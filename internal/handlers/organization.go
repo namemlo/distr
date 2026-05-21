@@ -39,7 +39,7 @@ func OrganizationRouter(r chiopenapi.Router) {
 		r.Post("/", createOrganization).
 			With(option.Description("Create a new organization")).
 			With(option.Request(api.CreateUpdateOrganizationRequest{})).
-			With(option.Response(http.StatusOK, types.OrganizationWithUserRole{}))
+			With(option.Response(http.StatusOK, types.OrganizationWithRole{}))
 
 		r.With(middleware.RequireAdmin).Group(func(r chiopenapi.Router) {
 			r.Put("/", updateOrganization).
@@ -150,7 +150,7 @@ func createOrganization(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if err := db.CreateUserAccountOrganizationAssignment(
-			ctx, auth.CurrentUserID(), organization.ID, types.UserRoleAdmin, nil); err != nil {
+			ctx, auth.CurrentUserID(), organization.ID, types.AccountRoleAdmin, nil); err != nil {
 			return err
 		}
 		return nil
@@ -163,9 +163,9 @@ func createOrganization(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		}
 	} else {
-		RespondJSON(w, types.OrganizationWithUserRole{
+		RespondJSON(w, types.OrganizationWithRole{
 			Organization: organization,
-			UserRole:     types.UserRoleAdmin,
+			AccountRole:  types.AccountRoleAdmin,
 			JoinedOrgAt:  time.Now(),
 		})
 	}

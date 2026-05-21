@@ -50,6 +50,7 @@
 
 ## Type Aliases
 
+- [AccountRole](type-aliases/AccountRole.md)
 - [ApplicationVersionFiles](type-aliases/ApplicationVersionFiles.md)
 - [ClientConfig](type-aliases/ClientConfig.md)
 - [CreateDeploymentParams](type-aliases/CreateDeploymentParams.md)
@@ -69,7 +70,6 @@
 - [UpdateAllDeploymentsSkippedTarget](type-aliases/UpdateAllDeploymentsSkippedTarget.md)
 - [UpdateAllDeploymentsUpdatedTarget](type-aliases/UpdateAllDeploymentsUpdatedTarget.md)
 - [UpdateDeploymentParams](type-aliases/UpdateDeploymentParams.md)
-- [UserRole](type-aliases/UserRole.md)
 
 ## Functions
 

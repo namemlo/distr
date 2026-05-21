@@ -28,11 +28,11 @@ type UserAccount struct {
 }
 
 func (u *UserAccount) AsUserAccountWithRole(
-	role UserRole,
+	role AccountRole,
 	customerOrganizationID *uuid.UUID,
 	joinedOrgAt time.Time,
-) UserAccountWithUserRole {
-	return UserAccountWithUserRole{
+) UserAccountWithRole {
+	return UserAccountWithRole{
 		ID:                     u.ID,
 		CreatedAt:              u.CreatedAt,
 		Email:                  u.Email,
@@ -46,14 +46,14 @@ func (u *UserAccount) AsUserAccountWithRole(
 		MFAEnabledAt:           util.PtrCopy(u.MFAEnabledAt),
 		IsSuperAdmin:           u.IsSuperAdmin,
 		Password:               u.Password,
-		UserRole:               role,
+		AccountRole:            role,
 		JoinedOrgAt:            joinedOrgAt,
 		CustomerOrganizationID: customerOrganizationID,
 		LastUsedOrganizationID: u.LastUsedOrganizationID,
 	}
 }
 
-type UserAccountWithUserRole struct {
+type UserAccountWithRole struct {
 	// copy+pasted from UserAccount because pgx does not like embedded structs
 	ID                     uuid.UUID  `db:"id" json:"id"`
 	CreatedAt              time.Time  `db:"created_at" json:"createdAt"`
@@ -70,7 +70,7 @@ type UserAccountWithUserRole struct {
 	MFAEnabledAt           *time.Time `db:"mfa_enabled_at" json:"-"`
 	IsSuperAdmin           bool       `db:"is_super_admin" json:"-"`
 	// not copy+pasted
-	UserRole UserRole `db:"user_role" json:"userRole"`
+	AccountRole AccountRole `db:"account_role" json:"userRole"`
 	// not copy+pasted
 	JoinedOrgAt time.Time `db:"joined_org_at" json:"joinedOrgAt"`
 	// not copy+pasted
@@ -79,7 +79,7 @@ type UserAccountWithUserRole struct {
 	// Remember to update AsUserAccount when adding fields!
 }
 
-func (u *UserAccountWithUserRole) AsUserAccount() UserAccount {
+func (u *UserAccountWithRole) AsUserAccount() UserAccount {
 	return UserAccount{
 		ID:                     u.ID,
 		CreatedAt:              u.CreatedAt,

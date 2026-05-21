@@ -13,24 +13,24 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-type UserRole string
+type AccountRole string
 
 const (
-	UserRoleReadOnly  UserRole = "read_only"
-	UserRoleReadWrite UserRole = "read_write"
-	UserRoleAdmin     UserRole = "admin"
+	AccountRoleReadOnly  AccountRole = "read_only"
+	AccountRoleReadWrite AccountRole = "read_write"
+	AccountRoleAdmin     AccountRole = "admin"
 )
 
-func ParseUserRole(value string) (UserRole, error) {
+func ParseAccountRole(value string) (AccountRole, error) {
 	switch value {
-	case string(UserRoleReadOnly):
-		return UserRoleReadOnly, nil
-	case string(UserRoleReadWrite):
-		return UserRoleReadWrite, nil
-	case string(UserRoleAdmin):
-		return UserRoleAdmin, nil
+	case string(AccountRoleReadOnly):
+		return AccountRoleReadOnly, nil
+	case string(AccountRoleReadWrite):
+		return AccountRoleReadWrite, nil
+	case string(AccountRoleAdmin):
+		return AccountRoleAdmin, nil
 	default:
-		return "", errors.New("invalid user role")
+		return "", errors.New("invalid account role")
 	}
 }
 

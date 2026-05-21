@@ -1,6 +1,6 @@
 import {inject} from '@angular/core';
 import {CanActivateFn, Router, Routes} from '@angular/router';
-import {UserRole} from '@distr-sh/distr-sdk';
+import {AccountRole} from '@distr-sh/distr-sdk';
 import dayjs from 'dayjs';
 import {firstValueFrom, map} from 'rxjs';
 import {getRemoteEnvironment} from '../env/remote';
@@ -44,7 +44,7 @@ import {RegistryTutorialComponent} from './tutorials/registry/registry-tutorial.
 import {TutorialsComponent} from './tutorials/tutorials.component';
 import {UserSettingsComponent} from './user-settings/user-settings.component';
 
-function requiredRoleGuard(...userRole: UserRole[]): CanActivateFn {
+function requiredRoleGuard(...userRole: AccountRole[]): CanActivateFn {
   return () => {
     const auth = inject(AuthService);
     if (auth.isSuperAdmin() || auth.hasAnyRole(...userRole)) {

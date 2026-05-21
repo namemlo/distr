@@ -8,7 +8,7 @@ import (
 type AuthInfo interface {
 	CurrentUserID() uuid.UUID
 	CurrentUserEmail() string
-	CurrentUserRole() *types.UserRole
+	CurrentAccountRole() *types.AccountRole
 	CurrentOrgID() *uuid.UUID
 	CurrentCustomerOrgID() *uuid.UUID
 	CurrentUserEmailVerified() bool

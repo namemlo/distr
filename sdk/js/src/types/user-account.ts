@@ -1,6 +1,6 @@
 import {BaseModel} from './base';
 
-export type UserRole = 'read_only' | 'read_write' | 'admin';
+export type AccountRole = 'read_only' | 'read_write' | 'admin';
 
 export interface UserAccount extends BaseModel {
   email: string;
@@ -12,7 +12,7 @@ export interface UserAccount extends BaseModel {
 }
 
 export interface UserAccountWithRole extends UserAccount {
-  userRole: UserRole;
+  userRole: AccountRole;
   customerOrganizationId?: string;
   joinedOrgAt: string;
 }

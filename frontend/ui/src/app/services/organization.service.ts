@@ -2,7 +2,7 @@ import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {toSignal} from '@angular/core/rxjs-interop';
 import {combineLatestWith, map, merge, Observable, shareReplay, Subject, tap} from 'rxjs';
-import {CreateUpdateOrganizationRequest, Organization, OrganizationWithUserRole} from '../types/organization';
+import {CreateUpdateOrganizationRequest, Organization, OrganizationWithRole} from '../types/organization';
 import {ContextService} from './context.service';
 
 @Injectable({
@@ -13,7 +13,7 @@ export class OrganizationService {
   private readonly contextService = inject(ContextService);
   private readonly baseUrl = '/api/v1/organization';
 
-  private readonly organizationUpdate = new Subject<OrganizationWithUserRole>();
+  private readonly organizationUpdate = new Subject<OrganizationWithRole>();
   private readonly organization$ = merge(
     this.organizationUpdate.asObservable(),
     this.contextService.getOrganization()
@@ -33,11 +33,11 @@ export class OrganizationService {
     {initialValue: false}
   );
 
-  get(): Observable<OrganizationWithUserRole> {
+  get(): Observable<OrganizationWithRole> {
     return this.organization$.pipe(shareReplay(1));
   }
 
-  getAll(): Observable<OrganizationWithUserRole[]> {
+  getAll(): Observable<OrganizationWithRole[]> {
     // TODO take updates into account like with organization$
     return this.contextService.getAvailableOrganizations();
   }
@@ -57,7 +57,7 @@ export class OrganizationService {
           joinedOrgAt: foundOrg?.joinedOrgAt ?? new Date().toISOString(),
         };
       }),
-      tap((it: OrganizationWithUserRole) => {
+      tap((it: OrganizationWithRole) => {
         this.organizationUpdate.next(it);
       })
     );

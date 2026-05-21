@@ -84,7 +84,7 @@ func ApplicationsRouter(r chiopenapi.Router) {
 			r.With(applicationMiddleware).
 				Group(func(r chiopenapi.Router) {
 					r.With(middleware.RequireVendor).
-						With(middleware.RequireAnyUserRole(types.UserRoleReadWrite, types.UserRoleAdmin)).
+						With(middleware.RequireAnyAccountRole(types.AccountRoleReadWrite, types.AccountRoleAdmin)).
 						With(middleware.BlockSuperAdmin).
 						Post("/", createApplicationVersion).
 						With(option.Description("Create a new application version")).

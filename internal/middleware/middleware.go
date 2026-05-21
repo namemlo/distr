@@ -86,7 +86,7 @@ func isSuperAdmin(ctx context.Context) bool {
 	return false
 }
 
-func RequireAnyUserRole(userRoles ...types.UserRole) func(handler http.Handler) http.Handler {
+func RequireAnyAccountRole(accountRoles ...types.AccountRole) func(handler http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -96,7 +96,7 @@ func RequireAnyUserRole(userRoles ...types.UserRole) func(handler http.Handler) 
 			}
 			if auth, err := auth.Authentication.Get(ctx); err != nil {
 				http.Error(w, err.Error(), http.StatusForbidden)
-			} else if auth.CurrentUserRole() == nil || !slices.Contains(userRoles, *auth.CurrentUserRole()) {
+			} else if auth.CurrentAccountRole() == nil || !slices.Contains(accountRoles, *auth.CurrentAccountRole()) {
 				http.Error(w, "insufficient permissions", http.StatusForbidden)
 			} else {
 				handler.ServeHTTP(w, r)
@@ -107,8 +107,8 @@ func RequireAnyUserRole(userRoles ...types.UserRole) func(handler http.Handler) 
 }
 
 var (
-	RequireReadWriteOrAdmin = RequireAnyUserRole(types.UserRoleReadWrite, types.UserRoleAdmin)
-	RequireAdmin            = RequireAnyUserRole(types.UserRoleAdmin)
+	RequireReadWriteOrAdmin = RequireAnyAccountRole(types.AccountRoleReadWrite, types.AccountRoleAdmin)
+	RequireAdmin            = RequireAnyAccountRole(types.AccountRoleAdmin)
 )
 
 func RequireAnySubscriptionType(types ...types.SubscriptionType) func(http.Handler) http.Handler {
@@ -213,7 +213,7 @@ var RequireOrgAndRole = auth.Authentication.ValidatorMiddleware(
 			}
 			return nil
 		}
-		if value.CurrentOrgID() == nil || value.CurrentOrg() == nil || value.CurrentUserRole() == nil {
+		if value.CurrentOrgID() == nil || value.CurrentOrg() == nil || value.CurrentAccountRole() == nil {
 			return authn.ErrBadAuthentication
 		}
 		return nil

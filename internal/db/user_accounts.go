@@ -31,7 +31,7 @@ const (
 		u.mfa_enabled_at,
 		u.is_super_admin`
 	userAccountWithRoleOutputExpr = userAccountOutputExpr +
-		", j.user_role, j.created_at, j.customer_organization_id "
+		", j.account_role, j.created_at, j.customer_organization_id "
 	userAccountWithRoleOutputExprWithAlias = userAccountWithRoleOutputExpr + " as joined_org_at "
 )
 
@@ -50,7 +50,7 @@ func CreateUserAccountWithOrganization(
 		ctx,
 		userAccount.ID,
 		org.ID,
-		types.UserRoleAdmin,
+		types.AccountRoleAdmin,
 		nil,
 	); err != nil {
 		return nil, err
@@ -202,12 +202,12 @@ func DeleteUserAccountFromOrganization(ctx context.Context, userID, orgID uuid.U
 func CreateUserAccountOrganizationAssignment(
 	ctx context.Context,
 	userID, orgID uuid.UUID,
-	role types.UserRole,
+	role types.AccountRole,
 	customerOrganizationID *uuid.UUID,
 ) error {
 	db := internalctx.GetDb(ctx)
 	_, err := db.Exec(ctx,
-		"INSERT INTO Organization_UserAccount (organization_id, user_account_id, user_role, customer_organization_id) "+
+		"INSERT INTO Organization_UserAccount (organization_id, user_account_id, account_role, customer_organization_id) "+
 			"VALUES (@orgId, @userId, @role, @customerOrganizationID)",
 		pgx.NamedArgs{
 			"userId":                 userID,
@@ -225,12 +225,12 @@ func CreateUserAccountOrganizationAssignment(
 func UpdateUserAccountOrganizationAssignment(
 	ctx context.Context,
 	userID, orgID uuid.UUID,
-	role types.UserRole,
+	role types.AccountRole,
 	customerOrganizationID *uuid.UUID,
 ) error {
 	db := internalctx.GetDb(ctx)
 	cmd, err := db.Exec(ctx,
-		"UPDATE Organization_UserAccount SET user_role = @role, customer_organization_id = @customerOrganizationID "+
+		"UPDATE Organization_UserAccount SET account_role = @role, customer_organization_id = @customerOrganizationID "+
 			"WHERE organization_id = @orgId AND user_account_id = @userId",
 		pgx.NamedArgs{
 			"userId":                 userID,
@@ -251,12 +251,12 @@ func UpdateUserAccountOrganizationAssignment(
 func UpdateAllUserAccountOrganizationAssignmentsWithOrganizationID(
 	ctx context.Context,
 	orgID uuid.UUID,
-	role types.UserRole,
+	role types.AccountRole,
 ) error {
 	db := internalctx.GetDb(ctx)
 	_, err := db.Exec(ctx,
 		`UPDATE Organization_UserAccount
-		SET user_role = @role
+		SET account_role = @role
 		WHERE organization_id = @orgId`,
 		pgx.NamedArgs{
 			"orgId": orgID,
@@ -273,12 +273,12 @@ func UpdateAllUserAccountOrganizationAssignmentsWithOrganizationID(
 func UpdateAllUserAccountOrganizationAssignmentsWithOrganizationSuscriptionType(
 	ctx context.Context,
 	subscriptionType []types.SubscriptionType,
-	role types.UserRole,
+	role types.AccountRole,
 ) error {
 	db := internalctx.GetDb(ctx)
 	_, err := db.Exec(ctx,
 		`UPDATE Organization_UserAccount
-		SET user_role = @role
+		SET account_role = @role
 		WHERE organization_id IN (
 			SELECT id FROM Organization WHERE subscription_type = ANY(@subscriptionType)
 		)`,
@@ -295,7 +295,7 @@ func UpdateAllUserAccountOrganizationAssignmentsWithOrganizationSuscriptionType(
 }
 
 func GetUserAccountsByOrgID(ctx context.Context, orgID uuid.UUID) (
-	[]types.UserAccountWithUserRole,
+	[]types.UserAccountWithRole,
 	error,
 ) {
 	db := internalctx.GetDb(ctx)
@@ -309,7 +309,7 @@ func GetUserAccountsByOrgID(ctx context.Context, orgID uuid.UUID) (
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not query users: %w", err)
-	} else if result, err := pgx.CollectRows[types.UserAccountWithUserRole](rows, pgx.RowToStructByPos); err != nil {
+	} else if result, err := pgx.CollectRows[types.UserAccountWithRole](rows, pgx.RowToStructByPos); err != nil {
 		return nil, fmt.Errorf("could not map users: %w", err)
 	} else {
 		return result, nil
@@ -337,7 +337,7 @@ func CountVendorUserAccountsByOrgID(ctx context.Context, orgID uuid.UUID) (int64
 }
 
 func GetUserAccountsByCustomerOrgID(ctx context.Context, customerOrganizationID uuid.UUID) (
-	[]types.UserAccountWithUserRole,
+	[]types.UserAccountWithRole,
 	error,
 ) {
 	db := internalctx.GetDb(ctx)
@@ -351,7 +351,7 @@ func GetUserAccountsByCustomerOrgID(ctx context.Context, customerOrganizationID 
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not query users: %w", err)
-	} else if result, err := pgx.CollectRows[types.UserAccountWithUserRole](rows, pgx.RowToStructByPos); err != nil {
+	} else if result, err := pgx.CollectRows[types.UserAccountWithRole](rows, pgx.RowToStructByPos); err != nil {
 		return nil, fmt.Errorf("could not map users: %w", err)
 	} else {
 		return result, nil
@@ -400,7 +400,7 @@ func GetUserAccountWithRole(
 	ctx context.Context,
 	userID, orgID uuid.UUID,
 	customerOrgID *uuid.UUID,
-) (*types.UserAccountWithUserRole, error) {
+) (*types.UserAccountWithRole, error) {
 	db := internalctx.GetDb(ctx)
 	checkCustomerOrgID := customerOrgID != nil
 	rows, err := db.Query(ctx,
@@ -421,7 +421,7 @@ func GetUserAccountWithRole(
 	if err != nil {
 		return nil, err
 	}
-	userAccount, err := pgx.CollectExactlyOneRow[types.UserAccountWithUserRole](rows, pgx.RowToStructByPos)
+	userAccount, err := pgx.CollectExactlyOneRow[types.UserAccountWithRole](rows, pgx.RowToStructByPos)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apierrors.ErrNotFound
@@ -434,7 +434,7 @@ func GetUserAccountWithRole(
 }
 
 func GetUserAccountAndOrg(ctx context.Context, userID, orgID uuid.UUID) (
-	*types.UserAccountWithUserRole,
+	*types.UserAccountWithRole,
 	*types.Organization,
 	error,
 ) {
@@ -457,7 +457,7 @@ func GetUserAccountAndOrg(ctx context.Context, userID, orgID uuid.UUID) (
 		return nil, nil, err
 	}
 	res, err := pgx.CollectExactlyOneRow[struct {
-		User types.UserAccountWithUserRole
+		User types.UserAccountWithRole
 		Org  types.Organization
 	}](rows, pgx.RowToStructByPos)
 	if err != nil {
@@ -520,7 +520,7 @@ func UpdateUserAccountLastLoggedIn(ctx context.Context, userID uuid.UUID) error 
 	return err
 }
 
-func UpdateUserAccountImage(ctx context.Context, userAccount *types.UserAccountWithUserRole, imageID uuid.UUID) error {
+func UpdateUserAccountImage(ctx context.Context, userAccount *types.UserAccountWithRole, imageID uuid.UUID) error {
 	db := internalctx.GetDb(ctx)
 	row := db.QueryRow(ctx,
 		`UPDATE UserAccount SET image_id = @imageId WHERE id = @id RETURNING image_id`,

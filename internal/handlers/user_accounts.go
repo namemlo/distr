@@ -84,7 +84,7 @@ func getUserAccountsHandler(w http.ResponseWriter, r *http.Request) {
 	log := internalctx.GetLogger(ctx)
 	auth := auth.Authentication.Require(ctx)
 
-	var userAccounts []types.UserAccountWithUserRole
+	var userAccounts []types.UserAccountWithRole
 	var err error
 
 	if customerOrgID := auth.CurrentCustomerOrgID(); customerOrgID != nil {
@@ -122,13 +122,13 @@ func createUserAccountHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if customerOrgID := auth.CurrentCustomerOrgID(); customerOrgID != nil {
-		if *auth.CurrentUserRole() != types.UserRoleAdmin {
+		if *auth.CurrentAccountRole() != types.AccountRoleAdmin {
 			http.Error(w, "must be admin to create users", http.StatusForbidden)
 			return
 		}
 
 		body.CustomerOrganizationID = customerOrgID
-	} else if *auth.CurrentUserRole() != types.UserRoleAdmin && body.CustomerOrganizationID == nil {
+	} else if *auth.CurrentAccountRole() != types.AccountRoleAdmin && body.CustomerOrganizationID == nil {
 		http.Error(w, "user must be admin to create non-customer users", http.StatusForbidden)
 		return
 	}
@@ -166,7 +166,7 @@ func createUserAccountHandler(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		if body.UserRole != types.UserRoleAdmin && !organization.SubscriptionType.IsPro() {
+		if body.AccountRole != types.AccountRoleAdmin && !organization.SubscriptionType.IsPro() {
 			err = errors.New("creating non-admin users requires a pro subscription")
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return err
@@ -222,7 +222,7 @@ func createUserAccountHandler(w http.ResponseWriter, r *http.Request) {
 			ctx,
 			userAccount.ID,
 			organization.ID,
-			body.UserRole,
+			body.AccountRole,
 			body.CustomerOrganizationID,
 		); errors.Is(err, apierrors.ErrAlreadyExists) {
 			http.Error(w, "user is already part of this organization", http.StatusBadRequest)
@@ -261,7 +261,7 @@ func createUserAccountHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, api.CreateUserAccountResponse{
-		User:      userAccount.AsUserAccountWithRole(body.UserRole, body.CustomerOrganizationID, time.Now()),
+		User:      userAccount.AsUserAccountWithRole(body.AccountRole, body.CustomerOrganizationID, time.Now()),
 		InviteURL: inviteURL,
 	})
 }
@@ -273,7 +273,7 @@ func patchUserAccountHandler() http.HandlerFunc {
 		auth := auth.Authentication.Require(ctx)
 		userAccount := internalctx.GetUserAccount(ctx)
 
-		if *auth.CurrentUserRole() != types.UserRoleAdmin {
+		if *auth.CurrentAccountRole() != types.AccountRoleAdmin {
 			if auth.CurrentCustomerOrgID() != nil {
 				http.Error(w, "admin role needed to patch user", http.StatusForbidden)
 				return
@@ -298,7 +298,7 @@ func patchUserAccountHandler() http.HandlerFunc {
 			isUpdateNeeded = true
 		}
 
-		if body.UserRole != nil && *body.UserRole != userAccount.UserRole {
+		if body.AccountRole != nil && *body.AccountRole != userAccount.AccountRole {
 			if userAccount.ID == auth.CurrentUserID() {
 				http.Error(w, "users cannot change their own role", http.StatusForbidden)
 				return
@@ -307,7 +307,7 @@ func patchUserAccountHandler() http.HandlerFunc {
 				ctx,
 				userAccount.ID,
 				*auth.CurrentOrgID(),
-				*body.UserRole,
+				*body.AccountRole,
 				userAccount.CustomerOrganizationID,
 			)
 			if errors.Is(err, apierrors.ErrNotFound) {
@@ -319,7 +319,7 @@ func patchUserAccountHandler() http.HandlerFunc {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			} else {
-				userAccount.UserRole = *body.UserRole
+				userAccount.AccountRole = *body.AccountRole
 			}
 		}
 
@@ -332,7 +332,7 @@ func patchUserAccountHandler() http.HandlerFunc {
 				return
 			}
 			*userAccount = user.AsUserAccountWithRole(
-				userAccount.UserRole,
+				userAccount.AccountRole,
 				userAccount.CustomerOrganizationID,
 				userAccount.JoinedOrgAt,
 			)
@@ -404,7 +404,7 @@ func deleteUserAccountHandler(w http.ResponseWriter, r *http.Request) {
 	userAccount := internalctx.GetUserAccount(ctx)
 	auth := auth.Authentication.Require(ctx)
 
-	if *auth.CurrentUserRole() != types.UserRoleAdmin {
+	if *auth.CurrentAccountRole() != types.AccountRoleAdmin {
 		if auth.CurrentCustomerOrgID() != nil {
 			http.Error(w, "admin role needed to delete user", http.StatusForbidden)
 			return

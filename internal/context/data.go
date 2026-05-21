@@ -61,12 +61,12 @@ func GetFile(ctx context.Context) *types.File {
 	panic("no File found in context")
 }
 
-func WithUserAccount(ctx context.Context, userAccount *types.UserAccountWithUserRole) context.Context {
+func WithUserAccount(ctx context.Context, userAccount *types.UserAccountWithRole) context.Context {
 	return context.WithValue(ctx, ctxKeyUserAccount, userAccount)
 }
 
-func GetUserAccount(ctx context.Context) *types.UserAccountWithUserRole {
-	if userAccount, ok := ctx.Value(ctxKeyUserAccount).(*types.UserAccountWithUserRole); ok {
+func GetUserAccount(ctx context.Context) *types.UserAccountWithRole {
+	if userAccount, ok := ctx.Value(ctxKeyUserAccount).(*types.UserAccountWithRole); ok {
 		return userAccount
 	}
 	panic("no UserAccount found in context")

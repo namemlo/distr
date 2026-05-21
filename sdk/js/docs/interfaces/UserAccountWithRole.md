@@ -106,4 +106,4 @@
 
 ### userRole
 
-> **userRole**: [`UserRole`](../type-aliases/UserRole.md)
+> **userRole**: [`AccountRole`](../type-aliases/AccountRole.md)

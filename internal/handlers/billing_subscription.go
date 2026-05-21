@@ -438,7 +438,7 @@ func checkHasNonAdminRoles(ctx context.Context, orgID uuid.UUID) (bool, error) {
 	}
 
 	for _, user := range userAccounts {
-		if user.UserRole != types.UserRoleAdmin {
+		if user.AccountRole != types.AccountRoleAdmin {
 			return true, nil
 		}
 	}

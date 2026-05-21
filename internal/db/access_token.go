@@ -19,7 +19,7 @@ const (
 `
 	accessTokenWithUserAccountOutputExpr = accessTokenOutputExpr + `,
 	(` + userAccountOutputExpr + `) AS user_account,
-	oua.user_role,
+	oua.account_role,
 	oua.customer_organization_id
 `
 )

@@ -2,7 +2,7 @@ import {AsyncPipe, DatePipe} from '@angular/common';
 import {Component, computed, inject, input, output, signal, TemplateRef, viewChild} from '@angular/core';
 import {toObservable, toSignal} from '@angular/core/rxjs-interop';
 import {FormBuilder, ReactiveFormsModule, Validators} from '@angular/forms';
-import {UserAccountWithRole, UserRole} from '@distr-sh/distr-sdk';
+import {AccountRole, UserAccountWithRole} from '@distr-sh/distr-sdk';
 import {FaIconComponent} from '@fortawesome/angular-fontawesome';
 import {
   faBox,
@@ -89,7 +89,7 @@ export class UsersComponent {
   protected readonly inviteForm = this.fb.group({
     email: this.fb.control('', [Validators.required, Validators.email]),
     name: this.fb.control<string | undefined>(undefined),
-    userRole: this.fb.control<UserRole>('admin', Validators.required),
+    userRole: this.fb.control<AccountRole>('admin', Validators.required),
   });
   protected inviteUrl: string | null = null;
 
@@ -118,7 +118,7 @@ export class UsersComponent {
   protected readonly editRoleUserId = signal<string | null>(null);
   protected readonly editRoleFormLoading = signal(false);
   protected readonly editRoleForm = this.fb.group({
-    userRole: this.fb.control<UserRole>('admin', Validators.required),
+    userRole: this.fb.control<AccountRole>('admin', Validators.required),
   });
 
   public showInviteDialog(reset?: boolean): void {
@@ -163,7 +163,7 @@ export class UsersComponent {
     }
   }
 
-  protected editUserRole(user: UserAccountWithRole): void {
+  protected editAccountRole(user: UserAccountWithRole): void {
     if (!user.id) {
       return;
     }
@@ -173,7 +173,7 @@ export class UsersComponent {
     this.editRoleForm.reset(user);
   }
 
-  protected async submitEditUserRoleForm(): Promise<void> {
+  protected async submitEditAccountRoleForm(): Promise<void> {
     this.editRoleForm.markAllAsTouched();
 
     const userId = this.editRoleUserId();

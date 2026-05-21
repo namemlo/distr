@@ -32,12 +32,12 @@ func FromUserJWT(token jwt.Token) (*SimpleAuthInfo, error) {
 		}
 	}
 
-	var userRoleStr string
-	if err := token.Get(authjwt.UserRoleKey, &userRoleStr); err == nil {
-		if userRole, err := types.ParseUserRole(userRoleStr); err != nil {
-			return nil, fmt.Errorf("%w: JWT userRole is invalid: %w", authn.ErrBadAuthentication, err)
+	var accountRoleStr string
+	if err := token.Get(authjwt.AccountRoleKey, &accountRoleStr); err == nil {
+		if accountRole, err := types.ParseAccountRole(accountRoleStr); err != nil {
+			return nil, fmt.Errorf("%w: JWT accountRole is invalid: %w", authn.ErrBadAuthentication, err)
 		} else {
-			result.userRole = &userRole
+			result.accountRole = &accountRole
 		}
 	}
 

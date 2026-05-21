@@ -108,18 +108,18 @@ func authLoginOidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		log = log.With(zap.Any("userId", user.ID))
 
-		var org types.OrganizationWithUserRole
+		var org types.OrganizationWithRole
 		orgs, err := db.GetOrganizationsForUser(ctx, user.ID)
 		if err != nil {
 			return err
 		} else if len(orgs) < 1 {
 			// TODO deduplicate (regular login)
 			org.Name = user.Email
-			org.UserRole = types.UserRoleAdmin
+			org.AccountRole = types.AccountRoleAdmin
 			if err := db.CreateOrganization(ctx, &org.Organization); err != nil {
 				return err
 			} else if err := db.CreateUserAccountOrganizationAssignment(
-				ctx, user.ID, org.ID, org.UserRole, org.CustomerOrganizationID); err != nil {
+				ctx, user.ID, org.ID, org.AccountRole, org.CustomerOrganizationID); err != nil {
 				return err
 			}
 		} else {

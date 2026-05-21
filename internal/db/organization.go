@@ -41,8 +41,8 @@ const (
 		o.stripe_webhook_secret,
 		(o.stripe_webhook_secret IS NOT NULL)
 	`
-	organizationWithUserRoleOutputExpr = organizationOutputExpr + `,
-		j.user_role,
+	organizationWithRoleOutputExpr = organizationOutputExpr + `,
+		j.account_role,
 		cu.id AS customer_organization_id,
 		cu.name AS customer_organization_name,
 		j.created_at as joined_org_at `
@@ -206,10 +206,10 @@ func UpdateOrganizationEnterpriseLimits(
 	return nil
 }
 
-func GetOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]types.OrganizationWithUserRole, error) {
+func GetOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]types.OrganizationWithRole, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx, `
-		SELECT`+organizationWithUserRoleOutputExpr+`
+		SELECT`+organizationWithRoleOutputExpr+`
 			FROM UserAccount u
 			INNER JOIN Organization_UserAccount j ON u.id = j.user_account_id
 			INNER JOIN Organization o ON o.id = j.organization_id
@@ -221,7 +221,7 @@ func GetOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]types.Org
 	if err != nil {
 		return nil, err
 	}
-	result, err := pgx.CollectRows(rows, pgx.RowToStructByPos[types.OrganizationWithUserRole])
+	result, err := pgx.CollectRows(rows, pgx.RowToStructByPos[types.OrganizationWithRole])
 	if err != nil {
 		return nil, err
 	} else {
@@ -229,11 +229,11 @@ func GetOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]types.Org
 	}
 }
 
-func GetAllOrganizationsForSuperAdmin(ctx context.Context) ([]types.OrganizationWithUserRole, error) {
+func GetAllOrganizationsForSuperAdmin(ctx context.Context) ([]types.OrganizationWithRole, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx, `
 		SELECT`+organizationOutputExpr+`,
-			'admin' as user_role,
+			'admin' as account_role,
 			NULL::UUID as customer_organization_id,
 			NULL::TEXT as customer_organization_name,
 			o.created_at as joined_org_at
@@ -244,7 +244,7 @@ func GetAllOrganizationsForSuperAdmin(ctx context.Context) ([]types.Organization
 	if err != nil {
 		return nil, err
 	}
-	result, err := pgx.CollectRows(rows, pgx.RowToStructByPos[types.OrganizationWithUserRole])
+	result, err := pgx.CollectRows(rows, pgx.RowToStructByPos[types.OrganizationWithRole])
 	if err != nil {
 		return nil, err
 	} else {

@@ -5,9 +5,9 @@ import (
 	"github.com/distr-sh/distr/internal/types"
 )
 
-func UserAccountToAPI(u types.UserAccountWithUserRole) api.UserAccountResponse {
+func UserAccountToAPI(u types.UserAccountWithRole) api.UserAccountResponse {
 	return api.UserAccountResponse{
-		UserAccountWithUserRole: u,
-		ImageUrl:                CreateImageURL(u.ImageID),
+		UserAccountWithRole: u,
+		ImageUrl:            CreateImageURL(u.ImageID),
 	}
 }

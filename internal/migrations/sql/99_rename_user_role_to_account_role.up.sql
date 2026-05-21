@@ -1,0 +1,3 @@
+ALTER TYPE USER_ROLE RENAME TO ACCOUNT_ROLE;
+
+ALTER TABLE Organization_UserAccount RENAME COLUMN user_role TO account_role;

@@ -21,7 +21,7 @@ const (
 	UserNameKey          = "name"
 	UserEmailKey         = "email"
 	UserEmailVerifiedKey = "email_verified"
-	UserRoleKey          = "role"
+	AccountRoleKey       = "role"
 	UserImageURLKey      = "image_url"
 	OrgIdKey             = "org"
 	CustomerOrgIDKey     = "c_org"
@@ -41,7 +41,7 @@ var JWTAuth = sync.OnceValue(func() *jwtauth.JWTAuth {
 	return jwtauth.New("HS256", env.JWTSecret(), nil)
 })
 
-func GenerateDefaultToken(user types.UserAccount, org types.OrganizationWithUserRole) (jwt.Token, string, error) {
+func GenerateDefaultToken(user types.UserAccount, org types.OrganizationWithRole) (jwt.Token, string, error) {
 	return generateUserToken(user, &org, defaultTokenExpiration, nil)
 }
 
@@ -58,7 +58,7 @@ func GenerateVerificationTokenValidFor(user types.UserAccount) (jwt.Token, strin
 
 func generateUserToken(
 	user types.UserAccount,
-	org *types.OrganizationWithUserRole,
+	org *types.OrganizationWithRole,
 	validFor time.Duration,
 	extraClaims map[string]any,
 ) (jwt.Token, string, error) {
@@ -82,7 +82,7 @@ func generateUserToken(
 	if org != nil {
 		claims[OrgIdKey] = org.ID.String()
 		if !user.IsSuperAdmin {
-			claims[UserRoleKey] = org.UserRole
+			claims[AccountRoleKey] = org.AccountRole
 		}
 		if org.CustomerOrganizationID != nil {
 			claims[CustomerOrgIDKey] = org.CustomerOrganizationID.String()

@@ -19,7 +19,7 @@ func OrganizationsRouter(r chiopenapi.Router) {
 	r.Use(middleware.RequireOrgAndRole)
 	r.Get("/", getOrganizations).
 		With(option.Description("List all organizations for current user")).
-		With(option.Response(http.StatusOK, []types.OrganizationWithUserRole{}))
+		With(option.Response(http.StatusOK, []types.OrganizationWithRole{}))
 }
 
 func getOrganizations(w http.ResponseWriter, r *http.Request) {

@@ -41,7 +41,7 @@ func (reg *Registry) createDBPool(ctx context.Context) (*pgxpool.Pool, error) {
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		typeNames := []string{
 			"DEPLOYMENT_TYPE",
-			"USER_ROLE",
+			"ACCOUNT_ROLE",
 			"HELM_CHART_TYPE",
 			"DEPLOYMENT_STATUS_TYPE",
 			"FEATURE",

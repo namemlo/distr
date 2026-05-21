@@ -29,7 +29,7 @@ func getContextHandler(w http.ResponseWriter, r *http.Request) {
 	log := internalctx.GetLogger(ctx)
 	auth := auth.Authentication.Require(ctx)
 
-	var orgs []types.OrganizationWithUserRole
+	var orgs []types.OrganizationWithRole
 	var err error
 
 	// Super admins get all organizations
@@ -47,25 +47,25 @@ func getContextHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var joinDate time.Time
-	var userRole *types.UserRole
+	var accountRole *types.AccountRole
 	var customerOrgID *uuid.UUID
 
 	if auth.IsSuperAdmin() {
 		// Super admins: use current org's creation time as join date, no role
 		joinDate = auth.CurrentOrg().CreatedAt
-		userRole = util.PtrTo(types.UserRoleAdmin)
+		accountRole = util.PtrTo(types.AccountRoleAdmin)
 	} else {
 		// Regular users: find their actual join date and role
 		for _, org := range orgs {
 			if org.ID == *auth.CurrentOrgID() {
 				joinDate = org.JoinedOrgAt
-				userRole = &org.UserRole
+				accountRole = &org.AccountRole
 				customerOrgID = org.CustomerOrganizationID
 				break
 			}
 		}
-		if userRole == nil {
-			userRole = auth.CurrentUserRole()
+		if accountRole == nil {
+			accountRole = auth.CurrentAccountRole()
 		}
 	}
 
@@ -89,7 +89,7 @@ func getContextHandler(w http.ResponseWriter, r *http.Request) {
 
 	RespondJSON(w, api.ContextResponse{
 		User: mapping.UserAccountToAPI(
-			auth.CurrentUser().AsUserAccountWithRole(*userRole, customerOrgID, joinDate),
+			auth.CurrentUser().AsUserAccountWithRole(*accountRole, customerOrgID, joinDate),
 		),
 		Organization:         mapping.OrganizationToAPI(*auth.CurrentOrg()),
 		CustomerOrganization: customerOrg,

@@ -31,7 +31,7 @@ func ReconcileStarterFeaturesForOrganizationID(ctx context.Context, orgID uuid.U
 		if err := db.UpdateAllUserAccountOrganizationAssignmentsWithOrganizationID(
 			ctx,
 			orgID,
-			types.UserRoleAdmin,
+			types.AccountRoleAdmin,
 		); err != nil {
 			return err
 		} else if err := db.UpdateDeploymentUnsetEntitlementIDWithOrganizationID(ctx, orgID); err != nil {
@@ -64,7 +64,7 @@ func ReconcileEditionFeatures(ctx context.Context) error {
 		if err := db.UpdateAllUserAccountOrganizationAssignmentsWithOrganizationSuscriptionType(
 			ctx,
 			types.NonProSubscriptionTypes,
-			types.UserRoleAdmin,
+			types.AccountRoleAdmin,
 		); err != nil {
 			return err
 		} else if err := db.UpdateDeploymentUnsetEntitlementIDWithOrganizationSubscriptionType(

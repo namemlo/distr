@@ -1,5 +1,5 @@
 import {Directive, effect, EmbeddedViewRef, inject, input, OnInit, TemplateRef, ViewContainerRef} from '@angular/core';
-import {UserRole} from '@distr-sh/distr-sdk';
+import {AccountRole} from '@distr-sh/distr-sdk';
 import {AuthService} from '../services/auth.service';
 
 abstract class EmbeddedViewToggler {
@@ -31,7 +31,7 @@ abstract class EmbeddedViewToggler {
 
 @Directive({selector: '[appRequiredRole]'})
 export class RequireRoleDirective extends EmbeddedViewToggler {
-  public readonly role = input.required<UserRole | UserRole[]>({alias: 'appRequiredRole'});
+  public readonly role = input.required<AccountRole | AccountRole[]>({alias: 'appRequiredRole'});
 
   private readonly auth = inject(AuthService);
 
@@ -62,7 +62,7 @@ export class RequireCustomerDirective extends EmbeddedViewToggler implements OnI
 export interface PermissionsInput {
   customer?: boolean;
   vendor?: boolean;
-  role?: UserRole | UserRole[];
+  role?: AccountRole | AccountRole[];
 }
 
 @Directive({selector: '[appPermissions]'})

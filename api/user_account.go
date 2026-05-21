@@ -7,19 +7,19 @@ import (
 )
 
 type CreateUserAccountRequest struct {
-	Email                  string         `json:"email"`
-	Name                   string         `json:"name"`
-	UserRole               types.UserRole `json:"userRole"`
-	CustomerOrganizationID *uuid.UUID     `json:"customerOrganizationId,omitempty"`
+	Email                  string            `json:"email"`
+	Name                   string            `json:"name"`
+	AccountRole            types.AccountRole `json:"userRole"`
+	CustomerOrganizationID *uuid.UUID        `json:"customerOrganizationId,omitempty"`
 }
 
 type CreateUserAccountResponse struct {
-	User      types.UserAccountWithUserRole `json:"user"`
-	InviteURL string                        `json:"inviteUrl"`
+	User      types.UserAccountWithRole `json:"user"`
+	InviteURL string                    `json:"inviteUrl"`
 }
 
 type UserAccountResponse struct {
-	types.UserAccountWithUserRole
+	types.UserAccountWithRole
 	ImageUrl *string `json:"imageUrl,omitempty"`
 }
 
@@ -50,6 +50,6 @@ func (r UpdateUserAccountEmailRequest) Validate() error {
 }
 
 type PatchUserAccountRequest struct {
-	Name     *string         `json:"name"`
-	UserRole *types.UserRole `json:"userRole"`
+	Name        *string            `json:"name"`
+	AccountRole *types.AccountRole `json:"userRole"`
 }

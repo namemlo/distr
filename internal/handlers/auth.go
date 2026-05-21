@@ -84,9 +84,9 @@ func authSwitchContextHandler() func(writer http.ResponseWriter, request *http.R
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			_, tokenString, err := authjwt.GenerateDefaultToken(*user, types.OrganizationWithUserRole{
+			_, tokenString, err := authjwt.GenerateDefaultToken(*user, types.OrganizationWithRole{
 				Organization:           *org,
-				UserRole:               types.UserRole(""), // Super admins don't have a role
+				AccountRole:            types.AccountRole(""), // Super admins don't have a role
 				CustomerOrganizationID: nil,
 			})
 			if err != nil {
@@ -114,9 +114,9 @@ func authSwitchContextHandler() func(writer http.ResponseWriter, request *http.R
 			sentry.GetHubFromContext(ctx).CaptureException(err)
 			log.Error("context switch failed", zap.Error(err))
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		} else if _, tokenString, err := authjwt.GenerateDefaultToken(user.AsUserAccount(), types.OrganizationWithUserRole{
+		} else if _, tokenString, err := authjwt.GenerateDefaultToken(user.AsUserAccount(), types.OrganizationWithRole{
 			Organization:           *org,
-			UserRole:               user.UserRole,
+			AccountRole:            user.AccountRole,
 			CustomerOrganizationID: user.CustomerOrganizationID,
 		}); err != nil {
 			sentry.GetHubFromContext(ctx).CaptureException(err)
@@ -154,7 +154,7 @@ func authLoginHandler(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		var orgs []types.OrganizationWithUserRole
+		var orgs []types.OrganizationWithRole
 		if user.IsSuperAdmin {
 			orgs, err = db.GetAllOrganizationsForSuperAdmin(ctx)
 		} else {
@@ -165,15 +165,15 @@ func authLoginHandler(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		var org types.OrganizationWithUserRole
+		var org types.OrganizationWithRole
 		if len(orgs) == 0 {
 			if !user.IsSuperAdmin {
 				org.Name = user.Email
-				org.UserRole = types.UserRoleAdmin
+				org.AccountRole = types.AccountRoleAdmin
 				if err := db.CreateOrganization(ctx, &org.Organization); err != nil {
 					return err
 				} else if err := db.CreateUserAccountOrganizationAssignment(
-					ctx, user.ID, org.ID, org.UserRole, org.CustomerOrganizationID); err != nil {
+					ctx, user.ID, org.ID, org.AccountRole, org.CustomerOrganizationID); err != nil {
 					return err
 				}
 			} else {

@@ -217,7 +217,7 @@ func sendLicenseKeyRevisionEmails(
 	}
 
 	for _, u := range vendorUsers {
-		if u.UserRole != types.UserRoleAdmin || !u.EmailVerified {
+		if u.AccountRole != types.AccountRoleAdmin || !u.EmailVerified {
 			continue
 		}
 

@@ -49,7 +49,7 @@ func DbAuthenticator() authn.Authenticator[AuthInfo, AuthInfoWithUserAndOrganiza
 						organizationID:         a.CurrentOrgID(),
 						customerOrganizationID: nil,
 						emailVerified:          a.CurrentUserEmailVerified(),
-						userRole:               nil, // Super admins don't have a role
+						accountRole:            nil, // Super admins don't have a role
 						isSuperAdmin:           true,
 						rawToken:               a.Token(),
 					},
@@ -58,7 +58,7 @@ func DbAuthenticator() authn.Authenticator[AuthInfo, AuthInfoWithUserAndOrganiza
 				}, nil
 			}
 			// Regular users: require org membership and validate role
-			if a.CurrentUserRole() != nil {
+			if a.CurrentAccountRole() != nil {
 				if u, o, err := db.GetUserAccountAndOrg(
 					ctx,
 					a.CurrentUserID(),
@@ -67,7 +67,7 @@ func DbAuthenticator() authn.Authenticator[AuthInfo, AuthInfoWithUserAndOrganiza
 					return nil, authn.ErrBadAuthentication
 				} else if err != nil {
 					return nil, err
-				} else if u.UserRole != *a.CurrentUserRole() {
+				} else if u.AccountRole != *a.CurrentAccountRole() {
 					return nil, authn.ErrBadAuthentication
 				} else {
 					return &DbAuthInfo{
@@ -77,7 +77,7 @@ func DbAuthenticator() authn.Authenticator[AuthInfo, AuthInfoWithUserAndOrganiza
 							organizationID:         a.CurrentOrgID(),
 							customerOrganizationID: u.CustomerOrganizationID,
 							emailVerified:          a.CurrentUserEmailVerified(),
-							userRole:               a.CurrentUserRole(),
+							accountRole:            a.CurrentAccountRole(),
 							isSuperAdmin:           false,
 							rawToken:               a.Token(),
 						},

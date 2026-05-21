@@ -3,14 +3,14 @@ import {inject, Injectable} from '@angular/core';
 import {CustomerOrganization, SidebarLink, UserAccountWithRole} from '@distr-sh/distr-sdk';
 import posthog from 'posthog-js';
 import {map, Observable, shareReplay, startWith, Subject, switchMap, tap} from 'rxjs';
-import {Organization, OrganizationWithUserRole} from '../types/organization';
+import {Organization, OrganizationWithRole} from '../types/organization';
 
 interface ContextResponse {
   user: UserAccountWithRole;
   organization: Organization;
   customerOrganization?: CustomerOrganization;
   sidebarLinks?: SidebarLink[];
-  availableContexts?: OrganizationWithUserRole[];
+  availableContexts?: OrganizationWithRole[];
 }
 
 /**
@@ -33,7 +33,7 @@ export class ContextService {
     return this.cache.pipe(map((ctx) => ctx.user));
   }
 
-  public getOrganization(): Observable<OrganizationWithUserRole> {
+  public getOrganization(): Observable<OrganizationWithRole> {
     return this.cache.pipe(
       map((ctx) => ({
         ...ctx.organization,
@@ -43,7 +43,7 @@ export class ContextService {
     );
   }
 
-  public getAvailableOrganizations(): Observable<OrganizationWithUserRole[]> {
+  public getAvailableOrganizations(): Observable<OrganizationWithRole[]> {
     return this.cache.pipe(map((ctx) => ctx.availableContexts ?? []));
   }
 

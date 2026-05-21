@@ -1,6 +1,6 @@
 import {HttpClient, HttpErrorResponse, HttpInterceptorFn, HttpRequest} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
-import {LoginResponse, TokenResponse, UserRole} from '@distr-sh/distr-sdk';
+import {AccountRole, LoginResponse, TokenResponse} from '@distr-sh/distr-sdk';
 import dayjs from 'dayjs';
 import {jwtDecode} from 'jwt-decode';
 import {catchError, map, Observable, of, tap, throwError} from 'rxjs';
@@ -19,7 +19,7 @@ export interface JWTClaims {
   email_verified: boolean;
   name: string;
   exp: string;
-  role: UserRole;
+  role: AccountRole;
   image_url: string | undefined;
   is_super_admin?: boolean;
   [claim: string]: unknown;
@@ -61,11 +61,11 @@ export class AuthService {
     }
   }
 
-  public hasRole(role: UserRole): boolean {
+  public hasRole(role: AccountRole): boolean {
     return this.getClaims()?.role === role;
   }
 
-  public hasAnyRole(...roles: UserRole[]): boolean {
+  public hasAnyRole(...roles: AccountRole[]): boolean {
     return roles.some((role) => this.hasRole(role));
   }
 

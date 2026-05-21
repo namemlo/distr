@@ -41,11 +41,11 @@ func (a *authorizer) Authorize(ctx context.Context, nameStr string, action Actio
 			return NewErrAccessDenied("customer user can not perform write action")
 		}
 
-		if auth.CurrentUserRole() == nil {
+		if auth.CurrentAccountRole() == nil {
 			return NewErrAccessDenied("user with no role can not perform write action")
 		}
 
-		if *auth.CurrentUserRole() == types.UserRoleReadOnly {
+		if *auth.CurrentAccountRole() == types.AccountRoleReadOnly {
 			return NewErrAccessDenied("read-only user can not perform write action")
 		}
 	}
@@ -82,11 +82,11 @@ func (a *authorizer) AuthorizeReference(ctx context.Context, nameStr string, ref
 			return NewErrAccessDenied("customer user can not perform write action")
 		}
 
-		if auth.CurrentUserRole() == nil {
+		if auth.CurrentAccountRole() == nil {
 			return NewErrAccessDenied("user with no role can not perform write action")
 		}
 
-		if *auth.CurrentUserRole() == types.UserRoleReadOnly {
+		if *auth.CurrentAccountRole() == types.AccountRoleReadOnly {
 			return NewErrAccessDenied("read-only user can not perform write action")
 		}
 	}
@@ -135,11 +135,11 @@ func (a *authorizer) AuthorizeBlob(ctx context.Context, digest digest.Digest, ac
 			return NewErrAccessDenied("customer user can not perform write action")
 		}
 
-		if auth.CurrentUserRole() == nil {
+		if auth.CurrentAccountRole() == nil {
 			return NewErrAccessDenied("user with no role can not perform write action")
 		}
 
-		if *auth.CurrentUserRole() == types.UserRoleReadOnly {
+		if *auth.CurrentAccountRole() == types.AccountRoleReadOnly {
 			return NewErrAccessDenied("read-only user can not perform write action")
 		}
 	}

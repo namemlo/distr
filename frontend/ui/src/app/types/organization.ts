@@ -1,4 +1,4 @@
-import {BaseModel, Named, UserRole} from '@distr-sh/distr-sdk';
+import {AccountRole, BaseModel, Named} from '@distr-sh/distr-sdk';
 import {SubscriptionType} from './subscription';
 
 export type Feature =
@@ -42,8 +42,8 @@ export interface Organization extends BaseModel, Named {
   stripeWebhookSecretConfigured: boolean;
 }
 
-export interface OrganizationWithUserRole extends Organization {
-  userRole: UserRole;
+export interface OrganizationWithRole extends Organization {
+  userRole: AccountRole;
   customerOrganizationId?: string;
   customerOrganizationName?: string;
   joinedOrgAt: string;

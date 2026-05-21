@@ -66,12 +66,12 @@ func (org *Organization) HasActiveSubscriptionWithType(st SubscriptionType) bool
 	return org.HasActiveSubscription() && org.SubscriptionType == st
 }
 
-type OrganizationWithUserRole struct {
+type OrganizationWithRole struct {
 	Organization
-	UserRole                 UserRole   `db:"user_role" json:"userRole"`
-	CustomerOrganizationID   *uuid.UUID `db:"customer_organization_id" json:"customerOrganizationId,omitempty"`
-	CustomerOrganizationName *string    `db:"customer_organization_name" json:"customerOrganizationName,omitempty"`
-	JoinedOrgAt              time.Time  `db:"joined_org_at" json:"joinedOrgAt"`
+	AccountRole              AccountRole `db:"account_role" json:"userRole"`
+	CustomerOrganizationID   *uuid.UUID  `db:"customer_organization_id" json:"customerOrganizationId,omitempty"`
+	CustomerOrganizationName *string     `db:"customer_organization_name" json:"customerOrganizationName,omitempty"`
+	JoinedOrgAt              time.Time   `db:"joined_org_at" json:"joinedOrgAt"`
 }
 
 type OrganizationWithBranding struct {

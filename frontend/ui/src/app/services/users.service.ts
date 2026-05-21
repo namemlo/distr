@@ -1,6 +1,6 @@
 import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
-import {UserAccountWithRole, UserRole} from '@distr-sh/distr-sdk';
+import {AccountRole, UserAccountWithRole} from '@distr-sh/distr-sdk';
 import {filter, map, merge, Observable, of, shareReplay, Subject, switchMap, tap} from 'rxjs';
 import {ReactiveList} from './cache';
 import {ContextService} from './context.service';
@@ -8,13 +8,13 @@ import {ContextService} from './context.service';
 export interface CreateUserAccountRequest {
   email: string;
   name?: string;
-  userRole: UserRole;
+  userRole: AccountRole;
   customerOrganizationId?: string;
 }
 
 export interface PatchUserAccountRequest {
   name?: string;
-  userRole?: UserRole;
+  userRole?: AccountRole;
 }
 
 export interface UserAccountInvitationResponse {
