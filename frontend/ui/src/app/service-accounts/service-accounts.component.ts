@@ -106,4 +106,11 @@ export class ServiceAccountsComponent {
     }
     return sas.filter((sa) => !sa.customerOrganizationId);
   }
+
+  protected detailRouterLink(sa: ServiceAccount): unknown[] {
+    if (sa.customerOrganizationId) {
+      return ['/', 'customers', sa.customerOrganizationId, 'service-accounts', sa.id];
+    }
+    return ['/', 'users', 'service-accounts', sa.id];
+  }
 }

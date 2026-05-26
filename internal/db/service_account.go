@@ -100,6 +100,9 @@ func DeleteServiceAccount(ctx context.Context, id, orgID uuid.UUID) error {
 	return nil
 }
 
+// GetServiceAccountsByOrgID returns every service account that belongs to the org, including
+// customer-scoped ones. Callers that need to partition by customer org should filter the result;
+// the matching pattern is used by GetUserAccountsByOrgID for user accounts.
 func GetServiceAccountsByOrgID(ctx context.Context, orgID uuid.UUID) ([]types.ServiceAccount, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(
@@ -107,7 +110,7 @@ func GetServiceAccountsByOrgID(ctx context.Context, orgID uuid.UUID) ([]types.Se
 		fmt.Sprintf(
 			`SELECT %s
 			FROM ServiceAccount sa
-			WHERE sa.organization_id = @orgId AND sa.customer_organization_id IS NULL
+			WHERE sa.organization_id = @orgId
 			ORDER BY sa.name`,
 			serviceAccountOutputExpr,
 		),

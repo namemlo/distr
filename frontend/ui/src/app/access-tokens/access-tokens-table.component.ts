@@ -1,12 +1,13 @@
 import {OverlayModule} from '@angular/cdk/overlay';
 import {AsyncPipe, DatePipe} from '@angular/common';
-import {Component, inject, input, signal, TemplateRef} from '@angular/core';
+import {Component, effect, inject, input, signal, TemplateRef} from '@angular/core';
+import {toObservable} from '@angular/core/rxjs-interop';
 import {FormControl, FormGroup, ReactiveFormsModule} from '@angular/forms';
 import {AccessToken, AccessTokenWithKey, CreateAccessTokenRequest} from '@distr-sh/distr-sdk';
 import {FaIconComponent} from '@fortawesome/angular-fontawesome';
 import {faPlus, faTrash, faXmark} from '@fortawesome/free-solid-svg-icons';
 import dayjs from 'dayjs';
-import {firstValueFrom, Observable, startWith, Subject, switchMap} from 'rxjs';
+import {combineLatest, firstValueFrom, Observable, startWith, Subject, switchMap} from 'rxjs';
 import {isExpired, RelativeDatePipe} from '../../util/dates';
 import {ClipComponent} from '../components/clip.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
@@ -47,9 +48,8 @@ export class AccessTokensTableComponent {
   private readonly toast = inject(ToastService);
 
   private readonly refresh$ = new Subject<void>();
-  protected readonly accessTokens$ = this.refresh$.pipe(
-    startWith(0),
-    switchMap(() => this.store().list())
+  protected readonly accessTokens$ = combineLatest([toObservable(this.store), this.refresh$.pipe(startWith(0))]).pipe(
+    switchMap(([store]) => store.list())
   );
 
   protected readonly editForm = new FormGroup({
@@ -59,6 +59,15 @@ export class AccessTokensTableComponent {
   protected editFormLoading = signal(false);
   protected createdToken = signal<AccessTokenWithKey | null>(null);
   protected drawer: DialogRef<void> | null = null;
+
+  constructor() {
+    // Reset the "newly created" key alert whenever the backing store changes (e.g. when the
+    // parent navigates between service accounts and the page is reused).
+    effect(() => {
+      this.store();
+      this.createdToken.set(null);
+    });
+  }
 
   public openDrawer(template: TemplateRef<unknown>) {
     this.hideDrawer();
