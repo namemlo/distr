@@ -34,14 +34,14 @@ func ParseAccountRole(value string) (AccountRole, error) {
 	}
 }
 
-func (ref *UserRole) UnmarshalJSON(data []byte) error {
+func (ref *AccountRole) UnmarshalJSON(data []byte) error {
 	var value string
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
-	} else if userRole, err := ParseUserRole(value); err != nil {
+	} else if accountRole, err := ParseAccountRole(value); err != nil {
 		return err
 	} else {
-		*ref = userRole
+		*ref = accountRole
 		return nil
 	}
 }

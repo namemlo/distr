@@ -26,24 +26,24 @@ func TestDeploymentStatusTypeParsing(t *testing.T) {
 	g.Expect(err).To(MatchError(ErrInvalidDeploymentStatusType))
 }
 
-func TestUserRoleParsing(t *testing.T) {
+func TestAccountRoleParsing(t *testing.T) {
 	g := NewWithT(t)
 
 	var target struct {
-		Role UserRole `json:"role"`
+		Role AccountRole `json:"role"`
 	}
 
 	err := json.Unmarshal([]byte(`{"role": "read_only"}`), &target)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(target.Role).To(Equal(UserRoleReadOnly))
+	g.Expect(target.Role).To(Equal(AccountRoleReadOnly))
 
 	err = json.Unmarshal([]byte(`{"role": "read_write"}`), &target)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(target.Role).To(Equal(UserRoleReadWrite))
+	g.Expect(target.Role).To(Equal(AccountRoleReadWrite))
 
 	err = json.Unmarshal([]byte(`{"role": "admin"}`), &target)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(target.Role).To(Equal(UserRoleAdmin))
+	g.Expect(target.Role).To(Equal(AccountRoleAdmin))
 
 	err = json.Unmarshal([]byte(`{"role": "superuser"}`), &target)
 	g.Expect(err).To(HaveOccurred())
