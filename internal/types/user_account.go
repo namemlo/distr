@@ -71,15 +71,18 @@ type UserAccountWithRole struct {
 	IsSuperAdmin           bool       `db:"is_super_admin" json:"-"`
 	// not copy+pasted
 	AccountRole AccountRole `db:"account_role" json:"accountRole"`
-	// UserRole is a deprecated alias for AccountRole. It is automatically mirrored from
-	// AccountRole on construction / after DB scans and only serialized for backwards
-	// compatibility. Do not set directly.
-	UserRole AccountRole `db:"-" json:"userRole" deprecated:"true"`
 	// not copy+pasted
 	JoinedOrgAt time.Time `db:"joined_org_at" json:"joinedOrgAt"`
 	// not copy+pasted
 	CustomerOrganizationID *uuid.UUID `db:"customer_organization_id" json:"customerOrganizationId,omitempty"`
 	Password               string     `db:"-" json:"-"`
+	// UserRole is a deprecated alias for AccountRole. It is automatically mirrored from
+	// AccountRole at the API boundary (see mapping.UserAccountToAPI) and only serialized for
+	// backwards compatibility. Do not set directly.
+	// NOTE: must stay at the end of the struct — pgx's composite-record codec iterates all
+	// exported fields by position (ignoring `db:"-"`), so inserting fields earlier would
+	// shift column-to-field alignment in GetUserAccountAndOrg.
+	UserRole AccountRole `db:"-" json:"userRole" deprecated:"true"`
 	// Remember to update AsUserAccount when adding fields!
 }
 

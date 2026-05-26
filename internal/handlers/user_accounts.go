@@ -261,7 +261,9 @@ func createUserAccountHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, api.CreateUserAccountResponse{
-		User:      userAccount.AsUserAccountWithRole(body.AccountRole, body.CustomerOrganizationID, time.Now()),
+		User: mapping.UserAccountToAPI(
+			userAccount.AsUserAccountWithRole(body.AccountRole, body.CustomerOrganizationID, time.Now()),
+		),
 		InviteURL: inviteURL,
 	})
 }
@@ -394,7 +396,10 @@ func resendUserInviteHandler() http.HandlerFunc {
 			return
 		}
 
-		RespondJSON(w, api.CreateUserAccountResponse{User: *userAccount, InviteURL: inviteURL})
+		RespondJSON(w, api.CreateUserAccountResponse{
+			User:      mapping.UserAccountToAPI(*userAccount),
+			InviteURL: inviteURL,
+		})
 	}
 }
 

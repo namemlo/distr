@@ -14,8 +14,8 @@ type CreateUserAccountRequest struct {
 }
 
 type CreateUserAccountResponse struct {
-	User      types.UserAccountWithRole `json:"user"`
-	InviteURL string                    `json:"inviteUrl"`
+	User      UserAccountResponse `json:"user"`
+	InviteURL string              `json:"inviteUrl"`
 }
 
 type UserAccountResponse struct {
