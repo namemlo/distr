@@ -7,10 +7,7 @@ import {AccessTokensTableComponent} from './access-tokens-table.component';
   imports: [AccessTokensTableComponent],
   template: `<section class="bg-gray-50 dark:bg-gray-900 p-3 sm:p-5 antialiased">
     <div class="mx-auto max-w-screen-2xl px-4 lg:px-12">
-      <app-access-tokens-table
-        [store]="accessTokens"
-        drawerTitle="Create a Personal Access Token"
-        keyDisplayText="Your Personal Access Token:" />
+      <app-access-tokens-table [store]="accessTokens" drawerTitle="Create a Personal Access Token" />
     </div>
   </section>`,
 })

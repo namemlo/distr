@@ -23,6 +23,7 @@ import {fromPromise} from 'rxjs/internal/observable/innerFrom';
 import {getRemoteEnvironment} from '../../../env/remote';
 import {getFormDisplayedError} from '../../../util/errors';
 import {slugMaxLength, slugPattern} from '../../../util/slug';
+import {CreatedAccessTokenAlertComponent} from '../../access-tokens/created-access-token-alert.component';
 import {ClipComponent} from '../../components/clip.component';
 import {AutotrimDirective} from '../../directives/autotrim.directive';
 import {AccessTokensService} from '../../services/access-tokens.service';
@@ -64,6 +65,7 @@ function helloDistrProxyUrl(base: string): string {
     CdkStepperPrevious,
     AutotrimDirective,
     ClipComponent,
+    CreatedAccessTokenAlertComponent,
     RouterLink,
   ],
   templateUrl: './registry-tutorial.component.html',

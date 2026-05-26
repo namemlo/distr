@@ -9,10 +9,10 @@ import {faPlus, faTrash, faXmark} from '@fortawesome/free-solid-svg-icons';
 import dayjs from 'dayjs';
 import {combineLatest, firstValueFrom, Observable, startWith, Subject, switchMap} from 'rxjs';
 import {isExpired, RelativeDatePipe} from '../../util/dates';
-import {ClipComponent} from '../components/clip.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
 import {DialogRef, OverlayService} from '../services/overlay.service';
 import {ToastService} from '../services/toast.service';
+import {CreatedAccessTokenAlertComponent} from './created-access-token-alert.component';
 
 export interface AccessTokenStore {
   list(): Observable<AccessToken[]>;
@@ -25,7 +25,7 @@ export interface AccessTokenStore {
   imports: [
     AsyncPipe,
     AutotrimDirective,
-    ClipComponent,
+    CreatedAccessTokenAlertComponent,
     DatePipe,
     FaIconComponent,
     OverlayModule,
@@ -37,7 +37,6 @@ export interface AccessTokenStore {
 export class AccessTokensTableComponent {
   public readonly store = input.required<AccessTokenStore>();
   public readonly drawerTitle = input<string>('Create access token');
-  public readonly keyDisplayText = input<string>('Your access token:');
 
   protected readonly faPlus = faPlus;
   protected readonly faTrash = faTrash;
