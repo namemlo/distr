@@ -150,8 +150,8 @@ func ApiRouter(
 					)
 
 					r.Use(
-						middleware.SentryUser,
 						auth.Authentication.Middleware,
+						middleware.SetSentryUserFromUserAuth,
 						middleware.RequireEmailVerified,
 						httprate.Limit(30, 1*time.Second, httprate.WithKeyFuncs(middleware.RateLimitUserIDKey)),
 						httprate.Limit(300, 1*time.Minute, httprate.WithKeyFuncs(middleware.RateLimitUserIDKey)),
