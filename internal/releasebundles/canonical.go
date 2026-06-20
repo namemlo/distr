@@ -10,12 +10,22 @@ import (
 )
 
 type canonicalBundle struct {
-	ApplicationID  string               `json:"applicationId"`
-	ChannelID      string               `json:"channelId"`
-	ReleaseNumber  string               `json:"releaseNumber"`
-	ReleaseNotes   string               `json:"releaseNotes"`
-	SourceRevision string               `json:"sourceRevision"`
-	Components     []canonicalComponent `json:"components"`
+	ApplicationID  string                  `json:"applicationId"`
+	ChannelID      string                  `json:"channelId"`
+	ReleaseNumber  string                  `json:"releaseNumber"`
+	ReleaseNotes   string                  `json:"releaseNotes"`
+	SourceRevision string                  `json:"sourceRevision"`
+	SourceMetadata canonicalSourceMetadata `json:"sourceMetadata"`
+	Components     []canonicalComponent    `json:"components"`
+}
+
+type canonicalSourceMetadata struct {
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
+	Tag        string `json:"tag"`
+	CIProvider string `json:"ciProvider"`
+	CIRunID    string `json:"ciRunId"`
+	CIRunURL   string `json:"ciRunUrl"`
 }
 
 type canonicalComponent struct {
@@ -48,7 +58,15 @@ func Canonicalize(bundle types.ReleaseBundle) ([]byte, string, error) {
 		ReleaseNumber:  bundle.ReleaseNumber,
 		ReleaseNotes:   bundle.ReleaseNotes,
 		SourceRevision: bundle.SourceRevision,
-		Components:     make([]canonicalComponent, 0, len(components)),
+		SourceMetadata: canonicalSourceMetadata{
+			Repository: bundle.SourceRepository,
+			Branch:     bundle.SourceBranch,
+			Tag:        bundle.SourceTag,
+			CIProvider: bundle.CIProvider,
+			CIRunID:    bundle.CIRunID,
+			CIRunURL:   bundle.CIRunURL,
+		},
+		Components: make([]canonicalComponent, 0, len(components)),
 	}
 	for _, component := range components {
 		canonical.Components = append(canonical.Components, canonicalizeComponent(component))

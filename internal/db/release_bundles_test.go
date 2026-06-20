@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -74,6 +75,172 @@ func TestReleaseBundleRepositoryRejectsDuplicateReleaseNumbersWithinApplicationS
 	otherApplicationID, otherChannelID, otherVersionID := createReleaseBundleDependenciesForOrganization(t, ctx, orgID)
 	sameNumberOtherApplication := releaseBundleFixture(orgID, otherApplicationID, otherChannelID, otherVersionID)
 	g.Expect(db.CreateReleaseBundle(ctx, &sameNumberOtherApplication)).To(Succeed())
+}
+
+func TestReleaseBundleRepositoryPersistsSourceMetadata(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	bundle.SourceRepository = "https://example.invalid/org/project"
+	bundle.SourceBranch = "main"
+	bundle.SourceTag = "v1.2.3"
+	bundle.CIProvider = "generic-ci"
+	bundle.CIRunID = "run-123"
+	bundle.CIRunURL = "https://ci.example.invalid/runs/123"
+
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	fetched, err := db.GetReleaseBundle(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.SourceRepository).To(Equal("https://example.invalid/org/project"))
+	g.Expect(fetched.SourceBranch).To(Equal("main"))
+	g.Expect(fetched.SourceTag).To(Equal("v1.2.3"))
+	g.Expect(fetched.CIProvider).To(Equal("generic-ci"))
+	g.Expect(fetched.CIRunID).To(Equal("run-123"))
+	g.Expect(fetched.CIRunURL).To(Equal("https://ci.example.invalid/runs/123"))
+	g.Expect(string(fetched.CanonicalPayload)).To(ContainSubstring(`"ciRunId":"run-123"`))
+}
+
+func TestReleaseBundleRepositoryRejectsInvalidOCIDigest(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, _ := createReleaseBundleDependencies(t, ctx)
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, uuid.New())
+	bundle.Components = []types.ReleaseBundleComponent{
+		{
+			Key:        "api-image",
+			Name:       "API image",
+			Type:       types.ReleaseBundleComponentTypeOCIImage,
+			Version:    "1.2.3",
+			PackageRef: "registry.example.invalid/org/api",
+			Digest:     "sha256:" + strings.Repeat("a", 63),
+		},
+	}
+
+	err := db.CreateReleaseBundle(ctx, &bundle)
+
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+}
+
+func TestReleaseBundleRepositoryIdempotentCreateReturnsExistingBundle(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	first := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &first, " ci-key-1 ")).To(Succeed())
+	second := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &second, "ci-key-1")).To(Succeed())
+
+	g.Expect(second.ID).To(Equal(first.ID))
+	g.Expect(second.CanonicalChecksum).To(Equal(first.CanonicalChecksum))
+	listed, err := db.GetReleaseBundlesByOrganizationID(ctx, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+
+	var componentCount int
+	g.Expect(internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`SELECT count(*) FROM ReleaseBundleComponent WHERE release_bundle_id = @releaseBundleId`,
+		pgx.NamedArgs{"releaseBundleId": first.ID},
+	).Scan(&componentCount)).To(Succeed())
+	g.Expect(componentCount).To(Equal(1))
+
+	var keyHash string
+	g.Expect(internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`SELECT key_hash FROM ReleaseBundleIdempotencyKey WHERE organization_id = @organizationId`,
+		pgx.NamedArgs{"organizationId": orgID},
+	).Scan(&keyHash)).To(Succeed())
+	g.Expect(keyHash).To(HavePrefix("sha256:"))
+	g.Expect(keyHash).NotTo(ContainSubstring("ci-key-1"))
+}
+
+func TestReleaseBundleRepositoryIdempotentCreateRejectsDifferentCanonicalRequest(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	first := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &first, "ci-key-conflict")).To(Succeed())
+
+	second := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	second.ReleaseNumber = "2026.06.21"
+	err := db.CreateReleaseBundleWithIdempotency(ctx, &second, "ci-key-conflict")
+
+	g.Expect(errors.Is(err, db.ErrReleaseBundleIdempotencyConflict)).To(BeTrue())
+	listed, listErr := db.GetReleaseBundlesByOrganizationID(ctx, orgID)
+	g.Expect(listErr).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+}
+
+func TestReleaseBundleRepositoryIdempotencyKeysAreScopedByOrganization(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	otherOrgID, otherApplicationID, otherChannelID, otherVersionID := createReleaseBundleDependencies(t, ctx)
+	first := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	second := releaseBundleFixture(otherOrgID, otherApplicationID, otherChannelID, otherVersionID)
+
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &first, "shared-ci-key")).To(Succeed())
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &second, "shared-ci-key")).To(Succeed())
+
+	g.Expect(first.ID).NotTo(Equal(second.ID))
+}
+
+func TestReleaseBundleRepositoryConcurrentIdempotentCreateCreatesExactlyOneBundle(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan types.ReleaseBundle, workers)
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+			if err := db.CreateReleaseBundleWithIdempotency(ctx, &bundle, "concurrent-ci-key"); err != nil {
+				errs <- err
+				return
+			}
+			results <- bundle
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	g.Expect(errs).To(BeEmpty())
+	var firstID uuid.UUID
+	for bundle := range results {
+		if firstID == uuid.Nil {
+			firstID = bundle.ID
+		}
+		g.Expect(bundle.ID).To(Equal(firstID))
+	}
+	listed, err := db.GetReleaseBundlesByOrganizationID(ctx, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+}
+
+func TestReleaseBundleRepositoryFailedIdempotentCreateDoesNotReserveKey(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	invalid := releaseBundleFixture(orgID, applicationID, channelID, uuid.New())
+
+	err := db.CreateReleaseBundleWithIdempotency(ctx, &invalid, "retry-after-failure")
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+
+	valid := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &valid, "retry-after-failure")).To(Succeed())
 }
 
 func TestReleaseBundleRepositoryRejectsInvalidAndCrossOrganizationReferences(t *testing.T) {
@@ -369,6 +536,23 @@ func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down113)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundleAuditEvent"))
 	g.Expect(string(down113)).To(ContainSubstring("DROP COLUMN published_by_user_account_id"))
+
+	up114, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "114_release_bundle_ci_idempotency.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	ciSQL := string(up114)
+	g.Expect(ciSQL).To(ContainSubstring("ALTER TABLE ReleaseBundle"))
+	g.Expect(ciSQL).To(ContainSubstring("ADD COLUMN source_repository TEXT NOT NULL DEFAULT ''"))
+	g.Expect(ciSQL).To(ContainSubstring("CREATE TABLE ReleaseBundleIdempotencyKey"))
+	g.Expect(ciSQL).To(ContainSubstring("organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE"))
+	g.Expect(ciSQL).To(ContainSubstring("key_hash TEXT NOT NULL"))
+	g.Expect(ciSQL).To(ContainSubstring("request_checksum TEXT NOT NULL"))
+	g.Expect(ciSQL).To(ContainSubstring("release_bundle_id UUID NOT NULL REFERENCES ReleaseBundle(id) ON DELETE CASCADE"))
+	g.Expect(ciSQL).To(ContainSubstring("releasebundleidempotencykey_organization_key_unique"))
+
+	down114, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "114_release_bundle_ci_idempotency.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down114)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundleIdempotencyKey"))
+	g.Expect(string(down114)).To(ContainSubstring("DROP COLUMN IF EXISTS source_repository"))
 }
 
 //nolint:dupl

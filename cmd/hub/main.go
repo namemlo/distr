@@ -8,6 +8,6 @@ import (
 
 func main() {
 	if err := cmd.RootCommand.Execute(); err != nil {
-		os.Exit(1)
+		os.Exit(cmd.CommandExitCode(err))
 	}
 }

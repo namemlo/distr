@@ -74,3 +74,39 @@ func TestCanonicalizeChangesWhenSemanticContentChanges(t *testing.T) {
 
 	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
 }
+
+func TestCanonicalizeIncludesSourceMetadata(t *testing.T) {
+	g := NewWithT(t)
+	versionID := uuid.New()
+	bundle := types.ReleaseBundle{
+		ApplicationID:    uuid.New(),
+		ChannelID:        uuid.New(),
+		ReleaseNumber:    "2026.06.20",
+		SourceRevision:   "abc123",
+		SourceRepository: "https://example.invalid/org/project",
+		SourceBranch:     "main",
+		SourceTag:        "v1.2.3",
+		CIProvider:       "generic-ci",
+		CIRunID:          "run-123",
+		CIRunURL:         "https://ci.example.invalid/runs/123",
+		Components: []types.ReleaseBundleComponent{
+			{
+				Key:                  "api",
+				Type:                 types.ReleaseBundleComponentTypeApplicationVersion,
+				Version:              "1.2.3",
+				ApplicationVersionID: &versionID,
+			},
+		},
+	}
+
+	firstPayload, firstChecksum, err := Canonicalize(bundle)
+	g.Expect(err).NotTo(HaveOccurred())
+	bundle.CIRunID = "run-456"
+	secondPayload, secondChecksum, err := Canonicalize(bundle)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(string(firstPayload)).To(ContainSubstring(`"sourceMetadata"`))
+	g.Expect(string(firstPayload)).To(ContainSubstring(`"ciRunId":"run-123"`))
+	g.Expect(string(secondPayload)).To(ContainSubstring(`"ciRunId":"run-456"`))
+	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
+}

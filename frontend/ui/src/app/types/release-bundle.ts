@@ -22,6 +22,15 @@ export interface ReleaseBundleComponent {
   childReleaseBundleId?: string;
 }
 
+export interface ReleaseBundleSourceMetadata {
+  repository: string;
+  branch: string;
+  tag: string;
+  ciProvider: string;
+  ciRunId: string;
+  ciRunUrl: string;
+}
+
 export interface ReleaseBundle {
   id: string;
   createdAt: string;
@@ -31,6 +40,7 @@ export interface ReleaseBundle {
   releaseNumber: string;
   releaseNotes: string;
   sourceRevision: string;
+  sourceMetadata?: ReleaseBundleSourceMetadata;
   status: ReleaseBundleStatus;
   publishedByUserAccountId?: string;
   publishedAt?: string;
@@ -56,6 +66,7 @@ export interface CreateUpdateReleaseBundleRequest {
   releaseNumber: string;
   releaseNotes: string;
   sourceRevision: string;
+  sourceMetadata?: ReleaseBundleSourceMetadata;
   components: ReleaseBundleComponentRequest[];
 }
 

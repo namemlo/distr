@@ -2,8 +2,11 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/channelrules"
@@ -27,6 +30,12 @@ const (
 	rb.release_number,
 	rb.release_notes,
 	rb.source_revision,
+	rb.source_repository,
+	rb.source_branch,
+	rb.source_tag,
+	rb.ci_provider,
+	rb.ci_run_id,
+	rb.ci_run_url,
 	rb.status,
 	rb.published_by_user_account_id,
 	rb.published_at,
@@ -56,10 +65,22 @@ const (
 	rbae.from_status,
 	rbae.to_status,
 	rbae.reason
-`
+	`
 )
 
+var ErrReleaseBundleIdempotencyConflict = errors.New("release bundle idempotency conflict")
+
 func CreateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error {
+	return RunTx(ctx, func(ctx context.Context) error {
+		return createReleaseBundle(ctx, bundle)
+	})
+}
+
+func CreateReleaseBundleWithIdempotency(ctx context.Context, bundle *types.ReleaseBundle, key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return CreateReleaseBundle(ctx, bundle)
+	}
 	return RunTx(ctx, func(ctx context.Context) error {
 		if bundle.Status == "" {
 			bundle.Status = types.ReleaseBundleStatusDraft
@@ -74,58 +95,202 @@ func CreateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			return err
 		}
 
-		db := internalctx.GetDb(ctx)
-		rows, err := db.Query(ctx,
-			`INSERT INTO ReleaseBundle AS rb (
-				organization_id,
-				application_id,
-				channel_id,
-				release_number,
-				release_notes,
-				source_revision,
-				status,
-				canonical_checksum,
-				canonical_payload
-			) VALUES (
-				@organizationId,
-				@applicationId,
-				@channelId,
-				@releaseNumber,
-				@releaseNotes,
-				@sourceRevision,
-				@status,
-				@canonicalChecksum,
-				@canonicalPayload
-			) RETURNING `+releaseBundleOutputExpr,
-			pgx.NamedArgs{
-				"organizationId":    bundle.OrganizationID,
-				"applicationId":     bundle.ApplicationID,
-				"channelId":         bundle.ChannelID,
-				"releaseNumber":     bundle.ReleaseNumber,
-				"releaseNotes":      bundle.ReleaseNotes,
-				"sourceRevision":    bundle.SourceRevision,
-				"status":            bundle.Status,
-				"canonicalChecksum": bundle.CanonicalChecksum,
-				"canonicalPayload":  bundle.CanonicalPayload,
-			},
+		keyHash := hashReleaseBundleIdempotencyKey(key)
+		if err := lockReleaseBundleIdempotencyKey(ctx, bundle.OrganizationID, keyHash); err != nil {
+			return err
+		}
+
+		existingID, existingChecksum, found, err := getReleaseBundleIdempotencyRecord(
+			ctx,
+			bundle.OrganizationID,
+			keyHash,
 		)
 		if err != nil {
-			return mapReleaseBundleWriteError("insert", err)
-		}
-		created, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ReleaseBundle])
-		if err != nil {
-			return mapReleaseBundleWriteError("scan created", err)
-		}
-		if err := insertReleaseBundleComponents(ctx, created.ID, bundle.Components); err != nil {
 			return err
 		}
-		loaded, err := getReleaseBundle(ctx, created.ID, bundle.OrganizationID, false)
-		if err != nil {
+		if found {
+			if existingChecksum != bundle.CanonicalChecksum {
+				return fmt.Errorf("%w: different canonical request checksum", ErrReleaseBundleIdempotencyConflict)
+			}
+			existing, err := getReleaseBundle(ctx, existingID, bundle.OrganizationID, false)
+			if err != nil {
+				return err
+			}
+			*bundle = *existing
+			return nil
+		}
+
+		if err := insertReleaseBundle(ctx, bundle); err != nil {
 			return err
 		}
-		*bundle = *loaded
-		return nil
+		return insertReleaseBundleIdempotencyRecord(ctx, bundle.OrganizationID, keyHash, bundle.CanonicalChecksum, bundle.ID)
 	})
+}
+
+func createReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error {
+	if bundle.Status == "" {
+		bundle.Status = types.ReleaseBundleStatusDraft
+	}
+	if bundle.Status != types.ReleaseBundleStatusDraft {
+		return fmt.Errorf("could not create ReleaseBundle: %w", apierrors.ErrConflict)
+	}
+	if err := ensureReleaseBundleReferences(ctx, *bundle); err != nil {
+		return err
+	}
+	if err := setReleaseBundleCanonicalFields(bundle); err != nil {
+		return err
+	}
+	return insertReleaseBundle(ctx, bundle)
+}
+
+func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error {
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`INSERT INTO ReleaseBundle AS rb (
+			organization_id,
+			application_id,
+			channel_id,
+			release_number,
+			release_notes,
+			source_revision,
+			source_repository,
+			source_branch,
+			source_tag,
+			ci_provider,
+			ci_run_id,
+			ci_run_url,
+			status,
+			canonical_checksum,
+			canonical_payload
+		) VALUES (
+			@organizationId,
+			@applicationId,
+			@channelId,
+			@releaseNumber,
+			@releaseNotes,
+			@sourceRevision,
+			@sourceRepository,
+			@sourceBranch,
+			@sourceTag,
+			@ciProvider,
+			@ciRunId,
+			@ciRunUrl,
+			@status,
+			@canonicalChecksum,
+			@canonicalPayload
+		) RETURNING `+releaseBundleOutputExpr,
+		pgx.NamedArgs{
+			"organizationId":    bundle.OrganizationID,
+			"applicationId":     bundle.ApplicationID,
+			"channelId":         bundle.ChannelID,
+			"releaseNumber":     bundle.ReleaseNumber,
+			"releaseNotes":      bundle.ReleaseNotes,
+			"sourceRevision":    bundle.SourceRevision,
+			"sourceRepository":  bundle.SourceRepository,
+			"sourceBranch":      bundle.SourceBranch,
+			"sourceTag":         bundle.SourceTag,
+			"ciProvider":        bundle.CIProvider,
+			"ciRunId":           bundle.CIRunID,
+			"ciRunUrl":          bundle.CIRunURL,
+			"status":            bundle.Status,
+			"canonicalChecksum": bundle.CanonicalChecksum,
+			"canonicalPayload":  bundle.CanonicalPayload,
+		},
+	)
+	if err != nil {
+		return mapReleaseBundleWriteError("insert", err)
+	}
+	created, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ReleaseBundle])
+	if err != nil {
+		return mapReleaseBundleWriteError("scan created", err)
+	}
+	if err := insertReleaseBundleComponents(ctx, created.ID, bundle.Components); err != nil {
+		return err
+	}
+	loaded, err := getReleaseBundle(ctx, created.ID, bundle.OrganizationID, false)
+	if err != nil {
+		return err
+	}
+	*bundle = *loaded
+	return nil
+}
+
+func hashReleaseBundleIdempotencyKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func lockReleaseBundleIdempotencyKey(ctx context.Context, organizationID uuid.UUID, keyHash string) error {
+	db := internalctx.GetDb(ctx)
+	if _, err := db.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended(@lockKey, 0))`,
+		pgx.NamedArgs{"lockKey": organizationID.String() + ":" + keyHash},
+	); err != nil {
+		return fmt.Errorf("could not lock ReleaseBundle idempotency key: %w", err)
+	}
+	return nil
+}
+
+func getReleaseBundleIdempotencyRecord(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	keyHash string,
+) (uuid.UUID, string, bool, error) {
+	db := internalctx.GetDb(ctx)
+	var releaseBundleID uuid.UUID
+	var requestChecksum string
+	err := db.QueryRow(
+		ctx,
+		`SELECT release_bundle_id, request_checksum
+		FROM ReleaseBundleIdempotencyKey
+		WHERE organization_id = @organizationId AND key_hash = @keyHash`,
+		pgx.NamedArgs{
+			"organizationId": organizationID,
+			"keyHash":        keyHash,
+		},
+	).Scan(&releaseBundleID, &requestChecksum)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, "", false, nil
+	}
+	if err != nil {
+		return uuid.Nil, "", false, fmt.Errorf("could not query ReleaseBundle idempotency key: %w", err)
+	}
+	return releaseBundleID, requestChecksum, true, nil
+}
+
+func insertReleaseBundleIdempotencyRecord(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	keyHash string,
+	requestChecksum string,
+	releaseBundleID uuid.UUID,
+) error {
+	db := internalctx.GetDb(ctx)
+	_, err := db.Exec(
+		ctx,
+		`INSERT INTO ReleaseBundleIdempotencyKey (
+			organization_id,
+			key_hash,
+			request_checksum,
+			release_bundle_id
+		) VALUES (
+			@organizationId,
+			@keyHash,
+			@requestChecksum,
+			@releaseBundleId
+		)`,
+		pgx.NamedArgs{
+			"organizationId":  organizationID,
+			"keyHash":         keyHash,
+			"requestChecksum": requestChecksum,
+			"releaseBundleId": releaseBundleID,
+		},
+	)
+	if err != nil {
+		return mapReleaseBundleWriteError("insert idempotency key", err)
+	}
+	return nil
 }
 
 func GetReleaseBundlesByOrganizationID(ctx context.Context, orgID uuid.UUID) ([]types.ReleaseBundle, error) {
@@ -212,6 +377,12 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				release_number = @releaseNumber,
 				release_notes = @releaseNotes,
 				source_revision = @sourceRevision,
+				source_repository = @sourceRepository,
+				source_branch = @sourceBranch,
+				source_tag = @sourceTag,
+				ci_provider = @ciProvider,
+				ci_run_id = @ciRunId,
+				ci_run_url = @ciRunUrl,
 				canonical_checksum = @canonicalChecksum,
 				canonical_payload = @canonicalPayload,
 				updated_at = now()
@@ -225,6 +396,12 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				"releaseNumber":     bundle.ReleaseNumber,
 				"releaseNotes":      bundle.ReleaseNotes,
 				"sourceRevision":    bundle.SourceRevision,
+				"sourceRepository":  bundle.SourceRepository,
+				"sourceBranch":      bundle.SourceBranch,
+				"sourceTag":         bundle.SourceTag,
+				"ciProvider":        bundle.CIProvider,
+				"ciRunId":           bundle.CIRunID,
+				"ciRunUrl":          bundle.CIRunURL,
 				"canonicalChecksum": bundle.CanonicalChecksum,
 				"canonicalPayload":  bundle.CanonicalPayload,
 			},
@@ -858,9 +1035,14 @@ func ensureReleaseBundleComponentReferences(
 		return ensureReleaseBundleApplicationVersionReference(ctx, bundle, component)
 	case types.ReleaseBundleComponentTypeChildReleaseBundle:
 		return ensureReleaseBundleChildReference(ctx, bundle, component)
+	case types.ReleaseBundleComponentTypeOCIImage, types.ReleaseBundleComponentTypeOCIArtifact:
+		if !releasebundles.IsSHA256Digest(component.Digest) {
+			return apierrors.NewBadRequest("component digest must be a sha256 digest")
+		}
 	default:
 		return nil
 	}
+	return nil
 }
 
 func ensureReleaseBundleApplicationVersionReference(

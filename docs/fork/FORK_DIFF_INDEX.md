@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-008 are implemented locally. PR-008 adds the feature-flagged Release Bundle administration UI on top of the existing PR-006/PR-007 APIs without adding CI release APIs, deployment planning, execution, or agent behavior.
+PR-000 through PR-009 are implemented locally. PR-009 adds idempotent CI Release Bundle creation, generic source metadata, strict OCI digest validation, release CLI commands, and neutral CI examples without adding lifecycle promotion, deployment planning, execution, or agent behavior.
 
 ## Tracking Template
 
@@ -163,3 +163,18 @@ Use one entry per pull request:
 - Tests: Angular service, component, and feature-flag tests were added.
 - Upstream contribution notes: Community-neutral Release Bundle UI; no adopter-specific terminology, provider logic, or Octopus UI/assets.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No CI release API, lifecycle eligibility, promotion, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-008.
+
+### PR-009 - CI release API and CLI
+
+- Status: Implemented locally; backend, migration, CLI, examples, lint, tests, and builds completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=release_bundles`.
+- User-facing behavior: CI systems can idempotently create draft Release Bundles, validate them, and explicitly publish them through the public API or `distr release` CLI commands.
+- Database changes: Added Release Bundle source metadata columns and organization-scoped `ReleaseBundleIdempotencyKey` records with hashed keys, request checksums, Release Bundle references, and unique organization/key enforcement.
+- API changes: Added optional `Idempotency-Key` support on `POST /api/v1/release-bundles`, optional `sourceMetadata`, strict OCI sha256 digest validation, and structured idempotency conflict responses.
+- UI changes: Updated shared Angular Release Bundle types for optional source metadata only; no Release UI behavior change.
+- Agent protocol changes: None.
+- Documentation: Added PR-009 notes, ADR-0009, release CLI guide, CI tutorial, and neutral Jenkins, GitHub Actions, GitLab CI, and curl examples.
+- Tests: Focused API, canonicalization, mapping, handler, repository, and CLI tests passed; live PostgreSQL Release Bundle repository and handler tests passed with `DISTR_TEST_DATABASE_URL` set; `go test -p=1 ./...`, Angular tests, migration-pair validation, touched-file Prettier checks, diff-scoped Go lint, community frontend build, community Hub build, Docker agent build, Kubernetes agent build, CLI local/linux builds, example parse checks, secret scan, and changed-file Unicode scan passed.
+- Upstream contribution notes: Community-neutral CI API and CLI; no Jenkins-only, registry-provider-specific, or adopter-specific core behavior.
+- Compatibility notes: Existing clients that omit `Idempotency-Key` retain previous create behavior. Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No lifecycle eligibility, promotion, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-009.

@@ -1,0 +1,49 @@
+stages:
+  - release
+
+release:
+  stage: release
+  image: alpine:3.22
+  script:
+    - echo "Run project build and tests here"
+    - apk add --no-cache curl jq
+    - |
+      cat > release-bundle.json <<JSON
+      {
+        "applicationId": "$DISTR_APPLICATION_ID",
+        "channelId": "$DISTR_CHANNEL_ID",
+        "releaseNumber": "$CI_PIPELINE_IID",
+        "releaseNotes": "Automated release from GitLab CI",
+        "sourceRevision": "$CI_COMMIT_SHA",
+        "sourceMetadata": {
+          "repository": "$CI_PROJECT_URL",
+          "branch": "$CI_COMMIT_REF_NAME",
+          "tag": "$CI_COMMIT_TAG",
+          "ciProvider": "gitlab-ci",
+          "ciRunId": "$CI_PIPELINE_ID",
+          "ciRunUrl": "$CI_PIPELINE_URL"
+        },
+        "components": [
+          {
+            "key": "api-image",
+            "name": "API image",
+            "type": "oci_image",
+            "version": "$CI_PIPELINE_IID",
+            "packageRef": "registry.example.invalid/org/api",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+      JSON
+    - |
+      create_output="$(
+        curl --fail-with-body \
+          -H "Authorization: AccessToken $DISTR_API_TOKEN" \
+          -H "Content-Type: application/json" \
+          -H "Idempotency-Key: $CI_PIPELINE_ID" \
+          --data @release-bundle.json \
+          "$DISTR_SERVER_URL/api/v1/release-bundles"
+      )"
+    - release_bundle_id="$(printf '%s' "$create_output" | jq -r '.id')"
+    - curl --fail-with-body -X POST -H "Authorization: AccessToken $DISTR_API_TOKEN" "$DISTR_SERVER_URL/api/v1/release-bundles/$release_bundle_id/validate"
+    - curl --fail-with-body -X POST -H "Authorization: AccessToken $DISTR_API_TOKEN" "$DISTR_SERVER_URL/api/v1/release-bundles/$release_bundle_id/publish"
