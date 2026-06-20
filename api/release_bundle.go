@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/distr-sh/distr/internal/validation"
 	"github.com/google/uuid"
@@ -15,12 +16,21 @@ type CreateUpdateReleaseBundleRequest struct {
 	ReleaseNumber  string                          `json:"releaseNumber"`
 	ReleaseNotes   string                          `json:"releaseNotes"`
 	SourceRevision string                          `json:"sourceRevision"`
+	SourceMetadata *ReleaseBundleSourceMetadata    `json:"sourceMetadata,omitempty"`
 	Components     []ReleaseBundleComponentRequest `json:"components"`
 }
 
 func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 	r.ReleaseNumber = strings.TrimSpace(r.ReleaseNumber)
 	r.SourceRevision = strings.TrimSpace(r.SourceRevision)
+	if r.SourceMetadata != nil {
+		r.SourceMetadata.trim()
+		if r.SourceMetadata.isZero() {
+			r.SourceMetadata = nil
+		} else if err := r.SourceMetadata.validate(); err != nil {
+			return err
+		}
+	}
 	if r.ReleaseNumber == "" {
 		return validation.NewValidationFailedError("releaseNumber is required")
 	}
@@ -50,6 +60,78 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 		}
 	}
 	return nil
+}
+
+type ReleaseBundleSourceMetadata struct {
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
+	Tag        string `json:"tag"`
+	CIProvider string `json:"ciProvider"`
+	CIRunID    string `json:"ciRunId"`
+	CIRunURL   string `json:"ciRunUrl"`
+}
+
+func (m *ReleaseBundleSourceMetadata) trim() {
+	m.Repository = strings.TrimSpace(m.Repository)
+	m.Branch = strings.TrimSpace(m.Branch)
+	m.Tag = strings.TrimSpace(m.Tag)
+	m.CIProvider = strings.TrimSpace(m.CIProvider)
+	m.CIRunID = strings.TrimSpace(m.CIRunID)
+	m.CIRunURL = strings.TrimSpace(m.CIRunURL)
+}
+
+func (m ReleaseBundleSourceMetadata) isZero() bool {
+	return m.Repository == "" &&
+		m.Branch == "" &&
+		m.Tag == "" &&
+		m.CIProvider == "" &&
+		m.CIRunID == "" &&
+		m.CIRunURL == ""
+}
+
+func (m ReleaseBundleSourceMetadata) validate() error {
+	for _, field := range []struct {
+		name  string
+		value string
+		limit int
+	}{
+		{name: "sourceMetadata.repository", value: m.Repository, limit: 512},
+		{name: "sourceMetadata.branch", value: m.Branch, limit: 512},
+		{name: "sourceMetadata.tag", value: m.Tag, limit: 512},
+		{name: "sourceMetadata.ciProvider", value: m.CIProvider, limit: 512},
+		{name: "sourceMetadata.ciRunId", value: m.CIRunID, limit: 512},
+		{name: "sourceMetadata.ciRunUrl", value: m.CIRunURL, limit: 2048},
+	} {
+		if len(field.value) > field.limit {
+			return validation.NewValidationFailedError(field.name + " is too long")
+		}
+		if containsUnsafeSourceMetadata(field.value) {
+			return validation.NewValidationFailedError(field.name + " must not contain secrets or authorization data")
+		}
+	}
+	return nil
+}
+
+func containsUnsafeSourceMetadata(value string) bool {
+	if strings.ContainsAny(value, "\r\n") {
+		return true
+	}
+	normalized := strings.ToLower(value)
+	for _, marker := range []string{
+		"authorization:",
+		"bearer ",
+		"accesstoken ",
+		"access_token=",
+		"api_key=",
+		"password=",
+		"secret=",
+		"token=",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 type ReleaseBundleComponentRequest struct {
@@ -92,7 +174,7 @@ func (r ReleaseBundleComponentRequest) validate() error {
 		if r.PackageRef == "" {
 			return validation.NewValidationFailedError("component packageRef is required")
 		}
-		if !strings.HasPrefix(r.Digest, "sha256:") {
+		if !releasebundles.IsSHA256Digest(r.Digest) {
 			return validation.NewValidationFailedError("component digest must be a sha256 digest")
 		}
 		if r.ApplicationVersionID != nil || r.ChildReleaseBundleID != nil {
@@ -131,19 +213,20 @@ func (r ReleaseBundleComponentRequest) validate() error {
 }
 
 type ReleaseBundle struct {
-	ID                       uuid.UUID                 `json:"id"`
-	CreatedAt                time.Time                 `json:"createdAt"`
-	UpdatedAt                time.Time                 `json:"updatedAt"`
-	ApplicationID            uuid.UUID                 `json:"applicationId"`
-	ChannelID                uuid.UUID                 `json:"channelId"`
-	ReleaseNumber            string                    `json:"releaseNumber"`
-	ReleaseNotes             string                    `json:"releaseNotes"`
-	SourceRevision           string                    `json:"sourceRevision"`
-	Status                   types.ReleaseBundleStatus `json:"status"`
-	PublishedByUserAccountID *uuid.UUID                `json:"publishedByUserAccountId,omitempty"`
-	PublishedAt              *time.Time                `json:"publishedAt,omitempty"`
-	CanonicalChecksum        string                    `json:"canonicalChecksum"`
-	Components               []ReleaseBundleComponent  `json:"components"`
+	ID                       uuid.UUID                    `json:"id"`
+	CreatedAt                time.Time                    `json:"createdAt"`
+	UpdatedAt                time.Time                    `json:"updatedAt"`
+	ApplicationID            uuid.UUID                    `json:"applicationId"`
+	ChannelID                uuid.UUID                    `json:"channelId"`
+	ReleaseNumber            string                       `json:"releaseNumber"`
+	ReleaseNotes             string                       `json:"releaseNotes"`
+	SourceRevision           string                       `json:"sourceRevision"`
+	SourceMetadata           *ReleaseBundleSourceMetadata `json:"sourceMetadata,omitempty"`
+	Status                   types.ReleaseBundleStatus    `json:"status"`
+	PublishedByUserAccountID *uuid.UUID                   `json:"publishedByUserAccountId,omitempty"`
+	PublishedAt              *time.Time                   `json:"publishedAt,omitempty"`
+	CanonicalChecksum        string                       `json:"canonicalChecksum"`
+	Components               []ReleaseBundleComponent     `json:"components"`
 }
 
 type ReleaseBundleComponent struct {
@@ -169,5 +252,12 @@ type ReleaseBundleValidationResponse struct {
 type ReleaseBundleValidationIssue struct {
 	Field   string `json:"field"`
 	Rule    string `json:"rule"`
+	Message string `json:"message"`
+}
+
+const ErrorCodeIdempotencyKeyReusedWithDifferentRequest = "idempotency_key_reused_with_different_request"
+
+type ErrorResponse struct {
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }

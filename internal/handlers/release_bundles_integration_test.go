@@ -76,6 +76,95 @@ func TestReleaseBundleHandlersCreateReadUpdateDeleteDraft(t *testing.T) {
 	g.Expect(deleteRecorder.Code).To(Equal(http.StatusNoContent))
 }
 
+func TestReleaseBundleCreateHandlerUsesIdempotencyKey(t *testing.T) {
+	ctx := channelHandlerDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleHandlerDependencies(t, ctx)
+	body := releaseBundleRequestBody(applicationID, channelID, versionID, "2026.06.20", "1.2.3")
+
+	firstRecorder := httptest.NewRecorder()
+	firstRequest := httptest.NewRequest(http.MethodPost, "/api/v1/release-bundles", strings.NewReader(body))
+	firstRequest.Header.Set("Idempotency-Key", "ci-run-123")
+	firstRequest = firstRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+
+	createReleaseBundleHandler().ServeHTTP(firstRecorder, firstRequest)
+
+	g.Expect(firstRecorder.Code).To(Equal(http.StatusOK))
+	var first api.ReleaseBundle
+	g.Expect(json.Unmarshal(firstRecorder.Body.Bytes(), &first)).To(Succeed())
+
+	secondRecorder := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/release-bundles", strings.NewReader(body))
+	secondRequest.Header.Set("Idempotency-Key", " ci-run-123 ")
+	secondRequest = secondRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+
+	createReleaseBundleHandler().ServeHTTP(secondRecorder, secondRequest)
+
+	g.Expect(secondRecorder.Code).To(Equal(http.StatusOK))
+	var second api.ReleaseBundle
+	g.Expect(json.Unmarshal(secondRecorder.Body.Bytes(), &second)).To(Succeed())
+	g.Expect(second.ID).To(Equal(first.ID))
+
+	listed, err := db.GetReleaseBundlesByOrganizationID(ctx, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+}
+
+func TestReleaseBundleCreateHandlerReturnsStructuredIdempotencyConflict(t *testing.T) {
+	ctx := channelHandlerDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleHandlerDependencies(t, ctx)
+
+	firstRecorder := httptest.NewRecorder()
+	firstRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/release-bundles",
+		strings.NewReader(releaseBundleRequestBody(applicationID, channelID, versionID, "2026.06.20", "1.2.3")),
+	)
+	firstRequest.Header.Set("Idempotency-Key", "ci-conflict")
+	firstRequest = firstRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+
+	createReleaseBundleHandler().ServeHTTP(firstRecorder, firstRequest)
+	g.Expect(firstRecorder.Code).To(Equal(http.StatusOK))
+
+	conflictRecorder := httptest.NewRecorder()
+	conflictRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/release-bundles",
+		strings.NewReader(releaseBundleRequestBody(applicationID, channelID, versionID, "2026.06.21", "1.2.3")),
+	)
+	conflictRequest.Header.Set("Idempotency-Key", "ci-conflict")
+	conflictRequest = conflictRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+
+	createReleaseBundleHandler().ServeHTTP(conflictRecorder, conflictRequest)
+
+	g.Expect(conflictRecorder.Code).To(Equal(http.StatusConflict))
+	var response api.ErrorResponse
+	g.Expect(json.Unmarshal(conflictRecorder.Body.Bytes(), &response)).To(Succeed())
+	g.Expect(response.Code).To(Equal(api.ErrorCodeIdempotencyKeyReusedWithDifferentRequest))
+	g.Expect(response.Message).To(Equal("idempotency key was already used with a different release bundle request"))
+}
+
+func TestReleaseBundleCreateHandlerWithoutIdempotencyKeyPreservesDuplicateBehavior(t *testing.T) {
+	ctx := channelHandlerDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleHandlerDependencies(t, ctx)
+	body := releaseBundleRequestBody(applicationID, channelID, versionID, "2026.06.20", "1.2.3")
+
+	firstRecorder := httptest.NewRecorder()
+	firstRequest := httptest.NewRequest(http.MethodPost, "/api/v1/release-bundles", strings.NewReader(body))
+	firstRequest = firstRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+	createReleaseBundleHandler().ServeHTTP(firstRecorder, firstRequest)
+	g.Expect(firstRecorder.Code).To(Equal(http.StatusOK))
+
+	secondRecorder := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/release-bundles", strings.NewReader(body))
+	secondRequest = secondRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+	createReleaseBundleHandler().ServeHTTP(secondRecorder, secondRequest)
+
+	g.Expect(secondRecorder.Code).To(Equal(http.StatusBadRequest))
+}
+
 func TestReleaseBundleHandlersValidatePublishBlockAndArchive(t *testing.T) {
 	ctx := channelHandlerDBTestContext(t)
 	g := NewWithT(t)

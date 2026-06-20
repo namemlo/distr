@@ -15,11 +15,31 @@ func ReleaseBundleToAPI(bundle types.ReleaseBundle) api.ReleaseBundle {
 		ReleaseNumber:            bundle.ReleaseNumber,
 		ReleaseNotes:             bundle.ReleaseNotes,
 		SourceRevision:           bundle.SourceRevision,
+		SourceMetadata:           ReleaseBundleSourceMetadataToAPI(bundle),
 		Status:                   bundle.Status,
 		PublishedByUserAccountID: bundle.PublishedByUserAccountID,
 		PublishedAt:              bundle.PublishedAt,
 		CanonicalChecksum:        bundle.CanonicalChecksum,
 		Components:               List(bundle.Components, ReleaseBundleComponentToAPI),
+	}
+}
+
+func ReleaseBundleSourceMetadataToAPI(bundle types.ReleaseBundle) *api.ReleaseBundleSourceMetadata {
+	if bundle.SourceRepository == "" &&
+		bundle.SourceBranch == "" &&
+		bundle.SourceTag == "" &&
+		bundle.CIProvider == "" &&
+		bundle.CIRunID == "" &&
+		bundle.CIRunURL == "" {
+		return nil
+	}
+	return &api.ReleaseBundleSourceMetadata{
+		Repository: bundle.SourceRepository,
+		Branch:     bundle.SourceBranch,
+		Tag:        bundle.SourceTag,
+		CIProvider: bundle.CIProvider,
+		CIRunID:    bundle.CIRunID,
+		CIRunURL:   bundle.CIRunURL,
 	}
 }
 

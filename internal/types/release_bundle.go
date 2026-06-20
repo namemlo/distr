@@ -51,6 +51,12 @@ type ReleaseBundle struct {
 	ReleaseNumber            string                   `db:"release_number" json:"releaseNumber"`
 	ReleaseNotes             string                   `db:"release_notes" json:"releaseNotes"`
 	SourceRevision           string                   `db:"source_revision" json:"sourceRevision"`
+	SourceRepository         string                   `db:"source_repository" json:"sourceRepository"`
+	SourceBranch             string                   `db:"source_branch" json:"sourceBranch"`
+	SourceTag                string                   `db:"source_tag" json:"sourceTag"`
+	CIProvider               string                   `db:"ci_provider" json:"ciProvider"`
+	CIRunID                  string                   `db:"ci_run_id" json:"ciRunId"`
+	CIRunURL                 string                   `db:"ci_run_url" json:"ciRunUrl"`
 	Status                   ReleaseBundleStatus      `db:"status" json:"status"`
 	PublishedByUserAccountID *uuid.UUID               `db:"published_by_user_account_id" json:"publishedByUserAccountId,omitempty"` //nolint:lll
 	PublishedAt              *time.Time               `db:"published_at" json:"publishedAt,omitempty"`

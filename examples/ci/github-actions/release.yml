@@ -1,0 +1,70 @@
+name: release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test
+        run: |
+          echo "Run project build and tests here"
+
+      - name: Create release request
+        env:
+          DISTR_APPLICATION_ID: ${{ vars.DISTR_APPLICATION_ID }}
+          DISTR_CHANNEL_ID: ${{ vars.DISTR_CHANNEL_ID }}
+          RELEASE_NUMBER: ${{ github.run_number }}
+          SOURCE_REVISION: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          IMAGE_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: |
+          cat > release-bundle.json <<JSON
+          {
+            "applicationId": "$DISTR_APPLICATION_ID",
+            "channelId": "$DISTR_CHANNEL_ID",
+            "releaseNumber": "$RELEASE_NUMBER",
+            "releaseNotes": "Automated release from GitHub Actions",
+            "sourceRevision": "$SOURCE_REVISION",
+            "sourceMetadata": {
+              "repository": "$SOURCE_REPOSITORY",
+              "branch": "$SOURCE_BRANCH",
+              "tag": "",
+              "ciProvider": "github-actions",
+              "ciRunId": "$CI_RUN_ID",
+              "ciRunUrl": "$CI_RUN_URL"
+            },
+            "components": [
+              {
+                "key": "api-image",
+                "name": "API image",
+                "type": "oci_image",
+                "version": "$RELEASE_NUMBER",
+                "packageRef": "registry.example.invalid/org/api",
+                "digest": "$IMAGE_DIGEST"
+              }
+            ]
+          }
+          JSON
+
+      - name: Create, validate, and publish Release Bundle
+        env:
+          DISTR_SERVER_URL: ${{ vars.DISTR_SERVER_URL }}
+          DISTR_API_TOKEN: ${{ secrets.DISTR_API_TOKEN }}
+          CI_RUN_ID: ${{ github.run_id }}
+        run: |
+          create_output="$(
+            distr release create \
+              --file release-bundle.json \
+              --idempotency-key "$CI_RUN_ID" \
+              --output json
+          )"
+          release_bundle_id="$(printf '%s' "$create_output" | jq -r '.id')"
+          distr release validate "$release_bundle_id"
+          distr release publish "$release_bundle_id"

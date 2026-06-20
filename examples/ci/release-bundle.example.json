@@ -1,0 +1,26 @@
+{
+  "applicationId": "00000000-0000-0000-0000-000000000000",
+  "channelId": "00000000-0000-0000-0000-000000000000",
+  "releaseNumber": "2026.06.20.1",
+  "releaseNotes": "Automated release from CI",
+  "sourceRevision": "0123456789abcdef0123456789abcdef01234567",
+  "sourceMetadata": {
+    "repository": "https://example.invalid/org/project",
+    "branch": "main",
+    "tag": "",
+    "ciProvider": "generic-ci",
+    "ciRunId": "12345",
+    "ciRunUrl": "https://ci.example.invalid/runs/12345"
+  },
+  "components": [
+    {
+      "key": "api-image",
+      "name": "API image",
+      "type": "oci_image",
+      "version": "2026.06.20.1",
+      "packageRef": "registry.example.invalid/org/api",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}
+

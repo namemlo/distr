@@ -1,6 +1,7 @@
 package releasebundles
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/types"
@@ -61,7 +62,7 @@ func TestValidateBundleContentAcceptsCompleteBundle(t *testing.T) {
 				Type:       types.ReleaseBundleComponentTypeOCIImage,
 				Version:    "1.2.3",
 				PackageRef: "registry.example/api",
-				Digest:     "sha256:abcdef",
+				Digest:     "sha256:" + strings.Repeat("a", 64),
 			},
 		},
 	}

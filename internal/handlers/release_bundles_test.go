@@ -32,6 +32,14 @@ func TestReleaseBundleFromCreateUpdateRequest(t *testing.T) {
 		ReleaseNumber:  " 2026.06.20 ",
 		ReleaseNotes:   "notes",
 		SourceRevision: " abc123 ",
+		SourceMetadata: &api.ReleaseBundleSourceMetadata{
+			Repository: " https://example.invalid/org/project ",
+			Branch:     " main ",
+			Tag:        " v1.2.3 ",
+			CIProvider: " generic-ci ",
+			CIRunID:    " run-123 ",
+			CIRunURL:   " https://ci.example.invalid/runs/123 ",
+		},
 		Components: []api.ReleaseBundleComponentRequest{
 			{
 				Key:                  " api ",
@@ -48,6 +56,12 @@ func TestReleaseBundleFromCreateUpdateRequest(t *testing.T) {
 	g.Expect(bundle.ChannelID).To(Equal(channelID))
 	g.Expect(bundle.ReleaseNumber).To(Equal("2026.06.20"))
 	g.Expect(bundle.SourceRevision).To(Equal("abc123"))
+	g.Expect(bundle.SourceRepository).To(Equal("https://example.invalid/org/project"))
+	g.Expect(bundle.SourceBranch).To(Equal("main"))
+	g.Expect(bundle.SourceTag).To(Equal("v1.2.3"))
+	g.Expect(bundle.CIProvider).To(Equal("generic-ci"))
+	g.Expect(bundle.CIRunID).To(Equal("run-123"))
+	g.Expect(bundle.CIRunURL).To(Equal("https://ci.example.invalid/runs/123"))
 	g.Expect(bundle.Components).To(Equal([]types.ReleaseBundleComponent{
 		{
 			Key:                  "api",

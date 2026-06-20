@@ -83,8 +83,12 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 		r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
 			Post("/", createReleaseBundleHandler()).
 			With(option.Description("Create a draft release bundle")).
-			With(option.Request(api.CreateUpdateReleaseBundleRequest{})).
-			With(option.Response(http.StatusOK, api.ReleaseBundle{}))
+			With(option.Request(struct {
+				IdempotencyKey string `header:"Idempotency-Key"`
+				api.CreateUpdateReleaseBundleRequest
+			}{})).
+			With(option.Response(http.StatusOK, api.ReleaseBundle{})).
+			With(option.Response(http.StatusConflict, api.ErrorResponse{}))
 	})
 }
 
@@ -242,7 +246,7 @@ func createReleaseBundleHandler() http.HandlerFunc {
 		}
 
 		bundle := releaseBundleFromCreateUpdateRequest(*auth.CurrentOrgID(), request)
-		if err := db.CreateReleaseBundle(ctx, &bundle); err != nil {
+		if err := db.CreateReleaseBundleWithIdempotency(ctx, &bundle, r.Header.Get("Idempotency-Key")); err != nil {
 			handleReleaseBundleWriteError(w, r, log, "create", err)
 			return
 		}
@@ -327,7 +331,7 @@ func releaseBundleFromCreateUpdateRequest(
 			ChildReleaseBundleID: component.ChildReleaseBundleID,
 		})
 	}
-	return types.ReleaseBundle{
+	bundle := types.ReleaseBundle{
 		OrganizationID: orgID,
 		ApplicationID:  request.ApplicationID,
 		ChannelID:      request.ChannelID,
@@ -337,6 +341,15 @@ func releaseBundleFromCreateUpdateRequest(
 		Status:         types.ReleaseBundleStatusDraft,
 		Components:     components,
 	}
+	if request.SourceMetadata != nil {
+		bundle.SourceRepository = request.SourceMetadata.Repository
+		bundle.SourceBranch = request.SourceMetadata.Branch
+		bundle.SourceTag = request.SourceMetadata.Tag
+		bundle.CIProvider = request.SourceMetadata.CIProvider
+		bundle.CIRunID = request.SourceMetadata.CIRunID
+		bundle.CIRunURL = request.SourceMetadata.CIRunURL
+	}
+	return bundle
 }
 
 func releaseBundleResponses(bundles []types.ReleaseBundle) []api.ReleaseBundle {
@@ -368,7 +381,12 @@ func releaseBundleValidationResponse(result releasebundles.ValidationResult) api
 }
 
 func handleReleaseBundleWriteError(w http.ResponseWriter, r *http.Request, log *zap.Logger, action string, err error) {
-	if errors.Is(err, apierrors.ErrAlreadyExists) {
+	if errors.Is(err, db.ErrReleaseBundleIdempotencyConflict) {
+		RespondJSONWithStatus(w, http.StatusConflict, api.ErrorResponse{
+			Code:    api.ErrorCodeIdempotencyKeyReusedWithDifferentRequest,
+			Message: "idempotency key was already used with a different release bundle request",
+		})
+	} else if errors.Is(err, apierrors.ErrAlreadyExists) {
 		http.Error(w, "a release bundle with this release number already exists for this application", http.StatusBadRequest)
 	} else if errors.Is(err, apierrors.ErrNotFound) {
 		http.NotFound(w, r)
