@@ -121,11 +121,20 @@ func GetChannelsByOrganizationID(ctx context.Context, orgID uuid.UUID) ([]types.
 }
 
 func GetChannel(ctx context.Context, id, orgID uuid.UUID) (*types.Channel, error) {
+	return getChannel(ctx, id, orgID, false)
+}
+
+func getChannel(ctx context.Context, id, orgID uuid.UUID, forUpdate bool) (*types.Channel, error) {
+	lockClause := ""
+	if forUpdate {
+		lockClause = " FOR UPDATE"
+	}
+
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
 		`SELECT `+channelOutputExpr+`
 		FROM Channel c
-		WHERE c.id = @id AND c.organization_id = @organizationId`,
+		WHERE c.id = @id AND c.organization_id = @organizationId`+lockClause,
 		pgx.NamedArgs{"id": id, "organizationId": orgID},
 	)
 	if err != nil {
@@ -142,7 +151,7 @@ func GetChannel(ctx context.Context, id, orgID uuid.UUID) (*types.Channel, error
 
 func UpdateChannel(ctx context.Context, channel *types.Channel) error {
 	return RunTx(ctx, func(ctx context.Context) error {
-		existing, err := GetChannel(ctx, channel.ID, channel.OrganizationID)
+		existing, err := getChannel(ctx, channel.ID, channel.OrganizationID, true)
 		if err != nil {
 			return err
 		}

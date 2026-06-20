@@ -16,7 +16,7 @@ Channels are unique by `(organization_id, application_id, name)`. This allows di
 
 Only one default Channel is allowed per organization/application. The repository creates a `Stable` default idempotently for applications that have no Channels when Channels are listed and at least one Lifecycle exists.
 
-When a non-default Channel is moved to an application without a default, the moved Channel becomes the default inside the update transaction. Moving a non-default Channel to an application with a default preserves the requested non-default state. Moving an existing default Channel to another application is rejected.
+Update operations lock the Channel row before validating default and move rules. When a non-default Channel is moved to an application without a default, the moved Channel becomes the default inside the update transaction. Moving a non-default Channel to an application with a default preserves the requested non-default state. Moving an existing default Channel to another application is rejected.
 
 Delete operations lock the Channel row before validating `is_default` and deleting the row. This preserves the default invariant when delete and promotion operations race.
 

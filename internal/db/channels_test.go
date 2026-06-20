@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
@@ -284,6 +285,98 @@ func TestChannelRepositoryDeleteDefaultAndNonDefaultChannels(t *testing.T) {
 	assertChannelApplicationHasOneDefault(t, ctx, orgID, applicationID)
 }
 
+func TestChannelRepositoryRejectsMovingChannelPromotedToDefaultConcurrently(t *testing.T) {
+	ctx := channelDBTestContext(t)
+	g := NewWithT(t)
+	orgID, sourceApplicationID, lifecycleID := createChannelDependencies(t, ctx)
+	targetApplicationID := createChannelApplicationForOrganization(t, ctx, orgID)
+
+	stable := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &stable)).To(Succeed())
+	preview := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Preview",
+		SortOrder:      10,
+	}
+	g.Expect(db.CreateChannel(ctx, &preview)).To(Succeed())
+	targetDefault := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  targetApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Target Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &targetDefault)).To(Succeed())
+
+	tx := lockChannelRowForTest(t, ctx, preview.ID)
+	promoteChannelToDefaultInTx(t, ctx, tx, orgID, sourceApplicationID, stable.ID, preview.ID)
+
+	preview.ApplicationID = targetApplicationID
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- db.UpdateChannel(ctx, &preview)
+	}()
+	assertChannelOperationIsWaiting(t, errCh)
+	g.Expect(tx.Commit(ctx)).To(Succeed())
+
+	err := awaitChannelOperation(t, errCh)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	unchanged, err := db.GetChannel(ctx, preview.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(unchanged.ApplicationID).To(Equal(sourceApplicationID))
+	g.Expect(unchanged.IsDefault).To(BeTrue())
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, sourceApplicationID)
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, targetApplicationID)
+}
+
+func TestChannelRepositoryRejectsDeletingChannelPromotedToDefaultConcurrently(t *testing.T) {
+	ctx := channelDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, lifecycleID := createChannelDependencies(t, ctx)
+
+	stable := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &stable)).To(Succeed())
+	preview := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Preview",
+		SortOrder:      10,
+	}
+	g.Expect(db.CreateChannel(ctx, &preview)).To(Succeed())
+
+	tx := lockChannelRowForTest(t, ctx, preview.ID)
+	promoteChannelToDefaultInTx(t, ctx, tx, orgID, applicationID, stable.ID, preview.ID)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- db.DeleteChannelWithID(ctx, preview.ID, orgID)
+	}()
+	assertChannelOperationIsWaiting(t, errCh)
+	g.Expect(tx.Commit(ctx)).To(Succeed())
+
+	err := awaitChannelOperation(t, errCh)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	unchanged, err := db.GetChannel(ctx, preview.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(unchanged.IsDefault).To(BeTrue())
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, applicationID)
+}
+
 func TestEnsureDefaultChannelsIsIdempotent(t *testing.T) {
 	ctx := channelDBTestContext(t)
 	g := NewWithT(t)
@@ -448,6 +541,87 @@ func createChannelTestOrganization(t *testing.T, ctx context.Context) uuid.UUID 
 		t.Fatalf("create organization: %v", err)
 	}
 	return orgID
+}
+
+func lockChannelRowForTest(t *testing.T, ctx context.Context, channelID uuid.UUID) pgx.Tx {
+	t.Helper()
+	pool, ok := internalctx.GetDb(ctx).(*pgxpool.Pool)
+	if !ok {
+		t.Fatalf("test context db is %T, expected *pgxpool.Pool", internalctx.GetDb(ctx))
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = tx.Rollback(ctx)
+	})
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT id FROM Channel WHERE id = @id FOR UPDATE`,
+		pgx.NamedArgs{"id": channelID},
+	); err != nil {
+		t.Fatalf("lock channel row: %v", err)
+	}
+	return tx
+}
+
+func promoteChannelToDefaultInTx(
+	t *testing.T,
+	ctx context.Context,
+	tx pgx.Tx,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+	currentDefaultID uuid.UUID,
+	newDefaultID uuid.UUID,
+) {
+	t.Helper()
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE Channel
+		SET is_default = false
+		WHERE id = @id AND organization_id = @organizationId AND application_id = @applicationId`,
+		pgx.NamedArgs{
+			"id":             currentDefaultID,
+			"organizationId": orgID,
+			"applicationId":  applicationID,
+		},
+	); err != nil {
+		t.Fatalf("clear current default channel: %v", err)
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE Channel
+		SET is_default = true
+		WHERE id = @id AND organization_id = @organizationId AND application_id = @applicationId`,
+		pgx.NamedArgs{
+			"id":             newDefaultID,
+			"organizationId": orgID,
+			"applicationId":  applicationID,
+		},
+	); err != nil {
+		t.Fatalf("promote channel to default: %v", err)
+	}
+}
+
+func assertChannelOperationIsWaiting(t *testing.T, errCh <-chan error) {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		t.Fatalf("channel operation completed before row lock was released: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func awaitChannelOperation(t *testing.T, errCh <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("channel operation did not finish after row lock was released")
+		return nil
+	}
 }
 
 func assertChannelApplicationHasOneDefault(
