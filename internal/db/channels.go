@@ -164,6 +164,15 @@ func UpdateChannel(ctx context.Context, channel *types.Channel) error {
 			if err := clearDefaultChannels(ctx, channel.OrganizationID, channel.ApplicationID, channel.ID); err != nil {
 				return err
 			}
+		} else if exists, err := defaultChannelExists(
+			ctx,
+			channel.OrganizationID,
+			channel.ApplicationID,
+			channel.ID,
+		); err != nil {
+			return err
+		} else if !exists {
+			channel.IsDefault = true
 		}
 
 		db := internalctx.GetDb(ctx)
@@ -204,30 +213,41 @@ func UpdateChannel(ctx context.Context, channel *types.Channel) error {
 }
 
 func DeleteChannelWithID(ctx context.Context, id, organizationID uuid.UUID) error {
-	existing, err := GetChannel(ctx, id, organizationID)
-	if err != nil {
-		return err
-	}
-	if existing.IsDefault {
-		return fmt.Errorf("could not delete Channel: %w", apierrors.ErrConflict)
-	}
-
-	db := internalctx.GetDb(ctx)
-	cmd, err := db.Exec(ctx,
-		`DELETE FROM Channel WHERE id = @id AND organization_id = @organizationId`,
-		pgx.NamedArgs{"id": id, "organizationId": organizationID},
-	)
-	if err != nil {
-		var pgError *pgconn.PgError
-		if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
-			return fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
+	return RunTx(ctx, func(ctx context.Context) error {
+		db := internalctx.GetDb(ctx)
+		var isDefault bool
+		err := db.QueryRow(ctx,
+			`SELECT is_default
+			FROM Channel
+			WHERE id = @id AND organization_id = @organizationId
+			FOR UPDATE`,
+			pgx.NamedArgs{"id": id, "organizationId": organizationID},
+		).Scan(&isDefault)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierrors.ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("could not lock Channel for delete: %w", err)
 		}
-		return fmt.Errorf("could not delete Channel: %w", err)
-	}
-	if cmd.RowsAffected() == 0 {
-		return apierrors.ErrNotFound
-	}
-	return nil
+		if isDefault {
+			return fmt.Errorf("could not delete Channel: %w", apierrors.ErrConflict)
+		}
+
+		cmd, err := db.Exec(ctx,
+			`DELETE FROM Channel WHERE id = @id AND organization_id = @organizationId`,
+			pgx.NamedArgs{"id": id, "organizationId": organizationID},
+		)
+		if err != nil {
+			var pgError *pgconn.PgError
+			if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+				return fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
+			}
+			return fmt.Errorf("could not delete Channel: %w", err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return apierrors.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func EnsureDefaultChannels(ctx context.Context, orgID uuid.UUID) error {

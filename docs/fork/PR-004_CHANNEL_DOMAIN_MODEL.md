@@ -82,6 +82,13 @@ The operation is idempotent:
 - The database enforces only one default Channel per organization/application.
 - Creating the first Channel for an application marks it default if the request did not.
 - Marking another Channel default clears the previous default for that application.
+- Moving a non-default Channel to an application without a default marks the moved Channel default.
+- Moving a non-default Channel to an application that already has a default preserves the requested non-default state.
+- Existing default Channels cannot be moved to another application.
+
+## Delete Behavior
+
+Default Channels cannot be deleted. Deletes lock the Channel row before validation so a concurrent promotion cannot cause a newly default Channel to be deleted.
 
 ## Compatibility
 

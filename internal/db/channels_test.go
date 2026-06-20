@@ -153,6 +153,137 @@ func TestChannelRepositoryRejectsDuplicateNamesWithinApplicationScope(t *testing
 	g.Expect(db.CreateChannel(ctx, &sameNameOtherApplication)).To(Succeed())
 }
 
+func TestChannelRepositoryMoveNonDefaultChannelToEmptyApplicationMakesItDefault(t *testing.T) {
+	ctx := channelDBTestContext(t)
+	g := NewWithT(t)
+	orgID, sourceApplicationID, lifecycleID := createChannelDependencies(t, ctx)
+	targetApplicationID := createChannelApplicationForOrganization(t, ctx, orgID)
+
+	stable := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &stable)).To(Succeed())
+	preview := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Preview",
+		SortOrder:      10,
+	}
+	g.Expect(db.CreateChannel(ctx, &preview)).To(Succeed())
+	g.Expect(preview.IsDefault).To(BeFalse())
+
+	preview.ApplicationID = targetApplicationID
+	g.Expect(db.UpdateChannel(ctx, &preview)).To(Succeed())
+
+	g.Expect(preview.IsDefault).To(BeTrue())
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, sourceApplicationID)
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, targetApplicationID)
+}
+
+func TestChannelRepositoryMoveNonDefaultChannelToApplicationWithDefaultPreservesTargetDefault(t *testing.T) {
+	ctx := channelDBTestContext(t)
+	g := NewWithT(t)
+	orgID, sourceApplicationID, lifecycleID := createChannelDependencies(t, ctx)
+	targetApplicationID := createChannelApplicationForOrganization(t, ctx, orgID)
+
+	sourceDefault := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Source Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &sourceDefault)).To(Succeed())
+	preview := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Preview",
+		SortOrder:      10,
+	}
+	g.Expect(db.CreateChannel(ctx, &preview)).To(Succeed())
+	g.Expect(preview.IsDefault).To(BeFalse())
+	targetDefault := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  targetApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Target Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &targetDefault)).To(Succeed())
+
+	preview.ApplicationID = targetApplicationID
+	g.Expect(db.UpdateChannel(ctx, &preview)).To(Succeed())
+
+	g.Expect(preview.IsDefault).To(BeFalse())
+	updatedTargetDefault, err := db.GetChannel(ctx, targetDefault.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(updatedTargetDefault.IsDefault).To(BeTrue())
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, sourceApplicationID)
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, targetApplicationID)
+}
+
+func TestChannelRepositoryRejectsMovingExistingDefaultChannel(t *testing.T) {
+	ctx := channelDBTestContext(t)
+	g := NewWithT(t)
+	orgID, sourceApplicationID, lifecycleID := createChannelDependencies(t, ctx)
+	targetApplicationID := createChannelApplicationForOrganization(t, ctx, orgID)
+	stable := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &stable)).To(Succeed())
+
+	stable.ApplicationID = targetApplicationID
+	err := db.UpdateChannel(ctx, &stable)
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	unchanged, err := db.GetChannel(ctx, stable.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(unchanged.ApplicationID).To(Equal(sourceApplicationID))
+	g.Expect(unchanged.IsDefault).To(BeTrue())
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, sourceApplicationID)
+}
+
+func TestChannelRepositoryDeleteDefaultAndNonDefaultChannels(t *testing.T) {
+	ctx := channelDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, lifecycleID := createChannelDependencies(t, ctx)
+	stable := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &stable)).To(Succeed())
+	preview := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Preview",
+		SortOrder:      10,
+	}
+	g.Expect(db.CreateChannel(ctx, &preview)).To(Succeed())
+	g.Expect(preview.IsDefault).To(BeFalse())
+
+	err := db.DeleteChannelWithID(ctx, stable.ID, orgID)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	g.Expect(db.DeleteChannelWithID(ctx, preview.ID, orgID)).To(Succeed())
+
+	_, err = db.GetChannel(ctx, preview.ID, orgID)
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+	assertChannelApplicationHasOneDefault(t, ctx, orgID, applicationID)
+}
+
 func TestEnsureDefaultChannelsIsIdempotent(t *testing.T) {
 	ctx := channelDBTestContext(t)
 	g := NewWithT(t)
@@ -202,7 +333,7 @@ func channelDBTestContext(t *testing.T) context.Context {
 	if err != nil {
 		t.Fatalf("connect to test database: %v", err)
 	}
-	defer adminPool.Close()
+	t.Cleanup(adminPool.Close)
 
 	schema := "channel_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
@@ -276,6 +407,26 @@ func createChannelDependenciesForOrganization(
 	orgID uuid.UUID,
 ) (uuid.UUID, uuid.UUID) {
 	t.Helper()
+	applicationID := createChannelApplicationForOrganization(t, ctx, orgID)
+	lifecycle := types.Lifecycle{
+		OrganizationID: orgID,
+		Name:           "Lifecycle " + uuid.NewString(),
+	}
+	if err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`INSERT INTO Lifecycle (organization_id, name) VALUES (@organizationId, @name) RETURNING id`,
+		pgx.NamedArgs{
+			"organizationId": lifecycle.OrganizationID,
+			"name":           lifecycle.Name,
+		},
+	).Scan(&lifecycle.ID); err != nil {
+		t.Fatalf("create lifecycle: %v", err)
+	}
+	return applicationID, lifecycle.ID
+}
+
+func createChannelApplicationForOrganization(t *testing.T, ctx context.Context, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
 	application := types.Application{
 		Name: "Application " + uuid.NewString(),
 		Type: types.DeploymentTypeDocker,
@@ -283,14 +434,7 @@ func createChannelDependenciesForOrganization(
 	if err := db.CreateApplication(ctx, &application, orgID); err != nil {
 		t.Fatalf("create application: %v", err)
 	}
-	lifecycle := types.Lifecycle{
-		OrganizationID: orgID,
-		Name:           "Lifecycle " + uuid.NewString(),
-	}
-	if err := db.CreateLifecycle(ctx, &lifecycle); err != nil {
-		t.Fatalf("create lifecycle: %v", err)
-	}
-	return application.ID, lifecycle.ID
+	return application.ID
 }
 
 func createChannelTestOrganization(t *testing.T, ctx context.Context) uuid.UUID {
@@ -304,4 +448,32 @@ func createChannelTestOrganization(t *testing.T, ctx context.Context) uuid.UUID 
 		t.Fatalf("create organization: %v", err)
 	}
 	return orgID
+}
+
+func assertChannelApplicationHasOneDefault(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+) {
+	t.Helper()
+	var count int
+	err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`SELECT count(*)
+		FROM Channel
+		WHERE organization_id = @organizationId
+			AND application_id = @applicationId
+			AND is_default`,
+		pgx.NamedArgs{
+			"organizationId": orgID,
+			"applicationId":  applicationID,
+		},
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("count default channels: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 default channel for application %s, got %d", applicationID, count)
+	}
 }
