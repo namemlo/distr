@@ -106,6 +106,7 @@ describe('DeploymentProcessesComponent', () => {
           key: 'deploy',
           name: 'Deploy',
           actionType: 'compose.deploy',
+          stepTemplateVersionId: 'template-version-1',
           executionLocation: 'target',
           inputBindings: {composeFile: 'compose.yaml'},
           condition: 'always',
@@ -233,6 +234,23 @@ describe('DeploymentProcessesComponent', () => {
     expect((component as any).selectedProcess()).toEqual(processes[0]);
     expect((component as any).revisions()).toEqual(revisions);
     expect(overlay.showModal).toHaveBeenCalled();
+  });
+
+  it('renders complete immutable revision step detail fields', () => {
+    const {component} = createComponent();
+    (component as any).selectedRevision.set(revisions[0]);
+
+    const detailTemplate = (component as any).revisionDetailDialog();
+    const view = detailTemplate.createEmbeddedView({});
+    view.detectChanges();
+    const text = view.rootNodes.map((node: HTMLElement) => node.textContent ?? '').join(' ');
+    view.destroy();
+
+    expect(text).toContain('Condition: always');
+    expect(text).toContain('Timeout: 300');
+    expect(text).toContain('Retry: 2 attempts / 30 seconds');
+    expect(text).toContain('Permissions: deploy.write');
+    expect(text).toContain('Step Template: template-version-1');
   });
 
   it('creates revisions with structured steps and scoped selectors', async () => {

@@ -500,8 +500,16 @@
               <span class="text-xs text-gray-500 dark:text-gray-400">Order {{ step.sortOrder | number }}</span>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700 dark:text-gray-300">
+              <div>Condition: {{ step.condition || '-' }}</div>
               <div>Location: {{ step.executionLocation }}</div>
               <div>Failure: {{ step.failureMode || 'fail' }}</div>
+              <div>Timeout: {{ step.timeoutSeconds | number }}</div>
+              <div>
+                Retry: {{ step.retryPolicy.maxAttempts | number }} attempts /
+                {{ step.retryPolicy.intervalSeconds | number }} seconds
+              </div>
+              <div>Permissions: {{ step.requiredPermissions.length ? step.requiredPermissions.join(', ') : '-' }}</div>
+              <div>Step Template: {{ step.stepTemplateVersionId || '-' }}</div>
               <div>Channels: {{ channelNames(step.channelIds) }}</div>
               <div>Environments: {{ environmentNames(step.environmentIds) }}</div>
               <div>Dependencies: {{ step.dependencies.length ? step.dependencies.join(', ') : '-' }}</div>
