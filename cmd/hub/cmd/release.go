@@ -166,6 +166,7 @@ func newReleaseCreateCommand(runtime releaseCommandRuntime, opts *releaseCommand
 				"/api/v1/release-bundles",
 				body,
 				strings.TrimSpace(createOpts.IdempotencyKey),
+				false,
 			)
 			if err != nil {
 				return err
@@ -200,6 +201,7 @@ func newReleaseValidateCommand(runtime releaseCommandRuntime, opts *releaseComma
 				"/api/v1/release-bundles/"+args[0]+"/validate",
 				[]byte(`{}`),
 				"",
+				false,
 			)
 			if err != nil {
 				return err
@@ -232,9 +234,13 @@ func newReleasePublishCommand(runtime releaseCommandRuntime, opts *releaseComman
 				"/api/v1/release-bundles/"+args[0]+"/publish",
 				[]byte(`{}`),
 				"",
+				true,
 			)
 			if err != nil {
 				return err
+			}
+			if isReleaseValidationResponse(response) {
+				return writeReleaseValidationOutput(runtime.Stdout, config.Output, response)
 			}
 			return writeReleaseBundleOutput(runtime.Stdout, config.Output, response)
 		},
@@ -315,6 +321,7 @@ func doReleaseAPIRequest(
 	path string,
 	body []byte,
 	idempotencyKey string,
+	allowValidationFailure bool,
 ) ([]byte, error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -353,6 +360,9 @@ func doReleaseAPIRequest(
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return bytes.TrimSpace(responseBody), nil
 	}
+	if allowValidationFailure && resp.StatusCode == http.StatusBadRequest && isReleaseValidationResponse(responseBody) {
+		return bytes.TrimSpace(responseBody), nil
+	}
 
 	code := releaseExitAPI
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -370,8 +380,8 @@ func doReleaseAPIRequest(
 }
 
 func releaseAuthorizationHeader(token string) string {
-	lower := strings.ToLower(token)
-	if strings.HasPrefix(lower, "bearer ") || strings.HasPrefix(lower, "accesstoken ") {
+	scheme, _ := releaseCredentialParts(token)
+	if scheme != "" {
 		return token
 	}
 	return "AccessToken " + token
@@ -382,10 +392,73 @@ func redactReleaseSecrets(value string, token string) string {
 	if token == "" {
 		return value
 	}
-	redacted := strings.ReplaceAll(value, "AccessToken "+token, "AccessToken [REDACTED]")
-	redacted = strings.ReplaceAll(redacted, "Bearer "+token, "Bearer [REDACTED]")
-	redacted = strings.ReplaceAll(redacted, token, "[REDACTED]")
+	scheme, credential := releaseCredentialParts(token)
+	candidates := []struct {
+		value       string
+		replacement string
+	}{
+		{value: token, replacement: "[REDACTED]"},
+		{value: credential, replacement: "[REDACTED]"},
+		{value: "AccessToken " + credential, replacement: "AccessToken [REDACTED]"},
+		{value: "Bearer " + credential, replacement: "Bearer [REDACTED]"},
+	}
+	if scheme != "" {
+		candidates = append(candidates, struct {
+			value       string
+			replacement string
+		}{value: scheme + " " + credential, replacement: scheme + " [REDACTED]"})
+	}
+	redacted := value
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if candidate.value == "" {
+			continue
+		}
+		key := strings.ToLower(candidate.value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		redacted = replaceCaseInsensitive(redacted, candidate.value, candidate.replacement)
+	}
 	return redacted
+}
+
+func releaseCredentialParts(token string) (string, string) {
+	fields := strings.Fields(strings.TrimSpace(token))
+	if len(fields) >= 2 {
+		scheme := strings.ToLower(fields[0])
+		if scheme == "bearer" || scheme == "accesstoken" {
+			return fields[0], strings.Join(fields[1:], " ")
+		}
+	}
+	return "", strings.TrimSpace(token)
+}
+
+func replaceCaseInsensitive(value string, old string, replacement string) string {
+	if old == "" {
+		return value
+	}
+	var builder strings.Builder
+	remaining := value
+	lowerOld := strings.ToLower(old)
+	for {
+		index := strings.Index(strings.ToLower(remaining), lowerOld)
+		if index < 0 {
+			builder.WriteString(remaining)
+			return builder.String()
+		}
+		builder.WriteString(remaining[:index])
+		builder.WriteString(replacement)
+		remaining = remaining[index+len(old):]
+	}
+}
+
+func isReleaseValidationResponse(response []byte) bool {
+	var probe struct {
+		Valid *bool `json:"valid"`
+	}
+	return json.Unmarshal(response, &probe) == nil && probe.Valid != nil
 }
 
 func writeReleaseBundleOutput(stdout io.Writer, output string, response []byte) error {

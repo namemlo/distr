@@ -78,26 +78,49 @@ func Evaluate(rules Rules, input Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	return evaluateNormalized(rules, input, true, true), nil
+}
 
+func EvaluateVersion(rules Rules, input Input) (Result, error) {
+	rules, err := NormalizeRules(rules)
+	if err != nil {
+		return Result{}, err
+	}
+	return evaluateNormalized(rules, input, true, false), nil
+}
+
+func EvaluateSource(rules Rules, input Input) (Result, error) {
+	rules, err := NormalizeRules(rules)
+	if err != nil {
+		return Result{}, err
+	}
+	return evaluateNormalized(rules, input, false, true), nil
+}
+
+func evaluateNormalized(rules Rules, input Input, includeVersion bool, includeSource bool) Result {
 	input.Version = strings.TrimSpace(input.Version)
 	input.SourceBranch = strings.TrimSpace(input.SourceBranch)
 	input.SourceTag = strings.TrimSpace(input.SourceTag)
 
 	var issues []Issue
-	version, err := semver.StrictNewVersion(input.Version)
-	if err != nil {
-		issues = append(issues, Issue{
-			Field:   "version",
-			Rule:    "semver",
-			Message: "version must be a valid SemVer 2.0 version",
-		})
-	} else {
-		issues = append(issues, evaluateVersionRanges(rules.AllowedVersionRanges, version)...)
-		issues = append(issues, evaluatePrereleasePatterns(rules.AllowedPrereleasePatterns, version)...)
+	if includeVersion {
+		version, err := semver.StrictNewVersion(input.Version)
+		if err != nil {
+			issues = append(issues, Issue{
+				Field:   "version",
+				Rule:    "semver",
+				Message: "version must be a valid SemVer 2.0 version",
+			})
+		} else {
+			issues = append(issues, evaluateVersionRanges(rules.AllowedVersionRanges, version)...)
+			issues = append(issues, evaluatePrereleasePatterns(rules.AllowedPrereleasePatterns, version)...)
+		}
 	}
-	issues = append(issues, evaluateSourceRules(rules, input)...)
+	if includeSource {
+		issues = append(issues, evaluateSourceRules(rules, input)...)
+	}
 
-	return Result{Valid: len(issues) == 0, Issues: issues}, nil
+	return Result{Valid: len(issues) == 0, Issues: issues}
 }
 
 func normalizeList(field string, values []string) ([]string, error) {

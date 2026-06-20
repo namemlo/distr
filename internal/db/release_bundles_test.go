@@ -174,6 +174,25 @@ func TestReleaseBundleRepositoryIdempotentCreateRejectsDifferentCanonicalRequest
 	g.Expect(listed).To(HaveLen(1))
 }
 
+func TestReleaseBundleRepositoryPreservesIdempotencyAfterDeleteAttempt(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	first := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &first, "delete-protected-key")).To(Succeed())
+
+	err := db.DeleteReleaseBundleWithID(ctx, first.ID, orgID)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+
+	replayed := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &replayed, "delete-protected-key")).To(Succeed())
+
+	g.Expect(replayed.ID).To(Equal(first.ID))
+	listed, err := db.GetReleaseBundlesByOrganizationID(ctx, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+}
+
 func TestReleaseBundleRepositoryIdempotencyKeysAreScopedByOrganization(t *testing.T) {
 	ctx := releaseBundleDBTestContext(t)
 	g := NewWithT(t)
@@ -241,6 +260,110 @@ func TestReleaseBundleRepositoryFailedIdempotentCreateDoesNotReserveKey(t *testi
 
 	valid := releaseBundleFixture(orgID, applicationID, channelID, versionID)
 	g.Expect(db.CreateReleaseBundleWithIdempotency(ctx, &valid, "retry-after-failure")).To(Succeed())
+}
+
+func TestReleaseBundleRepositoryValidatesBundleSourceRulesOnPublish(t *testing.T) {
+	tests := []struct {
+		name         string
+		sourceBranch string
+		sourceTag    string
+		wantErrField string
+	}{
+		{
+			name:         "accepts matching source branch",
+			sourceBranch: "release/2026.06",
+		},
+		{
+			name:         "rejects missing source",
+			wantErrField: "sourceMetadata",
+		},
+		{
+			name:         "rejects non matching branch",
+			sourceBranch: "feature/demo",
+			wantErrField: "sourceMetadata.branch",
+		},
+		{
+			name:         "rejects tag when channel allows only branches",
+			sourceTag:    "v1.2.3",
+			wantErrField: "sourceMetadata.tag",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := releaseBundleDBTestContext(t)
+			g := NewWithT(t)
+			orgID := createReleaseBundleTestOrganization(t, ctx)
+			applicationID, channelID, _ := createReleaseBundleDependenciesForOrganizationWithRules(
+				t, ctx, orgID, nil, nil, []string{"main", "release/*"}, nil,
+			)
+			actorID := createReleaseBundleTestUser(t, ctx, orgID)
+			bundle := ociReleaseBundleFixture(orgID, applicationID, channelID)
+			bundle.SourceBranch = tt.sourceBranch
+			bundle.SourceTag = tt.sourceTag
+			g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+			published, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+
+			if tt.wantErrField == "" {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(result.Valid).To(BeTrue())
+				g.Expect(published).NotTo(BeNil())
+				g.Expect(published.Status).To(Equal(types.ReleaseBundleStatusPublished))
+			} else {
+				g.Expect(published).To(BeNil())
+				g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+				g.Expect(result.Valid).To(BeFalse())
+				g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+					"Field": Equal(tt.wantErrField),
+				})))
+			}
+		})
+	}
+}
+
+func TestReleaseBundleRepositoryValidationRejectsLegacyMalformedOCIDigest(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, _ := createReleaseBundleDependencies(t, ctx)
+	actorID := createReleaseBundleTestUser(t, ctx, orgID)
+	bundle := ociReleaseBundleFixture(orgID, applicationID, channelID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	fetched, err := db.GetReleaseBundle(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	fetched.Components[0].Digest = "sha256:abc"
+	payload, checksum, err := releasebundles.Canonicalize(*fetched)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(
+		ctx,
+		`UPDATE ReleaseBundleComponent SET digest = @digest WHERE release_bundle_id = @releaseBundleId`,
+		pgx.NamedArgs{
+			"releaseBundleId": bundle.ID,
+			"digest":          "sha256:abc",
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(
+		ctx,
+		`UPDATE ReleaseBundle SET canonical_payload = @payload, canonical_checksum = @checksum WHERE id = @releaseBundleId`,
+		pgx.NamedArgs{
+			"releaseBundleId": bundle.ID,
+			"payload":         payload,
+			"checksum":        checksum,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	published, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+
+	g.Expect(published).To(BeNil())
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+	g.Expect(result.Errors).To(ContainElement(releasebundles.ValidationIssue{
+		Field:   "components.api-image.digest",
+		Rule:    "sha256",
+		Message: "OCI component digest must be a sha256 digest",
+	}))
 }
 
 func TestReleaseBundleRepositoryRejectsInvalidAndCrossOrganizationReferences(t *testing.T) {
@@ -546,13 +669,66 @@ func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g.Expect(ciSQL).To(ContainSubstring("organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE"))
 	g.Expect(ciSQL).To(ContainSubstring("key_hash TEXT NOT NULL"))
 	g.Expect(ciSQL).To(ContainSubstring("request_checksum TEXT NOT NULL"))
-	g.Expect(ciSQL).To(ContainSubstring("release_bundle_id UUID NOT NULL REFERENCES ReleaseBundle(id) ON DELETE CASCADE"))
+	g.Expect(ciSQL).To(ContainSubstring("release_bundle_id UUID NOT NULL REFERENCES ReleaseBundle(id) ON DELETE RESTRICT"))
 	g.Expect(ciSQL).To(ContainSubstring("releasebundleidempotencykey_organization_key_unique"))
 
 	down114, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "114_release_bundle_ci_idempotency.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down114)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundleIdempotencyKey"))
+	g.Expect(string(down114)).To(ContainSubstring(
+		"string_agg(component_payload, ',' ORDER BY component_key, component_id)",
+	))
+	g.Expect(string(down114)).To(ContainSubstring("pg_temp.release_bundle_go_json_string"))
+	g.Expect(string(down114)).To(ContainSubstring("sha256(repaired.canonical_payload)"))
 	g.Expect(string(down114)).To(ContainSubstring("DROP COLUMN IF EXISTS source_repository"))
+}
+
+func TestReleaseBundleDowngradeRepairsSourceMetadataCanonicalPayload(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	goEscapedChars := "<>&" + string(rune(0x2028)) + string(rune(0x2029))
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	bundle.ReleaseNotes = "Initial release " + goEscapedChars
+	bundle.SourceRevision = "abc123-" + goEscapedChars
+	bundle.SourceRepository = `https://example.invalid/{org}/"project"`
+	bundle.SourceBranch = `release/{2026}/"candidate"`
+	bundle.SourceTag = `v1.2.3-{candidate}`
+	bundle.CIProvider = `generic-ci\windows`
+	bundle.CIRunID = `run-"123"`
+	bundle.CIRunURL = `https://ci.example.invalid/runs/{123}?q="yes"`
+	bundle.Components[0].Name = "API " + goEscapedChars
+	bundle.Components[0].PackageRef = "registry.example.invalid/org/api?" + goEscapedChars
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	g.Expect(string(bundle.CanonicalPayload)).To(ContainSubstring("sourceMetadata"))
+
+	expected := bundle
+	expected.SourceRepository = ""
+	expected.SourceBranch = ""
+	expected.SourceTag = ""
+	expected.CIProvider = ""
+	expected.CIRunID = ""
+	expected.CIRunURL = ""
+	expectedPayload, expectedChecksum, err := releasebundles.Canonicalize(expected)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(expectedPayload)).NotTo(ContainSubstring("sourceMetadata"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "114_release_bundle_ci_idempotency.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(ctx, string(down))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	var repairedPayload []byte
+	var repairedChecksum string
+	g.Expect(internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`SELECT canonical_payload, canonical_checksum FROM ReleaseBundle WHERE id = @id`,
+		pgx.NamedArgs{"id": bundle.ID},
+	).Scan(&repairedPayload, &repairedChecksum)).To(Succeed())
+
+	g.Expect(string(repairedPayload)).NotTo(ContainSubstring("sourceMetadata"))
+	g.Expect(repairedPayload).To(Equal(expectedPayload))
+	g.Expect(repairedChecksum).To(Equal(expectedChecksum))
 }
 
 //nolint:dupl
@@ -750,6 +926,31 @@ func releaseBundleFixture(
 				Type:                 types.ReleaseBundleComponentTypeApplicationVersion,
 				Version:              "1.2.3",
 				ApplicationVersionID: &versionID,
+			},
+		},
+	}
+}
+
+func ociReleaseBundleFixture(
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+	channelID uuid.UUID,
+) types.ReleaseBundle {
+	return types.ReleaseBundle{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		ChannelID:      channelID,
+		ReleaseNumber:  "2026.06.20",
+		ReleaseNotes:   "Initial release",
+		SourceRevision: "abc123",
+		Components: []types.ReleaseBundleComponent{
+			{
+				Key:        "api-image",
+				Name:       "API image",
+				Type:       types.ReleaseBundleComponentTypeOCIImage,
+				Version:    "1.2.3",
+				PackageRef: "registry.example.invalid/org/api",
+				Digest:     "sha256:" + strings.Repeat("a", 64),
 			},
 		},
 	}

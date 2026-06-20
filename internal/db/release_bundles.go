@@ -635,6 +635,9 @@ func validateReleaseBundle(ctx context.Context, bundle types.ReleaseBundle) (rel
 	} else if err != nil {
 		return releasebundles.ValidationResult{}, err
 	}
+	if err := validateReleaseBundleSourceRules(&result, bundle, *channel); err != nil {
+		return releasebundles.ValidationResult{}, err
+	}
 
 	for _, component := range bundle.Components {
 		switch component.Type {
@@ -650,6 +653,40 @@ func validateReleaseBundle(ctx context.Context, bundle types.ReleaseBundle) (rel
 	}
 	result.Valid = len(result.Errors) == 0
 	return result, nil
+}
+
+func validateReleaseBundleSourceRules(
+	result *releasebundles.ValidationResult,
+	bundle types.ReleaseBundle,
+	channel types.Channel,
+) error {
+	channelResult, err := channelrules.EvaluateSource(
+		channelrulesFromChannel(channel),
+		channelrules.Input{
+			SourceBranch: bundle.SourceBranch,
+			SourceTag:    bundle.SourceTag,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("could not validate ReleaseBundle source rules: %w", err)
+	}
+	for _, issue := range channelResult.Issues {
+		result.AddError(releaseBundleSourceIssueField(issue.Field), issue.Rule, issue.Message)
+	}
+	return nil
+}
+
+func releaseBundleSourceIssueField(field string) string {
+	switch field {
+	case "sourceBranch":
+		return "sourceMetadata.branch"
+	case "sourceTag":
+		return "sourceMetadata.tag"
+	case "source":
+		return "sourceMetadata"
+	default:
+		return "sourceMetadata." + field
+	}
 }
 
 func validateApplicationVersionComponent(
@@ -702,13 +739,8 @@ func validateApplicationVersionComponent(
 		)
 	}
 
-	channelResult, err := channelrules.Evaluate(
-		channelrules.Rules{
-			AllowedVersionRanges:        channel.AllowedVersionRanges,
-			AllowedPrereleasePatterns:   channel.AllowedPrereleasePatterns,
-			AllowedSourceBranchPatterns: channel.AllowedSourceBranchPatterns,
-			AllowedSourceTagPatterns:    channel.AllowedSourceTagPatterns,
-		},
+	channelResult, err := channelrules.EvaluateVersion(
+		channelrulesFromChannel(channel),
 		channelrules.Input{Version: component.Version},
 	)
 	if err != nil {
@@ -718,6 +750,15 @@ func validateApplicationVersionComponent(
 		result.AddError(fieldPrefix+"."+issue.Field, issue.Rule, issue.Message)
 	}
 	return nil
+}
+
+func channelrulesFromChannel(channel types.Channel) channelrules.Rules {
+	return channelrules.Rules{
+		AllowedVersionRanges:        channel.AllowedVersionRanges,
+		AllowedPrereleasePatterns:   channel.AllowedPrereleasePatterns,
+		AllowedSourceBranchPatterns: channel.AllowedSourceBranchPatterns,
+		AllowedSourceTagPatterns:    channel.AllowedSourceTagPatterns,
+	}
 }
 
 func validateChildReleaseBundleComponent(

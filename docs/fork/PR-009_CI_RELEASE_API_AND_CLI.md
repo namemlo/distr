@@ -107,6 +107,7 @@ Publication continues to use the PR-007 behavior. Create does not publish automa
 - Replaying the same key and same canonical request returns the original bundle.
 - Replaying the same key and different canonical request returns the structured conflict response.
 - Concurrent same-key creates are serialized inside one database transaction path.
+- Draft bundles referenced by an idempotency key cannot be deleted, preserving stable retry responses.
 - Different organizations can reuse the same idempotency key independently.
 
 ## Digest Rules

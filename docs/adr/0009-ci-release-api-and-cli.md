@@ -24,7 +24,8 @@ When a key is provided:
 - the same organization, key, and canonical request returns the original Release Bundle without creating duplicate bundles, components, or audit events;
 - the same organization and key with a different canonical request returns `409 Conflict` with a stable structured error code;
 - different organizations may reuse the same key independently;
-- concurrent same-key requests serialize through the database transaction path and create at most one Release Bundle.
+- concurrent same-key requests serialize through the database transaction path and create at most one Release Bundle;
+- draft bundles referenced by an idempotency key cannot be deleted, preserving stable retry responses.
 
 Add generic CI source metadata to Release Bundles:
 

@@ -45,5 +45,15 @@ release:
           "$DISTR_SERVER_URL/api/v1/release-bundles"
       )"
     - release_bundle_id="$(printf '%s' "$create_output" | jq -r '.id')"
-    - curl --fail-with-body -X POST -H "Authorization: AccessToken $DISTR_API_TOKEN" "$DISTR_SERVER_URL/api/v1/release-bundles/$release_bundle_id/validate"
+    - |
+      validation_output="$(
+        curl --fail-with-body \
+          -X POST \
+          -H "Authorization: AccessToken $DISTR_API_TOKEN" \
+          "$DISTR_SERVER_URL/api/v1/release-bundles/$release_bundle_id/validate"
+      )"
+      if ! printf '%s' "$validation_output" | jq -e '.valid == true' >/dev/null; then
+        printf '%s\n' "$validation_output" >&2
+        exit 1
+      fi
     - curl --fail-with-body -X POST -H "Authorization: AccessToken $DISTR_API_TOKEN" "$DISTR_SERVER_URL/api/v1/release-bundles/$release_bundle_id/publish"

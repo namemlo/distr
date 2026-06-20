@@ -102,7 +102,7 @@ func validateComponentContent(result *ValidationResult, key string, component ty
 		if strings.TrimSpace(component.PackageRef) == "" {
 			result.AddError(fieldPrefix+".packageRef", "required", "OCI component package reference is required")
 		}
-		if !strings.HasPrefix(strings.TrimSpace(component.Digest), "sha256:") {
+		if !IsSHA256Digest(strings.TrimSpace(component.Digest)) {
 			result.AddError(fieldPrefix+".digest", "sha256", "OCI component digest must be a sha256 digest")
 		}
 		if component.ApplicationVersionID != nil || component.ChildReleaseBundleID != nil {

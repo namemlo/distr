@@ -10,13 +10,13 @@ import (
 )
 
 type canonicalBundle struct {
-	ApplicationID  string                  `json:"applicationId"`
-	ChannelID      string                  `json:"channelId"`
-	ReleaseNumber  string                  `json:"releaseNumber"`
-	ReleaseNotes   string                  `json:"releaseNotes"`
-	SourceRevision string                  `json:"sourceRevision"`
-	SourceMetadata canonicalSourceMetadata `json:"sourceMetadata"`
-	Components     []canonicalComponent    `json:"components"`
+	ApplicationID  string                   `json:"applicationId"`
+	ChannelID      string                   `json:"channelId"`
+	ReleaseNumber  string                   `json:"releaseNumber"`
+	ReleaseNotes   string                   `json:"releaseNotes"`
+	SourceRevision string                   `json:"sourceRevision"`
+	SourceMetadata *canonicalSourceMetadata `json:"sourceMetadata,omitempty"`
+	Components     []canonicalComponent     `json:"components"`
 }
 
 type canonicalSourceMetadata struct {
@@ -58,15 +58,18 @@ func Canonicalize(bundle types.ReleaseBundle) ([]byte, string, error) {
 		ReleaseNumber:  bundle.ReleaseNumber,
 		ReleaseNotes:   bundle.ReleaseNotes,
 		SourceRevision: bundle.SourceRevision,
-		SourceMetadata: canonicalSourceMetadata{
-			Repository: bundle.SourceRepository,
-			Branch:     bundle.SourceBranch,
-			Tag:        bundle.SourceTag,
-			CIProvider: bundle.CIProvider,
-			CIRunID:    bundle.CIRunID,
-			CIRunURL:   bundle.CIRunURL,
-		},
-		Components: make([]canonicalComponent, 0, len(components)),
+		Components:     make([]canonicalComponent, 0, len(components)),
+	}
+	sourceMetadata := canonicalSourceMetadata{
+		Repository: bundle.SourceRepository,
+		Branch:     bundle.SourceBranch,
+		Tag:        bundle.SourceTag,
+		CIProvider: bundle.CIProvider,
+		CIRunID:    bundle.CIRunID,
+		CIRunURL:   bundle.CIRunURL,
+	}
+	if !sourceMetadata.isZero() {
+		canonical.SourceMetadata = &sourceMetadata
 	}
 	for _, component := range components {
 		canonical.Components = append(canonical.Components, canonicalizeComponent(component))
@@ -78,6 +81,15 @@ func Canonicalize(bundle types.ReleaseBundle) ([]byte, string, error) {
 	}
 	sum := sha256.Sum256(payload)
 	return payload, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func (m canonicalSourceMetadata) isZero() bool {
+	return m.Repository == "" &&
+		m.Branch == "" &&
+		m.Tag == "" &&
+		m.CIProvider == "" &&
+		m.CIRunID == "" &&
+		m.CIRunURL == ""
 }
 
 func canonicalizeComponent(component types.ReleaseBundleComponent) canonicalComponent {

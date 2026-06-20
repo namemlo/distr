@@ -132,6 +132,38 @@ func TestReleaseValidateCommandReturnsValidationExitCode(t *testing.T) {
 	g.Expect(stdout).To(ContainSubstring("components.api.digest"))
 }
 
+func TestReleasePublishCommandReturnsValidationExitCodeForValidationFailure(t *testing.T) {
+	g := NewWithT(t)
+	bundleID := uuid.NewString()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.Expect(r.Method).To(Equal(http.MethodPost))
+		g.Expect(r.URL.Path).To(Equal("/api/v1/release-bundles/" + bundleID + "/publish"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{
+			"valid": false,
+			"errors": [{"field":"sourceMetadata.branch","rule":"channel.sourceBranch","message":"source branch is not allowed"}],
+			"warnings": []
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	stdout, stderr, err := executeReleaseCommandForTest(
+		t,
+		releaseCommandRuntime{Client: http.DefaultClient},
+		"--server", server.URL,
+		"--token", "token-value",
+		"publish",
+		bundleID,
+	)
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(releaseExitCodeForTest(err)).To(Equal(3))
+	g.Expect(stderr).To(BeEmpty())
+	g.Expect(stdout).To(ContainSubstring("invalid"))
+	g.Expect(stdout).To(ContainSubstring("sourceMetadata.branch"))
+}
+
 func TestReleasePublishCommandMapsAuthFailureAndRedactsToken(t *testing.T) {
 	g := NewWithT(t)
 	bundleID := uuid.NewString()
@@ -157,6 +189,38 @@ func TestReleasePublishCommandMapsAuthFailureAndRedactsToken(t *testing.T) {
 	g.Expect(stdout).NotTo(ContainSubstring(token))
 	g.Expect(stderr).NotTo(ContainSubstring(token))
 	g.Expect(err.Error()).NotTo(ContainSubstring(token))
+}
+
+func TestReleasePublishCommandRedactsCredentialVariants(t *testing.T) {
+	g := NewWithT(t)
+	bundleID := uuid.NewString()
+	const credential = "super-secret-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.Expect(r.Header.Get("Authorization")).To(Equal("Bearer " + credential))
+		http.Error(
+			w,
+			"bearer "+credential+" AccessToken "+credential+" "+credential+" is invalid",
+			http.StatusInternalServerError,
+		)
+	}))
+	t.Cleanup(server.Close)
+
+	stdout, stderr, err := executeReleaseCommandForTest(
+		t,
+		releaseCommandRuntime{Client: http.DefaultClient},
+		"--server", server.URL,
+		"--token", "Bearer "+credential,
+		"publish",
+		bundleID,
+	)
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(releaseExitCodeForTest(err)).To(Equal(5))
+	g.Expect(stdout).NotTo(ContainSubstring(credential))
+	g.Expect(stderr).NotTo(ContainSubstring(credential))
+	g.Expect(err.Error()).NotTo(ContainSubstring(credential))
+	g.Expect(stderr).To(ContainSubstring("[REDACTED]"))
+	g.Expect(err.Error()).To(ContainSubstring("[REDACTED]"))
 }
 
 func TestReleaseCommandUsageErrorsReturnUsageExitCode(t *testing.T) {

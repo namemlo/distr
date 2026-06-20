@@ -83,10 +83,17 @@ CREATE_OUTPUT="$(
 
 RELEASE_BUNDLE_ID="$(printf '%s' "$CREATE_OUTPUT" | jq -r '.id')"
 
-curl --fail-with-body \
-  -X POST \
-  -H "Authorization: AccessToken $DISTR_API_TOKEN" \
-  "$DISTR_SERVER_URL/api/v1/release-bundles/$RELEASE_BUNDLE_ID/validate"
+VALIDATION_OUTPUT="$(
+  curl --fail-with-body \
+    -X POST \
+    -H "Authorization: AccessToken $DISTR_API_TOKEN" \
+    "$DISTR_SERVER_URL/api/v1/release-bundles/$RELEASE_BUNDLE_ID/validate"
+)"
+
+if ! printf '%s' "$VALIDATION_OUTPUT" | jq -e '.valid == true' >/dev/null; then
+  printf '%s\n' "$VALIDATION_OUTPUT" >&2
+  exit 1
+fi
 
 curl --fail-with-body \
   -X POST \

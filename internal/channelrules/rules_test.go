@@ -298,3 +298,14 @@ func TestEvaluateSourceRules(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateSourceRulesDoesNotRequireVersion(t *testing.T) {
+	g := NewWithT(t)
+
+	result, err := EvaluateSource(Rules{
+		AllowedSourceBranchPatterns: []string{"main"},
+	}, Input{SourceBranch: "main"})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+}
