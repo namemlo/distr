@@ -200,7 +200,7 @@ Use one entry per pull request:
 - Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
 - Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=deployment_processes`.
 - User-facing behavior: Feature-flagged API callers can manage organization/application-scoped Deployment Processes and append immutable revisions with ordered steps and validated dependencies.
-- Database changes: Added `DeploymentProcess`, `DeploymentProcessRevision`, `DeploymentProcessStep`, `DeploymentProcessStepDependency`, `DeploymentProcessStepChannel`, and `DeploymentProcessStepEnvironment` tables with process-name uniqueness per organization/application, unique step keys/orders per revision, and scoped step Channel/Environment references.
+- Database changes: Added `DeploymentProcess`, `DeploymentProcessRevision`, `DeploymentProcessStep`, `DeploymentProcessStepDependency`, `DeploymentProcessStepChannel`, and `DeploymentProcessStepEnvironment` tables with process-name uniqueness per organization/application, unique step keys/orders per revision, scoped step Channel/Environment references, and composite Channel/application/organization FK protection.
 - API changes: Added feature-flagged CRUD endpoints under `/api/v1/deployment-processes` plus revision list/create/get endpoints under `/api/v1/deployment-processes/{deploymentProcessId}/revisions`.
 - UI changes: None. Process editor UI remains PR-012.
 - Agent protocol changes: None.

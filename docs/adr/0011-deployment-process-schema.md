@@ -29,7 +29,7 @@ Each revision receives a monotonically increasing revision number while holding 
 
 Step keys and sort orders are unique within a revision. Dependencies reference step keys in the same revision and are validated before persistence. Missing dependencies, self-dependencies, duplicate dependency edges, and cycles are rejected.
 
-Step Channel references must belong to the current organization and process application. Step Environment references must belong to the current organization. Missing or cross-organization references return not found.
+Step Channel references must belong to the current organization and process application. The step-channel relation stores the process organization/application pair and references `Channel(id, application_id, organization_id)` so a referenced Channel cannot later move to another application. Step Environment references must belong to the current organization. Missing or cross-organization references return not found.
 
 The API exposes:
 
@@ -50,7 +50,7 @@ PR-011 intentionally does not expose Step Template endpoints, process editor UI,
 
 - Later PRs can link releases and planners to immutable process revisions instead of mutable process definitions.
 - Organization isolation is enforced by repository queries and relation validation.
-- Channel references cannot silently cross application boundaries.
+- Channel references cannot silently cross application boundaries during revision creation or after persistence.
 - Dependency validation prevents cyclic process definitions from entering storage.
 - The API is additive and feature-gated.
 - Existing Environment, Lifecycle, Channel, Release Bundle, deployment target, deployment, release-name, and agent behavior remains unchanged.

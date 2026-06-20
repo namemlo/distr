@@ -11,6 +11,7 @@ import (
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/gomega"
 )
 
@@ -246,6 +247,79 @@ func TestDeploymentProcessRepositoryRejectsInvalidRevisionGraph(t *testing.T) {
 	}
 }
 
+func TestDeploymentProcessRepositoryPreventsReferencedChannelMovingToAnotherApplication(t *testing.T) {
+	ctx := deploymentProcessDBTestContext(t)
+	g := NewWithT(t)
+	deps := createDeploymentProcessDependencies(t, ctx)
+	referencedChannelID := createDeploymentProcessChannel(t, ctx, deps.orgID, deps.applicationID, deps.lifecycleID)
+	targetApplicationID := createChannelApplicationForOrganization(t, ctx, deps.orgID)
+	_ = createDeploymentProcessChannel(t, ctx, deps.orgID, targetApplicationID, deps.lifecycleID)
+
+	process := types.DeploymentProcess{
+		OrganizationID: deps.orgID,
+		ApplicationID:  deps.applicationID,
+		Name:           "Standard deploy",
+	}
+	g.Expect(db.CreateDeploymentProcess(ctx, &process)).To(Succeed())
+	revision := deploymentProcessRevisionFixture(deps)
+	revision.DeploymentProcessID = process.ID
+	revision.Steps[1].ChannelIDs = []uuid.UUID{referencedChannelID}
+	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
+
+	channel, err := db.GetChannel(ctx, referencedChannelID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	channel.ApplicationID = targetApplicationID
+	err = db.UpdateChannel(ctx, channel)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+
+	channel.ApplicationID = deps.applicationID
+	channel.SortOrder = 99
+	g.Expect(db.UpdateChannel(ctx, channel)).To(Succeed())
+}
+
+func TestDeploymentProcessRepositoryConcurrentChannelMoveCannotInvalidateRevision(t *testing.T) {
+	ctx := deploymentProcessDBTestContext(t)
+	g := NewWithT(t)
+	deps := createDeploymentProcessDependencies(t, ctx)
+	referencedChannelID := createDeploymentProcessChannel(t, ctx, deps.orgID, deps.applicationID, deps.lifecycleID)
+	targetApplicationID := createChannelApplicationForOrganization(t, ctx, deps.orgID)
+	_ = createDeploymentProcessChannel(t, ctx, deps.orgID, targetApplicationID, deps.lifecycleID)
+
+	process := types.DeploymentProcess{
+		OrganizationID: deps.orgID,
+		ApplicationID:  deps.applicationID,
+		Name:           "Standard deploy",
+	}
+	g.Expect(db.CreateDeploymentProcess(ctx, &process)).To(Succeed())
+
+	tx := lockChannelRowForTest(t, ctx, referencedChannelID)
+	_, err := tx.Exec(
+		ctx,
+		`UPDATE Channel
+		SET application_id = @applicationId, updated_at = now()
+		WHERE id = @id`,
+		pgx.NamedArgs{"id": referencedChannelID, "applicationId": targetApplicationID},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	errCh := make(chan error, 1)
+	go func() {
+		revision := deploymentProcessRevisionFixture(deps)
+		revision.DeploymentProcessID = process.ID
+		revision.Steps[1].ChannelIDs = []uuid.UUID{referencedChannelID}
+		errCh <- db.CreateDeploymentProcessRevision(ctx, &revision)
+	}()
+	assertChannelOperationIsWaiting(t, errCh)
+
+	g.Expect(tx.Commit(ctx)).To(Succeed())
+	err = awaitChannelOperation(t, errCh)
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+
+	revisions, err := db.GetDeploymentProcessRevisions(ctx, process.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(revisions).To(BeEmpty())
+}
+
 func TestDeploymentProcessMigrationDefinesProcessSchema(t *testing.T) {
 	g := NewWithT(t)
 
@@ -260,6 +334,7 @@ func TestDeploymentProcessMigrationDefinesProcessSchema(t *testing.T) {
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE DeploymentProcessStepEnvironment"))
 	g.Expect(sql).To(ContainSubstring("deploymentprocess_organization_application_name_unique"))
 	g.Expect(sql).To(ContainSubstring("deploymentprocessstep_revision_key_unique"))
+	g.Expect(sql).To(ContainSubstring("FOREIGN KEY (channel_id, application_id, organization_id)"))
 
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "115_deployment_processes.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())

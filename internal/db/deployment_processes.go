@@ -266,7 +266,13 @@ func CreateDeploymentProcessRevision(ctx context.Context, revision *types.Deploy
 		if err != nil {
 			return mapDeploymentProcessWriteError("scan revision", err)
 		}
-		if err := insertDeploymentProcessSteps(ctx, created.ID, revision.Steps); err != nil {
+		if err := insertDeploymentProcessSteps(
+			ctx,
+			created.ID,
+			process.OrganizationID,
+			process.ApplicationID,
+			revision.Steps,
+		); err != nil {
 			return err
 		}
 		loaded, err := getDeploymentProcessRevision(ctx, process.ID, created.ID, process.OrganizationID)
@@ -657,6 +663,8 @@ func deploymentProcessHasRevisions(ctx context.Context, deploymentProcessID uuid
 func insertDeploymentProcessSteps(
 	ctx context.Context,
 	deploymentProcessRevisionID uuid.UUID,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
 	steps []types.DeploymentProcessStep,
 ) error {
 	rows := make([]types.DeploymentProcessStep, len(steps))
@@ -716,7 +724,7 @@ func insertDeploymentProcessSteps(
 	if err := insertDeploymentProcessStepDependencies(ctx, deploymentProcessRevisionID, rows); err != nil {
 		return err
 	}
-	if err := insertDeploymentProcessStepChannels(ctx, rows); err != nil {
+	if err := insertDeploymentProcessStepChannels(ctx, orgID, applicationID, rows); err != nil {
 		return err
 	}
 	if err := insertDeploymentProcessStepEnvironments(ctx, rows); err != nil {
@@ -770,17 +778,56 @@ func insertDeploymentProcessStepDependencies(
 	return nil
 }
 
-func insertDeploymentProcessStepChannels(ctx context.Context, steps []types.DeploymentProcessStep) error {
-	rows := deploymentProcessStepUUIDRelations(steps, func(step types.DeploymentProcessStep) []uuid.UUID {
-		return step.ChannelIDs
-	})
-	return insertDeploymentProcessStepUUIDRelations(
+func insertDeploymentProcessStepChannels(
+	ctx context.Context,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+	steps []types.DeploymentProcessStep,
+) error {
+	count := 0
+	for _, step := range steps {
+		count += len(step.ChannelIDs)
+	}
+	if count == 0 {
+		return nil
+	}
+
+	type row struct {
+		StepID    uuid.UUID
+		ChannelID uuid.UUID
+		SortOrder int
+	}
+	rows := make([]row, 0, count)
+	for _, step := range steps {
+		for i, channelID := range step.ChannelIDs {
+			rows = append(rows, row{
+				StepID:    step.ID,
+				ChannelID: channelID,
+				SortOrder: i,
+			})
+		}
+	}
+
+	db := internalctx.GetDb(ctx)
+	_, err := db.CopyFrom(
 		ctx,
-		"deploymentprocessstepchannel",
-		"channel_id",
-		"insert step channels",
-		rows,
+		pgx.Identifier{"deploymentprocessstepchannel"},
+		[]string{
+			"deployment_process_step_id",
+			"organization_id",
+			"application_id",
+			"channel_id",
+			"sort_order",
+		},
+		pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) {
+			row := rows[i]
+			return []any{row.StepID, orgID, applicationID, row.ChannelID, row.SortOrder}, nil
+		}),
 	)
+	if err != nil {
+		return mapDeploymentProcessStepReferenceWriteError("insert step channels", err)
+	}
+	return nil
 }
 
 func insertDeploymentProcessStepEnvironments(ctx context.Context, steps []types.DeploymentProcessStep) error {
@@ -965,4 +1012,12 @@ func mapDeploymentProcessWriteError(action string, err error) error {
 		}
 	}
 	return fmt.Errorf("could not %s DeploymentProcess: %w", action, err)
+}
+
+func mapDeploymentProcessStepReferenceWriteError(action string, err error) error {
+	var pgError *pgconn.PgError
+	if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+		return fmt.Errorf("could not %s DeploymentProcess: %w", action, apierrors.ErrNotFound)
+	}
+	return mapDeploymentProcessWriteError(action, err)
 }

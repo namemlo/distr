@@ -78,13 +78,20 @@ CREATE INDEX DeploymentProcessStepDependency_revision_step_sort
 
 CREATE TABLE DeploymentProcessStepChannel (
   deployment_process_step_id UUID NOT NULL REFERENCES DeploymentProcessStep(id) ON DELETE CASCADE,
-  channel_id UUID NOT NULL REFERENCES Channel(id) ON DELETE RESTRICT,
+  organization_id UUID NOT NULL,
+  application_id UUID NOT NULL,
+  channel_id UUID NOT NULL,
   sort_order INTEGER NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
-  PRIMARY KEY (deployment_process_step_id, channel_id)
+  PRIMARY KEY (deployment_process_step_id, channel_id),
+  CONSTRAINT deploymentprocessstepchannel_channel_application_organization_fk
+    FOREIGN KEY (channel_id, application_id, organization_id)
+    REFERENCES Channel(id, application_id, organization_id)
+    ON UPDATE RESTRICT
+    ON DELETE RESTRICT
 );
 
 CREATE INDEX DeploymentProcessStepChannel_channel
-  ON DeploymentProcessStepChannel (channel_id);
+  ON DeploymentProcessStepChannel (organization_id, application_id, channel_id);
 
 CREATE TABLE DeploymentProcessStepEnvironment (
   deployment_process_step_id UUID NOT NULL REFERENCES DeploymentProcessStep(id) ON DELETE CASCADE,

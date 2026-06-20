@@ -65,7 +65,7 @@ Migration `115_deployment_processes` adds:
 
 Step keys and sort orders are unique within one revision. Dependencies are stored by step key and constrained to existing step keys in the same revision.
 
-Step Channel references must belong to the same organization and application as the process. Step Environment references must belong to the current organization.
+Step Channel references must belong to the same organization and application as the process. `DeploymentProcessStepChannel` stores the process organization/application pair and uses a composite Channel foreign key so referenced Channels cannot later move to another application and invalidate an immutable revision. Step Environment references must belong to the current organization.
 
 ## API
 
