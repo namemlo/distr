@@ -124,6 +124,10 @@ export class SideBarComponent {
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isChannelsEnabled$, {initialValue: false})
       : signal(false);
+  protected readonly isReleaseBundlesFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isReleaseBundlesEnabled$, {initialValue: false})
+      : signal(false);
 
   public readonly isSubscriptionBannerVisible = input<boolean>();
   public readonly isSidebarVisible = input<boolean>();

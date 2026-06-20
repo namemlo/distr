@@ -55,4 +55,22 @@ describe('FeatureFlagService', () => {
       },
     ]);
   });
+
+  it('exposes release bundle feature flag state', () => {
+    service.isReleaseBundlesEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+
+    const req = http.expectOne('/api/v1/experimental-feature-flags');
+    expect(req.request.method).toBe('GET');
+    req.flush([
+      {
+        key: 'release_bundles',
+        label: 'Release Bundles',
+        description: 'Draft and publish immutable release bundles.',
+        milestone: 'Milestone C',
+        enabled: true,
+      },
+    ]);
+  });
 });
