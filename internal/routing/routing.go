@@ -185,6 +185,7 @@ func ApiRouter(
 					r.Route("/notification-records", handlers.NotificationRecordsRouter)
 					r.Route("/organization", handlers.OrganizationRouter)
 					r.Route("/organizations", handlers.OrganizationsRouter)
+					r.Route("/release-bundles", handlers.ReleaseBundlesRouter)
 					r.Route("/secrets", handlers.SecretsRouter)
 					r.Route("/settings", handlers.SettingsRouter)
 					r.With(middleware.ProFeature).Route("/support-bundles", handlers.SupportBundlesRouter)

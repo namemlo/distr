@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-005 are implemented locally. PR-005 adds the feature-flagged SemVer and source-rule engine for Channels without changing existing Environment, Lifecycle, deployment target, deployment, release, or agent behavior.
+PR-000 through PR-006 are implemented locally. PR-006 adds the feature-flagged Release Bundle foundation without adding release publication, Release UI, deployment planning, execution, or agent behavior.
 
 ## Tracking Template
 
@@ -118,3 +118,18 @@ Use one entry per pull request:
 - Tests: `go test ./internal/channelrules ./api ./internal/mapping ./internal/handlers ./internal/db ./internal/routing`, live PostgreSQL Channel repository and validation handler tests with `DISTR_TEST_DATABASE_URL` set, `go test -p=1 ./...`, Angular `ng test --watch=false`, `pnpm run build:community`, hub community binary build, Docker agent build, Kubernetes agent build, direct migration validation, touched-file Prettier check, diff-scoped Go lint, and changed-file Unicode scan passed.
 - Upstream contribution notes: Community-neutral SemVer/source-rule engine; no adopter-specific logic.
 - Compatibility notes: Existing Environment, Lifecycle, deployment target, deployment, release, and agent behavior is unchanged. No Release Bundle, promotion, approval, retention, deployment planning, execution, or agent behavior is added in PR-005.
+
+### PR-006 - Release Bundle foundation
+
+- Status: Implemented locally; backend, API, repository, canonicalization, migration, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=release_bundles`.
+- User-facing behavior: Feature-flagged API callers can create, list, read, update, and delete draft Release Bundles with components.
+- Database changes: Added organization-scoped `ReleaseBundle` and `ReleaseBundleComponent` tables, release-number uniqueness per organization/application, component-key uniqueness per bundle, draft status storage, canonical payload storage, and checksum storage.
+- API changes: Added feature-flagged draft CRUD endpoints under `/api/v1/release-bundles`.
+- UI changes: None. Release Bundle UI remains PR-008.
+- Agent protocol changes: None.
+- Documentation: Added PR-006 notes and ADR-0006.
+- Tests: API validation, canonical checksum, mapping, handler, live PostgreSQL repository tests, migration checks, and focused Go tests were added.
+- Upstream contribution notes: Community-neutral Release Bundle foundation; no adopter-specific component or registry behavior.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No publication, validation service, promotion, approval, retention, planning, execution, or agent behavior is added in PR-006.
