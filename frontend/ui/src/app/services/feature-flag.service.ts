@@ -51,6 +51,7 @@ export class FeatureFlagService {
   }
 
   public readonly isEnvironmentsEnabled$ = this.isExperimentalFeatureEnabled$('environments');
+  public readonly isLifecyclesEnabled$ = this.isExperimentalFeatureEnabled$('lifecycles');
 
   isExperimentalFeatureEnabled$(key: ExperimentalFeatureFlagKey): Observable<boolean> {
     return this.getExperimentalFeatureFlags().pipe(

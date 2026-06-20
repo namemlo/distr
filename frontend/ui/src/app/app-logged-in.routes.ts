@@ -25,6 +25,7 @@ import {EnvironmentsComponent} from './environments/environments.component';
 import {CustomerLicenseDetailComponent} from './licenses/customer-license-detail.component';
 import {LicenseKeysComponent} from './licenses/license-keys/license-keys.component';
 import {LicensesOverviewComponent} from './licenses/licenses-overview.component';
+import {LifecyclesComponent} from './lifecycles/lifecycles.component';
 import {NotificationRecordsComponent} from './notification-records/notification-records.component';
 import {OrganizationBrandingComponent} from './organization-branding/organization-branding.component';
 import {OrganizationSettingsComponent} from './organization-settings/organization-settings.component';
@@ -194,6 +195,16 @@ export const routes: Routes = [
         path: 'environments',
         component: EnvironmentsComponent,
         canActivate: [requireVendor, requiredRoleGuard('admin'), experimentalFeatureEnabledGuard('environments')],
+      },
+      {
+        path: 'lifecycles',
+        component: LifecyclesComponent,
+        canActivate: [
+          requireVendor,
+          requiredRoleGuard('admin'),
+          experimentalFeatureEnabledGuard('environments'),
+          experimentalFeatureEnabledGuard('lifecycles'),
+        ],
       },
       {
         path: 'artifacts',
