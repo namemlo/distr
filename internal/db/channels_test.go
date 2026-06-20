@@ -154,6 +154,44 @@ func TestChannelRepositoryRejectsDuplicateNamesWithinApplicationScope(t *testing
 	g.Expect(db.CreateChannel(ctx, &sameNameOtherApplication)).To(Succeed())
 }
 
+func TestChannelRepositoryPersistsVersionAndSourceRules(t *testing.T) {
+	ctx := channelDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, lifecycleID := createChannelDependencies(t, ctx)
+
+	channel := types.Channel{
+		OrganizationID:              orgID,
+		ApplicationID:               applicationID,
+		LifecycleID:                 lifecycleID,
+		Name:                        "Preview",
+		AllowedVersionRanges:        []string{">=1.0.0 <2.0.0"},
+		AllowedPrereleasePatterns:   []string{"rc.*"},
+		AllowedSourceBranchPatterns: []string{"main", "release/*"},
+		AllowedSourceTagPatterns:    []string{"v*"},
+	}
+	g.Expect(db.CreateChannel(ctx, &channel)).To(Succeed())
+
+	created, err := db.GetChannel(ctx, channel.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(created.AllowedVersionRanges).To(Equal([]string{">=1.0.0 <2.0.0"}))
+	g.Expect(created.AllowedPrereleasePatterns).To(Equal([]string{"rc.*"}))
+	g.Expect(created.AllowedSourceBranchPatterns).To(Equal([]string{"main", "release/*"}))
+	g.Expect(created.AllowedSourceTagPatterns).To(Equal([]string{"v*"}))
+
+	channel.AllowedVersionRanges = []string{">=2.0.0 <3.0.0"}
+	channel.AllowedPrereleasePatterns = []string{"beta.*"}
+	channel.AllowedSourceBranchPatterns = []string{"develop"}
+	channel.AllowedSourceTagPatterns = []string{"preview-*"}
+	g.Expect(db.UpdateChannel(ctx, &channel)).To(Succeed())
+
+	updated, err := db.GetChannel(ctx, channel.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(updated.AllowedVersionRanges).To(Equal([]string{">=2.0.0 <3.0.0"}))
+	g.Expect(updated.AllowedPrereleasePatterns).To(Equal([]string{"beta.*"}))
+	g.Expect(updated.AllowedSourceBranchPatterns).To(Equal([]string{"develop"}))
+	g.Expect(updated.AllowedSourceTagPatterns).To(Equal([]string{"preview-*"}))
+}
+
 func TestChannelRepositoryMoveNonDefaultChannelToEmptyApplicationMakesItDefault(t *testing.T) {
 	ctx := channelDBTestContext(t)
 	g := NewWithT(t)
@@ -412,6 +450,26 @@ func TestChannelMigrationDefinesScopedConstraints(t *testing.T) {
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "110_channels.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS Channel"))
+}
+
+func TestChannelRulesMigrationDefinesRuleColumns(t *testing.T) {
+	g := NewWithT(t)
+
+	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "111_channel_rules.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	sql := string(up)
+
+	g.Expect(sql).To(ContainSubstring("allowed_version_ranges TEXT[] NOT NULL DEFAULT '{}'"))
+	g.Expect(sql).To(ContainSubstring("allowed_prerelease_patterns TEXT[] NOT NULL DEFAULT '{}'"))
+	g.Expect(sql).To(ContainSubstring("allowed_source_branches TEXT[] NOT NULL DEFAULT '{}'"))
+	g.Expect(sql).To(ContainSubstring("allowed_source_tags TEXT[] NOT NULL DEFAULT '{}'"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "111_channel_rules.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN allowed_version_ranges"))
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN allowed_prerelease_patterns"))
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN allowed_source_branches"))
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN allowed_source_tags"))
 }
 
 func channelDBTestContext(t *testing.T) context.Context {

@@ -30,6 +30,10 @@ describe('ChannelsComponent', () => {
       description: 'Default production-ready channel',
       sortOrder: 10,
       isDefault: true,
+      allowedVersionRanges: ['>=1.0.0 <2.0.0'],
+      allowedPrereleasePatterns: ['rc.*'],
+      allowedSourceBranches: ['main', 'release/*'],
+      allowedSourceTags: ['v*'],
     },
     {
       id: 'channel-2',
@@ -41,6 +45,10 @@ describe('ChannelsComponent', () => {
       description: '',
       sortOrder: 20,
       isDefault: false,
+      allowedVersionRanges: [],
+      allowedPrereleasePatterns: [],
+      allowedSourceBranches: [],
+      allowedSourceTags: [],
     },
   ];
   const applications = [{id: 'application-1', name: 'Payments'}] as Application[];
@@ -125,6 +133,10 @@ describe('ChannelsComponent', () => {
       description: 'Default production-ready channel',
       sortOrder: 10,
       isDefault: true,
+      allowedVersionRangesText: '>=1.0.0 <2.0.0\n>=3.0.0 <4.0.0',
+      allowedPrereleasePatternsText: 'rc.*',
+      allowedSourceBranchesText: 'main\nrelease/*',
+      allowedSourceTagsText: 'v*',
     });
     await (component as any).submitForm();
 
@@ -135,6 +147,10 @@ describe('ChannelsComponent', () => {
       description: 'Default production-ready channel',
       sortOrder: 10,
       isDefault: true,
+      allowedVersionRanges: ['>=1.0.0 <2.0.0', '>=3.0.0 <4.0.0'],
+      allowedPrereleasePatterns: ['rc.*'],
+      allowedSourceBranches: ['main', 'release/*'],
+      allowedSourceTags: ['v*'],
     });
   });
 
@@ -152,7 +168,22 @@ describe('ChannelsComponent', () => {
       description: '',
       sortOrder: 20,
       isDefault: false,
+      allowedVersionRanges: [],
+      allowedPrereleasePatterns: [],
+      allowedSourceBranches: [],
+      allowedSourceTags: [],
     });
+  });
+
+  it('loads channel rules into update form textareas', () => {
+    const {component} = createComponent();
+
+    (component as any).showUpdateDialog(channels[0]);
+
+    expect((component as any).channelForm.value.allowedVersionRangesText).toBe('>=1.0.0 <2.0.0');
+    expect((component as any).channelForm.value.allowedPrereleasePatternsText).toBe('rc.*');
+    expect((component as any).channelForm.value.allowedSourceBranchesText).toBe('main\nrelease/*');
+    expect((component as any).channelForm.value.allowedSourceTagsText).toBe('v*');
   });
 
   it('confirms before deleting channels', async () => {

@@ -32,6 +32,10 @@ describe('ChannelsService', () => {
           description: 'Default production-ready channel',
           sortOrder: 10,
           isDefault: true,
+          allowedVersionRanges: ['>=1.0.0 <2.0.0'],
+          allowedPrereleasePatterns: ['rc.*'],
+          allowedSourceBranches: ['main', 'release/*'],
+          allowedSourceTags: ['v*'],
         },
       ]);
     });
@@ -49,6 +53,10 @@ describe('ChannelsService', () => {
         description: 'Default production-ready channel',
         sortOrder: 10,
         isDefault: true,
+        allowedVersionRanges: ['>=1.0.0 <2.0.0'],
+        allowedPrereleasePatterns: ['rc.*'],
+        allowedSourceBranches: ['main', 'release/*'],
+        allowedSourceTags: ['v*'],
       },
     ]);
   });
@@ -61,6 +69,10 @@ describe('ChannelsService', () => {
       description: 'Default production-ready channel',
       sortOrder: 10,
       isDefault: true,
+      allowedVersionRanges: ['>=1.0.0 <2.0.0'],
+      allowedPrereleasePatterns: ['rc.*'],
+      allowedSourceBranches: ['main', 'release/*'],
+      allowedSourceTags: ['v*'],
     };
 
     service.create(request).subscribe();
@@ -79,5 +91,42 @@ describe('ChannelsService', () => {
     const deleteReq = http.expectOne('/api/v1/channels/channel-1');
     expect(deleteReq.request.method).toBe('DELETE');
     deleteReq.flush(null);
+  });
+
+  it('validates channel versions and sources', () => {
+    service
+      .validateVersion('channel-1', {
+        version: '1.2.3-rc.1',
+        sourceBranch: 'release/2026.06',
+      })
+      .subscribe((result) => {
+        expect(result).toEqual({
+          valid: false,
+          errors: [
+            {
+              field: 'version',
+              rule: '>=2.0.0 <3.0.0',
+              message: 'version does not match an allowed range',
+            },
+          ],
+        });
+      });
+
+    const req = http.expectOne('/api/v1/channels/channel-1/validate-version');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({
+      version: '1.2.3-rc.1',
+      sourceBranch: 'release/2026.06',
+    });
+    req.flush({
+      valid: false,
+      errors: [
+        {
+          field: 'version',
+          rule: '>=2.0.0 <3.0.0',
+          message: 'version does not match an allowed range',
+        },
+      ],
+    });
   });
 });

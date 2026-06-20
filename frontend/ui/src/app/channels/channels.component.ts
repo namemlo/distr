@@ -67,6 +67,10 @@ export class ChannelsComponent {
     description: this.fb.control(''),
     sortOrder: this.fb.control(0, [Validators.required, Validators.min(0)]),
     isDefault: this.fb.control(false),
+    allowedVersionRangesText: this.fb.control(''),
+    allowedPrereleasePatternsText: this.fb.control(''),
+    allowedSourceBranchesText: this.fb.control(''),
+    allowedSourceTagsText: this.fb.control(''),
   });
 
   protected readonly filteredChannels = signal<Channel[]>([]);
@@ -113,6 +117,10 @@ export class ChannelsComponent {
       description: '',
       sortOrder: this.nextSortOrder(),
       isDefault: false,
+      allowedVersionRangesText: '',
+      allowedPrereleasePatternsText: '',
+      allowedSourceBranchesText: '',
+      allowedSourceTagsText: '',
     });
     this.modalRef = this.overlay.showModal(this.channelDialog());
   }
@@ -127,6 +135,10 @@ export class ChannelsComponent {
       description: channel.description,
       sortOrder: channel.sortOrder,
       isDefault: channel.isDefault,
+      allowedVersionRangesText: this.ruleListToText(channel.allowedVersionRanges),
+      allowedPrereleasePatternsText: this.ruleListToText(channel.allowedPrereleasePatterns),
+      allowedSourceBranchesText: this.ruleListToText(channel.allowedSourceBranches),
+      allowedSourceTagsText: this.ruleListToText(channel.allowedSourceTags),
     });
     this.modalRef = this.overlay.showModal(this.channelDialog());
   }
@@ -154,6 +166,10 @@ export class ChannelsComponent {
         description: value.description,
         sortOrder: value.sortOrder,
         isDefault: value.isDefault,
+        allowedVersionRanges: this.ruleListFromText(value.allowedVersionRangesText),
+        allowedPrereleasePatterns: this.ruleListFromText(value.allowedPrereleasePatternsText),
+        allowedSourceBranches: this.ruleListFromText(value.allowedSourceBranchesText),
+        allowedSourceTags: this.ruleListFromText(value.allowedSourceTagsText),
       };
       if (value.id) {
         await firstValueFrom(this.channelsService.update(value.id, request));
@@ -227,5 +243,16 @@ export class ChannelsComponent {
   private nextSortOrder(): number {
     const maxSortOrder = Math.max(0, ...this.channels().map((channel) => channel.sortOrder));
     return maxSortOrder + 10;
+  }
+
+  private ruleListFromText(value: string): string[] {
+    return value
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
+  private ruleListToText(values: string[]): string {
+    return values.join('\n');
   }
 }
