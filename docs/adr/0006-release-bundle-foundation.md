@@ -37,6 +37,10 @@ Application-version components must reference an application version that belong
 
 Canonical serialization is computed in a pure `internal/releasebundles` package. Components are ordered by key before JSON serialization, and the SHA-256 checksum is stored as `sha256:<hex>`. IDs, timestamps, and database row order are excluded from the canonical payload.
 
+The canonical payload is stored as exact bytes, not database-normalized JSON, so the persisted payload remains the byte sequence that produced the stored checksum.
+
+Release Bundles also store a database-enforced Channel/Application/Organization reference. A Channel used by a Release Bundle cannot later be moved to another application and leave the bundle with an invalid application/channel pairing.
+
 The API is guarded by the `release_bundles` experimental feature flag.
 
 ## Consequences
@@ -46,5 +50,6 @@ The API is guarded by the `release_bundles` experimental feature flag.
 - Duplicate component keys within one bundle are rejected.
 - Draft bundles can be created, read, updated, and deleted.
 - Non-draft rows cannot be updated or deleted through PR-006 APIs.
+- Referenced Channels cannot move across applications while a Release Bundle uses them.
 - Existing application, channel, deployment target, deployment, release-name, and agent behavior is unchanged.
 - PR-006 does not add Release UI, publish/validate/block/archive endpoints, CI APIs, promotion, deployment planning, approval, retention, execution, or agent behavior.

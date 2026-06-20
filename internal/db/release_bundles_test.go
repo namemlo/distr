@@ -13,6 +13,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -48,6 +49,10 @@ func TestReleaseBundleRepositoryDraftCRUDAndChecksum(t *testing.T) {
 	fetched, err := db.GetReleaseBundle(ctx, bundle.ID, orgID)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(fetched.Components[0].Version).To(Equal("1.2.4"))
+	expectedPayload, expectedChecksum, err := releasebundles.Canonicalize(*fetched)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.CanonicalPayload).To(Equal(expectedPayload))
+	g.Expect(fetched.CanonicalChecksum).To(Equal(expectedChecksum))
 
 	g.Expect(db.DeleteReleaseBundleWithID(ctx, bundle.ID, orgID)).To(Succeed())
 	_, err = db.GetReleaseBundle(ctx, bundle.ID, orgID)
@@ -161,6 +166,40 @@ func TestReleaseBundleRepositoryRejectsMutatingNonDraftBundles(t *testing.T) {
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
 }
 
+func TestReleaseBundleRepositoryPreventsMovingReferencedChannelAcrossApplications(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, sourceApplicationID, sourceChannelID, versionID := createReleaseBundleDependencies(t, ctx)
+	targetApplicationID, _, _ := createReleaseBundleDependenciesForOrganization(t, ctx, orgID)
+
+	sourceChannel, err := db.GetChannel(ctx, sourceChannelID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	preview := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  sourceApplicationID,
+		LifecycleID:    sourceChannel.LifecycleID,
+		Name:           "Preview",
+		SortOrder:      10,
+	}
+	g.Expect(db.CreateChannel(ctx, &preview)).To(Succeed())
+	g.Expect(preview.IsDefault).To(BeFalse())
+
+	bundle := releaseBundleFixture(orgID, sourceApplicationID, preview.ID, versionID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	preview.ApplicationID = targetApplicationID
+	err = db.UpdateChannel(ctx, &preview)
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	unchanged, err := db.GetChannel(ctx, preview.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(unchanged.ApplicationID).To(Equal(sourceApplicationID))
+	fetched, err := db.GetReleaseBundle(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.ApplicationID).To(Equal(sourceApplicationID))
+	g.Expect(fetched.ChannelID).To(Equal(preview.ID))
+}
+
 func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g := NewWithT(t)
 
@@ -171,9 +210,13 @@ func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE ReleaseBundle"))
 	g.Expect(sql).To(ContainSubstring("organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE"))
 	g.Expect(sql).To(ContainSubstring("application_id UUID NOT NULL REFERENCES Application(id) ON DELETE RESTRICT"))
-	g.Expect(sql).To(ContainSubstring("channel_id UUID NOT NULL REFERENCES Channel(id) ON DELETE RESTRICT"))
+	g.Expect(sql).To(ContainSubstring("channel_id UUID NOT NULL"))
 	g.Expect(sql).To(ContainSubstring("releasebundle_organization_application_number_unique"))
 	g.Expect(sql).To(ContainSubstring("canonical_checksum TEXT NOT NULL"))
+	g.Expect(sql).To(ContainSubstring("canonical_payload BYTEA NOT NULL"))
+	g.Expect(sql).To(ContainSubstring("channel_id_application_organization_unique"))
+	g.Expect(sql).To(ContainSubstring("releasebundle_channel_application_organization_fk"))
+	g.Expect(sql).To(ContainSubstring("FOREIGN KEY (channel_id, application_id, organization_id)"))
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE ReleaseBundleComponent"))
 	g.Expect(sql).To(ContainSubstring("releasebundlecomponent_bundle_key_unique"))
 
@@ -181,6 +224,7 @@ func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundleComponent"))
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundle"))
+	g.Expect(string(down)).To(ContainSubstring("DROP CONSTRAINT IF EXISTS channel_id_application_organization_unique"))
 }
 
 //nolint:dupl

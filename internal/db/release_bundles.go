@@ -81,7 +81,7 @@ func CreateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				@sourceRevision,
 				@status,
 				@canonicalChecksum,
-				@canonicalPayload::jsonb
+				@canonicalPayload
 			) RETURNING `+releaseBundleOutputExpr,
 			pgx.NamedArgs{
 				"organizationId":    bundle.OrganizationID,
@@ -92,7 +92,7 @@ func CreateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				"sourceRevision":    bundle.SourceRevision,
 				"status":            bundle.Status,
 				"canonicalChecksum": bundle.CanonicalChecksum,
-				"canonicalPayload":  string(bundle.CanonicalPayload),
+				"canonicalPayload":  bundle.CanonicalPayload,
 			},
 		)
 		if err != nil {
@@ -199,7 +199,7 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				release_notes = @releaseNotes,
 				source_revision = @sourceRevision,
 				canonical_checksum = @canonicalChecksum,
-				canonical_payload = @canonicalPayload::jsonb,
+				canonical_payload = @canonicalPayload,
 				updated_at = now()
 			WHERE rb.id = @id AND rb.organization_id = @organizationId
 			RETURNING `+releaseBundleOutputExpr,
@@ -212,7 +212,7 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				"releaseNotes":      bundle.ReleaseNotes,
 				"sourceRevision":    bundle.SourceRevision,
 				"canonicalChecksum": bundle.CanonicalChecksum,
-				"canonicalPayload":  string(bundle.CanonicalPayload),
+				"canonicalPayload":  bundle.CanonicalPayload,
 			},
 		)
 		if err != nil {

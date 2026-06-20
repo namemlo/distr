@@ -4,15 +4,25 @@ CREATE TABLE ReleaseBundle (
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
     application_id UUID NOT NULL REFERENCES Application(id) ON DELETE RESTRICT,
-    channel_id UUID NOT NULL REFERENCES Channel(id) ON DELETE RESTRICT,
+    channel_id UUID NOT NULL,
     release_number TEXT NOT NULL,
     release_notes TEXT NOT NULL DEFAULT '',
     source_revision TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'VALIDATING', 'PUBLISHED', 'BLOCKED', 'ARCHIVED')),
     canonical_checksum TEXT NOT NULL,
-    canonical_payload JSONB NOT NULL,
+    canonical_payload BYTEA NOT NULL,
     CONSTRAINT releasebundle_organization_application_number_unique UNIQUE (organization_id, application_id, release_number)
 );
+
+ALTER TABLE Channel
+    ADD CONSTRAINT channel_id_application_organization_unique UNIQUE (id, application_id, organization_id);
+
+ALTER TABLE ReleaseBundle
+    ADD CONSTRAINT releasebundle_channel_application_organization_fk
+    FOREIGN KEY (channel_id, application_id, organization_id)
+    REFERENCES Channel(id, application_id, organization_id)
+    ON UPDATE RESTRICT
+    ON DELETE RESTRICT;
 
 CREATE INDEX releasebundle_organization_application_idx ON ReleaseBundle (organization_id, application_id);
 CREATE INDEX releasebundle_channel_idx ON ReleaseBundle (channel_id);

@@ -72,6 +72,7 @@ References:
 
 - Organization references cascade on organization delete.
 - Application, Channel, Application Version, and child Release Bundle references are restricted while Release Bundles use them.
+- Release Bundles store a database-enforced Channel/Application/Organization reference, so a Channel already used by a Release Bundle cannot later move to a different application and invalidate that pairing.
 
 ## API
 
@@ -122,7 +123,7 @@ Validation:
 
 The canonical payload excludes database row IDs, timestamps, and component row order. Components are sorted by key before JSON serialization. The stored checksum is `sha256:<hex>`.
 
-Changing semantic content, such as a component version, changes the checksum. Reordering the same components does not.
+Changing semantic content, such as a component version, changes the checksum. Reordering the same components does not. The canonical payload is stored as exact bytes so the persisted payload round-trips with the stored checksum.
 
 ## Compatibility
 

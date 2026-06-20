@@ -411,8 +411,13 @@ func defaultChannelExists(ctx context.Context, orgID, applicationID, exceptID uu
 
 func mapChannelWriteError(action string, err error) error {
 	var pgError *pgconn.PgError
-	if errors.As(err, &pgError) && pgError.Code == pgerrcode.UniqueViolation {
-		return fmt.Errorf("could not %s Channel: %w", action, apierrors.ErrAlreadyExists)
+	if errors.As(err, &pgError) {
+		switch pgError.Code {
+		case pgerrcode.UniqueViolation:
+			return fmt.Errorf("could not %s Channel: %w", action, apierrors.ErrAlreadyExists)
+		case pgerrcode.ForeignKeyViolation:
+			return fmt.Errorf("could not %s Channel: %w", action, apierrors.ErrConflict)
+		}
 	}
 	return fmt.Errorf("could not %s Channel: %w", action, err)
 }
