@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-010 are implemented locally. PR-010 adds a read-only lifecycle eligibility explanation API for published Release Bundles without adding lifecycle promotion, deployment planning, execution, UI workflow, or agent behavior.
+PR-000 through PR-011 are implemented locally. PR-011 adds the feature-flagged Deployment Process schema and backend API foundation without adding process editor UI, Release Bundle process links, deployment planning, execution, approvals, or agent behavior.
 
 ## Tracking Template
 
@@ -193,3 +193,18 @@ Use one entry per pull request:
 - Tests: Focused lifecycle, mapping, handler, repository, and live PostgreSQL tests were added.
 - Upstream contribution notes: Community-neutral lifecycle eligibility explanation; no adopter-specific release, promotion, or deployment behavior.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, deployment target, deployment, release-name, and agent behavior is unchanged. No promotion execution, deployment planning, approval, retention, notification, UI workflow, or agent behavior is added in PR-010.
+
+### PR-011 - Deployment Process schema
+
+- Status: Implemented locally; backend, API, repository, migration, mapping, handler, and live PostgreSQL verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=deployment_processes`.
+- User-facing behavior: Feature-flagged API callers can manage organization/application-scoped Deployment Processes and append immutable revisions with ordered steps and validated dependencies.
+- Database changes: Added `DeploymentProcess`, `DeploymentProcessRevision`, `DeploymentProcessStep`, `DeploymentProcessStepDependency`, `DeploymentProcessStepChannel`, and `DeploymentProcessStepEnvironment` tables with process-name uniqueness per organization/application, unique step keys/orders per revision, and scoped step Channel/Environment references.
+- API changes: Added feature-flagged CRUD endpoints under `/api/v1/deployment-processes` plus revision list/create/get endpoints under `/api/v1/deployment-processes/{deploymentProcessId}/revisions`.
+- UI changes: None. Process editor UI remains PR-012.
+- Agent protocol changes: None.
+- Documentation: Added PR-011 notes and ADR-0011.
+- Tests: API validation, mapping, handler, live PostgreSQL repository and handler integration, and migration checks were added.
+- Upstream contribution notes: Community-neutral Deployment Process schema; no adopter-specific action types, providers, or business logic.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, deployment target, deployment, release-name, and agent behavior is unchanged. No Step Template API, Release Bundle process snapshot/link, variable, deployment planning, approval, retention, execution, notification, UI workflow, or agent behavior is added in PR-011.
