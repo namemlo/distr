@@ -1,0 +1,532 @@
+<section class="bg-gray-50 dark:bg-gray-900 p-3 sm:p-5 antialiased">
+  <div class="mx-auto max-w-screen-2xl px-4 lg:px-12">
+    <div class="bg-white dark:bg-gray-800 relative shadow-md sm:rounded-lg overflow-hidden">
+      <div
+        class="flex flex-col md:flex-row items-stretch md:items-center md:space-x-3 space-y-3 md:space-y-0 justify-between mx-4 py-4 dark:border-gray-700">
+        <div class="w-full md:w-1/2">
+          <form class="flex items-center" [formGroup]="filterForm">
+            <label for="release-bundle-search" class="sr-only">Search</label>
+            <div class="relative w-full">
+              <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <fa-icon [icon]="faMagnifyingGlass" class="text-gray-500 dark:text-gray-400" />
+              </div>
+              <input
+                type="text"
+                id="release-bundle-search"
+                placeholder="Filter release bundles"
+                [formControl]="filterForm.controls.search"
+                autotrim
+                class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full pl-10 p-2 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" />
+            </div>
+          </form>
+        </div>
+        <div
+          class="w-full md:w-auto flex flex-col md:flex-row items-stretch md:items-center justify-end gap-4 flex-shrink-0 flex-grow">
+          <button
+            (click)="showCreateDialog()"
+            [disabled]="applications().length === 0 || channels().length === 0"
+            type="button"
+            class="w-full md:w-auto flex items-center justify-center py-2 px-4 text-sm font-medium text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-primary-700 focus:z-10 focus:ring-4 focus:ring-gray-200 disabled:opacity-50 disabled:cursor-not-allowed dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700">
+            <fa-icon [icon]="faPlus" class="text-gray-500 dark:text-gray-400 mr-2" />
+            Create Release
+          </button>
+        </div>
+      </div>
+
+      @if (loading()) {
+        <div class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">Loading release bundles...</div>
+      } @else if (loadError(); as error) {
+        <div class="px-4 py-8 text-center">
+          <fa-icon [icon]="faTriangleExclamation" class="text-red-500 mr-2" />
+          <span class="text-gray-700 dark:text-gray-300">{{ error }}</span>
+          <button type="button" (click)="load()" class="ml-3 distr-btn-secondary px-3 py-2">
+            <fa-icon [icon]="faRotateRight" class="mr-2" />
+            Retry
+          </button>
+        </div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="distr-table">
+            <thead class="distr-table-head">
+              <tr>
+                <th scope="col" class="p-4">Release</th>
+                <th scope="col" class="p-4">Application</th>
+                <th scope="col" class="p-4">Channel</th>
+                <th scope="col" class="p-4">Status</th>
+                <th scope="col" class="p-4">Components</th>
+                <th scope="col" class="p-4">Checksum</th>
+                <th scope="col" class="p-4"></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (bundle of filteredReleaseBundles(); track bundle.id) {
+                <tr class="distr-table-row">
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    <div class="flex items-start gap-3">
+                      <fa-icon [icon]="faBoxesStacked" class="mt-0.5 text-gray-400" />
+                      <div>
+                        <div>{{ bundle.releaseNumber }}</div>
+                        @if (bundle.releaseNotes) {
+                          <div class="text-xs text-gray-500 dark:text-gray-400 whitespace-normal">
+                            {{ bundle.releaseNotes }}
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    {{ applicationName(bundle.applicationId) }}
+                  </td>
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    {{ channelName(bundle.channelId) }}
+                  </td>
+                  <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="px-2 py-1 rounded text-xs font-semibold" [class]="statusClass(bundle.status)">
+                      {{ bundle.status }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    {{ bundle.components.length | number }}
+                  </td>
+                  <td class="px-4 py-3 text-xs font-mono text-gray-600 dark:text-gray-300">
+                    {{ bundle.canonicalChecksum }}
+                  </td>
+                  <td
+                    class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white flex justify-end space-x-2">
+                    <button
+                      type="button"
+                      (click)="showDetailDialog(bundle)"
+                      [disabled]="actionLoading() !== undefined"
+                      class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                      title="View">
+                      <fa-icon [icon]="faEye" />
+                    </button>
+                    @if (canEdit(bundle)) {
+                      <button
+                        type="button"
+                        (click)="showUpdateDialog(bundle)"
+                        [disabled]="actionLoading() !== undefined"
+                        class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                        title="Edit">
+                        <fa-icon [icon]="faEdit" />
+                      </button>
+                    }
+                    @if (canPublish(bundle)) {
+                      <button
+                        type="button"
+                        (click)="publish(bundle)"
+                        [disabled]="actionLoading() !== undefined"
+                        class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                        title="Publish">
+                        <fa-icon [icon]="faRocket" />
+                      </button>
+                    }
+                    @if (canBlock(bundle)) {
+                      <button
+                        type="button"
+                        (click)="block(bundle)"
+                        [disabled]="actionLoading() !== undefined"
+                        class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                        title="Block">
+                        <fa-icon [icon]="faBan" />
+                      </button>
+                    }
+                    @if (canArchive(bundle)) {
+                      <button
+                        type="button"
+                        (click)="archive(bundle)"
+                        [disabled]="actionLoading() !== undefined"
+                        class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                        title="Archive">
+                        <fa-icon [icon]="faBoxArchive" />
+                      </button>
+                    }
+                    @if (canEdit(bundle)) {
+                      <button
+                        type="button"
+                        (click)="delete(bundle)"
+                        [disabled]="actionLoading() !== undefined"
+                        class="py-2 px-3 flex items-center text-sm font-medium text-center text-red-700 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 focus:z-10 focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-red-500 dark:border-gray-600 dark:hover:bg-gray-700"
+                        title="Delete">
+                        <fa-icon [icon]="faTrash" />
+                      </button>
+                    }
+                  </td>
+                </tr>
+                @if (validationResults()[bundle.id]; as result) {
+                  @if (!result.valid || result.warnings.length > 0) {
+                    <tr class="border-t border-gray-200 dark:border-gray-600">
+                      <td colspan="7" class="px-4 py-3 bg-gray-50 dark:bg-gray-900">
+                        <ng-container
+                          *ngTemplateOutlet="validationResultTemplate; context: {$implicit: result}"></ng-container>
+                      </td>
+                    </tr>
+                  }
+                }
+              } @empty {
+                <tr class="border-t border-gray-200 dark:border-gray-600">
+                  <td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                    No release bundles found.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</section>
+
+<ng-template #validationResultTemplate let-result>
+  <div class="space-y-2">
+    @for (issue of result.errors; track issue.field + issue.rule + issue.message) {
+      <div class="text-sm text-red-700 dark:text-red-400">
+        <span class="font-semibold">{{ issue.field }}</span>
+        <span> {{ issue.message }}</span>
+        @if (issue.rule) {
+          <span class="text-xs text-red-500">({{ issue.rule }})</span>
+        }
+      </div>
+    }
+    @for (issue of result.warnings; track issue.field + issue.rule + issue.message) {
+      <div class="text-sm text-yellow-700 dark:text-yellow-300">
+        <span class="font-semibold">{{ issue.field }}</span>
+        <span> {{ issue.message }}</span>
+        @if (issue.rule) {
+          <span class="text-xs text-yellow-600">({{ issue.rule }})</span>
+        }
+      </div>
+    }
+  </div>
+</ng-template>
+
+<ng-template #releaseBundleDialog>
+  <div
+    animate.enter="animate-fly-in-top"
+    animate.leave="animate-fly-out-top"
+    class="p-4 w-full mt-12 max-h-full bg-white rounded-lg shadow-sm dark:bg-gray-900">
+    <div class="flex items-center justify-between p-4 md:p-5 border-b border-gray-200 rounded-t dark:border-gray-600">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+        @if (releaseBundleForm.value.id) {
+          Update Release
+        } @else {
+          New Release
+        }
+      </h2>
+      <button
+        type="button"
+        (click)="closeDialog()"
+        class="text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm w-8 h-8 ms-auto inline-flex justify-center items-center dark:hover:bg-gray-600 dark:hover:text-white">
+        <fa-icon [icon]="faXmark" />
+        <span class="sr-only">Close modal</span>
+      </button>
+    </div>
+    <div class="p-4 md:p-5">
+      <form class="space-y-5" (ngSubmit)="submitForm()" [formGroup]="releaseBundleForm">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <label for="release-application" class="distr-label">Application</label>
+            <select
+              id="release-application"
+              formControlName="applicationId"
+              (change)="onApplicationChanged()"
+              class="distr-input">
+              @for (application of applications(); track application.id) {
+                <option [value]="application.id">{{ application.name }}</option>
+              }
+            </select>
+          </div>
+          <div class="space-y-2">
+            <label for="release-channel" class="distr-label">Channel</label>
+            <select id="release-channel" formControlName="channelId" class="distr-input">
+              @for (
+                channel of channelsForApplication(releaseBundleForm.controls.applicationId.value);
+                track channel.id
+              ) {
+                <option [value]="channel.id">{{ channel.name }}</option>
+              }
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <label for="release-number" class="distr-label">Release Number</label>
+            <input
+              type="text"
+              id="release-number"
+              formControlName="releaseNumber"
+              autotrim
+              autocomplete="off"
+              placeholder="2026.06.21"
+              class="distr-input" />
+            @if (
+              releaseBundleForm.controls.releaseNumber.touched &&
+              releaseBundleForm.controls.releaseNumber.errors?.['required']
+            ) {
+              <span class="text-red-500 text-xs">Release number is required</span>
+            }
+          </div>
+          <div class="space-y-2">
+            <label for="release-source-revision" class="distr-label">Source Revision</label>
+            <input
+              type="text"
+              id="release-source-revision"
+              formControlName="sourceRevision"
+              autotrim
+              autocomplete="off"
+              placeholder="main@abc123"
+              class="distr-input" />
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <label for="release-notes" class="distr-label">Release Notes</label>
+          <textarea id="release-notes" formControlName="releaseNotes" rows="3" class="distr-input"></textarea>
+        </div>
+
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Components</h3>
+            <button type="button" (click)="addComponent()" class="distr-btn-secondary px-3 py-2 text-sm">
+              <fa-icon [icon]="faPlus" class="mr-2" />
+              Add Component
+            </button>
+          </div>
+
+          <div formArrayName="components" class="space-y-3">
+            @for (componentGroup of componentsArray.controls; track $index; let idx = $index) {
+              <div [formGroupName]="idx" class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-[10rem_1fr_1fr_auto] gap-4 items-start">
+                  <div class="space-y-2">
+                    <label [for]="'component-key-' + idx" class="distr-label">Key</label>
+                    <input
+                      [id]="'component-key-' + idx"
+                      type="text"
+                      formControlName="key"
+                      autotrim
+                      class="distr-input" />
+                  </div>
+                  <div class="space-y-2">
+                    <label [for]="'component-name-' + idx" class="distr-label">Name</label>
+                    <input
+                      [id]="'component-name-' + idx"
+                      type="text"
+                      formControlName="name"
+                      autotrim
+                      class="distr-input" />
+                  </div>
+                  <div class="space-y-2">
+                    <label [for]="'component-type-' + idx" class="distr-label">Type</label>
+                    <select [id]="'component-type-' + idx" formControlName="type" class="distr-input">
+                      @for (type of componentTypes; track type.value) {
+                        <option [value]="type.value">{{ type.label }}</option>
+                      }
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    (click)="removeComponent(idx)"
+                    [disabled]="componentsArray.length === 1"
+                    class="mt-7 py-2 px-3 flex items-center text-sm font-medium text-center text-red-700 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 focus:z-10 focus:ring-4 focus:ring-gray-200 disabled:opacity-50 disabled:cursor-not-allowed dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-red-500 dark:border-gray-600 dark:hover:bg-gray-700"
+                    title="Remove">
+                    <fa-icon [icon]="faTrash" />
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div class="space-y-2">
+                    <label [for]="'component-version-' + idx" class="distr-label">Version</label>
+                    <input
+                      [id]="'component-version-' + idx"
+                      type="text"
+                      formControlName="version"
+                      autotrim
+                      class="distr-input" />
+                  </div>
+                  @if (componentGroup.value.type === 'application_version') {
+                    <div class="space-y-2">
+                      <label [for]="'component-application-version-' + idx" class="distr-label">
+                        Application Version
+                      </label>
+                      <select
+                        [id]="'component-application-version-' + idx"
+                        formControlName="applicationVersionId"
+                        (change)="onApplicationVersionChanged(idx)"
+                        class="distr-input">
+                        @for (version of applicationVersionsForSelectedApplication(); track version.id) {
+                          <option [value]="version.id">{{ version.name }}</option>
+                        }
+                      </select>
+                    </div>
+                  }
+                  @if (componentGroup.value.type === 'child_release_bundle') {
+                    <div class="space-y-2">
+                      <label [for]="'component-child-bundle-' + idx" class="distr-label">Child Release</label>
+                      <select
+                        [id]="'component-child-bundle-' + idx"
+                        formControlName="childReleaseBundleId"
+                        class="distr-input">
+                        @for (bundle of childReleaseBundleOptions(); track bundle.id) {
+                          <option [value]="bundle.id">{{ bundle.releaseNumber }}</option>
+                        }
+                      </select>
+                    </div>
+                  }
+                </div>
+
+                @if (
+                  componentGroup.value.type !== 'application_version' &&
+                  componentGroup.value.type !== 'child_release_bundle'
+                ) {
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="space-y-2">
+                      <label [for]="'component-package-' + idx" class="distr-label">Package Ref</label>
+                      <input
+                        [id]="'component-package-' + idx"
+                        type="text"
+                        formControlName="packageRef"
+                        class="distr-input" />
+                    </div>
+                    <div class="space-y-2">
+                      <label [for]="'component-digest-' + idx" class="distr-label">Digest</label>
+                      <input
+                        [id]="'component-digest-' + idx"
+                        type="text"
+                        formControlName="digest"
+                        class="distr-input" />
+                    </div>
+                    <div class="space-y-2">
+                      <label [for]="'component-checksum-' + idx" class="distr-label">Checksum</label>
+                      <input
+                        [id]="'component-checksum-' + idx"
+                        type="text"
+                        formControlName="checksum"
+                        class="distr-input" />
+                    </div>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        </div>
+
+        <div class="flex justify-end">
+          <button
+            type="submit"
+            [disabled]="formLoading()"
+            class="text-white distr-btn-primary px-5 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed">
+            Submit
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</ng-template>
+
+<ng-template #detailDialog>
+  @if (selectedReleaseBundle(); as bundle) {
+    <div
+      animate.enter="animate-fly-in-top"
+      animate.leave="animate-fly-out-top"
+      class="p-4 w-full mt-12 max-h-full bg-white rounded-lg shadow-sm dark:bg-gray-900">
+      <div class="flex items-center justify-between p-4 md:p-5 border-b border-gray-200 rounded-t dark:border-gray-600">
+        <div>
+          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">{{ bundle.releaseNumber }}</h2>
+          <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {{ applicationName(bundle.applicationId) }} / {{ channelName(bundle.channelId) }}
+          </div>
+        </div>
+        <button
+          type="button"
+          (click)="closeDialog()"
+          class="text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm w-8 h-8 ms-auto inline-flex justify-center items-center dark:hover:bg-gray-600 dark:hover:text-white">
+          <fa-icon [icon]="faXmark" />
+          <span class="sr-only">Close modal</span>
+        </button>
+      </div>
+      <div class="p-4 md:p-5 space-y-5">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <div class="text-gray-500 dark:text-gray-400">Status</div>
+            <span
+              class="mt-1 inline-block px-2 py-1 rounded text-xs font-semibold"
+              [class]="statusClass(bundle.status)">
+              {{ bundle.status }}
+            </span>
+          </div>
+          <div>
+            <div class="text-gray-500 dark:text-gray-400">Created</div>
+            <div class="font-medium text-gray-900 dark:text-white">{{ bundle.createdAt | date: 'medium' }}</div>
+          </div>
+          <div>
+            <div class="text-gray-500 dark:text-gray-400">Published</div>
+            <div class="font-medium text-gray-900 dark:text-white">
+              @if (bundle.publishedAt) {
+                {{ bundle.publishedAt | date: 'medium' }}
+              } @else {
+                -
+              }
+            </div>
+          </div>
+          <div>
+            <div class="text-gray-500 dark:text-gray-400">Published By</div>
+            <div class="font-medium text-gray-900 dark:text-white">
+              {{ bundle.publishedByUserAccountId || '-' }}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-sm text-gray-500 dark:text-gray-400">Checksum</div>
+          <div class="font-mono text-xs text-gray-900 dark:text-white break-all">{{ bundle.canonicalChecksum }}</div>
+        </div>
+
+        @if (bundle.releaseNotes) {
+          <div>
+            <div class="text-sm text-gray-500 dark:text-gray-400">Release Notes</div>
+            <div class="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">{{ bundle.releaseNotes }}</div>
+          </div>
+        }
+
+        <div class="overflow-x-auto">
+          <table class="distr-table">
+            <thead class="distr-table-head">
+              <tr>
+                <th scope="col" class="p-4">Key</th>
+                <th scope="col" class="p-4">Type</th>
+                <th scope="col" class="p-4">Version</th>
+                <th scope="col" class="p-4">Reference</th>
+                <th scope="col" class="p-4">Digest / Checksum</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (component of bundle.components; track component.id) {
+                <tr class="distr-table-row">
+                  <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ component.key }}</td>
+                  <td class="px-4 py-3 text-gray-900 dark:text-white">{{ componentTypeLabel(component.type) }}</td>
+                  <td class="px-4 py-3 text-gray-900 dark:text-white">{{ component.version }}</td>
+                  <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                    {{
+                      component.applicationVersionId || component.childReleaseBundleId || component.packageRef || '-'
+                    }}
+                  </td>
+                  <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                    {{ component.digest || component.checksum || '-' }}
+                  </td>
+                </tr>
+              } @empty {
+                <tr class="border-t border-gray-200 dark:border-gray-600">
+                  <td colspan="5" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                    No components found.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  }
+</ng-template>

@@ -30,6 +30,7 @@ import {LifecyclesComponent} from './lifecycles/lifecycles.component';
 import {NotificationRecordsComponent} from './notification-records/notification-records.component';
 import {OrganizationBrandingComponent} from './organization-branding/organization-branding.component';
 import {OrganizationSettingsComponent} from './organization-settings/organization-settings.component';
+import {ReleaseBundlesComponent} from './release-bundles/release-bundles.component';
 import {CustomerSecretsPageComponent} from './secrets/customer-secrets-page.component';
 import {SecretsPage} from './secrets/secrets-page.component';
 import {AuthService} from './services/auth.service';
@@ -216,6 +217,18 @@ export const routes: Routes = [
           experimentalFeatureEnabledGuard('environments'),
           experimentalFeatureEnabledGuard('lifecycles'),
           experimentalFeatureEnabledGuard('channels'),
+        ],
+      },
+      {
+        path: 'release-bundles',
+        component: ReleaseBundlesComponent,
+        canActivate: [
+          requireVendor,
+          requiredRoleGuard('admin'),
+          experimentalFeatureEnabledGuard('environments'),
+          experimentalFeatureEnabledGuard('lifecycles'),
+          experimentalFeatureEnabledGuard('channels'),
+          experimentalFeatureEnabledGuard('release_bundles'),
         ],
       },
       {

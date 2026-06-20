@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-007 are implemented locally. PR-007 adds feature-flagged Release Bundle validation, publication, block/archive state changes, and audit events without adding Release UI, deployment planning, execution, or agent behavior.
+PR-000 through PR-008 are implemented locally. PR-008 adds the feature-flagged Release Bundle administration UI on top of the existing PR-006/PR-007 APIs without adding CI release APIs, deployment planning, execution, or agent behavior.
 
 ## Tracking Template
 
@@ -148,3 +148,18 @@ Use one entry per pull request:
 - Tests: API validation, release validation, mapping, handler, live PostgreSQL repository tests, migration checks, and focused Go tests were added.
 - Upstream contribution notes: Community-neutral validation and publication behavior; no adopter-specific component, registry, promotion, or deployment behavior.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No Release UI, CI release API, promotion, approval, retention, planning, execution, or agent behavior is added in PR-007.
+
+### PR-008 - Release UI
+
+- Status: Implemented locally; Angular route, service, component, tests, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=release_bundles`; the UI route/sidebar also require `environments`, `lifecycles`, and `channels`.
+- User-facing behavior: Vendor admins can list, create, edit, validate, publish, block, archive, delete, and inspect Release Bundles from a feature-flagged Release Bundles page.
+- Database changes: None.
+- API changes: None. The UI uses the existing PR-006/PR-007 Release Bundle endpoints.
+- UI changes: Added Release Bundles route, sidebar link, Angular service/types, list/detail views, draft editor, component editor, validation result display, and status-aware action confirmations.
+- Agent protocol changes: None.
+- Documentation: Added PR-008 notes and ADR-0008.
+- Tests: Angular service, component, and feature-flag tests were added.
+- Upstream contribution notes: Community-neutral Release Bundle UI; no adopter-specific terminology, provider logic, or Octopus UI/assets.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No CI release API, lifecycle eligibility, promotion, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-008.
