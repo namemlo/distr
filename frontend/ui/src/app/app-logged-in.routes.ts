@@ -20,6 +20,7 @@ import {PartnerOrganizationsComponent} from './components/partner-organizations/
 import {CustomerUsersComponent} from './components/users/customers/customer-users.component';
 import {PartnerUsersComponent} from './components/users/partners/partner-users.component';
 import {VendorUsersComponent} from './components/users/vendors/vendor-users.component';
+import {DeploymentProcessesComponent} from './deployment-processes/deployment-processes.component';
 import {DeploymentTargetDetailComponent} from './deployments/deployment-target-details/deployment-target-detail.component';
 import {DeploymentTargetsComponent} from './deployments/deployment-targets.component';
 import {EnvironmentsComponent} from './environments/environments.component';
@@ -229,6 +230,18 @@ export const routes: Routes = [
           experimentalFeatureEnabledGuard('lifecycles'),
           experimentalFeatureEnabledGuard('channels'),
           experimentalFeatureEnabledGuard('release_bundles'),
+        ],
+      },
+      {
+        path: 'deployment-processes',
+        component: DeploymentProcessesComponent,
+        canActivate: [
+          requireVendor,
+          requiredRoleGuard('admin'),
+          experimentalFeatureEnabledGuard('environments'),
+          experimentalFeatureEnabledGuard('lifecycles'),
+          experimentalFeatureEnabledGuard('channels'),
+          experimentalFeatureEnabledGuard('deployment_processes'),
         ],
       },
       {
