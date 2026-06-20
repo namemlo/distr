@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-006 are implemented locally. PR-006 adds the feature-flagged Release Bundle foundation without adding release publication, Release UI, deployment planning, execution, or agent behavior.
+PR-000 through PR-007 are implemented locally. PR-007 adds feature-flagged Release Bundle validation, publication, block/archive state changes, and audit events without adding Release UI, deployment planning, execution, or agent behavior.
 
 ## Tracking Template
 
@@ -133,3 +133,18 @@ Use one entry per pull request:
 - Tests: API validation, canonical checksum, mapping, handler, live PostgreSQL repository tests, migration checks, and focused Go tests were added.
 - Upstream contribution notes: Community-neutral Release Bundle foundation; no adopter-specific component or registry behavior.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No publication, validation service, promotion, approval, retention, planning, execution, or agent behavior is added in PR-006.
+
+### PR-007 - Release validation and publication
+
+- Status: Implemented locally; backend, API, repository, validation, migration, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=release_bundles`.
+- User-facing behavior: Feature-flagged API callers can validate draft Release Bundles, publish valid drafts, block published bundles, and archive published or blocked bundles.
+- Database changes: Added Release Bundle publication actor/time columns and append-only Release Bundle audit events for publish, block, archive, and rejected transitions.
+- API changes: Added feature-flagged `validate`, `publish`, `block`, and `archive` endpoints under `/api/v1/release-bundles/{releaseBundleId}`.
+- UI changes: None. Release Bundle UI remains PR-008.
+- Agent protocol changes: None.
+- Documentation: Added PR-007 notes and ADR-0007.
+- Tests: API validation, release validation, mapping, handler, live PostgreSQL repository tests, migration checks, and focused Go tests were added.
+- Upstream contribution notes: Community-neutral validation and publication behavior; no adopter-specific component, registry, promotion, or deployment behavior.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No Release UI, CI release API, promotion, approval, retention, planning, execution, or agent behavior is added in PR-007.

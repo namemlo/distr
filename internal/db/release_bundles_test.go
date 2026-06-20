@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 )
 
 func TestReleaseBundleRepositoryDraftCRUDAndChecksum(t *testing.T) {
@@ -166,6 +167,134 @@ func TestReleaseBundleRepositoryRejectsMutatingNonDraftBundles(t *testing.T) {
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
 }
 
+func TestReleaseBundleRepositoryValidatePublishAndProtectPublishedBundle(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	actorID := createReleaseBundleTestUser(t, ctx, orgID)
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	result, err := db.ValidateReleaseBundle(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+	g.Expect(published.Status).To(Equal(types.ReleaseBundleStatusPublished))
+	g.Expect(published.PublishedByUserAccountID).To(Equal(&actorID))
+	g.Expect(published.PublishedAt).NotTo(BeNil())
+	g.Expect(published.CanonicalChecksum).To(Equal(bundle.CanonicalChecksum))
+
+	published.ReleaseNotes = "Cannot edit after publish"
+	err = db.UpdateReleaseBundle(ctx, published)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	err = db.DeleteReleaseBundleWithID(ctx, published.ID, orgID)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+
+	events, err := db.GetReleaseBundleAuditEvents(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(events).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"OrganizationID":     Equal(orgID),
+		"ReleaseBundleID":    Equal(bundle.ID),
+		"ActorUserAccountID": Equal(&actorID),
+		"EventType":          Equal(types.ReleaseBundleAuditEventTypePublished),
+		"FromStatus":         Equal(types.ReleaseBundleStatusDraft),
+		"ToStatus":           Equal(releaseBundleStatusPtr(types.ReleaseBundleStatusPublished)),
+		"Reason":             Equal(""),
+	})))
+}
+
+func TestReleaseBundleRepositoryRejectsPublishWhenValidationFails(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID := createReleaseBundleTestOrganization(t, ctx)
+	applicationID, channelID, versionID := createReleaseBundleDependenciesForOrganizationWithRules(
+		t, ctx, orgID, []string{">=2.0.0 <3.0.0"}, nil, nil, nil,
+	)
+	actorID := createReleaseBundleTestUser(t, ctx, orgID)
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	published, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+
+	g.Expect(published).To(BeNil())
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+	g.Expect(result.Valid).To(BeFalse())
+	g.Expect(result.Errors).To(ContainElement(releasebundles.ValidationIssue{
+		Field:   "components.api.version",
+		Rule:    ">=2.0.0 <3.0.0",
+		Message: "version does not match an allowed range",
+	}))
+	fetched, err := db.GetReleaseBundle(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.Status).To(Equal(types.ReleaseBundleStatusDraft))
+	events, err := db.GetReleaseBundleAuditEvents(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(events).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"OrganizationID":     Equal(orgID),
+		"ReleaseBundleID":    Equal(bundle.ID),
+		"ActorUserAccountID": Equal(&actorID),
+		"EventType":          Equal(types.ReleaseBundleAuditEventTypeStateTransitionRejected),
+		"FromStatus":         Equal(types.ReleaseBundleStatusDraft),
+		"ToStatus":           Equal(releaseBundleStatusPtr(types.ReleaseBundleStatusPublished)),
+		"Reason":             Equal("validation failed"),
+	})))
+}
+
+func TestReleaseBundleRepositoryBlockArchiveAndRejectedTransitionAudits(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	actorID := createReleaseBundleTestUser(t, ctx, orgID)
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	_, _, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	blocked, err := db.BlockReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(blocked.Status).To(Equal(types.ReleaseBundleStatusBlocked))
+	_, err = db.BlockReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	archived, err := db.ArchiveReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(archived.Status).To(Equal(types.ReleaseBundleStatusArchived))
+
+	events, err := db.GetReleaseBundleAuditEvents(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(events).To(ContainElements(
+		MatchFields(IgnoreExtras, Fields{
+			"OrganizationID":     Equal(orgID),
+			"ReleaseBundleID":    Equal(bundle.ID),
+			"ActorUserAccountID": Equal(&actorID),
+			"EventType":          Equal(types.ReleaseBundleAuditEventTypeBlocked),
+			"FromStatus":         Equal(types.ReleaseBundleStatusPublished),
+			"ToStatus":           Equal(releaseBundleStatusPtr(types.ReleaseBundleStatusBlocked)),
+			"Reason":             Equal(""),
+		}),
+		MatchFields(IgnoreExtras, Fields{
+			"OrganizationID":     Equal(orgID),
+			"ReleaseBundleID":    Equal(bundle.ID),
+			"ActorUserAccountID": Equal(&actorID),
+			"EventType":          Equal(types.ReleaseBundleAuditEventTypeStateTransitionRejected),
+			"FromStatus":         Equal(types.ReleaseBundleStatusBlocked),
+			"ToStatus":           Equal(releaseBundleStatusPtr(types.ReleaseBundleStatusBlocked)),
+			"Reason":             Equal("release bundle cannot transition from BLOCKED to BLOCKED"),
+		}),
+		MatchFields(IgnoreExtras, Fields{
+			"OrganizationID":     Equal(orgID),
+			"ReleaseBundleID":    Equal(bundle.ID),
+			"ActorUserAccountID": Equal(&actorID),
+			"EventType":          Equal(types.ReleaseBundleAuditEventTypeArchived),
+			"FromStatus":         Equal(types.ReleaseBundleStatusBlocked),
+			"ToStatus":           Equal(releaseBundleStatusPtr(types.ReleaseBundleStatusArchived)),
+			"Reason":             Equal(""),
+		}),
+	))
+}
+
 func TestReleaseBundleRepositoryPreventsMovingReferencedChannelAcrossApplications(t *testing.T) {
 	ctx := releaseBundleDBTestContext(t)
 	g := NewWithT(t)
@@ -220,11 +349,26 @@ func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE ReleaseBundleComponent"))
 	g.Expect(sql).To(ContainSubstring("releasebundlecomponent_bundle_key_unique"))
 
+	up113, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "113_release_bundle_publication.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	publicationSQL := string(up113)
+	g.Expect(publicationSQL).To(ContainSubstring(
+		"published_by_user_account_id UUID REFERENCES UserAccount(id) ON DELETE SET NULL",
+	))
+	g.Expect(publicationSQL).To(ContainSubstring("published_at TIMESTAMP"))
+	g.Expect(publicationSQL).To(ContainSubstring("CREATE TABLE ReleaseBundleAuditEvent"))
+	g.Expect(publicationSQL).To(ContainSubstring("releasebundleauditevent_type_check"))
+
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "112_release_bundles.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundleComponent"))
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundle"))
 	g.Expect(string(down)).To(ContainSubstring("DROP CONSTRAINT IF EXISTS channel_id_application_organization_unique"))
+
+	down113, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "113_release_bundle_publication.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down113)).To(ContainSubstring("DROP TABLE IF EXISTS ReleaseBundleAuditEvent"))
+	g.Expect(string(down113)).To(ContainSubstring("DROP COLUMN published_by_user_account_id"))
 }
 
 //nolint:dupl
@@ -314,6 +458,19 @@ func createReleaseBundleDependenciesForOrganization(
 	orgID uuid.UUID,
 ) (uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
+	return createReleaseBundleDependenciesForOrganizationWithRules(t, ctx, orgID, nil, nil, nil, nil)
+}
+
+func createReleaseBundleDependenciesForOrganizationWithRules(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	ranges []string,
+	prereleasePatterns []string,
+	sourceBranchPatterns []string,
+	sourceTagPatterns []string,
+) (uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
 	application := types.Application{
 		Name: "Application " + uuid.NewString(),
 		Type: types.DeploymentTypeDocker,
@@ -339,16 +496,41 @@ func createReleaseBundleDependenciesForOrganization(
 		t.Fatalf("create lifecycle: %v", err)
 	}
 	channel := types.Channel{
-		OrganizationID: orgID,
-		ApplicationID:  application.ID,
-		LifecycleID:    lifecycleID,
-		Name:           "Stable",
-		IsDefault:      true,
+		OrganizationID:              orgID,
+		ApplicationID:               application.ID,
+		LifecycleID:                 lifecycleID,
+		Name:                        "Stable",
+		IsDefault:                   true,
+		AllowedVersionRanges:        ranges,
+		AllowedPrereleasePatterns:   prereleasePatterns,
+		AllowedSourceBranchPatterns: sourceBranchPatterns,
+		AllowedSourceTagPatterns:    sourceTagPatterns,
 	}
 	if err := db.CreateChannel(ctx, &channel); err != nil {
 		t.Fatalf("create channel: %v", err)
 	}
 	return application.ID, channel.ID, version.ID
+}
+
+func createReleaseBundleTestUser(t *testing.T, ctx context.Context, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var userID uuid.UUID
+	if err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`INSERT INTO UserAccount (email) VALUES (@email) RETURNING id`,
+		pgx.NamedArgs{"email": "release-bundle-" + uuid.NewString() + "@example.com"},
+	).Scan(&userID); err != nil {
+		t.Fatalf("create user account: %v", err)
+	}
+	if _, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Organization_UserAccount (organization_id, user_account_id, user_role)
+		VALUES (@organizationId, @userId, 'admin')`,
+		pgx.NamedArgs{"organizationId": orgID, "userId": userID},
+	); err != nil {
+		t.Fatalf("create organization user account: %v", err)
+	}
+	return userID
 }
 
 func createReleaseBundleTestOrganization(t *testing.T, ctx context.Context) uuid.UUID {
@@ -403,4 +585,8 @@ func markReleaseBundleStatusForTest(
 	); err != nil {
 		t.Fatalf("mark release bundle status: %v", err)
 	}
+}
+
+func releaseBundleStatusPtr(status types.ReleaseBundleStatus) *types.ReleaseBundleStatus {
+	return &status
 }

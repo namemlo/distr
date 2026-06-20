@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/channelrules"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
@@ -27,6 +28,8 @@ const (
 	rb.release_notes,
 	rb.source_revision,
 	rb.status,
+	rb.published_by_user_account_id,
+	rb.published_at,
 	rb.canonical_checksum,
 	rb.canonical_payload
 `
@@ -42,6 +45,17 @@ const (
 	rbc.digest,
 	rbc.checksum,
 	rbc.child_release_bundle_id
+`
+	releaseBundleAuditEventOutputExpr = `
+	rbae.id,
+	rbae.created_at,
+	rbae.organization_id,
+	rbae.release_bundle_id,
+	rbae.actor_user_account_id,
+	rbae.event_type,
+	rbae.from_status,
+	rbae.to_status,
+	rbae.reason
 `
 )
 
@@ -269,6 +283,150 @@ func DeleteReleaseBundleWithID(ctx context.Context, id, organizationID uuid.UUID
 	})
 }
 
+func ValidateReleaseBundle(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+) (releasebundles.ValidationResult, error) {
+	bundle, err := GetReleaseBundle(ctx, id, organizationID)
+	if err != nil {
+		return releasebundles.ValidationResult{}, err
+	}
+	return validateReleaseBundle(ctx, *bundle)
+}
+
+func PublishReleaseBundle(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+	actorUserAccountID uuid.UUID,
+) (*types.ReleaseBundle, releasebundles.ValidationResult, error) {
+	result := releasebundles.NewValidResult()
+	var published *types.ReleaseBundle
+	var operationErr error
+	err := RunTx(ctx, func(ctx context.Context) error {
+		bundle, err := getReleaseBundle(ctx, id, organizationID, true)
+		if err != nil {
+			return err
+		}
+		toStatus := types.ReleaseBundleStatusPublished
+		if bundle.Status != types.ReleaseBundleStatusDraft {
+			reason := releaseBundleTransitionRejectedReason(bundle.Status, toStatus)
+			if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+				*bundle,
+				actorUserAccountID,
+				types.ReleaseBundleAuditEventTypeStateTransitionRejected,
+				&toStatus,
+				reason,
+			)); err != nil {
+				return err
+			}
+			operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrConflict)
+			return nil
+		}
+		result, err = validateReleaseBundle(ctx, *bundle)
+		if err != nil {
+			return err
+		}
+		if !result.Valid {
+			if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+				*bundle,
+				actorUserAccountID,
+				types.ReleaseBundleAuditEventTypeStateTransitionRejected,
+				&toStatus,
+				"validation failed",
+			)); err != nil {
+				return err
+			}
+			operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrBadRequest)
+			return nil
+		}
+
+		updated, err := updateReleaseBundleStatus(ctx, bundle.ID, bundle.OrganizationID, toStatus, &actorUserAccountID)
+		if err != nil {
+			return err
+		}
+		if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+			*bundle,
+			actorUserAccountID,
+			types.ReleaseBundleAuditEventTypePublished,
+			&toStatus,
+			"",
+		)); err != nil {
+			return err
+		}
+		published = updated
+		return nil
+	})
+	if err != nil {
+		return published, result, err
+	}
+	return published, result, operationErr
+}
+
+func BlockReleaseBundle(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+	actorUserAccountID uuid.UUID,
+) (*types.ReleaseBundle, error) {
+	return transitionReleaseBundle(
+		ctx,
+		id,
+		organizationID,
+		actorUserAccountID,
+		types.ReleaseBundleStatusBlocked,
+		types.ReleaseBundleAuditEventTypeBlocked,
+		map[types.ReleaseBundleStatus]struct{}{types.ReleaseBundleStatusPublished: {}},
+	)
+}
+
+func ArchiveReleaseBundle(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+	actorUserAccountID uuid.UUID,
+) (*types.ReleaseBundle, error) {
+	return transitionReleaseBundle(
+		ctx,
+		id,
+		organizationID,
+		actorUserAccountID,
+		types.ReleaseBundleStatusArchived,
+		types.ReleaseBundleAuditEventTypeArchived,
+		map[types.ReleaseBundleStatus]struct{}{
+			types.ReleaseBundleStatusPublished: {},
+			types.ReleaseBundleStatusBlocked:   {},
+		},
+	)
+}
+
+func GetReleaseBundleAuditEvents(
+	ctx context.Context,
+	releaseBundleID uuid.UUID,
+	organizationID uuid.UUID,
+) ([]types.ReleaseBundleAuditEvent, error) {
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`SELECT `+releaseBundleAuditEventOutputExpr+`
+		FROM ReleaseBundleAuditEvent rbae
+		WHERE rbae.release_bundle_id = @releaseBundleId AND rbae.organization_id = @organizationId
+		ORDER BY rbae.created_at, rbae.id`,
+		pgx.NamedArgs{
+			"releaseBundleId": releaseBundleID,
+			"organizationId":  organizationID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query ReleaseBundleAuditEvent: %w", err)
+	}
+	events, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.ReleaseBundleAuditEvent])
+	if err != nil {
+		return nil, fmt.Errorf("could not collect ReleaseBundleAuditEvent: %w", err)
+	}
+	return events, nil
+}
+
 func getReleaseBundleComponents(
 	ctx context.Context,
 	releaseBundleID uuid.UUID,
@@ -289,6 +447,296 @@ func getReleaseBundleComponents(
 		return nil, fmt.Errorf("could not collect ReleaseBundleComponent: %w", err)
 	}
 	return components, nil
+}
+
+func validateReleaseBundle(ctx context.Context, bundle types.ReleaseBundle) (releasebundles.ValidationResult, error) {
+	result := releasebundles.ValidateBundleContent(bundle)
+	channel, err := getChannel(ctx, bundle.ChannelID, bundle.OrganizationID, false)
+	if errors.Is(err, apierrors.ErrNotFound) {
+		result.AddError("channelId", "exists", "release bundle channel does not exist in this organization")
+		return result, nil
+	} else if err != nil {
+		return releasebundles.ValidationResult{}, err
+	}
+
+	for _, component := range bundle.Components {
+		switch component.Type {
+		case types.ReleaseBundleComponentTypeApplicationVersion:
+			if err := validateApplicationVersionComponent(ctx, &result, bundle, component, *channel); err != nil {
+				return releasebundles.ValidationResult{}, err
+			}
+		case types.ReleaseBundleComponentTypeChildReleaseBundle:
+			if err := validateChildReleaseBundleComponent(ctx, &result, bundle, component); err != nil {
+				return releasebundles.ValidationResult{}, err
+			}
+		}
+	}
+	result.Valid = len(result.Errors) == 0
+	return result, nil
+}
+
+func validateApplicationVersionComponent(
+	ctx context.Context,
+	result *releasebundles.ValidationResult,
+	bundle types.ReleaseBundle,
+	component types.ReleaseBundleComponent,
+	channel types.Channel,
+) error {
+	fieldPrefix := "components." + component.Key
+	if component.ApplicationVersionID == nil {
+		result.AddError(
+			fieldPrefix+".applicationVersionId",
+			"required",
+			"application version component must reference an application version",
+		)
+		return nil
+	}
+
+	db := internalctx.GetDb(ctx)
+	var versionName string
+	err := db.QueryRow(ctx,
+		`SELECT av.name
+		FROM ApplicationVersion av
+		JOIN Application a ON a.id = av.application_id
+		WHERE av.id = @applicationVersionId
+			AND a.id = @applicationId
+			AND a.organization_id = @organizationId`,
+		pgx.NamedArgs{
+			"applicationVersionId": *component.ApplicationVersionID,
+			"applicationId":        bundle.ApplicationID,
+			"organizationId":       bundle.OrganizationID,
+		},
+	).Scan(&versionName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		result.AddError(
+			fieldPrefix+".applicationVersionId",
+			"organization",
+			"application version does not belong to this application and organization",
+		)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("could not validate ReleaseBundle application version component: %w", err)
+	}
+	if versionName != component.Version {
+		result.AddError(
+			fieldPrefix+".version",
+			"applicationVersion",
+			"component version must match the referenced application version",
+		)
+	}
+
+	channelResult, err := channelrules.Evaluate(
+		channelrules.Rules{
+			AllowedVersionRanges:        channel.AllowedVersionRanges,
+			AllowedPrereleasePatterns:   channel.AllowedPrereleasePatterns,
+			AllowedSourceBranchPatterns: channel.AllowedSourceBranchPatterns,
+			AllowedSourceTagPatterns:    channel.AllowedSourceTagPatterns,
+		},
+		channelrules.Input{Version: component.Version},
+	)
+	if err != nil {
+		return fmt.Errorf("could not validate ReleaseBundle channel rules: %w", err)
+	}
+	for _, issue := range channelResult.Issues {
+		result.AddError(fieldPrefix+"."+issue.Field, issue.Rule, issue.Message)
+	}
+	return nil
+}
+
+func validateChildReleaseBundleComponent(
+	ctx context.Context,
+	result *releasebundles.ValidationResult,
+	bundle types.ReleaseBundle,
+	component types.ReleaseBundleComponent,
+) error {
+	fieldPrefix := "components." + component.Key
+	if component.ChildReleaseBundleID == nil || *component.ChildReleaseBundleID == bundle.ID {
+		result.AddError(fieldPrefix+".childReleaseBundleId", "exists", "child release bundle reference is invalid")
+		return nil
+	}
+
+	db := internalctx.GetDb(ctx)
+	var childStatus types.ReleaseBundleStatus
+	err := db.QueryRow(ctx,
+		`SELECT status
+		FROM ReleaseBundle
+		WHERE id = @childReleaseBundleId AND organization_id = @organizationId`,
+		pgx.NamedArgs{
+			"childReleaseBundleId": *component.ChildReleaseBundleID,
+			"organizationId":       bundle.OrganizationID,
+		},
+	).Scan(&childStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		result.AddError(
+			fieldPrefix+".childReleaseBundleId",
+			"organization",
+			"child release bundle does not belong to this organization",
+		)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("could not validate child ReleaseBundle component: %w", err)
+	}
+	if childStatus != types.ReleaseBundleStatusPublished {
+		result.AddError(fieldPrefix+".childReleaseBundleId", "published", "child release bundle must be published")
+	}
+	return nil
+}
+
+func transitionReleaseBundle(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+	actorUserAccountID uuid.UUID,
+	toStatus types.ReleaseBundleStatus,
+	eventType types.ReleaseBundleAuditEventType,
+	allowedFrom map[types.ReleaseBundleStatus]struct{},
+) (*types.ReleaseBundle, error) {
+	var updated *types.ReleaseBundle
+	var operationErr error
+	err := RunTx(ctx, func(ctx context.Context) error {
+		bundle, err := getReleaseBundle(ctx, id, organizationID, true)
+		if err != nil {
+			return err
+		}
+		if _, ok := allowedFrom[bundle.Status]; !ok {
+			reason := releaseBundleTransitionRejectedReason(bundle.Status, toStatus)
+			if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+				*bundle,
+				actorUserAccountID,
+				types.ReleaseBundleAuditEventTypeStateTransitionRejected,
+				&toStatus,
+				reason,
+			)); err != nil {
+				return err
+			}
+			operationErr = fmt.Errorf("could not transition ReleaseBundle: %w", apierrors.ErrConflict)
+			return nil
+		}
+		updated, err = updateReleaseBundleStatus(ctx, bundle.ID, bundle.OrganizationID, toStatus, nil)
+		if err != nil {
+			return err
+		}
+		if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+			*bundle,
+			actorUserAccountID,
+			eventType,
+			&toStatus,
+			"",
+		)); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return updated, err
+	}
+	return updated, operationErr
+}
+
+func updateReleaseBundleStatus(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+	status types.ReleaseBundleStatus,
+	publishedByUserAccountID *uuid.UUID,
+) (*types.ReleaseBundle, error) {
+	publishedAssignments := ""
+	args := pgx.NamedArgs{
+		"id":             id,
+		"organizationId": organizationID,
+		"status":         status,
+	}
+	if publishedByUserAccountID != nil {
+		publishedAssignments = `,
+				published_by_user_account_id = @publishedByUserAccountId,
+				published_at = now()`
+		args["publishedByUserAccountId"] = *publishedByUserAccountID
+	}
+
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`UPDATE ReleaseBundle AS rb SET
+				status = @status,
+				updated_at = now()`+publishedAssignments+`
+			WHERE rb.id = @id AND rb.organization_id = @organizationId
+			RETURNING `+releaseBundleOutputExpr,
+		args,
+	)
+	if err != nil {
+		return nil, mapReleaseBundleWriteError("transition", err)
+	}
+	updated, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ReleaseBundle])
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	} else if err != nil {
+		return nil, mapReleaseBundleWriteError("scan transitioned", err)
+	}
+	updated.Components, err = getReleaseBundleComponents(ctx, updated.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func releaseBundleAuditEventForTransition(
+	bundle types.ReleaseBundle,
+	actorUserAccountID uuid.UUID,
+	eventType types.ReleaseBundleAuditEventType,
+	toStatus *types.ReleaseBundleStatus,
+	reason string,
+) types.ReleaseBundleAuditEvent {
+	return types.ReleaseBundleAuditEvent{
+		OrganizationID:     bundle.OrganizationID,
+		ReleaseBundleID:    bundle.ID,
+		ActorUserAccountID: &actorUserAccountID,
+		EventType:          eventType,
+		FromStatus:         bundle.Status,
+		ToStatus:           toStatus,
+		Reason:             reason,
+	}
+}
+
+func releaseBundleTransitionRejectedReason(
+	fromStatus types.ReleaseBundleStatus,
+	toStatus types.ReleaseBundleStatus,
+) string {
+	return fmt.Sprintf("release bundle cannot transition from %s to %s", fromStatus, toStatus)
+}
+
+func insertReleaseBundleAuditEvent(ctx context.Context, event types.ReleaseBundleAuditEvent) error {
+	db := internalctx.GetDb(ctx)
+	_, err := db.Exec(ctx,
+		`INSERT INTO ReleaseBundleAuditEvent (
+			organization_id,
+			release_bundle_id,
+			actor_user_account_id,
+			event_type,
+			from_status,
+			to_status,
+			reason
+		) VALUES (
+			@organizationId,
+			@releaseBundleId,
+			@actorUserAccountId,
+			@eventType,
+			@fromStatus,
+			@toStatus,
+			@reason
+		)`,
+		pgx.NamedArgs{
+			"organizationId":     event.OrganizationID,
+			"releaseBundleId":    event.ReleaseBundleID,
+			"actorUserAccountId": event.ActorUserAccountID,
+			"eventType":          event.EventType,
+			"fromStatus":         event.FromStatus,
+			"toStatus":           event.ToStatus,
+			"reason":             event.Reason,
+		},
+	)
+	if err != nil {
+		return mapReleaseBundleWriteError("insert audit event", err)
+	}
+	return nil
 }
 
 func insertReleaseBundleComponents(

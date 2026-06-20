@@ -131,17 +131,19 @@ func (r ReleaseBundleComponentRequest) validate() error {
 }
 
 type ReleaseBundle struct {
-	ID                uuid.UUID                 `json:"id"`
-	CreatedAt         time.Time                 `json:"createdAt"`
-	UpdatedAt         time.Time                 `json:"updatedAt"`
-	ApplicationID     uuid.UUID                 `json:"applicationId"`
-	ChannelID         uuid.UUID                 `json:"channelId"`
-	ReleaseNumber     string                    `json:"releaseNumber"`
-	ReleaseNotes      string                    `json:"releaseNotes"`
-	SourceRevision    string                    `json:"sourceRevision"`
-	Status            types.ReleaseBundleStatus `json:"status"`
-	CanonicalChecksum string                    `json:"canonicalChecksum"`
-	Components        []ReleaseBundleComponent  `json:"components"`
+	ID                       uuid.UUID                 `json:"id"`
+	CreatedAt                time.Time                 `json:"createdAt"`
+	UpdatedAt                time.Time                 `json:"updatedAt"`
+	ApplicationID            uuid.UUID                 `json:"applicationId"`
+	ChannelID                uuid.UUID                 `json:"channelId"`
+	ReleaseNumber            string                    `json:"releaseNumber"`
+	ReleaseNotes             string                    `json:"releaseNotes"`
+	SourceRevision           string                    `json:"sourceRevision"`
+	Status                   types.ReleaseBundleStatus `json:"status"`
+	PublishedByUserAccountID *uuid.UUID                `json:"publishedByUserAccountId,omitempty"`
+	PublishedAt              *time.Time                `json:"publishedAt,omitempty"`
+	CanonicalChecksum        string                    `json:"canonicalChecksum"`
+	Components               []ReleaseBundleComponent  `json:"components"`
 }
 
 type ReleaseBundleComponent struct {
@@ -156,4 +158,16 @@ type ReleaseBundleComponent struct {
 	Digest               string                           `json:"digest"`
 	Checksum             string                           `json:"checksum"`
 	ChildReleaseBundleID *uuid.UUID                       `json:"childReleaseBundleId,omitempty"`
+}
+
+type ReleaseBundleValidationResponse struct {
+	Valid    bool                           `json:"valid"`
+	Errors   []ReleaseBundleValidationIssue `json:"errors"`
+	Warnings []ReleaseBundleValidationIssue `json:"warnings"`
+}
+
+type ReleaseBundleValidationIssue struct {
+	Field   string `json:"field"`
+	Rule    string `json:"rule"`
+	Message string `json:"message"`
 }
