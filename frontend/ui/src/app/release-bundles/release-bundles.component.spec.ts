@@ -1,7 +1,7 @@
 import {HttpErrorResponse} from '@angular/common/http';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {Application} from '@distr-sh/distr-sdk';
-import {of, throwError} from 'rxjs';
+import {of, Subject, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {ApplicationsService} from '../services/applications.service';
 import {ChannelsService} from '../services/channels.service';
@@ -150,6 +150,20 @@ describe('ReleaseBundlesComponent', () => {
     expect((component as any).channelName('channel-1')).toBe('Stable');
   });
 
+  it('finishes loading when application list emits without completing', () => {
+    const applicationsSubject = new Subject<Application[]>();
+    applicationsService.list.mockReturnValue(applicationsSubject.asObservable());
+
+    const {component} = createComponent();
+
+    expect((component as any).loading()).toBe(true);
+    applicationsSubject.next(applications);
+
+    expect((component as any).applications()).toEqual(applications);
+    expect((component as any).releaseBundles()).toEqual(bundles);
+    expect((component as any).loading()).toBe(false);
+  });
+
   it('shows load errors', () => {
     releaseBundlesService.list.mockReturnValue(
       throwError(() => new HttpErrorResponse({status: 400, error: 'Could not load release bundles'}))
@@ -239,6 +253,16 @@ describe('ReleaseBundlesComponent', () => {
     expect((component as any).selectedReleaseBundle()).toEqual(bundles[1]);
     expect((component as any).isSelectedDraft()).toBe(false);
     expect(overlay.showModal).toHaveBeenCalled();
+  });
+
+  it('only offers published child release bundles and excludes the current bundle', () => {
+    const {component} = createComponent();
+
+    (component as any).showUpdateDialog(bundles[0]);
+
+    expect((component as any).childReleaseBundleOptions().map((bundle: ReleaseBundle) => bundle.id)).toEqual([
+      'bundle-2',
+    ]);
   });
 
   it('validates before publishing and requires confirmation', async () => {

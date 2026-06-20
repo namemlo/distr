@@ -18,7 +18,7 @@ import {
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
-import {filter, firstValueFrom, forkJoin, map, Observable, startWith} from 'rxjs';
+import {filter, firstValueFrom, forkJoin, map, Observable, startWith, take} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
 import {AutotrimDirective} from '../directives/autotrim.directive';
 import {ApplicationsService} from '../services/applications.service';
@@ -120,7 +120,7 @@ export class ReleaseBundlesComponent {
     this.loadError.set(undefined);
     forkJoin({
       releaseBundles: this.releaseBundlesService.list(),
-      applications: this.applicationsService.list(),
+      applications: this.applicationsService.list().pipe(take(1)),
       channels: this.channelsService.list(),
     }).subscribe({
       next: ({releaseBundles, applications, channels}) => {
@@ -355,6 +355,11 @@ export class ReleaseBundlesComponent {
         .find((application) => application.id === applicationId)
         ?.versions?.filter((version) => !version.archivedAt) ?? []
     );
+  }
+
+  protected childReleaseBundleOptions(): ReleaseBundle[] {
+    const currentBundleId = this.releaseBundleForm.controls.id.value;
+    return this.releaseBundles().filter((bundle) => bundle.status === 'PUBLISHED' && bundle.id !== currentBundleId);
   }
 
   protected isSelectedDraft(): boolean {
