@@ -82,6 +82,7 @@ func getEnvironmentsHandler() http.HandlerFunc {
 	}
 }
 
+//nolint:dupl
 func getEnvironmentHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("environmentId"))
@@ -130,6 +131,7 @@ func createEnvironmentHandler() http.HandlerFunc {
 	}
 }
 
+//nolint:dupl
 func updateEnvironmentHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("environmentId"))

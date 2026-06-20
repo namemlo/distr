@@ -180,6 +180,7 @@ func ApiRouter(
 					r.Route("/environments", handlers.EnvironmentsRouter)
 					r.Route("/experimental-feature-flags", handlers.ExperimentalFeatureFlagsRouter)
 					r.Route("/files", handlers.FileRouter)
+					r.Route("/lifecycles", handlers.LifecyclesRouter)
 					r.Route("/notification-records", handlers.NotificationRecordsRouter)
 					r.Route("/organization", handlers.OrganizationRouter)
 					r.Route("/organizations", handlers.OrganizationsRouter)

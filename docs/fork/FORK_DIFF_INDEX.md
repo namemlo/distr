@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-002 are implemented locally. PR-002 adds the feature-flagged Environment domain model without changing existing deployment target, deployment, or agent behavior.
+PR-000 through PR-003 are implemented locally. PR-003 adds the feature-flagged Lifecycle domain model and phase editor without changing existing deployment target, deployment, release, or agent behavior.
 
 ## Tracking Template
 
@@ -73,3 +73,18 @@ Use one entry per pull request:
 - Tests: `go test -p=1 ./...`, Angular `ng test --watch=false`, `pnpm run build:community`, hub community binary build, Docker agent build, Kubernetes agent build, direct migration validation, touched-file Prettier check, and diff-scoped Go lint passed. Full repo `pnpm lint` and full repo Go lint still report pre-existing formatting issues outside the PR-owned diff.
 - Upstream contribution notes: Community-neutral environment model; no adopter-specific logic.
 - Compatibility notes: Existing deployment targets, deployments, and agents are unchanged. No target-to-environment assignment is added in PR-002.
+
+### PR-003 - Lifecycle domain model
+
+- Status: Implemented locally; backend, frontend, migration, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=lifecycles`; the UI also requires `environments` so phase environments can be selected.
+- User-facing behavior: Admins can manage Lifecycles and ordered phases from a new feature-flagged Lifecycles page.
+- Database changes: Added organization-scoped `Lifecycle`, `LifecyclePhase`, and `LifecyclePhaseEnvironment` tables with unique lifecycle names per organization, unique phase names/orders per lifecycle, non-negative phase counters, and environment references.
+- API changes: Added feature-flagged CRUD endpoints under `/api/v1/lifecycles` plus phase list/replace endpoints under `/api/v1/lifecycles/{lifecycleId}/phases`.
+- UI changes: Added Lifecycles route, sidebar link, Angular service/types, and CRUD table/dialog UI with a dynamic phase editor.
+- Agent protocol changes: None.
+- Documentation: Added PR-003 notes and ADR-0003.
+- Tests: `go test ./api ./internal/mapping ./internal/handlers ./internal/lifecycle ./internal/db`, `go test -p=1 ./...`, Angular `ng test --watch=false`, `pnpm run build:community`, hub community binary build, Docker agent build, Kubernetes agent build, direct migration validation, touched-file Prettier check, and diff-scoped Go lint passed. Full repo `pnpm lint` and full repo Go lint still report pre-existing formatting issues outside the PR-owned diff.
+- Upstream contribution notes: Community-neutral lifecycle model; no adopter-specific logic.
+- Compatibility notes: Existing deployment targets, deployments, releases, and agents are unchanged. No channel link, release promotion, approval, retention, or deployment execution behavior is added in PR-003.
