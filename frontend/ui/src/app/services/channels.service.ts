@@ -1,7 +1,12 @@
 import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
-import {Channel, CreateUpdateChannelRequest} from '../types/channel';
+import {
+  Channel,
+  ChannelVersionValidationResponse,
+  CreateUpdateChannelRequest,
+  ValidateChannelVersionRequest,
+} from '../types/channel';
 
 const baseUrl = '/api/v1/channels';
 
@@ -29,5 +34,9 @@ export class ChannelsService {
 
   delete(id: string): Observable<void> {
     return this.httpClient.delete<void>(`${baseUrl}/${id}`);
+  }
+
+  validateVersion(id: string, request: ValidateChannelVersionRequest): Observable<ChannelVersionValidationResponse> {
+    return this.httpClient.post<ChannelVersionValidationResponse>(`${baseUrl}/${id}/validate-version`, request);
   }
 }

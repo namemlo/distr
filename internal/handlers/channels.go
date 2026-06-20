@@ -8,6 +8,7 @@ import (
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/auth"
+	"github.com/distr-sh/distr/internal/channelrules"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/featureflags"
@@ -41,6 +42,14 @@ func ChannelsRouter(r chiopenapi.Router) {
 				With(option.Description("Get a channel")).
 				With(option.Request(ChannelIDRequest{})).
 				With(option.Response(http.StatusOK, api.Channel{}))
+
+			r.Post("/validate-version", validateChannelVersionHandler()).
+				With(option.Description("Validate a version and optional source against channel rules")).
+				With(option.Request(struct {
+					ChannelIDRequest
+					api.ValidateChannelVersionRequest
+				}{})).
+				With(option.Response(http.StatusOK, api.ChannelVersionValidationResponse{}))
 
 			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).Group(func(r chiopenapi.Router) {
 				r.Put("/", updateChannelHandler()).
@@ -105,6 +114,53 @@ func getChannelHandler() http.HandlerFunc {
 		} else {
 			RespondJSON(w, mapping.ChannelToAPI(*channel))
 		}
+	}
+}
+
+//nolint:dupl
+func validateChannelVersionHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("channelId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		request, err := JsonBody[api.ValidateChannelVersionRequest](w, r)
+		if err != nil {
+			return
+		} else if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		channel, err := db.GetChannel(ctx, id, *auth.CurrentOrgID())
+		if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		} else if err != nil {
+			log.Error("failed to get channel for validation", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		result, err := channelrules.Evaluate(channelRulesFromChannel(*channel), channelrules.Input{
+			Version:      request.Version,
+			SourceBranch: request.SourceBranch,
+			SourceTag:    request.SourceTag,
+		})
+		if err != nil {
+			log.Error("failed to evaluate channel rules", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		RespondJSON(w, channelVersionValidationResponse(result))
 	}
 }
 
@@ -190,19 +246,53 @@ func deleteChannelHandler() http.HandlerFunc {
 }
 
 func channelFromCreateUpdateRequest(orgID uuid.UUID, request api.CreateUpdateChannelRequest) types.Channel {
+	rules, _ := channelrules.NormalizeRules(channelrules.Rules{
+		AllowedVersionRanges:        request.AllowedVersionRanges,
+		AllowedPrereleasePatterns:   request.AllowedPrereleasePatterns,
+		AllowedSourceBranchPatterns: request.AllowedSourceBranchPatterns,
+		AllowedSourceTagPatterns:    request.AllowedSourceTagPatterns,
+	})
 	return types.Channel{
-		OrganizationID: orgID,
-		ApplicationID:  request.ApplicationID,
-		LifecycleID:    request.LifecycleID,
-		Name:           strings.TrimSpace(request.Name),
-		Description:    request.Description,
-		SortOrder:      request.SortOrder,
-		IsDefault:      request.IsDefault,
+		OrganizationID:              orgID,
+		ApplicationID:               request.ApplicationID,
+		LifecycleID:                 request.LifecycleID,
+		Name:                        strings.TrimSpace(request.Name),
+		Description:                 request.Description,
+		SortOrder:                   request.SortOrder,
+		IsDefault:                   request.IsDefault,
+		AllowedVersionRanges:        rules.AllowedVersionRanges,
+		AllowedPrereleasePatterns:   rules.AllowedPrereleasePatterns,
+		AllowedSourceBranchPatterns: rules.AllowedSourceBranchPatterns,
+		AllowedSourceTagPatterns:    rules.AllowedSourceTagPatterns,
 	}
 }
 
 func channelResponses(channels []types.Channel) []api.Channel {
 	return mapping.List(channels, mapping.ChannelToAPI)
+}
+
+func channelRulesFromChannel(channel types.Channel) channelrules.Rules {
+	return channelrules.Rules{
+		AllowedVersionRanges:        channel.AllowedVersionRanges,
+		AllowedPrereleasePatterns:   channel.AllowedPrereleasePatterns,
+		AllowedSourceBranchPatterns: channel.AllowedSourceBranchPatterns,
+		AllowedSourceTagPatterns:    channel.AllowedSourceTagPatterns,
+	}
+}
+
+func channelVersionValidationResponse(result channelrules.Result) api.ChannelVersionValidationResponse {
+	errors := make([]api.ChannelValidationError, 0, len(result.Issues))
+	for _, issue := range result.Issues {
+		errors = append(errors, api.ChannelValidationError{
+			Field:   issue.Field,
+			Rule:    issue.Rule,
+			Message: issue.Message,
+		})
+	}
+	return api.ChannelVersionValidationResponse{
+		Valid:  result.Valid,
+		Errors: errors,
+	}
 }
 
 func handleChannelWriteError(w http.ResponseWriter, r *http.Request, log *zap.Logger, action string, err error) {

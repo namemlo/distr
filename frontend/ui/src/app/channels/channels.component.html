@@ -205,6 +205,45 @@
             placeholder="Default production-ready channel"></textarea>
         </div>
 
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <label for="channel-version-ranges" class="distr-label">Allowed Version Ranges</label>
+            <textarea
+              id="channel-version-ranges"
+              formControlName="allowedVersionRangesText"
+              rows="3"
+              class="distr-input"
+              placeholder=">=1.0.0 <2.0.0"></textarea>
+          </div>
+          <div class="space-y-2">
+            <label for="channel-prerelease-patterns" class="distr-label">Allowed Prerelease Patterns</label>
+            <textarea
+              id="channel-prerelease-patterns"
+              formControlName="allowedPrereleasePatternsText"
+              rows="3"
+              class="distr-input"
+              placeholder="rc.*"></textarea>
+          </div>
+          <div class="space-y-2">
+            <label for="channel-source-branches" class="distr-label">Allowed Source Branches</label>
+            <textarea
+              id="channel-source-branches"
+              formControlName="allowedSourceBranchesText"
+              rows="3"
+              class="distr-input"
+              placeholder="release/*"></textarea>
+          </div>
+          <div class="space-y-2">
+            <label for="channel-source-tags" class="distr-label">Allowed Source Tags</label>
+            <textarea
+              id="channel-source-tags"
+              formControlName="allowedSourceTagsText"
+              rows="3"
+              class="distr-input"
+              placeholder="v*"></textarea>
+          </div>
+        </div>
+
         <label class="flex items-center gap-3 text-sm text-gray-900 dark:text-white">
           <input type="checkbox" formControlName="isDefault" class="distr-checkbox" />
           Default channel

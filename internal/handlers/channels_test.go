@@ -10,6 +10,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/authjwt"
+	"github.com/distr-sh/distr/internal/channelrules"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/middleware"
@@ -19,6 +20,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const channelVersionRangeMessage = "version does not match an allowed range"
+
 func TestChannelFromCreateUpdateRequest(t *testing.T) {
 	g := NewWithT(t)
 	orgID := uuid.New()
@@ -26,22 +29,30 @@ func TestChannelFromCreateUpdateRequest(t *testing.T) {
 	lifecycleID := uuid.New()
 
 	channel := channelFromCreateUpdateRequest(orgID, api.CreateUpdateChannelRequest{
-		ApplicationID: applicationID,
-		LifecycleID:   lifecycleID,
-		Name:          " Stable ",
-		Description:   "Default production-ready channel",
-		SortOrder:     10,
-		IsDefault:     true,
+		ApplicationID:               applicationID,
+		LifecycleID:                 lifecycleID,
+		Name:                        " Stable ",
+		Description:                 "Default production-ready channel",
+		SortOrder:                   10,
+		IsDefault:                   true,
+		AllowedVersionRanges:        []string{" >=1.0.0 <2.0.0 "},
+		AllowedPrereleasePatterns:   []string{" rc.* "},
+		AllowedSourceBranchPatterns: []string{" release/* "},
+		AllowedSourceTagPatterns:    []string{" v* "},
 	})
 
 	g.Expect(channel).To(Equal(types.Channel{
-		OrganizationID: orgID,
-		ApplicationID:  applicationID,
-		LifecycleID:    lifecycleID,
-		Name:           "Stable",
-		Description:    "Default production-ready channel",
-		SortOrder:      10,
-		IsDefault:      true,
+		OrganizationID:              orgID,
+		ApplicationID:               applicationID,
+		LifecycleID:                 lifecycleID,
+		Name:                        "Stable",
+		Description:                 "Default production-ready channel",
+		SortOrder:                   10,
+		IsDefault:                   true,
+		AllowedVersionRanges:        []string{">=1.0.0 <2.0.0"},
+		AllowedPrereleasePatterns:   []string{"rc.*"},
+		AllowedSourceBranchPatterns: []string{"release/*"},
+		AllowedSourceTagPatterns:    []string{"v*"},
 	}))
 }
 
@@ -78,6 +89,16 @@ func TestCreateChannelHandlerRejectsInvalidPayloadsBeforeDatabaseAccess(t *testi
 			name: "negative sort order",
 			body: `{"applicationId":"` + applicationID.String() +
 				`","lifecycleId":"` + lifecycleID.String() + `","name":"Stable","sortOrder":-1}`,
+		},
+		{
+			name: "invalid version range",
+			body: `{"applicationId":"` + applicationID.String() +
+				`","lifecycleId":"` + lifecycleID.String() + `","name":"Stable","allowedVersionRanges":[">=>1.0.0"]}`,
+		},
+		{
+			name: "empty source branch pattern",
+			body: `{"applicationId":"` + applicationID.String() +
+				`","lifecycleId":"` + lifecycleID.String() + `","name":"Stable","allowedSourceBranches":[" "]}`,
 		},
 	}
 
@@ -119,6 +140,12 @@ func TestChannelHandlersRejectMalformedUUIDPathValues(t *testing.T) {
 			handler: deleteChannelHandler(),
 			method:  http.MethodDelete,
 		},
+		{
+			name:    "validate version",
+			handler: validateChannelVersionHandler(),
+			method:  http.MethodPost,
+			body:    `{"version":"1.2.3"}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -135,6 +162,50 @@ func TestChannelHandlersRejectMalformedUUIDPathValues(t *testing.T) {
 			g.Expect(recorder.Code).To(Equal(http.StatusNotFound))
 		})
 	}
+}
+
+func TestValidateChannelVersionHandlerRejectsInvalidPayloadBeforeDatabaseAccess(t *testing.T) {
+	g := NewWithT(t)
+	recorder := httptest.NewRecorder()
+	id := uuid.New()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/"+id.String()+"/validate-version",
+		strings.NewReader(`{"version":" "}`),
+	)
+	request.SetPathValue("channelId", id.String())
+	ctx := internalctx.WithLogger(request.Context(), zap.NewNop())
+	request = request.WithContext(auth.Authentication.NewContext(ctx, testChannelAuth()))
+
+	validateChannelVersionHandler().ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+}
+
+func TestChannelVersionValidationResponse(t *testing.T) {
+	g := NewWithT(t)
+
+	response := channelVersionValidationResponse(channelrules.Result{
+		Valid: false,
+		Issues: []channelrules.Issue{
+			{
+				Field:   "version",
+				Rule:    ">=1.0.0 <2.0.0",
+				Message: channelVersionRangeMessage,
+			},
+		},
+	})
+
+	g.Expect(response).To(Equal(api.ChannelVersionValidationResponse{
+		Valid: false,
+		Errors: []api.ChannelValidationError{
+			{
+				Field:   "version",
+				Rule:    ">=1.0.0 <2.0.0",
+				Message: channelVersionRangeMessage,
+			},
+		},
+	}))
 }
 
 func TestHandleChannelWriteError(t *testing.T) {

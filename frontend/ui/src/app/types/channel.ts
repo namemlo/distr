@@ -8,6 +8,10 @@ export interface Channel {
   description: string;
   sortOrder: number;
   isDefault: boolean;
+  allowedVersionRanges: string[];
+  allowedPrereleasePatterns: string[];
+  allowedSourceBranches: string[];
+  allowedSourceTags: string[];
 }
 
 export interface CreateUpdateChannelRequest {
@@ -17,4 +21,25 @@ export interface CreateUpdateChannelRequest {
   description: string;
   sortOrder: number;
   isDefault: boolean;
+  allowedVersionRanges: string[];
+  allowedPrereleasePatterns: string[];
+  allowedSourceBranches: string[];
+  allowedSourceTags: string[];
+}
+
+export interface ValidateChannelVersionRequest {
+  version: string;
+  sourceBranch?: string;
+  sourceTag?: string;
+}
+
+export interface ChannelValidationError {
+  field: string;
+  rule: string;
+  message: string;
+}
+
+export interface ChannelVersionValidationResponse {
+  valid: boolean;
+  errors: ChannelValidationError[];
 }

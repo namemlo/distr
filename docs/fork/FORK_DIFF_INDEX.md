@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-004 are implemented locally. PR-004 adds the feature-flagged Channel domain model and admin UI without changing existing Environment, Lifecycle, deployment target, deployment, release, or agent behavior.
+PR-000 through PR-005 are implemented locally. PR-005 adds the feature-flagged SemVer and source-rule engine for Channels without changing existing Environment, Lifecycle, deployment target, deployment, release, or agent behavior.
 
 ## Tracking Template
 
@@ -103,3 +103,18 @@ Use one entry per pull request:
 - Tests: `go test ./api ./internal/mapping ./internal/handlers ./internal/db ./internal/routing`, live PostgreSQL Channel repository tests with `DISTR_TEST_DATABASE_URL` set, `go test -p=1 ./...`, Angular `ng test --watch=false`, `pnpm run build:community`, hub community binary build, Docker agent build, Kubernetes agent build, direct migration validation, touched-file Prettier check, diff-scoped Go lint, and changed-file Unicode scan passed.
 - Upstream contribution notes: Community-neutral Channel model; no adopter-specific logic.
 - Compatibility notes: Existing Environment, Lifecycle, deployment target, deployment, release, and agent behavior is unchanged. No SemVer/source-rule engine, release bundles, promotion, approval, retention, or deployment execution behavior is added in PR-004.
+
+### PR-005 - SemVer and source-rule engine
+
+- Status: Implemented locally; backend, frontend, migration, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=channels`.
+- User-facing behavior: Admins can configure Channel version ranges, prerelease patterns, and allowed source branch/tag globs on the feature-flagged Channels page.
+- Database changes: Added Channel text-array rule columns for allowed version ranges, prerelease patterns, source branches, and source tags.
+- API changes: Extended Channel CRUD payloads with rule arrays and added `POST /api/v1/channels/{channelId}/validate-version` for organization-scoped rule validation.
+- UI changes: Added Channel editor text areas for rule lists and Angular service support for version/source validation.
+- Agent protocol changes: None.
+- Documentation: Added PR-005 notes and ADR-0005.
+- Tests: `go test ./internal/channelrules ./api ./internal/mapping ./internal/handlers ./internal/db ./internal/routing`, live PostgreSQL Channel repository and validation handler tests with `DISTR_TEST_DATABASE_URL` set, `go test -p=1 ./...`, Angular `ng test --watch=false`, `pnpm run build:community`, hub community binary build, Docker agent build, Kubernetes agent build, direct migration validation, touched-file Prettier check, diff-scoped Go lint, and changed-file Unicode scan passed.
+- Upstream contribution notes: Community-neutral SemVer/source-rule engine; no adopter-specific logic.
+- Compatibility notes: Existing Environment, Lifecycle, deployment target, deployment, release, and agent behavior is unchanged. No Release Bundle, promotion, approval, retention, deployment planning, execution, or agent behavior is added in PR-005.

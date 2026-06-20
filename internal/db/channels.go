@@ -27,7 +27,11 @@ const (
 	c.name,
 	c.description,
 	c.sort_order,
-	c.is_default
+	c.is_default,
+	c.allowed_version_ranges,
+	c.allowed_prerelease_patterns,
+	c.allowed_source_branches,
+	c.allowed_source_tags
 `
 )
 
@@ -65,7 +69,11 @@ func CreateChannel(ctx context.Context, channel *types.Channel) error {
 				name,
 				description,
 				sort_order,
-				is_default
+				is_default,
+				allowed_version_ranges,
+				allowed_prerelease_patterns,
+				allowed_source_branches,
+				allowed_source_tags
 			) VALUES (
 				@organizationId,
 				@applicationId,
@@ -73,16 +81,24 @@ func CreateChannel(ctx context.Context, channel *types.Channel) error {
 				@name,
 				@description,
 				@sortOrder,
-				@isDefault
+				@isDefault,
+				@allowedVersionRanges,
+				@allowedPrereleasePatterns,
+				@allowedSourceBranches,
+				@allowedSourceTags
 			) RETURNING `+channelOutputExpr,
 			pgx.NamedArgs{
-				"organizationId": channel.OrganizationID,
-				"applicationId":  channel.ApplicationID,
-				"lifecycleId":    channel.LifecycleID,
-				"name":           channel.Name,
-				"description":    channel.Description,
-				"sortOrder":      channel.SortOrder,
-				"isDefault":      channel.IsDefault,
+				"organizationId":            channel.OrganizationID,
+				"applicationId":             channel.ApplicationID,
+				"lifecycleId":               channel.LifecycleID,
+				"name":                      channel.Name,
+				"description":               channel.Description,
+				"sortOrder":                 channel.SortOrder,
+				"isDefault":                 channel.IsDefault,
+				"allowedVersionRanges":      stringSliceOrEmpty(channel.AllowedVersionRanges),
+				"allowedPrereleasePatterns": stringSliceOrEmpty(channel.AllowedPrereleasePatterns),
+				"allowedSourceBranches":     stringSliceOrEmpty(channel.AllowedSourceBranchPatterns),
+				"allowedSourceTags":         stringSliceOrEmpty(channel.AllowedSourceTagPatterns),
 			},
 		)
 		if err != nil {
@@ -193,18 +209,26 @@ func UpdateChannel(ctx context.Context, channel *types.Channel) error {
 				description = @description,
 				sort_order = @sortOrder,
 				is_default = @isDefault,
+				allowed_version_ranges = @allowedVersionRanges,
+				allowed_prerelease_patterns = @allowedPrereleasePatterns,
+				allowed_source_branches = @allowedSourceBranches,
+				allowed_source_tags = @allowedSourceTags,
 				updated_at = now()
 			WHERE c.id = @id AND c.organization_id = @organizationId
 			RETURNING `+channelOutputExpr,
 			pgx.NamedArgs{
-				"id":             channel.ID,
-				"organizationId": channel.OrganizationID,
-				"applicationId":  channel.ApplicationID,
-				"lifecycleId":    channel.LifecycleID,
-				"name":           channel.Name,
-				"description":    channel.Description,
-				"sortOrder":      channel.SortOrder,
-				"isDefault":      channel.IsDefault,
+				"id":                        channel.ID,
+				"organizationId":            channel.OrganizationID,
+				"applicationId":             channel.ApplicationID,
+				"lifecycleId":               channel.LifecycleID,
+				"name":                      channel.Name,
+				"description":               channel.Description,
+				"sortOrder":                 channel.SortOrder,
+				"isDefault":                 channel.IsDefault,
+				"allowedVersionRanges":      stringSliceOrEmpty(channel.AllowedVersionRanges),
+				"allowedPrereleasePatterns": stringSliceOrEmpty(channel.AllowedPrereleasePatterns),
+				"allowedSourceBranches":     stringSliceOrEmpty(channel.AllowedSourceBranchPatterns),
+				"allowedSourceTags":         stringSliceOrEmpty(channel.AllowedSourceTagPatterns),
 			},
 		)
 		if err != nil {
@@ -391,4 +415,11 @@ func mapChannelWriteError(action string, err error) error {
 		return fmt.Errorf("could not %s Channel: %w", action, apierrors.ErrAlreadyExists)
 	}
 	return fmt.Errorf("could not %s Channel: %w", action, err)
+}
+
+func stringSliceOrEmpty(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
