@@ -1,0 +1,224 @@
+<section class="bg-gray-50 dark:bg-gray-900 p-3 sm:p-5 antialiased">
+  <div class="mx-auto max-w-screen-2xl px-4 lg:px-12">
+    <div class="bg-white dark:bg-gray-800 relative shadow-md sm:rounded-lg overflow-hidden">
+      <div
+        class="flex flex-col md:flex-row items-stretch md:items-center md:space-x-3 space-y-3 md:space-y-0 justify-between mx-4 py-4 dark:border-gray-700">
+        <div class="w-full md:w-1/2">
+          <form class="flex items-center" [formGroup]="filterForm">
+            <label for="channel-search" class="sr-only">Search</label>
+            <div class="relative w-full">
+              <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <fa-icon [icon]="faMagnifyingGlass" class="text-gray-500 dark:text-gray-400" />
+              </div>
+              <input
+                type="text"
+                id="channel-search"
+                placeholder="Filter channels"
+                [formControl]="filterForm.controls.search"
+                autotrim
+                class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full pl-10 p-2 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-primary-500 dark:focus:border-primary-500" />
+            </div>
+          </form>
+        </div>
+        <div
+          class="w-full md:w-auto flex flex-col md:flex-row items-stretch md:items-center justify-end gap-4 flex-shrink-0 flex-grow">
+          <button
+            (click)="showCreateDialog()"
+            [disabled]="applications().length === 0 || lifecycles().length === 0"
+            type="button"
+            class="w-full md:w-auto flex items-center justify-center py-2 px-4 text-sm font-medium text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-primary-700 focus:z-10 focus:ring-4 focus:ring-gray-200 disabled:opacity-50 disabled:cursor-not-allowed dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-white dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700">
+            <fa-icon [icon]="faPlus" class="text-gray-500 dark:text-gray-400 mr-2" />
+            Create Channel
+          </button>
+        </div>
+      </div>
+
+      @if (loading()) {
+        <div class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">Loading channels...</div>
+      } @else if (loadError(); as error) {
+        <div class="px-4 py-8 text-center">
+          <fa-icon [icon]="faTriangleExclamation" class="text-red-500 mr-2" />
+          <span class="text-gray-700 dark:text-gray-300">{{ error }}</span>
+          <button type="button" (click)="load()" class="ml-3 distr-btn-secondary px-3 py-2">
+            <fa-icon [icon]="faRotateRight" class="mr-2" />
+            Retry
+          </button>
+        </div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="distr-table">
+            <thead class="distr-table-head">
+              <tr>
+                <th scope="col" class="p-4">Channel</th>
+                <th scope="col" class="p-4">Application</th>
+                <th scope="col" class="p-4">Lifecycle</th>
+                <th scope="col" class="p-4">Sort</th>
+                <th scope="col" class="p-4">Default</th>
+                <th scope="col" class="p-4"></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (channel of filteredChannels(); track channel.id) {
+                <tr class="distr-table-row">
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    <div class="flex items-start gap-3">
+                      <fa-icon [icon]="faLayerGroup" class="mt-0.5 text-gray-400" />
+                      <div>
+                        <div>{{ channel.name }}</div>
+                        @if (channel.description) {
+                          <div class="text-xs text-gray-500 dark:text-gray-400 whitespace-normal">
+                            {{ channel.description }}
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    {{ applicationName(channel.applicationId) }}
+                  </td>
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    {{ lifecycleName(channel.lifecycleId) }}
+                  </td>
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    {{ channel.sortOrder | number }}
+                  </td>
+                  <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                    @if (channel.isDefault) {
+                      <fa-icon [icon]="faCheck" class="text-green-600 dark:text-green-500" />
+                    } @else {
+                      <span class="text-gray-400">-</span>
+                    }
+                  </td>
+                  <td
+                    class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white flex justify-end space-x-2">
+                    <button
+                      type="button"
+                      (click)="showUpdateDialog(channel)"
+                      class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                      title="Edit">
+                      <fa-icon [icon]="faEdit" />
+                    </button>
+                    <button
+                      type="button"
+                      (click)="delete(channel)"
+                      [disabled]="channel.isDefault"
+                      class="py-2 px-3 flex items-center text-sm font-medium text-center text-red-700 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 focus:z-10 focus:ring-4 focus:ring-gray-200 disabled:opacity-50 disabled:cursor-not-allowed dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-red-500 dark:border-gray-600 dark:hover:bg-gray-700"
+                      title="Delete">
+                      <fa-icon [icon]="faTrash" />
+                    </button>
+                  </td>
+                </tr>
+              } @empty {
+                <tr class="border-t border-gray-200 dark:border-gray-600">
+                  <td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No channels found.</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</section>
+
+<ng-template #channelDialog>
+  <div
+    animate.enter="animate-fly-in-top"
+    animate.leave="animate-fly-out-top"
+    class="p-4 w-full mt-12 max-h-full bg-white rounded-lg shadow-sm dark:bg-gray-900">
+    <div class="flex items-center justify-between p-4 md:p-5 border-b border-gray-200 rounded-t dark:border-gray-600">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+        @if (channelForm.value.id) {
+          Update Channel
+        } @else {
+          New Channel
+        }
+      </h2>
+      <button
+        type="button"
+        (click)="closeDialog()"
+        class="text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm w-8 h-8 ms-auto inline-flex justify-center items-center dark:hover:bg-gray-600 dark:hover:text-white">
+        <fa-icon [icon]="faXmark" />
+        <span class="sr-only">Close modal</span>
+      </button>
+    </div>
+    <div class="p-4 md:p-5">
+      <form class="space-y-5" (ngSubmit)="submitForm()" [formGroup]="channelForm">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <label for="channel-application" class="distr-label">Application</label>
+            <select id="channel-application" formControlName="applicationId" class="distr-input">
+              @for (application of applications(); track application.id) {
+                <option [value]="application.id">{{ application.name }}</option>
+              }
+            </select>
+            @if (
+              channelForm.controls.applicationId.touched && channelForm.controls.applicationId.errors?.['required']
+            ) {
+              <span class="text-red-500 text-xs">Application is required</span>
+            }
+          </div>
+          <div class="space-y-2">
+            <label for="channel-lifecycle" class="distr-label">Lifecycle</label>
+            <select id="channel-lifecycle" formControlName="lifecycleId" class="distr-input">
+              @for (lifecycle of lifecycles(); track lifecycle.id) {
+                <option [value]="lifecycle.id">{{ lifecycle.name }}</option>
+              }
+            </select>
+            @if (channelForm.controls.lifecycleId.touched && channelForm.controls.lifecycleId.errors?.['required']) {
+              <span class="text-red-500 text-xs">Lifecycle is required</span>
+            }
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-[1fr_8rem] gap-4">
+          <div class="space-y-2">
+            <label for="channel-name" class="distr-label">Name</label>
+            <input
+              type="text"
+              id="channel-name"
+              formControlName="name"
+              autotrim
+              autocomplete="off"
+              placeholder="Stable"
+              class="distr-input" />
+            @if (channelForm.controls.name.touched && channelForm.controls.name.errors?.['required']) {
+              <span class="text-red-500 text-xs">Name is required</span>
+            }
+          </div>
+          <div class="space-y-2">
+            <label for="channel-sort-order" class="distr-label">Sort Order</label>
+            <input type="number" id="channel-sort-order" formControlName="sortOrder" min="0" class="distr-input" />
+            @if (channelForm.controls.sortOrder.touched && channelForm.controls.sortOrder.errors?.['min']) {
+              <span class="text-red-500 text-xs">Sort order must be non-negative</span>
+            }
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <label for="channel-description" class="distr-label">Description</label>
+          <textarea
+            id="channel-description"
+            formControlName="description"
+            rows="3"
+            class="distr-input"
+            placeholder="Default production-ready channel"></textarea>
+        </div>
+
+        <label class="flex items-center gap-3 text-sm text-gray-900 dark:text-white">
+          <input type="checkbox" formControlName="isDefault" class="distr-checkbox" />
+          Default channel
+        </label>
+
+        <div class="flex justify-end">
+          <button
+            type="submit"
+            [disabled]="formLoading()"
+            class="text-white distr-btn-primary px-5 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed">
+            Submit
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</ng-template>

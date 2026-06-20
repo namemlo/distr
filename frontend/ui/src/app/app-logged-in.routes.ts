@@ -12,6 +12,7 @@ import {ArtifactVersionsComponent} from './artifacts/artifact-versions/artifact-
 import {ArtifactsComponent} from './artifacts/artifacts/artifacts.component';
 import {BillingComponent} from './billing/billing.component';
 import {BillingSettingsComponent} from './billing/settings/billing-settings.component';
+import {ChannelsComponent} from './channels/channels.component';
 import {CustomerOrganizationsComponent} from './components/customer-organizations/customer-organizations.component';
 import {DashboardComponent} from './components/dashboard/dashboard.component';
 import {HomeComponent} from './components/home/home.component';
@@ -204,6 +205,17 @@ export const routes: Routes = [
           requiredRoleGuard('admin'),
           experimentalFeatureEnabledGuard('environments'),
           experimentalFeatureEnabledGuard('lifecycles'),
+        ],
+      },
+      {
+        path: 'channels',
+        component: ChannelsComponent,
+        canActivate: [
+          requireVendor,
+          requiredRoleGuard('admin'),
+          experimentalFeatureEnabledGuard('environments'),
+          experimentalFeatureEnabledGuard('lifecycles'),
+          experimentalFeatureEnabledGuard('channels'),
         ],
       },
       {

@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-003 are implemented locally. PR-003 adds the feature-flagged Lifecycle domain model and phase editor without changing existing deployment target, deployment, release, or agent behavior.
+PR-000 through PR-004 are implemented locally. PR-004 adds the feature-flagged Channel domain model and admin UI without changing existing Environment, Lifecycle, deployment target, deployment, release, or agent behavior.
 
 ## Tracking Template
 
@@ -88,3 +88,18 @@ Use one entry per pull request:
 - Tests: `go test ./api ./internal/mapping ./internal/handlers ./internal/lifecycle ./internal/db`, `go test -p=1 ./...`, Angular `ng test --watch=false`, `pnpm run build:community`, hub community binary build, Docker agent build, Kubernetes agent build, direct migration validation, touched-file Prettier check, and diff-scoped Go lint passed. Full repo `pnpm lint` and full repo Go lint still report pre-existing formatting issues outside the PR-owned diff.
 - Upstream contribution notes: Community-neutral lifecycle model; no adopter-specific logic.
 - Compatibility notes: Existing deployment targets, deployments, releases, and agents are unchanged. No channel link, release promotion, approval, retention, or deployment execution behavior is added in PR-003.
+
+### PR-004 - Channel domain model
+
+- Status: Implemented locally; backend, frontend, migration, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=channels`; the UI also requires `environments` and `lifecycles`.
+- User-facing behavior: Admins can manage application-scoped Channels from a new feature-flagged Channels page.
+- Database changes: Added organization-scoped `Channel` table linked to `Application` and `Lifecycle`, with unique names per organization/application and one default Channel per organization/application.
+- API changes: Added feature-flagged CRUD endpoints under `/api/v1/channels`.
+- UI changes: Added Channels route, sidebar link, Angular service/types, and CRUD table/dialog UI with application and lifecycle selectors.
+- Agent protocol changes: None.
+- Documentation: Added PR-004 notes and ADR-0004.
+- Tests: `go test ./api ./internal/mapping ./internal/handlers ./internal/db ./internal/routing`, `go test -p=1 ./...`, Angular `ng test --watch=false`, `pnpm run build:community`, hub community binary build, Docker agent build, Kubernetes agent build, direct migration validation, touched-file Prettier check, diff-scoped Go lint, and changed-file Unicode scan passed. Live Channel repository integration tests are included and run when `DISTR_TEST_DATABASE_URL` is configured; they were skipped in the local workspace because no test database or Docker CLI was available.
+- Upstream contribution notes: Community-neutral Channel model; no adopter-specific logic.
+- Compatibility notes: Existing Environment, Lifecycle, deployment target, deployment, release, and agent behavior is unchanged. No SemVer/source-rule engine, release bundles, promotion, approval, retention, or deployment execution behavior is added in PR-004.

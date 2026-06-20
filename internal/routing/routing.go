@@ -168,6 +168,7 @@ func ApiRouter(
 					r.Route("/artifact-pulls", handlers.ArtifactPullsRouter)
 					r.Route("/artifacts", handlers.ArtifactsRouter)
 					r.Route("/billing", handlers.BillingRouter)
+					r.Route("/channels", handlers.ChannelsRouter)
 					r.Route("/context", handlers.ContextRouter)
 					r.Route("/customer-organizations", handlers.CustomerOrganizationsRouter)
 					r.With(middleware.PartnerManagementFeatureMiddleware).
