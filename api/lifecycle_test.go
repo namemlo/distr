@@ -130,3 +130,71 @@ func TestCreateUpdateLifecycleRequestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateLifecyclePhasesRequestValidate(t *testing.T) {
+	environmentID := uuid.New()
+
+	tests := []struct {
+		name    string
+		request UpdateLifecyclePhasesRequest
+		wantErr bool
+	}{
+		{
+			name: "accepts ordered environment phases",
+			request: UpdateLifecyclePhasesRequest{
+				Phases: []CreateUpdateLifecyclePhaseRequest{
+					{Name: "Development", SortOrder: 10, EnvironmentIDs: []uuid.UUID{environmentID}},
+					{Name: "Production", SortOrder: 20, EnvironmentIDs: []uuid.UUID{environmentID}},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "rejects duplicate trimmed phase names",
+			request: UpdateLifecyclePhasesRequest{
+				Phases: []CreateUpdateLifecyclePhaseRequest{
+					{Name: "Production", SortOrder: 10, EnvironmentIDs: []uuid.UUID{environmentID}},
+					{Name: " Production ", SortOrder: 20, EnvironmentIDs: []uuid.UUID{environmentID}},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects duplicate phase sort orders",
+			request: UpdateLifecyclePhasesRequest{
+				Phases: []CreateUpdateLifecyclePhaseRequest{
+					{Name: "Staging", SortOrder: 10, EnvironmentIDs: []uuid.UUID{environmentID}},
+					{Name: "Production", SortOrder: 10, EnvironmentIDs: []uuid.UUID{environmentID}},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects duplicate environment IDs inside a phase",
+			request: UpdateLifecyclePhasesRequest{
+				Phases: []CreateUpdateLifecyclePhaseRequest{
+					{
+						Name:           "Production",
+						SortOrder:      10,
+						EnvironmentIDs: []uuid.UUID{environmentID, environmentID},
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			err := tt.request.Validate()
+
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+		})
+	}
+}

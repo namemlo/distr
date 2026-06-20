@@ -22,23 +22,7 @@ func (r *CreateUpdateLifecycleRequest) Validate() error {
 	if r.SortOrder < 0 {
 		return validation.NewValidationFailedError("sortOrder must be non-negative")
 	}
-	phaseNames := map[string]struct{}{}
-	phaseSortOrders := map[int]struct{}{}
-	for _, phase := range r.Phases {
-		if err := phase.Validate(); err != nil {
-			return err
-		}
-		phaseName := strings.TrimSpace(phase.Name)
-		if _, ok := phaseNames[phaseName]; ok {
-			return validation.NewValidationFailedError("phase name must be unique")
-		}
-		phaseNames[phaseName] = struct{}{}
-		if _, ok := phaseSortOrders[phase.SortOrder]; ok {
-			return validation.NewValidationFailedError("phase sortOrder must be unique")
-		}
-		phaseSortOrders[phase.SortOrder] = struct{}{}
-	}
-	return nil
+	return validateLifecyclePhases(r.Phases)
 }
 
 type CreateUpdateLifecyclePhaseRequest struct {
@@ -81,10 +65,25 @@ type UpdateLifecyclePhasesRequest struct {
 }
 
 func (r *UpdateLifecyclePhasesRequest) Validate() error {
-	for _, phase := range r.Phases {
+	return validateLifecyclePhases(r.Phases)
+}
+
+func validateLifecyclePhases(phases []CreateUpdateLifecyclePhaseRequest) error {
+	phaseNames := map[string]struct{}{}
+	phaseSortOrders := map[int]struct{}{}
+	for _, phase := range phases {
 		if err := phase.Validate(); err != nil {
 			return err
 		}
+		phaseName := strings.TrimSpace(phase.Name)
+		if _, ok := phaseNames[phaseName]; ok {
+			return validation.NewValidationFailedError("phase name must be unique")
+		}
+		phaseNames[phaseName] = struct{}{}
+		if _, ok := phaseSortOrders[phase.SortOrder]; ok {
+			return validation.NewValidationFailedError("phase sortOrder must be unique")
+		}
+		phaseSortOrders[phase.SortOrder] = struct{}{}
 	}
 	return nil
 }
