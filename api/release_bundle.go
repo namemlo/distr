@@ -255,6 +255,40 @@ type ReleaseBundleValidationIssue struct {
 	Message string `json:"message"`
 }
 
+type ReleaseBundleEligibilityResponse struct {
+	ReleaseBundleID uuid.UUID                        `json:"releaseBundleId"`
+	ApplicationID   uuid.UUID                        `json:"applicationId"`
+	ChannelID       uuid.UUID                        `json:"channelId"`
+	LifecycleID     uuid.UUID                        `json:"lifecycleId"`
+	EnvironmentID   uuid.UUID                        `json:"environmentId"`
+	EngineReady     bool                             `json:"engineReady"`
+	Eligible        bool                             `json:"eligible"`
+	TargetPhase     *ReleaseBundleEligibilityPhase   `json:"targetPhase,omitempty"`
+	Phases          []ReleaseBundleEligibilityPhase  `json:"phases"`
+	Reasons         []ReleaseBundleEligibilityReason `json:"reasons"`
+}
+
+type ReleaseBundleEligibilityPhase struct {
+	ID                           uuid.UUID   `json:"id"`
+	Name                         string      `json:"name"`
+	SortOrder                    int         `json:"sortOrder"`
+	EnvironmentIDs               []uuid.UUID `json:"environmentIds"`
+	Optional                     bool        `json:"optional"`
+	AutomaticPromotion           bool        `json:"automaticPromotion"`
+	MinimumSuccessfulDeployments int         `json:"minimumSuccessfulDeployments"`
+	ApprovalPolicyID             *uuid.UUID  `json:"approvalPolicyId,omitempty"`
+	RetentionPolicyID            *uuid.UUID  `json:"retentionPolicyId,omitempty"`
+	MatchesEnvironment           bool        `json:"matchesEnvironment"`
+	RequiredBeforeTarget         bool        `json:"requiredBeforeTarget"`
+	BlocksEligibility            bool        `json:"blocksEligibility"`
+}
+
+type ReleaseBundleEligibilityReason struct {
+	Code    string `json:"code"`
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
 const ErrorCodeIdempotencyKeyReusedWithDifferentRequest = "idempotency_key_reused_with_different_request"
 
 type ErrorResponse struct {

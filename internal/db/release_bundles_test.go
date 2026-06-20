@@ -14,6 +14,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/lifecycle"
 	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -585,6 +586,54 @@ func TestReleaseBundleRepositoryBlockArchiveAndRejectedTransitionAudits(t *testi
 	))
 }
 
+func TestReleaseBundleRepositoryGetsEligibilityForPublishedBundle(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	_, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	devResult, err := db.GetReleaseBundleEligibility(ctx, bundle.ID, deps.devEnvironmentID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(devResult.EngineReady).To(BeTrue())
+	g.Expect(devResult.Eligible).To(BeTrue())
+	g.Expect(devResult.ReleaseBundleID).To(Equal(bundle.ID))
+	g.Expect(devResult.ApplicationID).To(Equal(deps.applicationID))
+	g.Expect(devResult.ChannelID).To(Equal(deps.channelID))
+	g.Expect(devResult.LifecycleID).To(Equal(deps.lifecycleID))
+	g.Expect(devResult.TargetPhase).NotTo(BeNil())
+	g.Expect(devResult.TargetPhase.Name).To(Equal("Development"))
+	g.Expect(devResult.Reasons).To(BeEmpty())
+
+	prodResult, err := db.GetReleaseBundleEligibility(ctx, bundle.ID, deps.prodEnvironmentID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(prodResult.Eligible).To(BeFalse())
+	g.Expect(prodResult.TargetPhase).NotTo(BeNil())
+	g.Expect(prodResult.TargetPhase.Name).To(Equal("Production"))
+	g.Expect(prodResult.Reasons).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"Code": Equal(lifecycle.EligibilityReasonRequiredPriorPhaseIncomplete),
+	})))
+}
+
+func TestReleaseBundleRepositoryEligibilityPreservesOrganizationIsolation(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	otherDeps := createReleaseBundleEligibilityDependencies(t, ctx)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	_, err := db.GetReleaseBundleEligibility(ctx, bundle.ID, otherDeps.devEnvironmentID, deps.orgID)
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+
+	_, err = db.GetReleaseBundleEligibility(ctx, bundle.ID, deps.devEnvironmentID, otherDeps.orgID)
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+}
+
 func TestReleaseBundleRepositoryPreventsMovingReferencedChannelAcrossApplications(t *testing.T) {
 	ctx := releaseBundleDBTestContext(t)
 	g := NewWithT(t)
@@ -870,6 +919,97 @@ func createReleaseBundleDependenciesForOrganizationWithRules(
 		t.Fatalf("create channel: %v", err)
 	}
 	return application.ID, channel.ID, version.ID
+}
+
+type releaseBundleEligibilityDependencies struct {
+	orgID             uuid.UUID
+	applicationID     uuid.UUID
+	channelID         uuid.UUID
+	lifecycleID       uuid.UUID
+	versionID         uuid.UUID
+	devEnvironmentID  uuid.UUID
+	prodEnvironmentID uuid.UUID
+}
+
+func createReleaseBundleEligibilityDependencies(
+	t *testing.T,
+	ctx context.Context,
+) releaseBundleEligibilityDependencies {
+	t.Helper()
+	orgID := createReleaseBundleTestOrganization(t, ctx)
+	application := types.Application{
+		Name: "Application " + uuid.NewString(),
+		Type: types.DeploymentTypeDocker,
+	}
+	if err := db.CreateApplication(ctx, &application, orgID); err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+	version := types.ApplicationVersion{
+		Name:            "1.2.3",
+		ApplicationID:   application.ID,
+		LinkTemplate:    "https://example.com/{{.version}}",
+		ComposeFileData: []byte("services: {}\n"),
+	}
+	if err := db.CreateApplicationVersion(ctx, &version); err != nil {
+		t.Fatalf("create application version: %v", err)
+	}
+	devEnvironment := types.Environment{
+		OrganizationID: orgID,
+		Name:           "Development",
+		SortOrder:      10,
+	}
+	if err := db.CreateEnvironment(ctx, &devEnvironment); err != nil {
+		t.Fatalf("create development environment: %v", err)
+	}
+	prodEnvironment := types.Environment{
+		OrganizationID: orgID,
+		Name:           "Production",
+		SortOrder:      20,
+		IsProduction:   true,
+	}
+	if err := db.CreateEnvironment(ctx, &prodEnvironment); err != nil {
+		t.Fatalf("create production environment: %v", err)
+	}
+	lifecycleModel := types.Lifecycle{
+		OrganizationID: orgID,
+		Name:           "Lifecycle " + uuid.NewString(),
+		Phases: []types.LifecyclePhase{
+			{
+				Name:                         "Development",
+				SortOrder:                    10,
+				EnvironmentIDs:               []uuid.UUID{devEnvironment.ID},
+				MinimumSuccessfulDeployments: 1,
+			},
+			{
+				Name:                         "Production",
+				SortOrder:                    20,
+				EnvironmentIDs:               []uuid.UUID{prodEnvironment.ID},
+				MinimumSuccessfulDeployments: 1,
+			},
+		},
+	}
+	if err := db.CreateLifecycle(ctx, &lifecycleModel); err != nil {
+		t.Fatalf("create lifecycle: %v", err)
+	}
+	channel := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  application.ID,
+		LifecycleID:    lifecycleModel.ID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	if err := db.CreateChannel(ctx, &channel); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	return releaseBundleEligibilityDependencies{
+		orgID:             orgID,
+		applicationID:     application.ID,
+		channelID:         channel.ID,
+		lifecycleID:       lifecycleModel.ID,
+		versionID:         version.ID,
+		devEnvironmentID:  devEnvironment.ID,
+		prodEnvironmentID: prodEnvironment.ID,
+	}
 }
 
 func createReleaseBundleTestUser(t *testing.T, ctx context.Context, orgID uuid.UUID) uuid.UUID {

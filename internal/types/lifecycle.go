@@ -14,7 +14,7 @@ type Lifecycle struct {
 	Name           string           `db:"name" json:"name"`
 	Description    string           `db:"description" json:"description"`
 	SortOrder      int              `db:"sort_order" json:"sortOrder"`
-	Phases         []LifecyclePhase `json:"phases"`
+	Phases         []LifecyclePhase `db:"-" json:"phases"`
 }
 
 type LifecyclePhase struct {
@@ -23,7 +23,7 @@ type LifecyclePhase struct {
 	Name                         string      `db:"name" json:"name"`
 	Description                  string      `db:"description" json:"description"`
 	SortOrder                    int         `db:"sort_order" json:"sortOrder"`
-	EnvironmentIDs               []uuid.UUID `json:"environmentIds"`
+	EnvironmentIDs               []uuid.UUID `db:"-" json:"environmentIds"`
 	Optional                     bool        `db:"optional" json:"optional"`
 	AutomaticPromotion           bool        `db:"automatic_promotion" json:"automaticPromotion"`
 	MinimumSuccessfulDeployments int         `db:"minimum_successful_deployments" json:"minimumSuccessfulDeployments"`

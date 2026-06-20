@@ -2,6 +2,7 @@ package mapping
 
 import (
 	"github.com/distr-sh/distr/api"
+	"github.com/distr-sh/distr/internal/lifecycle"
 	"github.com/distr-sh/distr/internal/types"
 )
 
@@ -56,5 +57,50 @@ func ReleaseBundleComponentToAPI(component types.ReleaseBundleComponent) api.Rel
 		Digest:               component.Digest,
 		Checksum:             component.Checksum,
 		ChildReleaseBundleID: component.ChildReleaseBundleID,
+	}
+}
+
+func ReleaseBundleEligibilityToAPI(result lifecycle.EligibilityResult) api.ReleaseBundleEligibilityResponse {
+	var targetPhase *api.ReleaseBundleEligibilityPhase
+	if result.TargetPhase != nil {
+		phase := releaseBundleEligibilityPhaseToAPI(*result.TargetPhase)
+		targetPhase = &phase
+	}
+	return api.ReleaseBundleEligibilityResponse{
+		ReleaseBundleID: result.ReleaseBundleID,
+		ApplicationID:   result.ApplicationID,
+		ChannelID:       result.ChannelID,
+		LifecycleID:     result.LifecycleID,
+		EnvironmentID:   result.EnvironmentID,
+		EngineReady:     result.EngineReady,
+		Eligible:        result.Eligible,
+		TargetPhase:     targetPhase,
+		Phases:          List(result.Phases, releaseBundleEligibilityPhaseToAPI),
+		Reasons:         List(result.Reasons, releaseBundleEligibilityReasonToAPI),
+	}
+}
+
+func releaseBundleEligibilityPhaseToAPI(phase lifecycle.EligibilityPhase) api.ReleaseBundleEligibilityPhase {
+	return api.ReleaseBundleEligibilityPhase{
+		ID:                           phase.ID,
+		Name:                         phase.Name,
+		SortOrder:                    phase.SortOrder,
+		EnvironmentIDs:               phase.EnvironmentIDs,
+		Optional:                     phase.Optional,
+		AutomaticPromotion:           phase.AutomaticPromotion,
+		MinimumSuccessfulDeployments: phase.MinimumSuccessfulDeployments,
+		ApprovalPolicyID:             phase.ApprovalPolicyID,
+		RetentionPolicyID:            phase.RetentionPolicyID,
+		MatchesEnvironment:           phase.MatchesEnvironment,
+		RequiredBeforeTarget:         phase.RequiredBeforeTarget,
+		BlocksEligibility:            phase.BlocksEligibility,
+	}
+}
+
+func releaseBundleEligibilityReasonToAPI(reason lifecycle.EligibilityReason) api.ReleaseBundleEligibilityReason {
+	return api.ReleaseBundleEligibilityReason{
+		Code:    string(reason.Code),
+		Field:   reason.Field,
+		Message: reason.Message,
 	}
 }
