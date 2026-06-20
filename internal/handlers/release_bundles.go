@@ -38,6 +38,10 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 			type ReleaseBundleIDRequest struct {
 				ReleaseBundleID uuid.UUID `path:"releaseBundleId"`
 			}
+			type ReleaseBundleEligibilityRequest struct {
+				ReleaseBundleIDRequest
+				EnvironmentID uuid.UUID `query:"environmentId"`
+			}
 
 			r.Get("/", getReleaseBundleHandler()).
 				With(option.Description("Get a release bundle")).
@@ -48,6 +52,12 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 				With(option.Description("Validate a release bundle")).
 				With(option.Request(ReleaseBundleIDRequest{})).
 				With(option.Response(http.StatusOK, api.ReleaseBundleValidationResponse{}))
+
+			r.With(releaseBundleEligibilityFeatureFlagMiddleware).
+				Get("/eligibility", getReleaseBundleEligibilityHandler()).
+				With(option.Description("Explain lifecycle eligibility for a release bundle and environment")).
+				With(option.Request(ReleaseBundleEligibilityRequest{})).
+				With(option.Response(http.StatusOK, api.ReleaseBundleEligibilityResponse{}))
 
 			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).Group(func(r chiopenapi.Router) {
 				r.Put("/", updateReleaseBundleHandler()).
@@ -92,6 +102,18 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 	})
 }
 
+func releaseBundleEligibilityFeatureFlagMiddleware(handler http.Handler) http.Handler {
+	for _, feature := range []featureflags.Key{
+		featureflags.KeyReleaseBundles,
+		featureflags.KeyChannels,
+		featureflags.KeyLifecycles,
+		featureflags.KeyEnvironments,
+	} {
+		handler = middleware.ExperimentalFeatureFlagMiddleware(feature)(handler)
+	}
+	return handler
+}
+
 func getReleaseBundlesHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -131,6 +153,42 @@ func getReleaseBundleHandler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {
 			RespondJSON(w, mapping.ReleaseBundleToAPI(*bundle))
+		}
+	}
+}
+
+//nolint:dupl
+func getReleaseBundleEligibilityHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		environmentIDValue := strings.TrimSpace(r.URL.Query().Get("environmentId"))
+		if environmentIDValue == "" {
+			http.Error(w, "environmentId query parameter is required", http.StatusBadRequest)
+			return
+		}
+		environmentID, err := uuid.Parse(environmentIDValue)
+		if err != nil {
+			http.Error(w, "environmentId query parameter is invalid", http.StatusBadRequest)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		result, err := db.GetReleaseBundleEligibility(ctx, id, environmentID, *auth.CurrentOrgID())
+		if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+		} else if err != nil {
+			log.Error("failed to get release bundle eligibility", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			RespondJSON(w, mapping.ReleaseBundleEligibilityToAPI(result))
 		}
 	}
 }

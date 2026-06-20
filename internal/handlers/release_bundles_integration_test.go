@@ -248,6 +248,112 @@ func TestReleaseBundleHandlersValidatePublishBlockAndArchive(t *testing.T) {
 	g.Expect(archived.Status).To(Equal(types.ReleaseBundleStatusArchived))
 }
 
+func TestReleaseBundleEligibilityHandlerExplainsPublishedBundle(t *testing.T) {
+	ctx := channelHandlerDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityHandlerDependencies(t, ctx)
+	actorID := createReleaseBundleHandlerUser(t, ctx, deps.orgID)
+	bundle := types.ReleaseBundle{
+		OrganizationID: deps.orgID,
+		ApplicationID:  deps.applicationID,
+		ChannelID:      deps.channelID,
+		ReleaseNumber:  "2026.06.20",
+		ReleaseNotes:   "Initial release",
+		SourceRevision: "abc123",
+		Components: []types.ReleaseBundleComponent{
+			{
+				Key:                  "api",
+				Name:                 "API",
+				Type:                 types.ReleaseBundleComponentTypeApplicationVersion,
+				Version:              "1.2.3",
+				ApplicationVersionID: &deps.versionID,
+			},
+		},
+	}
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	_, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/release-bundles/"+bundle.ID.String()+"/eligibility?environmentId="+deps.devEnvironmentID.String(),
+		nil,
+	)
+	request.SetPathValue("releaseBundleId", bundle.ID.String())
+	request = request.WithContext(authenticatedReleaseBundleHandlerContext(ctx, deps.orgID, actorID))
+
+	getReleaseBundleEligibilityHandler().ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusOK))
+	var response api.ReleaseBundleEligibilityResponse
+	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &response)).To(Succeed())
+	g.Expect(response.ReleaseBundleID).To(Equal(bundle.ID))
+	g.Expect(response.ApplicationID).To(Equal(deps.applicationID))
+	g.Expect(response.ChannelID).To(Equal(deps.channelID))
+	g.Expect(response.LifecycleID).To(Equal(deps.lifecycleID))
+	g.Expect(response.EnvironmentID).To(Equal(deps.devEnvironmentID))
+	g.Expect(response.EngineReady).To(BeTrue())
+	g.Expect(response.Eligible).To(BeTrue())
+	g.Expect(response.TargetPhase).NotTo(BeNil())
+	g.Expect(response.TargetPhase.Name).To(Equal("Development"))
+	g.Expect(response.Reasons).To(BeEmpty())
+}
+
+func TestReleaseBundleEligibilityHandlerReturnsNotFoundForCrossOrganizationReferences(t *testing.T) {
+	ctx := channelHandlerDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityHandlerDependencies(t, ctx)
+	otherDeps := createReleaseBundleEligibilityHandlerDependencies(t, ctx)
+	actorID := createReleaseBundleHandlerUser(t, ctx, deps.orgID)
+	bundle := types.ReleaseBundle{
+		OrganizationID: deps.orgID,
+		ApplicationID:  deps.applicationID,
+		ChannelID:      deps.channelID,
+		ReleaseNumber:  "2026.06.20",
+		Components: []types.ReleaseBundleComponent{
+			{
+				Key:                  "api",
+				Type:                 types.ReleaseBundleComponentTypeApplicationVersion,
+				Version:              "1.2.3",
+				ApplicationVersionID: &deps.versionID,
+			},
+		},
+	}
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	crossOrgEnvironmentRecorder := httptest.NewRecorder()
+	crossOrgEnvironmentRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/release-bundles/"+bundle.ID.String()+"/eligibility?environmentId="+otherDeps.devEnvironmentID.String(),
+		nil,
+	)
+	crossOrgEnvironmentRequest.SetPathValue("releaseBundleId", bundle.ID.String())
+	crossOrgEnvironmentRequest = crossOrgEnvironmentRequest.WithContext(
+		authenticatedReleaseBundleHandlerContext(ctx, deps.orgID, actorID),
+	)
+
+	getReleaseBundleEligibilityHandler().ServeHTTP(crossOrgEnvironmentRecorder, crossOrgEnvironmentRequest)
+
+	g.Expect(crossOrgEnvironmentRecorder.Code).To(Equal(http.StatusNotFound))
+
+	crossOrgBundleRecorder := httptest.NewRecorder()
+	crossOrgBundleRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/release-bundles/"+bundle.ID.String()+"/eligibility?environmentId="+deps.devEnvironmentID.String(),
+		nil,
+	)
+	crossOrgBundleRequest.SetPathValue("releaseBundleId", bundle.ID.String())
+	crossOrgBundleRequest = crossOrgBundleRequest.WithContext(
+		authenticatedReleaseBundleHandlerContext(ctx, otherDeps.orgID, actorID),
+	)
+
+	getReleaseBundleEligibilityHandler().ServeHTTP(crossOrgBundleRecorder, crossOrgBundleRequest)
+
+	g.Expect(crossOrgBundleRecorder.Code).To(Equal(http.StatusNotFound))
+}
+
 func TestReleaseBundlePublishHandlerReturnsValidationErrors(t *testing.T) {
 	ctx := channelHandlerDBTestContext(t)
 	g := NewWithT(t)
@@ -352,6 +458,77 @@ func createReleaseBundleHandlerDependencies(
 		t.Fatalf("create application version: %v", err)
 	}
 	return orgID, applicationID, channel.ID, version.ID
+}
+
+type releaseBundleEligibilityHandlerDependencies struct {
+	orgID             uuid.UUID
+	applicationID     uuid.UUID
+	channelID         uuid.UUID
+	lifecycleID       uuid.UUID
+	versionID         uuid.UUID
+	devEnvironmentID  uuid.UUID
+	prodEnvironmentID uuid.UUID
+}
+
+func createReleaseBundleEligibilityHandlerDependencies(
+	t *testing.T,
+	ctx context.Context,
+) releaseBundleEligibilityHandlerDependencies {
+	t.Helper()
+	orgID, applicationID, lifecycleID := createChannelHandlerDependencies(t, ctx)
+	devEnvironment := types.Environment{
+		OrganizationID: orgID,
+		Name:           "Development",
+		SortOrder:      10,
+	}
+	g := NewWithT(t)
+	g.Expect(db.CreateEnvironment(ctx, &devEnvironment)).To(Succeed())
+	prodEnvironment := types.Environment{
+		OrganizationID: orgID,
+		Name:           "Production",
+		SortOrder:      20,
+		IsProduction:   true,
+	}
+	g.Expect(db.CreateEnvironment(ctx, &prodEnvironment)).To(Succeed())
+	_, err := db.ReplaceLifecyclePhases(ctx, lifecycleID, orgID, []types.LifecyclePhase{
+		{
+			Name:                         "Development",
+			SortOrder:                    10,
+			EnvironmentIDs:               []uuid.UUID{devEnvironment.ID},
+			MinimumSuccessfulDeployments: 1,
+		},
+		{
+			Name:                         "Production",
+			SortOrder:                    20,
+			EnvironmentIDs:               []uuid.UUID{prodEnvironment.ID},
+			MinimumSuccessfulDeployments: 1,
+		},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	channel := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		LifecycleID:    lifecycleID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	g.Expect(db.CreateChannel(ctx, &channel)).To(Succeed())
+	version := types.ApplicationVersion{
+		Name:            "1.2.3",
+		ApplicationID:   applicationID,
+		LinkTemplate:    "https://example.com/{{.version}}",
+		ComposeFileData: []byte("services: {}\n"),
+	}
+	g.Expect(db.CreateApplicationVersion(ctx, &version)).To(Succeed())
+	return releaseBundleEligibilityHandlerDependencies{
+		orgID:             orgID,
+		applicationID:     applicationID,
+		channelID:         channel.ID,
+		lifecycleID:       lifecycleID,
+		versionID:         version.ID,
+		devEnvironmentID:  devEnvironment.ID,
+		prodEnvironmentID: prodEnvironment.ID,
+	}
 }
 
 func authenticatedReleaseBundleHandlerContext(ctx context.Context, orgID, userID uuid.UUID) context.Context {

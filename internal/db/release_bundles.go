@@ -11,6 +11,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/channelrules"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/lifecycle"
 	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -321,6 +322,36 @@ func GetReleaseBundlesByOrganizationID(ctx context.Context, orgID uuid.UUID) ([]
 
 func GetReleaseBundle(ctx context.Context, id, orgID uuid.UUID) (*types.ReleaseBundle, error) {
 	return getReleaseBundle(ctx, id, orgID, false)
+}
+
+func GetReleaseBundleEligibility(
+	ctx context.Context,
+	releaseBundleID uuid.UUID,
+	environmentID uuid.UUID,
+	organizationID uuid.UUID,
+) (lifecycle.EligibilityResult, error) {
+	bundle, err := GetReleaseBundle(ctx, releaseBundleID, organizationID)
+	if err != nil {
+		return lifecycle.EligibilityResult{}, err
+	}
+	if _, err := GetEnvironment(ctx, environmentID, organizationID); err != nil {
+		return lifecycle.EligibilityResult{}, err
+	}
+	channel, err := getChannel(ctx, bundle.ChannelID, organizationID, false)
+	if err != nil {
+		return lifecycle.EligibilityResult{}, err
+	}
+	lifecycleModel, err := GetLifecycle(ctx, channel.LifecycleID, organizationID)
+	if err != nil {
+		return lifecycle.EligibilityResult{}, err
+	}
+	result := lifecycle.NewEligibilityService().Explain(ctx, lifecycle.EligibilityRequest{
+		ReleaseBundle: *bundle,
+		Channel:       *channel,
+		Lifecycle:     *lifecycleModel,
+		EnvironmentID: environmentID,
+	})
+	return result, nil
 }
 
 func getReleaseBundle(ctx context.Context, id, orgID uuid.UUID, forUpdate bool) (*types.ReleaseBundle, error) {

@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-009 are implemented locally. PR-009 adds idempotent CI Release Bundle creation, generic source metadata, strict OCI digest validation, release CLI commands, and neutral CI examples without adding lifecycle promotion, deployment planning, execution, or agent behavior.
+PR-000 through PR-010 are implemented locally. PR-010 adds a read-only lifecycle eligibility explanation API for published Release Bundles without adding lifecycle promotion, deployment planning, execution, UI workflow, or agent behavior.
 
 ## Tracking Template
 
@@ -178,3 +178,18 @@ Use one entry per pull request:
 - Tests: Focused API, canonicalization, mapping, handler, repository, and CLI tests passed; live PostgreSQL Release Bundle repository and handler tests passed with `DISTR_TEST_DATABASE_URL` set; `go test -p=1 ./...`, Angular tests, migration-pair validation, touched-file Prettier checks, diff-scoped Go lint, community frontend build, community Hub build, Docker agent build, Kubernetes agent build, CLI local/linux builds, example parse checks, secret scan, and changed-file Unicode scan passed.
 - Upstream contribution notes: Community-neutral CI API and CLI; no Jenkins-only, registry-provider-specific, or adopter-specific core behavior.
 - Compatibility notes: Existing clients that omit `Idempotency-Key` retain previous create behavior. Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. No lifecycle eligibility, promotion, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-009.
+
+### PR-010 - Lifecycle eligibility engine
+
+- Status: Implemented locally; focused backend, mapping, handler, repository, live PostgreSQL, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=release_bundles,channels,lifecycles,environments`.
+- User-facing behavior: Feature-flagged API callers can explain whether a Release Bundle is eligible for a lifecycle environment and receive structured blocking reasons.
+- Database changes: None.
+- API changes: Added `GET /api/v1/release-bundles/{releaseBundleId}/eligibility?environmentId={environmentId}`.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-010 notes and ADR-0010.
+- Tests: Focused lifecycle, mapping, handler, repository, and live PostgreSQL tests were added.
+- Upstream contribution notes: Community-neutral lifecycle eligibility explanation; no adopter-specific release, promotion, or deployment behavior.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, deployment target, deployment, release-name, and agent behavior is unchanged. No promotion execution, deployment planning, approval, retention, notification, UI workflow, or agent behavior is added in PR-010.

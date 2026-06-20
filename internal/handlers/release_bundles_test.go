@@ -96,6 +96,7 @@ func TestReleaseBundleHandlersRejectMalformedUUIDPathValues(t *testing.T) {
 		{name: "update", handler: updateReleaseBundleHandler(), method: http.MethodPut, body: `{"releaseNumber":"1.2.3"}`},
 		{name: "delete", handler: deleteReleaseBundleHandler(), method: http.MethodDelete},
 		{name: "validate", handler: validateReleaseBundleHandler(), method: http.MethodPost},
+		{name: "eligibility", handler: getReleaseBundleEligibilityHandler(), method: http.MethodGet},
 		{name: "publish", handler: publishReleaseBundleHandler(), method: http.MethodPost},
 		{name: "block", handler: blockReleaseBundleHandler(), method: http.MethodPost},
 		{name: "archive", handler: archiveReleaseBundleHandler(), method: http.MethodPost},
@@ -113,6 +114,39 @@ func TestReleaseBundleHandlersRejectMalformedUUIDPathValues(t *testing.T) {
 			tt.handler.ServeHTTP(recorder, request)
 
 			g.Expect(recorder.Code).To(Equal(http.StatusNotFound))
+		})
+	}
+}
+
+func TestReleaseBundleEligibilityHandlerRejectsInvalidEnvironmentIDBeforeDatabaseAccess(t *testing.T) {
+	releaseBundleID := uuid.New()
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{
+			name: "missing environment id",
+			url:  "/api/v1/release-bundles/" + releaseBundleID.String() + "/eligibility",
+		},
+		{
+			name: "malformed environment id",
+			url: "/api/v1/release-bundles/" + releaseBundleID.String() +
+				"/eligibility?environmentId=not-a-uuid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			request.SetPathValue("releaseBundleId", releaseBundleID.String())
+			ctx := internalctx.WithLogger(request.Context(), zap.NewNop())
+			request = request.WithContext(auth.Authentication.NewContext(ctx, testReleaseBundleAuth()))
+
+			getReleaseBundleEligibilityHandler().ServeHTTP(recorder, request)
+
+			g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
 		})
 	}
 }
@@ -154,6 +188,24 @@ func TestReleaseBundlesFeatureFlagMiddlewareRejectsDisabledAPI(t *testing.T) {
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/release-bundles", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusForbidden))
+	g.Expect(called).To(BeFalse())
+}
+
+func TestReleaseBundleEligibilityFeatureFlagMiddlewareRejectsDisabledAPI(t *testing.T) {
+	g := NewWithT(t)
+	called := false
+	handler := releaseBundleEligibilityFeatureFlagMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/release-bundles/"+uuid.NewString()+"/eligibility", nil)
 
 	handler.ServeHTTP(recorder, request)
 
