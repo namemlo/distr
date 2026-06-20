@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
@@ -42,6 +44,11 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 				With(option.Request(ReleaseBundleIDRequest{})).
 				With(option.Response(http.StatusOK, api.ReleaseBundle{}))
 
+			r.Post("/validate", validateReleaseBundleHandler()).
+				With(option.Description("Validate a release bundle")).
+				With(option.Request(ReleaseBundleIDRequest{})).
+				With(option.Response(http.StatusOK, api.ReleaseBundleValidationResponse{}))
+
 			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).Group(func(r chiopenapi.Router) {
 				r.Put("/", updateReleaseBundleHandler()).
 					With(option.Description("Update a draft release bundle")).
@@ -54,6 +61,22 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 				r.Delete("/", deleteReleaseBundleHandler()).
 					With(option.Description("Delete a draft release bundle")).
 					With(option.Request(ReleaseBundleIDRequest{}))
+
+				r.Post("/publish", publishReleaseBundleHandler()).
+					With(option.Description("Publish a valid draft release bundle")).
+					With(option.Request(ReleaseBundleIDRequest{})).
+					With(option.Response(http.StatusOK, api.ReleaseBundle{})).
+					With(option.Response(http.StatusBadRequest, api.ReleaseBundleValidationResponse{}))
+
+				r.Post("/block", blockReleaseBundleHandler()).
+					With(option.Description("Block a published release bundle")).
+					With(option.Request(ReleaseBundleIDRequest{})).
+					With(option.Response(http.StatusOK, api.ReleaseBundle{}))
+
+				r.Post("/archive", archiveReleaseBundleHandler()).
+					With(option.Description("Archive a published or blocked release bundle")).
+					With(option.Request(ReleaseBundleIDRequest{})).
+					With(option.Response(http.StatusOK, api.ReleaseBundle{}))
 			})
 		})
 
@@ -100,6 +123,102 @@ func getReleaseBundleHandler() http.HandlerFunc {
 			http.NotFound(w, r)
 		} else if err != nil {
 			log.Error("failed to get release bundle", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			RespondJSON(w, mapping.ReleaseBundleToAPI(*bundle))
+		}
+	}
+}
+
+//nolint:dupl
+func validateReleaseBundleHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		result, err := db.ValidateReleaseBundle(ctx, id, *auth.CurrentOrgID())
+		if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+		} else if err != nil {
+			log.Error("failed to validate release bundle", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			RespondJSON(w, releaseBundleValidationResponse(result))
+		}
+	}
+}
+
+//nolint:dupl
+func publishReleaseBundleHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		bundle, result, err := db.PublishReleaseBundle(ctx, id, *auth.CurrentOrgID(), auth.CurrentUserID())
+		if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+		} else if errors.Is(err, apierrors.ErrBadRequest) {
+			RespondJSONWithStatus(w, http.StatusBadRequest, releaseBundleValidationResponse(result))
+		} else if errors.Is(err, apierrors.ErrConflict) {
+			http.Error(w, "release bundle state transition is invalid", http.StatusConflict)
+		} else if err != nil {
+			log.Error("failed to publish release bundle", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			RespondJSON(w, mapping.ReleaseBundleToAPI(*bundle))
+		}
+	}
+}
+
+//nolint:dupl
+func blockReleaseBundleHandler() http.HandlerFunc {
+	return releaseBundleTransitionHandler("block", db.BlockReleaseBundle)
+}
+
+//nolint:dupl
+func archiveReleaseBundleHandler() http.HandlerFunc {
+	return releaseBundleTransitionHandler("archive", db.ArchiveReleaseBundle)
+}
+
+func releaseBundleTransitionHandler(
+	action string,
+	transition func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*types.ReleaseBundle, error),
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		bundle, err := transition(ctx, id, *auth.CurrentOrgID(), auth.CurrentUserID())
+		if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+		} else if errors.Is(err, apierrors.ErrConflict) {
+			http.Error(w, "release bundle state transition is invalid", http.StatusConflict)
+		} else if err != nil {
+			log.Error("failed to "+action+" release bundle", zap.Error(err))
 			sentry.GetHubFromContext(ctx).CaptureException(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {
@@ -222,6 +341,30 @@ func releaseBundleFromCreateUpdateRequest(
 
 func releaseBundleResponses(bundles []types.ReleaseBundle) []api.ReleaseBundle {
 	return mapping.List(bundles, mapping.ReleaseBundleToAPI)
+}
+
+func releaseBundleValidationResponse(result releasebundles.ValidationResult) api.ReleaseBundleValidationResponse {
+	errors := make([]api.ReleaseBundleValidationIssue, 0, len(result.Errors))
+	for _, issue := range result.Errors {
+		errors = append(errors, api.ReleaseBundleValidationIssue{
+			Field:   issue.Field,
+			Rule:    issue.Rule,
+			Message: issue.Message,
+		})
+	}
+	warnings := make([]api.ReleaseBundleValidationIssue, 0, len(result.Warnings))
+	for _, issue := range result.Warnings {
+		warnings = append(warnings, api.ReleaseBundleValidationIssue{
+			Field:   issue.Field,
+			Rule:    issue.Rule,
+			Message: issue.Message,
+		})
+	}
+	return api.ReleaseBundleValidationResponse{
+		Valid:    result.Valid,
+		Errors:   errors,
+		Warnings: warnings,
+	}
 }
 
 func handleReleaseBundleWriteError(w http.ResponseWriter, r *http.Request, log *zap.Logger, action string, err error) {

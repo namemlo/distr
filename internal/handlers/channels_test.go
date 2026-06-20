@@ -252,19 +252,21 @@ func TestChannelsFeatureFlagMiddlewareRejectsDisabledAPI(t *testing.T) {
 }
 
 type channelTestAuth struct {
-	orgID uuid.UUID
-	role  types.UserRole
+	orgID  uuid.UUID
+	userID uuid.UUID
+	role   types.UserRole
 }
 
 func testChannelAuth() channelTestAuth {
 	return channelTestAuth{
-		orgID: uuid.New(),
-		role:  types.UserRoleAdmin,
+		orgID:  uuid.New(),
+		userID: uuid.New(),
+		role:   types.UserRoleAdmin,
 	}
 }
 
 func (a channelTestAuth) CurrentUserID() uuid.UUID {
-	return uuid.New()
+	return a.userID
 }
 
 func (a channelTestAuth) CurrentUserEmail() string {
@@ -308,5 +310,5 @@ func (a channelTestAuth) CurrentOrg() *types.Organization {
 }
 
 func (a channelTestAuth) CurrentUser() *types.UserAccount {
-	return &types.UserAccount{ID: uuid.New(), Email: a.CurrentUserEmail()}
+	return &types.UserAccount{ID: a.userID, Email: a.CurrentUserEmail()}
 }

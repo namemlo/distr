@@ -81,6 +81,10 @@ func TestReleaseBundleHandlersRejectMalformedUUIDPathValues(t *testing.T) {
 		{name: "get", handler: getReleaseBundleHandler(), method: http.MethodGet},
 		{name: "update", handler: updateReleaseBundleHandler(), method: http.MethodPut, body: `{"releaseNumber":"1.2.3"}`},
 		{name: "delete", handler: deleteReleaseBundleHandler(), method: http.MethodDelete},
+		{name: "validate", handler: validateReleaseBundleHandler(), method: http.MethodPost},
+		{name: "publish", handler: publishReleaseBundleHandler(), method: http.MethodPost},
+		{name: "block", handler: blockReleaseBundleHandler(), method: http.MethodPost},
+		{name: "archive", handler: archiveReleaseBundleHandler(), method: http.MethodPost},
 	}
 
 	for _, tt := range tests {
