@@ -22,10 +22,21 @@ func (r *CreateUpdateLifecycleRequest) Validate() error {
 	if r.SortOrder < 0 {
 		return validation.NewValidationFailedError("sortOrder must be non-negative")
 	}
+	phaseNames := map[string]struct{}{}
+	phaseSortOrders := map[int]struct{}{}
 	for _, phase := range r.Phases {
 		if err := phase.Validate(); err != nil {
 			return err
 		}
+		phaseName := strings.TrimSpace(phase.Name)
+		if _, ok := phaseNames[phaseName]; ok {
+			return validation.NewValidationFailedError("phase name must be unique")
+		}
+		phaseNames[phaseName] = struct{}{}
+		if _, ok := phaseSortOrders[phase.SortOrder]; ok {
+			return validation.NewValidationFailedError("phase sortOrder must be unique")
+		}
+		phaseSortOrders[phase.SortOrder] = struct{}{}
 	}
 	return nil
 }
@@ -51,6 +62,13 @@ func (r *CreateUpdateLifecyclePhaseRequest) Validate() error {
 	}
 	if len(r.EnvironmentIDs) == 0 {
 		return validation.NewValidationFailedError("phase must reference at least one environment")
+	}
+	environmentIDs := map[uuid.UUID]struct{}{}
+	for _, environmentID := range r.EnvironmentIDs {
+		if _, ok := environmentIDs[environmentID]; ok {
+			return validation.NewValidationFailedError("phase environmentIds must be unique")
+		}
+		environmentIDs[environmentID] = struct{}{}
 	}
 	if r.MinimumSuccessfulDeployments < 0 {
 		return validation.NewValidationFailedError("phase minimumSuccessfulDeployments must be non-negative")

@@ -78,6 +78,42 @@ func TestCreateUpdateLifecycleRequestValidate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "rejects duplicate phase names",
+			request: CreateUpdateLifecycleRequest{
+				Name: "Standard",
+				Phases: []CreateUpdateLifecyclePhaseRequest{
+					{Name: "Production", SortOrder: 10, EnvironmentIDs: []uuid.UUID{environmentID}},
+					{Name: " Production ", SortOrder: 20, EnvironmentIDs: []uuid.UUID{environmentID}},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects duplicate phase sort orders",
+			request: CreateUpdateLifecycleRequest{
+				Name: "Standard",
+				Phases: []CreateUpdateLifecyclePhaseRequest{
+					{Name: "Staging", SortOrder: 10, EnvironmentIDs: []uuid.UUID{environmentID}},
+					{Name: "Production", SortOrder: 10, EnvironmentIDs: []uuid.UUID{environmentID}},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects duplicate phase environments",
+			request: CreateUpdateLifecycleRequest{
+				Name: "Standard",
+				Phases: []CreateUpdateLifecyclePhaseRequest{
+					{
+						Name:           "Production",
+						SortOrder:      10,
+						EnvironmentIDs: []uuid.UUID{environmentID, environmentID},
+					},
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
