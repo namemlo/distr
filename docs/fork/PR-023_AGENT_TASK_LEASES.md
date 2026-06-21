@@ -63,6 +63,8 @@ POST /api/v1/agents/{id}/tasks/{taskId}/heartbeat
 
 If no claimable work exists, the endpoint returns `204 No Content`.
 
+Claims and expired-lease reclaims lock and recheck the Task's Release Bundle before creating a lease. Tasks whose Release Bundle is no longer `PUBLISHED` are not claimable.
+
 `POST /api/v1/agents/{id}/tasks/{taskId}/heartbeat` accepts:
 
 ```json
@@ -71,13 +73,15 @@ If no claimable work exists, the endpoint returns `204 No Content`.
 }
 ```
 
-An active heartbeat extends `heartbeatAt` and `expiresAt`. Missing or cross-organization leases return `404 Not Found`; expired leases return `409 Conflict`; invalid payloads return `400 Bad Request`.
+An active heartbeat extends `heartbeatAt` and `expiresAt` only while the Task is `RUNNING`. Missing or cross-organization leases return `404 Not Found`; expired leases return `409 Conflict`; invalid payloads return `400 Bad Request`.
 
 ## Reclaim behavior
 
 If a Task is already `RUNNING` but its active lease is expired, a later lease claim releases the expired lease and creates a new lease for the same Task with the next attempt number. The Task remains `RUNNING`; resource locks remain held by the Task across attempts.
 
 Hub-executed-only Tasks are not claimed by target agents.
+
+When a Task transitions to a terminal state, any active lease for that Task is released in the same transaction as the task-state update.
 
 ## Non-goals
 

@@ -1071,6 +1071,11 @@ func updateTaskStatus(ctx context.Context, id, orgID uuid.UUID, status types.Tas
 	if err != nil {
 		return mapTaskWriteError("update status", err)
 	}
+	if status.IsTerminal() {
+		if err := releaseActiveTaskLeasesForTask(ctx, id, orgID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -56,6 +56,13 @@ func LeaseAgentTask(ctx context.Context, request types.LeaseAgentTaskRequest) (*
 		if err != nil {
 			return err
 		}
+		published, err := lockTaskReleaseBundlePublishedForLease(ctx, candidate.TaskID, request.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if !published {
+			return nil
+		}
 		if candidate.Status == types.TaskStatusQueued {
 			err := acquireTaskResourceLocks(ctx, candidate.TaskID, request.OrganizationID)
 			if errors.Is(err, apierrors.ErrConflict) {
@@ -102,6 +109,13 @@ func HeartbeatAgentTaskLease(
 	}
 	var lease *types.TaskLease
 	err := RunTx(ctx, func(ctx context.Context) error {
+		status, err := getTaskStatusForUpdate(ctx, request.TaskID, request.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if status != types.TaskStatusRunning {
+			return apierrors.ErrNotFound
+		}
 		leaseID, expired, err := getActiveTaskLeaseIDForHeartbeat(ctx, request)
 		if err != nil {
 			return err
@@ -168,12 +182,19 @@ func getNextTaskLeaseCandidateForUpdate(
 		WHERE t.organization_id = @organizationId
 			AND t.deployment_target_id = @agentId
 			AND (
-				t.status = @queuedStatus
+			t.status = @queuedStatus
 				OR (
 					t.status = @runningStatus
 					AND active_lease.id IS NOT NULL
 					AND active_lease.expires_at <= now()
 				)
+			)
+			AND EXISTS (
+				SELECT 1
+				FROM ReleaseBundle rb
+				WHERE rb.id = t.release_bundle_id
+					AND rb.organization_id = t.organization_id
+					AND rb.status = @publishedStatus
 			)
 			AND EXISTS (
 				SELECT 1
@@ -192,11 +213,12 @@ func getNextTaskLeaseCandidateForUpdate(
 		LIMIT 1
 		FOR UPDATE OF t SKIP LOCKED`,
 		pgx.NamedArgs{
-			"organizationId": request.OrganizationID,
-			"agentId":        request.AgentID,
-			"queuedStatus":   types.TaskStatusQueued,
-			"runningStatus":  types.TaskStatusRunning,
-			"skippedStatus":  types.StepRunStatusSkipped,
+			"organizationId":  request.OrganizationID,
+			"agentId":         request.AgentID,
+			"queuedStatus":    types.TaskStatusQueued,
+			"runningStatus":   types.TaskStatusRunning,
+			"skippedStatus":   types.StepRunStatusSkipped,
+			"publishedStatus": types.ReleaseBundleStatusPublished,
 		},
 	)
 	if err != nil {
@@ -210,6 +232,29 @@ func getNextTaskLeaseCandidateForUpdate(
 		return nil, fmt.Errorf("could not collect next Task lease candidate: %w", err)
 	}
 	return &candidate, nil
+}
+
+func lockTaskReleaseBundlePublishedForLease(ctx context.Context, taskID, orgID uuid.UUID) (bool, error) {
+	db := internalctx.GetDb(ctx)
+	var status types.ReleaseBundleStatus
+	err := db.QueryRow(ctx,
+		`SELECT rb.status
+		FROM Task t
+		JOIN ReleaseBundle rb
+			ON rb.id = t.release_bundle_id
+			AND rb.organization_id = t.organization_id
+		WHERE t.id = @taskId
+			AND t.organization_id = @organizationId
+		FOR UPDATE OF rb`,
+		pgx.NamedArgs{"taskId": taskID, "organizationId": orgID},
+	).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("could not lock Task ReleaseBundle for lease: %w", err)
+	}
+	return status == types.ReleaseBundleStatusPublished, nil
 }
 
 func releaseExpiredTaskLeasesAndNextAttempt(ctx context.Context, taskID, orgID uuid.UUID) (int, error) {
@@ -324,6 +369,24 @@ func getActiveTaskLeaseIDForHeartbeat(
 		return uuid.Nil, false, fmt.Errorf("could not lock TaskLease heartbeat: %w", err)
 	}
 	return leaseID, expired, nil
+}
+
+func releaseActiveTaskLeasesForTask(ctx context.Context, taskID, orgID uuid.UUID) error {
+	db := internalctx.GetDb(ctx)
+	_, err := db.Exec(ctx,
+		`UPDATE TaskLease
+		SET
+			released_at = COALESCE(released_at, now()),
+			updated_at = now()
+		WHERE task_id = @taskId
+			AND organization_id = @organizationId
+			AND released_at IS NULL`,
+		pgx.NamedArgs{"taskId": taskID, "organizationId": orgID},
+	)
+	if err != nil {
+		return mapTaskWriteError("release task leases", err)
+	}
+	return nil
 }
 
 func updateTaskLeaseHeartbeat(ctx context.Context, leaseID, orgID uuid.UUID) error {

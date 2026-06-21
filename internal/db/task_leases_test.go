@@ -14,6 +14,7 @@ import (
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/onsi/gomega"
 )
 
@@ -241,6 +242,164 @@ func TestTaskLeaseRepositoryDoesNotClaimWhenExclusiveLockIsHeld(t *testing.T) {
 	g.Expect(secondLease).To(BeNil())
 }
 
+func TestTaskLeaseRepositoryDoesNotClaimWhenReleaseBundleIsBlocked(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskLease(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	blocked, err := db.BlockReleaseBundle(ctx, deps.plan.ReleaseBundleID, deps.orgID, deps.actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(blocked.Status).To(Equal(types.ReleaseBundleStatusBlocked))
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).To(BeNil())
+	fetched, err := db.GetTask(ctx, tasks[0].ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.Status).To(Equal(types.TaskStatusQueued))
+}
+
+func TestTaskLeaseRepositoryDoesNotReclaimExpiredLeaseWhenReleaseBundleIsBlocked(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskLease(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	first, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	expireTaskLeaseForTest(t, ctx, first.ID)
+	blocked, err := db.BlockReleaseBundle(ctx, deps.plan.ReleaseBundleID, deps.orgID, deps.actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(blocked.Status).To(Equal(types.ReleaseBundleStatusBlocked))
+
+	second, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second).To(BeNil())
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, tasks[0].ID)).To(Equal(1))
+}
+
+func TestTaskLeaseRepositoryWaitsForConcurrentReleaseBundleBlockBeforeClaim(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskLease(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	tx := lockAndBlockReleaseBundleForTest(t, ctx, deps.plan.ReleaseBundleID)
+	resultCh := make(chan taskLeaseAsyncResult, 1)
+
+	go func() {
+		lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+			OrganizationID: deps.orgID,
+			AgentID:        tasks[0].DeploymentTargetID,
+		})
+		resultCh <- taskLeaseAsyncResult{lease: lease, err: err}
+	}()
+
+	assertTaskLeaseOperationIsWaiting(t, resultCh)
+	g.Expect(tx.Commit(ctx)).To(Succeed())
+	result := awaitTaskLeaseOperation(t, resultCh)
+	g.Expect(result.err).NotTo(HaveOccurred())
+	g.Expect(result.lease).To(BeNil())
+	fetched, err := db.GetTask(ctx, tasks[0].ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.Status).To(Equal(types.TaskStatusQueued))
+}
+
+func TestTaskLeaseRepositoryTerminalTaskReleasesLeaseAndRejectsHeartbeat(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskLease(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	terminal, err := db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         tasks[0].ID,
+		Status:         types.TaskStatusSucceeded,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(terminal.Status).To(Equal(types.TaskStatusSucceeded))
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, tasks[0].ID)).To(Equal(0))
+
+	_, err = db.HeartbeatAgentTaskLease(ctx, types.HeartbeatAgentTaskLeaseRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+		TaskID:         tasks[0].ID,
+		LeaseToken:     lease.LeaseToken,
+	})
+
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+}
+
+func TestTaskLeaseRepositoryHeartbeatWaitsForConcurrentTerminalTask(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskLease(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	tx := lockAndCompleteTaskForTest(t, ctx, tasks[0].ID, deps.orgID)
+	resultCh := make(chan taskLeaseAsyncResult, 1)
+
+	go func() {
+		heartbeat, err := db.HeartbeatAgentTaskLease(ctx, types.HeartbeatAgentTaskLeaseRequest{
+			OrganizationID: deps.orgID,
+			AgentID:        tasks[0].DeploymentTargetID,
+			TaskID:         tasks[0].ID,
+			LeaseToken:     lease.LeaseToken,
+		})
+		resultCh <- taskLeaseAsyncResult{lease: heartbeat, err: err}
+	}()
+
+	assertTaskLeaseOperationIsWaiting(t, resultCh)
+	g.Expect(tx.Commit(ctx)).To(Succeed())
+	result := awaitTaskLeaseOperation(t, resultCh)
+	g.Expect(errors.Is(result.err, apierrors.ErrNotFound)).To(BeTrue())
+	g.Expect(result.lease).To(BeNil())
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, tasks[0].ID)).To(Equal(0))
+}
+
 func TestTaskLeaseMigrationDefinesLeaseTables(t *testing.T) {
 	g := NewWithT(t)
 	sql, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "124_task_leases.up.sql"))
@@ -329,4 +488,78 @@ func countActiveTaskLeasesForTest(t *testing.T, ctx context.Context, taskID uuid
 		t.Fatalf("count active task leases: %v", err)
 	}
 	return count
+}
+
+type taskLeaseAsyncResult struct {
+	lease *types.TaskLease
+	err   error
+}
+
+func assertTaskLeaseOperationIsWaiting(t *testing.T, resultCh <-chan taskLeaseAsyncResult) {
+	t.Helper()
+	select {
+	case result := <-resultCh:
+		t.Fatalf("task lease operation completed before lock was released: lease=%v err=%v", result.lease, result.err)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func awaitTaskLeaseOperation(t *testing.T, resultCh <-chan taskLeaseAsyncResult) taskLeaseAsyncResult {
+	t.Helper()
+	select {
+	case result := <-resultCh:
+		return result
+	case <-time.After(5 * time.Second):
+		t.Fatal("task lease operation did not finish after lock was released")
+		return taskLeaseAsyncResult{}
+	}
+}
+
+func lockAndCompleteTaskForTest(t *testing.T, ctx context.Context, taskID, orgID uuid.UUID) pgx.Tx {
+	t.Helper()
+	pool, ok := internalctx.GetDb(ctx).(*pgxpool.Pool)
+	if !ok {
+		t.Fatalf("test context db is %T, expected *pgxpool.Pool", internalctx.GetDb(ctx))
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = tx.Rollback(ctx)
+	})
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT id FROM Task
+		WHERE id = @taskId AND organization_id = @organizationId
+		FOR UPDATE`,
+		pgx.NamedArgs{"taskId": taskID, "organizationId": orgID},
+	); err != nil {
+		t.Fatalf("lock task row: %v", err)
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE Task
+		SET status = @status, updated_at = now(), completed_at = now()
+		WHERE id = @taskId AND organization_id = @organizationId`,
+		pgx.NamedArgs{
+			"taskId":         taskID,
+			"organizationId": orgID,
+			"status":         types.TaskStatusSucceeded,
+		},
+	); err != nil {
+		t.Fatalf("complete task in transaction: %v", err)
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE TaskLease
+		SET released_at = COALESCE(released_at, now()), updated_at = now()
+		WHERE task_id = @taskId
+			AND organization_id = @organizationId
+			AND released_at IS NULL`,
+		pgx.NamedArgs{"taskId": taskID, "organizationId": orgID},
+	); err != nil {
+		t.Fatalf("release task lease in transaction: %v", err)
+	}
+	return tx
 }
