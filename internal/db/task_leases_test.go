@@ -384,6 +384,88 @@ func TestTaskLeaseRepositoryReclaimDoesNotResetRunningHubStepRun(t *testing.T) {
 	)
 }
 
+func TestTaskLeaseRepositoryOrdersTargetStepsByDependencies(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	compose := taskLeaseComposeDeployStep("compose", "Compose deploy", 10)
+	compose.Dependencies = []string{"prepare"}
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{
+		compose,
+		taskLeaseHTTPCheckStep("prepare", "Prepare", 20),
+	})
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	g.Expect(lease.Steps).To(HaveLen(2))
+	g.Expect(lease.Steps[0].StepKey).To(Equal("prepare"))
+	g.Expect(lease.Steps[1].StepKey).To(Equal("compose"))
+}
+
+func TestTaskLeaseRepositoryWaitsForHubDependencyBeforeLeasingTargetStep(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	hubStep := taskLeaseHTTPCheckStep("hub-prepare", "Hub prepare", 10)
+	hubStep.ExecutionLocation = "hub"
+	compose := taskLeaseComposeDeployStep("compose", "Compose deploy", 20)
+	compose.Dependencies = []string{"hub-prepare"}
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{
+		hubStep,
+		compose,
+	})
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	hubRun := taskLeaseStepRunByKeyForTest(t, tasks[0], "hub-prepare")
+
+	blocked, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(blocked).To(BeNil())
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, tasks[0].ID)).To(Equal(0))
+	fetched, err := db.GetTask(ctx, tasks[0].ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.Status).To(Equal(types.TaskStatusQueued))
+
+	_, err = db.TransitionStepRunState(ctx, types.TransitionStepRunStateRequest{
+		OrganizationID: deps.orgID,
+		StepRunID:      hubRun.ID,
+		Status:         types.StepRunStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = db.TransitionStepRunState(ctx, types.TransitionStepRunStateRequest{
+		OrganizationID: deps.orgID,
+		StepRunID:      hubRun.ID,
+		Status:         types.StepRunStatusSucceeded,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	g.Expect(lease.Steps).To(HaveLen(1))
+	g.Expect(lease.Steps[0].StepKey).To(Equal("compose"))
+}
+
 func TestTaskLeaseRepositoryDoesNotClaimWhenExclusiveLockIsHeld(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
