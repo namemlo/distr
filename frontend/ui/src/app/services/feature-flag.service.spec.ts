@@ -56,8 +56,11 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle feature flag state', () => {
+  it('exposes release bundle and deployment process feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isDeploymentProcessesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -68,6 +71,13 @@ describe('FeatureFlagService', () => {
         key: 'release_bundles',
         label: 'Release Bundles',
         description: 'Draft and publish immutable release bundles.',
+        milestone: 'Milestone C',
+        enabled: true,
+      },
+      {
+        key: 'deployment_processes',
+        label: 'Deployment Processes',
+        description: 'Create reusable deployment process revisions.',
         milestone: 'Milestone C',
         enabled: true,
       },

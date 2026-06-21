@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-011 are implemented locally. PR-011 adds the feature-flagged Deployment Process schema and backend API foundation without adding process editor UI, Release Bundle process links, deployment planning, execution, approvals, or agent behavior.
+PR-000 through PR-012 are implemented locally. PR-012 adds the feature-flagged Deployment Process editor UI without adding process snapshots, Release Bundle process links, deployment planning, execution, approvals, or agent behavior.
 
 ## Tracking Template
 
@@ -208,3 +208,18 @@ Use one entry per pull request:
 - Tests: API validation, mapping, handler, live PostgreSQL repository and handler integration, and migration checks were added.
 - Upstream contribution notes: Community-neutral Deployment Process schema; no adopter-specific action types, providers, or business logic.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, deployment target, deployment, release-name, and agent behavior is unchanged. No Step Template API, Release Bundle process snapshot/link, variable, deployment planning, approval, retention, execution, notification, UI workflow, or agent behavior is added in PR-011.
+
+### PR-012 - Process editor UI
+
+- Status: Implemented locally; Angular route, service, component, tests, lint, and build verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=deployment_processes`; the UI route/sidebar also require `environments`, `lifecycles`, and `channels`.
+- User-facing behavior: Vendor admins can list, create, edit, delete, inspect revision history, view revision details, and create new structured revisions for Deployment Processes from a feature-flagged Deployment Processes page.
+- Database changes: None.
+- API changes: None. The UI uses the existing PR-011 Deployment Process CRUD and revision endpoints.
+- UI changes: Added Deployment Processes route, sidebar link, Angular service/types, list view, process form, revision history view, revision detail view, and structured step revision editor.
+- Agent protocol changes: None.
+- Documentation: Added PR-012 notes and ADR-0012.
+- Tests: Angular service, component, and feature-flag tests were added.
+- Upstream contribution notes: Community-neutral Deployment Process UI; no adopter-specific terminology, provider logic, or Octopus UI/assets.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, deployment target, deployment, release-name, and agent behavior is unchanged. No process snapshots, Release Bundle process links, variables, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-012.

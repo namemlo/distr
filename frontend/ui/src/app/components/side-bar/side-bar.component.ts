@@ -16,6 +16,7 @@ import {
   faChevronDown,
   faCreditCard,
   faDashboard,
+  faDiagramProject,
   faGear,
   faHandHoldingDollar,
   faHome,
@@ -73,6 +74,7 @@ export class SideBarComponent {
   protected readonly githubUrl = GITHUB_URL;
 
   protected readonly faDashboard = faDashboard;
+  protected readonly faDiagramProject = faDiagramProject;
   protected readonly faBoxesStacked = faBoxesStacked;
   protected readonly faLightbulb = faLightbulb;
   protected readonly faKey = faKey;
@@ -127,6 +129,10 @@ export class SideBarComponent {
   protected readonly isReleaseBundlesFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isReleaseBundlesEnabled$, {initialValue: false})
+      : signal(false);
+  protected readonly isDeploymentProcessesFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isDeploymentProcessesEnabled$, {initialValue: false})
       : signal(false);
 
   public readonly isSubscriptionBannerVisible = input<boolean>();
