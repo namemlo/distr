@@ -44,6 +44,7 @@ Registry, network, and host mount-root allowlists are trusted Docker-agent confi
 DISTR_OCI_JOB_ALLOWED_REGISTRIES
 DISTR_OCI_JOB_ALLOWED_NETWORKS
 DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS
+DISTR_OCI_JOB_SECRET_STAGING_DIR
 ```
 
 They are intentionally not accepted from Deployment Process action input, because action input must not grant its own host permissions.
@@ -63,7 +64,7 @@ The Docker adapter enforces these policies:
 - `--log-driver none` is always used so retained deterministic containers do not keep raw stdout/stderr in Docker logs.
 - Optional `runAsUser`, CPU, and memory limits are passed through to Docker.
 
-The adapter writes public environment variables to a temporary env file and passes that file through Docker `--env-file`. Resolved `secretEnvironment` values are written to a separate temporary shell env file in a private host temp directory, chmodded container-readable, bind-mounted read-only into the container, sourced by an explicit `--entrypoint /bin/sh` wrapper, and removed after command completion. This keeps secret values out of Docker command-line arguments and retained container `Config.Env` metadata. Images that use `secretEnvironment` must provide `/bin/sh`.
+The adapter writes public environment variables to a temporary env file and passes that file through Docker `--env-file`. Resolved `secretEnvironment` values are written to a separate temporary shell env file under `DISTR_OCI_JOB_SECRET_STAGING_DIR`, chmodded container-readable, bind-mounted read-only into the container, sourced by an explicit `--entrypoint /bin/sh` wrapper, and removed after command completion. For containerized Docker agents using a host Docker socket, this staging directory must be mounted into the agent at the same host-visible absolute path so the Docker daemon can resolve the bind source. This keeps secret values out of Docker command-line arguments and retained container `Config.Env` metadata. Images that use `secretEnvironment` must provide `/bin/sh`.
 
 Idempotency uses a deterministic Docker container name derived from the action idempotency key. Before running `docker run`, the adapter inspects the deterministic container. An exited matching container is treated as the completed operation, a running matching container is waited, and a created matching container is started and then waited so restart/reclaim does not falsely mark an unexecuted job successful. Reclaim does not replay retained raw Docker logs because they may contain old secret values after rotation; it returns a generic reuse status with the exit code. Unsupported existing-container states fail explicitly. This covers normal retry, lease expiry reclaim, and agent restart on the same Docker host.
 

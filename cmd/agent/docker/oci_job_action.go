@@ -28,6 +28,7 @@ const (
 	ociJobAllowedRegistriesEnv = "DISTR_OCI_JOB_ALLOWED_REGISTRIES"
 	ociJobAllowedNetworksEnv   = "DISTR_OCI_JOB_ALLOWED_NETWORKS"
 	ociJobAllowedMountRootsEnv = "DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS"
+	ociJobSecretStagingDirEnv  = "DISTR_OCI_JOB_SECRET_STAGING_DIR"
 	ociJobSecretEnvMountPath   = "/run/distr/secret-env"
 	ociJobMaxStatusBytes       = types.MaxStepRunLogChunkBodyLength
 )
@@ -679,7 +680,11 @@ func writeOCIJobSecretEnvFile(secretEnvironment map[string]string) (string, func
 	if len(secretEnvironment) == 0 {
 		return "", func() {}, nil
 	}
-	dir, err := os.MkdirTemp("", "distr-oci-job-secret-env-*")
+	stagingDir, err := resolveOCIJobSecretStagingDir()
+	if err != nil {
+		return "", nil, err
+	}
+	dir, err := os.MkdirTemp(stagingDir, "distr-oci-job-secret-env-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create OCI job secret env dir: %w", err)
 	}
@@ -713,6 +718,14 @@ func writeOCIJobSecretEnvFile(secretEnvironment map[string]string) (string, func
 		return "", nil, fmt.Errorf("chmod OCI job secret env file: %w", err)
 	}
 	return path, cleanup, nil
+}
+
+func resolveOCIJobSecretStagingDir() (string, error) {
+	stagingDir := strings.TrimSpace(os.Getenv(ociJobSecretStagingDirEnv))
+	if stagingDir == "" {
+		return "", fmt.Errorf("%s is required when secretEnvironment is used", ociJobSecretStagingDirEnv)
+	}
+	return resolveOCIJobMountPath(stagingDir, ociJobSecretStagingDirEnv)
 }
 
 func shellSingleQuote(value string) string {

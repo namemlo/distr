@@ -101,9 +101,10 @@ Registry, network, and mount-root allowlists are trusted Docker-agent configurat
 DISTR_OCI_JOB_ALLOWED_REGISTRIES=registry.example.com
 DISTR_OCI_JOB_ALLOWED_NETWORKS=none,job-network
 DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS=/var/lib/distr/jobs
+DISTR_OCI_JOB_SECRET_STAGING_DIR=/var/lib/distr/oci-job-secrets
 ```
 
-When `DISTR_OCI_JOB_ALLOWED_NETWORKS` is unset, only `none` is allowed. Host mounts require absolute source paths that resolve through symlinks under one of `DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS`; Docker receives the resolved canonical source path, not the original input path.
+When `DISTR_OCI_JOB_ALLOWED_NETWORKS` is unset, only `none` is allowed. Host mounts require absolute source paths that resolve through symlinks under one of `DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS`; Docker receives the resolved canonical source path, not the original input path. `DISTR_OCI_JOB_SECRET_STAGING_DIR` is required when `secretEnvironment` is used. For a containerized Docker agent with a host Docker socket, mount that directory into the agent at the same absolute path so both the agent process and host Docker daemon can see the staged secret file.
 
 ## Agent behavior
 
@@ -141,7 +142,7 @@ For `distr.oci.job`, the agent:
 - Secret values are resolved only for an authenticated lease and are not stored back to the plan.
 - Resolved secret values remain lease-only in `secretEnvironment` and are kept separate from public `environment`.
 - StepRun event messages, details, logs, non-sensitive outputs, and returned agent errors are redacted using resolved secret values.
-- Docker command-line arguments, retained container `Config.Env` metadata, and retained Docker logs do not include resolved secret values; the agent creates the secret env file inside a private temp directory, makes the file container-readable for `runAsUser`, mounts it read-only, sources it through explicit `--entrypoint /bin/sh`, disables Docker log retention with `--log-driver none`, and removes the directory after command completion. Images using `secretEnvironment` must provide `/bin/sh`.
+- Docker command-line arguments, retained container `Config.Env` metadata, and retained Docker logs do not include resolved secret values; the agent creates the secret env file inside `DISTR_OCI_JOB_SECRET_STAGING_DIR`, makes the file container-readable for `runAsUser`, mounts it read-only, sources it through explicit `--entrypoint /bin/sh`, disables Docker log retention with `--log-driver none`, and removes the directory after command completion. Images using `secretEnvironment` must provide `/bin/sh`.
 - OCI jobs do not use privileged mode.
 - Root filesystems are read-only by default and cannot be disabled by this adapter.
 - Linux capabilities are dropped with `--cap-drop ALL`.
@@ -157,6 +158,7 @@ For `distr.oci.job`, the agent:
 - `volume source must be an absolute path`: use an absolute host path; relative host mounts are rejected.
 - `volumes must be read-only`: set each volume `readOnly` to `true`.
 - `secret environment variable name ... is invalid`: use shell-compatible environment variable names for `secretEnvironment` keys.
+- `DISTR_OCI_JOB_SECRET_STAGING_DIR is required when secretEnvironment is used`: configure a host-visible staging directory for temporary secret files.
 - `OCI job timed out`: increase `timeoutSeconds` or inspect the current failed run on the Docker host. Reclaim responses intentionally do not replay retained raw logs.
 - Repeated retries do not re-run the job when the deterministic container already exists; inspect or remove the `distr-job-*` container only after confirming it is safe to allow re-execution.
 

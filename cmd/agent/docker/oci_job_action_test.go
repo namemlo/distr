@@ -238,6 +238,11 @@ func TestExecuteOCIJobStepDoesNotPersistSecretEnvironmentInContainerMetadata(t *
 	run := findFakeDockerCommand(readFakeDockerCommands(t, argsFile), "run")
 	g.Expect(run).NotTo(BeNil())
 	g.Expect(strings.Join(run, " ")).NotTo(ContainSubstring(secretValue))
+	secretSource := fakeDockerSecretEnvSourceFromRun(run)
+	g.Expect(secretSource).NotTo(Equal(""))
+	g.Expect(sameOrChildPath(filepath.Clean(secretSource), filepath.Clean(os.Getenv(ociJobSecretStagingDirEnv)))).To(BeTrue())
+	_, statErr := os.Stat(secretSource)
+	g.Expect(os.IsNotExist(statErr)).To(BeTrue())
 	entrypoint := indexOfFakeDockerArg(run, "--entrypoint")
 	g.Expect(entrypoint).NotTo(Equal(-1))
 	g.Expect(run[entrypoint+1]).To(Equal("/bin/sh"))
@@ -292,6 +297,37 @@ func TestExecuteOCIJobStepDisablesDockerLogRetentionForRawSecretOutput(t *testin
 	outputs, err := json.Marshal(recorder.events[2].Outputs)
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(string(outputs)).NotTo(ContainSubstring(secretValue))
+}
+
+func TestExecuteOCIJobStepRequiresHostVisibleSecretStagingDir(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	t.Setenv(ociJobSecretStagingDirEnv, "")
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	inputs["secretEnvironment"] = map[string]any{"API_TOKEN": "super-secret-job-token"}
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         inputs,
+		IdempotencyKey: "sha256:job-key",
+	}
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).To(MatchError(ContainSubstring(ociJobSecretStagingDirEnv + " is required when secretEnvironment is used")))
+	g.Expect(findFakeDockerCommand(readFakeDockerCommands(t, argsFile), "run")).To(BeNil())
 }
 
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
@@ -933,6 +969,7 @@ func setOCIJobPolicyEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(ociJobAllowedRegistriesEnv, "registry.example.com")
 	t.Setenv(ociJobAllowedNetworksEnv, "none")
+	t.Setenv(ociJobSecretStagingDirEnv, t.TempDir())
 }
 
 func readFakeDockerCommands(t *testing.T, path string) [][]string {
@@ -965,6 +1002,20 @@ func findFakeDockerCommand(commands [][]string, name string) []string {
 		}
 	}
 	return nil
+}
+
+func fakeDockerSecretEnvSourceFromRun(command []string) string {
+	suffix := ":" + ociJobSecretEnvMountPath + ":ro"
+	for index, arg := range command {
+		if arg != "--volume" || index+1 >= len(command) {
+			continue
+		}
+		bind := command[index+1]
+		if strings.HasSuffix(bind, suffix) {
+			return strings.TrimSuffix(bind, suffix)
+		}
+	}
+	return ""
 }
 
 func indexOfFakeDockerArg(command []string, value string) int {
