@@ -32,6 +32,7 @@ func TestTaskHandlersCreateListReadAndTransitionTask(t *testing.T) {
 	g.Expect(json.Unmarshal(createRecorder.Body.Bytes(), &created)).To(Succeed())
 	g.Expect(created).To(HaveLen(1))
 	g.Expect(created[0].Status).To(Equal(types.TaskStatusQueued))
+	g.Expect(created[0].Locks).To(HaveLen(1))
 	g.Expect(created[0].StepRuns).To(HaveLen(1))
 
 	listRecorder := httptest.NewRecorder()
@@ -76,6 +77,61 @@ func TestTaskHandlersCreateListReadAndTransitionTask(t *testing.T) {
 	g.Expect(json.Unmarshal(transitionRecorder.Body.Bytes(), &transitioned)).To(Succeed())
 	g.Expect(transitioned.Status).To(Equal(types.TaskStatusRunning))
 	g.Expect(transitioned.StartedAt).NotTo(BeNil())
+}
+
+func TestTaskHandlersCreateTasksWithConcurrencyRequest(t *testing.T) {
+	ctx := taskHandlerDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyTaskHandlerPlan(t, ctx, "cluster-a")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/deployment-plans/"+deps.plan.ID.String()+"/tasks",
+		strings.NewReader(`{
+			"concurrencyPolicy": "ALLOW_PARALLEL",
+			"lockResources": [
+				{"resourceType": "custom", "resourceKey": " shared-db "}
+			]
+		}`),
+	)
+	request.SetPathValue("deploymentPlanId", deps.plan.ID.String())
+	request = request.WithContext(authenticatedReleaseBundleHandlerContext(ctx, deps.orgID, deps.actorID))
+
+	createTasksForDeploymentPlanHandler().ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusOK))
+	var created []api.Task
+	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &created)).To(Succeed())
+	g.Expect(created).To(HaveLen(1))
+	g.Expect(created[0].Locks).To(HaveLen(2))
+	g.Expect(created[0].Locks).To(ContainElement(WithTransform(
+		func(lock api.TaskResourceLock) string { return lock.ResourceKey },
+		Equal("shared-db"),
+	)))
+	g.Expect(created[0].Locks).To(ContainElement(WithTransform(
+		func(lock api.TaskResourceLock) types.TaskConcurrencyPolicy { return lock.ConcurrencyPolicy },
+		Equal(types.TaskConcurrencyPolicyAllowParallel),
+	)))
+}
+
+func TestTaskHandlersRejectInvalidConcurrencyRequest(t *testing.T) {
+	ctx := taskHandlerDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyTaskHandlerPlan(t, ctx, "cluster-a")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/deployment-plans/"+deps.plan.ID.String()+"/tasks",
+		strings.NewReader(`{"concurrencyPolicy":"BOUNCE"}`),
+	)
+	request.SetPathValue("deploymentPlanId", deps.plan.ID.String())
+	request = request.WithContext(authenticatedReleaseBundleHandlerContext(ctx, deps.orgID, deps.actorID))
+
+	createTasksForDeploymentPlanHandler().ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
 }
 
 func TestTaskHandlersReturnNotFoundForCrossOrganizationPlan(t *testing.T) {

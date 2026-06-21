@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -83,15 +86,60 @@ func createTasksForDeploymentPlanHandler() http.HandlerFunc {
 		log := internalctx.GetLogger(ctx)
 		auth := auth.Authentication.Require(ctx)
 
+		request, err := optionalCreateTasksRequest(w, r)
+		if err != nil {
+			return
+		}
 		tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
-			OrganizationID:     *auth.CurrentOrgID(),
-			DeploymentPlanID:   deploymentPlanID,
-			ActorUserAccountID: auth.CurrentUserID(),
+			OrganizationID:      *auth.CurrentOrgID(),
+			DeploymentPlanID:    deploymentPlanID,
+			ActorUserAccountID:  auth.CurrentUserID(),
+			ConcurrencyPolicy:   request.ConcurrencyPolicy,
+			AdditionalResources: taskLockResourcesFromAPI(request.LockResources),
 		})
 		respondTaskQueueResult(w, r, log, err, func() {
 			RespondJSON(w, mapping.List(tasks, mapping.TaskToAPI))
 		})
 	}
+}
+
+func optionalCreateTasksRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+) (api.CreateTasksForDeploymentPlanRequest, error) {
+	var request api.CreateTasksForDeploymentPlanRequest
+	if r.Body == nil || r.Body == http.NoBody {
+		return request, nil
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return request, err
+	}
+	if strings.TrimSpace(string(body)) == "" {
+		return request, nil
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return request, err
+	}
+	if err := request.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return request, err
+	}
+	return request, nil
+}
+
+func taskLockResourcesFromAPI(resources []api.TaskLockResourceRequest) []types.TaskLockResourceRequest {
+	result := make([]types.TaskLockResourceRequest, 0, len(resources))
+	for _, resource := range resources {
+		result = append(result, types.TaskLockResourceRequest{
+			ResourceType:      resource.ResourceType,
+			ResourceKey:       resource.ResourceKey,
+			ConcurrencyPolicy: resource.ConcurrencyPolicy,
+		})
+	}
+	return result
 }
 
 func getTasksHandler() http.HandlerFunc {

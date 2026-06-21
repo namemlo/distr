@@ -27,6 +27,15 @@ func TestTaskToAPI(t *testing.T) {
 		EnvironmentID:          uuid.New(),
 		Status:                 types.TaskStatusQueued,
 		QueueOrder:             42,
+		Locks: []types.TaskResourceLock{
+			{
+				ID:                uuid.New(),
+				TaskID:            uuid.New(),
+				ResourceType:      types.TaskLockResourceDeploymentTarget,
+				ResourceKey:       uuid.NewString(),
+				ConcurrencyPolicy: types.TaskConcurrencyPolicyQueue,
+			},
+		},
 		StepRuns: []types.StepRun{
 			{
 				ID:                   uuid.New(),
@@ -48,6 +57,9 @@ func TestTaskToAPI(t *testing.T) {
 	g.Expect(response.DeploymentTargetID).To(Equal(task.DeploymentTargetID))
 	g.Expect(response.Status).To(Equal(types.TaskStatusQueued))
 	g.Expect(response.QueueOrder).To(Equal(int64(42)))
+	g.Expect(response.Locks).To(HaveLen(1))
+	g.Expect(response.Locks[0].ResourceType).To(Equal(types.TaskLockResourceDeploymentTarget))
+	g.Expect(response.Locks[0].ConcurrencyPolicy).To(Equal(types.TaskConcurrencyPolicyQueue))
 	g.Expect(response.StepRuns).To(HaveLen(1))
 	g.Expect(response.StepRuns[0].StepKey).To(Equal("deploy"))
 	g.Expect(response.StepRuns[0].Status).To(Equal(types.StepRunStatusPending))

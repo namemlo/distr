@@ -22,7 +22,22 @@ func TaskToAPI(task types.Task) api.Task {
 		EnvironmentID:          task.EnvironmentID,
 		Status:                 task.Status,
 		QueueOrder:             task.QueueOrder,
+		Locks:                  List(task.Locks, TaskResourceLockToAPI),
 		StepRuns:               List(task.StepRuns, StepRunToAPI),
+	}
+}
+
+func TaskResourceLockToAPI(lock types.TaskResourceLock) api.TaskResourceLock {
+	return api.TaskResourceLock{
+		ID:                lock.ID,
+		CreatedAt:         lock.CreatedAt,
+		UpdatedAt:         lock.UpdatedAt,
+		AcquiredAt:        lock.AcquiredAt,
+		ReleasedAt:        lock.ReleasedAt,
+		TaskID:            lock.TaskID,
+		ResourceType:      lock.ResourceType,
+		ResourceKey:       lock.ResourceKey,
+		ConcurrencyPolicy: lock.ConcurrencyPolicy,
 	}
 }
 

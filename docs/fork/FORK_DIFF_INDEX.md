@@ -343,3 +343,18 @@ Use one entry per pull request:
 - Tests: API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and focused Go tests were added.
 - Upstream contribution notes: Community-neutral durable task queue foundation; no adopter-specific terminology, provider logic, or execution behavior.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, deployment target, deployment, release-name, frontend planning UI, and agent behavior is unchanged. No locks, concurrency policies, leases, heartbeats, agent capabilities, agent task endpoints, execution adapters, approvals, cancellation, timelines, logs, or guided failure behavior is added in PR-020.
+
+### PR-021 - Locks and concurrency
+
+- Status: Implemented locally; backend, API, repository, migration, mapping, handler, documentation, and live PostgreSQL verification completed.
+- Upstream base: `5910e5a99d8b8108e64dd7675c18be11d20c314e`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=task_queue,deployment_plans,release_bundles,deployment_processes,scoped_variables_v2,channels,lifecycles,environments`.
+- User-facing behavior: Feature-flagged API callers can create Tasks with default deployment-target locks, optional additional lock resources, and `QUEUE`, `REJECT_NEW`, `CANCEL_OLDER`, or `ALLOW_PARALLEL` concurrency policies.
+- Database changes: Added `TaskResourceLock`, lock indexes, lock backfill for existing Tasks, and terminal Task status `CANCELED`.
+- API changes: Extended `POST /api/v1/deployment-plans/{deploymentPlanId}/tasks` with an optional concurrency body and added `locks` to Task responses.
+- UI changes: None. No Task Queue Angular route, sidebar entry, or page is added in PR-021.
+- Agent protocol changes: None.
+- Documentation: Added PR-021 notes and ADR-0021.
+- Tests: API validation, mapping, handler, live PostgreSQL repository and handler integration, migration checks, and race-condition tests were added.
+- Upstream contribution notes: Community-neutral lock resource and concurrency policy model; no adopter-specific terminology, provider logic, or execution behavior.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, deployment target, deployment, release-name, frontend planning UI, and agent behavior is unchanged. No agent capability protocol, leases, heartbeats, agent task endpoints, execution adapters, approvals, guided failure, timelines, logs, or agent changes are added in PR-021.
