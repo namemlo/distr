@@ -44,6 +44,18 @@ func TasksRouter(r chiopenapi.Router) {
 				With(option.Request(TaskIDRequest{})).
 				With(option.Response(http.StatusOK, api.Task{}))
 
+			r.With(taskStepEventsFeatureFlagMiddleware).
+				Get("/timeline", getTaskTimelineHandler()).
+				With(option.Description("Get structured step events for a task")).
+				With(option.Request(TaskIDRequest{})).
+				With(option.Response(http.StatusOK, api.TaskTimeline{}))
+
+			r.With(taskStepEventsFeatureFlagMiddleware).
+				Get("/logs", getTaskLogsHandler()).
+				With(option.Description("Get redacted step logs for a task")).
+				With(option.Request(TaskIDRequest{})).
+				With(option.Response(http.StatusOK, []api.StepRunLogChunk{}))
+
 			type TransitionTaskStateRouteRequest struct {
 				TaskIDRequest
 				api.TransitionTaskStateRequest
@@ -72,6 +84,10 @@ func taskQueueFeatureFlagMiddleware(handler http.Handler) http.Handler {
 		handler = middleware.ExperimentalFeatureFlagMiddleware(feature)(handler)
 	}
 	return handler
+}
+
+func taskStepEventsFeatureFlagMiddleware(handler http.Handler) http.Handler {
+	return middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyStepEvents)(handler)
 }
 
 func createTasksForDeploymentPlanHandler() http.HandlerFunc {
@@ -170,6 +186,44 @@ func getTaskHandler() http.HandlerFunc {
 		task, err := db.GetTask(ctx, taskID, *auth.CurrentOrgID())
 		respondTaskQueueResult(w, r, log, err, func() {
 			RespondJSON(w, mapping.TaskToAPI(*task))
+		})
+	}
+}
+
+func getTaskTimelineHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		taskID, err := uuid.Parse(r.PathValue("taskId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		timeline, err := db.GetTaskTimeline(ctx, taskID, *auth.CurrentOrgID())
+		respondTaskQueueResult(w, r, log, err, func() {
+			RespondJSON(w, mapping.TaskTimelineToAPI(*timeline))
+		})
+	}
+}
+
+func getTaskLogsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		taskID, err := uuid.Parse(r.PathValue("taskId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		logs, err := db.GetTaskLogs(ctx, taskID, *auth.CurrentOrgID())
+		respondTaskQueueResult(w, r, log, err, func() {
+			RespondJSON(w, mapping.List(logs, mapping.StepRunLogChunkToAPI))
 		})
 	}
 }
