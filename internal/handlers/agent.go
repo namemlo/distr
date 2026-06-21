@@ -23,6 +23,7 @@ import (
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/deploymentvalues"
 	"github.com/distr-sh/distr/internal/env"
+	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
 	"github.com/distr-sh/distr/internal/notification"
@@ -79,6 +80,26 @@ func AgentRouter(r chiopenapi.Router) {
 			r.Post("/metrics", agentPostMetricsHander)
 			r.Put("/logs", agentPutDeploymentLogsHandler())
 			r.Put("/deployment-target-logs", agentPutDeploymentTargetLogsHandler())
+		})
+	})
+
+	r.Route("/agents/{agentId}", func(r chiopenapi.Router) {
+		r.WithOptions(option.GroupHidden(true))
+		r.With(
+			auth.AgentAuthentication.Middleware,
+			middleware.SetSentryUserFromAgentAuth,
+			agentAuthDeploymentTargetCtxMiddleware,
+			rateLimitPerDeploymentTargetID,
+			middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyAgentCapabilities),
+		).Group(func(r chiopenapi.Router) {
+			type AgentCapabilitiesRouteRequest struct {
+				AgentID uuid.UUID `path:"agentId"`
+				api.AgentCapabilitiesRequest
+			}
+
+			r.Post("/capabilities", postAgentCapabilitiesHandler()).
+				With(option.Request(AgentCapabilitiesRouteRequest{})).
+				With(option.Response(http.StatusOK, api.AgentCapabilities{}))
 		})
 	})
 }
@@ -516,6 +537,53 @@ func agentPostMetricsHander(w http.ResponseWriter, r *http.Request) {
 	}(context.WithoutCancel(ctx))
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func postAgentCapabilitiesHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("agentId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		deploymentTarget := internalctx.GetDeploymentTarget(ctx)
+		if deploymentTarget.ID != agentID {
+			http.NotFound(w, r)
+			return
+		}
+
+		request, err := JsonBody[api.AgentCapabilitiesRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		report, err := db.UpsertAgentCapabilityReport(
+			ctx,
+			mapping.AgentCapabilitiesRequestToInternal(
+				request,
+				deploymentTarget.OrganizationID,
+				deploymentTarget.ID,
+			),
+		)
+		if errors.Is(err, apierrors.ErrBadRequest) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+		} else if err != nil {
+			log.Error("failed to save agent capability report", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		} else {
+			RespondJSON(w, mapping.AgentCapabilitiesToAPI(*report))
+		}
+	}
 }
 
 func queryAuthDeploymentTargetCtxMiddleware(next http.Handler) http.Handler {
