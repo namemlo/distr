@@ -12,7 +12,8 @@ It adds:
 - Concurrency policies: `QUEUE`, `REJECT_NEW`, `CANCEL_OLDER`, and `ALLOW_PARALLEL`.
 - Lock acquisition during `QUEUED -> RUNNING` Task transitions.
 - Lock release when Tasks enter terminal states.
-- Race-condition tests for concurrent lock acquisition.
+- Transaction-scoped PostgreSQL advisory guards around resource policy checks.
+- Race-condition tests for concurrent Task creation and lock acquisition.
 
 ## Feature flag
 
@@ -80,10 +81,10 @@ Task responses now include `locks`.
 Creates the Task. A `QUEUED -> RUNNING` transition fails with `409 Conflict` while another running Task holds the same resource.
 
 `REJECT_NEW`:
-Rejects Task creation with `409 Conflict` when an existing queued or running Task already references the same resource.
+Rejects Task creation with `409 Conflict` when an existing queued or running Task already references the same resource. Concurrent creates for the same resource are serialized before insertion.
 
 `CANCEL_OLDER`:
-Cancels older queued Tasks that reference the same resource, releases their locks, and creates the new Task. Running Tasks are not canceled.
+Cancels older queued Tasks that reference the same resource, releases their locks, and creates the new Task. Running Tasks are not canceled. Concurrent creates for the same resource are serialized before insertion.
 
 `ALLOW_PARALLEL`:
 Allows concurrent running Tasks for the same resource.

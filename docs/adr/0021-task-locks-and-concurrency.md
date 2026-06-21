@@ -23,14 +23,15 @@ Supported policies are:
 
 Lock enforcement happens in two places:
 
-- Task creation applies `REJECT_NEW` and `CANCEL_OLDER` against queued or running Tasks.
-- `QUEUED -> RUNNING` acquisition locks all rows for each resource key before checking active running holders.
+- Task creation acquires transaction-scoped PostgreSQL advisory guards for each resource key before insertion, then applies `REJECT_NEW` and `CANCEL_OLDER` against queued or running Tasks.
+- `QUEUED -> RUNNING` acquisition acquires the same resource guards, locks all rows for each resource key, and then checks active running holders.
 
 Task terminal transitions release acquired locks. `CANCELED` is a terminal status used by concurrency policy cancellation.
 
 ## Consequences
 
 - Two Tasks cannot both enter `RUNNING` for the same exclusive resource.
+- Concurrent create/start operations for the same resource are serialized by deterministic resource-key ordering.
 - Existing queued work can be rejected or canceled by policy without adding a general cancellation endpoint.
 - Existing Tasks receive default target locks during migration.
 - Later agent lease and execution PRs can reuse these durable locks without changing their basic shape.
@@ -39,6 +40,6 @@ Task terminal transitions release acquired locks. `CANCELED` is a terminal statu
 
 Using only a partial unique index for active locks was rejected because `ALLOW_PARALLEL` and `QUEUE` need policy-aware behavior.
 
-Using only PostgreSQL advisory locks was rejected because the lock state must survive Hub restarts and be inspectable through the API.
+Using only PostgreSQL advisory locks was rejected because the lock state must survive Hub restarts and be inspectable through the API. PR-021 still uses transaction-scoped advisory guards as a short-lived serialization primitive around durable `TaskResourceLock` rows.
 
 Implementing leases, heartbeats, or agent task claims now was rejected because those behaviors belong to PR-023 and later roadmap work.

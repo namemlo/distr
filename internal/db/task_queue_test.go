@@ -174,6 +174,54 @@ func TestTaskQueueRepositoryRejectNewPolicyRejectsConflictingQueuedTask(t *testi
 	g.Expect(listed).To(HaveLen(1))
 }
 
+func TestTaskQueueRepositoryRejectNewPolicySerializesConcurrentCreates(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue reject new concurrent",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+
+	errs := createTasksForDeploymentPlansConcurrently(
+		t,
+		ctx,
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   deps.plan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyRejectNew,
+		},
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   secondPlan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyRejectNew,
+		},
+	)
+
+	var successes int
+	var conflicts int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, apierrors.ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent create error: %v", err)
+		}
+	}
+	g.Expect(successes).To(Equal(1))
+	g.Expect(conflicts).To(Equal(1))
+	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+}
+
 func TestTaskQueueRepositoryCancelOlderPolicyCancelsQueuedConflicts(t *testing.T) {
 	ctx := taskQueueDBTestContext(t)
 	g := NewWithT(t)
@@ -208,6 +256,62 @@ func TestTaskQueueRepositoryCancelOlderPolicyCancelsQueuedConflicts(t *testing.T
 	g.Expect(first.CompletedAt).NotTo(BeNil())
 	g.Expect(first.Locks).To(HaveLen(1))
 	g.Expect(first.Locks[0].ReleasedAt).NotTo(BeNil())
+}
+
+func TestTaskQueueRepositoryCancelOlderPolicySerializesConcurrentCreates(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue cancel older concurrent",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+
+	errs := createTasksForDeploymentPlansConcurrently(
+		t,
+		ctx,
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   deps.plan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyCancelOlder,
+		},
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   secondPlan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyCancelOlder,
+		},
+	)
+
+	for _, err := range errs {
+		g.Expect(err).NotTo(HaveOccurred())
+	}
+	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(2))
+	var queued int
+	var canceled int
+	for _, task := range listed {
+		switch task.Status {
+		case types.TaskStatusQueued:
+			queued++
+			g.Expect(task.Locks).To(HaveLen(1))
+			g.Expect(task.Locks[0].ReleasedAt).To(BeNil())
+		case types.TaskStatusCanceled:
+			canceled++
+			g.Expect(task.CompletedAt).NotTo(BeNil())
+			g.Expect(task.Locks).To(HaveLen(1))
+			g.Expect(task.Locks[0].ReleasedAt).NotTo(BeNil())
+		default:
+			t.Fatalf("unexpected task status after concurrent cancel older create: %s", task.Status)
+		}
+	}
+	g.Expect(queued).To(Equal(1))
+	g.Expect(canceled).To(Equal(1))
 }
 
 func TestTaskQueueRepositoryAllowParallelPolicyAllowsConcurrentRunningTasksForSameTarget(t *testing.T) {
@@ -690,4 +794,33 @@ func awaitTaskQueueOperation(t *testing.T, errCh <-chan error) error {
 		t.Fatal("task queue operation did not finish after release bundle lock was released")
 		return nil
 	}
+}
+
+func createTasksForDeploymentPlansConcurrently(
+	t *testing.T,
+	ctx context.Context,
+	requests ...types.CreateTasksForDeploymentPlanRequest,
+) []error {
+	t.Helper()
+	start := make(chan struct{})
+	errCh := make(chan error, len(requests))
+	for _, request := range requests {
+		go func() {
+			<-start
+			_, err := db.CreateTasksForDeploymentPlan(ctx, request)
+			errCh <- err
+		}()
+	}
+	close(start)
+
+	errs := make([]error, 0, len(requests))
+	for range requests {
+		select {
+		case err := <-errCh:
+			errs = append(errs, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent task creation did not finish")
+		}
+	}
+	return errs
 }

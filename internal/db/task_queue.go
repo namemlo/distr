@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -65,6 +66,14 @@ const taskResourceLockOutputExpr = `
 	trl.concurrency_policy
 `
 
+const taskResourceLockAdvisoryNamespace = "distr-task-resource-lock"
+
+type taskResourceLockGroup struct {
+	OrganizationID uuid.UUID
+	ResourceType   types.TaskLockResourceType
+	ResourceKey    string
+}
+
 func CreateTasksForDeploymentPlan(
 	ctx context.Context,
 	request types.CreateTasksForDeploymentPlanRequest,
@@ -83,6 +92,26 @@ func CreateTasksForDeploymentPlan(
 			return apierrors.NewConflict("deployment plan must be READY before tasks can be created")
 		}
 		existing, err := getTasksByDeploymentPlanID(ctx, request.DeploymentPlanID, request.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if len(existing) > 0 {
+			tasks = existing
+			return nil
+		}
+		lockGroups, err := getDeploymentPlanTaskResourceLockGroups(
+			ctx,
+			request.DeploymentPlanID,
+			request.OrganizationID,
+			lockResources,
+		)
+		if err != nil {
+			return err
+		}
+		if err := lockTaskResourceAdvisoryGroups(ctx, lockGroups); err != nil {
+			return err
+		}
+		existing, err = getTasksByDeploymentPlanID(ctx, request.DeploymentPlanID, request.OrganizationID)
 		if err != nil {
 			return err
 		}
@@ -377,6 +406,49 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) 
 	return tasks, nil
 }
 
+func getDeploymentPlanTaskResourceLockGroups(
+	ctx context.Context,
+	planID uuid.UUID,
+	orgID uuid.UUID,
+	additionalResources []types.TaskLockResourceRequest,
+) ([]taskResourceLockGroup, error) {
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`SELECT dpt.deployment_target_id
+		FROM DeploymentPlanTarget dpt
+		WHERE dpt.deployment_plan_id = @deploymentPlanId
+			AND dpt.organization_id = @organizationId
+		ORDER BY dpt.deployment_target_id`,
+		pgx.NamedArgs{
+			"deploymentPlanId": planID,
+			"organizationId":   orgID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query DeploymentPlanTarget locks: %w", err)
+	}
+	deploymentTargetIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("could not collect DeploymentPlanTarget locks: %w", err)
+	}
+	groups := make([]taskResourceLockGroup, 0, len(deploymentTargetIDs)+len(additionalResources))
+	for _, deploymentTargetID := range deploymentTargetIDs {
+		groups = append(groups, taskResourceLockGroup{
+			OrganizationID: orgID,
+			ResourceType:   types.TaskLockResourceDeploymentTarget,
+			ResourceKey:    deploymentTargetID.String(),
+		})
+	}
+	for _, resource := range additionalResources {
+		groups = append(groups, taskResourceLockGroup{
+			OrganizationID: orgID,
+			ResourceType:   resource.ResourceType,
+			ResourceKey:    resource.ResourceKey,
+		})
+	}
+	return distinctTaskResourceLockGroups(groups), nil
+}
+
 func insertTaskResourceLocksForTasks(
 	ctx context.Context,
 	tasks []types.Task,
@@ -442,10 +514,13 @@ func applyTaskConcurrencyPolicies(ctx context.Context, tasks []types.Task) error
 	if err != nil {
 		return err
 	}
-	for _, lock := range distinctTaskResourceLocks(locks) {
-		if err := lockTaskResourceGroup(ctx, lock); err != nil {
+	groups := taskResourceLockGroupsFromLocks(locks)
+	for _, group := range groups {
+		if err := lockTaskResourceGroup(ctx, group); err != nil {
 			return err
 		}
+	}
+	for _, lock := range distinctTaskResourceLocks(locks) {
 		switch lock.ConcurrencyPolicy {
 		case types.TaskConcurrencyPolicyRejectNew:
 			exists, err := hasNonTerminalTaskResourceConflict(ctx, lock, taskIDs)
@@ -696,14 +771,22 @@ func getStepRunStatusForUpdate(ctx context.Context, id, orgID uuid.UUID) (types.
 }
 
 func acquireTaskResourceLocks(ctx context.Context, taskID, orgID uuid.UUID) error {
-	locks, err := getTaskResourceLocksForUpdate(ctx, taskID, orgID)
+	locks, err := getTaskResourceLocksByTaskID(ctx, taskID, orgID)
 	if err != nil {
 		return err
 	}
-	for _, lock := range locks {
-		if err := lockTaskResourceGroup(ctx, lock); err != nil {
+	groups := taskResourceLockGroupsFromLocks(locks)
+	if err := lockTaskResourceAdvisoryGroups(ctx, groups); err != nil {
+		return err
+	}
+	for _, group := range groups {
+		if err := lockTaskResourceGroup(ctx, group); err != nil {
 			return err
 		}
+	}
+	locks, err = getTaskResourceLocksForUpdate(ctx, taskID, orgID)
+	if err != nil {
+		return err
 	}
 	for _, lock := range locks {
 		if lock.ConcurrencyPolicy == types.TaskConcurrencyPolicyAllowParallel {
@@ -757,7 +840,25 @@ func getTaskResourceLocksForUpdate(ctx context.Context, taskID, orgID uuid.UUID)
 	return locks, nil
 }
 
-func lockTaskResourceGroup(ctx context.Context, lock types.TaskResourceLock) error {
+func lockTaskResourceAdvisoryGroups(ctx context.Context, groups []taskResourceLockGroup) error {
+	groups = distinctTaskResourceLockGroups(groups)
+	db := internalctx.GetDb(ctx)
+	for _, group := range groups {
+		_, err := db.Exec(ctx,
+			`SELECT pg_advisory_xact_lock(hashtext(@namespace), hashtext(@resourceKey))`,
+			pgx.NamedArgs{
+				"namespace":   taskResourceLockAdvisoryNamespace,
+				"resourceKey": taskResourceLockGroupKey(group),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("could not acquire task resource advisory lock: %w", err)
+		}
+	}
+	return nil
+}
+
+func lockTaskResourceGroup(ctx context.Context, group taskResourceLockGroup) error {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
 		`SELECT id
@@ -768,9 +869,9 @@ func lockTaskResourceGroup(ctx context.Context, lock types.TaskResourceLock) err
 		ORDER BY task_id, id
 		FOR UPDATE`,
 		pgx.NamedArgs{
-			"organizationId": lock.OrganizationID,
-			"resourceType":   lock.ResourceType,
-			"resourceKey":    lock.ResourceKey,
+			"organizationId": group.OrganizationID,
+			"resourceType":   group.ResourceType,
+			"resourceKey":    group.ResourceKey,
 		},
 	)
 	if err != nil {
@@ -993,6 +1094,47 @@ func distinctTaskResourceLocks(locks []types.TaskResourceLock) []types.TaskResou
 		distinct = append(distinct, lock)
 	}
 	return distinct
+}
+
+func taskResourceLockGroupsFromLocks(locks []types.TaskResourceLock) []taskResourceLockGroup {
+	groups := make([]taskResourceLockGroup, 0, len(locks))
+	for _, lock := range locks {
+		groups = append(groups, taskResourceLockGroup{
+			OrganizationID: lock.OrganizationID,
+			ResourceType:   lock.ResourceType,
+			ResourceKey:    lock.ResourceKey,
+		})
+	}
+	return distinctTaskResourceLockGroups(groups)
+}
+
+func distinctTaskResourceLockGroups(groups []taskResourceLockGroup) []taskResourceLockGroup {
+	distinct := make([]taskResourceLockGroup, 0, len(groups))
+	seen := map[string]struct{}{}
+	for _, group := range groups {
+		key := taskResourceLockGroupKey(group)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		distinct = append(distinct, group)
+	}
+	sort.Slice(distinct, func(i, j int) bool {
+		return taskResourceLockGroupKey(distinct[i]) < taskResourceLockGroupKey(distinct[j])
+	})
+	return distinct
+}
+
+func taskResourceLockGroupKey(group taskResourceLockGroup) string {
+	resourceType := string(group.ResourceType)
+	return fmt.Sprintf(
+		"%s:%d:%s:%d:%s",
+		group.OrganizationID,
+		len(resourceType),
+		resourceType,
+		len(group.ResourceKey),
+		group.ResourceKey,
+	)
 }
 
 func updateStepRunStatus(ctx context.Context, id, orgID uuid.UUID, status types.StepRunStatus) error {
