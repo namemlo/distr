@@ -605,6 +605,7 @@ func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity
 		"--read-only",
 		"--security-opt", "no-new-privileges",
 		"--cap-drop", "ALL",
+		"--log-driver", "none",
 	}
 	labels := ociJobExpectedLabels(identity)
 	labelKeys := make([]string, 0, len(labels))

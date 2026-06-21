@@ -766,13 +766,20 @@ func writeFakeDockerContainerMetadata(path string, dockerArgs []string) error {
 	env := []string{}
 	labels := map[string]string{}
 	binds := []string{}
+	logDriver := ""
 	image := ""
 	cmd := []string{}
 	for i := 2; i < len(dockerArgs); i++ {
 		arg := dockerArgs[i]
 		switch arg {
-		case "--name", "--network", "--security-opt", "--cap-drop", "--user", "--cpus", "--memory":
+		case "--name", "--network", "--security-opt", "--cap-drop", "--user", "--cpus", "--memory", "--entrypoint":
 			i++
+		case "--log-driver":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --log-driver value")
+			}
+			logDriver = dockerArgs[i]
 		case "--env-file":
 			i++
 			if i >= len(dockerArgs) {
@@ -817,7 +824,8 @@ func writeFakeDockerContainerMetadata(path string, dockerArgs []string) error {
 			"Labels": labels,
 		},
 		"HostConfig": map[string]any{
-			"Binds": binds,
+			"Binds":     binds,
+			"LogConfig": map[string]any{"Type": logDriver},
 		},
 	})
 	if err != nil {

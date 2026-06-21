@@ -60,6 +60,7 @@ The Docker adapter enforces these policies:
 - The root filesystem is read-only and cannot be disabled by the adapter.
 - `--security-opt no-new-privileges` is always used.
 - `--cap-drop ALL` is always used.
+- `--log-driver none` is always used so retained deterministic containers do not keep raw stdout/stderr in Docker logs.
 - Optional `runAsUser`, CPU, and memory limits are passed through to Docker.
 
 The adapter writes public environment variables to a temporary env file and passes that file through Docker `--env-file`. Resolved `secretEnvironment` values are written to a separate temporary shell env file in a private host temp directory, chmodded container-readable, bind-mounted read-only into the container, sourced by an explicit `--entrypoint /bin/sh` wrapper, and removed after command completion. This keeps secret values out of Docker command-line arguments and retained container `Config.Env` metadata. Images that use `secretEnvironment` must provide `/bin/sh`.

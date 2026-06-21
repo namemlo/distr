@@ -245,6 +245,53 @@ func TestExecuteOCIJobStepDoesNotPersistSecretEnvironmentInContainerMetadata(t *
 	g.Expect(image).NotTo(Equal(-1))
 	g.Expect(run[image+1]).To(Equal("-c"))
 	g.Expect(run[image+2]).To(ContainSubstring("exec \"$@\""))
+	g.Expect(run).To(ContainElement("--log-driver"))
+	g.Expect(run).To(ContainElement("none"))
+	g.Expect(metadataText).To(ContainSubstring(`"LogConfig":{"Type":"none"}`))
+}
+
+func TestExecuteOCIJobStepDisablesDockerLogRetentionForRawSecretOutput(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	const secretValue = "super-secret-job-token"
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	metadataFile := filepath.Join(t.TempDir(), "container-metadata.json")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_CONTAINER_METADATA_FILE", metadataFile)
+	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "printed "+secretValue)
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	inputs["secretEnvironment"] = map[string]any{"API_TOKEN": secretValue}
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:        uuid.New(),
+		Key:              "cleanup",
+		ActionType:       ociJobActionType,
+		ActionVersion:    types.AgentActionVersionV1,
+		Inputs:           inputs,
+		SecretReferences: []string{"secret:job_api_token"},
+		IdempotencyKey:   "sha256:job-key",
+	}
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	metadata, err := os.ReadFile(metadataFile)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(string(metadata)).To(ContainSubstring(`"LogConfig":{"Type":"none"}`))
+	run := findFakeDockerCommand(readFakeDockerCommands(t, argsFile), "run")
+	g.Expect(run).NotTo(BeNil())
+	g.Expect(run).To(ContainElement("--log-driver"))
+	g.Expect(run).To(ContainElement("none"))
+	outputs, err := json.Marshal(recorder.events[2].Outputs)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(string(outputs)).NotTo(ContainSubstring(secretValue))
 }
 
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
