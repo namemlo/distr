@@ -66,6 +66,20 @@ func VariableSetsRouter(r chiopenapi.Router) {
 	})
 }
 
+func VariablesRouter(r chiopenapi.Router) {
+	r.WithOptions(option.GroupTags("Variables"))
+	r.With(
+		middleware.RequireVendor,
+		middleware.RequireOrgAndRole,
+		middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyScopedVariablesV2),
+	).Group(func(r chiopenapi.Router) {
+		r.Post("/resolve-preview", resolveVariablesPreviewHandler()).
+			With(option.Description("Preview scoped variable resolution")).
+			With(option.Request(api.ResolveVariablesPreviewRequest{})).
+			With(option.Response(http.StatusOK, []api.ResolvedVariable{}))
+	})
+}
+
 func getVariableSetsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -212,9 +226,96 @@ func variablesFromRequests(requests []api.VariableRequest) []types.Variable {
 			DefaultValue:  request.DefaultValue,
 			ReferenceID:   strings.TrimSpace(request.ReferenceID),
 			ReferenceName: strings.TrimSpace(request.ReferenceName),
+			ScopedValues:  scopedValuesFromRequests(request.ScopedValues),
 		})
 	}
 	return variables
+}
+
+func scopedValuesFromRequests(requests []api.VariableScopedValueRequest) []types.VariableScopedValue {
+	if len(requests) == 0 {
+		return nil
+	}
+	scopedValues := make([]types.VariableScopedValue, 0, len(requests))
+	for _, request := range requests {
+		scopedValues = append(scopedValues, types.VariableScopedValue{
+			Scope:         variableScopeFromRequest(request.Scope),
+			SortOrder:     request.SortOrder,
+			Value:         request.Value,
+			ReferenceID:   strings.TrimSpace(request.ReferenceID),
+			ReferenceName: strings.TrimSpace(request.ReferenceName),
+		})
+	}
+	return scopedValues
+}
+
+func variableScopeFromRequest(request api.VariableScopeRequest) types.VariableScope {
+	return types.VariableScope{
+		CustomerOrganizationID: request.CustomerOrganizationID,
+		EnvironmentID:          request.EnvironmentID,
+		ChannelID:              request.ChannelID,
+		DeploymentTargetID:     request.DeploymentTargetID,
+		ApplicationID:          request.ApplicationID,
+		TargetTag:              strings.TrimSpace(request.TargetTag),
+		ProcessStepKey:         strings.TrimSpace(request.ProcessStepKey),
+	}
+}
+
+func resolveVariablesPreviewHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		request, err := JsonBody[api.ResolveVariablesPreviewRequest](w, r)
+		if err != nil {
+			return
+		} else if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		variableSetIDs, scope, promptedValues := resolveVariablesPreviewRequestFromAPI(request)
+		resolved, err := db.ResolveVariablesPreview(ctx, *auth.CurrentOrgID(), variableSetIDs, scope, promptedValues)
+		if errors.Is(err, apierrors.ErrBadRequest) {
+			http.Error(w, "invalid variable resolution preview", http.StatusBadRequest)
+		} else if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+		} else if err != nil {
+			log.Error("failed to resolve variable preview", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			RespondJSON(w, mapping.List(resolved, mapping.ResolvedVariableToAPI))
+		}
+	}
+}
+
+func resolveVariablesPreviewRequestFromAPI(
+	request api.ResolveVariablesPreviewRequest,
+) ([]uuid.UUID, types.VariableResolutionScope, []types.VariablePromptedValue) {
+	scope := types.VariableResolutionScope{
+		CustomerOrganizationID: request.Scope.CustomerOrganizationID,
+		EnvironmentID:          request.Scope.EnvironmentID,
+		ChannelID:              request.Scope.ChannelID,
+		DeploymentTargetID:     request.Scope.DeploymentTargetID,
+		ApplicationID:          request.Scope.ApplicationID,
+		TargetTags:             make([]string, 0, len(request.Scope.TargetTags)),
+		ProcessStepKey:         strings.TrimSpace(request.Scope.ProcessStepKey),
+	}
+	for _, tag := range request.Scope.TargetTags {
+		scope.TargetTags = append(scope.TargetTags, strings.TrimSpace(tag))
+	}
+	promptedValues := make([]types.VariablePromptedValue, 0, len(request.PromptedValues))
+	for _, promptedValue := range request.PromptedValues {
+		promptedValues = append(promptedValues, types.VariablePromptedValue{
+			Key:           strings.TrimSpace(promptedValue.Key),
+			Value:         promptedValue.Value,
+			ReferenceID:   strings.TrimSpace(promptedValue.ReferenceID),
+			ReferenceName: strings.TrimSpace(promptedValue.ReferenceName),
+		})
+	}
+	return append([]uuid.UUID(nil), request.VariableSetIDs...), scope, promptedValues
 }
 
 func handleVariableSetWriteError(w http.ResponseWriter, r *http.Request, log *zap.Logger, action string, err error) {

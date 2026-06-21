@@ -36,7 +36,17 @@ func TestVariableSetHandlersCRUDAndOrganizationIsolation(t *testing.T) {
 		"sortOrder":10,
 		"applicationIds":["` + applicationID.String() + `"],
 		"variables":[
-			{"key":"api_url","type":"string","defaultValue":"https://example.test"},
+			{
+				"key":"api_url",
+				"type":"string",
+				"defaultValue":"https://example.test",
+				"scopedValues":[
+					{
+						"scope":{"applicationId":"` + applicationID.String() + `"},
+						"value":"https://application.example"
+					}
+				]
+			},
 			{"key":"api_token","type":"secret_reference","referenceId":"` + secretID.String() + `"}
 		]
 	}`
@@ -52,9 +62,39 @@ func TestVariableSetHandlersCRUDAndOrganizationIsolation(t *testing.T) {
 	g.Expect(created.Name).To(Equal("Shared Defaults"))
 	g.Expect(created.ApplicationIDs).To(Equal([]uuid.UUID{applicationID}))
 	g.Expect(created.Variables).To(HaveLen(2))
+	g.Expect(apiVariableByKey(created, "api_url").ScopedValues).To(HaveLen(1))
 	secretVariable := apiVariableByKey(created, "api_token")
 	g.Expect(secretVariable.ReferenceName).To(Equal("api_token"))
 	g.Expect(secretVariable.DefaultValue).To(BeNil())
+
+	previewRecorder := httptest.NewRecorder()
+	previewBody := `{
+		"variableSetIds":["` + created.ID.String() + `"],
+		"scope":{"applicationId":"` + applicationID.String() + `"}
+	}`
+	previewRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/variables/resolve-preview",
+		strings.NewReader(previewBody),
+	)
+	previewRequest = previewRequest.WithContext(authenticatedVariableSetHandlerContext(ctx, orgID))
+	resolveVariablesPreviewHandler().ServeHTTP(previewRecorder, previewRequest)
+	g.Expect(previewRecorder.Code).To(Equal(http.StatusOK))
+	var preview []api.ResolvedVariable
+	g.Expect(json.Unmarshal(previewRecorder.Body.Bytes(), &preview)).To(Succeed())
+	resolvedURL := resolvedAPIVariableByKey(preview, "api_url")
+	g.Expect(resolvedURL.Source).To(Equal("application"))
+	g.Expect(resolvedURL.Value).To(MatchJSON(`"https://application.example"`))
+
+	crossOrgPreviewRecorder := httptest.NewRecorder()
+	crossOrgPreviewRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/variables/resolve-preview",
+		strings.NewReader(previewBody),
+	)
+	crossOrgPreviewRequest = crossOrgPreviewRequest.WithContext(authenticatedVariableSetHandlerContext(ctx, otherOrgID))
+	resolveVariablesPreviewHandler().ServeHTTP(crossOrgPreviewRecorder, crossOrgPreviewRequest)
+	g.Expect(crossOrgPreviewRecorder.Code).To(Equal(http.StatusNotFound))
 
 	listRecorder := httptest.NewRecorder()
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/variable-sets", nil)
@@ -223,4 +263,13 @@ func apiVariableByKey(variableSet api.VariableSet, key string) api.Variable {
 		}
 	}
 	return api.Variable{}
+}
+
+func resolvedAPIVariableByKey(variables []api.ResolvedVariable, key string) api.ResolvedVariable {
+	for _, variable := range variables {
+		if variable.Key == key {
+			return variable
+		}
+	}
+	return api.ResolvedVariable{}
 }

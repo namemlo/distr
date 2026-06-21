@@ -4,6 +4,10 @@ import {Application} from '@distr-sh/distr-sdk';
 import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {ApplicationsService} from '../services/applications.service';
+import {ChannelsService} from '../services/channels.service';
+import {CustomerOrganizationsService} from '../services/customer-organizations.service';
+import {DeploymentTargetsService} from '../services/deployment-targets.service';
+import {EnvironmentsService} from '../services/environments.service';
 import {OverlayService} from '../services/overlay.service';
 import {SecretsService} from '../services/secrets.service';
 import {ToastService} from '../services/toast.service';
@@ -15,6 +19,10 @@ import {VariableSetsComponent} from './variable-sets.component';
 describe('VariableSetsComponent', () => {
   let variableSetsService: any;
   let applicationsService: any;
+  let channelsService: any;
+  let environmentsService: any;
+  let deploymentTargetsService: any;
+  let customerOrganizationsService: any;
   let secretsService: any;
   let overlay: any;
   let toast: any;
@@ -38,6 +46,16 @@ describe('VariableSetsComponent', () => {
           type: 'string',
           isRequired: false,
           defaultValue: 'https://example.test',
+          scopedValues: [
+            {
+              id: 'scoped-value-1',
+              createdAt: '2026-06-21T09:30:00Z',
+              updatedAt: '2026-06-21T10:45:00Z',
+              scope: {applicationId: 'application-1'},
+              sortOrder: 0,
+              value: 'https://application.example',
+            },
+          ],
         },
         {
           id: 'variable-2',
@@ -54,6 +72,37 @@ describe('VariableSetsComponent', () => {
     },
   ];
   const applications = [{id: 'application-1', name: 'Payments'}] as Application[];
+  const channels = [
+    {
+      id: 'channel-1',
+      createdAt: '2026-06-21T09:30:00Z',
+      updatedAt: '2026-06-21T10:45:00Z',
+      applicationId: 'application-1',
+      lifecycleId: 'lifecycle-1',
+      name: 'Stable',
+      description: '',
+      sortOrder: 10,
+      isDefault: true,
+      allowedVersionRanges: [],
+      allowedPrereleasePatterns: [],
+      allowedSourceBranches: [],
+      allowedSourceTags: [],
+    },
+  ];
+  const environments = [
+    {
+      id: 'environment-1',
+      createdAt: '2026-06-21T09:30:00Z',
+      updatedAt: '2026-06-21T10:45:00Z',
+      name: 'Production',
+      description: '',
+      sortOrder: 10,
+      isProduction: true,
+      allowDynamicTargets: false,
+    },
+  ];
+  const deploymentTargets = [{id: 'target-1', name: 'cluster-a'}];
+  const customerOrganizations = [{id: 'customer-1', name: 'Acme'}];
   const secrets: Secret[] = [
     {
       id: 'secret-1',
@@ -69,9 +118,22 @@ describe('VariableSetsComponent', () => {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      resolvePreview: vi.fn(),
     };
     applicationsService = {
       list: vi.fn(),
+    };
+    channelsService = {
+      list: vi.fn(),
+    };
+    environmentsService = {
+      list: vi.fn(),
+    };
+    deploymentTargetsService = {
+      list: vi.fn(),
+    };
+    customerOrganizationsService = {
+      getCustomerOrganizations: vi.fn(),
     };
     secretsService = {
       list: vi.fn(),
@@ -88,7 +150,27 @@ describe('VariableSetsComponent', () => {
     variableSetsService.create.mockReturnValue(of(variableSets[0]));
     variableSetsService.update.mockReturnValue(of(variableSets[0]));
     variableSetsService.delete.mockReturnValue(of(undefined));
+    variableSetsService.resolvePreview.mockReturnValue(
+      of([
+        {
+          variableSetId: 'variable-set-1',
+          variableId: 'variable-1',
+          key: 'api_url',
+          type: 'string',
+          isRequired: false,
+          status: 'resolved',
+          source: 'application',
+          value: 'https://application.example',
+          redacted: false,
+          trace: [{source: 'application', scope: {applicationId: 'application-1'}, selected: true, reason: 'matched'}],
+        },
+      ])
+    );
     applicationsService.list.mockReturnValue(of(applications));
+    channelsService.list.mockReturnValue(of(channels));
+    environmentsService.list.mockReturnValue(of(environments));
+    deploymentTargetsService.list.mockReturnValue(of(deploymentTargets));
+    customerOrganizationsService.getCustomerOrganizations.mockReturnValue(of(customerOrganizations));
     secretsService.list.mockReturnValue(of(secrets));
     overlay.showModal.mockReturnValue({close: vi.fn()} as any);
     overlay.confirm.mockReturnValue(of(true));
@@ -98,6 +180,10 @@ describe('VariableSetsComponent', () => {
       providers: [
         {provide: VariableSetsService, useValue: variableSetsService},
         {provide: ApplicationsService, useValue: applicationsService},
+        {provide: ChannelsService, useValue: channelsService},
+        {provide: EnvironmentsService, useValue: environmentsService},
+        {provide: DeploymentTargetsService, useValue: deploymentTargetsService},
+        {provide: CustomerOrganizationsService, useValue: customerOrganizationsService},
         {provide: SecretsService, useValue: secretsService},
         {provide: OverlayService, useValue: overlay},
         {provide: ToastService, useValue: toast},
@@ -111,6 +197,8 @@ describe('VariableSetsComponent', () => {
     expect((component as any).variableSets()).toEqual(variableSets);
     expect((component as any).applicationNames(['application-1'])).toBe('Payments');
     expect((component as any).secrets()).toEqual(secrets);
+    expect((component as any).channels()).toEqual(channels);
+    expect((component as any).environments()).toEqual(environments);
   });
 
   it('shows load errors', () => {
@@ -138,6 +226,12 @@ describe('VariableSetsComponent', () => {
       type: 'string',
       defaultValueText: 'https://example.test',
     });
+    (component as any).addScopedValue(0);
+    (component as any).scopedValueControls((component as any).variableControls()[0])[0].patchValue({
+      scopeKind: 'application',
+      applicationId: 'application-1',
+      valueText: 'https://application.example',
+    });
     (component as any).addVariable();
     (component as any).variableControls()[1].patchValue({
       key: 'api_token',
@@ -158,6 +252,13 @@ describe('VariableSetsComponent', () => {
           type: 'string',
           isRequired: false,
           defaultValue: 'https://example.test',
+          scopedValues: [
+            {
+              scope: {applicationId: 'application-1'},
+              sortOrder: 0,
+              value: 'https://application.example',
+            },
+          ],
         },
         {
           key: 'api_token',
@@ -189,6 +290,13 @@ describe('VariableSetsComponent', () => {
           type: 'string',
           isRequired: false,
           defaultValue: 'https://example.test',
+          scopedValues: [
+            {
+              scope: {applicationId: 'application-1'},
+              sortOrder: 0,
+              value: 'https://application.example',
+            },
+          ],
         },
         {
           key: 'api_token',
@@ -225,6 +333,44 @@ describe('VariableSetsComponent', () => {
 
     expect(overlay.confirm).toHaveBeenCalled();
     expect(variableSetsService.delete).toHaveBeenCalledWith('variable-set-1');
+  });
+
+  it('previews scoped variable resolution', async () => {
+    const {component} = createComponent();
+
+    (component as any).showPreviewDialog(variableSets[0]);
+    (component as any).previewForm.patchValue({
+      applicationId: 'application-1',
+      targetTagsText: ' linux ',
+    });
+    await (component as any).loadPreview();
+
+    expect(variableSetsService.resolvePreview).toHaveBeenCalledWith({
+      variableSetIds: ['variable-set-1'],
+      scope: {
+        applicationId: 'application-1',
+        targetTags: ['linux'],
+      },
+      promptedValues: [],
+    });
+    expect((component as any).previewResults()[0].source).toBe('application');
+  });
+
+  it('detects duplicate scoped value conflicts in the variable editor', () => {
+    const {component} = createComponent();
+
+    (component as any).showCreateDialog();
+    (component as any).addScopedValue(0);
+    (component as any).addScopedValue(0);
+    for (const scopedValue of (component as any).scopedValueControls((component as any).variableControls()[0])) {
+      scopedValue.patchValue({
+        scopeKind: 'application',
+        applicationId: 'application-1',
+        valueText: 'https://example.test',
+      });
+    }
+
+    expect((component as any).hasScopedValueConflict((component as any).variableControls()[0])).toBe(true);
   });
 
   function createComponent(): {fixture: ComponentFixture<VariableSetsComponent>; component: VariableSetsComponent} {

@@ -84,6 +84,13 @@
                     class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white flex justify-end space-x-2">
                     <button
                       type="button"
+                      (click)="showPreviewDialog(variableSet)"
+                      class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                      title="Preview">
+                      <fa-icon [icon]="faMagnifyingGlass" />
+                    </button>
+                    <button
+                      type="button"
                       (click)="showUpdateDialog(variableSet)"
                       class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
                       title="Edit">
@@ -316,6 +323,160 @@
                       class="distr-input" />
                   </div>
                 }
+
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="text-sm font-medium text-gray-900 dark:text-white">Scoped Values</div>
+                    <button type="button" (click)="addScopedValue(i)" class="distr-btn-secondary px-3 py-2">
+                      <fa-icon [icon]="faPlus" class="mr-2" />
+                      Add Scoped Value
+                    </button>
+                  </div>
+                  @if (hasScopedValueConflict(variable)) {
+                    <div class="text-xs text-red-500">Duplicate scoped value scope.</div>
+                  }
+                  <div formArrayName="scopedValues" class="space-y-3">
+                    @for (scopedValue of scopedValueControls(variable); track $index; let scopedIndex = $index) {
+                      <div
+                        [formGroup]="scopedValue"
+                        class="border border-gray-200 dark:border-gray-700 rounded-lg p-3 space-y-3">
+                        <div class="grid grid-cols-1 md:grid-cols-[1fr_8rem_auto] gap-3 items-start">
+                          <div class="space-y-2">
+                            <label [for]="'scoped-kind-' + i + '-' + scopedIndex" class="distr-label">Scope</label>
+                            <select
+                              [id]="'scoped-kind-' + i + '-' + scopedIndex"
+                              formControlName="scopeKind"
+                              class="distr-input">
+                              <option value="application">Application</option>
+                              <option value="channel">Channel</option>
+                              <option value="environment">Environment</option>
+                              <option value="environmentTargetTag">Environment + Target Tag</option>
+                              <option value="tenantEnvironment">Tenant + Environment</option>
+                              <option value="tenantEnvironmentChannel">Tenant + Environment + Channel</option>
+                              <option value="tenantEnvironmentTarget">Tenant + Environment + Target</option>
+                              <option value="tenantEnvironmentTargetChannelStep">
+                                Tenant + Environment + Target + Channel + Step
+                              </option>
+                            </select>
+                          </div>
+                          <div class="space-y-2">
+                            <label [for]="'scoped-sort-' + i + '-' + scopedIndex" class="distr-label">Sort</label>
+                            <input
+                              [id]="'scoped-sort-' + i + '-' + scopedIndex"
+                              type="number"
+                              min="0"
+                              formControlName="sortOrder"
+                              class="distr-input" />
+                          </div>
+                          <button
+                            type="button"
+                            (click)="removeScopedValue(i, scopedIndex)"
+                            class="py-2 px-3 flex items-center justify-center text-sm font-medium text-center text-red-700 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 focus:z-10 focus:ring-4 focus:ring-gray-200 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-red-500 dark:border-gray-600 dark:hover:bg-gray-700 md:mt-7"
+                            title="Remove Scoped Value">
+                            <fa-icon [icon]="faTrash" />
+                          </button>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          @if (scopedValue.controls.scopeKind.value === 'application') {
+                            <select formControlName="applicationId" class="distr-input">
+                              <option value="">Application</option>
+                              @for (application of applications(); track application.id) {
+                                @if (application.id; as applicationId) {
+                                  <option [value]="applicationId">{{ application.name }}</option>
+                                }
+                              }
+                            </select>
+                          }
+                          @if (
+                            scopedValue.controls.scopeKind.value === 'channel' ||
+                            scopedValue.controls.scopeKind.value === 'tenantEnvironmentChannel' ||
+                            scopedValue.controls.scopeKind.value === 'tenantEnvironmentTargetChannelStep'
+                          ) {
+                            <select formControlName="channelId" class="distr-input">
+                              <option value="">Channel</option>
+                              @for (channel of channels(); track channel.id) {
+                                <option [value]="channel.id">{{ channel.name }}</option>
+                              }
+                            </select>
+                          }
+                          @if (
+                            scopedValue.controls.scopeKind.value.includes('Environment') ||
+                            scopedValue.controls.scopeKind.value === 'environment'
+                          ) {
+                            <select formControlName="environmentId" class="distr-input">
+                              <option value="">Environment</option>
+                              @for (environment of environments(); track environment.id) {
+                                <option [value]="environment.id">{{ environment.name }}</option>
+                              }
+                            </select>
+                          }
+                          @if (scopedValue.controls.scopeKind.value.startsWith('tenant')) {
+                            <select formControlName="customerOrganizationId" class="distr-input">
+                              <option value="">Tenant</option>
+                              @for (customer of customerOrganizations(); track customer.id) {
+                                <option [value]="customer.id">{{ customer.name }}</option>
+                              }
+                            </select>
+                          }
+                          @if (
+                            scopedValue.controls.scopeKind.value === 'tenantEnvironmentTarget' ||
+                            scopedValue.controls.scopeKind.value === 'tenantEnvironmentTargetChannelStep'
+                          ) {
+                            <select formControlName="deploymentTargetId" class="distr-input">
+                              <option value="">Target</option>
+                              @for (target of deploymentTargets(); track target.id) {
+                                <option [value]="target.id">{{ target.name }}</option>
+                              }
+                            </select>
+                          }
+                          @if (scopedValue.controls.scopeKind.value === 'environmentTargetTag') {
+                            <input formControlName="targetTag" class="distr-input" placeholder="Target tag" />
+                          }
+                          @if (scopedValue.controls.scopeKind.value === 'tenantEnvironmentTargetChannelStep') {
+                            <input
+                              formControlName="processStepKey"
+                              class="distr-input"
+                              placeholder="Process step key" />
+                          }
+                        </div>
+
+                        @if (isReferenceType(variable.controls.type.value)) {
+                          @if (isSecretReference(variable.controls.type.value)) {
+                            <select formControlName="referenceId" class="distr-input">
+                              <option value="">Secret</option>
+                              @for (secret of secrets(); track secret.id) {
+                                <option [value]="secret.id">{{ secret.key }}</option>
+                              }
+                            </select>
+                          } @else {
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <input formControlName="referenceId" class="distr-input" placeholder="Reference ID" />
+                              <input formControlName="referenceName" class="distr-input" placeholder="Reference Name" />
+                            </div>
+                          }
+                        } @else if (isBooleanType(variable.controls.type.value)) {
+                          <select formControlName="valueText" class="distr-input">
+                            <option value="false">False</option>
+                            <option value="true">True</option>
+                          </select>
+                        } @else if (isJsonType(variable.controls.type.value)) {
+                          <textarea
+                            formControlName="valueText"
+                            rows="3"
+                            class="distr-input"
+                            placeholder='{"key":"value"}'></textarea>
+                        } @else {
+                          <input
+                            [type]="variable.controls.type.value === 'number' ? 'number' : 'text'"
+                            formControlName="valueText"
+                            class="distr-input"
+                            placeholder="Scoped value" />
+                        }
+                      </div>
+                    }
+                  </div>
+                </div>
               </div>
             } @empty {
               <div
@@ -335,6 +496,101 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+</ng-template>
+
+<ng-template #variablePreviewDialog>
+  <div
+    animate.enter="animate-fly-in-top"
+    animate.leave="animate-fly-out-top"
+    class="p-4 w-full mt-12 max-h-full bg-white rounded-lg shadow-sm dark:bg-gray-900">
+    <div class="flex items-center justify-between p-4 md:p-5 border-b border-gray-200 rounded-t dark:border-gray-600">
+      <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Resolution Preview</h2>
+      <button
+        type="button"
+        (click)="closePreviewDialog()"
+        class="text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm w-8 h-8 ms-auto inline-flex justify-center items-center dark:hover:bg-gray-600 dark:hover:text-white">
+        <fa-icon [icon]="faXmark" />
+        <span class="sr-only">Close modal</span>
+      </button>
+    </div>
+    <div class="p-4 md:p-5 space-y-4">
+      <form class="space-y-4" [formGroup]="previewForm" (ngSubmit)="loadPreview()">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <select formControlName="applicationId" class="distr-input">
+            <option value="">Application</option>
+            @for (application of applications(); track application.id) {
+              @if (application.id; as applicationId) {
+                <option [value]="applicationId">{{ application.name }}</option>
+              }
+            }
+          </select>
+          <select formControlName="channelId" class="distr-input">
+            <option value="">Channel</option>
+            @for (channel of channels(); track channel.id) {
+              <option [value]="channel.id">{{ channel.name }}</option>
+            }
+          </select>
+          <select formControlName="environmentId" class="distr-input">
+            <option value="">Environment</option>
+            @for (environment of environments(); track environment.id) {
+              <option [value]="environment.id">{{ environment.name }}</option>
+            }
+          </select>
+          <select formControlName="customerOrganizationId" class="distr-input">
+            <option value="">Tenant</option>
+            @for (customer of customerOrganizations(); track customer.id) {
+              <option [value]="customer.id">{{ customer.name }}</option>
+            }
+          </select>
+          <select formControlName="deploymentTargetId" class="distr-input">
+            <option value="">Target</option>
+            @for (target of deploymentTargets(); track target.id) {
+              <option [value]="target.id">{{ target.name }}</option>
+            }
+          </select>
+          <input formControlName="targetTagsText" class="distr-input" placeholder="Target tags" />
+          <input formControlName="processStepKey" class="distr-input" placeholder="Process step key" />
+        </div>
+        <button
+          type="submit"
+          [disabled]="previewLoading()"
+          class="text-white distr-btn-primary px-5 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed">
+          Preview
+        </button>
+      </form>
+
+      @if (previewError(); as error) {
+        <div class="text-sm text-red-500">{{ error }}</div>
+      }
+
+      <div class="space-y-3">
+        @for (result of previewResults(); track result.variableId) {
+          <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-sm text-gray-900 dark:text-white">
+            <div class="flex items-center justify-between gap-3">
+              <div class="font-medium">{{ result.key }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ result.status }} - {{ result.source }}</div>
+            </div>
+            @if (result.redacted) {
+              <div class="mt-1 text-gray-500 dark:text-gray-400">
+                Redacted reference: {{ result.referenceName || result.referenceId }}
+              </div>
+            } @else if (result.value !== undefined) {
+              <pre class="mt-2 whitespace-pre-wrap text-xs bg-gray-50 dark:bg-gray-800 rounded p-2">{{
+                result.value | json
+              }}</pre>
+            }
+            <div class="mt-2 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+              @for (entry of result.trace; track $index) {
+                <div>{{ entry.selected ? 'Selected' : 'Candidate' }}: {{ entry.source }}</div>
+              }
+            </div>
+          </div>
+        } @empty {
+          <div class="text-sm text-gray-500 dark:text-gray-400">No preview results.</div>
+        }
+      </div>
     </div>
   </div>
 </ng-template>

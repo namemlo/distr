@@ -25,6 +25,7 @@ func TestVariableSetFromCreateUpdateRequest(t *testing.T) {
 	orgID := uuid.New()
 	applicationID := uuid.New()
 	secretID := uuid.New()
+	environmentID := uuid.New()
 
 	variableSet := variableSetFromCreateUpdateRequest(orgID, api.CreateUpdateVariableSetRequest{
 		Name:           " Shared Defaults ",
@@ -33,7 +34,17 @@ func TestVariableSetFromCreateUpdateRequest(t *testing.T) {
 		ApplicationIDs: []uuid.UUID{applicationID},
 		Variables: []api.VariableRequest{
 			{Key: " api_url ", Type: api.VariableTypeString, DefaultValue: json.RawMessage(`"https://example.test"`)},
-			{Key: "api_token", Type: api.VariableTypeSecretReference, ReferenceID: secretID.String()},
+			{
+				Key:         "api_token",
+				Type:        api.VariableTypeSecretReference,
+				ReferenceID: secretID.String(),
+				ScopedValues: []api.VariableScopedValueRequest{
+					{
+						Scope:       api.VariableScopeRequest{EnvironmentID: &environmentID},
+						ReferenceID: secretID.String(),
+					},
+				},
+			},
 		},
 	})
 
@@ -45,7 +56,17 @@ func TestVariableSetFromCreateUpdateRequest(t *testing.T) {
 		ApplicationIDs: []uuid.UUID{applicationID},
 		Variables: []types.Variable{
 			{Key: "api_url", Type: types.VariableTypeString, DefaultValue: json.RawMessage(`"https://example.test"`)},
-			{Key: "api_token", Type: types.VariableTypeSecretReference, ReferenceID: secretID.String()},
+			{
+				Key:         "api_token",
+				Type:        types.VariableTypeSecretReference,
+				ReferenceID: secretID.String(),
+				ScopedValues: []types.VariableScopedValue{
+					{
+						Scope:       types.VariableScope{EnvironmentID: &environmentID},
+						ReferenceID: secretID.String(),
+					},
+				},
+			},
 		},
 	}))
 }
@@ -145,6 +166,64 @@ func TestVariableSetsFeatureFlagMiddlewareRejectsDisabledAPI(t *testing.T) {
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/variable-sets", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusForbidden))
+	g.Expect(called).To(BeFalse())
+}
+
+func TestResolveVariablesPreviewRequestFromAPI(t *testing.T) {
+	g := NewWithT(t)
+	variableSetID := uuid.New()
+	applicationID := uuid.New()
+
+	variableSetIDs, scope, promptedValues := resolveVariablesPreviewRequestFromAPI(api.ResolveVariablesPreviewRequest{
+		VariableSetIDs: []uuid.UUID{variableSetID},
+		Scope: api.VariableResolutionScopeRequest{
+			ApplicationID:  &applicationID,
+			TargetTags:     []string{" linux "},
+			ProcessStepKey: " deploy ",
+		},
+		PromptedValues: []api.VariablePromptedValueRequest{
+			{Key: " api_url ", Value: json.RawMessage(`"https://prompted.example"`)},
+		},
+	})
+
+	g.Expect(variableSetIDs).To(Equal([]uuid.UUID{variableSetID}))
+	g.Expect(scope).To(Equal(types.VariableResolutionScope{
+		ApplicationID:  &applicationID,
+		TargetTags:     []string{"linux"},
+		ProcessStepKey: "deploy",
+	}))
+	g.Expect(promptedValues).To(Equal([]types.VariablePromptedValue{
+		{Key: "api_url", Value: json.RawMessage(`"https://prompted.example"`)},
+	}))
+}
+
+func TestResolveVariablesPreviewHandlerRejectsInvalidPayloadsBeforeDatabaseAccess(t *testing.T) {
+	g := NewWithT(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/variables/resolve-preview", strings.NewReader(`{}`))
+	ctx := internalctx.WithLogger(request.Context(), zap.NewNop())
+	request = request.WithContext(auth.Authentication.NewContext(ctx, testVariableSetAuth()))
+
+	resolveVariablesPreviewHandler().ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+}
+
+func TestVariablesFeatureFlagMiddlewareRejectsDisabledResolvePreviewAPI(t *testing.T) {
+	g := NewWithT(t)
+	called := false
+	handler := middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyScopedVariablesV2)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/variables/resolve-preview", nil)
 
 	handler.ServeHTTP(recorder, request)
 
