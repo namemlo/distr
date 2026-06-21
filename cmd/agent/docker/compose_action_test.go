@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -145,6 +149,70 @@ func TestExecuteComposeDeployStepRedactsRegistryPasswordFromEmittedEventsAndOutp
 		Name:  "status",
 		Value: "ready with [REDACTED]",
 	}))
+}
+
+func TestExecuteComposeDeployStepRedactsRegistryPasswordFromReturnedError(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	const secretValue = "super-secret-password"
+	inputs := validComposeDeployInputs()
+	inputs["applicationVersion"].(map[string]any)["registryAuth"].(map[string]any)["registry.example.com"].(map[string]any)["password"] = secretValue
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		ActionType:    composeDeployActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        inputs,
+	}
+	recorder := &recordingLeasedTaskClient{}
+	apply := func(_ context.Context, _ api.AgentDeployment, _ composeDeployOptions, updateStatus func(string)) (*AgentDeployment, string, error) {
+		updateStatus("pulling image with " + secretValue)
+		return nil, "stderr contains " + secretValue, errors.New("compose failed with " + secretValue)
+	}
+
+	err := executeComposeDeployStep(ctx, lease, step, recorder, apply)
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).NotTo(ContainSubstring(secretValue))
+	g.Expect(err.Error()).To(ContainSubstring("[REDACTED]"))
+	payload, marshalErr := json.Marshal(recorder.events)
+	g.Expect(marshalErr).ToNot(HaveOccurred())
+	g.Expect(string(payload)).NotTo(ContainSubstring(secretValue))
+}
+
+func TestApplyComposeFileSwarmRedactsCommandOutputFromErrorAndAgentLogs(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	const secretValue = "super-secret-password"
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("FAKE_DOCKER_COMMAND_SECRET", secretValue)
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	collector := &recordingDeploymentTargetLogCollector{}
+	oldCollector := platformLoggingCore.Collector
+	platformLoggingCore.Collector = collector
+	t.Cleanup(func() { platformLoggingCore.Collector = oldCollector })
+	dockerType := types.DockerTypeSwarm
+	deployment := api.AgentDeployment{
+		ID:          uuid.New(),
+		RevisionID:  uuid.New(),
+		DockerType:  &dockerType,
+		ComposeFile: []byte("name: secret-stack\nservices:\n  web:\n    image: registry.example.com/app:latest\n"),
+		RegistryAuth: map[string]api.AgentRegistryAuth{
+			"registry.example.com": {Username: "deploy-user", Password: secretValue},
+		},
+	}
+
+	_, err := ApplyComposeFileSwarm(ctx, deployment, func(string) {})
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).NotTo(ContainSubstring(secretValue))
+	g.Expect(err.Error()).To(ContainSubstring("[REDACTED]"))
+	payload, marshalErr := json.Marshal(collector.records)
+	g.Expect(marshalErr).ToNot(HaveOccurred())
+	g.Expect(string(payload)).NotTo(ContainSubstring(secretValue))
+	g.Expect(string(payload)).To(ContainSubstring("[REDACTED]"))
 }
 
 func TestExecuteTaskLeaseHeartbeatsAndRunsComposeStep(t *testing.T) {
@@ -488,4 +556,50 @@ func eventTypes(events []api.AgentStepRunEventRequest) []types.StepRunEventType 
 		values = append(values, event.Type)
 	}
 	return values
+}
+
+type recordingDeploymentTargetLogCollector struct {
+	records []api.DeploymentTargetLogRecord
+}
+
+func (c *recordingDeploymentTargetLogCollector) ExportDeploymentTargetLogs(records ...api.DeploymentTargetLogRecord) error {
+	c.records = append(c.records, records...)
+	return nil
+}
+
+func fakeDockerCommandContext(ctx context.Context, command string, args ...string) *exec.Cmd {
+	helperArgs := []string{"-test.run=TestDockerCommandHelper", "--", command}
+	helperArgs = append(helperArgs, args...)
+	return exec.CommandContext(ctx, os.Args[0], helperArgs...)
+}
+
+func TestDockerCommandHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_DOCKER_COMMAND_HELPER") != "1" {
+		return
+	}
+	args := os.Args
+	separator := -1
+	for i, arg := range args {
+		if arg == "--" {
+			separator = i
+			break
+		}
+	}
+	if separator == -1 || len(args) <= separator+1 {
+		os.Exit(2)
+	}
+	dockerArgs := args[separator+1:]
+	if dockerArgs[0] != "docker" {
+		os.Exit(2)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "info" {
+		fmt.Fprint(os.Stdout, "active")
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 3 && dockerArgs[1] == "stack" && dockerArgs[2] == "deploy" {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		fmt.Fprintf(os.Stdout, "stack deploy failed with %s", os.Getenv("FAKE_DOCKER_COMMAND_SECRET"))
+		os.Exit(1)
+	}
+	os.Exit(2)
 }

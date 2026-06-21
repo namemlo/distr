@@ -193,10 +193,11 @@ func executeComposeDeployStep(
 	var secretValues []string
 	recordFailure := func(err error) error {
 		sequence++
-		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, err.Error(), nil, nil, secretValues...); recordErr != nil {
-			return recordErr
+		redactedErr := redactErrorWithSecretValues(err, secretValues)
+		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, redactedErr.Error(), nil, nil, secretValues...); recordErr != nil {
+			return redactErrorWithSecretValues(recordErr, secretValues)
 		}
-		return err
+		return redactedErr
 	}
 	if step.ActionType != composeDeployActionType {
 		return recordFailure(fmt.Errorf("unsupported actionType %q", step.ActionType))
@@ -248,18 +249,20 @@ func executeComposeDeployStep(
 	callbackErr := progressErr
 	progressErrMu.Unlock()
 	if callbackErr != nil {
-		return callbackErr
+		return redactErrorWithSecretValues(callbackErr, secretValues)
 	}
 	if heartbeatErr := taskLeaseHeartbeatError(heartbeatErrCh); heartbeatErr != nil {
 		sequence++
-		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, heartbeatErr.Error(), nil, nil, secretValues...); recordErr != nil {
-			return recordErr
+		redactedErr := redactErrorWithSecretValues(heartbeatErr, secretValues)
+		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, redactedErr.Error(), nil, nil, secretValues...); recordErr != nil {
+			return redactErrorWithSecretValues(recordErr, secretValues)
 		}
-		return heartbeatErr
+		return redactedErr
 	}
 
 	if err != nil {
 		sequence++
+		redactedErr := redactErrorWithSecretValues(err, secretValues)
 		logs := []api.AgentStepRunLogChunkRequest(nil)
 		if strings.TrimSpace(status) != "" {
 			logs = []api.AgentStepRunLogChunkRequest{{
@@ -268,10 +271,10 @@ func executeComposeDeployStep(
 				Body:     status,
 			}}
 		}
-		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, err.Error(), logs, nil, secretValues...); recordErr != nil {
-			return recordErr
+		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, redactedErr.Error(), logs, nil, secretValues...); recordErr != nil {
+			return redactErrorWithSecretValues(recordErr, secretValues)
 		}
-		return err
+		return redactedErr
 	}
 
 	sequence++
