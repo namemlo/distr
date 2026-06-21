@@ -239,11 +239,6 @@ func defaultActions() []types.ActionDefinition {
 						"type":    "string",
 						"pattern": `^\S+@sha256:[A-Fa-f0-9]{64}$`,
 					},
-					"allowedRegistries": map[string]any{
-						"type":     "array",
-						"items":    map[string]any{"type": "string", "minLength": 1},
-						"minItems": 1,
-					},
 					"command": map[string]any{
 						"type":     "array",
 						"items":    map[string]any{"type": "string", "minLength": 1},
@@ -262,11 +257,6 @@ func defaultActions() []types.ActionDefinition {
 						"additionalProperties": map[string]any{"type": "string", "minLength": 1},
 					},
 					"network": map[string]any{"type": "string", "minLength": 1},
-					"allowedNetworks": map[string]any{
-						"type":     "array",
-						"items":    map[string]any{"type": "string", "minLength": 1},
-						"minItems": 1,
-					},
 					"volumes": map[string]any{
 						"type": "array",
 						"items": map[string]any{
@@ -279,10 +269,6 @@ func defaultActions() []types.ActionDefinition {
 							"required":             []any{"source", "target", "readOnly"},
 							"additionalProperties": false,
 						},
-					},
-					"allowedMountRoots": map[string]any{
-						"type":  "array",
-						"items": map[string]any{"type": "string", "minLength": 1},
 					},
 					"timeoutSeconds": map[string]any{"type": "integer", "minimum": 1},
 					"expectedExitCodes": map[string]any{
@@ -317,7 +303,7 @@ func defaultActions() []types.ActionDefinition {
 						"additionalProperties": false,
 					},
 				},
-				[]any{"imageDigest", "allowedRegistries"},
+				[]any{"imageDigest", "command"},
 			),
 			OutputSchema: objectSchema(
 				map[string]any{

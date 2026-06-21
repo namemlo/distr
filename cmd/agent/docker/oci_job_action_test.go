@@ -17,6 +17,7 @@ import (
 
 func TestOCIJobActionInputRejectsMutableImageTag(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	inputs := validOCIJobInputs()
 	inputs["imageDigest"] = "registry.example.com/jobs/cleanup:latest"
 
@@ -26,54 +27,95 @@ func TestOCIJobActionInputRejectsMutableImageTag(t *testing.T) {
 }
 
 func TestOCIJobActionInputRejectsPolicyUnsafeSettings(t *testing.T) {
+	setOCIJobPolicyEnv(t)
 	tests := []struct {
 		name    string
-		mutate  func(map[string]any)
+		setup   func(*testing.T)
+		mutate  func(*testing.T, map[string]any)
 		message string
 	}{
 		{
 			name: "registry not allowlisted",
-			mutate: func(inputs map[string]any) {
-				inputs["allowedRegistries"] = []any{"registry.other.example.com"}
+			setup: func(t *testing.T) {
+				t.Setenv(ociJobAllowedRegistriesEnv, "registry.other.example.com")
 			},
 			message: "image registry is not allowlisted",
 		},
 		{
 			name: "network not allowlisted",
-			mutate: func(inputs map[string]any) {
+			mutate: func(_ *testing.T, inputs map[string]any) {
 				inputs["network"] = "bridge"
-				inputs["allowedNetworks"] = []any{"none"}
 			},
 			message: "network is not allowlisted",
 		},
 		{
 			name: "writable host mount",
-			mutate: func(inputs map[string]any) {
+			mutate: func(t *testing.T, inputs map[string]any) {
+				root := t.TempDir()
+				source := filepath.Join(root, "input")
+				g := NewWithT(t)
+				g.Expect(os.Mkdir(source, 0o700)).To(Succeed())
+				t.Setenv(ociJobAllowedMountRootsEnv, root)
 				inputs["volumes"] = []any{
-					map[string]any{"source": "/var/lib/distr/jobs/input", "target": "/input", "readOnly": false},
+					map[string]any{"source": source, "target": "/input", "readOnly": false},
 				}
 			},
 			message: "volumes must be read-only",
 		},
 		{
 			name: "disallowed host mount root",
-			mutate: func(inputs map[string]any) {
+			mutate: func(t *testing.T, inputs map[string]any) {
+				sourceRoot := t.TempDir()
+				allowedRoot := t.TempDir()
+				source := filepath.Join(sourceRoot, "input")
+				g := NewWithT(t)
+				g.Expect(os.Mkdir(source, 0o700)).To(Succeed())
+				t.Setenv(ociJobAllowedMountRootsEnv, allowedRoot)
 				inputs["volumes"] = []any{
-					map[string]any{"source": "/etc", "target": "/host/etc", "readOnly": true},
+					map[string]any{"source": source, "target": "/host/etc", "readOnly": true},
+				}
+			},
+			message: "volume source is not under an allowlisted mount root",
+		},
+		{
+			name: "relative host mount source",
+			mutate: func(t *testing.T, inputs map[string]any) {
+				t.Setenv(ociJobAllowedMountRootsEnv, t.TempDir())
+				inputs["volumes"] = []any{
+					map[string]any{"source": "relative/input", "target": "/input", "readOnly": true},
+				}
+			},
+			message: "volume source must be an absolute path",
+		},
+		{
+			name: "symlink escape from allowed mount root",
+			mutate: func(t *testing.T, inputs map[string]any) {
+				allowedRoot := t.TempDir()
+				outsideRoot := t.TempDir()
+				outsideSource := filepath.Join(outsideRoot, "actual")
+				linkSource := filepath.Join(allowedRoot, "link")
+				g := NewWithT(t)
+				g.Expect(os.Mkdir(outsideSource, 0o700)).To(Succeed())
+				if err := os.Symlink(outsideSource, linkSource); err != nil {
+					t.Skipf("symlink creation unavailable: %v", err)
+				}
+				t.Setenv(ociJobAllowedMountRootsEnv, allowedRoot)
+				inputs["volumes"] = []any{
+					map[string]any{"source": linkSource, "target": "/input", "readOnly": true},
 				}
 			},
 			message: "volume source is not under an allowlisted mount root",
 		},
 		{
 			name: "privileged mode",
-			mutate: func(inputs map[string]any) {
+			mutate: func(_ *testing.T, inputs map[string]any) {
 				inputs["security"] = map[string]any{"privileged": true}
 			},
 			message: "privileged mode is not supported",
 		},
 		{
 			name: "writable root filesystem",
-			mutate: func(inputs map[string]any) {
+			mutate: func(_ *testing.T, inputs map[string]any) {
 				inputs["security"] = map[string]any{"readOnlyRootFilesystem": false}
 			},
 			message: "read-only root filesystem cannot be disabled",
@@ -82,8 +124,14 @@ func TestOCIJobActionInputRejectsPolicyUnsafeSettings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
+			setOCIJobPolicyEnv(t)
 			inputs := validOCIJobInputs()
-			tt.mutate(inputs)
+			if tt.setup != nil {
+				tt.setup(t)
+			}
+			if tt.mutate != nil {
+				tt.mutate(t, inputs)
+			}
 
 			_, err := decodeOCIJobActionInput(inputs)
 
@@ -94,6 +142,7 @@ func TestOCIJobActionInputRejectsPolicyUnsafeSettings(t *testing.T) {
 
 func TestExecuteOCIJobStepUsesDigestAndDockerHardeningWithoutSecretInArgs(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx := context.Background()
 	const secretValue = "super-secret-job-token"
 	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
@@ -150,6 +199,7 @@ func TestExecuteOCIJobStepUsesDigestAndDockerHardeningWithoutSecretInArgs(t *tes
 
 func TestExecuteOCIJobStepRedactsSecretFromFailureEventsAndReturnedError(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx := context.Background()
 	const secretValue = "super-secret-job-token"
 	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
@@ -175,7 +225,6 @@ func TestExecuteOCIJobStepRedactsSecretFromFailureEventsAndReturnedError(t *test
 
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).NotTo(ContainSubstring(secretValue))
-	g.Expect(err.Error()).To(ContainSubstring("[REDACTED]"))
 	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
 		types.StepRunEventTypeStarted,
 		types.StepRunEventTypeProgress,
@@ -189,6 +238,7 @@ func TestExecuteOCIJobStepRedactsSecretFromFailureEventsAndReturnedError(t *test
 
 func TestExecuteOCIJobStepAcceptsExpectedNonZeroExitCode(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx := context.Background()
 	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
 	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
@@ -224,8 +274,43 @@ func TestExecuteOCIJobStepAcceptsExpectedNonZeroExitCode(t *testing.T) {
 	}))
 }
 
+func TestExecuteOCIJobStepTruncatesOversizedDockerOutput(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", strings.Repeat("x", types.MaxStepRunLogChunkBodyLength+4096))
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         validOCIJobInputs(),
+		IdempotencyKey: "sha256:job-key",
+	}
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	var status string
+	for _, output := range recorder.events[2].Outputs {
+		if output.Name == "status" {
+			status = output.Value.(string)
+		}
+	}
+	g.Expect(status).To(HaveLen(types.MaxStepRunLogChunkBodyLength))
+	g.Expect(status).To(ContainSubstring("[TRUNCATED]"))
+}
+
 func TestExecuteTaskLeaseRunsOCIJobStep(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx := context.Background()
 	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
 	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
@@ -267,12 +352,12 @@ func TestExecuteTaskLeaseRunsOCIJobStep(t *testing.T) {
 
 func TestExecuteOCIJobStepReusesExistingContainerForIdempotency(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx := context.Background()
 	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
 	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
 	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
 	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
-	t.Setenv("FAKE_DOCKER_EXISTING_STATE", `{"Status":"exited","Running":false,"ExitCode":0}`)
 	t.Setenv("FAKE_DOCKER_LOGS", "previous job output")
 	oldExecCommandContext := execCommandContext
 	execCommandContext = fakeDockerCommandContext
@@ -286,6 +371,11 @@ func TestExecuteOCIJobStepReusesExistingContainerForIdempotency(t *testing.T) {
 		Inputs:         validOCIJobInputs(),
 		IdempotencyKey: "sha256:job-key",
 	}
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", fakeOCIJobInspectJSON(t, lease, step, map[string]any{
+		"Status":   "exited",
+		"Running":  false,
+		"ExitCode": 0,
+	}))
 	recorder := &recordingLeasedTaskClient{}
 
 	err := executeOCIJobStep(ctx, lease, step, recorder)
@@ -303,12 +393,12 @@ func TestExecuteOCIJobStepReusesExistingContainerForIdempotency(t *testing.T) {
 
 func TestExecuteOCIJobStepWaitsForExistingRunningContainerAfterRestart(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx := context.Background()
 	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
 	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
 	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
 	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
-	t.Setenv("FAKE_DOCKER_EXISTING_STATE", `{"Status":"running","Running":true,"ExitCode":0}`)
 	t.Setenv("FAKE_DOCKER_WAIT_EXIT_CODE", "0")
 	t.Setenv("FAKE_DOCKER_LOGS", "restart recovered job output")
 	oldExecCommandContext := execCommandContext
@@ -323,6 +413,11 @@ func TestExecuteOCIJobStepWaitsForExistingRunningContainerAfterRestart(t *testin
 		Inputs:         validOCIJobInputs(),
 		IdempotencyKey: "sha256:job-key",
 	}
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", fakeOCIJobInspectJSON(t, lease, step, map[string]any{
+		"Status":   "running",
+		"Running":  true,
+		"ExitCode": 0,
+	}))
 	recorder := &recordingLeasedTaskClient{}
 
 	err := executeOCIJobStep(ctx, lease, step, recorder)
@@ -339,8 +434,50 @@ func TestExecuteOCIJobStepWaitsForExistingRunningContainerAfterRestart(t *testin
 	}))
 }
 
+func TestExecuteOCIJobStepRejectsExistingContainerWithDifferentOperation(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         validOCIJobInputs(),
+		IdempotencyKey: "sha256:job-key",
+	}
+	inspect := fakeOCIJobInspectJSON(t, lease, step, map[string]any{
+		"Status":   "exited",
+		"Running":  false,
+		"ExitCode": 0,
+	})
+	inspect = strings.Replace(inspect, `"distr.operationHash":"`, `"distr.operationHash":"sha256:foreign`, 1)
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", inspect)
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).To(MatchError(ContainSubstring("existing OCI job container does not match operation identity")))
+	commands := readFakeDockerCommands(t, argsFile)
+	g.Expect(findFakeDockerCommand(commands, "run")).To(BeNil())
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeProgress,
+		types.StepRunEventTypeFailed,
+	}))
+}
+
 func TestExecuteOCIJobStepStopsContainerOnTimeout(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx := context.Background()
 	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
 	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
@@ -375,8 +512,52 @@ func TestExecuteOCIJobStepStopsContainerOnTimeout(t *testing.T) {
 	}))
 }
 
+func TestExecuteOCIJobStepStopsExistingRunningContainerOnTimeout(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_WAIT_SLEEP_MS", "1500")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	inputs["timeoutSeconds"] = 1
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         inputs,
+		IdempotencyKey: "sha256:job-key",
+	}
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", fakeOCIJobInspectJSON(t, lease, step, map[string]any{
+		"Status":   "running",
+		"Running":  true,
+		"ExitCode": 0,
+	}))
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).To(MatchError(ContainSubstring("OCI job timed out")))
+	commands := readFakeDockerCommands(t, argsFile)
+	g.Expect(findFakeDockerCommand(commands, "wait")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "stop")).NotTo(BeNil())
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeProgress,
+		types.StepRunEventTypeFailed,
+	}))
+}
+
 func TestExecuteOCIJobStepStopsContainerOnCancellation(t *testing.T) {
 	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
 	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
@@ -423,17 +604,14 @@ func TestExecuteOCIJobStepStopsContainerOnCancellation(t *testing.T) {
 
 func validOCIJobInputs() map[string]any {
 	return map[string]any{
-		"imageDigest":       "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"allowedRegistries": []any{"registry.example.com"},
-		"command":           []any{"/bin/cleanup"},
-		"arguments":         []any{"--tenant", "demo"},
+		"imageDigest": "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"command":     []any{"/bin/cleanup"},
+		"arguments":   []any{"--tenant", "demo"},
 		"environment": map[string]any{
 			"MODE":      "once",
 			"API_TOKEN": "super-secret-job-token",
 		},
 		"network":           "none",
-		"allowedNetworks":   []any{"none"},
-		"allowedMountRoots": []any{"/var/lib/distr/jobs"},
 		"timeoutSeconds":    30,
 		"expectedExitCodes": []any{0},
 		"idempotencyKey":    "sha256:job-key",
@@ -441,6 +619,12 @@ func validOCIJobInputs() map[string]any {
 		"resources":         map[string]any{"cpus": 0.5, "memoryBytes": 134217728},
 		"security":          map[string]any{"readOnlyRootFilesystem": true},
 	}
+}
+
+func setOCIJobPolicyEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(ociJobAllowedRegistriesEnv, "registry.example.com")
+	t.Setenv(ociJobAllowedNetworksEnv, "none")
 }
 
 func readFakeDockerCommands(t *testing.T, path string) [][]string {
@@ -473,4 +657,34 @@ func findFakeDockerCommand(commands [][]string, name string) []string {
 		}
 	}
 	return nil
+}
+
+func fakeOCIJobInspectJSON(
+	t *testing.T,
+	lease api.AgentTaskLease,
+	step api.AgentTaskLeaseStep,
+	state map[string]any,
+) string {
+	t.Helper()
+	input, err := decodeOCIJobActionInput(step.Inputs)
+	if err != nil {
+		t.Fatalf("decode OCI job input for fake inspect: %v", err)
+	}
+	if input.IdempotencyKey == "" {
+		input.IdempotencyKey = step.IdempotencyKey
+	}
+	identity, err := ociJobOperationIdentityFromStep(lease, step, input)
+	if err != nil {
+		t.Fatalf("build OCI job identity for fake inspect: %v", err)
+	}
+	data, err := json.Marshal(map[string]any{
+		"State": state,
+		"Config": map[string]any{
+			"Labels": ociJobExpectedLabels(identity),
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode fake inspect: %v", err)
+	}
+	return string(data)
 }

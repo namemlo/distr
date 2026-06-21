@@ -9,7 +9,7 @@ It adds:
 - built-in `distr.oci.job` action registry metadata and input/output schemas
 - Docker agent capability reporting for `distr.oci.job` version `1`
 - Docker agent task-lease execution for one-shot OCI jobs
-- digest-only image validation and registry allowlisting
+- digest-only image validation and trusted Docker-agent registry allowlisting
 - network, volume, privilege, root filesystem, capability, user, CPU, and memory policy enforcement
 - lease-time secret resolution for OCI job environment variables
 - StepRun event, log, output, and returned-error redaction for resolved OCI secrets
@@ -63,7 +63,6 @@ The action registry now exposes `distr.oci.job` with this input shape:
 ```json
 {
   "imageDigest": "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "allowedRegistries": ["registry.example.com"],
   "command": ["/bin/cleanup"],
   "arguments": ["--tenant", "demo"],
   "environment": {
@@ -73,7 +72,6 @@ The action registry now exposes `distr.oci.job` with this input shape:
     "API_TOKEN": "job_api_token"
   },
   "network": "none",
-  "allowedNetworks": ["none"],
   "volumes": [
     {
       "source": "/var/lib/distr/jobs/input",
@@ -81,7 +79,6 @@ The action registry now exposes `distr.oci.job` with this input shape:
       "readOnly": true
     }
   ],
-  "allowedMountRoots": ["/var/lib/distr/jobs"],
   "timeoutSeconds": 60,
   "expectedExitCodes": [0],
   "idempotencyKey": "sha256:job-key",
@@ -97,6 +94,16 @@ The action registry now exposes `distr.oci.job` with this input shape:
 ```
 
 `imageDigest` must be an immutable `@sha256:<64 hex chars>` reference with an explicit registry. Mutable tags are rejected.
+
+Registry, network, and mount-root allowlists are trusted Docker-agent configuration, not Deployment Process input:
+
+```text
+DISTR_OCI_JOB_ALLOWED_REGISTRIES=registry.example.com
+DISTR_OCI_JOB_ALLOWED_NETWORKS=none,job-network
+DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS=/var/lib/distr/jobs
+```
+
+When `DISTR_OCI_JOB_ALLOWED_NETWORKS` is unset, only `none` is allowed. Host mounts require absolute source paths that resolve through symlinks under one of `DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS`.
 
 ## Agent behavior
 
@@ -144,9 +151,10 @@ For `distr.oci.job`, the agent:
 ## Troubleshooting
 
 - `imageDigest must be an immutable sha256 digest reference`: use `registry/name@sha256:<digest>`, not a mutable tag like `:latest`.
-- `image registry is not allowlisted`: add the exact registry host to `allowedRegistries`.
-- `network is not allowlisted`: set `network` to `none` or add the selected Docker network to `allowedNetworks`.
-- `volume source is not under an allowlisted mount root`: use a source path under one of `allowedMountRoots`.
+- `image registry is not allowlisted`: add the exact registry host to `DISTR_OCI_JOB_ALLOWED_REGISTRIES` on the Docker agent.
+- `network is not allowlisted`: set `network` to `none` or add the selected Docker network to `DISTR_OCI_JOB_ALLOWED_NETWORKS` on the Docker agent.
+- `volume source is not under an allowlisted mount root`: use an absolute source path that resolves under one of `DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS` on the Docker agent.
+- `volume source must be an absolute path`: use an absolute host path; relative host mounts are rejected.
 - `volumes must be read-only`: set each volume `readOnly` to `true`.
 - `secretEnvironment must be resolved by the task lease`: the agent received unresolved secret references; check the server-side lease secret resolver and that the secret exists for the target scope.
 - `OCI job timed out`: increase `timeoutSeconds` or inspect the deterministic container logs on the Docker host.

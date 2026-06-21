@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -24,23 +24,41 @@ import (
 
 var ociJobEnvNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+const (
+	ociJobAllowedRegistriesEnv = "DISTR_OCI_JOB_ALLOWED_REGISTRIES"
+	ociJobAllowedNetworksEnv   = "DISTR_OCI_JOB_ALLOWED_NETWORKS"
+	ociJobAllowedMountRootsEnv = "DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS"
+	ociJobMaxStatusBytes       = types.MaxStepRunLogChunkBodyLength
+)
+
 type ociJobActionInput struct {
 	ImageDigest       string            `json:"imageDigest"`
-	AllowedRegistries []string          `json:"allowedRegistries"`
 	Command           []string          `json:"command"`
 	Arguments         []string          `json:"arguments"`
 	Environment       map[string]string `json:"environment"`
 	SecretEnvironment map[string]string `json:"secretEnvironment"`
 	Network           string            `json:"network"`
-	AllowedNetworks   []string          `json:"allowedNetworks"`
 	Volumes           []ociJobVolume    `json:"volumes"`
-	AllowedMountRoots []string          `json:"allowedMountRoots"`
 	TimeoutSeconds    int               `json:"timeoutSeconds"`
 	ExpectedExitCodes []int             `json:"expectedExitCodes"`
 	IdempotencyKey    string            `json:"idempotencyKey"`
 	RunAsUser         string            `json:"runAsUser"`
 	Resources         ociJobResources   `json:"resources"`
 	Security          ociJobSecurity    `json:"security"`
+}
+
+type ociJobPolicy struct {
+	AllowedRegistries []string
+	AllowedNetworks   []string
+	AllowedMountRoots []string
+}
+
+type ociJobOperationIdentity struct {
+	IdempotencyKey string
+	TaskID         string
+	StepRunID      string
+	StepKey        string
+	OperationHash  string
 }
 
 type ociJobVolume struct {
@@ -74,6 +92,13 @@ type ociJobContainerState struct {
 	Error    string `json:"Error"`
 }
 
+type ociJobContainerInspect struct {
+	State  ociJobContainerState `json:"State"`
+	Config struct {
+		Labels map[string]string `json:"Labels"`
+	} `json:"Config"`
+}
+
 func decodeOCIJobActionInput(inputs map[string]any) (ociJobActionInput, error) {
 	var input ociJobActionInput
 	data, err := json.Marshal(inputs)
@@ -86,7 +111,7 @@ func decodeOCIJobActionInput(inputs map[string]any) (ociJobActionInput, error) {
 		return input, fmt.Errorf("decode OCI job inputs: %w", err)
 	}
 	normalizeOCIJobActionInput(&input)
-	if err := validateOCIJobActionInput(input); err != nil {
+	if err := validateOCIJobActionInput(input, ociJobPolicyFromEnv()); err != nil {
 		return input, err
 	}
 	return input, nil
@@ -100,12 +125,6 @@ func normalizeOCIJobActionInput(input *ociJobActionInput) {
 	}
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RunAsUser = strings.TrimSpace(input.RunAsUser)
-	input.AllowedRegistries = trimStringSlice(input.AllowedRegistries)
-	input.AllowedNetworks = trimStringSlice(input.AllowedNetworks)
-	if len(input.AllowedNetworks) == 0 {
-		input.AllowedNetworks = []string{"none"}
-	}
-	input.AllowedMountRoots = trimStringSlice(input.AllowedMountRoots)
 	input.Command = trimStringSlice(input.Command)
 	if input.ExpectedExitCodes == nil {
 		input.ExpectedExitCodes = []int{0}
@@ -115,12 +134,16 @@ func normalizeOCIJobActionInput(input *ociJobActionInput) {
 	}
 }
 
-func validateOCIJobActionInput(input ociJobActionInput) error {
+func validateOCIJobActionInput(input ociJobActionInput, policy ociJobPolicy) error {
+	policy = normalizeOCIJobPolicy(policy)
 	registry, err := ociJobRegistryFromDigest(input.ImageDigest)
 	if err != nil {
 		return err
 	}
-	if !containsString(input.AllowedRegistries, registry) {
+	if len(policy.AllowedRegistries) == 0 {
+		return fmt.Errorf("%s must allow at least one registry", ociJobAllowedRegistriesEnv)
+	}
+	if !containsString(policy.AllowedRegistries, registry) {
 		return fmt.Errorf("image registry is not allowlisted")
 	}
 	if len(input.Command) == 0 {
@@ -129,7 +152,7 @@ func validateOCIJobActionInput(input ociJobActionInput) error {
 	if len(input.SecretEnvironment) > 0 {
 		return fmt.Errorf("secretEnvironment must be resolved by the task lease")
 	}
-	if !containsString(input.AllowedNetworks, input.Network) {
+	if !containsString(policy.AllowedNetworks, input.Network) {
 		return fmt.Errorf("network is not allowlisted")
 	}
 	for name, value := range input.Environment {
@@ -144,7 +167,11 @@ func validateOCIJobActionInput(input ociJobActionInput) error {
 		if !volume.ReadOnly {
 			return fmt.Errorf("volumes must be read-only")
 		}
-		if !ociJobMountUnderAllowedRoot(volume.Source, input.AllowedMountRoots) {
+		ok, err := ociJobMountUnderAllowedRoot(volume.Source, policy.AllowedMountRoots)
+		if err != nil {
+			return err
+		}
+		if !ok {
 			return fmt.Errorf("volume source is not under an allowlisted mount root")
 		}
 	}
@@ -174,6 +201,31 @@ func validateOCIJobActionInput(input ociJobActionInput) error {
 		}
 	}
 	return nil
+}
+
+func ociJobPolicyFromEnv() ociJobPolicy {
+	return ociJobPolicy{
+		AllowedRegistries: splitOCIJobPolicyList(os.Getenv(ociJobAllowedRegistriesEnv)),
+		AllowedNetworks:   splitOCIJobPolicyList(os.Getenv(ociJobAllowedNetworksEnv)),
+		AllowedMountRoots: splitOCIJobPolicyList(os.Getenv(ociJobAllowedMountRootsEnv)),
+	}
+}
+
+func normalizeOCIJobPolicy(policy ociJobPolicy) ociJobPolicy {
+	policy.AllowedRegistries = trimStringSlice(policy.AllowedRegistries)
+	policy.AllowedNetworks = trimStringSlice(policy.AllowedNetworks)
+	if len(policy.AllowedNetworks) == 0 {
+		policy.AllowedNetworks = []string{"none"}
+	}
+	policy.AllowedMountRoots = trimStringSlice(policy.AllowedMountRoots)
+	return policy
+}
+
+func splitOCIJobPolicyList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
 }
 
 func ociJobRegistryFromDigest(imageDigest string) (string, error) {
@@ -240,6 +292,10 @@ func executeOCIJobStep(
 	}
 	secretValues = ociJobSecretValues(input)
 	containerName := ociJobContainerName(input.IdempotencyKey)
+	identity, err := ociJobOperationIdentityFromStep(lease, step, input)
+	if err != nil {
+		return recordFailure(err, "")
+	}
 	jobCtx, jobCancel := context.WithCancel(ctx)
 	if input.TimeoutSeconds > 0 {
 		jobCtx, jobCancel = context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
@@ -265,7 +321,7 @@ func executeOCIJobStep(
 			jobCancel()
 		}
 	}
-	result, err := runOCIJob(jobCtx, input, containerName, secretValues, updateStatus)
+	result, err := runOCIJob(jobCtx, input, containerName, identity, secretValues, updateStatus)
 	stopHeartbeat()
 	progressErrMu.Lock()
 	callbackErr := progressErr
@@ -292,6 +348,7 @@ func runOCIJob(
 	ctx context.Context,
 	input ociJobActionInput,
 	containerName string,
+	identity ociJobOperationIdentity,
 	secretValues []string,
 	updateStatus func(string),
 ) (ociJobResult, error) {
@@ -299,18 +356,20 @@ func runOCIJob(
 	if updateStatus != nil {
 		updateStatus("starting OCI job container")
 	}
-	if state, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
+	if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
 		return result, err
 	} else if exists {
-		return finishExistingOCIJobContainer(ctx, containerName, state, input.ExpectedExitCodes, secretValues)
+		if err := validateOCIJobContainerIdentity(inspected, identity); err != nil {
+			return result, err
+		}
+		return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes, secretValues)
 	}
 	envFile, cleanup, err := writeOCIJobEnvFile(input.Environment)
 	if err != nil {
 		return result, err
 	}
 	defer cleanup()
-	cmd := execCommandContext(ctx, "docker", dockerRunOCIJobArgs(input, containerName, envFile)...)
-	out, runErr := cmd.CombinedOutput()
+	out, runErr := runDockerCommandBounded(ctx, "docker", dockerRunOCIJobArgs(input, containerName, identity, envFile)...)
 	status := redactStringWithSecretValues(strings.TrimSpace(string(out)), secretValues)
 	result.Status = status
 	result.ExitCode = dockerCommandExitCode(runErr)
@@ -323,10 +382,10 @@ func runOCIJob(
 	}
 	if runErr != nil && result.ExitCode < 0 {
 		redactedErr := redactErrorWithSecretValues(runErr, secretValues)
-		return result, fmt.Errorf("run OCI job container: %w: %s", redactedErr, status)
+		return result, fmt.Errorf("run OCI job container: %w", redactedErr)
 	}
 	if !ociJobExpectedExitCode(result.ExitCode, input.ExpectedExitCodes) {
-		return result, fmt.Errorf("OCI job exited with code %d: %s", result.ExitCode, status)
+		return result, fmt.Errorf("OCI job exited with code %d", result.ExitCode)
 	}
 	if result.Status == "" {
 		result.Status = fmt.Sprintf("job exited with code %d", result.ExitCode)
@@ -334,25 +393,35 @@ func runOCIJob(
 	return result, nil
 }
 
-func inspectOCIJobContainer(ctx context.Context, containerName string) (ociJobContainerState, bool, error) {
-	cmd := execCommandContext(ctx, "docker", "inspect", "--format", "{{json .State}}", "--type", "container", containerName)
-	out, err := cmd.CombinedOutput()
+func inspectOCIJobContainer(ctx context.Context, containerName string) (ociJobContainerInspect, bool, error) {
+	out, err := runDockerCommandBounded(ctx, "docker", "inspect", "--format", "{{json .}}", "--type", "container", containerName)
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if strings.Contains(strings.ToLower(text), "no such") || strings.Contains(strings.ToLower(text), "not found") {
-			return ociJobContainerState{}, false, nil
+			return ociJobContainerInspect{}, false, nil
 		}
-		return ociJobContainerState{}, false, fmt.Errorf("inspect OCI job container: %w: %s", err, text)
+		return ociJobContainerInspect{}, false, fmt.Errorf("inspect OCI job container: %w: %s", err, text)
 	}
-	var state ociJobContainerState
-	stateJSON := strings.TrimSpace(string(out))
-	if start := strings.IndexByte(stateJSON, '{'); start >= 0 {
-		stateJSON = stateJSON[start:]
+	var inspected ociJobContainerInspect
+	inspectJSON := strings.TrimSpace(string(out))
+	if start := strings.IndexByte(inspectJSON, '{'); start >= 0 {
+		inspectJSON = inspectJSON[start:]
 	}
-	if err := json.Unmarshal([]byte(stateJSON), &state); err != nil {
-		return ociJobContainerState{}, false, fmt.Errorf("decode OCI job container state: %w", err)
+	if err := json.Unmarshal([]byte(inspectJSON), &inspected); err != nil {
+		return ociJobContainerInspect{}, false, fmt.Errorf("decode OCI job container inspect: %w", err)
 	}
-	return state, true, nil
+	return inspected, true, nil
+}
+
+func validateOCIJobContainerIdentity(inspected ociJobContainerInspect, identity ociJobOperationIdentity) error {
+	labels := inspected.Config.Labels
+	expected := ociJobExpectedLabels(identity)
+	for key, value := range expected {
+		if labels[key] != value {
+			return fmt.Errorf("existing OCI job container does not match operation identity")
+		}
+	}
+	return nil
 }
 
 func finishExistingOCIJobContainer(
@@ -366,6 +435,9 @@ func finishExistingOCIJobContainer(
 	if state.Running {
 		code, err := waitOCIJobContainer(ctx, containerName)
 		if err != nil {
+			if ctx.Err() != nil {
+				stopOCIJobContainer(containerName)
+			}
 			return result, err
 		}
 		result.ExitCode = code
@@ -376,7 +448,7 @@ func finishExistingOCIJobContainer(
 	}
 	result.Status = logs
 	if !ociJobExpectedExitCode(result.ExitCode, expectedExitCodes) {
-		return result, fmt.Errorf("OCI job exited with code %d: %s", result.ExitCode, result.Status)
+		return result, fmt.Errorf("OCI job exited with code %d", result.ExitCode)
 	}
 	if result.Status == "" {
 		result.Status = fmt.Sprintf("job exited with code %d", result.ExitCode)
@@ -385,9 +457,14 @@ func finishExistingOCIJobContainer(
 }
 
 func waitOCIJobContainer(ctx context.Context, containerName string) (int, error) {
-	cmd := execCommandContext(ctx, "docker", "wait", containerName)
-	out, err := cmd.CombinedOutput()
+	out, err := runDockerCommandBounded(ctx, "docker", "wait", containerName)
 	text := strings.TrimSpace(string(out))
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			return -1, fmt.Errorf("OCI job timed out")
+		}
+		return -1, fmt.Errorf("OCI job canceled")
+	}
 	if err != nil {
 		return -1, fmt.Errorf("wait for OCI job container: %w: %s", err, text)
 	}
@@ -399,8 +476,7 @@ func waitOCIJobContainer(ctx context.Context, containerName string) (int, error)
 }
 
 func readOCIJobContainerLogs(ctx context.Context, containerName string, secretValues []string) (string, error) {
-	cmd := execCommandContext(ctx, "docker", "logs", containerName)
-	out, err := cmd.CombinedOutput()
+	out, err := runDockerCommandBounded(ctx, "docker", "logs", containerName)
 	text := redactStringWithSecretValues(strings.TrimSpace(string(out)), secretValues)
 	if err != nil {
 		redactedErr := redactErrorWithSecretValues(err, secretValues)
@@ -409,13 +485,71 @@ func readOCIJobContainerLogs(ctx context.Context, containerName string, secretVa
 	return text, nil
 }
 
+func runDockerCommandBounded(ctx context.Context, command string, args ...string) ([]byte, error) {
+	output := newBoundedOutput(ociJobMaxStatusBytes)
+	cmd := execCommandContext(ctx, command, args...)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err := cmd.Run()
+	return []byte(output.String()), err
+}
+
+type boundedOutput struct {
+	mu        sync.Mutex
+	limit     int
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func newBoundedOutput(limit int) *boundedOutput {
+	return &boundedOutput{limit: limit}
+}
+
+func (b *boundedOutput) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.limit <= 0 {
+		b.truncated = b.truncated || len(data) > 0
+		return len(data), nil
+	}
+	remaining := b.limit - b.buf.Len()
+	if remaining <= 0 {
+		b.truncated = b.truncated || len(data) > 0
+		return len(data), nil
+	}
+	if len(data) > remaining {
+		_, _ = b.buf.Write(data[:remaining])
+		b.truncated = true
+		return len(data), nil
+	}
+	_, _ = b.buf.Write(data)
+	return len(data), nil
+}
+
+func (b *boundedOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	value := b.buf.String()
+	if !b.truncated {
+		return value
+	}
+	const suffix = "\n[TRUNCATED]"
+	if b.limit <= len(suffix) {
+		return suffix[len(suffix)-b.limit:]
+	}
+	if len(value)+len(suffix) <= b.limit {
+		return value + suffix
+	}
+	return value[:b.limit-len(suffix)] + suffix
+}
+
 func stopOCIJobContainer(containerName string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, _ = execCommandContext(ctx, "docker", "stop", "--time", "5", containerName).CombinedOutput()
+	_, _ = runDockerCommandBounded(ctx, "docker", "stop", "--time", "5", containerName)
 }
 
-func dockerRunOCIJobArgs(input ociJobActionInput, containerName, envFile string) []string {
+func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity ociJobOperationIdentity, envFile string) []string {
 	args := []string{
 		"run",
 		"--name", containerName,
@@ -423,8 +557,16 @@ func dockerRunOCIJobArgs(input ociJobActionInput, containerName, envFile string)
 		"--read-only",
 		"--security-opt", "no-new-privileges",
 		"--cap-drop", "ALL",
-		"--label", "distr.action=distr.oci.job",
-		"--label", "distr.idempotencyKey=" + input.IdempotencyKey,
+	}
+	labels := ociJobExpectedLabels(identity)
+	labelKeys := make([]string, 0, len(labels))
+	for key := range labels {
+		labelKeys = append(labelKeys, key)
+	}
+	sort.Strings(labelKeys)
+	for _, key := range labelKeys {
+		value := labels[key]
+		args = append(args, "--label", key+"="+value)
 	}
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
@@ -492,6 +634,77 @@ func ociJobContainerName(idempotencyKey string) string {
 	return "distr-job-" + hex.EncodeToString(sum[:])[:24]
 }
 
+func ociJobOperationIdentityFromStep(
+	lease api.AgentTaskLease,
+	step api.AgentTaskLeaseStep,
+	input ociJobActionInput,
+) (ociJobOperationIdentity, error) {
+	hash, err := ociJobOperationHash(input)
+	if err != nil {
+		return ociJobOperationIdentity{}, err
+	}
+	return ociJobOperationIdentity{
+		IdempotencyKey: input.IdempotencyKey,
+		TaskID:         lease.TaskID.String(),
+		StepRunID:      step.StepRunID.String(),
+		StepKey:        step.Key,
+		OperationHash:  hash,
+	}, nil
+}
+
+func ociJobOperationHash(input ociJobActionInput) (string, error) {
+	environmentHash, err := ociJobHashValue(input.Environment)
+	if err != nil {
+		return "", err
+	}
+	value := struct {
+		ImageDigest       string
+		Command           []string
+		Arguments         []string
+		EnvironmentHash   string
+		Network           string
+		Volumes           []ociJobVolume
+		TimeoutSeconds    int
+		ExpectedExitCodes []int
+		RunAsUser         string
+		Resources         ociJobResources
+		Security          ociJobSecurity
+	}{
+		ImageDigest:       input.ImageDigest,
+		Command:           input.Command,
+		Arguments:         input.Arguments,
+		EnvironmentHash:   environmentHash,
+		Network:           input.Network,
+		Volumes:           input.Volumes,
+		TimeoutSeconds:    input.TimeoutSeconds,
+		ExpectedExitCodes: input.ExpectedExitCodes,
+		RunAsUser:         input.RunAsUser,
+		Resources:         input.Resources,
+		Security:          input.Security,
+	}
+	return ociJobHashValue(value)
+}
+
+func ociJobHashValue(value any) (string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("hash OCI job operation: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func ociJobExpectedLabels(identity ociJobOperationIdentity) map[string]string {
+	return map[string]string{
+		"distr.action":         ociJobActionType,
+		"distr.idempotencyKey": identity.IdempotencyKey,
+		"distr.taskId":         identity.TaskID,
+		"distr.stepRunId":      identity.StepRunID,
+		"distr.stepKey":        identity.StepKey,
+		"distr.operationHash":  identity.OperationHash,
+	}
+}
+
 func dockerCommandExitCode(err error) int {
 	if err == nil {
 		return 0
@@ -512,37 +725,56 @@ func ociJobExpectedExitCode(code int, expected []int) bool {
 	return false
 }
 
-func ociJobMountUnderAllowedRoot(source string, roots []string) bool {
+func ociJobMountUnderAllowedRoot(source string, roots []string) (bool, error) {
 	if len(roots) == 0 {
-		return false
+		return false, nil
 	}
-	source = cleanMountPath(source)
-	if source == "" {
-		return false
+	resolvedSource, err := resolveOCIJobMountPath(source, "volume source")
+	if err != nil {
+		return false, err
 	}
 	for _, root := range roots {
-		root = cleanMountPath(root)
-		if root == "" {
-			continue
+		resolvedRoot, err := resolveOCIJobMountPath(root, "allowed mount root")
+		if err != nil {
+			return false, err
 		}
-		prefix := strings.TrimRight(root, "/") + "/"
-		if source == root || strings.HasPrefix(source, prefix) {
-			return true
+		if sameOrChildPath(resolvedSource, resolvedRoot) {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-func cleanMountPath(value string) string {
+func resolveOCIJobMountPath(value, field string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return ""
+		return "", fmt.Errorf("%s is required", field)
 	}
-	value = path.Clean(strings.ReplaceAll(value, "\\", "/"))
-	if value == "." {
-		return ""
+	if !filepath.IsAbs(value) {
+		return "", fmt.Errorf("%s must be an absolute path", field)
 	}
-	return value
+	resolved, err := filepath.EvalSymlinks(value)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s symlinks: %w", field, err)
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func sameOrChildPath(child, root string) bool {
+	if child == root {
+		return true
+	}
+	rel, err := filepath.Rel(root, child)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return false
+	}
+	return true
 }
 
 func trimStringSlice(values []string) []string {

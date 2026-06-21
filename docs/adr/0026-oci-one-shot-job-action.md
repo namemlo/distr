@@ -23,15 +23,12 @@ distr.oci.job
 The action accepts:
 
 - `imageDigest`
-- `allowedRegistries`
 - `command`
 - `arguments`
 - `environment`
 - `secretEnvironment`
 - `network`
-- `allowedNetworks`
 - `volumes`
-- `allowedMountRoots`
 - `timeoutSeconds`
 - `expectedExitCodes`
 - `idempotencyKey`
@@ -41,14 +38,24 @@ The action accepts:
 
 The Docker agent advertises `distr.oci.job` version `1` through the existing capability report protocol and executes it through the existing task lease, heartbeat, StepRun event, log, output, and retry infrastructure.
 
+Registry, network, and host mount-root allowlists are trusted Docker-agent configuration:
+
+```text
+DISTR_OCI_JOB_ALLOWED_REGISTRIES
+DISTR_OCI_JOB_ALLOWED_NETWORKS
+DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS
+```
+
+They are intentionally not accepted from Deployment Process action input, because action input must not grant its own host permissions.
+
 The server resolves `secretEnvironment` only while building an authenticated agent lease. Stored Deployment Plans and Process Snapshots keep secret keys only. The lease payload removes `secretEnvironment`, injects resolved values into `environment`, and records `SecretReferences`. StepRun event ingestion resolves the same secret references from stored plan input and redacts matching values from event messages, details, logs, and non-sensitive outputs.
 
 The Docker adapter enforces these policies:
 
-- `imageDigest` must be an immutable `@sha256` image reference with an explicit allowlisted registry.
+- `imageDigest` must be an immutable `@sha256` image reference with an explicit registry allowlisted by the Docker agent.
 - Mutable tags are rejected.
-- The default network is `none`; any selected network must be present in `allowedNetworks`.
-- Volumes must be read-only and under an allowlisted host source root.
+- The default network is `none`; any selected network must be present in the Docker agent's trusted network allowlist.
+- Volumes must be read-only, absolute host paths, and under a symlink-resolved trusted host source root.
 - Privileged containers are rejected.
 - The root filesystem is read-only and cannot be disabled by the adapter.
 - `--security-opt no-new-privileges` is always used.

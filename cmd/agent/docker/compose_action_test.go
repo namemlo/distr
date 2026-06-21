@@ -663,12 +663,16 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "inspect" {
+		if inspect := os.Getenv("FAKE_DOCKER_EXISTING_INSPECT"); inspect != "" {
+			fmt.Fprint(os.Stdout, inspect)
+			os.Exit(0)
+		}
 		state := os.Getenv("FAKE_DOCKER_EXISTING_STATE")
 		if state == "" {
 			fmt.Fprint(os.Stderr, "Error: No such object")
 			os.Exit(1)
 		}
-		fmt.Fprint(os.Stdout, state)
+		fmt.Fprintf(os.Stdout, `{"State":%s,"Config":{"Labels":{}}}`, state)
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "logs" {
@@ -676,6 +680,13 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "wait" {
+		if rawSleep := os.Getenv("FAKE_DOCKER_WAIT_SLEEP_MS"); rawSleep != "" {
+			ms, err := strconv.Atoi(rawSleep)
+			if err != nil {
+				os.Exit(2)
+			}
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
 		code := os.Getenv("FAKE_DOCKER_WAIT_EXIT_CODE")
 		if code == "" {
 			code = "0"

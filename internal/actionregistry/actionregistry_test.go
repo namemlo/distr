@@ -72,15 +72,12 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 	}`))).To(Succeed())
 	g.Expect(registry.ValidateInput("distr.oci.job", jsonObject(t, `{
 		"imageDigest":"registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"allowedRegistries":["registry.example.com"],
 		"command":["/bin/cleanup"],
 		"arguments":["--tenant","demo"],
 		"environment":{"MODE":"once"},
 		"secretEnvironment":{"API_TOKEN":"job_api_token"},
 		"network":"none",
-		"allowedNetworks":["none"],
 		"volumes":[{"source":"/var/lib/distr/jobs","target":"/work","readOnly":true}],
-		"allowedMountRoots":["/var/lib/distr"],
 		"timeoutSeconds":300,
 		"expectedExitCodes":[0],
 		"idempotencyKey":"cleanup-demo",
@@ -167,16 +164,24 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			actionType: "distr.oci.job",
 			input: jsonObject(t, `{
 				"imageDigest":"registry.example.com/jobs/cleanup:latest",
-				"allowedRegistries":["registry.example.com"]
+				"command":["/bin/cleanup"]
 			}`),
 			want: "imageDigest",
+		},
+		{
+			name:       "oci job requires command",
+			actionType: "distr.oci.job",
+			input: jsonObject(t, `{
+				"imageDigest":"registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}`),
+			want: "command",
 		},
 		{
 			name:       "oci job rejects privileged execution",
 			actionType: "distr.oci.job",
 			input: jsonObject(t, `{
 				"imageDigest":"registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				"allowedRegistries":["registry.example.com"],
+				"command":["/bin/cleanup"],
 				"security":{"privileged":true}
 			}`),
 			want: "privileged",
@@ -186,7 +191,7 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			actionType: "distr.oci.job",
 			input: jsonObject(t, `{
 				"imageDigest":"registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				"allowedRegistries":["registry.example.com"],
+				"command":["/bin/cleanup"],
 				"security":{"readOnlyRootFilesystem":false}
 			}`),
 			want: "readOnlyRootFilesystem",

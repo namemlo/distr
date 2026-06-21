@@ -897,10 +897,9 @@ func taskLeaseOCIJobStep(key, name string, sortOrder int) types.DeploymentProces
 		ActionType:        "distr.oci.job",
 		ExecutionLocation: "target",
 		InputBindings: map[string]any{
-			"imageDigest":       "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"allowedRegistries": []any{"registry.example.com"},
-			"command":           []any{"/bin/cleanup"},
-			"arguments":         []any{"--tenant", "demo"},
+			"imageDigest": "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"command":     []any{"/bin/cleanup"},
+			"arguments":   []any{"--tenant", "demo"},
 			"environment": map[string]any{
 				"MODE": "once",
 			},
@@ -908,7 +907,6 @@ func taskLeaseOCIJobStep(key, name string, sortOrder int) types.DeploymentProces
 				"API_TOKEN": "job_api_token",
 			},
 			"network":           "none",
-			"allowedNetworks":   []any{"none"},
 			"timeoutSeconds":    60,
 			"expectedExitCodes": []any{0},
 		},
