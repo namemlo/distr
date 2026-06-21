@@ -555,10 +555,22 @@ func resolveTaskLeaseStepSecrets(
 	task types.Task,
 	step *types.TaskLeaseStep,
 ) ([]string, error) {
-	if step.ActionType != "distr.compose.deploy" {
+	switch step.ActionType {
+	case "distr.compose.deploy":
+		return resolveComposeRegistryAuthSecrets(ctx, task, step.InputBindings)
+	case "distr.oci.job":
+		return resolveOCIJobSecretEnvironment(ctx, task, step.InputBindings)
+	default:
 		return []string{}, nil
 	}
-	applicationVersion, ok := mapStringAny(step.InputBindings["applicationVersion"])
+}
+
+func resolveComposeRegistryAuthSecrets(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	applicationVersion, ok := mapStringAny(inputBindings["applicationVersion"])
 	if !ok {
 		return []string{}, nil
 	}
@@ -589,6 +601,52 @@ func resolveTaskLeaseStepSecrets(
 		registryAuth[registry] = auth
 		references = append(references, "secret:"+reference)
 	}
+	sort.Strings(references)
+	return references, nil
+}
+
+func resolveOCIJobSecretEnvironment(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	secretEnvironment, ok := mapStringAny(inputBindings["secretEnvironment"])
+	if !ok {
+		if _, exists := inputBindings["secretEnvironment"]; exists {
+			return nil, apierrors.NewBadRequest("oci job secretEnvironment must be an object")
+		}
+		return []string{}, nil
+	}
+	environment, ok := mapStringAny(inputBindings["environment"])
+	if !ok {
+		if _, exists := inputBindings["environment"]; exists {
+			return nil, apierrors.NewBadRequest("oci job environment must be an object")
+		}
+		environment = map[string]any{}
+	}
+	references := make([]string, 0, len(secretEnvironment))
+	for rawName, rawReference := range secretEnvironment {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return nil, apierrors.NewBadRequest("oci job secretEnvironment name is required")
+		}
+		if _, exists := environment[name]; exists {
+			return nil, apierrors.NewBadRequest("oci job environment conflicts with secretEnvironment")
+		}
+		reference, ok := stringValue(rawReference)
+		if !ok || strings.TrimSpace(reference) == "" {
+			return nil, apierrors.NewBadRequest("oci job secretEnvironment value must be a secret reference")
+		}
+		reference = strings.TrimSpace(reference)
+		value, err := getTaskLeaseSecretValue(ctx, task, reference)
+		if err != nil {
+			return nil, err
+		}
+		environment[name] = value
+		references = append(references, "secret:"+reference)
+	}
+	inputBindings["environment"] = environment
+	delete(inputBindings, "secretEnvironment")
 	sort.Strings(references)
 	return references, nil
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"testing"
 	"time"
 
@@ -648,8 +649,59 @@ func TestDockerCommandHelper(t *testing.T) {
 	if dockerArgs[0] != "docker" {
 		os.Exit(2)
 	}
+	if path := os.Getenv("FAKE_DOCKER_COMMAND_ARGS_FILE"); path != "" {
+		data, _ := json.Marshal(dockerArgs)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			os.Exit(2)
+		}
+		_, _ = f.Write(append(data, '\n'))
+		_ = f.Close()
+	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "info" {
 		fmt.Fprint(os.Stdout, "active")
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "inspect" {
+		state := os.Getenv("FAKE_DOCKER_EXISTING_STATE")
+		if state == "" {
+			fmt.Fprint(os.Stderr, "Error: No such object")
+			os.Exit(1)
+		}
+		fmt.Fprint(os.Stdout, state)
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "logs" {
+		fmt.Fprint(os.Stdout, os.Getenv("FAKE_DOCKER_LOGS"))
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "wait" {
+		code := os.Getenv("FAKE_DOCKER_WAIT_EXIT_CODE")
+		if code == "" {
+			code = "0"
+		}
+		fmt.Fprint(os.Stdout, code)
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "stop" {
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "run" {
+		if rawSleep := os.Getenv("FAKE_DOCKER_RUN_SLEEP_MS"); rawSleep != "" {
+			ms, err := strconv.Atoi(rawSleep)
+			if err != nil {
+				os.Exit(2)
+			}
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		fmt.Fprint(os.Stdout, os.Getenv("FAKE_DOCKER_RUN_OUTPUT"))
+		if rawCode := os.Getenv("FAKE_DOCKER_RUN_EXIT_CODE"); rawCode != "" {
+			code, err := strconv.Atoi(rawCode)
+			if err != nil {
+				os.Exit(2)
+			}
+			os.Exit(code)
+		}
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 3 && dockerArgs[1] == "stack" && dockerArgs[2] == "deploy" {

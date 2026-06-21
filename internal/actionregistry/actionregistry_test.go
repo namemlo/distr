@@ -14,12 +14,13 @@ func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
 
 	actions := DefaultRegistry().List()
 
-	g.Expect(actions).To(HaveLen(4))
+	g.Expect(actions).To(HaveLen(5))
 	g.Expect(actionTypes(actions)).To(Equal([]string{
 		"distr.preflight",
 		"distr.http.check",
 		"distr.wait",
 		"distr.compose.deploy",
+		"distr.oci.job",
 	}))
 	g.Expect(actions[0].Name).To(Equal("Preflight checks"))
 	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("$schema", "https://json-schema.org/draft/2020-12/schema"))
@@ -68,6 +69,24 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 		"waitForHealthy":true,
 		"timeoutSeconds":120,
 		"strategy":"compose"
+	}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.oci.job", jsonObject(t, `{
+		"imageDigest":"registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"allowedRegistries":["registry.example.com"],
+		"command":["/bin/cleanup"],
+		"arguments":["--tenant","demo"],
+		"environment":{"MODE":"once"},
+		"secretEnvironment":{"API_TOKEN":"job_api_token"},
+		"network":"none",
+		"allowedNetworks":["none"],
+		"volumes":[{"source":"/var/lib/distr/jobs","target":"/work","readOnly":true}],
+		"allowedMountRoots":["/var/lib/distr"],
+		"timeoutSeconds":300,
+		"expectedExitCodes":[0],
+		"idempotencyKey":"cleanup-demo",
+		"runAsUser":"1000:1000",
+		"resources":{"cpus":0.5,"memoryBytes":134217728},
+		"security":{"readOnlyRootFilesystem":true,"dropCapabilities":["ALL"]}
 	}`))).To(Succeed())
 }
 
@@ -142,6 +161,35 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 				"projectName":"distr-preview"
 			}`),
 			want: "password",
+		},
+		{
+			name:       "oci job rejects mutable image tag",
+			actionType: "distr.oci.job",
+			input: jsonObject(t, `{
+				"imageDigest":"registry.example.com/jobs/cleanup:latest",
+				"allowedRegistries":["registry.example.com"]
+			}`),
+			want: "imageDigest",
+		},
+		{
+			name:       "oci job rejects privileged execution",
+			actionType: "distr.oci.job",
+			input: jsonObject(t, `{
+				"imageDigest":"registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"allowedRegistries":["registry.example.com"],
+				"security":{"privileged":true}
+			}`),
+			want: "privileged",
+		},
+		{
+			name:       "oci job rejects writable root filesystem",
+			actionType: "distr.oci.job",
+			input: jsonObject(t, `{
+				"imageDigest":"registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"allowedRegistries":["registry.example.com"],
+				"security":{"readOnlyRootFilesystem":false}
+			}`),
+			want: "readOnlyRootFilesystem",
 		},
 	}
 

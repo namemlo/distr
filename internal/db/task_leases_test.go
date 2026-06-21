@@ -128,6 +128,50 @@ func TestTaskLeaseRepositoryResolvesComposeRegistryAuthSecretOnlyForAgentLease(t
 	g.Expect(auth).NotTo(HaveKey("passwordSecretRef"))
 }
 
+func TestTaskLeaseRepositoryResolvesOCIJobSecretEnvironmentOnlyForAgentLease(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	job := taskLeaseOCIJobStep("job", "OCI job", 10)
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{job})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES (@organizationId, @key, @value, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"key":            "job_api_token",
+			"value":          "super-secret-job-token",
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	planPayload, err := json.Marshal(deps.plan.Steps[0].InputBindings)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(planPayload)).NotTo(ContainSubstring("super-secret-job-token"))
+	g.Expect(string(planPayload)).To(ContainSubstring("secretEnvironment"))
+	g.Expect(string(planPayload)).To(ContainSubstring("job_api_token"))
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	g.Expect(lease.Steps).To(HaveLen(1))
+	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:job_api_token"))
+	g.Expect(lease.Steps[0].InputBindings).NotTo(HaveKey("secretEnvironment"))
+	environment := lease.Steps[0].InputBindings["environment"].(map[string]any)
+	g.Expect(environment).To(HaveKeyWithValue("MODE", "once"))
+	g.Expect(environment).To(HaveKeyWithValue("API_TOKEN", "super-secret-job-token"))
+}
+
 func TestTaskLeaseRepositoryReturnsNilWhenNoQueuedTaskForAgent(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -836,6 +880,37 @@ func taskLeaseComposeDeployStep(key, name string, sortOrder int) types.Deploymen
 				"composeFile": "services:\n  web:\n    image: nginx:alpine\n",
 			},
 			"projectName": "task-lease-retry",
+		},
+		FailureMode:          "fail",
+		TimeoutSeconds:       120,
+		RetryMaxAttempts:     3,
+		RetryIntervalSeconds: 10,
+		RequiredPermissions:  []string{"deploy:write"},
+		SortOrder:            sortOrder,
+	}
+}
+
+func taskLeaseOCIJobStep(key, name string, sortOrder int) types.DeploymentProcessStep {
+	return types.DeploymentProcessStep{
+		Key:               key,
+		Name:              name,
+		ActionType:        "distr.oci.job",
+		ExecutionLocation: "target",
+		InputBindings: map[string]any{
+			"imageDigest":       "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"allowedRegistries": []any{"registry.example.com"},
+			"command":           []any{"/bin/cleanup"},
+			"arguments":         []any{"--tenant", "demo"},
+			"environment": map[string]any{
+				"MODE": "once",
+			},
+			"secretEnvironment": map[string]any{
+				"API_TOKEN": "job_api_token",
+			},
+			"network":           "none",
+			"allowedNetworks":   []any{"none"},
+			"timeoutSeconds":    60,
+			"expectedExitCodes": []any{0},
 		},
 		FailureMode:          "fail",
 		TimeoutSeconds:       120,

@@ -478,13 +478,18 @@ func getStepRunSecretValuesForRedaction(ctx context.Context, orgID, stepRunID uu
 	if err != nil {
 		return nil, fmt.Errorf("could not query StepRun secret values for redaction: %w", err)
 	}
-	if actionType != "distr.compose.deploy" {
-		return nil, nil
-	}
-	return getComposeRegistrySecretValuesForRedaction(ctx, types.Task{
+	task := types.Task{
 		OrganizationID:         orgID,
 		DeploymentPlanTargetID: deploymentPlanTargetID,
-	}, inputBindings)
+	}
+	switch actionType {
+	case "distr.compose.deploy":
+		return getComposeRegistrySecretValuesForRedaction(ctx, task, inputBindings)
+	case "distr.oci.job":
+		return getOCIJobSecretValuesForRedaction(ctx, task, inputBindings)
+	default:
+		return nil, nil
+	}
 }
 
 func getComposeRegistrySecretValuesForRedaction(
@@ -510,6 +515,32 @@ func getComposeRegistrySecretValuesForRedaction(
 			values = append(values, value)
 		}
 		reference, ok := stringValue(auth["passwordSecretRef"])
+		if !ok || strings.TrimSpace(reference) == "" {
+			continue
+		}
+		value, err := getTaskLeaseSecretValue(ctx, task, strings.TrimSpace(reference))
+		if err != nil {
+			return nil, err
+		}
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values, nil
+}
+
+func getOCIJobSecretValuesForRedaction(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	secretEnvironment, ok := mapStringAny(inputBindings["secretEnvironment"])
+	if !ok {
+		return nil, nil
+	}
+	values := make([]string, 0, len(secretEnvironment))
+	for _, rawReference := range secretEnvironment {
+		reference, ok := stringValue(rawReference)
 		if !ok || strings.TrimSpace(reference) == "" {
 			continue
 		}

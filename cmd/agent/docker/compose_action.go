@@ -169,6 +169,10 @@ func executeTaskLease(
 			if err := executeComposeDeployStep(ctx, lease, step, client, apply); err != nil {
 				return err
 			}
+		case ociJobActionType:
+			if err := executeOCIJobStep(ctx, lease, step, client); err != nil {
+				return err
+			}
 		default:
 			if err := recordUnsupportedStep(ctx, lease, step, client); err != nil {
 				return err

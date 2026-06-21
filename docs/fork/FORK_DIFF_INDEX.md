@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-025 are implemented locally. PR-025 adds the first target-executed action adapter by wrapping the Docker agent's existing Compose deployment path as `distr.compose.deploy`, while preserving legacy resource-poll deployment compatibility and without adding OCI/file/webhook adapters, approvals, guided failure, task cancellation, or UI timeline behavior.
+PR-000 through PR-026 are implemented locally. PR-026 adds the Docker-agent `distr.oci.job` one-shot container action with digest-only image references, allowlisted registries/networks/mounts, lease-time secret resolution, StepRun redaction, deterministic-container idempotency, and Docker hardening defaults while preserving existing Compose and legacy resource-poll deployment behavior.
 
 ## Tracking Template
 
@@ -418,3 +418,18 @@ Use one entry per pull request:
 - Tests: Action registry schema/order tests, Docker capability tests, Compose action input/execution event tests, task lease heartbeat/execution tests, and cleanup compatibility tests were added. Focused `go test ./internal/actionregistry` and Docker-agent tests with dummy agent endpoint environment values passed locally.
 - Upstream contribution notes: Community-neutral Docker Compose action adapter; no adopter-specific terminology, no OCI/file/webhook behavior, and no new provider-specific core dependency beyond the existing Docker agent Compose dependencies.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, and legacy Docker resource-poll deployment behavior are unchanged when no task lease is claimed. No OCI job action, file render action, webhook action, Helm typed action, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-026 behavior is added in PR-025.
+
+### PR-026 - OCI one-shot job action
+
+- Status: Implemented locally; action registry, Docker agent capability report, OCI job adapter, lease-time secret resolution, StepRun redaction, documentation, focused tests, and ADR completed.
+- Upstream base: `a566573e`
+- Feature flag: Adds no new flag. End-to-end execution uses existing `agent_capabilities`, `task_queue`, `agent_task_leases`, and `step_events` feature-flagged endpoints.
+- User-facing behavior: Target-executed Tasks can run `distr.oci.job` on Docker agents that advertise action version `1`; the agent emits structured started/progress/succeeded/failed step events and non-secret outputs for container name, exit code, and status.
+- Database changes: None. Reuses AgentCapabilityReport, AgentActionCapability, Task, StepRun, TaskLease, StepRunEvent, StepRunLogChunk, StepRunOutput, and Secret from earlier roadmap PRs.
+- API changes: None. Reuses hidden capability, lease, heartbeat, and step-event endpoints.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-026.
+- Agent protocol changes: Docker agents advertise `distr.oci.job` version `1`, claim a task lease through the existing lease flow, heartbeat before and during job execution, run digest-only allowlisted OCI images through Docker, stop containers on timeout/cancellation, and reuse deterministic containers for retry/reclaim/restart idempotency.
+- Documentation: Added PR-026 notes and ADR-0026.
+- Tests: Action registry schema/order tests, Docker capability tests, OCI action validation/execution/redaction/expected-exit/idempotency/restart/timeout/cancellation tests, task lease OCI secret resolution tests, and StepRun OCI redaction tests were added. Focused `go test ./internal/actionregistry`, Docker-agent tests with dummy agent endpoint environment values, and focused live PostgreSQL `internal/db` tests passed locally.
+- Upstream contribution notes: Community-neutral OCI one-shot action adapter; no adopter-specific terminology, no file/webhook behavior, no UI workflow, and no arbitrary host shell execution.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, and legacy Docker resource-poll deployment behavior are unchanged when no OCI job task lease is claimed. No file render action, webhook action, Helm typed action, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-027 behavior is added in PR-026.
