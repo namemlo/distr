@@ -476,7 +476,12 @@ func TestReleaseBundleRepositoryValidatePublishAndProtectPublishedBundle(t *test
 	g.Expect(published.Status).To(Equal(types.ReleaseBundleStatusPublished))
 	g.Expect(published.PublishedByUserAccountID).To(Equal(&actorID))
 	g.Expect(published.PublishedAt).NotTo(BeNil())
-	g.Expect(published.CanonicalChecksum).To(Equal(bundle.CanonicalChecksum))
+	g.Expect(published.VariableSnapshotID).NotTo(BeNil())
+	expectedPayload, expectedChecksum, err := releasebundles.Canonicalize(*published)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(published.CanonicalPayload).To(Equal(expectedPayload))
+	g.Expect(published.CanonicalChecksum).To(Equal(expectedChecksum))
+	g.Expect(published.CanonicalChecksum).NotTo(Equal(bundle.CanonicalChecksum))
 
 	published.ReleaseNotes = "Cannot edit after publish"
 	err = db.UpdateReleaseBundle(ctx, published)

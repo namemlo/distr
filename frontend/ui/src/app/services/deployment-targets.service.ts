@@ -2,6 +2,7 @@ import {HttpClient, HttpErrorResponse} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {DeploymentRequest, DeploymentTarget, DeploymentTargetAccessResponse} from '@distr-sh/distr-sdk';
 import {EMPTY, merge, Observable, retry, shareReplay, Subject, switchMap, tap, timer} from 'rxjs';
+import {ConfigurationDrift} from '../types/configuration-drift';
 import {ReactiveList} from './cache';
 import {CrudService} from './interfaces';
 
@@ -85,6 +86,10 @@ export class DeploymentTargetsService implements CrudService<DeploymentTarget> {
 
   undeploy(id: string): Observable<void> {
     return this.httpClient.delete<void>(`${this.deploymentsBaseUrl}/${id}`).pipe(tap(() => this.pollRefresh$.next()));
+  }
+
+  getConfigurationDrift(deploymentId: string): Observable<ConfigurationDrift> {
+    return this.httpClient.get<ConfigurationDrift>(`${this.deploymentsBaseUrl}/${deploymentId}/configuration-drift`);
   }
 
   public getNotes(deploymentTargetId: string) {

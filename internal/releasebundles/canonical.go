@@ -10,14 +10,15 @@ import (
 )
 
 type canonicalBundle struct {
-	ApplicationID     string                   `json:"applicationId"`
-	ChannelID         string                   `json:"channelId"`
-	ProcessSnapshotID string                   `json:"processSnapshotId,omitempty"`
-	ReleaseNumber     string                   `json:"releaseNumber"`
-	ReleaseNotes      string                   `json:"releaseNotes"`
-	SourceRevision    string                   `json:"sourceRevision"`
-	SourceMetadata    *canonicalSourceMetadata `json:"sourceMetadata,omitempty"`
-	Components        []canonicalComponent     `json:"components"`
+	ApplicationID      string                   `json:"applicationId"`
+	ChannelID          string                   `json:"channelId"`
+	ProcessSnapshotID  string                   `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID string                   `json:"variableSnapshotId,omitempty"`
+	ReleaseNumber      string                   `json:"releaseNumber"`
+	ReleaseNotes       string                   `json:"releaseNotes"`
+	SourceRevision     string                   `json:"sourceRevision"`
+	SourceMetadata     *canonicalSourceMetadata `json:"sourceMetadata,omitempty"`
+	Components         []canonicalComponent     `json:"components"`
 }
 
 type canonicalSourceMetadata struct {
@@ -63,6 +64,9 @@ func Canonicalize(bundle types.ReleaseBundle) ([]byte, string, error) {
 	}
 	if bundle.ProcessSnapshotID != nil {
 		canonical.ProcessSnapshotID = bundle.ProcessSnapshotID.String()
+	}
+	if bundle.VariableSnapshotID != nil {
+		canonical.VariableSnapshotID = bundle.VariableSnapshotID.String()
 	}
 	sourceMetadata := canonicalSourceMetadata{
 		Repository: bundle.SourceRepository,

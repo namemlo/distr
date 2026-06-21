@@ -49,6 +49,7 @@ type ReleaseBundle struct {
 	ApplicationID               uuid.UUID                `db:"application_id" json:"applicationId"`
 	ChannelID                   uuid.UUID                `db:"channel_id" json:"channelId"`
 	ProcessSnapshotID           *uuid.UUID               `db:"process_snapshot_id" json:"processSnapshotId,omitempty"`
+	VariableSnapshotID          *uuid.UUID               `db:"variable_snapshot_id" json:"variableSnapshotId,omitempty"`
 	DeploymentProcessRevisionID *uuid.UUID               `db:"-" json:"deploymentProcessRevisionId,omitempty"`
 	ReleaseNumber               string                   `db:"release_number" json:"releaseNumber"`
 	ReleaseNotes                string                   `db:"release_notes" json:"releaseNotes"`
