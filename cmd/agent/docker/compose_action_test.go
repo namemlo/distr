@@ -139,6 +139,61 @@ func TestExecuteTaskLeaseHeartbeatsAndRunsComposeStep(t *testing.T) {
 	}))
 }
 
+func TestExecuteTaskLeaseDoesNotApplyWhenInitialHeartbeatFails(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	lease := api.AgentTaskLease{
+		TaskID:     uuid.New(),
+		LeaseToken: "lease-token",
+		Steps: []api.AgentTaskLeaseStep{
+			{
+				StepRunID:     uuid.New(),
+				ActionType:    composeDeployActionType,
+				ActionVersion: types.AgentActionVersionV1,
+				Inputs:        validComposeDeployInputs(),
+			},
+		},
+	}
+	recorder := &recordingLeasedTaskClient{heartbeatErr: errors.New("heartbeat endpoint unavailable")}
+	applied := false
+	apply := func(_ context.Context, _ api.AgentDeployment, _ composeDeployOptions, _ func(string)) (*AgentDeployment, string, error) {
+		applied = true
+		return nil, "", nil
+	}
+
+	err := executeTaskLease(ctx, lease, recorder, apply)
+
+	g.Expect(err).To(MatchError(ContainSubstring("heartbeat task lease")))
+	g.Expect(applied).To(BeFalse())
+	g.Expect(recorder.events).To(BeEmpty())
+}
+
+func TestExecuteComposeDeployStepDoesNotApplyWhenStepEventEndpointFails(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		ActionType:    composeDeployActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        validComposeDeployInputs(),
+	}
+	recorder := &recordingLeasedTaskClient{
+		recordingStepEventClient: recordingStepEventClient{stepEventErr: errors.New("step event endpoint unavailable")},
+	}
+	applied := false
+	apply := func(_ context.Context, _ api.AgentDeployment, _ composeDeployOptions, _ func(string)) (*AgentDeployment, string, error) {
+		applied = true
+		return nil, "", nil
+	}
+
+	err := executeComposeDeployStep(ctx, lease, step, recorder, apply)
+
+	g.Expect(err).To(MatchError(ContainSubstring("step event endpoint unavailable")))
+	g.Expect(applied).To(BeFalse())
+	g.Expect(recorder.events).To(BeEmpty())
+}
+
 func TestExecuteTaskLeaseStartsBeforeUnsupportedActionFailure(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
@@ -315,11 +370,15 @@ func validComposeDeployInputs() map[string]any {
 }
 
 type recordingStepEventClient struct {
-	stepRunIDs []uuid.UUID
-	events     []api.AgentStepRunEventRequest
+	stepRunIDs   []uuid.UUID
+	events       []api.AgentStepRunEventRequest
+	stepEventErr error
 }
 
 func (c *recordingStepEventClient) RecordStepRunEvent(_ context.Context, stepRunID uuid.UUID, request api.AgentStepRunEventRequest) (*api.StepRunEvent, error) {
+	if c.stepEventErr != nil {
+		return nil, c.stepEventErr
+	}
 	c.stepRunIDs = append(c.stepRunIDs, stepRunID)
 	c.events = append(c.events, request)
 	return nil, nil

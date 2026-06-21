@@ -54,15 +54,15 @@ func TestRecordStepRunEventPostsAuthenticatedRequest(t *testing.T) {
 	}
 }
 
-func TestRecordStepRunEventSkipsMissingDisabledOrEmptyEndpoint(t *testing.T) {
+func TestRecordStepRunEventFailsMissingDisabledOrEmptyEndpoint(t *testing.T) {
 	client := testStepEventClient("")
 	event, err := client.RecordStepRunEvent(context.Background(), uuid.New(), api.AgentStepRunEventRequest{
 		LeaseToken: "lease-token",
 		Sequence:   1,
 		Type:       types.StepRunEventTypeStarted,
 	})
-	if err != nil || event != nil {
-		t.Fatalf("expected missing endpoint to be skipped, event=%v err=%v", event, err)
+	if err == nil || event != nil {
+		t.Fatalf("expected missing endpoint to fail closed, event=%v err=%v", event, err)
 	}
 
 	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusNoContent} {
@@ -76,8 +76,8 @@ func TestRecordStepRunEventSkipsMissingDisabledOrEmptyEndpoint(t *testing.T) {
 			Type:       types.StepRunEventTypeStarted,
 		})
 		server.Close()
-		if err != nil || event != nil {
-			t.Fatalf("expected status %d to be skipped, event=%v err=%v", status, event, err)
+		if err == nil || event != nil {
+			t.Fatalf("expected status %d to fail closed, event=%v err=%v", status, event, err)
 		}
 	}
 }

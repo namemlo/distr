@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -43,7 +44,7 @@ func (c *Client) HeartbeatTaskLease(
 ) (*api.AgentTaskLease, error) {
 	endpoint := taskHeartbeatEndpoint(c.taskHeartbeatEndpointTemplate, taskID)
 	if endpoint == "" {
-		return nil, nil
+		return nil, fmt.Errorf("task heartbeat endpoint is required for leased tasks")
 	}
 	request := api.HeartbeatAgentTaskLeaseRequest{LeaseToken: leaseToken}
 	if err := request.Validate(); err != nil {
@@ -59,12 +60,6 @@ func (c *Client) HeartbeatTaskLease(
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.doAuthenticated(ctx, req, false)
-	if resp != nil {
-		switch resp.StatusCode {
-		case http.StatusForbidden, http.StatusNotFound, http.StatusNoContent:
-			return nil, nil
-		}
-	}
 	if err != nil {
 		return nil, err
 	}
