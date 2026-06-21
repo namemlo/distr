@@ -330,6 +330,42 @@ func TestExecuteOCIJobStepRequiresHostVisibleSecretStagingDir(t *testing.T) {
 	g.Expect(findFakeDockerCommand(readFakeDockerCommands(t, argsFile), "run")).To(BeNil())
 }
 
+func TestExecuteOCIJobStepCleansStaleSecretStagingOnRestart(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	staleDir := filepath.Join(os.Getenv(ociJobSecretStagingDirEnv), "distr-oci-job-secret-env-stale")
+	g.Expect(os.Mkdir(staleDir, 0o700)).To(Succeed())
+	g.Expect(os.WriteFile(filepath.Join(staleDir, "env"), []byte("API_TOKEN='old-secret-token'\n"), 0o400)).To(Succeed())
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "job completed")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	inputs["secretEnvironment"] = map[string]any{"API_TOKEN": "new-secret-token"}
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         inputs,
+		IdempotencyKey: "sha256:job-key",
+	}
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	_, statErr := os.Stat(staleDir)
+	g.Expect(os.IsNotExist(statErr)).To(BeTrue())
+	g.Expect(findFakeDockerCommand(readFakeDockerCommands(t, argsFile), "run")).NotTo(BeNil())
+}
+
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -737,6 +773,49 @@ func TestExecuteOCIJobStepStartsExistingCreatedContainerAfterRestart(t *testing.
 	}))
 }
 
+func TestExecuteOCIJobStepRecreatesCreatedContainerWhenSecretMountMissing(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	missingSecretSource := filepath.Join(os.Getenv(ociJobSecretStagingDirEnv), "distr-oci-job-secret-env-missing", "env")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "job completed")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	inputs["secretEnvironment"] = map[string]any{"API_TOKEN": "new-secret-token"}
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         inputs,
+		IdempotencyKey: "sha256:job-key",
+	}
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", fakeOCIJobInspectJSONWithMounts(t, lease, step, map[string]any{
+		"Status":   "created",
+		"Running":  false,
+		"ExitCode": 0,
+	}, []map[string]any{{
+		"Source":      missingSecretSource,
+		"Destination": ociJobSecretEnvMountPath,
+	}}))
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	commands := readFakeDockerCommands(t, argsFile)
+	g.Expect(findFakeDockerCommand(commands, "rm")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "start")).To(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "run")).NotTo(BeNil())
+}
+
 func TestExecuteOCIJobStepRejectsExistingContainerInUnsupportedState(t *testing.T) {
 	g := NewWithT(t)
 	setOCIJobPolicyEnv(t)
@@ -1040,6 +1119,16 @@ func fakeOCIJobInspectJSON(
 	step api.AgentTaskLeaseStep,
 	state map[string]any,
 ) string {
+	return fakeOCIJobInspectJSONWithMounts(t, lease, step, state, nil)
+}
+
+func fakeOCIJobInspectJSONWithMounts(
+	t *testing.T,
+	lease api.AgentTaskLease,
+	step api.AgentTaskLeaseStep,
+	state map[string]any,
+	mounts []map[string]any,
+) string {
 	t.Helper()
 	input, err := decodeOCIJobActionInput(step.Inputs)
 	if err != nil {
@@ -1053,7 +1142,8 @@ func fakeOCIJobInspectJSON(
 		t.Fatalf("build OCI job identity for fake inspect: %v", err)
 	}
 	data, err := json.Marshal(map[string]any{
-		"State": state,
+		"State":  state,
+		"Mounts": mounts,
 		"Config": map[string]any{
 			"Labels": ociJobExpectedLabels(identity),
 		},

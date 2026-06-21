@@ -698,6 +698,9 @@ func TestDockerCommandHelper(t *testing.T) {
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "stop" {
 		os.Exit(0)
 	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "rm" {
+		os.Exit(0)
+	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "start" {
 		os.Exit(0)
 	}

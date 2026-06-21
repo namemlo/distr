@@ -96,6 +96,10 @@ type ociJobContainerState struct {
 
 type ociJobContainerInspect struct {
 	State  ociJobContainerState `json:"State"`
+	Mounts []struct {
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
 	Config struct {
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
@@ -370,13 +374,20 @@ func runOCIJob(
 	if updateStatus != nil {
 		updateStatus("starting OCI job container")
 	}
+	cleanupOCIJobSecretStagingDir()
 	if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
 		return result, err
 	} else if exists {
 		if err := validateOCIJobContainerIdentity(inspected, identity); err != nil {
 			return result, err
 		}
-		return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes)
+		if shouldRecreateOCIJobContainer(inspected, input) {
+			if err := removeOCIJobContainer(ctx, containerName); err != nil {
+				return result, err
+			}
+		} else {
+			return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes)
+		}
 	}
 	envFile, cleanupEnv, err := writeOCIJobEnvFile(input.Environment)
 	if err != nil {
@@ -598,6 +609,35 @@ func stopOCIJobContainer(containerName string) {
 	_, _ = runDockerCommandBounded(ctx, "docker", "stop", "--time", "5", containerName)
 }
 
+func removeOCIJobContainer(ctx context.Context, containerName string) error {
+	out, err := runDockerCommandBounded(ctx, "docker", "rm", "--force", containerName)
+	if err != nil {
+		return fmt.Errorf("remove OCI job container for recreation: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func shouldRecreateOCIJobContainer(inspected ociJobContainerInspect, input ociJobActionInput) bool {
+	if strings.ToLower(strings.TrimSpace(inspected.State.Status)) != "created" || len(input.SecretEnvironment) == 0 {
+		return false
+	}
+	source := inspectedSecretEnvMountSource(inspected)
+	if source == "" {
+		return true
+	}
+	_, err := os.Stat(source)
+	return err != nil
+}
+
+func inspectedSecretEnvMountSource(inspected ociJobContainerInspect) string {
+	for _, mount := range inspected.Mounts {
+		if mount.Destination == ociJobSecretEnvMountPath {
+			return mount.Source
+		}
+	}
+	return ""
+}
+
 func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity ociJobOperationIdentity, envFile, secretEnvFile string) []string {
 	args := []string{
 		"run",
@@ -726,6 +766,23 @@ func resolveOCIJobSecretStagingDir() (string, error) {
 		return "", fmt.Errorf("%s is required when secretEnvironment is used", ociJobSecretStagingDirEnv)
 	}
 	return resolveOCIJobMountPath(stagingDir, ociJobSecretStagingDirEnv)
+}
+
+func cleanupOCIJobSecretStagingDir() {
+	stagingDir, err := resolveOCIJobSecretStagingDir()
+	if err != nil {
+		return
+	}
+	entries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "distr-oci-job-secret-env-") {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(stagingDir, entry.Name()))
+	}
 }
 
 func shellSingleQuote(value string) string {
