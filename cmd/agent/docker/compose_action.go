@@ -234,6 +234,9 @@ func executeComposeDeployStep(
 		}
 		sequence++
 		progressErr = recordStepEvent(applyCtx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeProgress, status, nil, nil)
+		if progressErr != nil {
+			applyCancel()
+		}
 	}
 
 	agentDeployment, status, err := apply(applyCtx, deployment, options, updateStatus)

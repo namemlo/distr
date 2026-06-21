@@ -194,6 +194,43 @@ func TestExecuteComposeDeployStepDoesNotApplyWhenStepEventEndpointFails(t *testi
 	g.Expect(recorder.events).To(BeEmpty())
 }
 
+func TestExecuteComposeDeployStepCancelsApplyWhenProgressEventFails(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		ActionType:    composeDeployActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        validComposeDeployInputs(),
+	}
+	recorder := &recordingLeasedTaskClient{
+		recordingStepEventClient: recordingStepEventClient{
+			stepEventErr:   errors.New("progress event rejected"),
+			stepEventErrOn: types.StepRunEventTypeProgress,
+		},
+	}
+	applyCanceled := false
+	apply := func(ctx context.Context, _ api.AgentDeployment, _ composeDeployOptions, updateStatus func(string)) (*AgentDeployment, string, error) {
+		updateStatus("creating services")
+		select {
+		case <-ctx.Done():
+			applyCanceled = true
+			return nil, "", ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+			return nil, "", errors.New("apply context was not canceled")
+		}
+	}
+
+	err := executeComposeDeployStep(ctx, lease, step, recorder, apply)
+
+	g.Expect(err).To(MatchError(ContainSubstring("progress event rejected")))
+	g.Expect(applyCanceled).To(BeTrue())
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+	}))
+}
+
 func TestExecuteTaskLeaseStartsBeforeUnsupportedActionFailure(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()
@@ -370,13 +407,14 @@ func validComposeDeployInputs() map[string]any {
 }
 
 type recordingStepEventClient struct {
-	stepRunIDs   []uuid.UUID
-	events       []api.AgentStepRunEventRequest
-	stepEventErr error
+	stepRunIDs     []uuid.UUID
+	events         []api.AgentStepRunEventRequest
+	stepEventErr   error
+	stepEventErrOn types.StepRunEventType
 }
 
 func (c *recordingStepEventClient) RecordStepRunEvent(_ context.Context, stepRunID uuid.UUID, request api.AgentStepRunEventRequest) (*api.StepRunEvent, error) {
-	if c.stepEventErr != nil {
+	if c.stepEventErr != nil && (c.stepEventErrOn == "" || c.stepEventErrOn == request.Type) {
 		return nil, c.stepEventErr
 	}
 	c.stepRunIDs = append(c.stepRunIDs, stepRunID)
