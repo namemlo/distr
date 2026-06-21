@@ -2,9 +2,12 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -33,6 +36,7 @@ type stepRunEventLease struct {
 type preparedStepRunEventRequest struct {
 	types.RecordAgentStepRunEventRequest
 	DetailsJSON []byte
+	PayloadHash string
 	Redacted    bool
 	Logs        []preparedStepRunLogChunk
 	Outputs     []preparedStepRunOutput
@@ -74,7 +78,10 @@ func RecordAgentStepRunEvent(
 			ctx, prepared.OrganizationID, prepared.StepRunID, lease.ID, prepared.Sequence,
 		)
 		if err == nil {
-			event = existing
+			if existing.PayloadHash != prepared.PayloadHash {
+				return apierrors.NewConflict("step event sequence already recorded with different payload")
+			}
+			event = existing.StepRunEvent
 			return nil
 		}
 		if !errors.Is(err, apierrors.ErrNotFound) {
@@ -93,6 +100,11 @@ func RecordAgentStepRunEvent(
 		if prepared.Sequence != maxSequence+1 {
 			return apierrors.NewConflict("step event sequence is out of order")
 		}
+		if err := validateStepRunOutputNameLimit(
+			ctx, prepared.OrganizationID, prepared.StepRunID, prepared.Outputs,
+		); err != nil {
+			return err
+		}
 		if err := applyStepRunEventTransition(ctx, target, prepared); err != nil {
 			return err
 		}
@@ -103,7 +115,7 @@ func RecordAgentStepRunEvent(
 		if err := insertStepRunLogChunks(ctx, eventID, target.TaskID, lease.ID, prepared); err != nil {
 			return err
 		}
-		if err := upsertStepRunOutputs(ctx, eventID, target.TaskID, lease.ID, prepared); err != nil {
+		if err := insertStepRunOutputs(ctx, eventID, target.TaskID, lease.ID, prepared); err != nil {
 			return err
 		}
 		event, err = getStepRunEvent(ctx, eventID, prepared.OrganizationID)
@@ -126,9 +138,12 @@ func GetTaskTimeline(ctx context.Context, taskID, orgID uuid.UUID) (*types.TaskT
 		JOIN StepRun sr
 			ON sr.id = sre.step_run_id
 			AND sr.organization_id = sre.organization_id
+		JOIN TaskLease tl
+			ON tl.id = sre.task_lease_id
+			AND tl.organization_id = sre.organization_id
 		WHERE sre.task_id = @taskId
 			AND sre.organization_id = @organizationId
-		ORDER BY sr.sort_order, sre.sequence, sre.id`,
+		ORDER BY sr.sort_order, tl.attempt, sre.sequence, sre.id`,
 		pgx.NamedArgs{"taskId": taskID, "organizationId": orgID},
 	)
 	if err != nil {
@@ -181,9 +196,12 @@ func GetTaskLogs(ctx context.Context, taskID, orgID uuid.UUID) ([]types.StepRunL
 		JOIN StepRun sr
 			ON sr.id = lc.step_run_id
 			AND sr.organization_id = lc.organization_id
+		JOIN TaskLease tl
+			ON tl.id = lc.task_lease_id
+			AND tl.organization_id = lc.organization_id
 		WHERE lc.task_id = @taskId
 			AND lc.organization_id = @organizationId
-		ORDER BY sr.sort_order, sre.sequence, lc.chunk_index, lc.id`,
+		ORDER BY sr.sort_order, tl.attempt, sre.sequence, lc.chunk_index, lc.id`,
 		pgx.NamedArgs{"taskId": taskID, "organizationId": orgID},
 	)
 	if err != nil {
@@ -260,7 +278,77 @@ func prepareStepRunEventRequest(
 		}
 		prepared.Outputs = append(prepared.Outputs, preparedOutput)
 	}
+	payloadHash, err := stepRunEventPayloadHash(prepared)
+	if err != nil {
+		return preparedStepRunEventRequest{}, err
+	}
+	prepared.PayloadHash = payloadHash
 	return prepared, nil
+}
+
+func stepRunEventPayloadHash(request preparedStepRunEventRequest) (string, error) {
+	type canonicalLog struct {
+		OccurredAt any                      `json:"occurredAt,omitempty"`
+		Stream     types.StepRunLogStream   `json:"stream"`
+		Severity   types.StepRunLogSeverity `json:"severity"`
+		Body       string                   `json:"body"`
+		Redacted   bool                     `json:"redacted"`
+	}
+	type canonicalOutput struct {
+		Name      string          `json:"name"`
+		Value     json.RawMessage `json:"value"`
+		Sensitive bool            `json:"sensitive"`
+		Redacted  bool            `json:"redacted"`
+	}
+	logs := make([]canonicalLog, 0, len(request.Logs))
+	for _, log := range request.Logs {
+		logs = append(logs, canonicalLog{
+			OccurredAt: log.OccurredAt,
+			Stream:     log.Stream,
+			Severity:   log.Severity,
+			Body:       log.Body,
+			Redacted:   log.Redacted,
+		})
+	}
+	outputs := make([]canonicalOutput, 0, len(request.Outputs))
+	for _, output := range request.Outputs {
+		outputs = append(outputs, canonicalOutput{
+			Name:      output.Name,
+			Value:     json.RawMessage(output.ValueJSON),
+			Sensitive: output.Sensitive,
+			Redacted:  output.Redacted,
+		})
+	}
+	sort.Slice(outputs, func(i, j int) bool {
+		return outputs[i].Name < outputs[j].Name
+	})
+	payload := struct {
+		Sequence        int64                  `json:"sequence"`
+		Type            types.StepRunEventType `json:"type"`
+		OccurredAt      any                    `json:"occurredAt,omitempty"`
+		Message         string                 `json:"message"`
+		ProgressPercent *int                   `json:"progressPercent,omitempty"`
+		Details         json.RawMessage        `json:"details"`
+		Redacted        bool                   `json:"redacted"`
+		Logs            []canonicalLog         `json:"logs"`
+		Outputs         []canonicalOutput      `json:"outputs"`
+	}{
+		Sequence:        request.Sequence,
+		Type:            request.Type,
+		OccurredAt:      request.OccurredAt,
+		Message:         request.Message,
+		ProgressPercent: request.ProgressPercent,
+		Details:         json.RawMessage(request.DetailsJSON),
+		Redacted:        request.Redacted,
+		Logs:            logs,
+		Outputs:         outputs,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", apierrors.NewBadRequest("step event payload must be valid JSON")
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func validateRecordAgentStepRunEventRequest(request *types.RecordAgentStepRunEventRequest) error {
@@ -388,15 +476,21 @@ func getTaskLeaseForStepRunEvent(
 	return lease, nil
 }
 
+type stepRunEventReplay struct {
+	*types.StepRunEvent
+	PayloadHash string
+}
+
 func getStepRunEventBySequence(
 	ctx context.Context,
 	orgID, stepRunID, leaseID uuid.UUID,
 	sequence int64,
-) (*types.StepRunEvent, error) {
+) (*stepRunEventReplay, error) {
 	db := internalctx.GetDb(ctx)
 	var eventID uuid.UUID
+	var payloadHash string
 	err := db.QueryRow(ctx,
-		`SELECT id
+		`SELECT id, payload_hash
 		FROM StepRunEvent
 		WHERE organization_id = @organizationId
 			AND step_run_id = @stepRunId
@@ -408,14 +502,21 @@ func getStepRunEventBySequence(
 			"taskLeaseId":    leaseID,
 			"sequence":       sequence,
 		},
-	).Scan(&eventID)
+	).Scan(&eventID, &payloadHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apierrors.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("could not query StepRunEvent by sequence: %w", err)
 	}
-	return getStepRunEvent(ctx, eventID, orgID)
+	event, err := getStepRunEvent(ctx, eventID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return &stepRunEventReplay{
+		StepRunEvent: event,
+		PayloadHash:  payloadHash,
+	}, nil
 }
 
 func getMaxStepRunEventSequence(ctx context.Context, orgID, stepRunID, leaseID uuid.UUID) (int64, error) {
@@ -532,6 +633,7 @@ func insertStepRunEvent(
 			message,
 			progress_percent,
 			details,
+			payload_hash,
 			redacted
 		)
 		VALUES (
@@ -546,6 +648,7 @@ func insertStepRunEvent(
 			@message,
 			@progressPercent,
 			@details::jsonb,
+			@payloadHash,
 			@redacted
 		)
 		RETURNING id`,
@@ -561,6 +664,7 @@ func insertStepRunEvent(
 			"message":         request.Message,
 			"progressPercent": request.ProgressPercent,
 			"details":         request.DetailsJSON,
+			"payloadHash":     request.PayloadHash,
 			"redacted":        request.Redacted,
 		},
 	).Scan(&eventID)
@@ -631,7 +735,43 @@ func insertStepRunLogChunks(
 	return nil
 }
 
-func upsertStepRunOutputs(
+func validateStepRunOutputNameLimit(
+	ctx context.Context,
+	orgID, stepRunID uuid.UUID,
+	outputs []preparedStepRunOutput,
+) error {
+	if len(outputs) == 0 {
+		return nil
+	}
+	names := make(map[string]struct{}, len(outputs))
+	for _, output := range outputs {
+		names[output.Name] = struct{}{}
+	}
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`SELECT DISTINCT name
+		FROM StepRunOutput
+		WHERE organization_id = @organizationId
+			AND step_run_id = @stepRunId`,
+		pgx.NamedArgs{"organizationId": orgID, "stepRunId": stepRunID},
+	)
+	if err != nil {
+		return fmt.Errorf("could not query StepRunOutput names: %w", err)
+	}
+	existing, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("could not collect StepRunOutput names: %w", err)
+	}
+	for _, name := range existing {
+		names[name] = struct{}{}
+	}
+	if len(names) > types.MaxStepRunEventOutputItemCount {
+		return apierrors.NewConflict("step run output name limit exceeded")
+	}
+	return nil
+}
+
+func insertStepRunOutputs(
 	ctx context.Context,
 	eventID, taskID, leaseID uuid.UUID,
 	request preparedStepRunEventRequest,
@@ -665,16 +805,7 @@ func upsertStepRunOutputs(
 				@value::jsonb,
 				@sensitive,
 				@redacted
-			)
-			ON CONFLICT (step_run_id, name) DO UPDATE
-			SET
-				updated_at = now(),
-				event_id = EXCLUDED.event_id,
-				task_lease_id = EXCLUDED.task_lease_id,
-				agent_id = EXCLUDED.agent_id,
-				value = EXCLUDED.value,
-				sensitive = EXCLUDED.sensitive,
-				redacted = EXCLUDED.redacted`,
+			)`,
 			pgx.NamedArgs{
 				"eventId":        eventID,
 				"organizationId": request.OrganizationID,

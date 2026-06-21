@@ -51,12 +51,13 @@ Migration `125_step_events` adds:
 - monotonically increasing per-step/per-lease sequence number
 - lifecycle event type
 - optional message, progress percent, redacted details, and redaction marker
+- a redacted canonical payload hash used to validate idempotent replays
 
-The `(step_run_id, task_lease_id, sequence)` uniqueness rule makes retries idempotent. Reposting an already-recorded sequence for the same lease returns the stored event.
+The `(step_run_id, task_lease_id, sequence)` uniqueness rule makes retries idempotent. Reposting an already-recorded sequence for the same lease returns the stored event only when the canonical redacted payload matches the stored payload hash. A changed replay returns `409 Conflict`.
 
 `StepRunLogChunk` stores bounded redacted log bodies with stream, severity, and deterministic chunk ordering.
 
-`StepRunOutput` stores bounded named outputs per StepRun. Sensitive outputs and outputs containing detected secret patterns are marked redacted; sensitive output values are not stored.
+`StepRunOutput` stores immutable per-event named output history. A StepRun is limited to the same bounded set of distinct output names across its events; repeated names are allowed on later events to preserve output history. Sensitive outputs and outputs containing detected secret patterns are marked redacted; sensitive output values are not stored.
 
 ## API
 
@@ -108,7 +109,9 @@ The endpoint:
 - requires the lease token to match the Task's lease
 - rejects expired or released leases for new events
 - accepts exact replay of an already-recorded sequence
+- rejects replay of an already-recorded sequence when the redacted payload changed
 - rejects sequence gaps
+- rejects events that would exceed the StepRun distinct output-name limit
 - redacts messages, details, log bodies, and non-sensitive output values before persistence
 
 Malformed UUIDs return `404 Not Found`. Invalid payloads return `400 Bad Request`. Missing or cross-organization resources return `404 Not Found`. Expired leases, released leases, invalid state transitions, and sequence gaps return `409 Conflict`.
@@ -121,6 +124,8 @@ GET /api/v1/tasks/{id}/logs
 ```
 
 Both preserve organization isolation and return `404 Not Found` for missing or cross-organization Tasks.
+
+Timeline and log reads order events by StepRun sort order, TaskLease attempt, event sequence, and stable row IDs so reclaimed leases with sequence numbers starting at `1` do not reorder earlier attempt history.
 
 ## Lifecycle behavior
 

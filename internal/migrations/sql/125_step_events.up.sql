@@ -20,6 +20,7 @@ CREATE TABLE StepRunEvent (
   message TEXT NOT NULL DEFAULT '' CHECK (length(message) <= 2048),
   progress_percent INTEGER CHECK (progress_percent >= 0 AND progress_percent <= 100),
   details JSONB NOT NULL DEFAULT '{}' CHECK (octet_length(details::text) <= 16384),
+  payload_hash TEXT NOT NULL CHECK (length(trim(payload_hash)) > 0 AND length(payload_hash) <= 96),
   redacted BOOLEAN NOT NULL DEFAULT false,
   CONSTRAINT steprunevent_task_fk
     FOREIGN KEY (task_id, organization_id)
@@ -77,7 +78,7 @@ CREATE TABLE StepRunOutput (
   value JSONB,
   sensitive BOOLEAN NOT NULL DEFAULT false,
   redacted BOOLEAN NOT NULL DEFAULT false,
-  CONSTRAINT steprunoutput_step_name_unique UNIQUE (step_run_id, name),
+  CONSTRAINT steprunoutput_event_name_unique UNIQUE (event_id, name),
   CONSTRAINT steprunoutput_event_fk
     FOREIGN KEY (event_id)
     REFERENCES StepRunEvent(id)
@@ -85,13 +86,13 @@ CREATE TABLE StepRunOutput (
 );
 
 CREATE INDEX StepRunEvent_task_sequence
-  ON StepRunEvent (task_id, sequence, id);
+  ON StepRunEvent (task_id, task_lease_id, sequence, id);
 
 CREATE INDEX StepRunEvent_step_sequence
   ON StepRunEvent (step_run_id, task_lease_id, sequence);
 
 CREATE INDEX StepRunLogChunk_task_order
-  ON StepRunLogChunk (task_id, occurred_at, event_id, chunk_index);
+  ON StepRunLogChunk (task_id, task_lease_id, event_id, chunk_index);
 
 CREATE INDEX StepRunOutput_step_name
   ON StepRunOutput (step_run_id, name);

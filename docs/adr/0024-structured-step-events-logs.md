@@ -35,7 +35,7 @@ The endpoint requires:
 - Task ownership by the authenticated deployment target
 - matching TaskLease token hash
 
-Event ingestion runs in one transaction. It locks the Task, StepRun, and TaskLease, validates the requested sequence, accepts exact replay of an existing sequence, rejects sequence gaps, updates StepRun and Task state for lifecycle events, redacts event payloads, and persists events, logs, and outputs.
+Event ingestion runs in one transaction. It locks the Task, StepRun, and TaskLease, validates the requested sequence, accepts exact replay of an existing sequence only when the canonical redacted payload matches, rejects changed replays and sequence gaps, updates StepRun and Task state for lifecycle events, redacts event payloads, and persists events, logs, and immutable per-event outputs.
 
 `STARTED` moves a StepRun from `PENDING` to `RUNNING`. `SUCCEEDED` and `FAILED` move the StepRun to terminal states. A failed StepRun fails the Task. When all StepRuns are terminal and none failed, the Task succeeds. Terminal Task updates release active leases through the existing task update path.
 
@@ -48,13 +48,16 @@ GET /api/v1/tasks/{id}/logs
 
 These endpoints are organization-scoped and feature-flagged. They expose stored structured event and redacted log data for existing Tasks only.
 
+Timeline and log reads order by StepRun sort order, TaskLease attempt, event sequence, and stable row IDs. This keeps history deterministic when an expired lease is reclaimed and the new lease restarts event sequence numbering at `1`.
+
 Generated Docker and Kubernetes manifests include an optional `DISTR_STEP_EVENT_ENDPOINT_TEMPLATE`. The agent client exposes a helper that no-ops when the endpoint is missing or disabled.
 
 ## Consequences
 
 - Agents can report durable step lifecycle progress without adding action execution in PR-024.
-- Event retries are idempotent by `(step_run_id, task_lease_id, sequence)`.
-- Step logs and outputs are bounded before persistence.
+- Event retries are idempotent by `(step_run_id, task_lease_id, sequence)` plus canonical redacted payload matching.
+- Step logs and outputs are bounded before persistence, including a cumulative StepRun distinct output-name limit.
+- Step outputs are immutable per event so later output events do not rewrite earlier event history.
 - Common secret shapes are centrally redacted before storage and response.
 - Sensitive outputs are stored without plaintext values.
 - Existing agents remain compatible because the endpoint template is optional.
