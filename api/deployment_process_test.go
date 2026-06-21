@@ -69,9 +69,9 @@ func TestCreateDeploymentProcessRevisionRequestValidateNormalizesSteps(t *testin
 			{
 				Key:                 " build ",
 				Name:                " Build ",
-				ActionType:          " script ",
+				ActionType:          " distr.http.check ",
 				ExecutionLocation:   " hub ",
-				InputBindings:       map[string]any{"script": "make build"},
+				InputBindings:       map[string]any{"url": "https://example.com/health"},
 				Condition:           " channel == stable ",
 				ChannelIDs:          []uuid.UUID{channelID},
 				EnvironmentIDs:      []uuid.UUID{environmentID},
@@ -86,8 +86,9 @@ func TestCreateDeploymentProcessRevisionRequestValidateNormalizesSteps(t *testin
 			{
 				Key:               " prepare ",
 				Name:              " Prepare ",
-				ActionType:        " script ",
+				ActionType:        " distr.preflight ",
 				ExecutionLocation: " hub ",
+				InputBindings:     map[string]any{},
 				SortOrder:         0,
 			},
 		},
@@ -98,7 +99,7 @@ func TestCreateDeploymentProcessRevisionRequestValidateNormalizesSteps(t *testin
 	g.Expect(request.Description).To(Equal("initial revision"))
 	g.Expect(request.Steps[0].Key).To(Equal("build"))
 	g.Expect(request.Steps[0].Name).To(Equal("Build"))
-	g.Expect(request.Steps[0].ActionType).To(Equal("script"))
+	g.Expect(request.Steps[0].ActionType).To(Equal("distr.http.check"))
 	g.Expect(request.Steps[0].ExecutionLocation).To(Equal("hub"))
 	g.Expect(request.Steps[0].Condition).To(Equal("channel == stable"))
 	g.Expect(request.Steps[0].TargetTags).To(Equal([]string{"linux", "x64"}))
@@ -132,6 +133,19 @@ func TestCreateDeploymentProcessRevisionRequestValidateRejectsInvalidSteps(t *te
 			name:    "empty action type",
 			mutate:  func(r *CreateDeploymentProcessRevisionRequest) { r.Steps[0].ActionType = " " },
 			wantErr: "step actionType is required",
+		},
+		{
+			name:    "unknown action type",
+			mutate:  func(r *CreateDeploymentProcessRevisionRequest) { r.Steps[0].ActionType = "script" },
+			wantErr: `unknown actionType "script"`,
+		},
+		{
+			name: "registered action input does not match schema",
+			mutate: func(r *CreateDeploymentProcessRevisionRequest) {
+				r.Steps[0].ActionType = "distr.http.check"
+				r.Steps[0].InputBindings = map[string]any{"expectedStatusCodes": []any{float64(200)}}
+			},
+			wantErr: "url",
 		},
 		{
 			name:    "empty execution location",
@@ -246,7 +260,8 @@ func validDeploymentProcessStepRequest(key string, sortOrder int) DeploymentProc
 	return DeploymentProcessStepRequest{
 		Key:               key,
 		Name:              key,
-		ActionType:        "script",
+		ActionType:        "distr.preflight",
+		InputBindings:     map[string]any{},
 		ExecutionLocation: "hub",
 		SortOrder:         sortOrder,
 	}

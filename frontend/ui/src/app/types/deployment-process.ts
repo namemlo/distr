@@ -58,3 +58,11 @@ export interface DeploymentProcessStep extends DeploymentProcessStepRequest {
   id: string;
   deploymentProcessRevisionId: string;
 }
+
+export interface ActionDefinition {
+  type: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+}

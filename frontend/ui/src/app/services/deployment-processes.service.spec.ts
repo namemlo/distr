@@ -76,9 +76,9 @@ describe('DeploymentProcessesService', () => {
         {
           key: 'deploy',
           name: 'Deploy',
-          actionType: 'compose.deploy',
+          actionType: 'distr.http.check',
           executionLocation: 'target',
-          inputBindings: {composeFile: 'compose.yaml'},
+          inputBindings: {url: 'https://example.com/health'},
           condition: 'always',
           channelIds: ['channel-1'],
           environmentIds: ['environment-1'],
@@ -110,5 +110,24 @@ describe('DeploymentProcessesService', () => {
     expect(createReq.request.method).toBe('POST');
     expect(createReq.request.body).toEqual(revisionRequest);
     createReq.flush({id: 'revision-1', deploymentProcessId: 'process-1', revisionNumber: 1, ...revisionRequest});
+  });
+
+  it('lists built-in action definitions', () => {
+    service.listActionDefinitions().subscribe((actions) => {
+      expect(actions[0].type).toBe('distr.preflight');
+      expect(actions[0].inputSchema['type']).toBe('object');
+    });
+
+    const req = http.expectOne('/api/v1/action-definitions');
+    expect(req.request.method).toBe('GET');
+    req.flush([
+      {
+        type: 'distr.preflight',
+        name: 'Preflight checks',
+        description: 'Runs built-in agent preflight checks.',
+        inputSchema: {type: 'object'},
+        outputSchema: {type: 'object'},
+      },
+    ]);
   });
 });

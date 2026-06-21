@@ -2,6 +2,7 @@ import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
 import {
+  ActionDefinition,
   CreateDeploymentProcessRevisionRequest,
   CreateUpdateDeploymentProcessRequest,
   DeploymentProcess,
@@ -9,6 +10,7 @@ import {
 } from '../types/deployment-process';
 
 const baseUrl = '/api/v1/deployment-processes';
+const actionDefinitionsUrl = '/api/v1/action-definitions';
 
 @Injectable({
   providedIn: 'root',
@@ -49,5 +51,9 @@ export class DeploymentProcessesService {
     request: CreateDeploymentProcessRevisionRequest
   ): Observable<DeploymentProcessRevision> {
     return this.httpClient.post<DeploymentProcessRevision>(`${baseUrl}/${processId}/revisions`, request);
+  }
+
+  listActionDefinitions(): Observable<ActionDefinition[]> {
+    return this.httpClient.get<ActionDefinition[]>(actionDefinitionsUrl);
   }
 }

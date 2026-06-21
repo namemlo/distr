@@ -42,13 +42,20 @@ func TestDeploymentProcessHandlersCreateAndReadRevision(t *testing.T) {
 		strings.NewReader(`{
 			"description":" initial ",
 			"steps":[
-				{"key":"prepare","name":"Prepare","actionType":"script","executionLocation":"hub","sortOrder":10},
+				{
+					"key":"prepare",
+					"name":"Prepare",
+					"actionType":"distr.preflight",
+					"executionLocation":"hub",
+					"inputBindings":{},
+					"sortOrder":10
+				},
 				{
 					"key":"deploy",
 					"name":"Deploy",
-					"actionType":"script",
+					"actionType":"distr.http.check",
 					"executionLocation":"hub",
-					"inputBindings":{"script":"make deploy"},
+					"inputBindings":{"url":"https://example.com/health"},
 					"channelIds":["`+deps.channelID.String()+`"],
 					"environmentIds":["`+deps.environmentID.String()+`"],
 					"sortOrder":20,
@@ -134,12 +141,20 @@ func TestDeploymentProcessHandlersReturnNotFoundForCrossOrganizationReferences(t
 		"/api/v1/deployment-processes/"+process.ID.String()+"/revisions",
 		strings.NewReader(`{
 			"steps":[
-				{"key":"prepare","name":"Prepare","actionType":"script","executionLocation":"hub","sortOrder":10},
+				{
+					"key":"prepare",
+					"name":"Prepare",
+					"actionType":"distr.preflight",
+					"executionLocation":"hub",
+					"inputBindings":{},
+					"sortOrder":10
+				},
 				{
 					"key":"deploy",
 					"name":"Deploy",
-					"actionType":"script",
+					"actionType":"distr.http.check",
 					"executionLocation":"hub",
+					"inputBindings":{"url":"https://example.com/health"},
 					"channelIds":["`+otherDeps.channelID.String()+`"],
 					"environmentIds":["`+deps.environmentID.String()+`"],
 					"sortOrder":20,

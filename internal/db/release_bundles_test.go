@@ -694,7 +694,7 @@ func TestReleaseBundleRepositoryCreatesProcessSnapshotFromRevision(t *testing.T)
 	g.Expect(snapshot.CanonicalPayload).NotTo(BeEmpty())
 	g.Expect(snapshot.Revision.Steps).To(HaveLen(1))
 	g.Expect(snapshot.Revision.Steps[0].Key).To(Equal("deploy"))
-	g.Expect(snapshot.Revision.Steps[0].InputBindings).To(HaveKeyWithValue("script", "make deploy"))
+	g.Expect(snapshot.Revision.Steps[0].InputBindings).To(HaveKeyWithValue("url", "https://example.com/health"))
 	g.Expect(string(bundle.CanonicalPayload)).To(ContainSubstring(
 		`"processSnapshotId":"` + bundle.ProcessSnapshotID.String() + `"`,
 	))
@@ -1299,9 +1299,9 @@ func createReleaseBundleProcessRevision(
 			{
 				Key:                  "deploy",
 				Name:                 "Deploy",
-				ActionType:           "script",
+				ActionType:           "distr.http.check",
 				ExecutionLocation:    "hub",
-				InputBindings:        map[string]any{"script": "make deploy"},
+				InputBindings:        map[string]any{"url": "https://example.com/health"},
 				FailureMode:          "fail",
 				TimeoutSeconds:       120,
 				RetryMaxAttempts:     3,

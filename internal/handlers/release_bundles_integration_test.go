@@ -681,9 +681,9 @@ func createReleaseBundleHandlerProcessRevision(
 			{
 				Key:               "deploy",
 				Name:              "Deploy",
-				ActionType:        "script",
+				ActionType:        "distr.http.check",
 				ExecutionLocation: "hub",
-				InputBindings:     map[string]any{"script": "make deploy"},
+				InputBindings:     map[string]any{"url": "https://example.com/health"},
 				FailureMode:       "fail",
 				SortOrder:         10,
 			},

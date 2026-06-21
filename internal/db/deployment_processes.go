@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/distr-sh/distr/internal/actionregistry"
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
@@ -455,6 +456,9 @@ func normalizeDeploymentProcessRevision(revision *types.DeploymentProcessRevisio
 			return apierrors.NewBadRequest("step sortOrder values must be unique")
 		}
 		sortOrders[step.SortOrder] = struct{}{}
+	}
+	if err := actionregistry.DefaultRegistry().ValidateSteps(revision.Steps); err != nil {
+		return err
 	}
 	return validateDeploymentProcessStepGraph(revision.Steps, keys)
 }
