@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, and scoped variable feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, and deployment plan feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -64,6 +64,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isScopedVariablesV2Enabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isDeploymentPlansEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -89,6 +92,13 @@ describe('FeatureFlagService', () => {
         label: 'Scoped Variables',
         description: 'Manage typed variable sets and references.',
         milestone: 'Milestone C',
+        enabled: true,
+      },
+      {
+        key: 'deployment_plans',
+        label: 'Deployment Plans',
+        description: 'Preview deployment plans before execution.',
+        milestone: 'Milestone D',
         enabled: true,
       },
     ]);
