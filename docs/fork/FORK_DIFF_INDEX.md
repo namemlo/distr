@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-022 are implemented locally. PR-022 adds a feature-flagged agent capability protocol with versioned capability reports, organization-scoped storage, Docker and Kubernetes runtime/tooling advertisement, and Deployment Plan compatibility blockers for reported unsupported target-executed actions without adding leases, heartbeats, task claims, execution adapters, approvals, timelines, logs, or PR-023 behavior.
+PR-000 through PR-023 are implemented locally. PR-023 adds feature-flagged agent task leases with short-lived hashed lease tokens, heartbeat extension, expired-lease reclaim, agent client helpers, and generated manifest endpoint configuration without adding step events, logs, task completion, execution adapters, approvals, or PR-024 behavior.
 
 ## Tracking Template
 
@@ -373,3 +373,18 @@ Use one entry per pull request:
 - Tests: API validation, agent client, handler, live PostgreSQL repository, Deployment Plan compatibility, migration checks, and focused Go tests were added.
 - Upstream contribution notes: Community-neutral capability protocol; no adopter-specific terminology, provider logic, or execution behavior.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue, locks/concurrency, deployment target, deployment, release-name, and frontend planning UI behavior is unchanged except for blockers when an agent has explicitly reported incompatible target-executed action support. No leases, heartbeats, task claims, task completion, execution adapters, approvals, guided failure, timelines, logs, or PR-023 behavior is added in PR-022.
+
+### PR-023 - Agent task leases
+
+- Status: Implemented locally; backend, API, repository, migration, handler, agent client, generated manifests, documentation, and live PostgreSQL verification completed.
+- Upstream base: `a56e5c9661c1469f20a1d58978120228bf3921c3`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=task_queue,agent_task_leases` for hidden agent lease endpoints.
+- User-facing behavior: Feature-flagged agents can claim the next queued target-executed Task for their deployment target and heartbeat an active lease with an opaque token. No work returns `204 No Content`.
+- Database changes: Added `TaskLease`, a Task target/org uniqueness constraint for composite lease references, hashed lease token storage, lease attempt tracking, and a one-active-lease partial unique index.
+- API changes: Added hidden agent-authenticated `POST /api/v1/agents/{id}/lease` and `POST /api/v1/agents/{id}/tasks/{taskId}/heartbeat`.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-023.
+- Agent protocol changes: Docker and Kubernetes manifests include optional lease and heartbeat endpoint variables. Agent client helpers can claim and heartbeat leases but existing agent loops do not execute leased Tasks.
+- Documentation: Added PR-023 notes and ADR-0023.
+- Tests: API validation, agent client, manifest, handler, live PostgreSQL repository, migration checks, expired-lease reclaim, and feature-flag tests were added.
+- Upstream contribution notes: Community-neutral lease and heartbeat protocol; no adopter-specific terminology, provider logic, or execution behavior.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, and current agent deployment behavior are unchanged. No step events, logs, task completion, execution adapters, approvals, guided failure, timelines, or PR-024 behavior is added in PR-023.
