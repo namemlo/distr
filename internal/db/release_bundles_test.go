@@ -668,6 +668,126 @@ func TestReleaseBundleRepositoryPreventsMovingReferencedChannelAcrossApplication
 	g.Expect(fetched.ChannelID).To(Equal(preview.ID))
 }
 
+func TestReleaseBundleRepositoryCreatesProcessSnapshotFromRevision(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	process, revision := createReleaseBundleProcessRevision(t, ctx, orgID, applicationID, "Standard deploy")
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	g.Expect(bundle.ProcessSnapshotID).NotTo(BeNil())
+	snapshot, err := db.GetProcessSnapshot(ctx, *bundle.ProcessSnapshotID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(snapshot.ApplicationID).To(Equal(applicationID))
+	g.Expect(snapshot.DeploymentProcessID).To(Equal(process.ID))
+	g.Expect(snapshot.DeploymentProcessRevisionID).To(Equal(revision.ID))
+	g.Expect(snapshot.RevisionNumber).To(Equal(1))
+	g.Expect(snapshot.CanonicalChecksum).To(HavePrefix("sha256:"))
+	g.Expect(snapshot.CanonicalPayload).NotTo(BeEmpty())
+	g.Expect(snapshot.Revision.Steps).To(HaveLen(1))
+	g.Expect(snapshot.Revision.Steps[0].Key).To(Equal("deploy"))
+	g.Expect(snapshot.Revision.Steps[0].InputBindings).To(HaveKeyWithValue("script", "make deploy"))
+	g.Expect(string(bundle.CanonicalPayload)).To(ContainSubstring(
+		`"processSnapshotId":"` + bundle.ProcessSnapshotID.String() + `"`,
+	))
+
+	fetched, err := db.GetReleaseBundle(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.ProcessSnapshotID).To(Equal(bundle.ProcessSnapshotID))
+
+	_, err = db.GetProcessSnapshot(ctx, *bundle.ProcessSnapshotID, uuid.New())
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+}
+
+func TestReleaseBundleRepositoryReusesProcessSnapshotForSameRevision(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, orgID, applicationID, "Standard deploy")
+	first := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	first.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &first)).To(Succeed())
+
+	second := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	second.ReleaseNumber = "2026.06.21"
+	second.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &second)).To(Succeed())
+
+	g.Expect(second.ProcessSnapshotID).To(Equal(first.ProcessSnapshotID))
+	var count int
+	g.Expect(internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`SELECT count(*) FROM ProcessSnapshot WHERE deployment_process_revision_id = @revisionId`,
+		pgx.NamedArgs{"revisionId": revision.ID},
+	).Scan(&count)).To(Succeed())
+	g.Expect(count).To(Equal(1))
+}
+
+func TestReleaseBundleRepositoryRejectsInvalidProcessRevisionReferences(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	otherApplicationID, _, _ := createReleaseBundleDependenciesForOrganization(t, ctx, orgID)
+	_, otherApplicationRevision := createReleaseBundleProcessRevision(
+		t,
+		ctx,
+		orgID,
+		otherApplicationID,
+		"Other application process",
+	)
+	otherOrgID, otherOrgApplicationID, _, _ := createReleaseBundleDependencies(t, ctx)
+	_, otherOrgRevision := createReleaseBundleProcessRevision(
+		t,
+		ctx,
+		otherOrgID,
+		otherOrgApplicationID,
+		"Other organization process",
+	)
+
+	tests := []struct {
+		name       string
+		revisionID uuid.UUID
+	}{
+		{name: "missing revision", revisionID: uuid.New()},
+		{name: "other application revision", revisionID: otherApplicationRevision.ID},
+		{name: "other organization revision", revisionID: otherOrgRevision.ID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+			bundle.DeploymentProcessRevisionID = &tt.revisionID
+
+			err := db.CreateReleaseBundle(ctx, &bundle)
+
+			g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+		})
+	}
+}
+
+func TestReleaseBundleRepositoryUpdatesDraftProcessSnapshot(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	_, firstRevision := createReleaseBundleProcessRevision(t, ctx, orgID, applicationID, "Initial process")
+	_, secondRevision := createReleaseBundleProcessRevision(t, ctx, orgID, applicationID, "Updated process")
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	bundle.DeploymentProcessRevisionID = &firstRevision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	firstSnapshotID := *bundle.ProcessSnapshotID
+
+	bundle.DeploymentProcessRevisionID = &secondRevision.ID
+	g.Expect(db.UpdateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	g.Expect(bundle.ProcessSnapshotID).NotTo(BeNil())
+	g.Expect(*bundle.ProcessSnapshotID).NotTo(Equal(firstSnapshotID))
+	snapshot, err := db.GetProcessSnapshot(ctx, *bundle.ProcessSnapshotID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(snapshot.DeploymentProcessRevisionID).To(Equal(secondRevision.ID))
+}
+
 func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g := NewWithT(t)
 
@@ -730,6 +850,22 @@ func TestReleaseBundleMigrationDefinesDraftBundleSchema(t *testing.T) {
 	g.Expect(string(down114)).To(ContainSubstring("pg_temp.release_bundle_go_json_string"))
 	g.Expect(string(down114)).To(ContainSubstring("sha256(repaired.canonical_payload)"))
 	g.Expect(string(down114)).To(ContainSubstring("DROP COLUMN IF EXISTS source_repository"))
+
+	up116, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "116_process_snapshots.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	processSnapshotSQL := string(up116)
+	g.Expect(processSnapshotSQL).To(ContainSubstring("CREATE TABLE ProcessSnapshot"))
+	g.Expect(processSnapshotSQL).To(ContainSubstring("deployment_process_revision_id UUID NOT NULL"))
+	g.Expect(processSnapshotSQL).To(ContainSubstring("canonical_checksum TEXT NOT NULL"))
+	g.Expect(processSnapshotSQL).To(ContainSubstring("canonical_payload BYTEA NOT NULL"))
+	g.Expect(processSnapshotSQL).To(ContainSubstring("processsnapshot_revision_unique"))
+	g.Expect(processSnapshotSQL).To(ContainSubstring("ADD COLUMN process_snapshot_id UUID"))
+	g.Expect(processSnapshotSQL).To(ContainSubstring("FOREIGN KEY (process_snapshot_id, application_id, organization_id)"))
+
+	down116, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "116_process_snapshots.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down116)).To(ContainSubstring("DROP COLUMN IF EXISTS process_snapshot_id"))
+	g.Expect(string(down116)).To(ContainSubstring("DROP TABLE IF EXISTS ProcessSnapshot"))
 }
 
 func TestReleaseBundleDowngradeRepairsSourceMetadataCanonicalPayload(t *testing.T) {
@@ -776,6 +912,44 @@ func TestReleaseBundleDowngradeRepairsSourceMetadataCanonicalPayload(t *testing.
 	).Scan(&repairedPayload, &repairedChecksum)).To(Succeed())
 
 	g.Expect(string(repairedPayload)).NotTo(ContainSubstring("sourceMetadata"))
+	g.Expect(repairedPayload).To(Equal(expectedPayload))
+	g.Expect(repairedChecksum).To(Equal(expectedChecksum))
+}
+
+func TestReleaseBundleDowngradeRepairsProcessSnapshotCanonicalPayload(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, orgID, applicationID, "Standard deploy")
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	bundle.SourceRepository = "https://example.invalid/org/project"
+	bundle.SourceBranch = "main"
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	g.Expect(bundle.ProcessSnapshotID).NotTo(BeNil())
+	g.Expect(string(bundle.CanonicalPayload)).To(ContainSubstring("processSnapshotId"))
+
+	expected := bundle
+	expected.ProcessSnapshotID = nil
+	expected.DeploymentProcessRevisionID = nil
+	expectedPayload, expectedChecksum, err := releasebundles.Canonicalize(expected)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(expectedPayload)).NotTo(ContainSubstring("processSnapshotId"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "116_process_snapshots.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(ctx, string(down))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	var repairedPayload []byte
+	var repairedChecksum string
+	g.Expect(internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`SELECT canonical_payload, canonical_checksum FROM ReleaseBundle WHERE id = @id`,
+		pgx.NamedArgs{"id": bundle.ID},
+	).Scan(&repairedPayload, &repairedChecksum)).To(Succeed())
+
+	g.Expect(string(repairedPayload)).NotTo(ContainSubstring("processSnapshotId"))
 	g.Expect(repairedPayload).To(Equal(expectedPayload))
 	g.Expect(repairedChecksum).To(Equal(expectedChecksum))
 }
@@ -1094,6 +1268,48 @@ func ociReleaseBundleFixture(
 			},
 		},
 	}
+}
+
+func createReleaseBundleProcessRevision(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+	name string,
+) (types.DeploymentProcess, types.DeploymentProcessRevision) {
+	t.Helper()
+	process := types.DeploymentProcess{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		Name:           name + " " + uuid.NewString(),
+	}
+	if err := db.CreateDeploymentProcess(ctx, &process); err != nil {
+		t.Fatalf("create deployment process: %v", err)
+	}
+	revision := types.DeploymentProcessRevision{
+		OrganizationID:      orgID,
+		DeploymentProcessID: process.ID,
+		Description:         "Initial revision",
+		Steps: []types.DeploymentProcessStep{
+			{
+				Key:                  "deploy",
+				Name:                 "Deploy",
+				ActionType:           "script",
+				ExecutionLocation:    "hub",
+				InputBindings:        map[string]any{"script": "make deploy"},
+				FailureMode:          "fail",
+				TimeoutSeconds:       120,
+				RetryMaxAttempts:     3,
+				RetryIntervalSeconds: 10,
+				RequiredPermissions:  []string{"deploy:write"},
+				SortOrder:            10,
+			},
+		},
+	}
+	if err := db.CreateDeploymentProcessRevision(ctx, &revision); err != nil {
+		t.Fatalf("create deployment process revision: %v", err)
+	}
+	return process, revision
 }
 
 func markReleaseBundleStatusForTest(

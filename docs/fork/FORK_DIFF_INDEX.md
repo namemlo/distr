@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-012 are implemented locally. PR-012 adds the feature-flagged Deployment Process editor UI without adding process snapshots, Release Bundle process links, deployment planning, execution, approvals, or agent behavior.
+PR-000 through PR-013 are implemented locally. PR-013 adds immutable Deployment Process snapshots linked to Release Bundles without adding variables, deployment planning, execution, approvals, or agent behavior.
 
 ## Tracking Template
 
@@ -223,3 +223,18 @@ Use one entry per pull request:
 - Tests: Angular service, component, and feature-flag tests were added.
 - Upstream contribution notes: Community-neutral Deployment Process UI; no adopter-specific terminology, provider logic, or Octopus UI/assets.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, deployment target, deployment, release-name, and agent behavior is unchanged. No process snapshots, Release Bundle process links, variables, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-012.
+
+### PR-013 - Process snapshots
+
+- Status: Implemented locally; backend, API, repository, migration, mapping, handler, Angular service, and live PostgreSQL verification completed.
+- Upstream base: `b49fb27eb6270d7a71eed82b12e47eec1217c4cf`
+- Feature flag: Existing Release Bundle create/update behavior uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=release_bundles`; the read-only process snapshot endpoint also requires `deployment_processes`.
+- User-facing behavior: API callers can link a draft Release Bundle to an immutable Deployment Process revision snapshot and read the linked snapshot.
+- Database changes: Added `ProcessSnapshot`, nullable `ReleaseBundle.process_snapshot_id`, deterministic snapshot payload/checksum storage, unique snapshot per Deployment Process revision, and composite organization/application foreign keys for Release Bundle snapshot links.
+- API changes: Added optional `deploymentProcessRevisionId` to Release Bundle create/update requests, optional `processSnapshotId` to Release Bundle responses, and `GET /api/v1/release-bundles/{releaseBundleId}/process-snapshot`.
+- UI changes: Updated shared Angular Release Bundle types and service support for the read-only process snapshot endpoint. No screen, route, sidebar, or selector UI is added.
+- Agent protocol changes: None.
+- Documentation: Added PR-013 notes and ADR-0013.
+- Tests: API validation, process snapshot canonicalization, mapping, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service tests were added.
+- Upstream contribution notes: Community-neutral Process Snapshot model; no adopter-specific terminology, provider logic, or Octopus UI/assets.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. Existing Release Bundle clients may omit `deploymentProcessRevisionId`. No variable, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-013.

@@ -16,12 +16,14 @@ func TestReleaseBundleToAPI(t *testing.T) {
 	componentID := uuid.New()
 	applicationID := uuid.New()
 	channelID := uuid.New()
+	processSnapshotID := uuid.New()
 	versionID := uuid.New()
 
 	response := ReleaseBundleToAPI(types.ReleaseBundle{
 		ID:                bundleID,
 		ApplicationID:     applicationID,
 		ChannelID:         channelID,
+		ProcessSnapshotID: &processSnapshotID,
 		ReleaseNumber:     "2026.06.20",
 		ReleaseNotes:      "Initial release",
 		SourceRevision:    "abc123",
@@ -44,6 +46,7 @@ func TestReleaseBundleToAPI(t *testing.T) {
 		ID:                bundleID,
 		ApplicationID:     applicationID,
 		ChannelID:         channelID,
+		ProcessSnapshotID: &processSnapshotID,
 		ReleaseNumber:     "2026.06.20",
 		ReleaseNotes:      "Initial release",
 		SourceRevision:    "abc123",

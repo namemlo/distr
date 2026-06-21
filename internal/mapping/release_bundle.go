@@ -13,6 +13,7 @@ func ReleaseBundleToAPI(bundle types.ReleaseBundle) api.ReleaseBundle {
 		UpdatedAt:                bundle.UpdatedAt,
 		ApplicationID:            bundle.ApplicationID,
 		ChannelID:                bundle.ChannelID,
+		ProcessSnapshotID:        bundle.ProcessSnapshotID,
 		ReleaseNumber:            bundle.ReleaseNumber,
 		ReleaseNotes:             bundle.ReleaseNotes,
 		SourceRevision:           bundle.SourceRevision,
@@ -22,6 +23,19 @@ func ReleaseBundleToAPI(bundle types.ReleaseBundle) api.ReleaseBundle {
 		PublishedAt:              bundle.PublishedAt,
 		CanonicalChecksum:        bundle.CanonicalChecksum,
 		Components:               List(bundle.Components, ReleaseBundleComponentToAPI),
+	}
+}
+
+func ProcessSnapshotToAPI(snapshot types.ProcessSnapshot) api.ProcessSnapshot {
+	return api.ProcessSnapshot{
+		ID:                          snapshot.ID,
+		CreatedAt:                   snapshot.CreatedAt,
+		ApplicationID:               snapshot.ApplicationID,
+		DeploymentProcessID:         snapshot.DeploymentProcessID,
+		DeploymentProcessRevisionID: snapshot.DeploymentProcessRevisionID,
+		RevisionNumber:              snapshot.RevisionNumber,
+		CanonicalChecksum:           snapshot.CanonicalChecksum,
+		Revision:                    DeploymentProcessRevisionToAPI(snapshot.Revision),
 	}
 }
 

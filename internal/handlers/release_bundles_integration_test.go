@@ -165,6 +165,54 @@ func TestReleaseBundleCreateHandlerWithoutIdempotencyKeyPreservesDuplicateBehavi
 	g.Expect(secondRecorder.Code).To(Equal(http.StatusBadRequest))
 }
 
+func TestReleaseBundleHandlersCreateAndReadProcessSnapshot(t *testing.T) {
+	ctx := channelHandlerDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleHandlerDependencies(t, ctx)
+	_, revision := createReleaseBundleHandlerProcessRevision(t, ctx, orgID, applicationID)
+
+	createRecorder := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/release-bundles",
+		strings.NewReader(releaseBundleRequestBodyWithProcessRevision(
+			applicationID,
+			channelID,
+			versionID,
+			revision.ID,
+		)),
+	)
+	createRequest = createRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+
+	createReleaseBundleHandler().ServeHTTP(createRecorder, createRequest)
+
+	g.Expect(createRecorder.Code).To(Equal(http.StatusOK))
+	var created api.ReleaseBundle
+	g.Expect(json.Unmarshal(createRecorder.Body.Bytes(), &created)).To(Succeed())
+	g.Expect(created.ProcessSnapshotID).NotTo(BeNil())
+
+	getRecorder := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/release-bundles/"+created.ID.String()+"/process-snapshot",
+		nil,
+	)
+	getRequest.SetPathValue("releaseBundleId", created.ID.String())
+	getRequest = getRequest.WithContext(authenticatedChannelHandlerContext(ctx, orgID))
+
+	getReleaseBundleProcessSnapshotHandler().ServeHTTP(getRecorder, getRequest)
+
+	g.Expect(getRecorder.Code).To(Equal(http.StatusOK))
+	var snapshot api.ProcessSnapshot
+	g.Expect(json.Unmarshal(getRecorder.Body.Bytes(), &snapshot)).To(Succeed())
+	g.Expect(snapshot.ID).To(Equal(*created.ProcessSnapshotID))
+	g.Expect(snapshot.ApplicationID).To(Equal(applicationID))
+	g.Expect(snapshot.DeploymentProcessRevisionID).To(Equal(revision.ID))
+	g.Expect(snapshot.CanonicalChecksum).To(HavePrefix("sha256:"))
+	g.Expect(snapshot.Revision.Steps).To(HaveLen(1))
+	g.Expect(snapshot.Revision.Steps[0].Key).To(Equal("deploy"))
+}
+
 func TestReleaseBundleHandlersValidatePublishBlockAndArchive(t *testing.T) {
 	ctx := channelHandlerDBTestContext(t)
 	g := NewWithT(t)
@@ -583,4 +631,66 @@ func releaseBundleRequestBody(
 			}
 		]
 	}`
+}
+
+func releaseBundleRequestBodyWithProcessRevision(
+	applicationID uuid.UUID,
+	channelID uuid.UUID,
+	versionID uuid.UUID,
+	revisionID uuid.UUID,
+) string {
+	return `{
+		"applicationId":"` + applicationID.String() + `",
+		"channelId":"` + channelID.String() + `",
+		"deploymentProcessRevisionId":"` + revisionID.String() + `",
+		"releaseNumber":"2026.06.20",
+		"releaseNotes":"Initial release",
+		"sourceRevision":"abc123",
+		"components":[
+			{
+				"key":"api",
+				"name":"API",
+				"type":"application_version",
+				"version":"1.2.3",
+				"applicationVersionId":"` + versionID.String() + `"
+			}
+		]
+	}`
+}
+
+func createReleaseBundleHandlerProcessRevision(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+) (types.DeploymentProcess, types.DeploymentProcessRevision) {
+	t.Helper()
+	process := types.DeploymentProcess{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		Name:           "Standard deploy " + uuid.NewString(),
+	}
+	if err := db.CreateDeploymentProcess(ctx, &process); err != nil {
+		t.Fatalf("create deployment process: %v", err)
+	}
+	revision := types.DeploymentProcessRevision{
+		OrganizationID:      orgID,
+		DeploymentProcessID: process.ID,
+		Description:         "Initial revision",
+		Steps: []types.DeploymentProcessStep{
+			{
+				Key:               "deploy",
+				Name:              "Deploy",
+				ActionType:        "script",
+				ExecutionLocation: "hub",
+				InputBindings:     map[string]any{"script": "make deploy"},
+				FailureMode:       "fail",
+				SortOrder:         10,
+			},
+		},
+	}
+	if err := db.CreateDeploymentProcessRevision(ctx, &revision); err != nil {
+		t.Fatalf("create deployment process revision: %v", err)
+	}
+	return process, revision
 }

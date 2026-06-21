@@ -28,6 +28,7 @@ const (
 	rb.organization_id,
 	rb.application_id,
 	rb.channel_id,
+	rb.process_snapshot_id,
 	rb.release_number,
 	rb.release_notes,
 	rb.source_revision,
@@ -89,7 +90,7 @@ func CreateReleaseBundleWithIdempotency(ctx context.Context, bundle *types.Relea
 		if bundle.Status != types.ReleaseBundleStatusDraft {
 			return fmt.Errorf("could not create ReleaseBundle: %w", apierrors.ErrConflict)
 		}
-		if err := ensureReleaseBundleReferences(ctx, *bundle); err != nil {
+		if err := ensureReleaseBundleReferences(ctx, bundle); err != nil {
 			return err
 		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -135,7 +136,7 @@ func createReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 	if bundle.Status != types.ReleaseBundleStatusDraft {
 		return fmt.Errorf("could not create ReleaseBundle: %w", apierrors.ErrConflict)
 	}
-	if err := ensureReleaseBundleReferences(ctx, *bundle); err != nil {
+	if err := ensureReleaseBundleReferences(ctx, bundle); err != nil {
 		return err
 	}
 	if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -151,6 +152,7 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			organization_id,
 			application_id,
 			channel_id,
+			process_snapshot_id,
 			release_number,
 			release_notes,
 			source_revision,
@@ -167,6 +169,7 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			@organizationId,
 			@applicationId,
 			@channelId,
+			@processSnapshotId,
 			@releaseNumber,
 			@releaseNotes,
 			@sourceRevision,
@@ -184,6 +187,7 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			"organizationId":    bundle.OrganizationID,
 			"applicationId":     bundle.ApplicationID,
 			"channelId":         bundle.ChannelID,
+			"processSnapshotId": bundle.ProcessSnapshotID,
 			"releaseNumber":     bundle.ReleaseNumber,
 			"releaseNotes":      bundle.ReleaseNotes,
 			"sourceRevision":    bundle.SourceRevision,
@@ -393,7 +397,10 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			return fmt.Errorf("could not update ReleaseBundle: %w", apierrors.ErrConflict)
 		}
 		bundle.Status = existing.Status
-		if err := ensureReleaseBundleReferences(ctx, *bundle); err != nil {
+		if bundle.DeploymentProcessRevisionID == nil {
+			bundle.ProcessSnapshotID = existing.ProcessSnapshotID
+		}
+		if err := ensureReleaseBundleReferences(ctx, bundle); err != nil {
 			return err
 		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -405,6 +412,7 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			`UPDATE ReleaseBundle AS rb SET
 				application_id = @applicationId,
 				channel_id = @channelId,
+				process_snapshot_id = @processSnapshotId,
 				release_number = @releaseNumber,
 				release_notes = @releaseNotes,
 				source_revision = @sourceRevision,
@@ -424,6 +432,7 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				"organizationId":    bundle.OrganizationID,
 				"applicationId":     bundle.ApplicationID,
 				"channelId":         bundle.ChannelID,
+				"processSnapshotId": bundle.ProcessSnapshotID,
 				"releaseNumber":     bundle.ReleaseNumber,
 				"releaseNotes":      bundle.ReleaseNotes,
 				"sourceRevision":    bundle.SourceRevision,
@@ -1053,14 +1062,44 @@ func setReleaseBundleCanonicalFields(bundle *types.ReleaseBundle) error {
 	return nil
 }
 
-func ensureReleaseBundleReferences(ctx context.Context, bundle types.ReleaseBundle) error {
-	if err := ensureReleaseBundleParentReferences(ctx, bundle); err != nil {
+func ensureReleaseBundleReferences(ctx context.Context, bundle *types.ReleaseBundle) error {
+	if err := ensureReleaseBundleParentReferences(ctx, *bundle); err != nil {
+		return err
+	}
+	if err := ensureReleaseBundleProcessSnapshotReference(ctx, bundle); err != nil {
 		return err
 	}
 	for _, component := range bundle.Components {
-		if err := ensureReleaseBundleComponentReferences(ctx, bundle, component); err != nil {
+		if err := ensureReleaseBundleComponentReferences(ctx, *bundle, component); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func ensureReleaseBundleProcessSnapshotReference(ctx context.Context, bundle *types.ReleaseBundle) error {
+	if bundle.DeploymentProcessRevisionID != nil {
+		snapshot, err := ensureProcessSnapshotForRevision(
+			ctx,
+			bundle.OrganizationID,
+			bundle.ApplicationID,
+			*bundle.DeploymentProcessRevisionID,
+		)
+		if err != nil {
+			return err
+		}
+		bundle.ProcessSnapshotID = &snapshot.ID
+		return nil
+	}
+	if bundle.ProcessSnapshotID == nil {
+		return nil
+	}
+	snapshot, err := getProcessSnapshot(ctx, *bundle.ProcessSnapshotID, bundle.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if snapshot.ApplicationID != bundle.ApplicationID {
+		return apierrors.ErrNotFound
 	}
 	return nil
 }

@@ -97,6 +97,7 @@ func TestReleaseBundleHandlersRejectMalformedUUIDPathValues(t *testing.T) {
 		{name: "delete", handler: deleteReleaseBundleHandler(), method: http.MethodDelete},
 		{name: "validate", handler: validateReleaseBundleHandler(), method: http.MethodPost},
 		{name: "eligibility", handler: getReleaseBundleEligibilityHandler(), method: http.MethodGet},
+		{name: "process snapshot", handler: getReleaseBundleProcessSnapshotHandler(), method: http.MethodGet},
 		{name: "publish", handler: publishReleaseBundleHandler(), method: http.MethodPost},
 		{name: "block", handler: blockReleaseBundleHandler(), method: http.MethodPost},
 		{name: "archive", handler: archiveReleaseBundleHandler(), method: http.MethodPost},
@@ -206,6 +207,24 @@ func TestReleaseBundleEligibilityFeatureFlagMiddlewareRejectsDisabledAPI(t *test
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/release-bundles/"+uuid.NewString()+"/eligibility", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusForbidden))
+	g.Expect(called).To(BeFalse())
+}
+
+func TestReleaseBundleProcessSnapshotFeatureFlagMiddlewareRejectsDisabledAPI(t *testing.T) {
+	g := NewWithT(t)
+	called := false
+	handler := releaseBundleProcessSnapshotFeatureFlagMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/release-bundles/"+uuid.NewString()+"/process-snapshot", nil)
 
 	handler.ServeHTTP(recorder, request)
 

@@ -59,6 +59,12 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 				With(option.Request(ReleaseBundleEligibilityRequest{})).
 				With(option.Response(http.StatusOK, api.ReleaseBundleEligibilityResponse{}))
 
+			r.With(releaseBundleProcessSnapshotFeatureFlagMiddleware).
+				Get("/process-snapshot", getReleaseBundleProcessSnapshotHandler()).
+				With(option.Description("Get the immutable process snapshot linked to a release bundle")).
+				With(option.Request(ReleaseBundleIDRequest{})).
+				With(option.Response(http.StatusOK, api.ProcessSnapshot{}))
+
 			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).Group(func(r chiopenapi.Router) {
 				r.Put("/", updateReleaseBundleHandler()).
 					With(option.Description("Update a draft release bundle")).
@@ -108,6 +114,16 @@ func releaseBundleEligibilityFeatureFlagMiddleware(handler http.Handler) http.Ha
 		featureflags.KeyChannels,
 		featureflags.KeyLifecycles,
 		featureflags.KeyEnvironments,
+	} {
+		handler = middleware.ExperimentalFeatureFlagMiddleware(feature)(handler)
+	}
+	return handler
+}
+
+func releaseBundleProcessSnapshotFeatureFlagMiddleware(handler http.Handler) http.Handler {
+	for _, feature := range []featureflags.Key{
+		featureflags.KeyReleaseBundles,
+		featureflags.KeyDeploymentProcesses,
 	} {
 		handler = middleware.ExperimentalFeatureFlagMiddleware(feature)(handler)
 	}
@@ -215,6 +231,32 @@ func validateReleaseBundleHandler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {
 			RespondJSON(w, releaseBundleValidationResponse(result))
+		}
+	}
+}
+
+//nolint:dupl
+func getReleaseBundleProcessSnapshotHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		auth := auth.Authentication.Require(ctx)
+
+		snapshot, err := db.GetProcessSnapshotForReleaseBundle(ctx, id, *auth.CurrentOrgID())
+		if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+		} else if err != nil {
+			log.Error("failed to get release bundle process snapshot", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			RespondJSON(w, mapping.ProcessSnapshotToAPI(*snapshot))
 		}
 	}
 }
@@ -390,14 +432,15 @@ func releaseBundleFromCreateUpdateRequest(
 		})
 	}
 	bundle := types.ReleaseBundle{
-		OrganizationID: orgID,
-		ApplicationID:  request.ApplicationID,
-		ChannelID:      request.ChannelID,
-		ReleaseNumber:  strings.TrimSpace(request.ReleaseNumber),
-		ReleaseNotes:   request.ReleaseNotes,
-		SourceRevision: strings.TrimSpace(request.SourceRevision),
-		Status:         types.ReleaseBundleStatusDraft,
-		Components:     components,
+		OrganizationID:              orgID,
+		ApplicationID:               request.ApplicationID,
+		ChannelID:                   request.ChannelID,
+		DeploymentProcessRevisionID: request.DeploymentProcessRevisionID,
+		ReleaseNumber:               strings.TrimSpace(request.ReleaseNumber),
+		ReleaseNotes:                request.ReleaseNotes,
+		SourceRevision:              strings.TrimSpace(request.SourceRevision),
+		Status:                      types.ReleaseBundleStatusDraft,
+		Components:                  components,
 	}
 	if request.SourceMetadata != nil {
 		bundle.SourceRepository = request.SourceMetadata.Repository

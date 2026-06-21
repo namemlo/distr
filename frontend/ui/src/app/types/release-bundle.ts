@@ -1,3 +1,5 @@
+import {DeploymentProcessRevision} from './deployment-process';
+
 export type ReleaseBundleStatus = 'DRAFT' | 'VALIDATING' | 'PUBLISHED' | 'BLOCKED' | 'ARCHIVED';
 
 export type ReleaseBundleComponentType =
@@ -37,6 +39,7 @@ export interface ReleaseBundle {
   updatedAt: string;
   applicationId: string;
   channelId: string;
+  processSnapshotId?: string;
   releaseNumber: string;
   releaseNotes: string;
   sourceRevision: string;
@@ -63,6 +66,7 @@ export interface ReleaseBundleComponentRequest {
 export interface CreateUpdateReleaseBundleRequest {
   applicationId: string;
   channelId: string;
+  deploymentProcessRevisionId?: string;
   releaseNumber: string;
   releaseNotes: string;
   sourceRevision: string;
@@ -80,4 +84,15 @@ export interface ReleaseBundleValidationResponse {
   valid: boolean;
   errors: ReleaseBundleValidationIssue[];
   warnings: ReleaseBundleValidationIssue[];
+}
+
+export interface ProcessSnapshot {
+  id: string;
+  createdAt: string;
+  applicationId: string;
+  deploymentProcessId: string;
+  deploymentProcessRevisionId: string;
+  revisionNumber: number;
+  canonicalChecksum: string;
+  revision: DeploymentProcessRevision;
 }

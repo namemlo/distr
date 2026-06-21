@@ -91,4 +91,53 @@ describe('ReleaseBundlesService', () => {
     expect(archiveReq.request.method).toBe('POST');
     archiveReq.flush({id: 'bundle-1', status: 'ARCHIVED', components: []});
   });
+
+  it('gets the linked process snapshot', () => {
+    service.getProcessSnapshot('bundle-1').subscribe((snapshot) => {
+      expect(snapshot.id).toBe('snapshot-1');
+      expect(snapshot.deploymentProcessRevisionId).toBe('revision-1');
+      expect(snapshot.revision.steps[0].key).toBe('deploy');
+    });
+
+    const snapshotReq = http.expectOne('/api/v1/release-bundles/bundle-1/process-snapshot');
+    expect(snapshotReq.request.method).toBe('GET');
+    snapshotReq.flush({
+      id: 'snapshot-1',
+      createdAt: '2026-06-21T00:00:00Z',
+      applicationId: 'application-1',
+      deploymentProcessId: 'process-1',
+      deploymentProcessRevisionId: 'revision-1',
+      revisionNumber: 1,
+      canonicalChecksum: 'sha256:abc',
+      revision: {
+        id: 'revision-1',
+        createdAt: '2026-06-21T00:00:00Z',
+        updatedAt: '2026-06-21T00:00:00Z',
+        deploymentProcessId: 'process-1',
+        revisionNumber: 1,
+        description: 'Initial revision',
+        steps: [
+          {
+            id: 'step-1',
+            deploymentProcessRevisionId: 'revision-1',
+            key: 'deploy',
+            name: 'Deploy',
+            actionType: 'script',
+            executionLocation: 'hub',
+            inputBindings: {},
+            condition: '',
+            channelIds: [],
+            environmentIds: [],
+            targetTags: [],
+            failureMode: 'fail',
+            timeoutSeconds: 0,
+            retryPolicy: {maxAttempts: 0, intervalSeconds: 0},
+            requiredPermissions: [],
+            sortOrder: 10,
+            dependencies: [],
+          },
+        ],
+      },
+    });
+  });
 });
