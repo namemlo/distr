@@ -702,6 +702,12 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "run" {
+		if os.Getenv("FAKE_DOCKER_REQUIRE_SECRET_FILE_CONTAINER_READABLE") == "1" {
+			if err := checkFakeDockerSecretFileContainerReadable(dockerArgs); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
 		if path := os.Getenv("FAKE_DOCKER_CONTAINER_METADATA_FILE"); path != "" {
 			if err := writeFakeDockerContainerMetadata(path, dockerArgs); err != nil {
 				fmt.Fprint(os.Stderr, err.Error())
@@ -731,6 +737,29 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(1)
 	}
 	os.Exit(2)
+}
+
+func checkFakeDockerSecretFileContainerReadable(dockerArgs []string) error {
+	suffix := ":" + ociJobSecretEnvMountPath + ":ro"
+	for i := 2; i < len(dockerArgs)-1; i++ {
+		if dockerArgs[i] != "--volume" {
+			continue
+		}
+		bind := dockerArgs[i+1]
+		if !strings.HasSuffix(bind, suffix) {
+			continue
+		}
+		source := strings.TrimSuffix(bind, suffix)
+		info, err := os.Stat(source)
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm()&0o004 == 0 {
+			return fmt.Errorf("secret env file is not readable by a non-owner container user: %v", info.Mode().Perm())
+		}
+		return nil
+	}
+	return fmt.Errorf("secret env file volume was not mounted")
 }
 
 func writeFakeDockerContainerMetadata(path string, dockerArgs []string) error {

@@ -128,9 +128,9 @@ For `distr.oci.job`, the agent:
 - emits `STARTED`
 - emits `PROGRESS` before inspecting or starting the container
 - rejects unsupported action versions, mutable image tags, non-allowlisted registries, non-allowlisted networks, writable or non-allowlisted host mounts, privileged mode, disabled no-new-privileges, and disabled read-only root filesystem
-- writes public environment variables to a temporary env file, and injects resolved `secretEnvironment` through a separate read-only mounted shell env file instead of Docker environment metadata
+- writes public environment variables to a temporary env file, and injects resolved `secretEnvironment` through a separate read-only mounted shell env file and explicit `--entrypoint /bin/sh` wrapper instead of Docker environment metadata
 - runs `docker run` with a deterministic container name, `--read-only`, `--security-opt no-new-privileges`, `--cap-drop ALL`, the selected allowlisted network, optional canonical read-only allowlisted volumes, optional user, and optional CPU/memory limits
-- reuses exited deterministic containers, waits running deterministic containers, starts created deterministic containers, and rejects unsupported existing-container states on retry, lease reclaim, or agent restart
+- reuses exited deterministic containers, waits running deterministic containers, starts created deterministic containers, and rejects unsupported existing-container states on retry, lease reclaim, or agent restart without replaying retained raw Docker logs
 - stops the container on timeout or cancellation
 - emits `SUCCEEDED` with non-sensitive `containerName`, `exitCode`, and `status` outputs when the exit code is expected
 - emits `FAILED` with redacted error and stderr-style details when validation or execution fails
@@ -141,7 +141,7 @@ For `distr.oci.job`, the agent:
 - Secret values are resolved only for an authenticated lease and are not stored back to the plan.
 - Resolved secret values remain lease-only in `secretEnvironment` and are kept separate from public `environment`.
 - StepRun event messages, details, logs, non-sensitive outputs, and returned agent errors are redacted using resolved secret values.
-- Docker command-line arguments and retained container `Config.Env` metadata do not include resolved secret values; the agent mounts a temporary secret env file, sources it through `/bin/sh`, and removes the file after command completion. Images using `secretEnvironment` must provide `/bin/sh`.
+- Docker command-line arguments and retained container `Config.Env` metadata do not include resolved secret values; the agent creates the secret env file inside a private temp directory, makes the file container-readable for `runAsUser`, mounts it read-only, sources it through explicit `--entrypoint /bin/sh`, and removes the directory after command completion. Images using `secretEnvironment` must provide `/bin/sh`.
 - OCI jobs do not use privileged mode.
 - Root filesystems are read-only by default and cannot be disabled by this adapter.
 - Linux capabilities are dropped with `--cap-drop ALL`.
@@ -157,7 +157,7 @@ For `distr.oci.job`, the agent:
 - `volume source must be an absolute path`: use an absolute host path; relative host mounts are rejected.
 - `volumes must be read-only`: set each volume `readOnly` to `true`.
 - `secret environment variable name ... is invalid`: use shell-compatible environment variable names for `secretEnvironment` keys.
-- `OCI job timed out`: increase `timeoutSeconds` or inspect the deterministic container logs on the Docker host.
+- `OCI job timed out`: increase `timeoutSeconds` or inspect the current failed run on the Docker host. Reclaim responses intentionally do not replay retained raw logs.
 - Repeated retries do not re-run the job when the deterministic container already exists; inspect or remove the `distr-job-*` container only after confirming it is safe to allow re-execution.
 
 ## UI

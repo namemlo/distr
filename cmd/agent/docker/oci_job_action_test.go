@@ -208,6 +208,7 @@ func TestExecuteOCIJobStepDoesNotPersistSecretEnvironmentInContainerMetadata(t *
 	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
 	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
 	t.Setenv("FAKE_DOCKER_CONTAINER_METADATA_FILE", metadataFile)
+	t.Setenv("FAKE_DOCKER_REQUIRE_SECRET_FILE_CONTAINER_READABLE", "1")
 	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "job completed")
 	oldExecCommandContext := execCommandContext
 	execCommandContext = fakeDockerCommandContext
@@ -237,6 +238,13 @@ func TestExecuteOCIJobStepDoesNotPersistSecretEnvironmentInContainerMetadata(t *
 	run := findFakeDockerCommand(readFakeDockerCommands(t, argsFile), "run")
 	g.Expect(run).NotTo(BeNil())
 	g.Expect(strings.Join(run, " ")).NotTo(ContainSubstring(secretValue))
+	entrypoint := indexOfFakeDockerArg(run, "--entrypoint")
+	g.Expect(entrypoint).NotTo(Equal(-1))
+	g.Expect(run[entrypoint+1]).To(Equal("/bin/sh"))
+	image := indexOfFakeDockerArg(run, validOCIJobInputs()["imageDigest"].(string))
+	g.Expect(image).NotTo(Equal(-1))
+	g.Expect(run[image+1]).To(Equal("-c"))
+	g.Expect(run[image+2]).To(ContainSubstring("exec \"$@\""))
 }
 
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
@@ -506,10 +514,56 @@ func TestExecuteOCIJobStepReusesExistingContainerForIdempotency(t *testing.T) {
 	commands := readFakeDockerCommands(t, argsFile)
 	g.Expect(findFakeDockerCommand(commands, "run")).To(BeNil())
 	g.Expect(findFakeDockerCommand(commands, "inspect")).NotTo(BeNil())
-	g.Expect(findFakeDockerCommand(commands, "logs")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "logs")).To(BeNil())
 	g.Expect(recorder.events[2].Outputs).To(ContainElement(api.AgentStepRunOutputRequest{
 		Name:  "status",
-		Value: "previous job output",
+		Value: "reused existing OCI job container with exit code 0",
+	}))
+}
+
+func TestExecuteOCIJobStepDoesNotReplayOldSecretLogsFromExistingContainer(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_LOGS", "old-secret-token")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	inputs["secretEnvironment"] = map[string]any{"API_TOKEN": "new-secret-token"}
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:        uuid.New(),
+		Key:              "cleanup",
+		ActionType:       ociJobActionType,
+		ActionVersion:    types.AgentActionVersionV1,
+		Inputs:           inputs,
+		SecretReferences: []string{"secret:job_api_token"},
+		IdempotencyKey:   "sha256:job-key",
+	}
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", fakeOCIJobInspectJSON(t, lease, step, map[string]any{
+		"Status":   "exited",
+		"Running":  false,
+		"ExitCode": 0,
+	}))
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	commands := readFakeDockerCommands(t, argsFile)
+	g.Expect(findFakeDockerCommand(commands, "run")).To(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "logs")).To(BeNil())
+	outputs, err := json.Marshal(recorder.events[2].Outputs)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(string(outputs)).NotTo(ContainSubstring("old-secret-token"))
+	g.Expect(recorder.events[2].Outputs).To(ContainElement(api.AgentStepRunOutputRequest{
+		Name:  "status",
+		Value: "reused existing OCI job container with exit code 0",
 	}))
 }
 
@@ -549,10 +603,10 @@ func TestExecuteOCIJobStepWaitsForExistingRunningContainerAfterRestart(t *testin
 	g.Expect(findFakeDockerCommand(commands, "run")).To(BeNil())
 	g.Expect(findFakeDockerCommand(commands, "inspect")).NotTo(BeNil())
 	g.Expect(findFakeDockerCommand(commands, "wait")).NotTo(BeNil())
-	g.Expect(findFakeDockerCommand(commands, "logs")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "logs")).To(BeNil())
 	g.Expect(recorder.events[2].Outputs).To(ContainElement(api.AgentStepRunOutputRequest{
 		Name:  "status",
-		Value: "restart recovered job output",
+		Value: "reused existing OCI job container with exit code 0",
 	}))
 }
 
@@ -593,10 +647,10 @@ func TestExecuteOCIJobStepStartsExistingCreatedContainerAfterRestart(t *testing.
 	g.Expect(findFakeDockerCommand(commands, "inspect")).NotTo(BeNil())
 	g.Expect(findFakeDockerCommand(commands, "start")).NotTo(BeNil())
 	g.Expect(findFakeDockerCommand(commands, "wait")).NotTo(BeNil())
-	g.Expect(findFakeDockerCommand(commands, "logs")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "logs")).To(BeNil())
 	g.Expect(recorder.events[2].Outputs).To(ContainElement(api.AgentStepRunOutputRequest{
 		Name:  "status",
-		Value: "created container recovered job output",
+		Value: "reused existing OCI job container with exit code 0",
 	}))
 }
 
@@ -864,6 +918,15 @@ func findFakeDockerCommand(commands [][]string, name string) []string {
 		}
 	}
 	return nil
+}
+
+func indexOfFakeDockerArg(command []string, value string) int {
+	for index, arg := range command {
+		if arg == value {
+			return index
+		}
+	}
+	return -1
 }
 
 func createOCIJobTestSymlink(t *testing.T, target, link string) {

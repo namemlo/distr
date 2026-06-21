@@ -375,7 +375,7 @@ func runOCIJob(
 		if err := validateOCIJobContainerIdentity(inspected, identity); err != nil {
 			return result, err
 		}
-		return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes, secretValues)
+		return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes)
 	}
 	envFile, cleanupEnv, err := writeOCIJobEnvFile(input.Environment)
 	if err != nil {
@@ -447,7 +447,6 @@ func finishExistingOCIJobContainer(
 	containerName string,
 	state ociJobContainerState,
 	expectedExitCodes []int,
-	secretValues []string,
 ) (ociJobResult, error) {
 	result := ociJobResult{ContainerName: containerName, ExitCode: state.ExitCode}
 	status := strings.ToLower(strings.TrimSpace(state.Status))
@@ -483,17 +482,10 @@ func finishExistingOCIJobContainer(
 		}
 		return result, fmt.Errorf("existing OCI job container is in unsupported state %q", status)
 	}
-	logs, err := readOCIJobContainerLogs(ctx, containerName, secretValues)
-	if err != nil {
-		return result, err
-	}
-	result.Status = logs
 	if !ociJobExpectedExitCode(result.ExitCode, expectedExitCodes) {
 		return result, fmt.Errorf("OCI job exited with code %d", result.ExitCode)
 	}
-	if result.Status == "" {
-		result.Status = fmt.Sprintf("job exited with code %d", result.ExitCode)
-	}
+	result.Status = fmt.Sprintf("reused existing OCI job container with exit code %d", result.ExitCode)
 	return result, nil
 }
 
@@ -628,6 +620,7 @@ func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity
 		args = append(args, "--env-file", envFile)
 	}
 	if secretEnvFile != "" {
+		args = append(args, "--entrypoint", "/bin/sh")
 		args = append(args, "--volume", secretEnvFile+":"+ociJobSecretEnvMountPath+":ro")
 	}
 	for _, volume := range input.Volumes {
@@ -644,7 +637,7 @@ func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity
 	}
 	args = append(args, input.ImageDigest)
 	if secretEnvFile != "" {
-		args = append(args, "/bin/sh", "-c", "set -a; . "+ociJobSecretEnvMountPath+"; set +a; exec \"$@\"", "distr-oci-job")
+		args = append(args, "-c", "set -a; . "+ociJobSecretEnvMountPath+"; set +a; exec \"$@\"", "distr-oci-job")
 	}
 	args = append(args, input.Command...)
 	args = append(args, input.Arguments...)
@@ -685,12 +678,18 @@ func writeOCIJobSecretEnvFile(secretEnvironment map[string]string) (string, func
 	if len(secretEnvironment) == 0 {
 		return "", func() {}, nil
 	}
-	file, err := os.CreateTemp("", "distr-oci-job-secret-env-*")
+	dir, err := os.MkdirTemp("", "distr-oci-job-secret-env-*")
 	if err != nil {
+		return "", nil, fmt.Errorf("create OCI job secret env dir: %w", err)
+	}
+	path := filepath.Join(dir, "env")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("create OCI job secret env file: %w", err)
 	}
 	cleanup := func() {
-		_ = os.Remove(file.Name())
+		_ = os.RemoveAll(dir)
 	}
 	names := make([]string, 0, len(secretEnvironment))
 	for name := range secretEnvironment {
@@ -708,7 +707,11 @@ func writeOCIJobSecretEnvFile(secretEnvironment map[string]string) (string, func
 		cleanup()
 		return "", nil, fmt.Errorf("close OCI job secret env file: %w", err)
 	}
-	return file.Name(), cleanup, nil
+	if err := os.Chmod(path, 0o444); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("chmod OCI job secret env file: %w", err)
+	}
+	return path, cleanup, nil
 }
 
 func shellSingleQuote(value string) string {
