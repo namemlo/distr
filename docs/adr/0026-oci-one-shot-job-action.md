@@ -64,7 +64,7 @@ The Docker adapter enforces these policies:
 
 The adapter writes declared environment variables to a temporary env file and passes `--env-file` to Docker so resolved secret values are not visible in Docker command-line arguments. The temp file is removed after the command exits.
 
-Idempotency uses a deterministic Docker container name derived from the action idempotency key. Before running `docker run`, the adapter inspects the deterministic container. If it already exists, the adapter reads its existing state/logs and does not run the operation again. This covers normal retry, lease expiry reclaim, and agent restart on the same Docker host.
+Idempotency uses a deterministic Docker container name derived from the action idempotency key. Before running `docker run`, the adapter inspects the deterministic container. An exited matching container is treated as the completed operation, a running matching container is waited, and a created matching container is started and then waited so restart/reclaim does not falsely mark an unexecuted job successful. Unsupported existing-container states fail explicitly. This covers normal retry, lease expiry reclaim, and agent restart on the same Docker host.
 
 The action emits:
 

@@ -434,6 +434,92 @@ func TestExecuteOCIJobStepWaitsForExistingRunningContainerAfterRestart(t *testin
 	}))
 }
 
+func TestExecuteOCIJobStepStartsExistingCreatedContainerAfterRestart(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_WAIT_EXIT_CODE", "0")
+	t.Setenv("FAKE_DOCKER_LOGS", "created container recovered job output")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         validOCIJobInputs(),
+		IdempotencyKey: "sha256:job-key",
+	}
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", fakeOCIJobInspectJSON(t, lease, step, map[string]any{
+		"Status":   "created",
+		"Running":  false,
+		"ExitCode": 0,
+	}))
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	commands := readFakeDockerCommands(t, argsFile)
+	g.Expect(findFakeDockerCommand(commands, "run")).To(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "inspect")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "start")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "wait")).NotTo(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "logs")).NotTo(BeNil())
+	g.Expect(recorder.events[2].Outputs).To(ContainElement(api.AgentStepRunOutputRequest{
+		Name:  "status",
+		Value: "created container recovered job output",
+	}))
+}
+
+func TestExecuteOCIJobStepRejectsExistingContainerInUnsupportedState(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         validOCIJobInputs(),
+		IdempotencyKey: "sha256:job-key",
+	}
+	t.Setenv("FAKE_DOCKER_EXISTING_INSPECT", fakeOCIJobInspectJSON(t, lease, step, map[string]any{
+		"Status":   "paused",
+		"Running":  true,
+		"ExitCode": 0,
+	}))
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).To(MatchError(ContainSubstring(`existing OCI job container is in unsupported state "paused"`)))
+	commands := readFakeDockerCommands(t, argsFile)
+	g.Expect(findFakeDockerCommand(commands, "run")).To(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "start")).To(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "wait")).To(BeNil())
+	g.Expect(findFakeDockerCommand(commands, "logs")).To(BeNil())
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeProgress,
+		types.StepRunEventTypeFailed,
+	}))
+}
+
 func TestExecuteOCIJobStepRejectsExistingContainerWithDifferentOperation(t *testing.T) {
 	g := NewWithT(t)
 	setOCIJobPolicyEnv(t)

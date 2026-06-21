@@ -432,7 +432,9 @@ func finishExistingOCIJobContainer(
 	secretValues []string,
 ) (ociJobResult, error) {
 	result := ociJobResult{ContainerName: containerName, ExitCode: state.ExitCode}
-	if state.Running {
+	status := strings.ToLower(strings.TrimSpace(state.Status))
+	switch status {
+	case "running":
 		code, err := waitOCIJobContainer(ctx, containerName)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -441,6 +443,27 @@ func finishExistingOCIJobContainer(
 			return result, err
 		}
 		result.ExitCode = code
+	case "created":
+		if err := startExistingOCIJobContainer(ctx, containerName); err != nil {
+			if ctx.Err() != nil {
+				stopOCIJobContainer(containerName)
+			}
+			return result, err
+		}
+		code, err := waitOCIJobContainer(ctx, containerName)
+		if err != nil {
+			if ctx.Err() != nil {
+				stopOCIJobContainer(containerName)
+			}
+			return result, err
+		}
+		result.ExitCode = code
+	case "exited":
+	default:
+		if status == "" {
+			status = "unknown"
+		}
+		return result, fmt.Errorf("existing OCI job container is in unsupported state %q", status)
 	}
 	logs, err := readOCIJobContainerLogs(ctx, containerName, secretValues)
 	if err != nil {
@@ -454,6 +477,21 @@ func finishExistingOCIJobContainer(
 		result.Status = fmt.Sprintf("job exited with code %d", result.ExitCode)
 	}
 	return result, nil
+}
+
+func startExistingOCIJobContainer(ctx context.Context, containerName string) error {
+	out, err := runDockerCommandBounded(ctx, "docker", "start", containerName)
+	text := strings.TrimSpace(string(out))
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			return fmt.Errorf("OCI job timed out")
+		}
+		return fmt.Errorf("OCI job canceled")
+	}
+	if err != nil {
+		return fmt.Errorf("start existing OCI job container: %w: %s", err, text)
+	}
+	return nil
 }
 
 func waitOCIJobContainer(ctx context.Context, containerName string) (int, error) {

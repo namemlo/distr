@@ -697,6 +697,9 @@ func TestDockerCommandHelper(t *testing.T) {
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "stop" {
 		os.Exit(0)
 	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "start" {
+		os.Exit(0)
+	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "run" {
 		if rawSleep := os.Getenv("FAKE_DOCKER_RUN_SLEEP_MS"); rawSleep != "" {
 			ms, err := strconv.Atoi(rawSleep)

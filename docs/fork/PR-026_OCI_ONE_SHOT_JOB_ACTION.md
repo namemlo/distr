@@ -130,7 +130,7 @@ For `distr.oci.job`, the agent:
 - rejects unsupported action versions, mutable image tags, non-allowlisted registries, non-allowlisted networks, writable or non-allowlisted host mounts, privileged mode, disabled no-new-privileges, and disabled read-only root filesystem
 - writes declared environment variables to a temporary env file instead of putting secret values in Docker command-line arguments
 - runs `docker run` with a deterministic container name, `--read-only`, `--security-opt no-new-privileges`, `--cap-drop ALL`, the selected allowlisted network, optional read-only allowlisted volumes, optional user, and optional CPU/memory limits
-- reuses an existing deterministic container on retry, lease reclaim, or agent restart instead of running the operation again
+- reuses exited deterministic containers, waits running deterministic containers, starts created deterministic containers, and rejects unsupported existing-container states on retry, lease reclaim, or agent restart
 - stops the container on timeout or cancellation
 - emits `SUCCEEDED` with non-sensitive `containerName`, `exitCode`, and `status` outputs when the exit code is expected
 - emits `FAILED` with redacted error and stderr-style details when validation or execution fails
