@@ -22,10 +22,11 @@ func TestGetActionDefinitionsHandler(t *testing.T) {
 	g.Expect(recorder.Code).To(Equal(http.StatusOK))
 	var actions []api.ActionDefinition
 	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &actions)).To(Succeed())
-	g.Expect(actions).To(HaveLen(3))
+	g.Expect(actions).To(HaveLen(4))
 	g.Expect(actions[0].Type).To(Equal("distr.preflight"))
 	g.Expect(actions[1].Type).To(Equal("distr.http.check"))
 	g.Expect(actions[2].Type).To(Equal("distr.wait"))
+	g.Expect(actions[3].Type).To(Equal("distr.compose.deploy"))
 	g.Expect(actions[1].InputSchema).To(HaveKeyWithValue("type", "object"))
 }
 

@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -43,6 +45,19 @@ type taskLeaseCandidate struct {
 	Status types.TaskStatus `db:"status"`
 }
 
+type taskLeaseStepCandidate struct {
+	StepRunID         uuid.UUID           `db:"step_run_id"`
+	StepKey           string              `db:"step_key"`
+	Name              string              `db:"name"`
+	ActionType        string              `db:"action_type"`
+	InputBindings     map[string]any      `db:"input_bindings"`
+	SortOrder         int                 `db:"sort_order"`
+	Status            types.StepRunStatus `db:"status"`
+	ExecutionLocation string              `db:"execution_location"`
+	Included          bool                `db:"included"`
+	Dependencies      []string            `db:"dependencies"`
+}
+
 func LeaseAgentTask(ctx context.Context, request types.LeaseAgentTaskRequest) (*types.TaskLease, error) {
 	if err := validateLeaseAgentTaskRequest(request); err != nil {
 		return nil, err
@@ -63,6 +78,21 @@ func LeaseAgentTask(ctx context.Context, request types.LeaseAgentTaskRequest) (*
 		if !published {
 			return nil
 		}
+		attempt := 1
+		if candidate.Status == types.TaskStatusRunning {
+			var err error
+			attempt, err = releaseExpiredTaskLeasesAndNextAttempt(ctx, candidate.TaskID, request.OrganizationID)
+			if err != nil {
+				return err
+			}
+		}
+		steps, err := getReadyTaskLeaseStepCandidates(ctx, candidate.TaskID, request.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if len(steps) == 0 {
+			return nil
+		}
 		if candidate.Status == types.TaskStatusQueued {
 			err := acquireTaskResourceLocks(ctx, candidate.TaskID, request.OrganizationID)
 			if errors.Is(err, apierrors.ErrConflict) {
@@ -74,10 +104,10 @@ func LeaseAgentTask(ctx context.Context, request types.LeaseAgentTaskRequest) (*
 			if err := updateTaskStatus(ctx, candidate.TaskID, request.OrganizationID, types.TaskStatusRunning); err != nil {
 				return err
 			}
-		}
-		attempt, err := releaseExpiredTaskLeasesAndNextAttempt(ctx, candidate.TaskID, request.OrganizationID)
-		if err != nil {
-			return err
+			attempt, err = releaseExpiredTaskLeasesAndNextAttempt(ctx, candidate.TaskID, request.OrganizationID)
+			if err != nil {
+				return err
+			}
 		}
 		token, tokenHash, err := newTaskLeaseToken()
 		if err != nil {
@@ -185,8 +215,10 @@ func getNextTaskLeaseCandidateForUpdate(
 			t.status = @queuedStatus
 				OR (
 					t.status = @runningStatus
-					AND active_lease.id IS NOT NULL
-					AND active_lease.expires_at <= now()
+					AND (
+						active_lease.id IS NULL
+						OR active_lease.expires_at <= now()
+					)
 				)
 			)
 			AND EXISTS (
@@ -205,7 +237,7 @@ func getNextTaskLeaseCandidateForUpdate(
 					AND dps.organization_id = sr.organization_id
 				WHERE sr.task_id = t.id
 					AND sr.organization_id = t.organization_id
-					AND sr.status <> @skippedStatus
+					AND sr.status IN (@pendingStepStatus, @runningStepStatus)
 					AND dps.included
 					AND lower(trim(dps.execution_location)) = 'target'
 			)
@@ -213,12 +245,13 @@ func getNextTaskLeaseCandidateForUpdate(
 		LIMIT 1
 		FOR UPDATE OF t SKIP LOCKED`,
 		pgx.NamedArgs{
-			"organizationId":  request.OrganizationID,
-			"agentId":         request.AgentID,
-			"queuedStatus":    types.TaskStatusQueued,
-			"runningStatus":   types.TaskStatusRunning,
-			"skippedStatus":   types.StepRunStatusSkipped,
-			"publishedStatus": types.ReleaseBundleStatusPublished,
+			"organizationId":    request.OrganizationID,
+			"agentId":           request.AgentID,
+			"queuedStatus":      types.TaskStatusQueued,
+			"runningStatus":     types.TaskStatusRunning,
+			"pendingStepStatus": types.StepRunStatusPending,
+			"runningStepStatus": types.StepRunStatusRunning,
+			"publishedStatus":   types.ReleaseBundleStatusPublished,
 		},
 	)
 	if err != nil {
@@ -280,7 +313,7 @@ func releaseExpiredTaskLeasesAndNextAttempt(ctx context.Context, taskID, orgID u
 			nextAttempt = attempt + 1
 		}
 	}
-	_, err = db.Exec(ctx,
+	tag, err := db.Exec(ctx,
 		`UPDATE TaskLease
 		SET
 			released_at = COALESCE(released_at, now()),
@@ -294,7 +327,44 @@ func releaseExpiredTaskLeasesAndNextAttempt(ctx context.Context, taskID, orgID u
 	if err != nil {
 		return 0, fmt.Errorf("could not release expired TaskLease: %w", err)
 	}
+	if tag.RowsAffected() > 0 {
+		if err := resetInterruptedStepRunsForTask(ctx, taskID, orgID); err != nil {
+			return 0, err
+		}
+	}
 	return nextAttempt, nil
+}
+
+func resetInterruptedStepRunsForTask(ctx context.Context, taskID, orgID uuid.UUID) error {
+	db := internalctx.GetDb(ctx)
+	_, err := db.Exec(ctx,
+		`UPDATE StepRun
+		SET
+			status = @pendingStatus,
+			updated_at = now()
+		WHERE task_id = @taskId
+			AND organization_id = @organizationId
+			AND status = @runningStatus
+			AND EXISTS (
+				SELECT 1
+				FROM DeploymentPlanStep dps
+				WHERE dps.id = StepRun.deployment_plan_step_id
+					AND dps.deployment_plan_id = StepRun.deployment_plan_id
+					AND dps.organization_id = StepRun.organization_id
+					AND dps.included
+					AND lower(trim(dps.execution_location)) = 'target'
+			)`,
+		pgx.NamedArgs{
+			"taskId":         taskID,
+			"organizationId": orgID,
+			"pendingStatus":  types.StepRunStatusPending,
+			"runningStatus":  types.StepRunStatusRunning,
+		},
+	)
+	if err != nil {
+		return mapTaskWriteError("reset interrupted step runs", err)
+	}
+	return nil
 }
 
 func insertTaskLease(
@@ -451,6 +521,127 @@ func getTaskLease(ctx context.Context, leaseID, orgID uuid.UUID) (*types.TaskLea
 }
 
 func getTaskLeaseSteps(ctx context.Context, task types.Task) ([]types.TaskLeaseStep, error) {
+	candidates, err := getReadyTaskLeaseStepCandidates(ctx, task.ID, task.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	steps := make([]types.TaskLeaseStep, 0, len(candidates))
+	for _, candidate := range candidates {
+		step := types.TaskLeaseStep{
+			StepRunID:     candidate.StepRunID,
+			StepKey:       candidate.StepKey,
+			Name:          candidate.Name,
+			ActionType:    candidate.ActionType,
+			InputBindings: candidate.InputBindings,
+			SortOrder:     candidate.SortOrder,
+		}
+		if step.InputBindings == nil {
+			step.InputBindings = map[string]any{}
+		}
+		step.ActionVersion = types.AgentActionVersionV1
+		secretReferences, err := resolveTaskLeaseStepSecrets(ctx, task, &step)
+		if err != nil {
+			return nil, err
+		}
+		step.SecretReferences = secretReferences
+		step.IdempotencyKey = taskLeaseStepIdempotencyKey(task, step)
+		steps = append(steps, step)
+	}
+	return steps, nil
+}
+
+func resolveTaskLeaseStepSecrets(
+	ctx context.Context,
+	task types.Task,
+	step *types.TaskLeaseStep,
+) ([]string, error) {
+	if step.ActionType != "distr.compose.deploy" {
+		return []string{}, nil
+	}
+	applicationVersion, ok := mapStringAny(step.InputBindings["applicationVersion"])
+	if !ok {
+		return []string{}, nil
+	}
+	registryAuth, ok := mapStringAny(applicationVersion["registryAuth"])
+	if !ok {
+		return []string{}, nil
+	}
+	references := make([]string, 0, len(registryAuth))
+	for registry, rawAuth := range registryAuth {
+		auth, ok := mapStringAny(rawAuth)
+		if !ok {
+			continue
+		}
+		if _, hasPlaintext := auth["password"]; hasPlaintext {
+			return nil, apierrors.NewBadRequest("compose registryAuth password must use passwordSecretRef")
+		}
+		reference, ok := stringValue(auth["passwordSecretRef"])
+		if !ok || strings.TrimSpace(reference) == "" {
+			return nil, apierrors.NewBadRequest("compose registryAuth passwordSecretRef is required")
+		}
+		reference = strings.TrimSpace(reference)
+		value, err := getTaskLeaseSecretValue(ctx, task, reference)
+		if err != nil {
+			return nil, err
+		}
+		auth["password"] = value
+		delete(auth, "passwordSecretRef")
+		registryAuth[registry] = auth
+		references = append(references, "secret:"+reference)
+	}
+	sort.Strings(references)
+	return references, nil
+}
+
+func getTaskLeaseSecretValue(ctx context.Context, task types.Task, key string) (string, error) {
+	db := internalctx.GetDb(ctx)
+	var value string
+	err := db.QueryRow(ctx,
+		`SELECT s.value
+		FROM DeploymentPlanTarget dpt
+		JOIN Secret s
+			ON s.organization_id = dpt.organization_id
+			AND s.key = @key
+			AND (
+				(dpt.customer_organization_id IS NULL AND s.customer_organization_id IS NULL)
+				OR s.customer_organization_id = dpt.customer_organization_id
+			)
+		WHERE dpt.id = @deploymentPlanTargetId
+			AND dpt.organization_id = @organizationId`,
+		pgx.NamedArgs{
+			"deploymentPlanTargetId": task.DeploymentPlanTargetID,
+			"organizationId":         task.OrganizationID,
+			"key":                    key,
+		},
+	).Scan(&value)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", apierrors.ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("could not resolve task lease secret %q: %w", key, err)
+	}
+	return value, nil
+}
+
+func mapStringAny(value any) (map[string]any, bool) {
+	typed, ok := value.(map[string]any)
+	return typed, ok
+}
+
+func stringValue(value any) (string, bool) {
+	typed, ok := value.(string)
+	return typed, ok
+}
+
+func getReadyTaskLeaseStepCandidates(ctx context.Context, taskID, orgID uuid.UUID) ([]taskLeaseStepCandidate, error) {
+	candidates, err := getTaskLeaseStepCandidates(ctx, taskID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return readyTaskLeaseStepCandidates(candidates), nil
+}
+
+func getTaskLeaseStepCandidates(ctx context.Context, taskID, orgID uuid.UUID) ([]taskLeaseStepCandidate, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
 		`SELECT
@@ -459,7 +650,11 @@ func getTaskLeaseSteps(ctx context.Context, task types.Task) ([]types.TaskLeaseS
 			sr.name,
 			sr.action_type,
 			dps.input_bindings,
-			sr.sort_order
+			sr.sort_order,
+			sr.status,
+			lower(trim(dps.execution_location)) AS execution_location,
+			dps.included,
+			dps.dependencies
 		FROM StepRun sr
 		JOIN DeploymentPlanStep dps
 			ON dps.id = sr.deployment_plan_step_id
@@ -467,32 +662,64 @@ func getTaskLeaseSteps(ctx context.Context, task types.Task) ([]types.TaskLeaseS
 			AND dps.organization_id = sr.organization_id
 		WHERE sr.task_id = @taskId
 			AND sr.organization_id = @organizationId
-			AND sr.status <> @skippedStatus
-			AND dps.included
-			AND lower(trim(dps.execution_location)) = 'target'
 		ORDER BY sr.sort_order, sr.step_key`,
 		pgx.NamedArgs{
-			"taskId":         task.ID,
-			"organizationId": task.OrganizationID,
-			"skippedStatus":  types.StepRunStatusSkipped,
+			"taskId":         taskID,
+			"organizationId": orgID,
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query TaskLease steps: %w", err)
+		return nil, fmt.Errorf("could not query TaskLease step candidates: %w", err)
 	}
-	steps, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.TaskLeaseStep])
+	candidates, err := pgx.CollectRows(rows, pgx.RowToStructByName[taskLeaseStepCandidate])
 	if err != nil {
-		return nil, fmt.Errorf("could not collect TaskLease steps: %w", err)
+		return nil, fmt.Errorf("could not collect TaskLease step candidates: %w", err)
 	}
-	for i := range steps {
-		if steps[i].InputBindings == nil {
-			steps[i].InputBindings = map[string]any{}
+	return candidates, nil
+}
+
+func readyTaskLeaseStepCandidates(candidates []taskLeaseStepCandidate) []taskLeaseStepCandidate {
+	satisfied := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		if taskLeaseDependencyStatusSatisfied(candidate.Status) {
+			satisfied[candidate.StepKey] = true
 		}
-		steps[i].ActionVersion = types.AgentActionVersionV1
-		steps[i].SecretReferences = []string{}
-		steps[i].IdempotencyKey = taskLeaseStepIdempotencyKey(task, steps[i])
 	}
-	return steps, nil
+	ready := make([]taskLeaseStepCandidate, 0, len(candidates))
+	selected := make(map[string]bool, len(candidates))
+	for {
+		progressed := false
+		for _, candidate := range candidates {
+			if selected[candidate.StepKey] ||
+				!candidate.Included ||
+				candidate.ExecutionLocation != "target" ||
+				candidate.Status != types.StepRunStatusPending ||
+				!taskLeaseDependenciesSatisfied(candidate.Dependencies, satisfied) {
+				continue
+			}
+			ready = append(ready, candidate)
+			selected[candidate.StepKey] = true
+			satisfied[candidate.StepKey] = true
+			progressed = true
+		}
+		if !progressed {
+			break
+		}
+	}
+	return ready
+}
+
+func taskLeaseDependencyStatusSatisfied(status types.StepRunStatus) bool {
+	return status == types.StepRunStatusSucceeded || status == types.StepRunStatusSkipped
+}
+
+func taskLeaseDependenciesSatisfied(dependencies []string, satisfied map[string]bool) bool {
+	for _, dependency := range dependencies {
+		if !satisfied[dependency] {
+			return false
+		}
+	}
+	return true
 }
 
 func taskLeaseStepIdempotencyKey(task types.Task, step types.TaskLeaseStep) string {

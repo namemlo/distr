@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-024 are implemented locally. PR-024 adds feature-flagged structured StepRun lifecycle events, redacted log chunks, bounded step outputs, task timeline/log read APIs, agent client helpers, and generated manifest endpoint configuration without adding action execution adapters, task cancellation, approvals, guided failure, or PR-025 behavior.
+PR-000 through PR-025 are implemented locally. PR-025 adds the first target-executed action adapter by wrapping the Docker agent's existing Compose deployment path as `distr.compose.deploy`, while preserving legacy resource-poll deployment compatibility and without adding OCI/file/webhook adapters, approvals, guided failure, task cancellation, or UI timeline behavior.
 
 ## Tracking Template
 
@@ -403,3 +403,18 @@ Use one entry per pull request:
 - Tests: API validation, redaction, mapping, feature-flag, manifest, agent client, handler, repository, lifecycle transition, canonical idempotent replay, immutable output history, lease-attempt ordering, output bound enforcement, organization isolation, expired lease, and migration checks were added. Focused Go tests, `go test -p=1 ./...`, live PostgreSQL repository tests, Angular tests with watch disabled, migration-pair validation, touched-file Prettier checks, diff-scoped Go lint, community frontend build, community Hub build, Docker agent build, Kubernetes agent build, and changed-file Unicode scan passed locally.
 - Upstream contribution notes: Community-neutral structured step event/log protocol; no adopter-specific terminology, provider logic, or execution behavior.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, and current deployment behavior are unchanged. No action execution adapters, Compose/OCI/file/webhook adapters, release promotion execution, task cancellation, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-025 behavior is added in PR-024.
+
+### PR-025 - Compose deployment action adapter
+
+- Status: Implemented locally; action registry, Docker agent capability report, task lease execution path, Compose action adapter, local task-sourced deployment state, documentation, focused tests, and ADR completed.
+- Upstream base: `29fcd992`
+- Feature flag: Adds no new flag. End-to-end execution uses existing `agent_capabilities`, `task_queue`, `agent_task_leases`, and `step_events` feature-flagged endpoints.
+- User-facing behavior: Target-executed Tasks can run `distr.compose.deploy` on Docker agents that advertise action version `1`; the agent emits structured started/progress/succeeded/failed step events and non-secret outputs for project, strategy, status, and local state.
+- Database changes: None. Reuses AgentCapabilityReport, AgentActionCapability, Task, StepRun, TaskLease, StepRunEvent, StepRunLogChunk, and StepRunOutput from earlier roadmap PRs.
+- API changes: None. Reuses hidden capability, lease, heartbeat, and step-event endpoints.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-025.
+- Agent protocol changes: Docker agents advertise `distr.compose.deploy` version `1`, claim a task lease before the legacy resource-poll path, heartbeat before and during step execution, wrap the existing Compose or Swarm apply path, and mark task-created local deployment state with `source: "task"` so legacy cleanup skips it.
+- Documentation: Added PR-025 notes and ADR-0025.
+- Tests: Action registry schema/order tests, Docker capability tests, Compose action input/execution event tests, task lease heartbeat/execution tests, and cleanup compatibility tests were added. Focused `go test ./internal/actionregistry` and Docker-agent tests with dummy agent endpoint environment values passed locally.
+- Upstream contribution notes: Community-neutral Docker Compose action adapter; no adopter-specific terminology, no OCI/file/webhook behavior, and no new provider-specific core dependency beyond the existing Docker agent Compose dependencies.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, and legacy Docker resource-poll deployment behavior are unchanged when no task lease is claimed. No OCI job action, file render action, webhook action, Helm typed action, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-026 behavior is added in PR-025.

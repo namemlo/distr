@@ -69,6 +69,27 @@ func TestLeaseTaskSkipsMissingDisabledOrEmptyEndpoint(t *testing.T) {
 	}
 }
 
+func TestHeartbeatTaskLeaseFailsMissingDisabledOrEmptyEndpoint(t *testing.T) {
+	taskID := uuid.New()
+	client := testTaskLeaseClient("", "")
+	lease, err := client.HeartbeatTaskLease(context.Background(), taskID, "lease-token")
+	if err == nil || lease != nil {
+		t.Fatalf("expected missing endpoint to fail closed, lease=%v err=%v", lease, err)
+	}
+
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusNoContent} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+		}))
+		client = testTaskLeaseClient("", server.URL+"/api/v1/agents/agent/tasks/{taskId}/heartbeat")
+		lease, err = client.HeartbeatTaskLease(context.Background(), taskID, "lease-token")
+		server.Close()
+		if err == nil || lease != nil {
+			t.Fatalf("expected status %d to fail closed, lease=%v err=%v", status, lease, err)
+		}
+	}
+}
+
 func TestHeartbeatTaskLeasePostsTokenToTaskEndpoint(t *testing.T) {
 	taskID := uuid.New()
 	var received api.HeartbeatAgentTaskLeaseRequest

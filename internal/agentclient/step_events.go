@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -18,7 +19,7 @@ func (c *Client) RecordStepRunEvent(
 ) (*api.StepRunEvent, error) {
 	endpoint := stepEventEndpoint(c.stepEventEndpointTemplate, stepRunID)
 	if endpoint == "" {
-		return nil, nil
+		return nil, fmt.Errorf("step event endpoint is required for leased tasks")
 	}
 	if err := request.Validate(); err != nil {
 		return nil, err
@@ -33,12 +34,6 @@ func (c *Client) RecordStepRunEvent(
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.doAuthenticated(ctx, req, false)
-	if resp != nil {
-		switch resp.StatusCode {
-		case http.StatusForbidden, http.StatusNotFound, http.StatusNoContent:
-			return nil, nil
-		}
-	}
 	if err != nil {
 		return nil, err
 	}

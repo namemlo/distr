@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -87,6 +88,67 @@ func TestStepEventRepositoryRecordsEventLogsAndOutputs(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(logs).To(HaveLen(1))
 	g.Expect(logs[0].Body).To(Equal("password=[REDACTED]"))
+}
+
+func TestStepEventRepositoryRedactsResolvedComposeRegistrySecretFromEventsLogsAndOutputs(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	const secretValue = "super-secret-password"
+	fixture := createComposeRegistrySecretStepEventFixture(t, ctx, secretValue)
+
+	event, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       1,
+		Type:           types.StepRunEventTypeStarted,
+		Message:        "pull failed: " + secretValue,
+		Details: map[string]any{
+			"error": "registry returned " + secretValue,
+		},
+		Logs: []types.RecordStepRunLogChunkRequest{
+			{
+				Stream:   types.StepRunLogStreamStderr,
+				Severity: types.StepRunLogSeverityError,
+				Body:     "stderr contains " + secretValue,
+			},
+		},
+		Outputs: []types.RecordStepRunOutputRequest{
+			{
+				Name: "diagnostics",
+				Value: map[string]any{
+					"message": "output contains " + secretValue,
+				},
+			},
+		},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(event.Redacted).To(BeTrue())
+	g.Expect(event.Message).To(Equal("pull failed: [REDACTED]"))
+	g.Expect(event.Details["error"]).To(Equal("registry returned [REDACTED]"))
+	g.Expect(event.Logs).To(HaveLen(1))
+	g.Expect(event.Logs[0].Body).To(Equal("stderr contains [REDACTED]"))
+	g.Expect(event.Logs[0].Redacted).To(BeTrue())
+	g.Expect(event.Outputs).To(HaveLen(1))
+	g.Expect(string(event.Outputs[0].Value)).To(ContainSubstring("[REDACTED]"))
+	g.Expect(string(event.Outputs[0].Value)).NotTo(ContainSubstring(secretValue))
+	eventPayload, err := json.Marshal(event)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(eventPayload)).NotTo(ContainSubstring(secretValue))
+
+	timeline, err := db.GetTaskTimeline(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	timelinePayload, err := json.Marshal(timeline)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(timelinePayload)).NotTo(ContainSubstring(secretValue))
+
+	logs, err := db.GetTaskLogs(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	logsPayload, err := json.Marshal(logs)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(logsPayload)).NotTo(ContainSubstring(secretValue))
 }
 
 func TestStepEventRepositoryReplaysSameSequenceIdempotently(t *testing.T) {
@@ -272,7 +334,7 @@ func TestStepEventRepositoryOrdersTimelineAndLogsByLeaseAttempt(t *testing.T) {
 		StepRunID:      fixture.stepRunID,
 		LeaseToken:     nextLease.LeaseToken,
 		Sequence:       1,
-		Type:           types.StepRunEventTypeLog,
+		Type:           types.StepRunEventTypeStarted,
 		Message:        "attempt-2 restarted",
 		Logs: []types.RecordStepRunLogChunkRequest{
 			{Stream: types.StepRunLogStreamStdout, Severity: types.StepRunLogSeverityInfo, Body: "attempt-2 restarted"},
@@ -419,6 +481,46 @@ func TestStepEventRepositoryCompletesStepRunAndTaskOnSucceededEvent(t *testing.T
 	g.Expect(countActiveTaskLeasesForTest(t, ctx, fixture.taskID)).To(Equal(0))
 }
 
+func TestStepEventRepositoryFailsTaskAndStopsLeasingAfterStartedFailedEvents(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	fixture := createStepEventFixture(t, ctx)
+	_, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       1,
+		Type:           types.StepRunEventTypeStarted,
+		Message:        "started before validation",
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       2,
+		Type:           types.StepRunEventTypeFailed,
+		Message:        "validation failed",
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	task, err := db.GetTask(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(task.Status).To(Equal(types.TaskStatusFailed))
+	g.Expect(task.CompletedAt).NotTo(BeNil())
+	g.Expect(task.StepRuns[0].Status).To(Equal(types.StepRunStatusFailed))
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, fixture.taskID)).To(Equal(0))
+	nextLease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(nextLease).To(BeNil())
+}
+
 func TestStepEventMigrationDefinesEventLogAndOutputTables(t *testing.T) {
 	g := NewWithT(t)
 	upSQL := readStepEventMigrationForTest(t, "up")
@@ -458,6 +560,60 @@ func createStepEventFixture(t *testing.T, ctx context.Context) stepEventFixture 
 	t.Helper()
 	g := NewWithT(t)
 	deps := createReadyDeploymentPlanForTaskLease(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	return stepEventFixture{
+		orgID:      deps.orgID,
+		agentID:    tasks[0].DeploymentTargetID,
+		taskID:     tasks[0].ID,
+		stepRunID:  tasks[0].StepRuns[0].ID,
+		leaseID:    lease.ID,
+		leaseToken: lease.LeaseToken,
+	}
+}
+
+func createComposeRegistrySecretStepEventFixture(
+	t *testing.T,
+	ctx context.Context,
+	secretValue string,
+) stepEventFixture {
+	t.Helper()
+	g := NewWithT(t)
+	compose := taskLeaseComposeDeployStep("compose", "Compose deploy", 10)
+	compose.InputBindings = map[string]any{
+		"applicationVersion": map[string]any{
+			"composeFile": "services:\n  web:\n    image: registry.example.com/app:latest\n",
+			"registryAuth": map[string]any{
+				"registry.example.com": map[string]any{
+					"username":          "deploy-user",
+					"passwordSecretRef": "docker_password",
+				},
+			},
+		},
+		"projectName": "step-event-registry-secret",
+	}
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{compose})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES (@organizationId, @key, @value, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"key":            "docker_password",
+			"value":          secretValue,
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
 	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
 		OrganizationID:     deps.orgID,
 		DeploymentPlanID:   deps.plan.ID,

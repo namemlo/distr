@@ -178,6 +178,57 @@ func defaultActions() []types.ActionDefinition {
 				[]any{"completed", "elapsedSeconds"},
 			),
 		},
+		{
+			Type:        "distr.compose.deploy",
+			Name:        "Compose deploy",
+			Description: "Runs the Docker Compose deployment adapter through the typed action protocol.",
+			InputSchema: objectSchema(
+				map[string]any{
+					"applicationVersion": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"composeFile": map[string]any{"type": "string", "minLength": 1},
+							"registryAuth": map[string]any{
+								"type": "object",
+								"additionalProperties": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"username":          map[string]any{"type": "string"},
+										"passwordSecretRef": map[string]any{"type": "string", "minLength": 1},
+									},
+									"required":             []any{"username", "passwordSecretRef"},
+									"additionalProperties": false,
+								},
+							},
+						},
+						"required":             []any{"composeFile"},
+						"additionalProperties": false,
+					},
+					"projectName":     map[string]any{"type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+					"environmentFile": map[string]any{"type": "string"},
+					"pullPolicy": map[string]any{
+						"type": "string",
+						"enum": []any{"always", "missing", "if_not_present", "never"},
+					},
+					"waitForHealthy": map[string]any{"type": "boolean"},
+					"timeoutSeconds": map[string]any{"type": "integer", "minimum": 1},
+					"strategy": map[string]any{
+						"type": "string",
+						"enum": []any{"compose", "swarm"},
+					},
+				},
+				[]any{"applicationVersion", "projectName"},
+			),
+			OutputSchema: objectSchema(
+				map[string]any{
+					"projectName": map[string]any{"type": "string"},
+					"strategy":    map[string]any{"type": "string"},
+					"status":      map[string]any{"type": "string"},
+					"state":       map[string]any{"type": "string"},
+				},
+				[]any{"projectName", "strategy", "status"},
+			),
+		},
 	}
 }
 

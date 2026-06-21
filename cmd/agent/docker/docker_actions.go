@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/dotenv"
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/agentauth"
 	"github.com/distr-sh/distr/internal/agentenv"
@@ -21,16 +22,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var execCommandContext = exec.CommandContext
+
 func DockerEngineApply(
 	ctx context.Context,
 	deployment api.AgentDeployment,
 	updateStatus func(string),
 ) (agentDeployment *AgentDeployment, status string, err error) {
+	return DockerEngineApplyWithComposeOptions(ctx, deployment, composeDeployOptions{}, updateStatus)
+}
+
+func DockerEngineApplyWithComposeOptions(
+	ctx context.Context,
+	deployment api.AgentDeployment,
+	options composeDeployOptions,
+	updateStatus func(string),
+) (agentDeployment *AgentDeployment, status string, err error) {
+	secretValues := agentDeploymentSecretValues(deployment)
+	updateStatus = redactStatusUpdater(updateStatus, secretValues)
 	logger := logger.With(zap.Stringer("deploymentId", deployment.ID))
 	agentDeployment, err = NewAgentDeployment(deployment)
 	if err != nil {
-		return agentDeployment, status, err
+		return agentDeployment, status, redactErrorWithSecretValues(err, secretValues)
 	}
+	agentDeployment.Source = options.LocalDeploymentSource
 
 	agentDeployment.State = StateProgressing
 	if err = SaveDeployment(*agentDeployment); err != nil {
@@ -42,11 +57,13 @@ func DockerEngineApply(
 		status, err = ApplyComposeFileSwarm(ctx, deployment, updateStatus)
 	} else {
 		logger.Debug("applying compose file")
-		err = ApplyComposeFile(ctx, deployment, updateStatus)
+		err = ApplyComposeFileWithOptions(ctx, deployment, updateStatus, options)
 		if err == nil {
 			status = "compose command executed successfully"
 		}
 	}
+	status = redactStringWithSecretValues(status, secretValues)
+	err = redactErrorWithSecretValues(err, secretValues)
 
 	if err == nil {
 		agentDeployment.State = StateReady
@@ -62,6 +79,15 @@ func DockerEngineApply(
 }
 
 func ApplyComposeFile(ctx context.Context, deployment api.AgentDeployment, updateStatus func(string)) error {
+	return ApplyComposeFileWithOptions(ctx, deployment, updateStatus, composeDeployOptions{})
+}
+
+func ApplyComposeFileWithOptions(
+	ctx context.Context,
+	deployment api.AgentDeployment,
+	updateStatus func(string),
+	options composeDeployOptions,
+) error {
 	updateStatus("initializing compose service")
 
 	var composeFileName string
@@ -98,10 +124,23 @@ func ApplyComposeFile(ctx context.Context, deployment api.AgentDeployment, updat
 		return fmt.Errorf("failed to load compose project: %w", err)
 	}
 
-	err = composeService.Up(ctx, project, composeapi.UpOptions{
+	applyComposePullPolicy(project, options.PullPolicy)
+	upOptions := composeapi.UpOptions{
 		Create: composeapi.CreateOptions{RemoveOrphans: true},
-		Start:  composeapi.StartOptions{Project: project},
-	})
+		Start: composeapi.StartOptions{
+			Project: project,
+			Wait:    options.WaitForHealthy,
+		},
+	}
+	if options.Timeout > 0 {
+		timeout := options.Timeout
+		upOptions.Create.Timeout = &timeout
+		if options.WaitForHealthy {
+			upOptions.Start.WaitTimeout = timeout
+		}
+	}
+
+	err = composeService.Up(ctx, project, upOptions)
 	if err != nil {
 		return fmt.Errorf("compose up failed: %w", err)
 	}
@@ -109,22 +148,36 @@ func ApplyComposeFile(ctx context.Context, deployment api.AgentDeployment, updat
 	return nil
 }
 
+func applyComposePullPolicy(project *composetypes.Project, pullPolicy string) {
+	pullPolicy = strings.TrimSpace(pullPolicy)
+	if pullPolicy == "" {
+		return
+	}
+	for name, service := range project.Services {
+		service.PullPolicy = pullPolicy
+		project.Services[name] = service
+	}
+}
 func ApplyComposeFileSwarm(
 	ctx context.Context,
 	deployment api.AgentDeployment,
 	updateStatus func(string),
 ) (string, error) {
+	secretValues := agentDeploymentSecretValues(deployment)
+	updateStatus = redactStatusUpdater(updateStatus, secretValues)
 	// Step 1 Ensure Docker Swarm is initialized
-	initCmd := exec.CommandContext(ctx, "docker", "info", "--format", "{{.Swarm.LocalNodeState}}")
+	initCmd := execCommandContext(ctx, "docker", "info", "--format", "{{.Swarm.LocalNodeState}}")
 	initOutput, err := initCmd.CombinedOutput()
 	if err != nil {
-		logger.Error("Failed to check Docker Swarm state", zap.Error(err))
-		return "", fmt.Errorf("failed to check Docker Swarm state: %w", err)
+		redactedErr := redactErrorWithSecretValues(err, secretValues)
+		logger.Error("Failed to check Docker Swarm state", zap.Error(redactedErr))
+		return "", fmt.Errorf("failed to check Docker Swarm state: %w", redactedErr)
 	}
 
 	if !strings.Contains(strings.TrimSpace(string(initOutput)), "active") {
-		logger.Error("Docker Swarm not initialized", zap.String("output", string(initOutput)))
-		return "", fmt.Errorf("docker Swarm not initialized: %s", string(initOutput))
+		redactedOutput := redactStringWithSecretValues(string(initOutput), secretValues)
+		logger.Error("Docker Swarm not initialized", zap.String("output", redactedOutput))
+		return "", fmt.Errorf("docker Swarm not initialized: %s", redactedOutput)
 	}
 
 	projectName, err := getProjectName(deployment.ComposeFile)
@@ -162,13 +215,13 @@ func ApplyComposeFileSwarm(
 		"--detach=true",
 		projectName,
 	}
-	cmd := exec.CommandContext(ctx, "docker", composeArgs...)
+	cmd := execCommandContext(ctx, "docker", composeArgs...)
 	cmd.Stdin = bytes.NewReader(cleanedComposeFile)
 	cmd.Env = envVars // Ensure the same env variables are used
 
 	// Execute the command and capture output
 	cmdOut, err := cmd.CombinedOutput()
-	statusStr := string(cmdOut)
+	statusStr := redactStringWithSecretValues(string(cmdOut), secretValues)
 
 	if err != nil {
 		logger.Error("docker stack deploy failed", zap.String("output", statusStr))
