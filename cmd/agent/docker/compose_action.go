@@ -305,21 +305,28 @@ func startTaskLeaseHeartbeat(
 	client leasedTaskClient,
 	cancelApply context.CancelFunc,
 ) (<-chan error, context.CancelFunc) {
-	heartbeatCtx, stop := context.WithCancel(ctx)
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() { close(stopCh) })
+	}
 	errCh := make(chan error, 1)
 	interval := taskLeaseHeartbeatEvery
 	if interval <= 0 {
 		interval = time.Second
 	}
 	go func() {
+		defer close(errCh)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-heartbeatCtx.Done():
+			case <-ctx.Done():
+				return
+			case <-stopCh:
 				return
 			case <-ticker.C:
-				if _, err := client.HeartbeatTaskLease(heartbeatCtx, lease.TaskID, lease.LeaseToken); err != nil {
+				if _, err := client.HeartbeatTaskLease(ctx, lease.TaskID, lease.LeaseToken); err != nil {
 					errCh <- fmt.Errorf("heartbeat task lease: %w", err)
 					cancelApply()
 					return
@@ -331,12 +338,10 @@ func startTaskLeaseHeartbeat(
 }
 
 func taskLeaseHeartbeatError(errCh <-chan error) error {
-	select {
-	case err := <-errCh:
+	if err, ok := <-errCh; ok {
 		return err
-	default:
-		return nil
 	}
+	return nil
 }
 
 func recordUnsupportedStep(

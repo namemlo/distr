@@ -498,6 +498,45 @@ func TestExecuteComposeDeployStepCancelsApplyWhenHeartbeatFails(t *testing.T) {
 	g.Expect(recorder.events[1].Message).To(ContainSubstring("heartbeat rejected"))
 }
 
+func TestExecuteComposeDeployStepWaitsForRacingHeartbeatFailureBeforeSuccess(t *testing.T) {
+	g := NewWithT(t)
+	oldHeartbeatEvery := taskLeaseHeartbeatEvery
+	taskLeaseHeartbeatEvery = time.Millisecond
+	t.Cleanup(func() { taskLeaseHeartbeatEvery = oldHeartbeatEvery })
+
+	ctx := context.Background()
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		ActionType:    composeDeployActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        validComposeDeployInputs(),
+	}
+	recorder := &racingHeartbeatClient{
+		heartbeatStarted: make(chan struct{}),
+		releaseHeartbeat: make(chan struct{}),
+	}
+	apply := func(_ context.Context, deployment api.AgentDeployment, _ composeDeployOptions, _ func(string)) (*AgentDeployment, string, error) {
+		<-recorder.heartbeatStarted
+		close(recorder.releaseHeartbeat)
+		return &AgentDeployment{
+			ID:         deployment.ID,
+			RevisionID: deployment.RevisionID,
+			DockerType: *deployment.DockerType,
+			State:      StateReady,
+		}, "ready", nil
+	}
+
+	err := executeComposeDeployStep(ctx, lease, step, recorder, apply)
+
+	g.Expect(err).To(MatchError(ContainSubstring("heartbeat task lease")))
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeFailed,
+	}))
+	g.Expect(recorder.events[1].Message).To(ContainSubstring("heartbeat rejected"))
+}
+
 func validComposeDeployInputs() map[string]any {
 	return map[string]any{
 		"applicationVersion": map[string]any{
@@ -548,6 +587,23 @@ func (c *recordingLeasedTaskClient) HeartbeatTaskLease(_ context.Context, taskID
 		return nil, c.heartbeatErr
 	}
 	return &api.AgentTaskLease{TaskID: taskID, LeaseToken: leaseToken}, nil
+}
+
+type racingHeartbeatClient struct {
+	recordingStepEventClient
+	heartbeatStarted chan struct{}
+	releaseHeartbeat chan struct{}
+	startedClosed    bool
+}
+
+func (c *racingHeartbeatClient) HeartbeatTaskLease(_ context.Context, taskID uuid.UUID, leaseToken string) (*api.AgentTaskLease, error) {
+	if !c.startedClosed {
+		close(c.heartbeatStarted)
+		c.startedClosed = true
+	}
+	<-c.releaseHeartbeat
+	time.Sleep(25 * time.Millisecond)
+	return nil, errors.New("heartbeat rejected")
 }
 
 func eventTypes(events []api.AgentStepRunEventRequest) []types.StepRunEventType {
