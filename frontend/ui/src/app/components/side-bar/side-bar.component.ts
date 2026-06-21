@@ -24,6 +24,7 @@ import {
   faLayerGroup,
   faLifeRing,
   faLightbulb,
+  faListCheck,
   faPalette,
   faUsers,
 } from '@fortawesome/free-solid-svg-icons';
@@ -79,6 +80,7 @@ export class SideBarComponent {
   protected readonly faLightbulb = faLightbulb;
   protected readonly faKey = faKey;
   protected readonly faLayerGroup = faLayerGroup;
+  protected readonly faListCheck = faListCheck;
   protected readonly faGear = faGear;
   protected readonly faUsers = faUsers;
   protected readonly faPalette = faPalette;
@@ -133,6 +135,10 @@ export class SideBarComponent {
   protected readonly isDeploymentProcessesFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isDeploymentProcessesEnabled$, {initialValue: false})
+      : signal(false);
+  protected readonly isDeploymentPlansFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isDeploymentPlansEnabled$, {initialValue: false})
       : signal(false);
   protected readonly isScopedVariablesFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')

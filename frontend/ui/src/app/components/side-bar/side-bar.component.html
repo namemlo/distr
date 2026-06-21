@@ -138,6 +138,31 @@
           </li>
         }
 
+        @if (
+          auth.hasRole('admin') &&
+          isEnvironmentsFeatureEnabled() &&
+          isLifecyclesFeatureEnabled() &&
+          isChannelsFeatureEnabled() &&
+          isReleaseBundlesFeatureEnabled() &&
+          isDeploymentProcessesFeatureEnabled() &&
+          isScopedVariablesFeatureEnabled() &&
+          isDeploymentPlansFeatureEnabled()
+        ) {
+          <li>
+            <a
+              (click)="sidebar.hide()"
+              routerLinkActive="bg-gray-100 dark:bg-gray-700"
+              routerLink="/deployment-plans"
+              class="flex items-center p-2 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
+              <fa-icon
+                [icon]="faListCheck"
+                size="lg"
+                class="pl-0.5 w-6 h-6 text-gray-400 transition duration-75 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" />
+              <span class="ms-3">Deployment Plans</span>
+            </a>
+          </li>
+        }
+
         @if (auth.hasRole('admin') && isScopedVariablesFeatureEnabled()) {
           <li>
             <a

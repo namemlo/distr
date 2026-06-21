@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-018 are implemented locally. PR-018 adds a feature-flagged backend Deployment Plan foundation with resolved targets, snapshots, steps, variables, actions, and blocker/warning persistence without adding plan UI, export, task queue, execution, approvals, locks, notifications, runbooks, or agent behavior.
+PR-000 through PR-019 are implemented locally. PR-019 adds a feature-flagged Angular Deployment Plans administration UI with plan creation, detail preview, checksum display, and JSON/Markdown export without adding task queue, execution, approvals, locks, notifications, runbooks, or agent behavior.
 
 ## Tracking Template
 
@@ -313,3 +313,18 @@ Use one entry per pull request:
 - Tests: API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, and migration checks were added.
 - Upstream contribution notes: Community-neutral Deployment Plan foundation; no adopter-specific terminology, provider execution logic, or target mutation.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, deployment target, deployment, release-name, and agent behavior is unchanged. No Plan UI, JSON/Markdown export, task queue, execution, locks, approvals, retention, notifications, runbooks, rollout waves, or agent behavior is added in PR-018.
+
+### PR-019 - Deployment Plan UI and export
+
+- Status: Implemented locally; Angular route, sidebar gating, service, types, component UI, and focused Angular verification completed.
+- Upstream base: `12b2a398d480d641c49a2d5c218f772a02f04da2`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=deployment_plans,release_bundles,deployment_processes,scoped_variables_v2,channels,lifecycles,environments`.
+- User-facing behavior: Vendor admins can list Deployment Plans, create a plan from a published Release Bundle, Environment, and selected targets, inspect blockers, warnings, resolved targets, steps, variables, and copy-safe checksums, and export the plan as JSON or Markdown.
+- Database changes: None.
+- API changes: None. PR-019 consumes the PR-018 `GET /api/v1/deployment-plans`, `POST /api/v1/deployment-plans`, and `GET /api/v1/deployment-plans/{deploymentPlanId}` API.
+- UI changes: Added Deployment Plans route, sidebar feature gating, Angular service/types, list view, create modal, detail preview modal, checksum display, JSON export, Markdown export, loading, empty, validation, and API-error states.
+- Agent protocol changes: None.
+- Documentation: Added PR-019 notes and ADR-0019.
+- Tests: Angular service, feature-flag, and Deployment Plans component tests were added or updated.
+- Upstream contribution notes: Community-neutral plan preview UI; no adopter-specific terminology, provider execution logic, or Octopus assets.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, deployment target, deployment, release-name, backend planning behavior, and agent behavior is unchanged. No task queue, execution, locks, approvals, retention, notifications, runbooks, rollout waves, or agent behavior is added in PR-019.
