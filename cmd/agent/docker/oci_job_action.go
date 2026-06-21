@@ -386,7 +386,7 @@ func runOCIJob(
 				return result, err
 			}
 		} else {
-			return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes)
+			return finishExistingOCIJobContainer(ctx, containerName, inspected, input.ExpectedExitCodes)
 		}
 	}
 	if len(input.SecretEnvironment) > 0 {
@@ -460,9 +460,10 @@ func validateOCIJobContainerIdentity(inspected ociJobContainerInspect, identity 
 func finishExistingOCIJobContainer(
 	ctx context.Context,
 	containerName string,
-	state ociJobContainerState,
+	inspected ociJobContainerInspect,
 	expectedExitCodes []int,
 ) (ociJobResult, error) {
+	state := inspected.State
 	result := ociJobResult{ContainerName: containerName, ExitCode: state.ExitCode}
 	status := strings.ToLower(strings.TrimSpace(state.Status))
 	switch status {
@@ -498,8 +499,10 @@ func finishExistingOCIJobContainer(
 		return result, fmt.Errorf("existing OCI job container is in unsupported state %q", status)
 	}
 	if !ociJobExpectedExitCode(result.ExitCode, expectedExitCodes) {
+		cleanupOCIJobSecretMountSource(inspectedSecretEnvMountSource(inspected), containerName)
 		return result, fmt.Errorf("OCI job exited with code %d", result.ExitCode)
 	}
+	cleanupOCIJobSecretMountSource(inspectedSecretEnvMountSource(inspected), containerName)
 	result.Status = fmt.Sprintf("reused existing OCI job container with exit code %d", result.ExitCode)
 	return result, nil
 }
@@ -803,6 +806,22 @@ func cleanupOCIJobSecretStagingDir(ctx context.Context, containerName string) {
 
 func ociJobSecretStagingDirPrefix(containerName string) string {
 	return ociJobSecretEnvDirPrefix + containerName + "-"
+}
+
+func cleanupOCIJobSecretMountSource(source, containerName string) {
+	source = filepath.Clean(strings.TrimSpace(source))
+	if source == "." || filepath.Base(source) != "env" {
+		return
+	}
+	stagingDir, err := resolveOCIJobSecretStagingDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Clean(filepath.Dir(source))
+	if !sameOrChildPath(dir, stagingDir) || !strings.HasPrefix(filepath.Base(dir), ociJobSecretStagingDirPrefix(containerName)) {
+		return
+	}
+	_ = os.RemoveAll(dir)
 }
 
 func shellSingleQuote(value string) string {
