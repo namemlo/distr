@@ -42,27 +42,29 @@ func (t ReleaseBundleComponentType) IsValid() bool {
 }
 
 type ReleaseBundle struct {
-	ID                       uuid.UUID                `db:"id" json:"id"`
-	CreatedAt                time.Time                `db:"created_at" json:"createdAt"`
-	UpdatedAt                time.Time                `db:"updated_at" json:"updatedAt"`
-	OrganizationID           uuid.UUID                `db:"organization_id" json:"organizationId"`
-	ApplicationID            uuid.UUID                `db:"application_id" json:"applicationId"`
-	ChannelID                uuid.UUID                `db:"channel_id" json:"channelId"`
-	ReleaseNumber            string                   `db:"release_number" json:"releaseNumber"`
-	ReleaseNotes             string                   `db:"release_notes" json:"releaseNotes"`
-	SourceRevision           string                   `db:"source_revision" json:"sourceRevision"`
-	SourceRepository         string                   `db:"source_repository" json:"sourceRepository"`
-	SourceBranch             string                   `db:"source_branch" json:"sourceBranch"`
-	SourceTag                string                   `db:"source_tag" json:"sourceTag"`
-	CIProvider               string                   `db:"ci_provider" json:"ciProvider"`
-	CIRunID                  string                   `db:"ci_run_id" json:"ciRunId"`
-	CIRunURL                 string                   `db:"ci_run_url" json:"ciRunUrl"`
-	Status                   ReleaseBundleStatus      `db:"status" json:"status"`
-	PublishedByUserAccountID *uuid.UUID               `db:"published_by_user_account_id" json:"publishedByUserAccountId,omitempty"` //nolint:lll
-	PublishedAt              *time.Time               `db:"published_at" json:"publishedAt,omitempty"`
-	CanonicalChecksum        string                   `db:"canonical_checksum" json:"canonicalChecksum"`
-	CanonicalPayload         []byte                   `db:"canonical_payload" json:"-"`
-	Components               []ReleaseBundleComponent `db:"-" json:"components"`
+	ID                          uuid.UUID                `db:"id" json:"id"`
+	CreatedAt                   time.Time                `db:"created_at" json:"createdAt"`
+	UpdatedAt                   time.Time                `db:"updated_at" json:"updatedAt"`
+	OrganizationID              uuid.UUID                `db:"organization_id" json:"organizationId"`
+	ApplicationID               uuid.UUID                `db:"application_id" json:"applicationId"`
+	ChannelID                   uuid.UUID                `db:"channel_id" json:"channelId"`
+	ProcessSnapshotID           *uuid.UUID               `db:"process_snapshot_id" json:"processSnapshotId,omitempty"`
+	DeploymentProcessRevisionID *uuid.UUID               `db:"-" json:"deploymentProcessRevisionId,omitempty"`
+	ReleaseNumber               string                   `db:"release_number" json:"releaseNumber"`
+	ReleaseNotes                string                   `db:"release_notes" json:"releaseNotes"`
+	SourceRevision              string                   `db:"source_revision" json:"sourceRevision"`
+	SourceRepository            string                   `db:"source_repository" json:"sourceRepository"`
+	SourceBranch                string                   `db:"source_branch" json:"sourceBranch"`
+	SourceTag                   string                   `db:"source_tag" json:"sourceTag"`
+	CIProvider                  string                   `db:"ci_provider" json:"ciProvider"`
+	CIRunID                     string                   `db:"ci_run_id" json:"ciRunId"`
+	CIRunURL                    string                   `db:"ci_run_url" json:"ciRunUrl"`
+	Status                      ReleaseBundleStatus      `db:"status" json:"status"`
+	PublishedByUserAccountID    *uuid.UUID               `db:"published_by_user_account_id" json:"publishedByUserAccountId,omitempty"` //nolint:lll
+	PublishedAt                 *time.Time               `db:"published_at" json:"publishedAt,omitempty"`
+	CanonicalChecksum           string                   `db:"canonical_checksum" json:"canonicalChecksum"`
+	CanonicalPayload            []byte                   `db:"canonical_payload" json:"-"`
+	Components                  []ReleaseBundleComponent `db:"-" json:"components"`
 }
 
 type ReleaseBundleComponent struct {

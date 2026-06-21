@@ -3,6 +3,7 @@ import {inject, Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
 import {
   CreateUpdateReleaseBundleRequest,
+  ProcessSnapshot,
   ReleaseBundle,
   ReleaseBundleValidationResponse,
 } from '../types/release-bundle';
@@ -21,6 +22,10 @@ export class ReleaseBundlesService {
 
   get(id: string): Observable<ReleaseBundle> {
     return this.httpClient.get<ReleaseBundle>(`${baseUrl}/${id}`);
+  }
+
+  getProcessSnapshot(id: string): Observable<ProcessSnapshot> {
+    return this.httpClient.get<ProcessSnapshot>(`${baseUrl}/${id}/process-snapshot`);
   }
 
   create(request: CreateUpdateReleaseBundleRequest): Observable<ReleaseBundle> {

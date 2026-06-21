@@ -14,13 +14,15 @@ func TestCreateUpdateReleaseBundleRequestValidateTrimsFields(t *testing.T) {
 	applicationID := uuid.New()
 	channelID := uuid.New()
 	versionID := uuid.New()
+	revisionID := uuid.New()
 
 	request := CreateUpdateReleaseBundleRequest{
-		ApplicationID:  applicationID,
-		ChannelID:      channelID,
-		ReleaseNumber:  " 1.2.3 ",
-		ReleaseNotes:   " release notes ",
-		SourceRevision: " abc123 ",
+		ApplicationID:               applicationID,
+		ChannelID:                   channelID,
+		DeploymentProcessRevisionID: &revisionID,
+		ReleaseNumber:               " 1.2.3 ",
+		ReleaseNotes:                " release notes ",
+		SourceRevision:              " abc123 ",
 		Components: []ReleaseBundleComponentRequest{
 			{
 				Key:                  " api ",
@@ -36,6 +38,7 @@ func TestCreateUpdateReleaseBundleRequestValidateTrimsFields(t *testing.T) {
 
 	g.Expect(request.ReleaseNumber).To(Equal("1.2.3"))
 	g.Expect(request.SourceRevision).To(Equal("abc123"))
+	g.Expect(request.DeploymentProcessRevisionID).To(Equal(&revisionID))
 	g.Expect(request.Components[0].Key).To(Equal("api"))
 	g.Expect(request.Components[0].Name).To(Equal("API"))
 	g.Expect(request.Components[0].Version).To(Equal("1.2.3"))
@@ -238,6 +241,16 @@ func TestCreateUpdateReleaseBundleRequestValidateRejectsInvalidPayloads(t *testi
 				ChannelID:      channelID,
 				ReleaseNumber:  "1.2.3",
 				SourceRevision: "abc123",
+			},
+		},
+		{
+			name: "empty deployment process revision id",
+			request: CreateUpdateReleaseBundleRequest{
+				ApplicationID:               applicationID,
+				ChannelID:                   channelID,
+				DeploymentProcessRevisionID: &uuid.Nil,
+				ReleaseNumber:               "1.2.3",
+				Components:                  []ReleaseBundleComponentRequest{validComponent},
 			},
 		},
 		{

@@ -11,13 +11,14 @@ import (
 )
 
 type CreateUpdateReleaseBundleRequest struct {
-	ApplicationID  uuid.UUID                       `json:"applicationId"`
-	ChannelID      uuid.UUID                       `json:"channelId"`
-	ReleaseNumber  string                          `json:"releaseNumber"`
-	ReleaseNotes   string                          `json:"releaseNotes"`
-	SourceRevision string                          `json:"sourceRevision"`
-	SourceMetadata *ReleaseBundleSourceMetadata    `json:"sourceMetadata,omitempty"`
-	Components     []ReleaseBundleComponentRequest `json:"components"`
+	ApplicationID               uuid.UUID                       `json:"applicationId"`
+	ChannelID                   uuid.UUID                       `json:"channelId"`
+	DeploymentProcessRevisionID *uuid.UUID                      `json:"deploymentProcessRevisionId,omitempty"`
+	ReleaseNumber               string                          `json:"releaseNumber"`
+	ReleaseNotes                string                          `json:"releaseNotes"`
+	SourceRevision              string                          `json:"sourceRevision"`
+	SourceMetadata              *ReleaseBundleSourceMetadata    `json:"sourceMetadata,omitempty"`
+	Components                  []ReleaseBundleComponentRequest `json:"components"`
 }
 
 func (r *CreateUpdateReleaseBundleRequest) Validate() error {
@@ -39,6 +40,9 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 	}
 	if r.ChannelID == uuid.Nil {
 		return validation.NewValidationFailedError("channelId is required")
+	}
+	if r.DeploymentProcessRevisionID != nil && *r.DeploymentProcessRevisionID == uuid.Nil {
+		return validation.NewValidationFailedError("deploymentProcessRevisionId must not be empty")
 	}
 	if len(r.Components) == 0 {
 		return validation.NewValidationFailedError("at least one component is required")
@@ -218,6 +222,7 @@ type ReleaseBundle struct {
 	UpdatedAt                time.Time                    `json:"updatedAt"`
 	ApplicationID            uuid.UUID                    `json:"applicationId"`
 	ChannelID                uuid.UUID                    `json:"channelId"`
+	ProcessSnapshotID        *uuid.UUID                   `json:"processSnapshotId,omitempty"`
 	ReleaseNumber            string                       `json:"releaseNumber"`
 	ReleaseNotes             string                       `json:"releaseNotes"`
 	SourceRevision           string                       `json:"sourceRevision"`
@@ -227,6 +232,17 @@ type ReleaseBundle struct {
 	PublishedAt              *time.Time                   `json:"publishedAt,omitempty"`
 	CanonicalChecksum        string                       `json:"canonicalChecksum"`
 	Components               []ReleaseBundleComponent     `json:"components"`
+}
+
+type ProcessSnapshot struct {
+	ID                          uuid.UUID                 `json:"id"`
+	CreatedAt                   time.Time                 `json:"createdAt"`
+	ApplicationID               uuid.UUID                 `json:"applicationId"`
+	DeploymentProcessID         uuid.UUID                 `json:"deploymentProcessId"`
+	DeploymentProcessRevisionID uuid.UUID                 `json:"deploymentProcessRevisionId"`
+	RevisionNumber              int                       `json:"revisionNumber"`
+	CanonicalChecksum           string                    `json:"canonicalChecksum"`
+	Revision                    DeploymentProcessRevision `json:"revision"`
 }
 
 type ReleaseBundleComponent struct {
