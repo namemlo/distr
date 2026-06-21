@@ -96,9 +96,7 @@ func TestOCIJobActionInputRejectsPolicyUnsafeSettings(t *testing.T) {
 				linkSource := filepath.Join(allowedRoot, "link")
 				g := NewWithT(t)
 				g.Expect(os.Mkdir(outsideSource, 0o700)).To(Succeed())
-				if err := os.Symlink(outsideSource, linkSource); err != nil {
-					t.Skipf("symlink creation unavailable: %v", err)
-				}
+				createOCIJobTestSymlink(t, outsideSource, linkSource)
 				t.Setenv(ociJobAllowedMountRootsEnv, allowedRoot)
 				inputs["volumes"] = []any{
 					map[string]any{"source": linkSource, "target": "/input", "readOnly": true},
@@ -195,6 +193,84 @@ func TestExecuteOCIJobStepUsesDigestAndDockerHardeningWithoutSecretInArgs(t *tes
 		Name:  "status",
 		Value: "job completed",
 	}))
+}
+
+func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, allowedRoot string) (mountSource string, canonicalSource string)
+	}{
+		{
+			name: "cleaned path",
+			setup: func(t *testing.T, allowedRoot string) (string, string) {
+				t.Helper()
+				g := NewWithT(t)
+				actualSource := filepath.Join(allowedRoot, "actual")
+				g.Expect(os.Mkdir(actualSource, 0o700)).To(Succeed())
+				mountSource := actualSource + string(filepath.Separator) + "."
+				canonicalSource, err := filepath.EvalSymlinks(mountSource)
+				g.Expect(err).ToNot(HaveOccurred())
+				return mountSource, canonicalSource
+			},
+		},
+		{
+			name: "symlink path",
+			setup: func(t *testing.T, allowedRoot string) (string, string) {
+				t.Helper()
+				g := NewWithT(t)
+				actualSource := filepath.Join(allowedRoot, "actual")
+				linkSource := filepath.Join(allowedRoot, "link")
+				g.Expect(os.Mkdir(actualSource, 0o700)).To(Succeed())
+				createOCIJobTestSymlink(t, actualSource, linkSource)
+				canonicalSource, err := filepath.EvalSymlinks(linkSource)
+				g.Expect(err).ToNot(HaveOccurred())
+				return linkSource, canonicalSource
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			setOCIJobPolicyEnv(t)
+			ctx := context.Background()
+			argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+			allowedRoot := t.TempDir()
+			mountSource, canonicalSource := tt.setup(t, allowedRoot)
+			if mountSource == canonicalSource {
+				t.Skip("mount source is already canonical on this platform")
+			}
+			t.Setenv(ociJobAllowedMountRootsEnv, allowedRoot)
+			t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+			t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+			t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+			t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "job completed")
+			oldExecCommandContext := execCommandContext
+			execCommandContext = fakeDockerCommandContext
+			t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+			inputs := validOCIJobInputs()
+			inputs["volumes"] = []any{
+				map[string]any{"source": mountSource, "target": "/input", "readOnly": true},
+			}
+			lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+			step := api.AgentTaskLeaseStep{
+				StepRunID:      uuid.New(),
+				Key:            "cleanup",
+				ActionType:     ociJobActionType,
+				ActionVersion:  types.AgentActionVersionV1,
+				Inputs:         inputs,
+				IdempotencyKey: "sha256:job-key",
+			}
+			recorder := &recordingLeasedTaskClient{}
+
+			err := executeOCIJobStep(ctx, lease, step, recorder)
+
+			g.Expect(err).ToNot(HaveOccurred())
+			run := findFakeDockerCommand(readFakeDockerCommands(t, argsFile), "run")
+			g.Expect(run).NotTo(BeNil())
+			g.Expect(run).To(ContainElement(canonicalSource + ":/input:ro"))
+			g.Expect(run).NotTo(ContainElement(mountSource + ":/input:ro"))
+		})
+	}
 }
 
 func TestExecuteOCIJobStepRedactsSecretFromFailureEventsAndReturnedError(t *testing.T) {
@@ -743,6 +819,13 @@ func findFakeDockerCommand(commands [][]string, name string) []string {
 		}
 	}
 	return nil
+}
+
+func createOCIJobTestSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
 }
 
 func fakeOCIJobInspectJSON(

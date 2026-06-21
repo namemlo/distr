@@ -103,7 +103,7 @@ DISTR_OCI_JOB_ALLOWED_NETWORKS=none,job-network
 DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS=/var/lib/distr/jobs
 ```
 
-When `DISTR_OCI_JOB_ALLOWED_NETWORKS` is unset, only `none` is allowed. Host mounts require absolute source paths that resolve through symlinks under one of `DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS`.
+When `DISTR_OCI_JOB_ALLOWED_NETWORKS` is unset, only `none` is allowed. Host mounts require absolute source paths that resolve through symlinks under one of `DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS`; Docker receives the resolved canonical source path, not the original input path.
 
 ## Agent behavior
 
@@ -129,7 +129,7 @@ For `distr.oci.job`, the agent:
 - emits `PROGRESS` before inspecting or starting the container
 - rejects unsupported action versions, mutable image tags, non-allowlisted registries, non-allowlisted networks, writable or non-allowlisted host mounts, privileged mode, disabled no-new-privileges, and disabled read-only root filesystem
 - writes declared environment variables to a temporary env file instead of putting secret values in Docker command-line arguments
-- runs `docker run` with a deterministic container name, `--read-only`, `--security-opt no-new-privileges`, `--cap-drop ALL`, the selected allowlisted network, optional read-only allowlisted volumes, optional user, and optional CPU/memory limits
+- runs `docker run` with a deterministic container name, `--read-only`, `--security-opt no-new-privileges`, `--cap-drop ALL`, the selected allowlisted network, optional canonical read-only allowlisted volumes, optional user, and optional CPU/memory limits
 - reuses exited deterministic containers, waits running deterministic containers, starts created deterministic containers, and rejects unsupported existing-container states on retry, lease reclaim, or agent restart
 - stops the container on timeout or cancellation
 - emits `SUCCEEDED` with non-sensitive `containerName`, `exitCode`, and `status` outputs when the exit code is expected

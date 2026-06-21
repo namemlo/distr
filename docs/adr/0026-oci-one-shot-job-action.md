@@ -55,7 +55,7 @@ The Docker adapter enforces these policies:
 - `imageDigest` must be an immutable `@sha256` image reference with an explicit registry allowlisted by the Docker agent.
 - Mutable tags are rejected.
 - The default network is `none`; any selected network must be present in the Docker agent's trusted network allowlist.
-- Volumes must be read-only, absolute host paths, and under a symlink-resolved trusted host source root.
+- Volumes must be read-only, absolute host paths, and under a symlink-resolved trusted host source root. The resolved canonical source path is stored in the decoded action input and passed to Docker.
 - Privileged containers are rejected.
 - The root filesystem is read-only and cannot be disabled by the adapter.
 - `--security-opt no-new-privileges` is always used.

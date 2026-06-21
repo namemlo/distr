@@ -111,7 +111,7 @@ func decodeOCIJobActionInput(inputs map[string]any) (ociJobActionInput, error) {
 		return input, fmt.Errorf("decode OCI job inputs: %w", err)
 	}
 	normalizeOCIJobActionInput(&input)
-	if err := validateOCIJobActionInput(input, ociJobPolicyFromEnv()); err != nil {
+	if err := validateOCIJobActionInput(&input, ociJobPolicyFromEnv()); err != nil {
 		return input, err
 	}
 	return input, nil
@@ -134,7 +134,7 @@ func normalizeOCIJobActionInput(input *ociJobActionInput) {
 	}
 }
 
-func validateOCIJobActionInput(input ociJobActionInput, policy ociJobPolicy) error {
+func validateOCIJobActionInput(input *ociJobActionInput, policy ociJobPolicy) error {
 	policy = normalizeOCIJobPolicy(policy)
 	registry, err := ociJobRegistryFromDigest(input.ImageDigest)
 	if err != nil {
@@ -163,17 +163,18 @@ func validateOCIJobActionInput(input ociJobActionInput, policy ociJobPolicy) err
 			return fmt.Errorf("environment variable %q contains unsupported characters", name)
 		}
 	}
-	for _, volume := range input.Volumes {
+	for index, volume := range input.Volumes {
 		if !volume.ReadOnly {
 			return fmt.Errorf("volumes must be read-only")
 		}
-		ok, err := ociJobMountUnderAllowedRoot(volume.Source, policy.AllowedMountRoots)
+		canonicalSource, ok, err := ociJobCanonicalMountSourceUnderAllowedRoot(volume.Source, policy.AllowedMountRoots)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return fmt.Errorf("volume source is not under an allowlisted mount root")
 		}
+		input.Volumes[index].Source = canonicalSource
 	}
 	if input.Security.Privileged {
 		return fmt.Errorf("privileged mode is not supported")
@@ -763,24 +764,24 @@ func ociJobExpectedExitCode(code int, expected []int) bool {
 	return false
 }
 
-func ociJobMountUnderAllowedRoot(source string, roots []string) (bool, error) {
+func ociJobCanonicalMountSourceUnderAllowedRoot(source string, roots []string) (string, bool, error) {
 	if len(roots) == 0 {
-		return false, nil
+		return "", false, nil
 	}
 	resolvedSource, err := resolveOCIJobMountPath(source, "volume source")
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	for _, root := range roots {
 		resolvedRoot, err := resolveOCIJobMountPath(root, "allowed mount root")
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
 		if sameOrChildPath(resolvedSource, resolvedRoot) {
-			return true, nil
+			return resolvedSource, true, nil
 		}
 	}
-	return false, nil
+	return "", false, nil
 }
 
 func resolveOCIJobMountPath(value, field string) (string, error) {
