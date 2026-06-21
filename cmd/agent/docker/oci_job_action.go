@@ -30,6 +30,7 @@ const (
 	ociJobAllowedMountRootsEnv = "DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS"
 	ociJobSecretStagingDirEnv  = "DISTR_OCI_JOB_SECRET_STAGING_DIR"
 	ociJobSecretEnvMountPath   = "/run/distr/secret-env"
+	ociJobSecretEnvDirPrefix   = "distr-oci-job-secret-env-"
 	ociJobMaxStatusBytes       = types.MaxStepRunLogChunkBodyLength
 )
 
@@ -374,7 +375,6 @@ func runOCIJob(
 	if updateStatus != nil {
 		updateStatus("starting OCI job container")
 	}
-	cleanupOCIJobSecretStagingDir()
 	if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
 		return result, err
 	} else if exists {
@@ -389,12 +389,15 @@ func runOCIJob(
 			return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes)
 		}
 	}
+	if len(input.SecretEnvironment) > 0 {
+		cleanupOCIJobSecretStagingDir(ctx, containerName)
+	}
 	envFile, cleanupEnv, err := writeOCIJobEnvFile(input.Environment)
 	if err != nil {
 		return result, err
 	}
 	defer cleanupEnv()
-	secretEnvFile, cleanupSecretEnv, err := writeOCIJobSecretEnvFile(input.SecretEnvironment)
+	secretEnvFile, cleanupSecretEnv, err := writeOCIJobSecretEnvFile(containerName, input.SecretEnvironment)
 	if err != nil {
 		return result, err
 	}
@@ -716,7 +719,7 @@ func writeOCIJobEnvFile(environment map[string]string) (string, func(), error) {
 	return file.Name(), cleanup, nil
 }
 
-func writeOCIJobSecretEnvFile(secretEnvironment map[string]string) (string, func(), error) {
+func writeOCIJobSecretEnvFile(containerName string, secretEnvironment map[string]string) (string, func(), error) {
 	if len(secretEnvironment) == 0 {
 		return "", func() {}, nil
 	}
@@ -724,7 +727,7 @@ func writeOCIJobSecretEnvFile(secretEnvironment map[string]string) (string, func
 	if err != nil {
 		return "", nil, err
 	}
-	dir, err := os.MkdirTemp(stagingDir, "distr-oci-job-secret-env-*")
+	dir, err := os.MkdirTemp(stagingDir, ociJobSecretStagingDirPrefix(containerName)+"*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create OCI job secret env dir: %w", err)
 	}
@@ -768,21 +771,38 @@ func resolveOCIJobSecretStagingDir() (string, error) {
 	return resolveOCIJobMountPath(stagingDir, ociJobSecretStagingDirEnv)
 }
 
-func cleanupOCIJobSecretStagingDir() {
+func cleanupOCIJobSecretStagingDir(ctx context.Context, containerName string) {
 	stagingDir, err := resolveOCIJobSecretStagingDir()
 	if err != nil {
+		return
+	}
+	protected := map[string]struct{}{}
+	if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err == nil && exists {
+		if source := inspectedSecretEnvMountSource(inspected); source != "" {
+			protected[filepath.Clean(source)] = struct{}{}
+		}
+	} else if err != nil {
 		return
 	}
 	entries, err := os.ReadDir(stagingDir)
 	if err != nil {
 		return
 	}
+	prefix := ociJobSecretStagingDirPrefix(containerName)
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "distr-oci-job-secret-env-") {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
 			continue
 		}
-		_ = os.RemoveAll(filepath.Join(stagingDir, entry.Name()))
+		dir := filepath.Join(stagingDir, entry.Name())
+		if _, ok := protected[filepath.Clean(filepath.Join(dir, "env"))]; ok {
+			continue
+		}
+		_ = os.RemoveAll(dir)
 	}
+}
+
+func ociJobSecretStagingDirPrefix(containerName string) string {
+	return ociJobSecretEnvDirPrefix + containerName + "-"
 }
 
 func shellSingleQuote(value string) string {

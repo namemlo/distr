@@ -724,6 +724,17 @@ func TestDockerCommandHelper(t *testing.T) {
 			}
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
+		if os.Getenv("FAKE_DOCKER_VERIFY_SECRET_FILE_AFTER_SLEEP") == "1" {
+			source := fakeDockerSecretEnvSourceFromRun(dockerArgs)
+			if source == "" {
+				fmt.Fprint(os.Stderr, "secret env file volume was not mounted")
+				os.Exit(2)
+			}
+			if _, err := os.Stat(source); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
 		fmt.Fprint(os.Stdout, os.Getenv("FAKE_DOCKER_RUN_OUTPUT"))
 		if rawCode := os.Getenv("FAKE_DOCKER_RUN_EXIT_CODE"); rawCode != "" {
 			code, err := strconv.Atoi(rawCode)
