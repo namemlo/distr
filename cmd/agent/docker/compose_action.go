@@ -185,26 +185,31 @@ func executeComposeDeployStep(
 	client leasedTaskClient,
 	apply composeDeployApplyFunc,
 ) error {
+	sequence := int64(1)
+	if err := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeStarted, "starting Compose deployment", nil, nil); err != nil {
+		return err
+	}
+	recordFailure := func(err error) error {
+		sequence++
+		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, err.Error(), nil, nil); recordErr != nil {
+			return recordErr
+		}
+		return err
+	}
 	if step.ActionType != composeDeployActionType {
-		return fmt.Errorf("unsupported actionType %q", step.ActionType)
+		return recordFailure(fmt.Errorf("unsupported actionType %q", step.ActionType))
 	}
 	if step.ActionVersion != types.AgentActionVersionV1 {
-		return fmt.Errorf("unsupported actionVersion %q", step.ActionVersion)
+		return recordFailure(fmt.Errorf("unsupported actionVersion %q", step.ActionVersion))
 	}
 
 	input, err := decodeComposeDeployActionInput(step.Inputs)
 	if err != nil {
-		_ = recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, 1, types.StepRunEventTypeFailed, err.Error(), nil, nil)
-		return err
+		return recordFailure(err)
 	}
 	deployment, err := agentDeploymentFromComposeAction(step.StepRunID, input)
 	if err != nil {
-		_ = recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, 1, types.StepRunEventTypeFailed, err.Error(), nil, nil)
-		return err
-	}
-	sequence := int64(1)
-	if err := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeStarted, "starting Compose deployment", nil, nil); err != nil {
-		return err
+		return recordFailure(err)
 	}
 
 	options := composeOptionsFromAction(input)
@@ -322,7 +327,10 @@ func recordUnsupportedStep(
 	client stepEventClient,
 ) error {
 	message := fmt.Sprintf("unsupported actionType %q", step.ActionType)
-	return recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, 1, types.StepRunEventTypeFailed, message, nil, nil)
+	if err := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, 1, types.StepRunEventTypeStarted, "starting task lease step", nil, nil); err != nil {
+		return err
+	}
+	return recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, 2, types.StepRunEventTypeFailed, message, nil, nil)
 }
 
 func recordStepEvent(

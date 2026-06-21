@@ -139,6 +139,97 @@ func TestExecuteTaskLeaseHeartbeatsAndRunsComposeStep(t *testing.T) {
 	}))
 }
 
+func TestExecuteTaskLeaseStartsBeforeUnsupportedActionFailure(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	lease := api.AgentTaskLease{
+		TaskID:     uuid.New(),
+		LeaseToken: "lease-token",
+		Steps: []api.AgentTaskLeaseStep{
+			{
+				StepRunID:     uuid.New(),
+				ActionType:    "distr.unknown.action",
+				ActionVersion: types.AgentActionVersionV1,
+			},
+		},
+	}
+	recorder := &recordingLeasedTaskClient{}
+	apply := func(_ context.Context, _ api.AgentDeployment, _ composeDeployOptions, _ func(string)) (*AgentDeployment, string, error) {
+		t.Fatal("apply should not run for unsupported actions")
+		return nil, "", nil
+	}
+
+	err := executeTaskLease(ctx, lease, recorder, apply)
+
+	g.Expect(err).To(MatchError(ContainSubstring("unsupported actionType")))
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeFailed,
+	}))
+	g.Expect(recorder.events[0].Sequence).To(Equal(int64(1)))
+	g.Expect(recorder.events[1].Sequence).To(Equal(int64(2)))
+}
+
+func TestExecuteComposeDeployStepStartsBeforeInvalidInputFailure(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	inputs := validComposeDeployInputs()
+	inputs["applicationVersion"] = map[string]any{}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		ActionType:    composeDeployActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        inputs,
+	}
+	recorder := &recordingLeasedTaskClient{}
+	apply := func(_ context.Context, _ api.AgentDeployment, _ composeDeployOptions, _ func(string)) (*AgentDeployment, string, error) {
+		t.Fatal("apply should not run for invalid inputs")
+		return nil, "", nil
+	}
+
+	err := executeComposeDeployStep(ctx, lease, step, recorder, apply)
+
+	g.Expect(err).To(MatchError(ContainSubstring("applicationVersion.composeFile is required")))
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeFailed,
+	}))
+	g.Expect(recorder.events[0].Sequence).To(Equal(int64(1)))
+	g.Expect(recorder.events[1].Sequence).To(Equal(int64(2)))
+}
+
+func TestExecuteComposeDeployStepStartsBeforeSetupFailure(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	inputs := validComposeDeployInputs()
+	inputs["applicationVersion"] = map[string]any{
+		"composeFile": "services:\n  web:\n    image: [",
+	}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		ActionType:    composeDeployActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        inputs,
+	}
+	recorder := &recordingLeasedTaskClient{}
+	apply := func(_ context.Context, _ api.AgentDeployment, _ composeDeployOptions, _ func(string)) (*AgentDeployment, string, error) {
+		t.Fatal("apply should not run when setup fails")
+		return nil, "", nil
+	}
+
+	err := executeComposeDeployStep(ctx, lease, step, recorder, apply)
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeFailed,
+	}))
+	g.Expect(recorder.events[0].Sequence).To(Equal(int64(1)))
+	g.Expect(recorder.events[1].Sequence).To(Equal(int64(2)))
+}
+
 func TestExecuteComposeDeployStepEmitsFailureEventWhenApplyFails(t *testing.T) {
 	g := NewWithT(t)
 	ctx := context.Background()

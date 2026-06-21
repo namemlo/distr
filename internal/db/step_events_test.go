@@ -419,6 +419,46 @@ func TestStepEventRepositoryCompletesStepRunAndTaskOnSucceededEvent(t *testing.T
 	g.Expect(countActiveTaskLeasesForTest(t, ctx, fixture.taskID)).To(Equal(0))
 }
 
+func TestStepEventRepositoryFailsTaskAndStopsLeasingAfterStartedFailedEvents(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	fixture := createStepEventFixture(t, ctx)
+	_, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       1,
+		Type:           types.StepRunEventTypeStarted,
+		Message:        "started before validation",
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       2,
+		Type:           types.StepRunEventTypeFailed,
+		Message:        "validation failed",
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	task, err := db.GetTask(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(task.Status).To(Equal(types.TaskStatusFailed))
+	g.Expect(task.CompletedAt).NotTo(BeNil())
+	g.Expect(task.StepRuns[0].Status).To(Equal(types.StepRunStatusFailed))
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, fixture.taskID)).To(Equal(0))
+	nextLease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(nextLease).To(BeNil())
+}
+
 func TestStepEventMigrationDefinesEventLogAndOutputTables(t *testing.T) {
 	g := NewWithT(t)
 	upSQL := readStepEventMigrationForTest(t, "up")
