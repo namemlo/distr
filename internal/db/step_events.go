@@ -57,20 +57,27 @@ func RecordAgentStepRunEvent(
 	ctx context.Context,
 	request types.RecordAgentStepRunEventRequest,
 ) (*types.StepRunEvent, error) {
-	prepared, err := prepareStepRunEventRequest(request)
-	if err != nil {
+	if err := validateRecordAgentStepRunEventRequest(&request); err != nil {
 		return nil, err
 	}
 	var event *types.StepRunEvent
-	err = RunTx(ctx, func(ctx context.Context) error {
-		target, err := getStepRunEventTargetForUpdate(ctx, prepared.OrganizationID, prepared.StepRunID)
+	err := RunTx(ctx, func(ctx context.Context) error {
+		target, err := getStepRunEventTargetForUpdate(ctx, request.OrganizationID, request.StepRunID)
 		if err != nil {
 			return err
 		}
-		if target.AgentID != prepared.AgentID {
+		if target.AgentID != request.AgentID {
 			return apierrors.ErrNotFound
 		}
-		lease, err := getTaskLeaseForStepRunEvent(ctx, prepared, target.TaskID)
+		lease, err := getTaskLeaseForStepRunEvent(ctx, request, target.TaskID)
+		if err != nil {
+			return err
+		}
+		secretValues, err := getStepRunSecretValuesForRedaction(ctx, request.OrganizationID, request.StepRunID)
+		if err != nil {
+			return err
+		}
+		prepared, err := prepareStepRunEventRequest(request, secretValues)
 		if err != nil {
 			return err
 		}
@@ -216,14 +223,15 @@ func GetTaskLogs(ctx context.Context, taskID, orgID uuid.UUID) ([]types.StepRunL
 
 func prepareStepRunEventRequest(
 	request types.RecordAgentStepRunEventRequest,
+	secretValues []string,
 ) (preparedStepRunEventRequest, error) {
 	if err := validateRecordAgentStepRunEventRequest(&request); err != nil {
 		return preparedStepRunEventRequest{}, err
 	}
-	message, messageRedacted := stepredaction.RedactString(request.Message)
+	message, messageRedacted := stepredaction.RedactStringWithValues(request.Message, secretValues)
 	details := map[string]any{}
 	if request.Details != nil {
-		redactedDetails, changed := stepredaction.RedactValue(request.Details)
+		redactedDetails, changed := stepredaction.RedactValueWithValues(request.Details, secretValues)
 		messageRedacted = messageRedacted || changed
 		if typed, ok := redactedDetails.(map[string]any); ok {
 			details = typed
@@ -246,7 +254,7 @@ func prepareStepRunEventRequest(
 	prepared.Message = message
 	prepared.Details = details
 	for _, log := range request.Logs {
-		body, redacted := stepredaction.RedactString(log.Body)
+		body, redacted := stepredaction.RedactStringWithValues(log.Body, secretValues)
 		log.Body = body
 		prepared.Redacted = prepared.Redacted || redacted
 		prepared.Logs = append(prepared.Logs, preparedStepRunLogChunk{
@@ -263,7 +271,7 @@ func prepareStepRunEventRequest(
 			preparedOutput.Redacted = true
 			prepared.Redacted = true
 		} else {
-			value, redacted := stepredaction.RedactValue(output.Value)
+			value, redacted := stepredaction.RedactValueWithValues(output.Value, secretValues)
 			preparedOutput.Value = value
 			preparedOutput.Redacted = redacted
 			prepared.Redacted = prepared.Redacted || redacted
@@ -442,9 +450,83 @@ func getStepRunEventTargetForUpdate(ctx context.Context, orgID, stepRunID uuid.U
 	return target, nil
 }
 
+func getStepRunSecretValuesForRedaction(ctx context.Context, orgID, stepRunID uuid.UUID) ([]string, error) {
+	db := internalctx.GetDb(ctx)
+	var deploymentPlanTargetID uuid.UUID
+	var actionType string
+	var inputBindings map[string]any
+	err := db.QueryRow(ctx,
+		`SELECT
+			t.deployment_plan_target_id,
+			dps.action_type,
+			dps.input_bindings
+		FROM StepRun sr
+		JOIN Task t
+			ON t.id = sr.task_id
+			AND t.organization_id = sr.organization_id
+		JOIN DeploymentPlanStep dps
+			ON dps.id = sr.deployment_plan_step_id
+			AND dps.deployment_plan_id = sr.deployment_plan_id
+			AND dps.organization_id = sr.organization_id
+		WHERE sr.id = @stepRunId
+			AND sr.organization_id = @organizationId`,
+		pgx.NamedArgs{"stepRunId": stepRunID, "organizationId": orgID},
+	).Scan(&deploymentPlanTargetID, &actionType, &inputBindings)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("could not query StepRun secret values for redaction: %w", err)
+	}
+	if actionType != "distr.compose.deploy" {
+		return nil, nil
+	}
+	return getComposeRegistrySecretValuesForRedaction(ctx, types.Task{
+		OrganizationID:         orgID,
+		DeploymentPlanTargetID: deploymentPlanTargetID,
+	}, inputBindings)
+}
+
+func getComposeRegistrySecretValuesForRedaction(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	applicationVersion, ok := mapStringAny(inputBindings["applicationVersion"])
+	if !ok {
+		return nil, nil
+	}
+	registryAuth, ok := mapStringAny(applicationVersion["registryAuth"])
+	if !ok {
+		return nil, nil
+	}
+	values := make([]string, 0, len(registryAuth))
+	for _, rawAuth := range registryAuth {
+		auth, ok := mapStringAny(rawAuth)
+		if !ok {
+			continue
+		}
+		if value, ok := stringValue(auth["password"]); ok && value != "" {
+			values = append(values, value)
+		}
+		reference, ok := stringValue(auth["passwordSecretRef"])
+		if !ok || strings.TrimSpace(reference) == "" {
+			continue
+		}
+		value, err := getTaskLeaseSecretValue(ctx, task, strings.TrimSpace(reference))
+		if err != nil {
+			return nil, err
+		}
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values, nil
+}
+
 func getTaskLeaseForStepRunEvent(
 	ctx context.Context,
-	request preparedStepRunEventRequest,
+	request types.RecordAgentStepRunEventRequest,
 	taskID uuid.UUID,
 ) (stepRunEventLease, error) {
 	db := internalctx.GetDb(ctx)

@@ -13,6 +13,7 @@ import (
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/agentauth"
 	"github.com/distr-sh/distr/internal/agentenv"
+	"github.com/distr-sh/distr/internal/stepredaction"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -189,9 +190,10 @@ func executeComposeDeployStep(
 	if err := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeStarted, "starting Compose deployment", nil, nil); err != nil {
 		return err
 	}
+	var secretValues []string
 	recordFailure := func(err error) error {
 		sequence++
-		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, err.Error(), nil, nil); recordErr != nil {
+		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, err.Error(), nil, nil, secretValues...); recordErr != nil {
 			return recordErr
 		}
 		return err
@@ -207,6 +209,7 @@ func executeComposeDeployStep(
 	if err != nil {
 		return recordFailure(err)
 	}
+	secretValues = composeDeploySecretValues(input)
 	deployment, err := agentDeploymentFromComposeAction(step.StepRunID, input)
 	if err != nil {
 		return recordFailure(err)
@@ -233,7 +236,7 @@ func executeComposeDeployStep(
 			return
 		}
 		sequence++
-		progressErr = recordStepEvent(applyCtx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeProgress, status, nil, nil)
+		progressErr = recordStepEvent(applyCtx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeProgress, status, nil, nil, secretValues...)
 		if progressErr != nil {
 			applyCancel()
 		}
@@ -249,7 +252,7 @@ func executeComposeDeployStep(
 	}
 	if heartbeatErr := taskLeaseHeartbeatError(heartbeatErrCh); heartbeatErr != nil {
 		sequence++
-		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, heartbeatErr.Error(), nil, nil); recordErr != nil {
+		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, heartbeatErr.Error(), nil, nil, secretValues...); recordErr != nil {
 			return recordErr
 		}
 		return heartbeatErr
@@ -265,7 +268,7 @@ func executeComposeDeployStep(
 				Body:     status,
 			}}
 		}
-		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, err.Error(), logs, nil); recordErr != nil {
+		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, err.Error(), logs, nil, secretValues...); recordErr != nil {
 			return recordErr
 		}
 		return err
@@ -280,7 +283,17 @@ func executeComposeDeployStep(
 	if agentDeployment != nil {
 		outputs = append(outputs, api.AgentStepRunOutputRequest{Name: "state", Value: string(agentDeployment.State)})
 	}
-	return recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeSucceeded, "Compose deployment succeeded", nil, outputs)
+	return recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeSucceeded, "Compose deployment succeeded", nil, outputs, secretValues...)
+}
+
+func composeDeploySecretValues(input composeDeployActionInput) []string {
+	values := make([]string, 0, len(input.ApplicationVersion.RegistryAuth))
+	for _, auth := range input.ApplicationVersion.RegistryAuth {
+		if auth.Password != "" {
+			values = append(values, auth.Password)
+		}
+	}
+	return values
 }
 
 func startTaskLeaseHeartbeat(
@@ -346,11 +359,22 @@ func recordStepEvent(
 	message string,
 	logs []api.AgentStepRunLogChunkRequest,
 	outputs []api.AgentStepRunOutputRequest,
+	secretValues ...string,
 ) error {
 	progress := (*int)(nil)
 	if eventType == types.StepRunEventTypeSucceeded {
 		value := 100
 		progress = &value
+	}
+	message, _ = stepredaction.RedactStringWithValues(message, secretValues)
+	for i := range logs {
+		logs[i].Body, _ = stepredaction.RedactStringWithValues(logs[i].Body, secretValues)
+	}
+	for i := range outputs {
+		if outputs[i].Sensitive {
+			continue
+		}
+		outputs[i].Value, _ = stepredaction.RedactValueWithValues(outputs[i].Value, secretValues)
 	}
 	_, err := client.RecordStepRunEvent(ctx, stepRunID, api.AgentStepRunEventRequest{
 		LeaseToken:      leaseToken,

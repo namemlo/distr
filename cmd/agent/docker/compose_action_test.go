@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -100,6 +101,49 @@ func TestExecuteComposeDeployStepEmitsLifecycleEventsAndOutputs(t *testing.T) {
 	g.Expect(recorder.events[2].Outputs).To(ContainElement(api.AgentStepRunOutputRequest{
 		Name:  "state",
 		Value: string(StateReady),
+	}))
+}
+
+func TestExecuteComposeDeployStepRedactsRegistryPasswordFromEmittedEventsAndOutputs(t *testing.T) {
+	g := NewWithT(t)
+	ctx := context.Background()
+	const secretValue = "super-secret-password"
+	inputs := validComposeDeployInputs()
+	inputs["applicationVersion"].(map[string]any)["registryAuth"].(map[string]any)["registry.example.com"].(map[string]any)["password"] = secretValue
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		ActionType:    composeDeployActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        inputs,
+	}
+	recorder := &recordingLeasedTaskClient{}
+	apply := func(_ context.Context, deployment api.AgentDeployment, _ composeDeployOptions, updateStatus func(string)) (*AgentDeployment, string, error) {
+		updateStatus("pulling image with " + secretValue)
+		return &AgentDeployment{
+			ID:         deployment.ID,
+			RevisionID: deployment.RevisionID,
+			DockerType: *deployment.DockerType,
+			State:      StateReady,
+		}, "ready with " + secretValue, nil
+	}
+
+	err := executeComposeDeployStep(ctx, lease, step, recorder, apply)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeProgress,
+		types.StepRunEventTypeSucceeded,
+	}))
+	payload, err := json.Marshal(recorder.events)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(string(payload)).NotTo(ContainSubstring(secretValue))
+	g.Expect(string(payload)).To(ContainSubstring("[REDACTED]"))
+	g.Expect(recorder.events[1].Message).To(Equal("pulling image with [REDACTED]"))
+	g.Expect(recorder.events[2].Outputs).To(ContainElement(api.AgentStepRunOutputRequest{
+		Name:  "status",
+		Value: "ready with [REDACTED]",
 	}))
 }
 
