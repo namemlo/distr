@@ -27,7 +27,9 @@ import {combineLatest, debounceTime, map, of, switchMap} from 'rxjs';
 import {dateTimeLocalToISO, isoToDateTimeLocal} from '../../../util/dates';
 import {DeploymentLogsService} from '../../services/deployment-logs.service';
 import {DeploymentTargetsService} from '../../services/deployment-targets.service';
+import {FeatureFlagService} from '../../services/feature-flag.service';
 import {OrderDirection} from '../../types/timeseries-options';
+import {ConfigurationDriftComponent} from '../configuration-drift/configuration-drift.component';
 import {DeploymentAppNameComponent} from '../deployment-target-card/deployment-app-name.component';
 import {DeploymentLogsTableComponent} from './deployment-logs-table.component';
 import {DeploymentStatusTableComponent} from './deployment-status-table.component';
@@ -41,6 +43,7 @@ const ORDER_DIRECTION_KEY = 'logViewer.orderDirection';
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
     DeploymentAppNameComponent,
+    ConfigurationDriftComponent,
     DeploymentLogsTableComponent,
     DeploymentStatusTableComponent,
     DeploymentTargetLogsTableComponent,
@@ -55,6 +58,7 @@ export class DeploymentTargetDetailComponent {
   private readonly router = inject(Router);
   private readonly deploymentTargetsService = inject(DeploymentTargetsService);
   private readonly deploymentLogsService = inject(DeploymentLogsService);
+  private readonly featureFlags = inject(FeatureFlagService);
   private readonly fb = inject(FormBuilder).nonNullable;
 
   protected readonly faServer = faServer;
@@ -100,6 +104,9 @@ export class DeploymentTargetDetailComponent {
   protected readonly filter = toSignal(this.filter$);
 
   protected readonly live = computed(() => !this.after() && !this.before());
+  protected readonly isScopedVariablesV2Enabled = toSignal(this.featureFlags.isScopedVariablesV2Enabled$, {
+    initialValue: false,
+  });
 
   private readonly deploymentTargets$ = this.deploymentTargetsService.list();
   protected readonly deploymentTargets = toSignal(this.deploymentTargets$, {initialValue: []});

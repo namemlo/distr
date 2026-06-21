@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-013 are implemented locally. PR-013 adds immutable Deployment Process snapshots linked to Release Bundles without adding variables, deployment planning, execution, approvals, or agent behavior.
+PR-000 through PR-016 are implemented locally. PR-016 adds immutable Variable snapshots for published Release Bundles and read-only deployment configuration drift without adding deployment planning, execution, approvals, retention, notifications, runbooks, or agent behavior.
 
 ## Tracking Template
 
@@ -268,3 +268,18 @@ Use one entry per pull request:
 - Tests: Pure resolver, API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service/component tests were added.
 - Upstream contribution notes: Community-neutral scoped resolver model; no adopter-specific terminology, provider execution logic, or plaintext secret exposure.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, deployment target, deployment, release-name, and agent behavior is unchanged. No variable snapshots, drift detection, deployment planning, approval, retention, execution, notification, runbook persistence, or agent behavior is added in PR-015.
+
+### PR-016 - Variable snapshots and drift
+
+- Status: Implemented locally; backend snapshot repository, drift comparison, API, migration, mapping, handler, Angular UI, and focused verification completed.
+- Upstream base: `ddd8b3bc88e09efc371aecace29700a4301bdadc`
+- Feature flag: Release Bundle publication keeps `release_bundles`; snapshot reads require `release_bundles` and `scoped_variables_v2`; drift API/UI requires `scoped_variables_v2`.
+- User-facing behavior: Vendor admins can see read-only configuration drift categories on deployment details when scoped variables are enabled. API callers can read redacted Variable snapshots for published Release Bundles.
+- Database changes: Added `VariableSnapshot`, `VariableSnapshotValue`, nullable `ReleaseBundle.variable_snapshot_id`, canonical snapshot payload/checksum storage, organization/application/channel foreign keys, and a redaction check preventing plaintext values on redacted rows.
+- API changes: Added feature-flagged `GET /api/v1/variable-snapshots/{variableSnapshotId}` and `GET /api/v1/deployments/{deploymentId}/configuration-drift`.
+- UI changes: Added a feature-flagged deployment detail configuration drift panel with loading, no-drift, API-error, and drift-category states.
+- Agent protocol changes: None.
+- Documentation: Added PR-016 notes and ADR-0016.
+- Tests: Drift comparator, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service/component tests were added.
+- Upstream contribution notes: Community-neutral Variable snapshot and drift model; no adopter-specific terminology, provider execution logic, or plaintext secret exposure.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle draft/edit, Deployment Process, deployment target, deployment, release-name, and agent behavior is unchanged. No action registry, deployment planning, promotion execution, approval, retention, notification, runbook persistence, or agent behavior is added in PR-016.

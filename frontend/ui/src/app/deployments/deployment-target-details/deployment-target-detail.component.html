@@ -296,6 +296,9 @@
       </div>
 
       @if (deploymentId(); as deploymentId) {
+        @if (isScopedVariablesV2Enabled()) {
+          <app-configuration-drift [deploymentId]="deploymentId" />
+        }
         @if (selectedResources().length > 0) {
           <app-deployment-logs-table
             [deploymentId]="deploymentId"

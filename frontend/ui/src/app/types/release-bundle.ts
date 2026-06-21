@@ -40,6 +40,7 @@ export interface ReleaseBundle {
   applicationId: string;
   channelId: string;
   processSnapshotId?: string;
+  variableSnapshotId?: string;
   releaseNumber: string;
   releaseNotes: string;
   sourceRevision: string;

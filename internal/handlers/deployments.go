@@ -14,6 +14,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/deploymentvalues"
+	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/handlerutil"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
@@ -74,6 +75,11 @@ func DeploymentsRouter(r chiopenapi.Router) {
 				ResourceRequest
 			}{})).
 			With(option.Response(http.StatusOK, nil, option.ContentType("text/plain")))
+		r.With(middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyScopedVariablesV2)).
+			Get("/configuration-drift", getDeploymentConfigurationDriftHandler()).
+			With(option.Description("Get variable configuration drift for a deployment")).
+			With(option.Request(DeploymentIDRequest{})).
+			With(option.Response(http.StatusOK, api.ConfigurationDrift{}))
 		r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).Group(func(r chiopenapi.Router) {
 			r.Delete("/", deleteDeploymentHandler()).
 				With(option.Description("Delete a deployment")).

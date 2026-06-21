@@ -223,6 +223,7 @@ type ReleaseBundle struct {
 	ApplicationID            uuid.UUID                    `json:"applicationId"`
 	ChannelID                uuid.UUID                    `json:"channelId"`
 	ProcessSnapshotID        *uuid.UUID                   `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID       *uuid.UUID                   `json:"variableSnapshotId,omitempty"`
 	ReleaseNumber            string                       `json:"releaseNumber"`
 	ReleaseNotes             string                       `json:"releaseNotes"`
 	SourceRevision           string                       `json:"sourceRevision"`

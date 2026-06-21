@@ -29,6 +29,7 @@ const (
 	rb.application_id,
 	rb.channel_id,
 	rb.process_snapshot_id,
+	rb.variable_snapshot_id,
 	rb.release_number,
 	rb.release_notes,
 	rb.source_revision,
@@ -559,7 +560,16 @@ func PublishReleaseBundle(
 			return nil
 		}
 
-		updated, err := updateReleaseBundleStatus(ctx, bundle.ID, bundle.OrganizationID, toStatus, &actorUserAccountID)
+		snapshot, err := createVariableSnapshotForReleaseBundle(ctx, *bundle)
+		if err != nil {
+			return err
+		}
+		bundle.VariableSnapshotID = &snapshot.ID
+		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
+			return err
+		}
+
+		updated, err := publishReleaseBundleStatus(ctx, bundle, toStatus, actorUserAccountID)
 		if err != nil {
 			return err
 		}
@@ -579,6 +589,50 @@ func PublishReleaseBundle(
 		return published, result, err
 	}
 	return published, result, operationErr
+}
+
+func publishReleaseBundleStatus(
+	ctx context.Context,
+	bundle *types.ReleaseBundle,
+	status types.ReleaseBundleStatus,
+	publishedByUserAccountID uuid.UUID,
+) (*types.ReleaseBundle, error) {
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`UPDATE ReleaseBundle AS rb SET
+				status = @status,
+				variable_snapshot_id = @variableSnapshotId,
+				canonical_checksum = @canonicalChecksum,
+				canonical_payload = @canonicalPayload,
+				published_by_user_account_id = @publishedByUserAccountId,
+				published_at = now(),
+				updated_at = now()
+			WHERE rb.id = @id AND rb.organization_id = @organizationId
+			RETURNING `+releaseBundleOutputExpr,
+		pgx.NamedArgs{
+			"id":                       bundle.ID,
+			"organizationId":           bundle.OrganizationID,
+			"status":                   status,
+			"variableSnapshotId":       bundle.VariableSnapshotID,
+			"canonicalChecksum":        bundle.CanonicalChecksum,
+			"canonicalPayload":         bundle.CanonicalPayload,
+			"publishedByUserAccountId": publishedByUserAccountID,
+		},
+	)
+	if err != nil {
+		return nil, mapReleaseBundleWriteError("publish", err)
+	}
+	updated, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ReleaseBundle])
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	} else if err != nil {
+		return nil, mapReleaseBundleWriteError("scan published", err)
+	}
+	updated.Components, err = getReleaseBundleComponents(ctx, updated.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 func BlockReleaseBundle(

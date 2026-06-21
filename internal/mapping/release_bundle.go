@@ -14,6 +14,7 @@ func ReleaseBundleToAPI(bundle types.ReleaseBundle) api.ReleaseBundle {
 		ApplicationID:            bundle.ApplicationID,
 		ChannelID:                bundle.ChannelID,
 		ProcessSnapshotID:        bundle.ProcessSnapshotID,
+		VariableSnapshotID:       bundle.VariableSnapshotID,
 		ReleaseNumber:            bundle.ReleaseNumber,
 		ReleaseNotes:             bundle.ReleaseNotes,
 		SourceRevision:           bundle.SourceRevision,
