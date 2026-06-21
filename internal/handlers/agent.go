@@ -85,11 +85,13 @@ func AgentRouter(r chiopenapi.Router) {
 
 	r.Route("/agents/{agentId}", func(r chiopenapi.Router) {
 		r.WithOptions(option.GroupHidden(true))
-		r.With(
+		agentRoutes := r.With(
 			auth.AgentAuthentication.Middleware,
 			middleware.SetSentryUserFromAgentAuth,
 			agentAuthDeploymentTargetCtxMiddleware,
 			rateLimitPerDeploymentTargetID,
+		)
+		agentRoutes.With(
 			middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyAgentCapabilities),
 		).Group(func(r chiopenapi.Router) {
 			type AgentCapabilitiesRouteRequest struct {
@@ -101,7 +103,36 @@ func AgentRouter(r chiopenapi.Router) {
 				With(option.Request(AgentCapabilitiesRouteRequest{})).
 				With(option.Response(http.StatusOK, api.AgentCapabilities{}))
 		})
+		agentRoutes.With(agentTaskLeaseFeatureFlagMiddleware).Group(func(r chiopenapi.Router) {
+			type AgentLeaseRouteRequest struct {
+				AgentID uuid.UUID `path:"agentId"`
+			}
+
+			r.Post("/lease", postAgentLeaseHandler()).
+				With(option.Request(AgentLeaseRouteRequest{})).
+				With(option.Response(http.StatusOK, api.AgentTaskLease{}))
+
+			type AgentTaskHeartbeatRouteRequest struct {
+				AgentID uuid.UUID `path:"agentId"`
+				TaskID  uuid.UUID `path:"taskId"`
+				api.HeartbeatAgentTaskLeaseRequest
+			}
+
+			r.Post("/tasks/{taskId}/heartbeat", postAgentTaskHeartbeatHandler()).
+				With(option.Request(AgentTaskHeartbeatRouteRequest{})).
+				With(option.Response(http.StatusOK, api.AgentTaskLease{}))
+		})
 	})
+}
+
+func agentTaskLeaseFeatureFlagMiddleware(handler http.Handler) http.Handler {
+	for _, feature := range []featureflags.Key{
+		featureflags.KeyAgentTaskLeases,
+		featureflags.KeyTaskQueue,
+	} {
+		handler = middleware.ExperimentalFeatureFlagMiddleware(feature)(handler)
+	}
+	return handler
 }
 
 func connectHandler() http.HandlerFunc {
@@ -583,6 +614,99 @@ func postAgentCapabilitiesHandler() http.HandlerFunc {
 		} else {
 			RespondJSON(w, mapping.AgentCapabilitiesToAPI(*report))
 		}
+	}
+}
+
+func postAgentLeaseHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("agentId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		deploymentTarget := internalctx.GetDeploymentTarget(ctx)
+		if deploymentTarget.ID != agentID {
+			http.NotFound(w, r)
+			return
+		}
+
+		lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+			OrganizationID: deploymentTarget.OrganizationID,
+			AgentID:        deploymentTarget.ID,
+		})
+		respondAgentTaskLeaseResult(w, r, log, err, func() {
+			if lease == nil {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			RespondJSON(w, mapping.TaskLeaseToAPI(*lease))
+		})
+	}
+}
+
+func postAgentTaskHeartbeatHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("agentId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		taskID, err := uuid.Parse(r.PathValue("taskId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		deploymentTarget := internalctx.GetDeploymentTarget(ctx)
+		if deploymentTarget.ID != agentID {
+			http.NotFound(w, r)
+			return
+		}
+		request, err := JsonBody[api.HeartbeatAgentTaskLeaseRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		lease, err := db.HeartbeatAgentTaskLease(ctx, types.HeartbeatAgentTaskLeaseRequest{
+			OrganizationID: deploymentTarget.OrganizationID,
+			AgentID:        deploymentTarget.ID,
+			TaskID:         taskID,
+			LeaseToken:     request.LeaseToken,
+		})
+		respondAgentTaskLeaseResult(w, r, log, err, func() {
+			RespondJSON(w, mapping.TaskLeaseToAPI(*lease))
+		})
+	}
+}
+
+func respondAgentTaskLeaseResult(
+	w http.ResponseWriter,
+	r *http.Request,
+	log *zap.Logger,
+	err error,
+	success func(),
+) {
+	if errors.Is(err, apierrors.ErrBadRequest) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	} else if errors.Is(err, apierrors.ErrConflict) {
+		http.Error(w, err.Error(), http.StatusConflict)
+	} else if errors.Is(err, apierrors.ErrNotFound) {
+		http.NotFound(w, r)
+	} else if err != nil {
+		log.Error("failed to handle agent task lease request", zap.Error(err))
+		sentry.GetHubFromContext(r.Context()).CaptureException(err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	} else {
+		success()
 	}
 }
 

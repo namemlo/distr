@@ -44,6 +44,8 @@ func getTemplateData(
 		statusEndpoint       string
 		metricsEndpoint      string
 		capabilitiesEndpoint string
+		leaseEndpoint        string
+		heartbeatEndpoint    string
 		logsEndpoint         string
 		agentLogsEndpoint    string
 	)
@@ -66,28 +68,44 @@ func getTemplateData(
 			deploymentTarget.ID.String(),
 			"capabilities",
 		).String()
+		leaseEndpoint = u.JoinPath(
+			"api",
+			"v1",
+			"agents",
+			deploymentTarget.ID.String(),
+			"lease",
+		).String()
+		heartbeatEndpoint = u.JoinPath(
+			"api",
+			"v1",
+			"agents",
+			deploymentTarget.ID.String(),
+			"tasks",
+		).String() + "/{taskId}/heartbeat"
 	}
 
 	result := map[string]any{
-		"agentDockerConfig":    base64.StdEncoding.EncodeToString(env.AgentDockerConfig()),
-		"agentInterval":        env.AgentInterval(),
-		"agentVersion":         deploymentTarget.AgentVersion.Name,
-		"agentVersionId":       deploymentTarget.AgentVersion.ID,
-		"autohealAll":          deploymentTarget.AutohealEnabled,
-		"loginEndpoint":        loginEndpoint,
-		"manifestEndpoint":     manifestEndpoint,
-		"metricsEndpoint":      metricsEndpoint,
-		"capabilitiesEndpoint": capabilitiesEndpoint,
-		"registryEnabled":      env.RegistryEnabled(),
-		"registryHost":         customdomains.RegistryDomainOrDefault(org),
-		"registryPlainHttp":    buildconfig.IsDevelopment(),
-		"resourcesEndpoint":    resourcesEndpoint,
-		"statusEndpoint":       statusEndpoint,
-		"targetId":             deploymentTarget.ID,
-		"targetSecret":         secret,
-		"logsEndpoint":         logsEndpoint,
-		"agentLogsEndpoint":    agentLogsEndpoint,
-		"metricsEnabled":       deploymentTarget.MetricsEnabled,
+		"agentDockerConfig":             base64.StdEncoding.EncodeToString(env.AgentDockerConfig()),
+		"agentInterval":                 env.AgentInterval(),
+		"agentVersion":                  deploymentTarget.AgentVersion.Name,
+		"agentVersionId":                deploymentTarget.AgentVersion.ID,
+		"autohealAll":                   deploymentTarget.AutohealEnabled,
+		"loginEndpoint":                 loginEndpoint,
+		"manifestEndpoint":              manifestEndpoint,
+		"metricsEndpoint":               metricsEndpoint,
+		"capabilitiesEndpoint":          capabilitiesEndpoint,
+		"leaseEndpoint":                 leaseEndpoint,
+		"taskHeartbeatEndpointTemplate": heartbeatEndpoint,
+		"registryEnabled":               env.RegistryEnabled(),
+		"registryHost":                  customdomains.RegistryDomainOrDefault(org),
+		"registryPlainHttp":             buildconfig.IsDevelopment(),
+		"resourcesEndpoint":             resourcesEndpoint,
+		"statusEndpoint":                statusEndpoint,
+		"targetId":                      deploymentTarget.ID,
+		"targetSecret":                  secret,
+		"logsEndpoint":                  logsEndpoint,
+		"agentLogsEndpoint":             agentLogsEndpoint,
+		"metricsEnabled":                deploymentTarget.MetricsEnabled,
 	}
 	if deploymentTarget.Namespace != nil {
 		result["targetNamespace"] = *deploymentTarget.Namespace

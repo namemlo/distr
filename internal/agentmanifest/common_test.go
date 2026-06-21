@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestGetTemplateDataIncludesAgentCapabilitiesEndpoint(t *testing.T) {
+func TestGetTemplateDataIncludesAgentProtocolEndpoints(t *testing.T) {
 	targetID := uuid.New()
 	agentVersionID := uuid.New()
 	appDomain := "https://hub.example.com/root"
@@ -41,5 +41,13 @@ func TestGetTemplateDataIncludesAgentCapabilitiesEndpoint(t *testing.T) {
 	if got, want := data["capabilitiesEndpoint"],
 		"https://hub.example.com/root/api/v1/agents/"+targetID.String()+"/capabilities"; got != want {
 		t.Fatalf("expected capabilities endpoint %q, got %q", want, got)
+	}
+	if got, want := data["leaseEndpoint"],
+		"https://hub.example.com/root/api/v1/agents/"+targetID.String()+"/lease"; got != want {
+		t.Fatalf("expected lease endpoint %q, got %q", want, got)
+	}
+	if got, want := data["taskHeartbeatEndpointTemplate"],
+		"https://hub.example.com/root/api/v1/agents/"+targetID.String()+"/tasks/{taskId}/heartbeat"; got != want {
+		t.Fatalf("expected task heartbeat endpoint template %q, got %q", want, got)
 	}
 }
