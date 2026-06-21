@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, scoped variable, and deployment plan feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, deployment plan, and task queue feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -67,6 +67,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isDeploymentPlansEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isTaskQueueEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -98,6 +101,13 @@ describe('FeatureFlagService', () => {
         key: 'deployment_plans',
         label: 'Deployment Plans',
         description: 'Preview deployment plans before execution.',
+        milestone: 'Milestone D',
+        enabled: true,
+      },
+      {
+        key: 'task_queue',
+        label: 'Task Queue',
+        description: 'Create durable task records from deployment plans.',
         milestone: 'Milestone D',
         enabled: true,
       },

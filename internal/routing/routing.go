@@ -192,6 +192,7 @@ func ApiRouter(
 					r.Route("/secrets", handlers.SecretsRouter)
 					r.Route("/settings", handlers.SettingsRouter)
 					r.With(middleware.ProFeature).Route("/support-bundles", handlers.SupportBundlesRouter)
+					r.Route("/tasks", handlers.TasksRouter)
 					r.Route("/tutorial-progress", handlers.TutorialsRouter)
 					r.Route("/variable-sets", handlers.VariableSetsRouter)
 					r.Route("/variable-snapshots", handlers.VariableSnapshotsRouter)

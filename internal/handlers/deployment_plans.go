@@ -40,6 +40,12 @@ func DeploymentPlansRouter(r chiopenapi.Router) {
 				With(option.Description("Get a deployment plan")).
 				With(option.Request(DeploymentPlanIDRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlan{}))
+
+			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin, taskQueueFeatureFlagMiddleware).
+				Post("/tasks", createTasksForDeploymentPlanHandler()).
+				With(option.Description("Create durable tasks for a ready deployment plan")).
+				With(option.Request(DeploymentPlanIDRequest{})).
+				With(option.Response(http.StatusOK, []api.Task{}))
 		})
 
 		r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).

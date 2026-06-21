@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-019 are implemented locally. PR-019 adds a feature-flagged Angular Deployment Plans administration UI with plan creation, detail preview, checksum display, and JSON/Markdown export without adding task queue, execution, approvals, locks, notifications, runbooks, or agent behavior.
+PR-000 through PR-020 are implemented locally. PR-020 adds a feature-flagged durable Task and StepRun queue foundation with deterministic queue ordering, idempotent task creation from READY Deployment Plans, and guarded state transitions without adding locks, leases, agent protocols, execution adapters, approvals, cancellation, timelines, logs, or agent behavior.
 
 ## Tracking Template
 
@@ -328,3 +328,18 @@ Use one entry per pull request:
 - Tests: Angular service, feature-flag, and Deployment Plans component tests were added or updated.
 - Upstream contribution notes: Community-neutral plan preview UI; no adopter-specific terminology, provider execution logic, or Octopus assets.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, deployment target, deployment, release-name, backend planning behavior, and agent behavior is unchanged. No task queue, execution, locks, approvals, retention, notifications, runbooks, rollout waves, or agent behavior is added in PR-019.
+
+### PR-020 - Durable task queue
+
+- Status: Implemented locally; backend, API, repository, migration, mapping, handler, feature-flag, and live PostgreSQL verification completed.
+- Upstream base: `dd83b703aea7ad8dd9b47b3bf62f936883c90cf0`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=task_queue,deployment_plans,release_bundles,deployment_processes,scoped_variables_v2,channels,lifecycles,environments`.
+- User-facing behavior: Feature-flagged API callers can create durable Tasks from READY Deployment Plans, list/read queued Tasks in deterministic order, and transition Task state through the guarded PR-020 state machine.
+- Database changes: Added `Task_queue_order_seq`, `Task`, and `StepRun` with organization-scoped composite references to Deployment Plans, Deployment Plan targets, Deployment Plan steps, and Deployment Targets.
+- API changes: Added `POST /api/v1/deployment-plans/{deploymentPlanId}/tasks`, `GET /api/v1/tasks`, `GET /api/v1/tasks/{taskId}`, and `POST /api/v1/tasks/{taskId}/state`.
+- UI changes: None. No Task Queue Angular route, sidebar entry, or page is added in PR-020.
+- Agent protocol changes: None.
+- Documentation: Added PR-020 notes and ADR-0020.
+- Tests: API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and focused Go tests were added.
+- Upstream contribution notes: Community-neutral durable task queue foundation; no adopter-specific terminology, provider logic, or execution behavior.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, deployment target, deployment, release-name, frontend planning UI, and agent behavior is unchanged. No locks, concurrency policies, leases, heartbeats, agent capabilities, agent task endpoints, execution adapters, approvals, cancellation, timelines, logs, or guided failure behavior is added in PR-020.
