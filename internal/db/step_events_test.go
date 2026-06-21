@@ -272,7 +272,7 @@ func TestStepEventRepositoryOrdersTimelineAndLogsByLeaseAttempt(t *testing.T) {
 		StepRunID:      fixture.stepRunID,
 		LeaseToken:     nextLease.LeaseToken,
 		Sequence:       1,
-		Type:           types.StepRunEventTypeLog,
+		Type:           types.StepRunEventTypeStarted,
 		Message:        "attempt-2 restarted",
 		Logs: []types.RecordStepRunLogChunkRequest{
 			{Stream: types.StepRunLogStreamStdout, Severity: types.StepRunLogSeverityInfo, Body: "attempt-2 restarted"},

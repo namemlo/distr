@@ -205,7 +205,7 @@ func getNextTaskLeaseCandidateForUpdate(
 					AND dps.organization_id = sr.organization_id
 				WHERE sr.task_id = t.id
 					AND sr.organization_id = t.organization_id
-					AND sr.status <> @skippedStatus
+					AND sr.status IN (@pendingStepStatus, @runningStepStatus)
 					AND dps.included
 					AND lower(trim(dps.execution_location)) = 'target'
 			)
@@ -213,12 +213,13 @@ func getNextTaskLeaseCandidateForUpdate(
 		LIMIT 1
 		FOR UPDATE OF t SKIP LOCKED`,
 		pgx.NamedArgs{
-			"organizationId":  request.OrganizationID,
-			"agentId":         request.AgentID,
-			"queuedStatus":    types.TaskStatusQueued,
-			"runningStatus":   types.TaskStatusRunning,
-			"skippedStatus":   types.StepRunStatusSkipped,
-			"publishedStatus": types.ReleaseBundleStatusPublished,
+			"organizationId":    request.OrganizationID,
+			"agentId":           request.AgentID,
+			"queuedStatus":      types.TaskStatusQueued,
+			"runningStatus":     types.TaskStatusRunning,
+			"pendingStepStatus": types.StepRunStatusPending,
+			"runningStepStatus": types.StepRunStatusRunning,
+			"publishedStatus":   types.ReleaseBundleStatusPublished,
 		},
 	)
 	if err != nil {
@@ -280,7 +281,7 @@ func releaseExpiredTaskLeasesAndNextAttempt(ctx context.Context, taskID, orgID u
 			nextAttempt = attempt + 1
 		}
 	}
-	_, err = db.Exec(ctx,
+	tag, err := db.Exec(ctx,
 		`UPDATE TaskLease
 		SET
 			released_at = COALESCE(released_at, now()),
@@ -294,7 +295,35 @@ func releaseExpiredTaskLeasesAndNextAttempt(ctx context.Context, taskID, orgID u
 	if err != nil {
 		return 0, fmt.Errorf("could not release expired TaskLease: %w", err)
 	}
+	if tag.RowsAffected() > 0 {
+		if err := resetInterruptedStepRunsForTask(ctx, taskID, orgID); err != nil {
+			return 0, err
+		}
+	}
 	return nextAttempt, nil
+}
+
+func resetInterruptedStepRunsForTask(ctx context.Context, taskID, orgID uuid.UUID) error {
+	db := internalctx.GetDb(ctx)
+	_, err := db.Exec(ctx,
+		`UPDATE StepRun
+		SET
+			status = @pendingStatus,
+			updated_at = now()
+		WHERE task_id = @taskId
+			AND organization_id = @organizationId
+			AND status = @runningStatus`,
+		pgx.NamedArgs{
+			"taskId":         taskID,
+			"organizationId": orgID,
+			"pendingStatus":  types.StepRunStatusPending,
+			"runningStatus":  types.StepRunStatusRunning,
+		},
+	)
+	if err != nil {
+		return mapTaskWriteError("reset interrupted step runs", err)
+	}
+	return nil
 }
 
 func insertTaskLease(
@@ -467,14 +496,14 @@ func getTaskLeaseSteps(ctx context.Context, task types.Task) ([]types.TaskLeaseS
 			AND dps.organization_id = sr.organization_id
 		WHERE sr.task_id = @taskId
 			AND sr.organization_id = @organizationId
-			AND sr.status <> @skippedStatus
+			AND sr.status = @pendingStatus
 			AND dps.included
 			AND lower(trim(dps.execution_location)) = 'target'
 		ORDER BY sr.sort_order, sr.step_key`,
 		pgx.NamedArgs{
 			"taskId":         task.ID,
 			"organizationId": task.OrganizationID,
-			"skippedStatus":  types.StepRunStatusSkipped,
+			"pendingStatus":  types.StepRunStatusPending,
 		},
 	)
 	if err != nil {

@@ -204,6 +204,122 @@ func TestTaskLeaseRepositoryReclaimsExpiredLeaseWithNewAttempt(t *testing.T) {
 	g.Expect(second.Task.Status).To(Equal(types.TaskStatusRunning))
 }
 
+func TestTaskLeaseRepositoryReclaimSkipsSucceededStepRuns(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{
+		taskLeaseHTTPCheckStep("prepare", "Prepare", 10),
+		taskLeaseHTTPCheckStep("deploy", "Deploy", 20),
+	})
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	first, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first.Steps).To(HaveLen(2))
+	recordTaskLeaseStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		first.Steps[0].StepRunID,
+		first.LeaseToken,
+		1,
+		types.StepRunEventTypeStarted,
+	)
+	recordTaskLeaseStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		first.Steps[0].StepRunID,
+		first.LeaseToken,
+		2,
+		types.StepRunEventTypeSucceeded,
+	)
+	expireTaskLeaseForTest(t, ctx, first.ID)
+
+	second, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second).NotTo(BeNil())
+	g.Expect(second.Attempt).To(Equal(2))
+	g.Expect(second.Steps).To(HaveLen(1))
+	g.Expect(second.Steps[0].StepKey).To(Equal("deploy"))
+	g.Expect(second.Steps[0].StepRunID).To(Equal(first.Steps[1].StepRunID))
+	recordTaskLeaseStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		second.Steps[0].StepRunID,
+		second.LeaseToken,
+		1,
+		types.StepRunEventTypeStarted,
+	)
+}
+
+func TestTaskLeaseRepositoryReclaimResetsInterruptedRunningStepRunForRetry(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{
+		taskLeaseComposeDeployStep("compose", "Compose deploy", 10),
+	})
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	first, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first.Steps).To(HaveLen(1))
+	recordTaskLeaseStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		first.Steps[0].StepRunID,
+		first.LeaseToken,
+		1,
+		types.StepRunEventTypeStarted,
+	)
+	expireTaskLeaseForTest(t, ctx, first.ID)
+
+	second, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second).NotTo(BeNil())
+	g.Expect(second.Attempt).To(Equal(2))
+	g.Expect(second.Steps).To(HaveLen(1))
+	g.Expect(second.Steps[0].StepRunID).To(Equal(first.Steps[0].StepRunID))
+
+	recordTaskLeaseStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		second.Steps[0].StepRunID,
+		second.LeaseToken,
+		1,
+		types.StepRunEventTypeStarted,
+	)
+}
+
 func TestTaskLeaseRepositoryDoesNotClaimWhenExclusiveLockIsHeld(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -424,16 +540,32 @@ func taskLeaseDBTestContext(t *testing.T) context.Context {
 
 func createReadyDeploymentPlanForTaskLease(t *testing.T, ctx context.Context) taskQueuePlanDeps {
 	t.Helper()
+	return createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{
+		taskLeaseHTTPCheckStep("deploy", "Deploy", 10),
+	})
+}
+
+func createReadyDeploymentPlanForTaskLeaseWithSteps(
+	t *testing.T,
+	ctx context.Context,
+	steps []types.DeploymentProcessStep,
+) taskQueuePlanDeps {
+	t.Helper()
 	g := NewWithT(t)
 	deps := createReleaseBundleEligibilityDependencies(t, ctx)
-	_, revision := createReleaseBundleProcessRevisionWithExecutionLocation(
-		t,
-		ctx,
-		deps.orgID,
-		deps.applicationID,
-		"Task lease deploy",
-		"target",
-	)
+	process := types.DeploymentProcess{
+		OrganizationID: deps.orgID,
+		ApplicationID:  deps.applicationID,
+		Name:           "Task lease deploy " + uuid.NewString(),
+	}
+	g.Expect(db.CreateDeploymentProcess(ctx, &process)).To(Succeed())
+	revision := types.DeploymentProcessRevision{
+		OrganizationID:      deps.orgID,
+		DeploymentProcessID: process.ID,
+		Description:         "Initial revision",
+		Steps:               steps,
+	}
+	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
 	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
@@ -460,6 +592,67 @@ func createReadyDeploymentPlanForTaskLease(t *testing.T, ctx context.Context) ta
 		actorID:          actorID,
 		plan:             plan,
 	}
+}
+
+func taskLeaseHTTPCheckStep(key, name string, sortOrder int) types.DeploymentProcessStep {
+	return types.DeploymentProcessStep{
+		Key:                  key,
+		Name:                 name,
+		ActionType:           "distr.http.check",
+		ExecutionLocation:    "target",
+		InputBindings:        map[string]any{"url": "https://example.com/health"},
+		FailureMode:          "fail",
+		TimeoutSeconds:       120,
+		RetryMaxAttempts:     3,
+		RetryIntervalSeconds: 10,
+		RequiredPermissions:  []string{"deploy:write"},
+		SortOrder:            sortOrder,
+	}
+}
+
+func taskLeaseComposeDeployStep(key, name string, sortOrder int) types.DeploymentProcessStep {
+	return types.DeploymentProcessStep{
+		Key:               key,
+		Name:              name,
+		ActionType:        "distr.compose.deploy",
+		ExecutionLocation: "target",
+		InputBindings: map[string]any{
+			"applicationVersion": map[string]any{
+				"composeFile": "services:\n  web:\n    image: nginx:alpine\n",
+			},
+			"projectName": "task-lease-retry",
+		},
+		FailureMode:          "fail",
+		TimeoutSeconds:       120,
+		RetryMaxAttempts:     3,
+		RetryIntervalSeconds: 10,
+		RequiredPermissions:  []string{"deploy:write"},
+		SortOrder:            sortOrder,
+	}
+}
+
+func recordTaskLeaseStepEventForTest(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	agentID uuid.UUID,
+	stepRunID uuid.UUID,
+	leaseToken string,
+	sequence int64,
+	eventType types.StepRunEventType,
+) {
+	t.Helper()
+	g := NewWithT(t)
+	_, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: orgID,
+		AgentID:        agentID,
+		StepRunID:      stepRunID,
+		LeaseToken:     leaseToken,
+		Sequence:       sequence,
+		Type:           eventType,
+		Message:        string(eventType),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
 }
 
 func expireTaskLeaseForTest(t *testing.T, ctx context.Context, leaseID uuid.UUID) {
