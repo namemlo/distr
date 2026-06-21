@@ -52,10 +52,6 @@ CREATE TABLE VariableSnapshotValue (
     FOREIGN KEY (variable_snapshot_id, organization_id)
     REFERENCES VariableSnapshot(id, organization_id)
     ON DELETE CASCADE,
-  CONSTRAINT variablesnapshotvalue_variable_fk
-    FOREIGN KEY (variable_id, variable_set_id, organization_id)
-    REFERENCES Variable(id, variable_set_id, organization_id)
-    ON DELETE RESTRICT,
   CONSTRAINT variablesnapshotvalue_snapshot_variable_unique UNIQUE (variable_snapshot_id, variable_id),
   CONSTRAINT variablesnapshotvalue_secret_redaction_check CHECK (NOT redacted OR value IS NULL)
 );

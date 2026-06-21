@@ -98,6 +98,41 @@ func TestVariableSnapshotRepositoryIsOrganizationScoped(t *testing.T) {
 	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
 }
 
+func TestPublishedVariableSnapshotDoesNotBlockVariableSetUpdates(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, versionID := createReleaseBundleDependencies(t, ctx)
+	variableSet := types.VariableSet{
+		OrganizationID: orgID,
+		Name:           "Runtime Defaults",
+		ApplicationIDs: []uuid.UUID{applicationID},
+		Variables: []types.Variable{
+			{Key: "API_URL", Type: types.VariableTypeString, DefaultValue: json.RawMessage(`"https://old.example"`)},
+		},
+	}
+	g.Expect(db.CreateVariableSet(ctx, &variableSet)).To(Succeed())
+	originalVariableID := variableSet.Variables[0].ID
+	bundle := releaseBundleFixture(orgID, applicationID, channelID, versionID)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, _, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, createReleaseBundleTestUser(t, ctx, orgID))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	variableSet.Variables = []types.Variable{
+		{Key: "API_URL", Type: types.VariableTypeString, DefaultValue: json.RawMessage(`"https://new.example"`)},
+		{Key: "DEBUG", Type: types.VariableTypeBoolean, DefaultValue: json.RawMessage(`true`)},
+	}
+	g.Expect(db.UpdateVariableSet(ctx, &variableSet)).To(Succeed())
+	g.Expect(variableSet.Variables).To(HaveLen(2))
+	g.Expect(variableByKeyForSnapshotTest(variableSet, "API_URL").ID).NotTo(Equal(originalVariableID))
+
+	snapshot, err := db.GetVariableSnapshot(ctx, *published.VariableSnapshotID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(snapshot.Values).To(HaveLen(1))
+	apiURL := variableSnapshotValueByKey(snapshot.Values, "API_URL")
+	g.Expect(apiURL.VariableID).To(Equal(originalVariableID))
+	g.Expect(apiURL.Value).To(MatchJSON(`"https://old.example"`))
+}
+
 func TestGetDeploymentConfigurationDriftComparesLatestDeploymentAgainstCurrentVariableSchema(t *testing.T) {
 	ctx := releaseBundleDBTestContext(t)
 	g := NewWithT(t)
@@ -189,6 +224,7 @@ func TestVariableSnapshotMigrationsDefineReversibleSchema(t *testing.T) {
 	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE VariableSnapshotValue"))
 	g.Expect(upSQL).To(ContainSubstring("variable_snapshot_id UUID"))
 	g.Expect(upSQL).To(ContainSubstring("variablesnapshotvalue_secret_redaction_check"))
+	g.Expect(upSQL).NotTo(ContainSubstring("variablesnapshotvalue_variable_fk"))
 
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "119_variable_snapshots.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
@@ -268,4 +304,13 @@ func variableSnapshotValueByKey(values []types.VariableSnapshotValue, key string
 		}
 	}
 	return types.VariableSnapshotValue{}
+}
+
+func variableByKeyForSnapshotTest(variableSet types.VariableSet, key string) types.Variable {
+	for _, variable := range variableSet.Variables {
+		if variable.Key == key {
+			return variable
+		}
+	}
+	return types.Variable{}
 }
