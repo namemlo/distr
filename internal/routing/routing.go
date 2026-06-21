@@ -191,6 +191,7 @@ func ApiRouter(
 					r.Route("/settings", handlers.SettingsRouter)
 					r.With(middleware.ProFeature).Route("/support-bundles", handlers.SupportBundlesRouter)
 					r.Route("/tutorial-progress", handlers.TutorialsRouter)
+					r.Route("/variable-sets", handlers.VariableSetsRouter)
 					r.Route("/license-keys", handlers.LicenseKeysRouter)
 					r.Route("/license-templates", handlers.LicenseTemplatesRouter)
 					r.Route("/licenses", handlers.LicensesRouter)

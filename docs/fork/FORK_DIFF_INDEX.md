@@ -238,3 +238,18 @@ Use one entry per pull request:
 - Tests: API validation, process snapshot canonicalization, mapping, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service tests were added.
 - Upstream contribution notes: Community-neutral Process Snapshot model; no adopter-specific terminology, provider logic, or Octopus UI/assets.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, deployment target, deployment, release-name, and agent behavior is unchanged. Existing Release Bundle clients may omit `deploymentProcessRevisionId`. No variable, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-013.
+
+### PR-014 - Variable types and sets
+
+- Status: Implemented locally; backend, API, repository, migration, mapping, handler, Angular UI, and live PostgreSQL verification completed.
+- Upstream base: `4752a5b2ae25192a5158194ac3b9dd8225325bbf`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=scoped_variables_v2`.
+- User-facing behavior: Vendor admins can manage organization-scoped Variable Sets with typed variables, optional Application links, and safe Secret references from a feature-flagged admin UI.
+- Database changes: Added `VariableSet`, `VariableSetApplication`, and `Variable` tables with organization scoping, Variable Set name uniqueness per organization, Variable key uniqueness per set, typed JSON default checks, organization-scoped Application links, and restricted same-organization Secret references.
+- API changes: Added feature-flagged CRUD endpoints under `/api/v1/variable-sets`.
+- UI changes: Added Variable Sets route, sidebar link, Angular service/types, list view, form, typed variable editor, Application selectors, safe Secret selector, loading/error/empty/confirmation states, and Angular tests.
+- Agent protocol changes: None.
+- Documentation: Added PR-014 notes and ADR-0014.
+- Tests: API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service/component tests were added.
+- Upstream contribution notes: Community-neutral Variable Set model; no adopter-specific terminology, provider logic, or plaintext secret storage.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, deployment target, deployment, release-name, and agent behavior is unchanged. No scoped resolution, variable snapshots, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-014.

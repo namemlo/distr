@@ -134,6 +134,10 @@ export class SideBarComponent {
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isDeploymentProcessesEnabled$, {initialValue: false})
       : signal(false);
+  protected readonly isScopedVariablesFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isScopedVariablesV2Enabled$, {initialValue: false})
+      : signal(false);
 
   public readonly isSubscriptionBannerVisible = input<boolean>();
   public readonly isSidebarVisible = input<boolean>();

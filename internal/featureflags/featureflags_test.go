@@ -50,6 +50,11 @@ func TestRegistryMarksEnabledFlags(t *testing.T) {
 	g.Expect(environments.Enabled).To(BeTrue())
 	g.Expect(lifecycles.Key).To(Equal(KeyLifecycles))
 	g.Expect(lifecycles.Enabled).To(BeFalse())
+	scopedVariables := findFlag(flags, KeyScopedVariablesV2)
+	g.Expect(scopedVariables.Key).To(Equal(KeyScopedVariablesV2))
+	g.Expect(scopedVariables.Label).To(Equal("Scoped Variables"))
+	g.Expect(scopedVariables.Description).NotTo(BeEmpty())
+	g.Expect(scopedVariables.Milestone).To(Equal("Milestone C"))
 }
 
 func findFlag(flags []Flag, key Key) Flag {

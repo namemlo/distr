@@ -51,6 +51,7 @@ import {TutorialsComponent} from './tutorials/tutorials.component';
 import {ExperimentalFeatureFlagKey} from './types/feature-flags';
 import {isSubscriptionExpired} from './types/organization';
 import {UserSettingsComponent} from './user-settings/user-settings.component';
+import {VariableSetsComponent} from './variable-sets/variable-sets.component';
 
 function requiredRoleGuard(...userRole: UserRole[]): CanActivateFn {
   return () => {
@@ -242,6 +243,15 @@ export const routes: Routes = [
           experimentalFeatureEnabledGuard('lifecycles'),
           experimentalFeatureEnabledGuard('channels'),
           experimentalFeatureEnabledGuard('deployment_processes'),
+        ],
+      },
+      {
+        path: 'variable-sets',
+        component: VariableSetsComponent,
+        canActivate: [
+          requireVendor,
+          requiredRoleGuard('admin'),
+          experimentalFeatureEnabledGuard('scoped_variables_v2'),
         ],
       },
       {

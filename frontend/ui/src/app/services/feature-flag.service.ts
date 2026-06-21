@@ -55,6 +55,7 @@ export class FeatureFlagService {
   public readonly isChannelsEnabled$ = this.isExperimentalFeatureEnabled$('channels');
   public readonly isReleaseBundlesEnabled$ = this.isExperimentalFeatureEnabled$('release_bundles');
   public readonly isDeploymentProcessesEnabled$ = this.isExperimentalFeatureEnabled$('deployment_processes');
+  public readonly isScopedVariablesV2Enabled$ = this.isExperimentalFeatureEnabled$('scoped_variables_v2');
 
   isExperimentalFeatureEnabled$(key: ExperimentalFeatureFlagKey): Observable<boolean> {
     return this.getExperimentalFeatureFlags().pipe(
