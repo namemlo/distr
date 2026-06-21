@@ -312,7 +312,16 @@ func resetInterruptedStepRunsForTask(ctx context.Context, taskID, orgID uuid.UUI
 			updated_at = now()
 		WHERE task_id = @taskId
 			AND organization_id = @organizationId
-			AND status = @runningStatus`,
+			AND status = @runningStatus
+			AND EXISTS (
+				SELECT 1
+				FROM DeploymentPlanStep dps
+				WHERE dps.id = StepRun.deployment_plan_step_id
+					AND dps.deployment_plan_id = StepRun.deployment_plan_id
+					AND dps.organization_id = StepRun.organization_id
+					AND dps.included
+					AND lower(trim(dps.execution_location)) = 'target'
+			)`,
 		pgx.NamedArgs{
 			"taskId":         taskID,
 			"organizationId": orgID,

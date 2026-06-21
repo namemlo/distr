@@ -320,6 +320,70 @@ func TestTaskLeaseRepositoryReclaimResetsInterruptedRunningStepRunForRetry(t *te
 	)
 }
 
+func TestTaskLeaseRepositoryReclaimDoesNotResetRunningHubStepRun(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	hubStep := taskLeaseHTTPCheckStep("hub-prepare", "Hub prepare", 10)
+	hubStep.ExecutionLocation = "hub"
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{
+		hubStep,
+		taskLeaseComposeDeployStep("compose", "Compose deploy", 20),
+	})
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	hubRun := taskLeaseStepRunByKeyForTest(t, tasks[0], "hub-prepare")
+	composeRun := taskLeaseStepRunByKeyForTest(t, tasks[0], "compose")
+	first, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first.Steps).To(HaveLen(1))
+	g.Expect(first.Steps[0].StepRunID).To(Equal(composeRun.ID))
+	_, err = db.TransitionStepRunState(ctx, types.TransitionStepRunStateRequest{
+		OrganizationID: deps.orgID,
+		StepRunID:      hubRun.ID,
+		Status:         types.StepRunStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	recordTaskLeaseStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		composeRun.ID,
+		first.LeaseToken,
+		1,
+		types.StepRunEventTypeStarted,
+	)
+	expireTaskLeaseForTest(t, ctx, first.ID)
+
+	second, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second).NotTo(BeNil())
+	fetched, err := db.GetTask(ctx, tasks[0].ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(taskLeaseStepRunByKeyForTest(t, *fetched, "hub-prepare").Status).To(Equal(types.StepRunStatusRunning))
+	g.Expect(taskLeaseStepRunByKeyForTest(t, *fetched, "compose").Status).To(Equal(types.StepRunStatusPending))
+	recordTaskLeaseStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		second.Steps[0].StepRunID,
+		second.LeaseToken,
+		1,
+		types.StepRunEventTypeStarted,
+	)
+}
+
 func TestTaskLeaseRepositoryDoesNotClaimWhenExclusiveLockIsHeld(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -653,6 +717,17 @@ func recordTaskLeaseStepEventForTest(
 		Message:        string(eventType),
 	})
 	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func taskLeaseStepRunByKeyForTest(t *testing.T, task types.Task, key string) types.StepRun {
+	t.Helper()
+	for _, stepRun := range task.StepRuns {
+		if stepRun.StepKey == key {
+			return stepRun
+		}
+	}
+	t.Fatalf("step run %q not found", key)
+	return types.StepRun{}
 }
 
 func expireTaskLeaseForTest(t *testing.T, ctx context.Context, leaseID uuid.UUID) {
