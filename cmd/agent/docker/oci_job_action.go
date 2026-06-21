@@ -466,12 +466,14 @@ func finishExistingOCIJobContainer(
 	state := inspected.State
 	result := ociJobResult{ContainerName: containerName, ExitCode: state.ExitCode}
 	status := strings.ToLower(strings.TrimSpace(state.Status))
+	secretMountSource := inspectedSecretEnvMountSource(inspected)
 	switch status {
 	case "running":
 		code, err := waitOCIJobContainer(ctx, containerName)
 		if err != nil {
 			if ctx.Err() != nil {
 				stopOCIJobContainer(containerName)
+				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
 			return result, err
 		}
@@ -480,6 +482,7 @@ func finishExistingOCIJobContainer(
 		if err := startExistingOCIJobContainer(ctx, containerName); err != nil {
 			if ctx.Err() != nil {
 				stopOCIJobContainer(containerName)
+				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
 			return result, err
 		}
@@ -487,6 +490,7 @@ func finishExistingOCIJobContainer(
 		if err != nil {
 			if ctx.Err() != nil {
 				stopOCIJobContainer(containerName)
+				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
 			return result, err
 		}
@@ -499,10 +503,10 @@ func finishExistingOCIJobContainer(
 		return result, fmt.Errorf("existing OCI job container is in unsupported state %q", status)
 	}
 	if !ociJobExpectedExitCode(result.ExitCode, expectedExitCodes) {
-		cleanupOCIJobSecretMountSource(inspectedSecretEnvMountSource(inspected), containerName)
+		cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 		return result, fmt.Errorf("OCI job exited with code %d", result.ExitCode)
 	}
-	cleanupOCIJobSecretMountSource(inspectedSecretEnvMountSource(inspected), containerName)
+	cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 	result.Status = fmt.Sprintf("reused existing OCI job container with exit code %d", result.ExitCode)
 	return result, nil
 }
