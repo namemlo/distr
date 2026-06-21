@@ -48,7 +48,7 @@ DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS
 
 They are intentionally not accepted from Deployment Process action input, because action input must not grant its own host permissions.
 
-The server resolves `secretEnvironment` only while building an authenticated agent lease. Stored Deployment Plans and Process Snapshots keep secret keys only. The lease payload removes `secretEnvironment`, injects resolved values into `environment`, and records `SecretReferences`. StepRun event ingestion resolves the same secret references from stored plan input and redacts matching values from event messages, details, logs, and non-sensitive outputs.
+The server resolves `secretEnvironment` only while building an authenticated agent lease. Stored Deployment Plans and Process Snapshots keep secret keys only. The lease payload keeps resolved values in lease-only `secretEnvironment`, leaves public `environment` separate, and records `SecretReferences`. StepRun event ingestion resolves the same secret references from stored plan input and redacts matching values from event messages, details, logs, and non-sensitive outputs.
 
 The Docker adapter enforces these policies:
 
@@ -62,7 +62,7 @@ The Docker adapter enforces these policies:
 - `--cap-drop ALL` is always used.
 - Optional `runAsUser`, CPU, and memory limits are passed through to Docker.
 
-The adapter writes declared environment variables to a temporary env file and passes `--env-file` to Docker so resolved secret values are not visible in Docker command-line arguments. The temp file is removed after the command exits.
+The adapter writes public environment variables to a temporary env file and passes that file through Docker `--env-file`. Resolved `secretEnvironment` values are written to a separate temporary shell env file, bind-mounted read-only into the container, sourced by a `/bin/sh` wrapper, and removed after command completion. This keeps secret values out of Docker command-line arguments and retained container `Config.Env` metadata. Images that use `secretEnvironment` must provide `/bin/sh`.
 
 Idempotency uses a deterministic Docker container name derived from the action idempotency key. Before running `docker run`, the adapter inspects the deterministic container. An exited matching container is treated as the completed operation, a running matching container is waited, and a created matching container is started and then waited so restart/reclaim does not falsely mark an unexecuted job successful. Unsupported existing-container states fail explicitly. This covers normal retry, lease expiry reclaim, and agent restart on the same Docker host.
 
@@ -79,7 +79,7 @@ The action emits:
 - Docker agents can advertise both `distr.compose.deploy` and `distr.oci.job`.
 - Compose execution and legacy Docker resource-poll deployment behavior remain unchanged.
 - Secret references are resolved only for authenticated leases and redacted again at event ingestion.
-- The adapter avoids plaintext secrets in Docker command-line process arguments.
+- The adapter avoids plaintext secrets in Docker command-line process arguments and retained Docker container environment metadata.
 - Deterministic containers provide at-most-once execution for the same idempotency key on the same Docker host.
 - Operators may need to inspect or intentionally remove deterministic `distr-job-*` containers before re-running a previously completed side-effecting job.
 
@@ -87,7 +87,7 @@ The action emits:
 
 Allowing mutable tags was rejected because the same task could run different image content across retry or restart.
 
-Passing secrets as `--env KEY=value` was rejected because it exposes resolved secrets in Docker command-line process arguments.
+Passing secrets as `--env KEY=value` or Docker `--env-file` was rejected because it exposes resolved secrets in Docker command-line process arguments or retained container environment metadata.
 
 Using `--rm` was rejected because removing the container after exit would remove the idempotency marker and allow the same operation to run again after lease reclaim or agent restart.
 

@@ -28,6 +28,7 @@ const (
 	ociJobAllowedRegistriesEnv = "DISTR_OCI_JOB_ALLOWED_REGISTRIES"
 	ociJobAllowedNetworksEnv   = "DISTR_OCI_JOB_ALLOWED_NETWORKS"
 	ociJobAllowedMountRootsEnv = "DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS"
+	ociJobSecretEnvMountPath   = "/run/distr/secret-env"
 	ociJobMaxStatusBytes       = types.MaxStepRunLogChunkBodyLength
 )
 
@@ -132,6 +133,9 @@ func normalizeOCIJobActionInput(input *ociJobActionInput) {
 	if input.Environment == nil {
 		input.Environment = map[string]string{}
 	}
+	if input.SecretEnvironment == nil {
+		input.SecretEnvironment = map[string]string{}
+	}
 }
 
 func validateOCIJobActionInput(input *ociJobActionInput, policy ociJobPolicy) error {
@@ -149,9 +153,6 @@ func validateOCIJobActionInput(input *ociJobActionInput, policy ociJobPolicy) er
 	if len(input.Command) == 0 {
 		return fmt.Errorf("command is required")
 	}
-	if len(input.SecretEnvironment) > 0 {
-		return fmt.Errorf("secretEnvironment must be resolved by the task lease")
-	}
 	if !containsString(policy.AllowedNetworks, input.Network) {
 		return fmt.Errorf("network is not allowlisted")
 	}
@@ -161,6 +162,17 @@ func validateOCIJobActionInput(input *ociJobActionInput, policy ociJobPolicy) er
 		}
 		if strings.ContainsAny(value, "\x00\r\n") {
 			return fmt.Errorf("environment variable %q contains unsupported characters", name)
+		}
+	}
+	for name, value := range input.SecretEnvironment {
+		if !ociJobEnvNamePattern.MatchString(name) {
+			return fmt.Errorf("secret environment variable name %q is invalid", name)
+		}
+		if _, exists := input.Environment[name]; exists {
+			return fmt.Errorf("environment conflicts with secretEnvironment")
+		}
+		if strings.ContainsAny(value, "\x00\r\n") {
+			return fmt.Errorf("secret environment variable %q contains unsupported characters", name)
 		}
 	}
 	for index, volume := range input.Volumes {
@@ -365,12 +377,17 @@ func runOCIJob(
 		}
 		return finishExistingOCIJobContainer(ctx, containerName, inspected.State, input.ExpectedExitCodes, secretValues)
 	}
-	envFile, cleanup, err := writeOCIJobEnvFile(input.Environment)
+	envFile, cleanupEnv, err := writeOCIJobEnvFile(input.Environment)
 	if err != nil {
 		return result, err
 	}
-	defer cleanup()
-	out, runErr := runDockerCommandBounded(ctx, "docker", dockerRunOCIJobArgs(input, containerName, identity, envFile)...)
+	defer cleanupEnv()
+	secretEnvFile, cleanupSecretEnv, err := writeOCIJobSecretEnvFile(input.SecretEnvironment)
+	if err != nil {
+		return result, err
+	}
+	defer cleanupSecretEnv()
+	out, runErr := runDockerCommandBounded(ctx, "docker", dockerRunOCIJobArgs(input, containerName, identity, envFile, secretEnvFile)...)
 	status := redactStringWithSecretValues(strings.TrimSpace(string(out)), secretValues)
 	result.Status = status
 	result.ExitCode = dockerCommandExitCode(runErr)
@@ -588,7 +605,7 @@ func stopOCIJobContainer(containerName string) {
 	_, _ = runDockerCommandBounded(ctx, "docker", "stop", "--time", "5", containerName)
 }
 
-func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity ociJobOperationIdentity, envFile string) []string {
+func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity ociJobOperationIdentity, envFile, secretEnvFile string) []string {
 	args := []string{
 		"run",
 		"--name", containerName,
@@ -610,6 +627,9 @@ func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
+	if secretEnvFile != "" {
+		args = append(args, "--volume", secretEnvFile+":"+ociJobSecretEnvMountPath+":ro")
+	}
 	for _, volume := range input.Volumes {
 		args = append(args, "--volume", volume.Source+":"+volume.Target+":ro")
 	}
@@ -623,6 +643,9 @@ func dockerRunOCIJobArgs(input ociJobActionInput, containerName string, identity
 		args = append(args, "--memory", strconv.FormatInt(input.Resources.MemoryBytes, 10))
 	}
 	args = append(args, input.ImageDigest)
+	if secretEnvFile != "" {
+		args = append(args, "/bin/sh", "-c", "set -a; . "+ociJobSecretEnvMountPath+"; set +a; exec \"$@\"", "distr-oci-job")
+	}
 	args = append(args, input.Command...)
 	args = append(args, input.Arguments...)
 	return args
@@ -658,9 +681,43 @@ func writeOCIJobEnvFile(environment map[string]string) (string, func(), error) {
 	return file.Name(), cleanup, nil
 }
 
+func writeOCIJobSecretEnvFile(secretEnvironment map[string]string) (string, func(), error) {
+	if len(secretEnvironment) == 0 {
+		return "", func() {}, nil
+	}
+	file, err := os.CreateTemp("", "distr-oci-job-secret-env-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create OCI job secret env file: %w", err)
+	}
+	cleanup := func() {
+		_ = os.Remove(file.Name())
+	}
+	names := make([]string, 0, len(secretEnvironment))
+	for name := range secretEnvironment {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, err := fmt.Fprintf(file, "%s=%s\n", name, shellSingleQuote(secretEnvironment[name])); err != nil {
+			_ = file.Close()
+			cleanup()
+			return "", nil, fmt.Errorf("write OCI job secret env file: %w", err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("close OCI job secret env file: %w", err)
+	}
+	return file.Name(), cleanup, nil
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 func ociJobSecretValues(input ociJobActionInput) []string {
-	values := make([]string, 0, len(input.Environment))
-	for _, value := range input.Environment {
+	values := make([]string, 0, len(input.SecretEnvironment))
+	for _, value := range input.SecretEnvironment {
 		if value != "" {
 			values = append(values, value)
 		}
@@ -701,6 +758,7 @@ func ociJobOperationHash(input ociJobActionInput) (string, error) {
 		Command           []string
 		Arguments         []string
 		EnvironmentHash   string
+		SecretEnvNames    []string
 		Network           string
 		Volumes           []ociJobVolume
 		TimeoutSeconds    int
@@ -713,6 +771,7 @@ func ociJobOperationHash(input ociJobActionInput) (string, error) {
 		Command:           input.Command,
 		Arguments:         input.Arguments,
 		EnvironmentHash:   environmentHash,
+		SecretEnvNames:    sortedStringMapKeys(input.SecretEnvironment),
 		Network:           input.Network,
 		Volumes:           input.Volumes,
 		TimeoutSeconds:    input.TimeoutSeconds,
@@ -722,6 +781,15 @@ func ociJobOperationHash(input ociJobActionInput) (string, error) {
 		Security:          input.Security,
 	}
 	return ociJobHashValue(value)
+}
+
+func sortedStringMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func ociJobHashValue(value any) (string, error) {

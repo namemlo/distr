@@ -624,6 +624,7 @@ func resolveOCIJobSecretEnvironment(
 		}
 		environment = map[string]any{}
 	}
+	resolvedSecretEnvironment := map[string]any{}
 	references := make([]string, 0, len(secretEnvironment))
 	for rawName, rawReference := range secretEnvironment {
 		name := strings.TrimSpace(rawName)
@@ -642,11 +643,11 @@ func resolveOCIJobSecretEnvironment(
 		if err != nil {
 			return nil, err
 		}
-		environment[name] = value
+		resolvedSecretEnvironment[name] = value
 		references = append(references, "secret:"+reference)
 	}
 	inputBindings["environment"] = environment
-	delete(inputBindings, "secretEnvironment")
+	inputBindings["secretEnvironment"] = resolvedSecretEnvironment
 	sort.Strings(references)
 	return references, nil
 }

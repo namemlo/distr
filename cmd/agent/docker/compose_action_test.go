@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -701,6 +702,12 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "run" {
+		if path := os.Getenv("FAKE_DOCKER_CONTAINER_METADATA_FILE"); path != "" {
+			if err := writeFakeDockerContainerMetadata(path, dockerArgs); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
 		if rawSleep := os.Getenv("FAKE_DOCKER_RUN_SLEEP_MS"); rawSleep != "" {
 			ms, err := strconv.Atoi(rawSleep)
 			if err != nil {
@@ -724,4 +731,68 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(1)
 	}
 	os.Exit(2)
+}
+
+func writeFakeDockerContainerMetadata(path string, dockerArgs []string) error {
+	env := []string{}
+	labels := map[string]string{}
+	binds := []string{}
+	image := ""
+	cmd := []string{}
+	for i := 2; i < len(dockerArgs); i++ {
+		arg := dockerArgs[i]
+		switch arg {
+		case "--name", "--network", "--security-opt", "--cap-drop", "--user", "--cpus", "--memory":
+			i++
+		case "--env-file":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --env-file value")
+			}
+			data, err := os.ReadFile(dockerArgs[i])
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				if strings.TrimSpace(line) != "" {
+					env = append(env, line)
+				}
+			}
+		case "--label":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --label value")
+			}
+			key, value, ok := strings.Cut(dockerArgs[i], "=")
+			if ok {
+				labels[key] = value
+			}
+		case "--volume":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --volume value")
+			}
+			binds = append(binds, dockerArgs[i])
+		case "--read-only":
+		default:
+			image = arg
+			cmd = append(cmd, dockerArgs[i+1:]...)
+			i = len(dockerArgs)
+		}
+	}
+	data, err := json.Marshal(map[string]any{
+		"Config": map[string]any{
+			"Env":    env,
+			"Image":  image,
+			"Cmd":    cmd,
+			"Labels": labels,
+		},
+		"HostConfig": map[string]any{
+			"Binds": binds,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }

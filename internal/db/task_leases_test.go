@@ -166,10 +166,11 @@ func TestTaskLeaseRepositoryResolvesOCIJobSecretEnvironmentOnlyForAgentLease(t *
 	g.Expect(lease).NotTo(BeNil())
 	g.Expect(lease.Steps).To(HaveLen(1))
 	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:job_api_token"))
-	g.Expect(lease.Steps[0].InputBindings).NotTo(HaveKey("secretEnvironment"))
 	environment := lease.Steps[0].InputBindings["environment"].(map[string]any)
 	g.Expect(environment).To(HaveKeyWithValue("MODE", "once"))
-	g.Expect(environment).To(HaveKeyWithValue("API_TOKEN", "super-secret-job-token"))
+	g.Expect(environment).NotTo(HaveKey("API_TOKEN"))
+	secretEnvironment := lease.Steps[0].InputBindings["secretEnvironment"].(map[string]any)
+	g.Expect(secretEnvironment).To(HaveKeyWithValue("API_TOKEN", "super-secret-job-token"))
 }
 
 func TestTaskLeaseRepositoryReturnsNilWhenNoQueuedTaskForAgent(t *testing.T) {
