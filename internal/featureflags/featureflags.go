@@ -19,6 +19,7 @@ const (
 	KeyTaskQueue           Key = "task_queue"
 	KeyAgentCapabilities   Key = "agent_capabilities"
 	KeyAgentTaskLeases     Key = "agent_task_leases"
+	KeyStepEvents          Key = "step_events"
 	KeyRunbooks            Key = "runbooks"
 )
 
@@ -100,6 +101,12 @@ var definitions = []definition{
 		Key:         KeyAgentTaskLeases,
 		Label:       "Agent Task Leases",
 		Description: "Lets agents claim durable task leases and heartbeat active work.",
+		Milestone:   "Milestone D",
+	},
+	{
+		Key:         KeyStepEvents,
+		Label:       "Step Events",
+		Description: "Stores structured step lifecycle events, redacted log chunks, and bounded step outputs.",
 		Milestone:   "Milestone D",
 	},
 	{

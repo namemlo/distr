@@ -46,6 +46,7 @@ func getTemplateData(
 		capabilitiesEndpoint string
 		leaseEndpoint        string
 		heartbeatEndpoint    string
+		stepEventEndpoint    string
 		logsEndpoint         string
 		agentLogsEndpoint    string
 	)
@@ -82,6 +83,13 @@ func getTemplateData(
 			deploymentTarget.ID.String(),
 			"tasks",
 		).String() + "/{taskId}/heartbeat"
+		stepEventEndpoint = u.JoinPath(
+			"api",
+			"v1",
+			"agents",
+			deploymentTarget.ID.String(),
+			"step-runs",
+		).String() + "/{stepRunId}/events"
 	}
 
 	result := map[string]any{
@@ -96,6 +104,7 @@ func getTemplateData(
 		"capabilitiesEndpoint":          capabilitiesEndpoint,
 		"leaseEndpoint":                 leaseEndpoint,
 		"taskHeartbeatEndpointTemplate": heartbeatEndpoint,
+		"stepEventEndpointTemplate":     stepEventEndpoint,
 		"registryEnabled":               env.RegistryEnabled(),
 		"registryHost":                  customdomains.RegistryDomainOrDefault(org),
 		"registryPlainHttp":             buildconfig.IsDevelopment(),

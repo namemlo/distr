@@ -941,6 +941,11 @@ func TestReleaseBundleDowngradeRepairsProcessSnapshotCanonicalPayload(t *testing
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(expectedPayload)).NotTo(ContainSubstring("processSnapshotId"))
 
+	stepEventsDown, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "125_step_events.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(ctx, string(stepEventsDown))
+	g.Expect(err).NotTo(HaveOccurred())
+
 	taskLeasesDown, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "124_task_leases.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	_, err = internalctx.GetDb(ctx).Exec(ctx, string(taskLeasesDown))

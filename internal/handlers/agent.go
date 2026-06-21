@@ -122,11 +122,33 @@ func AgentRouter(r chiopenapi.Router) {
 				With(option.Request(AgentTaskHeartbeatRouteRequest{})).
 				With(option.Response(http.StatusOK, api.AgentTaskLease{}))
 		})
+		agentRoutes.With(agentStepEventsFeatureFlagMiddleware).Group(func(r chiopenapi.Router) {
+			type AgentStepRunEventRouteRequest struct {
+				AgentID   uuid.UUID `path:"agentId"`
+				StepRunID uuid.UUID `path:"stepRunId"`
+				api.AgentStepRunEventRequest
+			}
+
+			r.Post("/step-runs/{stepRunId}/events", postAgentStepRunEventHandler()).
+				With(option.Request(AgentStepRunEventRouteRequest{})).
+				With(option.Response(http.StatusOK, api.StepRunEvent{}))
+		})
 	})
 }
 
 func agentTaskLeaseFeatureFlagMiddleware(handler http.Handler) http.Handler {
 	for _, feature := range []featureflags.Key{
+		featureflags.KeyAgentTaskLeases,
+		featureflags.KeyTaskQueue,
+	} {
+		handler = middleware.ExperimentalFeatureFlagMiddleware(feature)(handler)
+	}
+	return handler
+}
+
+func agentStepEventsFeatureFlagMiddleware(handler http.Handler) http.Handler {
+	for _, feature := range []featureflags.Key{
+		featureflags.KeyStepEvents,
 		featureflags.KeyAgentTaskLeases,
 		featureflags.KeyTaskQueue,
 	} {
@@ -688,6 +710,86 @@ func postAgentTaskHeartbeatHandler() http.HandlerFunc {
 	}
 }
 
+func postAgentStepRunEventHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("agentId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		stepRunID, err := uuid.Parse(r.PathValue("stepRunId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		deploymentTarget := internalctx.GetDeploymentTarget(ctx)
+		if deploymentTarget.ID != agentID {
+			http.NotFound(w, r)
+			return
+		}
+		request, err := JsonBody[api.AgentStepRunEventRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		event, err := db.RecordAgentStepRunEvent(ctx, agentStepRunEventRequestFromAPI(
+			request,
+			deploymentTarget.OrganizationID,
+			deploymentTarget.ID,
+			stepRunID,
+		))
+		respondStepEventResult(w, r, log, err, func() {
+			RespondJSON(w, mapping.StepRunEventToAPI(*event))
+		})
+	}
+}
+
+func agentStepRunEventRequestFromAPI(
+	request api.AgentStepRunEventRequest,
+	orgID uuid.UUID,
+	agentID uuid.UUID,
+	stepRunID uuid.UUID,
+) types.RecordAgentStepRunEventRequest {
+	logs := make([]types.RecordStepRunLogChunkRequest, 0, len(request.Logs))
+	for _, log := range request.Logs {
+		logs = append(logs, types.RecordStepRunLogChunkRequest{
+			OccurredAt: log.OccurredAt,
+			Stream:     log.Stream,
+			Severity:   log.Severity,
+			Body:       log.Body,
+		})
+	}
+	outputs := make([]types.RecordStepRunOutputRequest, 0, len(request.Outputs))
+	for _, output := range request.Outputs {
+		outputs = append(outputs, types.RecordStepRunOutputRequest{
+			Name:      output.Name,
+			Value:     output.Value,
+			Sensitive: output.Sensitive,
+		})
+	}
+	return types.RecordAgentStepRunEventRequest{
+		OrganizationID:  orgID,
+		AgentID:         agentID,
+		StepRunID:       stepRunID,
+		LeaseToken:      request.LeaseToken,
+		Sequence:        request.Sequence,
+		Type:            request.Type,
+		OccurredAt:      request.OccurredAt,
+		Message:         request.Message,
+		ProgressPercent: request.ProgressPercent,
+		Details:         request.Details,
+		Logs:            logs,
+		Outputs:         outputs,
+	}
+}
+
 func respondAgentTaskLeaseResult(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -703,6 +805,28 @@ func respondAgentTaskLeaseResult(
 		http.NotFound(w, r)
 	} else if err != nil {
 		log.Error("failed to handle agent task lease request", zap.Error(err))
+		sentry.GetHubFromContext(r.Context()).CaptureException(err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	} else {
+		success()
+	}
+}
+
+func respondStepEventResult(
+	w http.ResponseWriter,
+	r *http.Request,
+	log *zap.Logger,
+	err error,
+	success func(),
+) {
+	if errors.Is(err, apierrors.ErrBadRequest) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	} else if errors.Is(err, apierrors.ErrConflict) {
+		http.Error(w, err.Error(), http.StatusConflict)
+	} else if errors.Is(err, apierrors.ErrNotFound) {
+		http.NotFound(w, r)
+	} else if err != nil {
+		log.Error("failed to handle step event request", zap.Error(err))
 		sentry.GetHubFromContext(r.Context()).CaptureException(err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	} else {

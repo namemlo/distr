@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-023 are implemented locally. PR-023 adds feature-flagged agent task leases with short-lived hashed lease tokens, heartbeat extension, expired-lease reclaim, agent client helpers, and generated manifest endpoint configuration without adding step events, logs, task completion, execution adapters, approvals, or PR-024 behavior.
+PR-000 through PR-024 are implemented locally. PR-024 adds feature-flagged structured StepRun lifecycle events, redacted log chunks, bounded step outputs, task timeline/log read APIs, agent client helpers, and generated manifest endpoint configuration without adding action execution adapters, task cancellation, approvals, guided failure, or PR-025 behavior.
 
 ## Tracking Template
 
@@ -388,3 +388,18 @@ Use one entry per pull request:
 - Tests: API validation, agent client, manifest, handler, live PostgreSQL repository, migration checks, expired-lease reclaim, and feature-flag tests were added.
 - Upstream contribution notes: Community-neutral lease and heartbeat protocol; no adopter-specific terminology, provider logic, or execution behavior.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, and current agent deployment behavior are unchanged. No step events, logs, task completion, execution adapters, approvals, guided failure, timelines, or PR-024 behavior is added in PR-023.
+
+### PR-024 - Structured step events and logs
+
+- Status: Implemented locally; backend, API, repository, migration, handler, agent client, generated manifests, documentation, live PostgreSQL verification, lint, tests, and builds completed.
+- Upstream base: `d8fdb6bbb0273c597c0f66404d6899a8f8f40e53`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=task_queue,agent_task_leases,step_events` for hidden agent ingestion; task timeline/log reads also require the Task Queue prerequisite flags.
+- User-facing behavior: Feature-flagged API callers can read a Task's structured StepRun event timeline and redacted StepRun logs.
+- Database changes: Added `StepRunEvent`, `StepRunLogChunk`, and `StepRunOutput` with organization-scoped composite references to Task, StepRun, TaskLease, and deployment target agent, ordered per-step/per-lease sequences, bounded log/output storage, and idempotent replay uniqueness.
+- API changes: Added hidden agent-authenticated `POST /api/v1/agents/{id}/step-runs/{stepRunId}/events` plus `GET /api/v1/tasks/{taskId}/timeline` and `GET /api/v1/tasks/{taskId}/logs`.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-024.
+- Agent protocol changes: Docker and Kubernetes manifests include optional `DISTR_STEP_EVENT_ENDPOINT_TEMPLATE`. Agent client helpers can post structured step events but existing agent loops do not execute leased Tasks or emit execution events in PR-024.
+- Documentation: Added PR-024 notes and ADR-0024.
+- Tests: API validation, redaction, mapping, feature-flag, manifest, agent client, handler, repository, lifecycle transition, idempotent replay, organization isolation, expired lease, and migration checks were added. Focused Go tests, `go test -p=1 ./...`, live PostgreSQL repository tests, Angular tests with watch disabled, migration-pair validation, touched-file Prettier checks, diff-scoped Go lint, community frontend build, community Hub build, Docker agent build, Kubernetes agent build, and changed-file Unicode scan passed locally.
+- Upstream contribution notes: Community-neutral structured step event/log protocol; no adopter-specific terminology, provider logic, or execution behavior.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, and current deployment behavior are unchanged. No action execution adapters, Compose/OCI/file/webhook adapters, release promotion execution, task cancellation, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-025 behavior is added in PR-024.

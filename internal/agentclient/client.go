@@ -35,6 +35,7 @@ type clientData struct {
 	capabilitiesEndpoint          string
 	leaseEndpoint                 string
 	taskHeartbeatEndpointTemplate string
+	stepEventEndpointTemplate     string
 	deploymentLogsEndpoint        string
 	deploymentTargetLogsEndpoint  string
 }
@@ -274,6 +275,7 @@ func (c *Client) ReloadFromEnv() (changed bool, err error) {
 	d.capabilitiesEndpoint = readEnvVarOptional("DISTR_CAPABILITIES_ENDPOINT")
 	d.leaseEndpoint = readEnvVarOptional("DISTR_LEASE_ENDPOINT")
 	d.taskHeartbeatEndpointTemplate = readEnvVarOptional("DISTR_TASK_HEARTBEAT_ENDPOINT_TEMPLATE")
+	d.stepEventEndpointTemplate = readEnvVarOptional("DISTR_STEP_EVENT_ENDPOINT_TEMPLATE")
 	if d.deploymentLogsEndpoint, err = readEnvVar("DISTR_LOGS_ENDPOINT"); err != nil {
 		return changed, err
 	}
