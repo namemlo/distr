@@ -253,3 +253,18 @@ Use one entry per pull request:
 - Tests: API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service/component tests were added.
 - Upstream contribution notes: Community-neutral Variable Set model; no adopter-specific terminology, provider logic, or plaintext secret storage.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, deployment target, deployment, release-name, and agent behavior is unchanged. No scoped resolution, variable snapshots, deployment planning, approval, retention, execution, notification, or agent behavior is added in PR-014.
+
+### PR-015 - Scoped variable resolver
+
+- Status: Implemented; backend resolver, API, repository, migration, mapping, handler, Angular UI, and focused verification completed.
+- Upstream base: `e78ee16d4f60ae25a4727a80c7b37d512400a736`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=scoped_variables_v2`.
+- User-facing behavior: Vendor admins can add scoped values to Variables, see duplicate-scope warnings, and preview deterministic resolution with safe trace output from the Variable Sets page.
+- Database changes: Added `VariableScopedValue` with organization-scoped foreign keys, allowed scope-shape checks, one payload source per scoped value, duplicate-scope uniqueness per Variable, and composite constraints for same-organization scope references.
+- API changes: Extended Variable Set CRUD payloads/responses with `scopedValues` and added feature-flagged `POST /api/v1/variables/resolve-preview`.
+- UI changes: Extended the Variable Sets page with scoped-value editing, optional organization lookup selectors, resolution preview modal, redacted Secret reference display, and trace output.
+- Agent protocol changes: None.
+- Documentation: Added PR-015 notes and ADR-0015.
+- Tests: Pure resolver, API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service/component tests were added.
+- Upstream contribution notes: Community-neutral scoped resolver model; no adopter-specific terminology, provider execution logic, or plaintext secret exposure.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, deployment target, deployment, release-name, and agent behavior is unchanged. No variable snapshots, drift detection, deployment planning, approval, retention, execution, notification, runbook persistence, or agent behavior is added in PR-015.

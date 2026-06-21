@@ -1,7 +1,12 @@
 import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
-import {CreateUpdateVariableSetRequest, VariableSet} from '../types/variable-set';
+import {
+  CreateUpdateVariableSetRequest,
+  ResolvedVariable,
+  ResolveVariablesPreviewRequest,
+  VariableSet,
+} from '../types/variable-set';
 
 const baseUrl = '/api/v1/variable-sets';
 
@@ -29,5 +34,9 @@ export class VariableSetsService {
 
   delete(id: string): Observable<void> {
     return this.httpClient.delete<void>(`${baseUrl}/${id}`);
+  }
+
+  resolvePreview(request: ResolveVariablesPreviewRequest): Observable<ResolvedVariable[]> {
+    return this.httpClient.post<ResolvedVariable[]>('/api/v1/variables/resolve-preview', request);
   }
 }

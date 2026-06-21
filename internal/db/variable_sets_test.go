@@ -169,6 +169,224 @@ func TestVariableSetSecretReferencePreventsUnsafeSecretDelete(t *testing.T) {
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
 }
 
+func TestVariableSetRepositoryPersistsScopedValuesAndResolvesPreview(t *testing.T) {
+	ctx := variableSetDBTestContext(t)
+	g := NewWithT(t)
+	orgID := createVariableSetTestOrganization(t, ctx)
+	applicationID := createVariableSetApplicationForOrganization(t, ctx, orgID)
+	lifecycleID := createVariableSetLifecycleForOrganization(t, ctx, orgID)
+	channelID := createVariableSetChannelForOrganization(t, ctx, orgID, applicationID, lifecycleID, "Stable")
+	environmentID := createVariableSetEnvironmentForOrganization(t, ctx, orgID, "Production")
+	deploymentTargetID := createVariableSetDeploymentTargetForOrganization(t, ctx, orgID, "cluster-a")
+	customerOrganizationID := createVariableSetCustomerOrganizationForOrganization(t, ctx, orgID, "Acme")
+	secretID := createVariableSetSecretForOrganization(t, ctx, orgID, "api_token")
+	scopedSecretID := createVariableSetSecretForOrganization(t, ctx, orgID, "tenant_api_token")
+
+	variableSet := types.VariableSet{
+		OrganizationID: orgID,
+		Name:           "Runtime Defaults",
+		ApplicationIDs: []uuid.UUID{applicationID},
+		Variables: []types.Variable{
+			{
+				Key:          "api_url",
+				Type:         types.VariableTypeString,
+				DefaultValue: json.RawMessage(`"https://default.example"`),
+				ScopedValues: []types.VariableScopedValue{
+					{
+						Scope:     types.VariableScope{ApplicationID: &applicationID},
+						Value:     json.RawMessage(`"https://application.example"`),
+						SortOrder: 10,
+					},
+					{
+						Scope: types.VariableScope{
+							CustomerOrganizationID: &customerOrganizationID,
+							EnvironmentID:          &environmentID,
+							DeploymentTargetID:     &deploymentTargetID,
+							ChannelID:              &channelID,
+							ProcessStepKey:         "deploy",
+						},
+						Value: json.RawMessage(`"https://exact.example"`),
+					},
+				},
+			},
+			{
+				Key:         "api_token",
+				Type:        types.VariableTypeSecretReference,
+				ReferenceID: secretID.String(),
+				ScopedValues: []types.VariableScopedValue{
+					{
+						Scope:       types.VariableScope{ApplicationID: &applicationID},
+						ReferenceID: scopedSecretID.String(),
+					},
+				},
+			},
+		},
+	}
+	g.Expect(db.CreateVariableSet(ctx, &variableSet)).To(Succeed())
+
+	loaded, err := db.GetVariableSet(ctx, variableSet.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	apiURL := variableByKey(*loaded, "api_url")
+	g.Expect(apiURL.ScopedValues).To(HaveLen(2))
+	g.Expect(apiURL.ScopedValues[0].Value).To(MatchJSON(`"https://exact.example"`))
+	g.Expect(apiURL.ScopedValues[1].Value).To(MatchJSON(`"https://application.example"`))
+	apiToken := variableByKey(*loaded, "api_token")
+	g.Expect(apiToken.ScopedValues).To(HaveLen(1))
+	g.Expect(apiToken.ScopedValues[0].ReferenceID).To(Equal(scopedSecretID.String()))
+	g.Expect(apiToken.ScopedValues[0].ReferenceName).To(Equal("tenant_api_token"))
+	g.Expect(apiToken.ScopedValues[0].Value).To(BeNil())
+
+	resolved, err := db.ResolveVariablesPreview(
+		ctx,
+		orgID,
+		[]uuid.UUID{variableSet.ID},
+		types.VariableResolutionScope{
+			ApplicationID:          &applicationID,
+			ChannelID:              &channelID,
+			CustomerOrganizationID: &customerOrganizationID,
+			EnvironmentID:          &environmentID,
+			DeploymentTargetID:     &deploymentTargetID,
+			ProcessStepKey:         "deploy",
+		},
+		nil,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	resolvedURL := resolvedByKey(resolved, "api_url")
+	g.Expect(resolvedURL.Status).To(Equal(types.VariableResolutionStatusResolved))
+	g.Expect(resolvedURL.Source).To(Equal(types.VariableResolutionSourceExactTenantEnvironmentTargetChannelStep))
+	g.Expect(resolvedURL.Value).To(MatchJSON(`"https://exact.example"`))
+	resolvedToken := resolvedByKey(resolved, "api_token")
+	g.Expect(resolvedToken.Value).To(BeNil())
+	g.Expect(resolvedToken.ReferenceName).To(Equal("tenant_api_token"))
+	g.Expect(resolvedToken.Redacted).To(BeTrue())
+}
+
+func TestVariableSetRepositoryRejectsInvalidScopedValueReferences(t *testing.T) {
+	ctx := variableSetDBTestContext(t)
+	g := NewWithT(t)
+	orgID := createVariableSetTestOrganization(t, ctx)
+	applicationID := createVariableSetApplicationForOrganization(t, ctx, orgID)
+	otherOrgID := createVariableSetTestOrganization(t, ctx)
+	otherApplicationID := createVariableSetApplicationForOrganization(t, ctx, otherOrgID)
+	otherLifecycleID := createVariableSetLifecycleForOrganization(t, ctx, otherOrgID)
+	otherChannelID := createVariableSetChannelForOrganization(
+		t, ctx, otherOrgID, otherApplicationID, otherLifecycleID, "Stable",
+	)
+	otherEnvironmentID := createVariableSetEnvironmentForOrganization(t, ctx, otherOrgID, "Production")
+	otherDeploymentTargetID := createVariableSetDeploymentTargetForOrganization(t, ctx, otherOrgID, "cluster-b")
+	otherCustomerOrganizationID := createVariableSetCustomerOrganizationForOrganization(t, ctx, otherOrgID, "Other")
+	otherSecretID := createVariableSetSecretForOrganization(t, ctx, otherOrgID, "other_token")
+
+	tests := []struct {
+		name     string
+		variable types.Variable
+	}{
+		{
+			name: "cross organization application",
+			variable: types.Variable{
+				Key:          "api_url",
+				Type:         types.VariableTypeString,
+				DefaultValue: json.RawMessage(`"https://default.example"`),
+				ScopedValues: []types.VariableScopedValue{
+					{Scope: types.VariableScope{ApplicationID: &otherApplicationID}, Value: json.RawMessage(`"bad"`)},
+				},
+			},
+		},
+		{
+			name: "cross organization channel",
+			variable: types.Variable{
+				Key:          "api_url",
+				Type:         types.VariableTypeString,
+				DefaultValue: json.RawMessage(`"https://default.example"`),
+				ScopedValues: []types.VariableScopedValue{
+					{Scope: types.VariableScope{ChannelID: &otherChannelID}, Value: json.RawMessage(`"bad"`)},
+				},
+			},
+		},
+		{
+			name: "cross organization environment",
+			variable: types.Variable{
+				Key:          "api_url",
+				Type:         types.VariableTypeString,
+				DefaultValue: json.RawMessage(`"https://default.example"`),
+				ScopedValues: []types.VariableScopedValue{
+					{Scope: types.VariableScope{EnvironmentID: &otherEnvironmentID}, Value: json.RawMessage(`"bad"`)},
+				},
+			},
+		},
+		{
+			name: "cross organization deployment target",
+			variable: types.Variable{
+				Key:          "api_url",
+				Type:         types.VariableTypeString,
+				DefaultValue: json.RawMessage(`"https://default.example"`),
+				ScopedValues: []types.VariableScopedValue{
+					{
+						Scope: types.VariableScope{
+							CustomerOrganizationID: &otherCustomerOrganizationID,
+							EnvironmentID:          ptrUUIDForVariableSet(environmentIDForScopedReferenceTest(t, ctx, orgID)),
+							DeploymentTargetID:     &otherDeploymentTargetID,
+						},
+						Value: json.RawMessage(`"bad"`),
+					},
+				},
+			},
+		},
+		{
+			name: "cross organization secret reference",
+			variable: types.Variable{
+				Key:  "api_token",
+				Type: types.VariableTypeSecretReference,
+				ScopedValues: []types.VariableScopedValue{
+					{Scope: types.VariableScope{ApplicationID: &applicationID}, ReferenceID: otherSecretID.String()},
+				},
+				ReferenceID: createVariableSetSecretForOrganization(t, ctx, orgID, "api_token").String(),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			variableSet := types.VariableSet{
+				OrganizationID: orgID,
+				Name:           "Runtime Defaults " + uuid.NewString(),
+				Variables:      []types.Variable{tt.variable},
+			}
+
+			err := db.CreateVariableSet(ctx, &variableSet)
+
+			g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+		})
+	}
+}
+
+func TestVariableSetRepositoryRejectsDuplicateScopedValueScopes(t *testing.T) {
+	ctx := variableSetDBTestContext(t)
+	g := NewWithT(t)
+	orgID := createVariableSetTestOrganization(t, ctx)
+	applicationID := createVariableSetApplicationForOrganization(t, ctx, orgID)
+
+	variableSet := types.VariableSet{
+		OrganizationID: orgID,
+		Name:           "Runtime Defaults",
+		Variables: []types.Variable{
+			{
+				Key:          "api_url",
+				Type:         types.VariableTypeString,
+				DefaultValue: json.RawMessage(`"https://default.example"`),
+				ScopedValues: []types.VariableScopedValue{
+					{Scope: types.VariableScope{ApplicationID: &applicationID}, Value: json.RawMessage(`"one"`)},
+					{Scope: types.VariableScope{ApplicationID: &applicationID}, Value: json.RawMessage(`"two"`)},
+				},
+			},
+		},
+	}
+
+	err := db.CreateVariableSet(ctx, &variableSet)
+
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+}
+
 func TestVariableSetMigrationDefinesScopedTables(t *testing.T) {
 	g := NewWithT(t)
 
@@ -189,6 +407,18 @@ func TestVariableSetMigrationDefinesScopedTables(t *testing.T) {
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS Variable"))
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS VariableSetApplication"))
 	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS VariableSet"))
+
+	up, err = os.ReadFile(filepath.Join("..", "migrations", "sql", "118_variable_scoped_values.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	sql = string(up)
+	g.Expect(sql).To(ContainSubstring("CREATE TABLE VariableScopedValue"))
+	g.Expect(sql).To(ContainSubstring("variablescopedvalue_scope_unique"))
+	g.Expect(sql).To(ContainSubstring("variablescopedvalue_variable_fk"))
+	g.Expect(sql).To(ContainSubstring("variablescopedvalue_secret_reference_org_fk"))
+
+	down, err = os.ReadFile(filepath.Join("..", "migrations", "sql", "118_variable_scoped_values.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS VariableScopedValue"))
 }
 
 //nolint:dupl
@@ -309,6 +539,155 @@ func createVariableSetSecretForOrganization(t *testing.T, ctx context.Context, o
 	return secretID
 }
 
+func createVariableSetLifecycleForOrganization(t *testing.T, ctx context.Context, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var lifecycleID uuid.UUID
+	if err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`INSERT INTO Lifecycle (organization_id, name)
+		VALUES (@organizationId, @name)
+		RETURNING id`,
+		pgx.NamedArgs{"organizationId": orgID, "name": "Lifecycle " + uuid.NewString()},
+	).Scan(&lifecycleID); err != nil {
+		t.Fatalf("create lifecycle: %v", err)
+	}
+	return lifecycleID
+}
+
+func createVariableSetChannelForOrganization(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+	lifecycleID uuid.UUID,
+	name string,
+) uuid.UUID {
+	t.Helper()
+	channel := types.Channel{
+		OrganizationID: orgID,
+		ApplicationID:  applicationID,
+		LifecycleID:    lifecycleID,
+		Name:           name,
+	}
+	if err := db.CreateChannel(ctx, &channel); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	return channel.ID
+}
+
+func createVariableSetEnvironmentForOrganization(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	name string,
+) uuid.UUID {
+	t.Helper()
+	environment := types.Environment{
+		OrganizationID: orgID,
+		Name:           name + " " + uuid.NewString(),
+	}
+	if err := db.CreateEnvironment(ctx, &environment); err != nil {
+		t.Fatalf("create environment: %v", err)
+	}
+	return environment.ID
+}
+
+func createVariableSetDeploymentTargetForOrganization(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	name string,
+) uuid.UUID {
+	t.Helper()
+	namespace := "default"
+	scope := types.DeploymentTargetScopeNamespace
+	createdByID := createVariableSetTestUser(t, ctx, orgID)
+	agentVersionID := createVariableSetAgentVersion(t, ctx)
+	target := types.DeploymentTargetFull{
+		DeploymentTarget: types.DeploymentTarget{
+			Name:           name + " " + uuid.NewString(),
+			Type:           types.DeploymentTypeKubernetes,
+			OrganizationID: orgID,
+			Namespace:      &namespace,
+			Scope:          &scope,
+			AgentVersionID: &agentVersionID,
+		},
+	}
+	if err := db.CreateDeploymentTarget(ctx, &target, orgID, createdByID, nil); err != nil {
+		t.Fatalf("create deployment target: %v", err)
+	}
+	return target.ID
+}
+
+func createVariableSetAgentVersion(t *testing.T, ctx context.Context) uuid.UUID {
+	t.Helper()
+	var agentVersionID uuid.UUID
+	if err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`INSERT INTO AgentVersion (name, manifest_file_revision, compose_file_revision)
+		VALUES (@name, @manifestFileRevision, @composeFileRevision)
+		RETURNING id`,
+		pgx.NamedArgs{
+			"name":                 "variable-set-agent-" + uuid.NewString(),
+			"manifestFileRevision": "v1",
+			"composeFileRevision":  "v1",
+		},
+	).Scan(&agentVersionID); err != nil {
+		t.Fatalf("create agent version: %v", err)
+	}
+	return agentVersionID
+}
+
+func createVariableSetTestUser(t *testing.T, ctx context.Context, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var userID uuid.UUID
+	if err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`INSERT INTO UserAccount (email) VALUES (@email) RETURNING id`,
+		pgx.NamedArgs{"email": "variable-set-" + uuid.NewString() + "@example.com"},
+	).Scan(&userID); err != nil {
+		t.Fatalf("create user account: %v", err)
+	}
+	if _, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Organization_UserAccount (organization_id, user_account_id, user_role)
+		VALUES (@organizationId, @userId, 'admin')`,
+		pgx.NamedArgs{"organizationId": orgID, "userId": userID},
+	); err != nil {
+		t.Fatalf("create organization user account: %v", err)
+	}
+	return userID
+}
+
+func createVariableSetCustomerOrganizationForOrganization(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	name string,
+) uuid.UUID {
+	t.Helper()
+	var customerOrganizationID uuid.UUID
+	if err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`INSERT INTO CustomerOrganization (organization_id, name)
+		VALUES (@organizationId, @name)
+		RETURNING id`,
+		pgx.NamedArgs{"organizationId": orgID, "name": name + " " + uuid.NewString()},
+	).Scan(&customerOrganizationID); err != nil {
+		t.Fatalf("create customer organization: %v", err)
+	}
+	return customerOrganizationID
+}
+
+func environmentIDForScopedReferenceTest(t *testing.T, ctx context.Context, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	return createVariableSetEnvironmentForOrganization(t, ctx, orgID, "Production")
+}
+
+func ptrUUIDForVariableSet(value uuid.UUID) *uuid.UUID {
+	return &value
+}
+
 func variableByKey(variableSet types.VariableSet, key string) types.Variable {
 	for _, variable := range variableSet.Variables {
 		if variable.Key == key {
@@ -316,4 +695,13 @@ func variableByKey(variableSet types.VariableSet, key string) types.Variable {
 		}
 	}
 	return types.Variable{}
+}
+
+func resolvedByKey(variables []types.ResolvedVariable, key string) types.ResolvedVariable {
+	for _, variable := range variables {
+		if variable.Key == key {
+			return variable
+		}
+	}
+	return types.ResolvedVariable{}
 }

@@ -17,6 +17,9 @@ func TestVariableSetToAPI(t *testing.T) {
 	orgID := uuid.New()
 	applicationID := uuid.New()
 	variableID := uuid.New()
+	scopedSecretID := uuid.New()
+	scopedPayloadID := uuid.New()
+	secretReferenceID := uuid.New()
 	createdAt := time.Date(2026, 6, 21, 9, 30, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 6, 21, 10, 45, 0, 0, time.UTC)
 
@@ -38,8 +41,20 @@ func TestVariableSetToAPI(t *testing.T) {
 				VariableSetID:  id,
 				Key:            "api_token",
 				Type:           types.VariableTypeSecretReference,
-				ReferenceID:    uuid.NewString(),
+				ReferenceID:    secretReferenceID.String(),
 				ReferenceName:  "api_token",
+				ScopedValues: []types.VariableScopedValue{
+					{
+						ID:            scopedSecretID,
+						CreatedAt:     createdAt,
+						UpdatedAt:     updatedAt,
+						VariableSetID: id,
+						VariableID:    variableID,
+						Scope:         types.VariableScope{ApplicationID: &applicationID},
+						ReferenceID:   secretReferenceID.String(),
+						ReferenceName: "application_api_token",
+					},
+				},
 			},
 			{
 				ID:            uuid.New(),
@@ -49,6 +64,17 @@ func TestVariableSetToAPI(t *testing.T) {
 				Key:           "payload",
 				Type:          types.VariableTypeJSON,
 				DefaultValue:  json.RawMessage(`{"mode":"safe"}`),
+				ScopedValues: []types.VariableScopedValue{
+					{
+						ID:            scopedPayloadID,
+						CreatedAt:     createdAt,
+						UpdatedAt:     updatedAt,
+						VariableSetID: id,
+						VariableID:    variableID,
+						Scope:         types.VariableScope{ApplicationID: &applicationID},
+						Value:         json.RawMessage(`{"mode":"application"}`),
+					},
+				},
 			},
 		},
 	})
@@ -70,6 +96,16 @@ func TestVariableSetToAPI(t *testing.T) {
 				Type:          api.VariableTypeSecretReference,
 				ReferenceID:   res.Variables[0].ReferenceID,
 				ReferenceName: "api_token",
+				ScopedValues: []api.VariableScopedValue{
+					{
+						ID:            scopedSecretID,
+						CreatedAt:     createdAt,
+						UpdatedAt:     updatedAt,
+						Scope:         api.VariableScope{ApplicationID: &applicationID},
+						ReferenceID:   secretReferenceID.String(),
+						ReferenceName: "application_api_token",
+					},
+				},
 			},
 			{
 				ID:           res.Variables[1].ID,
@@ -78,6 +114,15 @@ func TestVariableSetToAPI(t *testing.T) {
 				Key:          "payload",
 				Type:         api.VariableTypeJSON,
 				DefaultValue: json.RawMessage(`{"mode":"safe"}`),
+				ScopedValues: []api.VariableScopedValue{
+					{
+						ID:        scopedPayloadID,
+						CreatedAt: createdAt,
+						UpdatedAt: updatedAt,
+						Scope:     api.VariableScope{ApplicationID: &applicationID},
+						Value:     json.RawMessage(`{"mode":"application"}`),
+					},
+				},
 			},
 		},
 	}))
