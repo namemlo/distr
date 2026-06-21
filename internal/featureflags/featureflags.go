@@ -16,6 +16,7 @@ const (
 	KeyDeploymentProcesses Key = "deployment_processes"
 	KeyScopedVariablesV2   Key = "scoped_variables_v2"
 	KeyDeploymentPlans     Key = "deployment_plans"
+	KeyTaskQueue           Key = "task_queue"
 	KeyRunbooks            Key = "runbooks"
 )
 
@@ -79,6 +80,12 @@ var definitions = []definition{
 		Key:         KeyDeploymentPlans,
 		Label:       "Deployment Plans",
 		Description: "Resolves an immutable preview of what a deployment will do before execution.",
+		Milestone:   "Milestone D",
+	},
+	{
+		Key:         KeyTaskQueue,
+		Label:       "Task Queue",
+		Description: "Stores durable deployment tasks and step runs with deterministic queue ordering.",
 		Milestone:   "Milestone D",
 	},
 	{
