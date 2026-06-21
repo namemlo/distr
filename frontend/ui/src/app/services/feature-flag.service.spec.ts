@@ -56,11 +56,14 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle and deployment process feature flag state', () => {
+  it('exposes release bundle, deployment process, and scoped variable feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
     service.isDeploymentProcessesEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isScopedVariablesV2Enabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -78,6 +81,13 @@ describe('FeatureFlagService', () => {
         key: 'deployment_processes',
         label: 'Deployment Processes',
         description: 'Create reusable deployment process revisions.',
+        milestone: 'Milestone C',
+        enabled: true,
+      },
+      {
+        key: 'scoped_variables_v2',
+        label: 'Scoped Variables',
+        description: 'Manage typed variable sets and references.',
         milestone: 'Milestone C',
         enabled: true,
       },

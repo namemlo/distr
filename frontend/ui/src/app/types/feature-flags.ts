@@ -4,6 +4,7 @@ export type ExperimentalFeatureFlagKey =
   | 'channels'
   | 'release_bundles'
   | 'deployment_processes'
+  | 'scoped_variables_v2'
   | 'deployment_plans'
   | 'runbooks';
 

@@ -14,6 +14,7 @@ const (
 	KeyChannels            Key = "channels"
 	KeyReleaseBundles      Key = "release_bundles"
 	KeyDeploymentProcesses Key = "deployment_processes"
+	KeyScopedVariablesV2   Key = "scoped_variables_v2"
 	KeyDeploymentPlans     Key = "deployment_plans"
 	KeyRunbooks            Key = "runbooks"
 )
@@ -66,6 +67,12 @@ var definitions = []definition{
 		Key:         KeyDeploymentProcesses,
 		Label:       "Deployment Processes",
 		Description: "Models reusable ordered or grouped sets of typed deployment steps.",
+		Milestone:   "Milestone C",
+	},
+	{
+		Key:         KeyScopedVariablesV2,
+		Label:       "Scoped Variables",
+		Description: "Models reusable variable sets, typed values, and safe secret references.",
 		Milestone:   "Milestone C",
 	},
 	{
