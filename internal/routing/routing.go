@@ -178,6 +178,7 @@ func ApiRouter(
 					r.Route("/alert-configurations", handlers.AlertConfigurationsRouter)
 					r.Route("/deployment-target-metrics", handlers.DeploymentTargetMetricsRouter)
 					r.Route("/deployment-targets", handlers.DeploymentTargetsRouter)
+					r.Route("/deployment-plans", handlers.DeploymentPlansRouter)
 					r.Route("/deployment-processes", handlers.DeploymentProcessesRouter)
 					r.Route("/deployments", handlers.DeploymentsRouter)
 					r.Route("/environments", handlers.EnvironmentsRouter)

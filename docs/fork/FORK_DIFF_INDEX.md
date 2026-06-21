@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-017 are implemented locally. PR-017 adds a static built-in Deployment Process action registry and JSON-schema validation for the first generic actions without adding deployment planning, execution, approvals, retention, notifications, runbooks, or agent behavior.
+PR-000 through PR-018 are implemented locally. PR-018 adds a feature-flagged backend Deployment Plan foundation with resolved targets, snapshots, steps, variables, actions, and blocker/warning persistence without adding plan UI, export, task queue, execution, approvals, locks, notifications, runbooks, or agent behavior.
 
 ## Tracking Template
 
@@ -298,3 +298,18 @@ Use one entry per pull request:
 - Tests: Action registry, API validation, mapping, handler, live PostgreSQL Deployment Process repository, process snapshot canonicalization, and Angular service tests were added or updated.
 - Upstream contribution notes: Community-neutral built-in action metadata; no adopter-specific action names or execution logic.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Process Snapshot, Variable Set, deployment target, deployment, release-name, and agent behavior is unchanged. No Deployment Plan foundation, task queue, execution, approvals, retention, notifications, runbooks, Step Templates, Compose/Helm/OCI/file/webhook adapters, or agent behavior is added in PR-017.
+
+### PR-018 - Deployment Plan foundation
+
+- Status: Implemented locally; backend, API, repository, migration, mapping, handler, and live PostgreSQL verification completed.
+- Upstream base: `84d1bf887976ee85652461ad9e02e5d0e445abfc`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=deployment_plans,release_bundles,deployment_processes,scoped_variables_v2,channels,lifecycles,environments`.
+- User-facing behavior: Feature-flagged API callers can create and inspect resolved Deployment Plan previews with selected targets, resolved process steps, resolved variable snapshot values, and structured blockers/warnings.
+- Database changes: Added `DeploymentPlan`, `DeploymentPlanTarget`, `DeploymentPlanStep`, `DeploymentPlanVariable`, and `DeploymentPlanIssue` tables with organization-scoped composite references to Release Bundles, Environments, Process Snapshots, Variable Snapshots, and Deployment Targets.
+- API changes: Added `GET /api/v1/deployment-plans`, `POST /api/v1/deployment-plans`, and `GET /api/v1/deployment-plans/{deploymentPlanId}`.
+- UI changes: None. Plan UI, export, and checksum display remain PR-019.
+- Agent protocol changes: None.
+- Documentation: Added PR-018 notes and ADR-0018.
+- Tests: API validation, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, and migration checks were added.
+- Upstream contribution notes: Community-neutral Deployment Plan foundation; no adopter-specific terminology, provider execution logic, or target mutation.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, deployment target, deployment, release-name, and agent behavior is unchanged. No Plan UI, JSON/Markdown export, task queue, execution, locks, approvals, retention, notifications, runbooks, rollout waves, or agent behavior is added in PR-018.
