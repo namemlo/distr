@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/distr-sh/distr/internal/actionregistry"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -466,7 +467,7 @@ func addDeploymentPlanSteps(plan *types.DeploymentPlan, snapshot types.ProcessSn
 func addDeploymentPlanAgentCapabilityIssues(ctx context.Context, plan *types.DeploymentPlan) {
 	includedSteps := make([]types.DeploymentPlanStep, 0, len(plan.Steps))
 	for _, step := range plan.Steps {
-		if step.Included {
+		if step.Included && deploymentPlanStepRunsOnTarget(step) {
 			includedSteps = append(includedSteps, step)
 		}
 	}
@@ -511,6 +512,10 @@ func addDeploymentPlanAgentCapabilityIssues(ctx context.Context, plan *types.Dep
 			)
 		}
 	}
+}
+
+func deploymentPlanStepRunsOnTarget(step types.DeploymentPlanStep) bool {
+	return strings.EqualFold(strings.TrimSpace(step.ExecutionLocation), "target")
 }
 
 func deploymentPlanStepExcludedReason(

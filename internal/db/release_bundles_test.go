@@ -1298,6 +1298,18 @@ func createReleaseBundleProcessRevision(
 	name string,
 ) (types.DeploymentProcess, types.DeploymentProcessRevision) {
 	t.Helper()
+	return createReleaseBundleProcessRevisionWithExecutionLocation(t, ctx, orgID, applicationID, name, "hub")
+}
+
+func createReleaseBundleProcessRevisionWithExecutionLocation(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	applicationID uuid.UUID,
+	name string,
+	executionLocation string,
+) (types.DeploymentProcess, types.DeploymentProcessRevision) {
+	t.Helper()
 	process := types.DeploymentProcess{
 		OrganizationID: orgID,
 		ApplicationID:  applicationID,
@@ -1315,7 +1327,7 @@ func createReleaseBundleProcessRevision(
 				Key:                  "deploy",
 				Name:                 "Deploy",
 				ActionType:           "distr.http.check",
-				ExecutionLocation:    "hub",
+				ExecutionLocation:    executionLocation,
 				InputBindings:        map[string]any{"url": "https://example.com/health"},
 				FailureMode:          "fail",
 				TimeoutSeconds:       120,

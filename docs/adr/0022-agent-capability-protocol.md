@@ -30,7 +30,7 @@ Generated Docker and Kubernetes manifests include `DISTR_CAPABILITIES_ENDPOINT`.
 
 PR-022 agents report runtime and tooling support with an empty supported-action list because execution adapters are not part of this PR. The protocol still accepts action type/version entries from agents that actually support them.
 
-Deployment Plan resolution checks existing reports and adds an `agent_action_unsupported` blocker when a reported target does not support an included step action at version `1`. Missing reports do not block plans in PR-022.
+Deployment Plan resolution checks existing reports and adds an `agent_action_unsupported` blocker when a reported target does not support an included target-executed step action at version `1`. Hub-executed steps are not checked against agent capabilities. Missing reports do not block plans in PR-022.
 
 ## Consequences
 

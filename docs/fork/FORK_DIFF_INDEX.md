@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-022 are implemented locally. PR-022 adds a feature-flagged agent capability protocol with versioned capability reports, organization-scoped storage, Docker and Kubernetes runtime/tooling advertisement, and Deployment Plan compatibility blockers for reported unsupported actions without adding leases, heartbeats, task claims, execution adapters, approvals, timelines, logs, or PR-023 behavior.
+PR-000 through PR-022 are implemented locally. PR-022 adds a feature-flagged agent capability protocol with versioned capability reports, organization-scoped storage, Docker and Kubernetes runtime/tooling advertisement, and Deployment Plan compatibility blockers for reported unsupported target-executed actions without adding leases, heartbeats, task claims, execution adapters, approvals, timelines, logs, or PR-023 behavior.
 
 ## Tracking Template
 
@@ -364,7 +364,7 @@ Use one entry per pull request:
 - Status: Implemented locally; backend, API, repository, migration, handler, agent client, generated manifests, documentation, and live PostgreSQL verification completed.
 - Upstream base: `214d7fe68b54a6eea615dbd7e10193e2372e4d9c`
 - Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=agent_capabilities` for the agent capability report endpoint.
-- User-facing behavior: Feature-flagged agents can advertise protocol, runtime, tooling, strategy, and action-version support. PR-022 agents initially report no execution action support. Deployment Plan resolution blocks reported targets that cannot support included action steps.
+- User-facing behavior: Feature-flagged agents can advertise protocol, runtime, tooling, strategy, and action-version support. PR-022 agents initially report no execution action support. Deployment Plan resolution blocks reported targets that cannot support included target-executed action steps.
 - Database changes: Added `AgentCapabilityReport` and `AgentActionCapability` with organization-scoped deployment-target references, one current report per target, and atomic action capability replacement on upsert.
 - API changes: Added hidden agent-authenticated `POST /api/v1/agents/{id}/capabilities`.
 - UI changes: None. No Angular route, sidebar entry, or page is added in PR-022.
@@ -372,4 +372,4 @@ Use one entry per pull request:
 - Documentation: Added PR-022 notes and ADR-0022.
 - Tests: API validation, agent client, handler, live PostgreSQL repository, Deployment Plan compatibility, migration checks, and focused Go tests were added.
 - Upstream contribution notes: Community-neutral capability protocol; no adopter-specific terminology, provider logic, or execution behavior.
-- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue, locks/concurrency, deployment target, deployment, release-name, and frontend planning UI behavior is unchanged except for blockers when an agent has explicitly reported incompatible action support. No leases, heartbeats, task claims, task completion, execution adapters, approvals, guided failure, timelines, logs, or PR-023 behavior is added in PR-022.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue, locks/concurrency, deployment target, deployment, release-name, and frontend planning UI behavior is unchanged except for blockers when an agent has explicitly reported incompatible target-executed action support. No leases, heartbeats, task claims, task completion, execution adapters, approvals, guided failure, timelines, logs, or PR-023 behavior is added in PR-022.

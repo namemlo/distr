@@ -98,9 +98,9 @@ The protocol accepts action capabilities when an agent really supports them. Lat
 
 ## Compatibility validation
 
-Deployment Plan resolution now checks capability reports for selected targets. If a target has a report and an included plan step uses an unsupported action type/version, including an empty supported-action list, the plan gets an `agent_action_unsupported` blocker.
+Deployment Plan resolution now checks capability reports for selected targets. If a target has a report and an included target-executed plan step uses an unsupported action type/version, including an empty supported-action list, the plan gets an `agent_action_unsupported` blocker.
 
-Targets without capability reports do not block existing plans. This keeps PR-022 additive for older agents and disabled feature flags while still blocking known incompatible reported agents.
+Hub-executed steps are not checked against agent capabilities. Targets without capability reports do not block existing plans. This keeps PR-022 additive for older agents and disabled feature flags while still blocking known incompatible reported agents.
 
 ## Non-goals
 
@@ -121,4 +121,4 @@ Those features remain PR-023 or later roadmap work.
 
 ## Compatibility notes
 
-Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue, locks/concurrency, deployment target, deployment, release-name, and frontend planning UI behavior is unchanged except for capability blockers when an agent has explicitly reported incompatible action support.
+Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue, locks/concurrency, deployment target, deployment, release-name, and frontend planning UI behavior is unchanged except for capability blockers when an agent has explicitly reported incompatible target-executed action support.

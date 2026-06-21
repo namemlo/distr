@@ -68,7 +68,14 @@ func TestDeploymentPlanRepositoryBlocksIncludedStepUnsupportedByReportedAgentCap
 	ctx := agentCapabilityDBTestContext(t)
 	g := NewWithT(t)
 	deps := createReleaseBundleEligibilityDependencies(t, ctx)
-	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Capability deploy")
+	_, revision := createReleaseBundleProcessRevisionWithExecutionLocation(
+		t,
+		ctx,
+		deps.orgID,
+		deps.applicationID,
+		"Capability deploy",
+		"target",
+	)
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
 	report := agentCapabilityReportFixture(deps.orgID, targetID)
@@ -102,7 +109,14 @@ func TestDeploymentPlanRepositoryBlocksIncludedStepWhenReportedAgentHasNoActionS
 	ctx := agentCapabilityDBTestContext(t)
 	g := NewWithT(t)
 	deps := createReleaseBundleEligibilityDependencies(t, ctx)
-	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Capability deploy")
+	_, revision := createReleaseBundleProcessRevisionWithExecutionLocation(
+		t,
+		ctx,
+		deps.orgID,
+		deps.applicationID,
+		"Capability deploy",
+		"target",
+	)
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
 	report := agentCapabilityReportFixture(deps.orgID, targetID)
@@ -130,11 +144,56 @@ func TestDeploymentPlanRepositoryBlocksIncludedStepWhenReportedAgentHasNoActionS
 		To(ContainElement("agent_action_unsupported"))
 }
 
+func TestDeploymentPlanRepositorySkipsHubExecutedStepForReportedAgentCapabilities(t *testing.T) {
+	ctx := agentCapabilityDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevisionWithExecutionLocation(
+		t,
+		ctx,
+		deps.orgID,
+		deps.applicationID,
+		"Capability deploy",
+		"hub",
+	)
+	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
+	report := agentCapabilityReportFixture(deps.orgID, targetID)
+	report.SupportedActions = nil
+	_, err := db.UpsertAgentCapabilityReport(ctx, report)
+	g.Expect(err).NotTo(HaveOccurred())
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID:  deps.orgID,
+		ReleaseBundleID: published.ID,
+		EnvironmentID:   deps.devEnvironmentID,
+		TargetIDs:       []uuid.UUID{targetID},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(deploymentPlanIssueCodes(plan.Issues, types.DeploymentPlanIssueSeverityBlocker)).To(BeEmpty())
+}
+
 func TestDeploymentPlanRepositoryAllowsIncludedStepSupportedByReportedAgentCapabilities(t *testing.T) {
 	ctx := agentCapabilityDBTestContext(t)
 	g := NewWithT(t)
 	deps := createReleaseBundleEligibilityDependencies(t, ctx)
-	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Capability deploy")
+	_, revision := createReleaseBundleProcessRevisionWithExecutionLocation(
+		t,
+		ctx,
+		deps.orgID,
+		deps.applicationID,
+		"Capability deploy",
+		"target",
+	)
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
 	_, err := db.UpsertAgentCapabilityReport(ctx, agentCapabilityReportFixture(deps.orgID, targetID))
