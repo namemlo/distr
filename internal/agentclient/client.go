@@ -32,6 +32,7 @@ type clientData struct {
 	resourceEndpoint             string
 	statusEndpoint               string
 	metricsEndpoint              string
+	capabilitiesEndpoint         string
 	deploymentLogsEndpoint       string
 	deploymentTargetLogsEndpoint string
 }
@@ -249,30 +250,38 @@ func (c *Client) ReloadFromEnv() (changed bool, err error) {
 	var d clientData
 	if d.authTarget, err = readEnvVar("DISTR_TARGET_ID"); err != nil {
 		return changed, err
-	} else if d.authSecret, err = readEnvVar("DISTR_TARGET_SECRET"); err != nil {
-		return changed, err
-	} else if d.loginEndpoint, err = readEnvVar("DISTR_LOGIN_ENDPOINT"); err != nil {
-		return changed, err
-	} else if d.manifestEndpoint, err = readEnvVar("DISTR_MANIFEST_ENDPOINT"); err != nil {
-		return changed, err
-	} else if d.resourceEndpoint, err = readEnvVar("DISTR_RESOURCE_ENDPOINT"); err != nil {
-		return changed, err
-	} else if d.statusEndpoint, err = readEnvVar("DISTR_STATUS_ENDPOINT"); err != nil {
-		return changed, err
-	} else if d.metricsEndpoint, err = readEnvVar("DISTR_METRICS_ENDPOINT"); err != nil {
-		return changed, err
-	} else if d.deploymentLogsEndpoint, err = readEnvVar("DISTR_LOGS_ENDPOINT"); err != nil {
-		return changed, err
-	} else if d.deploymentTargetLogsEndpoint, err = readEnvVar("DISTR_AGENT_LOGS_ENDPOINT"); err != nil {
-		return changed, err
-	} else {
-		changed = c.clientData != d
-		if changed {
-			c.clientData = d
-			c.ClearToken()
-		}
+	}
+	if d.authSecret, err = readEnvVar("DISTR_TARGET_SECRET"); err != nil {
 		return changed, err
 	}
+	if d.loginEndpoint, err = readEnvVar("DISTR_LOGIN_ENDPOINT"); err != nil {
+		return changed, err
+	}
+	if d.manifestEndpoint, err = readEnvVar("DISTR_MANIFEST_ENDPOINT"); err != nil {
+		return changed, err
+	}
+	if d.resourceEndpoint, err = readEnvVar("DISTR_RESOURCE_ENDPOINT"); err != nil {
+		return changed, err
+	}
+	if d.statusEndpoint, err = readEnvVar("DISTR_STATUS_ENDPOINT"); err != nil {
+		return changed, err
+	}
+	if d.metricsEndpoint, err = readEnvVar("DISTR_METRICS_ENDPOINT"); err != nil {
+		return changed, err
+	}
+	d.capabilitiesEndpoint = readEnvVarOptional("DISTR_CAPABILITIES_ENDPOINT")
+	if d.deploymentLogsEndpoint, err = readEnvVar("DISTR_LOGS_ENDPOINT"); err != nil {
+		return changed, err
+	}
+	if d.deploymentTargetLogsEndpoint, err = readEnvVar("DISTR_AGENT_LOGS_ENDPOINT"); err != nil {
+		return changed, err
+	}
+	changed = c.clientData != d
+	if changed {
+		c.clientData = d
+		c.ClearToken()
+	}
+	return changed, err
 }
 
 func NewFromEnv(logger *zap.Logger) (*Client, error) {
@@ -294,6 +303,10 @@ func readEnvVar(key string) (string, error) {
 	} else {
 		return "", fmt.Errorf("missing environment variable: %v", key)
 	}
+}
+
+func readEnvVarOptional(key string) string {
+	return os.Getenv(key)
 }
 
 var (

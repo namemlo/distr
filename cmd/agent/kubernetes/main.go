@@ -112,6 +112,7 @@ func main() {
 	var logsWatcher *logsWatcher
 	var logsGoroutine *util.ToggleableGoroutine
 	metricsGoroutine := util.NewToggleableGoroutine(watchMetrics)
+	capabilitiesReported := false
 
 	tick := time.Tick(agentenv.Interval)
 
@@ -128,8 +129,24 @@ func main() {
 			logger.Error("agent client config reload failed", zap.Error(err))
 		} else if changed {
 			logger.Info("agent client config reloaded")
+			capabilitiesReported = false
 		} else {
 			logger.Debug("agent client config unchanged")
+		}
+
+		if !capabilitiesReported {
+			if err := agentClient.ReportCapabilities(
+				ctx,
+				agentclient.DefaultCapabilityReport(
+					"kubernetes",
+					[]string{"kubernetes", "helm"},
+					[]string{"helm"},
+				),
+			); err != nil {
+				logger.Warn("agent capability report failed", zap.Error(err))
+			} else {
+				capabilitiesReported = true
+			}
 		}
 
 		res, err := agentClient.Resource(ctx)

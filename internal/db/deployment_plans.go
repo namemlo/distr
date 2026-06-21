@@ -270,6 +270,7 @@ func resolveDeploymentPlan(
 	}
 	addDeploymentPlanEligibilityBlockers(ctx, plan)
 	addDeploymentPlanSnapshotData(ctx, plan)
+	addDeploymentPlanAgentCapabilityIssues(ctx, plan)
 	addDeploymentPlanIssue(
 		plan,
 		types.DeploymentPlanIssueSeverityWarning,
@@ -459,6 +460,56 @@ func addDeploymentPlanSteps(plan *types.DeploymentPlan, snapshot types.ProcessSn
 			"steps",
 			"process snapshot has no steps applicable to the selected channel and environment",
 		)
+	}
+}
+
+func addDeploymentPlanAgentCapabilityIssues(ctx context.Context, plan *types.DeploymentPlan) {
+	includedSteps := make([]types.DeploymentPlanStep, 0, len(plan.Steps))
+	for _, step := range plan.Steps {
+		if step.Included {
+			includedSteps = append(includedSteps, step)
+		}
+	}
+	if len(includedSteps) == 0 || len(plan.Targets) == 0 {
+		return
+	}
+	targetIDs := make([]uuid.UUID, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		targetIDs = append(targetIDs, target.DeploymentTargetID)
+	}
+	reports, err := getAgentCapabilityReportsForDeploymentTargets(ctx, plan.OrganizationID, targetIDs)
+	if err != nil {
+		addDeploymentPlanIssue(
+			plan,
+			types.DeploymentPlanIssueSeverityBlocker,
+			"agent_capabilities_unavailable",
+			"agentCapabilities",
+			"agent capability reports could not be resolved",
+		)
+		return
+	}
+	for _, target := range plan.Targets {
+		report, ok := reports[target.DeploymentTargetID]
+		if !ok {
+			continue
+		}
+		for _, step := range includedSteps {
+			if agentCapabilitySupportsAction(report, step.ActionType, types.AgentActionVersionV1) {
+				continue
+			}
+			addDeploymentPlanIssue(
+				plan,
+				types.DeploymentPlanIssueSeverityBlocker,
+				"agent_action_unsupported",
+				"targets."+target.DeploymentTargetID.String()+".steps."+step.StepKey+".actionType",
+				fmt.Sprintf(
+					"deployment target %q does not support action %q version %q",
+					target.Name,
+					step.ActionType,
+					types.AgentActionVersionV1,
+				),
+			)
+		}
 	}
 }
 

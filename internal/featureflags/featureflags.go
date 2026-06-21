@@ -17,6 +17,7 @@ const (
 	KeyScopedVariablesV2   Key = "scoped_variables_v2"
 	KeyDeploymentPlans     Key = "deployment_plans"
 	KeyTaskQueue           Key = "task_queue"
+	KeyAgentCapabilities   Key = "agent_capabilities"
 	KeyRunbooks            Key = "runbooks"
 )
 
@@ -86,6 +87,12 @@ var definitions = []definition{
 		Key:         KeyTaskQueue,
 		Label:       "Task Queue",
 		Description: "Stores durable deployment tasks and step runs with deterministic queue ordering.",
+		Milestone:   "Milestone D",
+	},
+	{
+		Key:         KeyAgentCapabilities,
+		Label:       "Agent Capabilities",
+		Description: "Lets agents advertise protocol, runtime, and action support for plan compatibility checks.",
 		Milestone:   "Milestone D",
 	},
 	{

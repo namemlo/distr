@@ -9,10 +9,10 @@ import (
 func TestParseEnabledKeys(t *testing.T) {
 	g := NewWithT(t)
 
-	keys, err := ParseEnabledKeys("release_bundles, environments\nlifecycles release_bundles")
+	keys, err := ParseEnabledKeys("release_bundles, environments\nlifecycles agent_capabilities release_bundles")
 
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(keys).To(Equal([]Key{KeyEnvironments, KeyLifecycles, KeyReleaseBundles}))
+	g.Expect(keys).To(Equal([]Key{KeyEnvironments, KeyLifecycles, KeyReleaseBundles, KeyAgentCapabilities}))
 }
 
 func TestParseEnabledKeysAll(t *testing.T) {
@@ -55,6 +55,11 @@ func TestRegistryMarksEnabledFlags(t *testing.T) {
 	g.Expect(scopedVariables.Label).To(Equal("Scoped Variables"))
 	g.Expect(scopedVariables.Description).NotTo(BeEmpty())
 	g.Expect(scopedVariables.Milestone).To(Equal("Milestone C"))
+	agentCapabilities := findFlag(flags, KeyAgentCapabilities)
+	g.Expect(agentCapabilities.Key).To(Equal(KeyAgentCapabilities))
+	g.Expect(agentCapabilities.Label).To(Equal("Agent Capabilities"))
+	g.Expect(agentCapabilities.Description).NotTo(BeEmpty())
+	g.Expect(agentCapabilities.Milestone).To(Equal("Milestone D"))
 }
 
 func findFlag(flags []Flag, key Key) Flag {

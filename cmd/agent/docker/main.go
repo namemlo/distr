@@ -96,6 +96,7 @@ func main() {
 func mainLoop(ctx context.Context) {
 	tick := time.Tick(agentenv.Interval)
 	logsGoroutine := util.NewToggleableGoroutine(logWatcher.Watch)
+	capabilitiesReported := false
 
 loop:
 	for ctx.Err() == nil {
@@ -106,6 +107,21 @@ loop:
 		}
 
 		health.Heartbeat()
+
+		if !capabilitiesReported {
+			if err := client.ReportCapabilities(
+				ctx,
+				agentclient.DefaultCapabilityReport(
+					"docker",
+					[]string{"docker", "docker-compose"},
+					[]string{"docker-compose"},
+				),
+			); err != nil {
+				logger.Warn("agent capability report failed", zap.Error(err))
+			} else {
+				capabilitiesReported = true
+			}
+		}
 
 		if resource, err := client.Resource(ctx); err != nil {
 			logger.Error("failed to get resource", zap.Error(err))
