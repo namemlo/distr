@@ -20,6 +20,7 @@ Add a feature-flagged durable Task Queue model:
 - Included plan steps start as `PENDING`.
 - Excluded plan steps start as `SKIPPED` with the plan excluded reason.
 - Task creation is idempotent per Deployment Plan target.
+- New Task creation locks and rechecks the referenced Release Bundle, and only proceeds while it is still `PUBLISHED`.
 - Queue ordering is stored in a sequence-backed `queue_order` column.
 - Reads return tasks in queue order.
 - Task state transitions are validated by a small state machine.

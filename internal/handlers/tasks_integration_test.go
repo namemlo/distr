@@ -94,6 +94,24 @@ func TestTaskHandlersReturnNotFoundForCrossOrganizationPlan(t *testing.T) {
 	g.Expect(recorder.Code).To(Equal(http.StatusNotFound))
 }
 
+func TestTaskHandlersRejectTaskCreationWhenReleaseBundleIsBlocked(t *testing.T) {
+	ctx := taskHandlerDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyTaskHandlerPlan(t, ctx, "cluster-a")
+	blocked, err := db.BlockReleaseBundle(ctx, deps.plan.ReleaseBundleID, deps.orgID, deps.actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(blocked.Status).To(Equal(types.ReleaseBundleStatusBlocked))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/deployment-plans/"+deps.plan.ID.String()+"/tasks", nil)
+	request.SetPathValue("deploymentPlanId", deps.plan.ID.String())
+	request = request.WithContext(authenticatedReleaseBundleHandlerContext(ctx, deps.orgID, deps.actorID))
+
+	createTasksForDeploymentPlanHandler().ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusConflict))
+}
+
 func TestTaskHandlersRejectMalformedUUIDs(t *testing.T) {
 	g := NewWithT(t)
 

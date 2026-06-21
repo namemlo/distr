@@ -75,6 +75,9 @@ func CreateTasksForDeploymentPlan(
 			tasks = existing
 			return nil
 		}
+		if err := ensureDeploymentPlanReleaseBundlePublishedForTaskCreation(ctx, *plan); err != nil {
+			return err
+		}
 		created, err := insertTasksForDeploymentPlan(ctx, request.DeploymentPlanID, request.OrganizationID)
 		if err != nil {
 			return err
@@ -179,6 +182,20 @@ func validateCreateTasksForDeploymentPlanRequest(request types.CreateTasksForDep
 	}
 	if request.DeploymentPlanID == uuid.Nil {
 		return apierrors.NewBadRequest("deploymentPlanId is required")
+	}
+	return nil
+}
+
+func ensureDeploymentPlanReleaseBundlePublishedForTaskCreation(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+) error {
+	bundle, err := getReleaseBundle(ctx, plan.ReleaseBundleID, plan.OrganizationID, true)
+	if err != nil {
+		return err
+	}
+	if bundle.Status != types.ReleaseBundleStatusPublished {
+		return apierrors.NewConflict("release bundle must be PUBLISHED before tasks can be created")
 	}
 	return nil
 }

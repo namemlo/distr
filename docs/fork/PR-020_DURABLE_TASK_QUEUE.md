@@ -67,6 +67,8 @@ POST /api/v1/tasks/{taskId}/state
 
 `POST /api/v1/deployment-plans/{deploymentPlanId}/tasks` creates one Task for each Deployment Plan target and one StepRun for each Deployment Plan step. Repeating the request returns the existing Tasks without creating duplicates.
 
+Before creating new Tasks, the repository rechecks the referenced Release Bundle inside the same database transaction with a row lock. If the bundle is no longer `PUBLISHED`, creation returns `409 Conflict`.
+
 `POST /api/v1/tasks/{taskId}/state` accepts:
 
 ```json

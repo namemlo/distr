@@ -6,11 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/onsi/gomega"
 )
 
@@ -79,6 +83,52 @@ func TestTaskQueueRepositoryRejectsBlockedPlan(t *testing.T) {
 	})
 
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+}
+
+func TestTaskQueueRepositoryRejectsReadyPlanWhenReleaseBundleIsBlocked(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	blocked, err := db.BlockReleaseBundle(ctx, deps.plan.ReleaseBundleID, deps.orgID, deps.actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(blocked.Status).To(Equal(types.ReleaseBundleStatusBlocked))
+
+	_, err = db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(BeEmpty())
+}
+
+func TestTaskQueueRepositoryRejectsCreateAfterConcurrentReleaseBundleBlock(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	tx := lockAndBlockReleaseBundleForTest(t, ctx, deps.plan.ReleaseBundleID)
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   deps.plan.ID,
+			ActorUserAccountID: deps.actorID,
+		})
+		errCh <- err
+	}()
+
+	assertTaskQueueOperationIsWaiting(t, errCh)
+	g.Expect(tx.Commit(ctx)).To(Succeed())
+	err := awaitTaskQueueOperation(t, errCh)
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(BeEmpty())
 }
 
 func TestTaskQueueRepositoryPreservesOrganizationIsolation(t *testing.T) {
@@ -254,4 +304,59 @@ func createBlockedDeploymentPlanForTaskQueue(t *testing.T, ctx context.Context) 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusBlocked))
 	return taskQueuePlanDeps{orgID: deps.orgID, actorID: actorID, plan: plan}
+}
+
+func lockAndBlockReleaseBundleForTest(t *testing.T, ctx context.Context, releaseBundleID uuid.UUID) pgx.Tx {
+	t.Helper()
+	pool, ok := internalctx.GetDb(ctx).(*pgxpool.Pool)
+	if !ok {
+		t.Fatalf("test context db is %T, expected *pgxpool.Pool", internalctx.GetDb(ctx))
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = tx.Rollback(ctx)
+	})
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT id FROM ReleaseBundle WHERE id = @id FOR UPDATE`,
+		pgx.NamedArgs{"id": releaseBundleID},
+	); err != nil {
+		t.Fatalf("lock release bundle row: %v", err)
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE ReleaseBundle
+		SET status = @status, updated_at = now()
+		WHERE id = @id`,
+		pgx.NamedArgs{
+			"id":     releaseBundleID,
+			"status": types.ReleaseBundleStatusBlocked,
+		},
+	); err != nil {
+		t.Fatalf("block release bundle in transaction: %v", err)
+	}
+	return tx
+}
+
+func assertTaskQueueOperationIsWaiting(t *testing.T, errCh <-chan error) {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		t.Fatalf("task queue operation completed before release bundle lock was released: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func awaitTaskQueueOperation(t *testing.T, errCh <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("task queue operation did not finish after release bundle lock was released")
+		return nil
+	}
 }
