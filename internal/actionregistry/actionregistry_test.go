@@ -1,0 +1,146 @@
+package actionregistry
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/distr-sh/distr/internal/types"
+	. "github.com/onsi/gomega"
+)
+
+func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
+	g := NewWithT(t)
+
+	actions := DefaultRegistry().List()
+
+	g.Expect(actions).To(HaveLen(3))
+	g.Expect(actionTypes(actions)).To(Equal([]string{"distr.preflight", "distr.http.check", "distr.wait"}))
+	g.Expect(actions[0].Name).To(Equal("Preflight checks"))
+	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("$schema", "https://json-schema.org/draft/2020-12/schema"))
+	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("type", "object"))
+	g.Expect(actions[0].OutputSchema).To(HaveKeyWithValue("type", "object"))
+}
+
+func TestDefaultRegistryReturnsActionByType(t *testing.T) {
+	g := NewWithT(t)
+
+	action, ok := DefaultRegistry().Get("distr.http.check")
+
+	g.Expect(ok).To(BeTrue())
+	g.Expect(action.Type).To(Equal("distr.http.check"))
+	g.Expect(action.Name).To(Equal("HTTP check"))
+	g.Expect(action.Description).To(ContainSubstring("HTTP endpoint"))
+}
+
+func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
+	registry := DefaultRegistry()
+	g := NewWithT(t)
+
+	g.Expect(registry.ValidateInput("distr.preflight", jsonObject(t, `{}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.http.check", jsonObject(t, `{
+		"url":"https://example.com/health",
+		"method":"GET",
+		"expectedStatusCodes":[200,204],
+		"maxLatencyMs":1000,
+		"retry":{"maxAttempts":3,"intervalSeconds":5}
+	}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.wait", jsonObject(t, `{"durationSeconds":30}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.wait", jsonObject(t, `{"condition":"deployment.healthy"}`))).To(Succeed())
+}
+
+func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
+	registry := DefaultRegistry()
+
+	tests := []struct {
+		name       string
+		actionType string
+		input      map[string]any
+		want       string
+	}{
+		{
+			name:       "unknown action",
+			actionType: "script",
+			input:      jsonObject(t, `{}`),
+			want:       `unknown actionType "script"`,
+		},
+		{
+			name:       "preflight rejects undeclared inputs",
+			actionType: "distr.preflight",
+			input:      jsonObject(t, `{"unexpected":true}`),
+			want:       "additional properties",
+		},
+		{
+			name:       "http check requires url",
+			actionType: "distr.http.check",
+			input:      jsonObject(t, `{"expectedStatusCodes":[200]}`),
+			want:       "url",
+		},
+		{
+			name:       "wait requires positive duration",
+			actionType: "distr.wait",
+			input:      jsonObject(t, `{"durationSeconds":0}`),
+			want:       "durationSeconds",
+		},
+		{
+			name:       "wait requires duration or condition",
+			actionType: "distr.wait",
+			input:      jsonObject(t, `{}`),
+			want:       "oneOf",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			err := registry.ValidateInput(tt.actionType, tt.input)
+
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(strings.ToLower(err.Error())).To(ContainSubstring(strings.ToLower(tt.want)))
+		})
+	}
+}
+
+func TestDefaultRegistryValidatesDeploymentProcessSteps(t *testing.T) {
+	registry := DefaultRegistry()
+	g := NewWithT(t)
+	steps := []types.DeploymentProcessStep{
+		{
+			Key:           "check",
+			ActionType:    "distr.http.check",
+			InputBindings: jsonObject(t, `{"url":"https://example.com/health"}`),
+		},
+		{
+			Key:           "pause",
+			ActionType:    "distr.wait",
+			InputBindings: jsonObject(t, `{"durationSeconds":10}`),
+		},
+	}
+
+	g.Expect(registry.ValidateSteps(steps)).To(Succeed())
+
+	steps[1].InputBindings = jsonObject(t, `{"durationSeconds":0}`)
+	err := registry.ValidateSteps(steps)
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring(`step "pause"`))
+	g.Expect(err.Error()).To(ContainSubstring("durationSeconds"))
+}
+
+func actionTypes(actions []types.ActionDefinition) []string {
+	values := make([]string, 0, len(actions))
+	for _, action := range actions {
+		values = append(values, action.Type)
+	}
+	return values
+}
+
+func jsonObject(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		t.Fatalf("decode json object: %v", err)
+	}
+	return value
+}

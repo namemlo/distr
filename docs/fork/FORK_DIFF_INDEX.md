@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-016 are implemented locally. PR-016 adds immutable Variable snapshots for published Release Bundles and read-only deployment configuration drift without adding deployment planning, execution, approvals, retention, notifications, runbooks, or agent behavior.
+PR-000 through PR-017 are implemented locally. PR-017 adds a static built-in Deployment Process action registry and JSON-schema validation for the first generic actions without adding deployment planning, execution, approvals, retention, notifications, runbooks, or agent behavior.
 
 ## Tracking Template
 
@@ -283,3 +283,18 @@ Use one entry per pull request:
 - Tests: Drift comparator, mapping, feature-flag, handler, live PostgreSQL repository and handler integration, migration checks, and Angular service/component tests were added.
 - Upstream contribution notes: Community-neutral Variable snapshot and drift model; no adopter-specific terminology, provider execution logic, or plaintext secret exposure.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle draft/edit, Deployment Process, deployment target, deployment, release-name, and agent behavior is unchanged. No action registry, deployment planning, promotion execution, approval, retention, notification, runbook persistence, or agent behavior is added in PR-016.
+
+### PR-017 - Built-in action registry
+
+- Status: Implemented locally; action registry, API, validation, mapping, handler, Angular service, and verification completed.
+- Upstream base: `f3cb5d607ae301cb8bd35ee95e7b161fcf016801`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=deployment_processes`.
+- User-facing behavior: Feature-flagged API callers and Angular services can list built-in Deployment Process action definitions for `distr.preflight`, `distr.http.check`, and `distr.wait`.
+- Database changes: None.
+- API changes: Added `GET /api/v1/action-definitions` and Deployment Process revision validation for registered action types and JSON-schema-valid `inputBindings`.
+- UI changes: Added Angular service/type support for reading action definitions and updated existing Deployment Process examples to use registered generic actions. No new route or sidebar entry is added.
+- Agent protocol changes: None.
+- Documentation: Added PR-017 notes and ADR-0017.
+- Tests: Action registry, API validation, mapping, handler, live PostgreSQL Deployment Process repository, process snapshot canonicalization, and Angular service tests were added or updated.
+- Upstream contribution notes: Community-neutral built-in action metadata; no adopter-specific action names or execution logic.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Process Snapshot, Variable Set, deployment target, deployment, release-name, and agent behavior is unchanged. No Deployment Plan foundation, task queue, execution, approvals, retention, notifications, runbooks, Step Templates, Compose/Helm/OCI/file/webhook adapters, or agent behavior is added in PR-017.

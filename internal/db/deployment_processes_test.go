@@ -56,7 +56,7 @@ func TestDeploymentProcessRepositoryCRUDAndRevisionPersistence(t *testing.T) {
 	g.Expect(revision.Steps[1].Dependencies).To(Equal([]string{"prepare"}))
 	g.Expect(revision.Steps[1].ChannelIDs).To(Equal([]uuid.UUID{deps.channelID}))
 	g.Expect(revision.Steps[1].EnvironmentIDs).To(Equal([]uuid.UUID{deps.environmentID}))
-	g.Expect(revision.Steps[1].InputBindings).To(HaveKeyWithValue("script", "make deploy"))
+	g.Expect(revision.Steps[1].InputBindings).To(HaveKeyWithValue("url", "https://example.com/health"))
 
 	secondRevision := deploymentProcessRevisionFixture(deps)
 	secondRevision.DeploymentProcessID = process.ID
@@ -247,6 +247,61 @@ func TestDeploymentProcessRepositoryRejectsInvalidRevisionGraph(t *testing.T) {
 	}
 }
 
+func TestDeploymentProcessRepositoryRejectsUnregisteredOrSchemaInvalidActions(t *testing.T) {
+	ctx := deploymentProcessDBTestContext(t)
+	g := NewWithT(t)
+	deps := createDeploymentProcessDependencies(t, ctx)
+	process := types.DeploymentProcess{
+		OrganizationID: deps.orgID,
+		ApplicationID:  deps.applicationID,
+		Name:           "Standard deploy",
+	}
+	g.Expect(db.CreateDeploymentProcess(ctx, &process)).To(Succeed())
+
+	tests := []struct {
+		name   string
+		mutate func(*types.DeploymentProcessRevision)
+		want   string
+	}{
+		{
+			name: "unknown action",
+			mutate: func(r *types.DeploymentProcessRevision) {
+				r.Steps[0].ActionType = "script"
+			},
+			want: `unknown actionType "script"`,
+		},
+		{
+			name: "http check missing required url",
+			mutate: func(r *types.DeploymentProcessRevision) {
+				r.Steps[1].InputBindings = map[string]any{"expectedStatusCodes": []any{float64(200)}}
+			},
+			want: "url",
+		},
+		{
+			name: "wait rejects non-positive duration",
+			mutate: func(r *types.DeploymentProcessRevision) {
+				r.Steps[0].ActionType = "distr.wait"
+				r.Steps[0].InputBindings = map[string]any{"durationSeconds": float64(0)}
+			},
+			want: "durationSeconds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			revision := deploymentProcessRevisionFixture(deps)
+			revision.DeploymentProcessID = process.ID
+			tt.mutate(&revision)
+
+			err := db.CreateDeploymentProcessRevision(ctx, &revision)
+
+			g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+			g.Expect(err.Error()).To(ContainSubstring(tt.want))
+		})
+	}
+}
+
 func TestDeploymentProcessRepositoryPreventsReferencedChannelMovingToAnotherApplication(t *testing.T) {
 	ctx := deploymentProcessDBTestContext(t)
 	g := NewWithT(t)
@@ -410,9 +465,9 @@ func deploymentProcessRevisionFixture(deps deploymentProcessDependencies) types.
 			{
 				Key:                  "deploy",
 				Name:                 "Deploy",
-				ActionType:           "script",
+				ActionType:           "distr.http.check",
 				ExecutionLocation:    "hub",
-				InputBindings:        map[string]any{"script": "make deploy"},
+				InputBindings:        map[string]any{"url": "https://example.com/health"},
 				Condition:            "channel == stable",
 				ChannelIDs:           []uuid.UUID{deps.channelID},
 				EnvironmentIDs:       []uuid.UUID{deps.environmentID},
@@ -433,7 +488,8 @@ func deploymentProcessStepFixture(key string, sortOrder int) types.DeploymentPro
 	return types.DeploymentProcessStep{
 		Key:               key,
 		Name:              key,
-		ActionType:        "script",
+		ActionType:        "distr.preflight",
+		InputBindings:     map[string]any{},
 		ExecutionLocation: "hub",
 		FailureMode:       "fail",
 		SortOrder:         sortOrder,

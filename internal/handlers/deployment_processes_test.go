@@ -52,9 +52,9 @@ func TestDeploymentProcessRevisionFromCreateRequest(t *testing.T) {
 			{
 				Key:                 " deploy ",
 				Name:                " Deploy ",
-				ActionType:          " script ",
+				ActionType:          " distr.http.check ",
 				ExecutionLocation:   " hub ",
-				InputBindings:       map[string]any{"script": "make deploy"},
+				InputBindings:       map[string]any{"url": "https://example.com/health"},
 				Condition:           " channel == stable ",
 				ChannelIDs:          []uuid.UUID{channelID},
 				EnvironmentIDs:      []uuid.UUID{environmentID},
@@ -76,9 +76,9 @@ func TestDeploymentProcessRevisionFromCreateRequest(t *testing.T) {
 		{
 			Key:                  "deploy",
 			Name:                 "Deploy",
-			ActionType:           "script",
+			ActionType:           "distr.http.check",
 			ExecutionLocation:    "hub",
-			InputBindings:        map[string]any{"script": "make deploy"},
+			InputBindings:        map[string]any{"url": "https://example.com/health"},
 			Condition:            "channel == stable",
 			ChannelIDs:           []uuid.UUID{channelID},
 			EnvironmentIDs:       []uuid.UUID{environmentID},
@@ -121,8 +121,9 @@ func TestDeploymentProcessHandlersRejectInvalidPayloadsBeforeDatabaseAccess(t *t
 				"steps":[{
 					"key":"deploy",
 					"name":"Deploy",
-					"actionType":"script",
+					"actionType":"distr.preflight",
 					"executionLocation":"hub",
+					"inputBindings":{},
 					"dependencies":["missing"]
 				}]
 			}`,

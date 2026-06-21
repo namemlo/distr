@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distr-sh/distr/internal/actionregistry"
 	"github.com/distr-sh/distr/internal/validation"
 	"github.com/google/uuid"
 )
@@ -100,6 +101,11 @@ func (r *CreateDeploymentProcessRevisionRequest) Validate() error {
 		}
 		if step.InputBindings == nil {
 			step.InputBindings = map[string]any{}
+		}
+		if err := actionregistry.DefaultRegistry().ValidateInput(step.ActionType, step.InputBindings); err != nil {
+			return validation.NewValidationFailedError(
+				fmt.Sprintf("step %q %s", step.Key, strings.TrimPrefix(err.Error(), "bad request: ")),
+			)
 		}
 	}
 

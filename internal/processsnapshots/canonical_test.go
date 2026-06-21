@@ -23,7 +23,7 @@ func TestCanonicalizeIsStableForStepOrder(t *testing.T) {
 			{
 				Key:               "deploy",
 				Name:              "Deploy",
-				ActionType:        "script",
+				ActionType:        "distr.http.check",
 				ExecutionLocation: "hub",
 				FailureMode:       "fail",
 				SortOrder:         20,
@@ -32,7 +32,7 @@ func TestCanonicalizeIsStableForStepOrder(t *testing.T) {
 			{
 				Key:               "prepare",
 				Name:              "Prepare",
-				ActionType:        "script",
+				ActionType:        "distr.preflight",
 				ExecutionLocation: "hub",
 				FailureMode:       "fail",
 				SortOrder:         10,
@@ -67,9 +67,9 @@ func TestCanonicalizeChangesWhenStepContentChanges(t *testing.T) {
 			{
 				Key:               "deploy",
 				Name:              "Deploy",
-				ActionType:        "script",
+				ActionType:        "distr.http.check",
 				ExecutionLocation: "hub",
-				InputBindings:     map[string]any{"script": "make deploy"},
+				InputBindings:     map[string]any{"url": "https://example.com/health"},
 				FailureMode:       "fail",
 				SortOrder:         10,
 			},
@@ -78,7 +78,7 @@ func TestCanonicalizeChangesWhenStepContentChanges(t *testing.T) {
 
 	_, firstChecksum, err := Canonicalize(process, revision)
 	g.Expect(err).NotTo(HaveOccurred())
-	revision.Steps[0].InputBindings["script"] = "make deploy-prod"
+	revision.Steps[0].InputBindings["url"] = "https://example.com/ready"
 	_, secondChecksum, err := Canonicalize(process, revision)
 	g.Expect(err).NotTo(HaveOccurred())
 
