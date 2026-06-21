@@ -120,11 +120,6 @@ CREATE TABLE DeploymentPlanVariable (
     FOREIGN KEY (deployment_plan_id, organization_id)
     REFERENCES DeploymentPlan(id, organization_id)
     ON DELETE CASCADE,
-  CONSTRAINT deploymentplanvariable_variable_fk
-    FOREIGN KEY (variable_id, variable_set_id, organization_id)
-    REFERENCES Variable(id, variable_set_id, organization_id)
-    ON UPDATE RESTRICT
-    ON DELETE RESTRICT,
   CONSTRAINT deploymentplanvariable_plan_variable_unique UNIQUE (deployment_plan_id, variable_id),
   CONSTRAINT deploymentplanvariable_redaction_check CHECK (NOT redacted OR value IS NULL)
 );

@@ -76,6 +76,81 @@ func TestDeploymentPlanRepositoryCreatesReadyPlanFromPublishedRelease(t *testing
 	g.Expect(listed[0].ID).To(Equal(plan.ID))
 }
 
+func TestDeploymentPlanRepositoryPlansFromVariableSnapshotAfterVariableSetUpdate(t *testing.T) {
+	ctx := deploymentPlanDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Standard deploy")
+	variableSet := createDeploymentPlanEditableVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	originalVariableID := deploymentPlanVariableSetVariableByKey(variableSet, "API_URL").ID
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	variableSet.Variables = []types.Variable{
+		{Key: "API_URL", Type: types.VariableTypeString, DefaultValue: json.RawMessage(`"https://new.example"`)},
+		{Key: "DEBUG", Type: types.VariableTypeBoolean, DefaultValue: json.RawMessage(`true`)},
+	}
+	g.Expect(db.UpdateVariableSet(ctx, &variableSet)).To(Succeed())
+	g.Expect(deploymentPlanVariableSetVariableByKey(variableSet, "API_URL").ID).NotTo(Equal(originalVariableID))
+
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID:  deps.orgID,
+		ReleaseBundleID: published.ID,
+		EnvironmentID:   deps.devEnvironmentID,
+		TargetIDs:       []uuid.UUID{targetID},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(plan.Variables).To(HaveLen(1))
+	apiURL := deploymentPlanVariableByKey(plan.Variables, "API_URL")
+	g.Expect(apiURL.VariableID).To(Equal(originalVariableID))
+	g.Expect(apiURL.Value).To(MatchJSON(`"https://old.example"`))
+}
+
+func TestDeploymentPlanRepositoryVariableSetUpdateAfterPlanDoesNotMutatePlanVariables(t *testing.T) {
+	ctx := deploymentPlanDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Standard deploy")
+	variableSet := createDeploymentPlanEditableVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	originalVariableID := deploymentPlanVariableSetVariableByKey(variableSet, "API_URL").ID
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID:  deps.orgID,
+		ReleaseBundleID: published.ID,
+		EnvironmentID:   deps.devEnvironmentID,
+		TargetIDs:       []uuid.UUID{targetID},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	variableSet.Variables = []types.Variable{
+		{Key: "API_URL", Type: types.VariableTypeString, DefaultValue: json.RawMessage(`"https://new.example"`)},
+		{Key: "DEBUG", Type: types.VariableTypeBoolean, DefaultValue: json.RawMessage(`true`)},
+	}
+	g.Expect(db.UpdateVariableSet(ctx, &variableSet)).To(Succeed())
+
+	fetched, err := db.GetDeploymentPlan(ctx, plan.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.Variables).To(HaveLen(1))
+	apiURL := deploymentPlanVariableByKey(fetched.Variables, "API_URL")
+	g.Expect(apiURL.VariableID).To(Equal(originalVariableID))
+	g.Expect(apiURL.Value).To(MatchJSON(`"https://old.example"`))
+}
+
 func TestDeploymentPlanRepositoryBlocksDraftReleaseMissingSnapshots(t *testing.T) {
 	ctx := deploymentPlanDBTestContext(t)
 	g := NewWithT(t)
@@ -177,6 +252,7 @@ func TestDeploymentPlanMigrationDefinesPlanTables(t *testing.T) {
 	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE DeploymentPlanIssue"))
 	g.Expect(upSQL).To(ContainSubstring("FOREIGN KEY (release_bundle_id, application_id, channel_id, organization_id)"))
 	g.Expect(upSQL).To(ContainSubstring("FOREIGN KEY (deployment_target_id, organization_id)"))
+	g.Expect(upSQL).NotTo(ContainSubstring("REFERENCES Variable(id, variable_set_id, organization_id)"))
 
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "120_deployment_plans.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
@@ -215,6 +291,26 @@ func createDeploymentPlanVariableSet(t *testing.T, ctx context.Context, orgID, a
 	}
 }
 
+func createDeploymentPlanEditableVariableSet(
+	t *testing.T,
+	ctx context.Context,
+	orgID, applicationID uuid.UUID,
+) types.VariableSet {
+	t.Helper()
+	variableSet := types.VariableSet{
+		OrganizationID: orgID,
+		Name:           "Editable defaults " + uuid.NewString(),
+		ApplicationIDs: []uuid.UUID{applicationID},
+		Variables: []types.Variable{
+			{Key: "API_URL", Type: types.VariableTypeString, DefaultValue: json.RawMessage(`"https://old.example"`)},
+		},
+	}
+	if err := db.CreateVariableSet(ctx, &variableSet); err != nil {
+		t.Fatalf("create editable variable set: %v", err)
+	}
+	return variableSet
+}
+
 func createDeploymentPlanRequiredVariableSet(t *testing.T, ctx context.Context, orgID, applicationID uuid.UUID) {
 	t.Helper()
 	variableSet := types.VariableSet{
@@ -241,6 +337,15 @@ func deploymentPlanVariableByKey(variables []types.DeploymentPlanVariable, key s
 		}
 	}
 	return types.DeploymentPlanVariable{}
+}
+
+func deploymentPlanVariableSetVariableByKey(variableSet types.VariableSet, key string) types.Variable {
+	for _, variable := range variableSet.Variables {
+		if variable.Key == key {
+			return variable
+		}
+	}
+	return types.Variable{}
 }
 
 func deploymentPlanIssueCodes(
