@@ -53,7 +53,15 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 	g.Expect(registry.ValidateInput("distr.wait", jsonObject(t, `{"durationSeconds":30}`))).To(Succeed())
 	g.Expect(registry.ValidateInput("distr.wait", jsonObject(t, `{"condition":"deployment.healthy"}`))).To(Succeed())
 	g.Expect(registry.ValidateInput("distr.compose.deploy", jsonObject(t, `{
-		"applicationVersion":{"composeFile":"services:\n  web:\n    image: nginx:latest\n"},
+		"applicationVersion":{
+			"composeFile":"services:\n  web:\n    image: nginx:latest\n",
+			"registryAuth":{
+				"registry.example.com":{
+					"username":"user",
+					"passwordSecretRef":"docker_password"
+				}
+			}
+		},
 		"projectName":"distr-preview",
 		"environmentFile":"PORT=8080\n",
 		"pullPolicy":"missing",
@@ -117,6 +125,23 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 				"strategy":"blue-green"
 			}`),
 			want: "strategy",
+		},
+		{
+			name:       "compose deploy rejects plaintext registry password",
+			actionType: "distr.compose.deploy",
+			input: jsonObject(t, `{
+				"applicationVersion":{
+					"composeFile":"services:\n  web:\n    image: nginx:latest\n",
+					"registryAuth":{
+						"registry.example.com":{
+							"username":"user",
+							"password":"plain-secret"
+						}
+					}
+				},
+				"projectName":"distr-preview"
+			}`),
+			want: "password",
 		},
 	}
 

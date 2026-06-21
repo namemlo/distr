@@ -193,10 +193,10 @@ func defaultActions() []types.ActionDefinition {
 								"additionalProperties": map[string]any{
 									"type": "object",
 									"properties": map[string]any{
-										"username": map[string]any{"type": "string"},
-										"password": map[string]any{"type": "string"},
+										"username":          map[string]any{"type": "string"},
+										"passwordSecretRef": map[string]any{"type": "string", "minLength": 1},
 									},
-									"required":             []any{"username", "password"},
+									"required":             []any{"username", "passwordSecretRef"},
 									"additionalProperties": false,
 								},
 							},

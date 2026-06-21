@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,6 +58,74 @@ func TestTaskLeaseRepositoryClaimsQueuedTaskForAgent(t *testing.T) {
 	fetched, err := db.GetTask(ctx, tasks[0].ID, deps.orgID)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(fetched.Status).To(Equal(types.TaskStatusRunning))
+}
+
+func TestTaskLeaseRepositoryResolvesComposeRegistryAuthSecretOnlyForAgentLease(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	compose := taskLeaseComposeDeployStep("compose", "Compose deploy", 10)
+	compose.InputBindings = map[string]any{
+		"applicationVersion": map[string]any{
+			"composeFile": "services:\n  web:\n    image: registry.example.com/app:latest\n",
+			"registryAuth": map[string]any{
+				"registry.example.com": map[string]any{
+					"username":          "deploy-user",
+					"passwordSecretRef": "docker_password",
+				},
+			},
+		},
+		"projectName": "task-lease-registry-secret",
+	}
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{compose})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES (@organizationId, @key, @value, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"key":            "docker_password",
+			"value":          "super-secret-password",
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	planPayload, err := json.Marshal(deps.plan.Steps[0].InputBindings)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(planPayload)).NotTo(ContainSubstring("super-secret-password"))
+	g.Expect(string(planPayload)).To(ContainSubstring("passwordSecretRef"))
+	g.Expect(deps.plan.ProcessSnapshotID).NotTo(BeNil())
+	snapshot, err := db.GetProcessSnapshot(ctx, *deps.plan.ProcessSnapshotID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	snapshotPayload, err := json.Marshal(snapshot.Revision.Steps[0].InputBindings)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(snapshotPayload)).NotTo(ContainSubstring("super-secret-password"))
+	g.Expect(string(snapshotPayload)).To(ContainSubstring("passwordSecretRef"))
+	fetchedPlan, err := db.GetDeploymentPlan(ctx, deps.plan.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	fetchedPayload, err := json.Marshal(fetchedPlan.Steps[0].InputBindings)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(fetchedPayload)).NotTo(ContainSubstring("super-secret-password"))
+	g.Expect(string(fetchedPayload)).To(ContainSubstring("passwordSecretRef"))
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	g.Expect(lease.Steps).To(HaveLen(1))
+	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:docker_password"))
+	auth := lease.Steps[0].InputBindings["applicationVersion"].(map[string]any)["registryAuth"].(map[string]any)["registry.example.com"].(map[string]any)
+	g.Expect(auth).To(HaveKeyWithValue("username", "deploy-user"))
+	g.Expect(auth).To(HaveKeyWithValue("password", "super-secret-password"))
+	g.Expect(auth).NotTo(HaveKey("passwordSecretRef"))
 }
 
 func TestTaskLeaseRepositoryReturnsNilWhenNoQueuedTaskForAgent(t *testing.T) {

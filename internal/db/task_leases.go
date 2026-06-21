@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -537,11 +539,98 @@ func getTaskLeaseSteps(ctx context.Context, task types.Task) ([]types.TaskLeaseS
 			step.InputBindings = map[string]any{}
 		}
 		step.ActionVersion = types.AgentActionVersionV1
-		step.SecretReferences = []string{}
+		secretReferences, err := resolveTaskLeaseStepSecrets(ctx, task, &step)
+		if err != nil {
+			return nil, err
+		}
+		step.SecretReferences = secretReferences
 		step.IdempotencyKey = taskLeaseStepIdempotencyKey(task, step)
 		steps = append(steps, step)
 	}
 	return steps, nil
+}
+
+func resolveTaskLeaseStepSecrets(
+	ctx context.Context,
+	task types.Task,
+	step *types.TaskLeaseStep,
+) ([]string, error) {
+	if step.ActionType != "distr.compose.deploy" {
+		return []string{}, nil
+	}
+	applicationVersion, ok := mapStringAny(step.InputBindings["applicationVersion"])
+	if !ok {
+		return []string{}, nil
+	}
+	registryAuth, ok := mapStringAny(applicationVersion["registryAuth"])
+	if !ok {
+		return []string{}, nil
+	}
+	references := make([]string, 0, len(registryAuth))
+	for registry, rawAuth := range registryAuth {
+		auth, ok := mapStringAny(rawAuth)
+		if !ok {
+			continue
+		}
+		if _, hasPlaintext := auth["password"]; hasPlaintext {
+			return nil, apierrors.NewBadRequest("compose registryAuth password must use passwordSecretRef")
+		}
+		reference, ok := stringValue(auth["passwordSecretRef"])
+		if !ok || strings.TrimSpace(reference) == "" {
+			return nil, apierrors.NewBadRequest("compose registryAuth passwordSecretRef is required")
+		}
+		reference = strings.TrimSpace(reference)
+		value, err := getTaskLeaseSecretValue(ctx, task, reference)
+		if err != nil {
+			return nil, err
+		}
+		auth["password"] = value
+		delete(auth, "passwordSecretRef")
+		registryAuth[registry] = auth
+		references = append(references, "secret:"+reference)
+	}
+	sort.Strings(references)
+	return references, nil
+}
+
+func getTaskLeaseSecretValue(ctx context.Context, task types.Task, key string) (string, error) {
+	db := internalctx.GetDb(ctx)
+	var value string
+	err := db.QueryRow(ctx,
+		`SELECT s.value
+		FROM DeploymentPlanTarget dpt
+		JOIN Secret s
+			ON s.organization_id = dpt.organization_id
+			AND s.key = @key
+			AND (
+				(dpt.customer_organization_id IS NULL AND s.customer_organization_id IS NULL)
+				OR s.customer_organization_id = dpt.customer_organization_id
+			)
+		WHERE dpt.id = @deploymentPlanTargetId
+			AND dpt.organization_id = @organizationId`,
+		pgx.NamedArgs{
+			"deploymentPlanTargetId": task.DeploymentPlanTargetID,
+			"organizationId":         task.OrganizationID,
+			"key":                    key,
+		},
+	).Scan(&value)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", apierrors.ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("could not resolve task lease secret %q: %w", key, err)
+	}
+	return value, nil
+}
+
+func mapStringAny(value any) (map[string]any, bool) {
+	typed, ok := value.(map[string]any)
+	return typed, ok
+}
+
+func stringValue(value any) (string, bool) {
+	typed, ok := value.(string)
+	return typed, ok
 }
 
 func getReadyTaskLeaseStepCandidates(ctx context.Context, taskID, orgID uuid.UUID) ([]taskLeaseStepCandidate, error) {
