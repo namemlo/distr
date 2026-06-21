@@ -41,10 +41,15 @@ func DeploymentPlansRouter(r chiopenapi.Router) {
 				With(option.Request(DeploymentPlanIDRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlan{}))
 
+			type CreateTasksForDeploymentPlanRouteRequest struct {
+				DeploymentPlanIDRequest
+				api.CreateTasksForDeploymentPlanRequest
+			}
+
 			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin, taskQueueFeatureFlagMiddleware).
 				Post("/tasks", createTasksForDeploymentPlanHandler()).
 				With(option.Description("Create durable tasks for a ready deployment plan")).
-				With(option.Request(DeploymentPlanIDRequest{})).
+				With(option.Request(CreateTasksForDeploymentPlanRouteRequest{})).
 				With(option.Response(http.StatusOK, []api.Task{}))
 		})
 

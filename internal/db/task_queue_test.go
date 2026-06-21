@@ -71,6 +71,381 @@ func TestTaskQueueRepositoryCreateTasksForPlanIsIdempotent(t *testing.T) {
 	g.Expect(listed).To(HaveLen(1))
 }
 
+func TestTaskQueueRepositoryCreatesDefaultDeploymentTargetLocks(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(tasks).To(HaveLen(1))
+	g.Expect(tasks[0].Locks).To(HaveLen(1))
+	g.Expect(tasks[0].Locks[0].ResourceType).To(Equal(types.TaskLockResourceDeploymentTarget))
+	g.Expect(tasks[0].Locks[0].ResourceKey).To(Equal(deps.plan.Targets[0].DeploymentTargetID.String()))
+	g.Expect(tasks[0].Locks[0].ConcurrencyPolicy).To(Equal(types.TaskConcurrencyPolicyQueue))
+}
+
+func TestTaskQueueRepositoryQueuePolicyPreventsConcurrentRunningTasksForSameTarget(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue deploy two",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+	firstTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	secondTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   secondPlan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         firstTasks[0].ID,
+		Status:         types.TaskStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         secondTasks[0].ID,
+		Status:         types.TaskStatusRunning,
+	})
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         firstTasks[0].ID,
+		Status:         types.TaskStatusSucceeded,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	running, err := db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         secondTasks[0].ID,
+		Status:         types.TaskStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(running.Status).To(Equal(types.TaskStatusRunning))
+}
+
+func TestTaskQueueRepositoryRejectNewPolicyRejectsConflictingQueuedTask(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue reject new",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+	_, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:      deps.orgID,
+		DeploymentPlanID:    secondPlan.ID,
+		ActorUserAccountID:  deps.actorID,
+		ConcurrencyPolicy:   types.TaskConcurrencyPolicyRejectNew,
+		AdditionalResources: nil,
+	})
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+}
+
+func TestTaskQueueRepositoryRejectNewPolicySerializesConcurrentCreates(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue reject new concurrent",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+
+	errs := createTasksForDeploymentPlansConcurrently(
+		t,
+		ctx,
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   deps.plan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyRejectNew,
+		},
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   secondPlan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyRejectNew,
+		},
+	)
+
+	var successes int
+	var conflicts int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, apierrors.ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent create error: %v", err)
+		}
+	}
+	g.Expect(successes).To(Equal(1))
+	g.Expect(conflicts).To(Equal(1))
+	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(1))
+}
+
+func TestTaskQueueRepositoryCancelOlderPolicyCancelsQueuedConflicts(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue cancel older",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+	firstTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	secondTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   secondPlan.ID,
+		ActorUserAccountID: deps.actorID,
+		ConcurrencyPolicy:  types.TaskConcurrencyPolicyCancelOlder,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(secondTasks).To(HaveLen(1))
+	g.Expect(secondTasks[0].Status).To(Equal(types.TaskStatusQueued))
+	first, err := db.GetTask(ctx, firstTasks[0].ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first.Status).To(Equal(types.TaskStatusCanceled))
+	g.Expect(first.CompletedAt).NotTo(BeNil())
+	g.Expect(first.Locks).To(HaveLen(1))
+	g.Expect(first.Locks[0].ReleasedAt).NotTo(BeNil())
+}
+
+func TestTaskQueueRepositoryCancelOlderPolicySerializesConcurrentCreates(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue cancel older concurrent",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+
+	errs := createTasksForDeploymentPlansConcurrently(
+		t,
+		ctx,
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   deps.plan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyCancelOlder,
+		},
+		types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   secondPlan.ID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyCancelOlder,
+		},
+	)
+
+	for _, err := range errs {
+		g.Expect(err).NotTo(HaveOccurred())
+	}
+	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(listed).To(HaveLen(2))
+	var queued int
+	var canceled int
+	for _, task := range listed {
+		switch task.Status {
+		case types.TaskStatusQueued:
+			queued++
+			g.Expect(task.Locks).To(HaveLen(1))
+			g.Expect(task.Locks[0].ReleasedAt).To(BeNil())
+		case types.TaskStatusCanceled:
+			canceled++
+			g.Expect(task.CompletedAt).NotTo(BeNil())
+			g.Expect(task.Locks).To(HaveLen(1))
+			g.Expect(task.Locks[0].ReleasedAt).NotTo(BeNil())
+		default:
+			t.Fatalf("unexpected task status after concurrent cancel older create: %s", task.Status)
+		}
+	}
+	g.Expect(queued).To(Equal(1))
+	g.Expect(canceled).To(Equal(1))
+}
+
+func TestTaskQueueRepositoryAllowParallelPolicyAllowsConcurrentRunningTasksForSameTarget(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue allow parallel",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+	request := func(planID uuid.UUID) types.CreateTasksForDeploymentPlanRequest {
+		return types.CreateTasksForDeploymentPlanRequest{
+			OrganizationID:     deps.orgID,
+			DeploymentPlanID:   planID,
+			ActorUserAccountID: deps.actorID,
+			ConcurrencyPolicy:  types.TaskConcurrencyPolicyAllowParallel,
+		}
+	}
+	firstTasks, err := db.CreateTasksForDeploymentPlan(ctx, request(deps.plan.ID))
+	g.Expect(err).NotTo(HaveOccurred())
+	secondTasks, err := db.CreateTasksForDeploymentPlan(ctx, request(secondPlan.ID))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         firstTasks[0].ID,
+		Status:         types.TaskStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         secondTasks[0].ID,
+		Status:         types.TaskStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func TestTaskQueueRepositorySerializesConcurrentLockAcquisition(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue race",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+	firstTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	secondTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   secondPlan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	start := make(chan struct{})
+	errCh := make(chan error, 2)
+	transition := func(taskID uuid.UUID) {
+		<-start
+		_, err := db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+			OrganizationID: deps.orgID,
+			TaskID:         taskID,
+			Status:         types.TaskStatusRunning,
+		})
+		errCh <- err
+	}
+	go transition(firstTasks[0].ID)
+	go transition(secondTasks[0].ID)
+	close(start)
+
+	var successes int
+	var conflicts int
+	for range 2 {
+		err := awaitTaskQueueOperation(t, errCh)
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, apierrors.ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected transition error: %v", err)
+		}
+	}
+	g.Expect(successes).To(Equal(1))
+	g.Expect(conflicts).To(Equal(1))
+}
+
+func TestTaskQueueRepositoryAdditionalLocksApplyAcrossTargets(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue custom lock",
+		createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-b"),
+	)
+	lock := types.TaskLockResourceRequest{
+		ResourceType:      types.TaskLockResourceCustom,
+		ResourceKey:       " shared-db ",
+		ConcurrencyPolicy: types.TaskConcurrencyPolicyRejectNew,
+	}
+	firstTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:      deps.orgID,
+		DeploymentPlanID:    deps.plan.ID,
+		ActorUserAccountID:  deps.actorID,
+		AdditionalResources: []types.TaskLockResourceRequest{lock},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(firstTasks[0].Locks).To(ContainElement(WithTransform(
+		func(lock types.TaskResourceLock) string { return lock.ResourceKey },
+		Equal("shared-db"),
+	)))
+
+	_, err = db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:      deps.orgID,
+		DeploymentPlanID:    secondPlan.ID,
+		ActorUserAccountID:  deps.actorID,
+		AdditionalResources: []types.TaskLockResourceRequest{lock},
+	})
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+}
+
 func TestTaskQueueRepositoryRejectsBlockedPlan(t *testing.T) {
 	ctx := taskQueueDBTestContext(t)
 	g := NewWithT(t)
@@ -244,10 +619,34 @@ func TestTaskQueueMigrationDefinesTaskTables(t *testing.T) {
 	g.Expect(downSQL).To(ContainSubstring("DROP SEQUENCE IF EXISTS Task_queue_order_seq"))
 }
 
+func TestTaskLockMigrationDefinesLockTables(t *testing.T) {
+	g := NewWithT(t)
+	sql, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "122_task_locks.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	upSQL := string(sql)
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE TaskResourceLock"))
+	g.Expect(upSQL).To(ContainSubstring("status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED')"))
+	g.Expect(upSQL).To(ContainSubstring(
+		"resource_type IN ('deployment_target', 'tenant_environment', 'application_environment', 'custom')",
+	))
+	g.Expect(upSQL).To(ContainSubstring("concurrency_policy IN ('QUEUE', 'CANCEL_OLDER', 'REJECT_NEW', 'ALLOW_PARALLEL')"))
+	g.Expect(upSQL).To(ContainSubstring("INSERT INTO TaskResourceLock"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "122_task_locks.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	downSQL := string(down)
+	g.Expect(downSQL).To(ContainSubstring("DROP TABLE IF EXISTS TaskResourceLock"))
+	g.Expect(downSQL).To(ContainSubstring("status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED')"))
+}
+
 type taskQueuePlanDeps struct {
-	orgID   uuid.UUID
-	actorID uuid.UUID
-	plan    *types.DeploymentPlan
+	orgID            uuid.UUID
+	applicationID    uuid.UUID
+	channelID        uuid.UUID
+	versionID        uuid.UUID
+	devEnvironmentID uuid.UUID
+	actorID          uuid.UUID
+	plan             *types.DeploymentPlan
 }
 
 func taskQueueDBTestContext(t *testing.T) context.Context {
@@ -284,7 +683,43 @@ func createReadyDeploymentPlanForTaskQueue(
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
-	return taskQueuePlanDeps{orgID: deps.orgID, actorID: actorID, plan: plan}
+	return taskQueuePlanDeps{
+		orgID:            deps.orgID,
+		applicationID:    deps.applicationID,
+		channelID:        deps.channelID,
+		versionID:        deps.versionID,
+		devEnvironmentID: deps.devEnvironmentID,
+		actorID:          actorID,
+		plan:             plan,
+	}
+}
+
+func createReadyDeploymentPlanForTaskQueueWithTargets(
+	t *testing.T,
+	ctx context.Context,
+	deps taskQueuePlanDeps,
+	processName string,
+	targetIDs ...uuid.UUID,
+) *types.DeploymentPlan {
+	t.Helper()
+	g := NewWithT(t)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, processName)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	bundle.ReleaseNumber = "2026.06." + uuid.NewString()
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, result, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, deps.actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID:  deps.orgID,
+		ReleaseBundleID: published.ID,
+		EnvironmentID:   deps.devEnvironmentID,
+		TargetIDs:       targetIDs,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	return plan
 }
 
 func createBlockedDeploymentPlanForTaskQueue(t *testing.T, ctx context.Context) taskQueuePlanDeps {
@@ -359,4 +794,33 @@ func awaitTaskQueueOperation(t *testing.T, errCh <-chan error) error {
 		t.Fatal("task queue operation did not finish after release bundle lock was released")
 		return nil
 	}
+}
+
+func createTasksForDeploymentPlansConcurrently(
+	t *testing.T,
+	ctx context.Context,
+	requests ...types.CreateTasksForDeploymentPlanRequest,
+) []error {
+	t.Helper()
+	start := make(chan struct{})
+	errCh := make(chan error, len(requests))
+	for _, request := range requests {
+		go func() {
+			<-start
+			_, err := db.CreateTasksForDeploymentPlan(ctx, request)
+			errCh <- err
+		}()
+	}
+	close(start)
+
+	errs := make([]error, 0, len(requests))
+	for range requests {
+		select {
+		case err := <-errCh:
+			errs = append(errs, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent task creation did not finish")
+		}
+	}
+	return errs
 }
