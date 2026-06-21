@@ -14,8 +14,13 @@ func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
 
 	actions := DefaultRegistry().List()
 
-	g.Expect(actions).To(HaveLen(3))
-	g.Expect(actionTypes(actions)).To(Equal([]string{"distr.preflight", "distr.http.check", "distr.wait"}))
+	g.Expect(actions).To(HaveLen(4))
+	g.Expect(actionTypes(actions)).To(Equal([]string{
+		"distr.preflight",
+		"distr.http.check",
+		"distr.wait",
+		"distr.compose.deploy",
+	}))
 	g.Expect(actions[0].Name).To(Equal("Preflight checks"))
 	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("$schema", "https://json-schema.org/draft/2020-12/schema"))
 	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("type", "object"))
@@ -47,6 +52,15 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 	}`))).To(Succeed())
 	g.Expect(registry.ValidateInput("distr.wait", jsonObject(t, `{"durationSeconds":30}`))).To(Succeed())
 	g.Expect(registry.ValidateInput("distr.wait", jsonObject(t, `{"condition":"deployment.healthy"}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.compose.deploy", jsonObject(t, `{
+		"applicationVersion":{"composeFile":"services:\n  web:\n    image: nginx:latest\n"},
+		"projectName":"distr-preview",
+		"environmentFile":"PORT=8080\n",
+		"pullPolicy":"missing",
+		"waitForHealthy":true,
+		"timeoutSeconds":120,
+		"strategy":"compose"
+	}`))).To(Succeed())
 }
 
 func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
@@ -87,6 +101,22 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			actionType: "distr.wait",
 			input:      jsonObject(t, `{}`),
 			want:       "oneOf",
+		},
+		{
+			name:       "compose deploy requires compose file",
+			actionType: "distr.compose.deploy",
+			input:      jsonObject(t, `{"applicationVersion":{},"projectName":"distr-preview"}`),
+			want:       "composeFile",
+		},
+		{
+			name:       "compose deploy rejects unknown strategy",
+			actionType: "distr.compose.deploy",
+			input: jsonObject(t, `{
+				"applicationVersion":{"composeFile":"services:\n  web:\n    image: nginx:latest\n"},
+				"projectName":"distr-preview",
+				"strategy":"blue-green"
+			}`),
+			want: "strategy",
 		},
 	}
 

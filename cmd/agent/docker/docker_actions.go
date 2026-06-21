@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/dotenv"
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/agentauth"
 	"github.com/distr-sh/distr/internal/agentenv"
@@ -26,11 +27,21 @@ func DockerEngineApply(
 	deployment api.AgentDeployment,
 	updateStatus func(string),
 ) (agentDeployment *AgentDeployment, status string, err error) {
+	return DockerEngineApplyWithComposeOptions(ctx, deployment, composeDeployOptions{}, updateStatus)
+}
+
+func DockerEngineApplyWithComposeOptions(
+	ctx context.Context,
+	deployment api.AgentDeployment,
+	options composeDeployOptions,
+	updateStatus func(string),
+) (agentDeployment *AgentDeployment, status string, err error) {
 	logger := logger.With(zap.Stringer("deploymentId", deployment.ID))
 	agentDeployment, err = NewAgentDeployment(deployment)
 	if err != nil {
 		return agentDeployment, status, err
 	}
+	agentDeployment.Source = options.LocalDeploymentSource
 
 	agentDeployment.State = StateProgressing
 	if err = SaveDeployment(*agentDeployment); err != nil {
@@ -42,7 +53,7 @@ func DockerEngineApply(
 		status, err = ApplyComposeFileSwarm(ctx, deployment, updateStatus)
 	} else {
 		logger.Debug("applying compose file")
-		err = ApplyComposeFile(ctx, deployment, updateStatus)
+		err = ApplyComposeFileWithOptions(ctx, deployment, updateStatus, options)
 		if err == nil {
 			status = "compose command executed successfully"
 		}
@@ -62,6 +73,15 @@ func DockerEngineApply(
 }
 
 func ApplyComposeFile(ctx context.Context, deployment api.AgentDeployment, updateStatus func(string)) error {
+	return ApplyComposeFileWithOptions(ctx, deployment, updateStatus, composeDeployOptions{})
+}
+
+func ApplyComposeFileWithOptions(
+	ctx context.Context,
+	deployment api.AgentDeployment,
+	updateStatus func(string),
+	options composeDeployOptions,
+) error {
 	updateStatus("initializing compose service")
 
 	var composeFileName string
@@ -98,10 +118,23 @@ func ApplyComposeFile(ctx context.Context, deployment api.AgentDeployment, updat
 		return fmt.Errorf("failed to load compose project: %w", err)
 	}
 
-	err = composeService.Up(ctx, project, composeapi.UpOptions{
+	applyComposePullPolicy(project, options.PullPolicy)
+	upOptions := composeapi.UpOptions{
 		Create: composeapi.CreateOptions{RemoveOrphans: true},
-		Start:  composeapi.StartOptions{Project: project},
-	})
+		Start: composeapi.StartOptions{
+			Project: project,
+			Wait:    options.WaitForHealthy,
+		},
+	}
+	if options.Timeout > 0 {
+		timeout := options.Timeout
+		upOptions.Create.Timeout = &timeout
+		if options.WaitForHealthy {
+			upOptions.Start.WaitTimeout = timeout
+		}
+	}
+
+	err = composeService.Up(ctx, project, upOptions)
 	if err != nil {
 		return fmt.Errorf("compose up failed: %w", err)
 	}
@@ -109,6 +142,16 @@ func ApplyComposeFile(ctx context.Context, deployment api.AgentDeployment, updat
 	return nil
 }
 
+func applyComposePullPolicy(project *composetypes.Project, pullPolicy string) {
+	pullPolicy = strings.TrimSpace(pullPolicy)
+	if pullPolicy == "" {
+		return
+	}
+	for name, service := range project.Services {
+		service.PullPolicy = pullPolicy
+		project.Services[name] = service
+	}
+}
 func ApplyComposeFileSwarm(
 	ctx context.Context,
 	deployment api.AgentDeployment,

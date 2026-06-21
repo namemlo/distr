@@ -111,16 +111,21 @@ loop:
 		if !capabilitiesReported {
 			if err := client.ReportCapabilities(
 				ctx,
-				agentclient.DefaultCapabilityReport(
-					"docker",
-					[]string{"docker", "docker-compose"},
-					[]string{"docker-compose"},
-				),
+				dockerCapabilityReport(),
 			); err != nil {
 				logger.Warn("agent capability report failed", zap.Error(err))
 			} else {
 				capabilitiesReported = true
 			}
+		}
+
+		if lease, err := client.LeaseTask(ctx); err != nil {
+			logger.Warn("agent task lease failed", zap.Error(err))
+		} else if lease != nil {
+			if err := executeTaskLease(ctx, *lease, client, dockerComposeDeployActionApply); err != nil {
+				logger.Error("agent task execution failed", zap.Stringer("taskId", lease.TaskID), zap.Error(err))
+			}
+			continue
 		}
 
 		if resource, err := client.Resource(ctx); err != nil {
@@ -286,11 +291,7 @@ func selfUpdateIfRequired(ctx context.Context, resource api.AgentResource) bool 
 
 func cleanupOldDeployments(ctx context.Context, resource api.AgentResource, deployments []AgentDeployment) {
 	for _, deployment := range deployments {
-		resourceHasExistingDeployment := slices.ContainsFunc(
-			resource.Deployments,
-			func(d api.AgentDeployment) bool { return d.ID == deployment.ID },
-		)
-		if !resourceHasExistingDeployment {
+		if shouldCleanupDeployment(resource, deployment) {
 			logger.Info("uninstalling old deployment", zap.String("id", deployment.ID.String()))
 
 			deploymentImages, err := GetDeploymentImages(ctx, deployment)
@@ -311,4 +312,14 @@ func cleanupOldDeployments(ctx context.Context, resource api.AgentResource, depl
 			logWatcher.CleanupLogsTimestamps(deployment)
 		}
 	}
+}
+
+func shouldCleanupDeployment(resource api.AgentResource, deployment AgentDeployment) bool {
+	if deployment.Source == AgentDeploymentSourceTask {
+		return false
+	}
+	return !slices.ContainsFunc(
+		resource.Deployments,
+		func(d api.AgentDeployment) bool { return d.ID == deployment.ID },
+	)
 }

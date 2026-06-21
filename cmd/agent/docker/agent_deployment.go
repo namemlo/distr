@@ -22,12 +22,20 @@ const (
 	StateFailed      State = "failed"
 )
 
+type AgentDeploymentSource string
+
+const (
+	AgentDeploymentSourceLegacy AgentDeploymentSource = ""
+	AgentDeploymentSourceTask   AgentDeploymentSource = "task"
+)
+
 type AgentDeployment struct {
-	ID          uuid.UUID        `json:"id"`
-	RevisionID  uuid.UUID        `json:"revisionId"`
-	ProjectName string           `json:"projectName"`
-	DockerType  types.DockerType `json:"docker_type,omitempty"`
-	State       State            `json:"phase"`
+	ID          uuid.UUID             `json:"id"`
+	RevisionID  uuid.UUID             `json:"revisionId"`
+	ProjectName string                `json:"projectName"`
+	DockerType  types.DockerType      `json:"docker_type,omitempty"`
+	State       State                 `json:"phase"`
+	Source      AgentDeploymentSource `json:"source,omitempty"`
 }
 
 func (d AgentDeployment) GetDeploymentID() uuid.UUID {
