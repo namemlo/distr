@@ -9,23 +9,24 @@ import (
 type Key string
 
 const (
-	KeyEnvironments         Key = "environments"
-	KeyLifecycles           Key = "lifecycles"
-	KeyChannels             Key = "channels"
-	KeyReleaseBundles       Key = "release_bundles"
-	KeyDeploymentProcesses  Key = "deployment_processes"
-	KeyScopedVariablesV2    Key = "scoped_variables_v2"
-	KeyDeploymentPlans      Key = "deployment_plans"
-	KeyTaskQueue            Key = "task_queue"
-	KeyAgentCapabilities    Key = "agent_capabilities"
-	KeyAgentTaskLeases      Key = "agent_task_leases"
-	KeyStepEvents           Key = "step_events"
-	KeyStepTemplates        Key = "step_templates"
-	KeyRunbooks             Key = "runbooks"
-	KeyDeploymentTimeline   Key = "deployment_timeline"
-	KeyRetentionPolicies    Key = "retention_policies"
-	KeyObservabilityMetrics Key = "observability_metrics"
-	KeyObservabilityTracing Key = "observability_tracing"
+	KeyEnvironments            Key = "environments"
+	KeyLifecycles              Key = "lifecycles"
+	KeyChannels                Key = "channels"
+	KeyReleaseBundles          Key = "release_bundles"
+	KeyDeploymentProcesses     Key = "deployment_processes"
+	KeyScopedVariablesV2       Key = "scoped_variables_v2"
+	KeyDeploymentPlans         Key = "deployment_plans"
+	KeyTaskQueue               Key = "task_queue"
+	KeyAgentCapabilities       Key = "agent_capabilities"
+	KeyAgentTaskLeases         Key = "agent_task_leases"
+	KeyStepEvents              Key = "step_events"
+	KeyStepTemplates           Key = "step_templates"
+	KeyRunbooks                Key = "runbooks"
+	KeyDeploymentTimeline      Key = "deployment_timeline"
+	KeyRetentionPolicies       Key = "retention_policies"
+	KeyObservabilityMetrics    Key = "observability_metrics"
+	KeyObservabilityTracing    Key = "observability_tracing"
+	KeyObservabilityDashboards Key = "observability_dashboards"
 )
 
 type Flag struct {
@@ -148,6 +149,12 @@ var definitions = []definition{
 		Key:         KeyObservabilityTracing,
 		Label:       "Observability Tracing",
 		Description: "Enables OpenTelemetry tracing for HTTP traffic and task execution instrumentation.",
+		Milestone:   "Milestone G",
+	},
+	{
+		Key:         KeyObservabilityDashboards,
+		Label:       "Observability Dashboards",
+		Description: "Publishes static Grafana dashboard templates for observability review.",
 		Milestone:   "Milestone G",
 	},
 }

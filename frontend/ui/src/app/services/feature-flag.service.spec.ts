@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability metrics, and observability tracing feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability metrics, observability tracing, and observability dashboards feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -82,6 +82,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isObservabilityTracingEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isObservabilityDashboardsEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -148,6 +151,13 @@ describe('FeatureFlagService', () => {
         key: 'observability_tracing',
         label: 'Observability Tracing',
         description: 'Enables OpenTelemetry tracing for HTTP traffic and task execution instrumentation.',
+        milestone: 'Milestone G',
+        enabled: true,
+      },
+      {
+        key: 'observability_dashboards',
+        label: 'Observability Dashboards',
+        description: 'Publishes static Grafana dashboard templates for observability review.',
         milestone: 'Milestone G',
         enabled: true,
       },

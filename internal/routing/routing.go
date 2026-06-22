@@ -193,6 +193,7 @@ func ApiRouter(
 					r.Route("/files", handlers.FileRouter)
 					r.Route("/lifecycles", handlers.LifecyclesRouter)
 					r.Route("/notification-records", handlers.NotificationRecordsRouter)
+					r.Route("/observability", handlers.ObservabilityRouter)
 					r.Route("/organization", handlers.OrganizationRouter)
 					r.Route("/organizations", handlers.OrganizationsRouter)
 					r.Route("/release-bundles", handlers.ReleaseBundlesRouter)
