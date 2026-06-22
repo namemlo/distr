@@ -1427,6 +1427,191 @@ func TestRunWebhookActionRetriesTransientResponseBodyNetworkError(t *testing.T) 
 	g.Expect(roundTrips).To(Equal(2))
 }
 
+func TestWebhookActionIdempotentReplaySuite(t *testing.T) {
+	t.Run("duplicate task execution sends one HTTP request", func(t *testing.T) {
+		g := NewWithT(t)
+		var requests int32
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&requests, 1)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"remote-123"}`))
+		}))
+		defer server.Close()
+		setWebhookPolicyEnvForURL(t, server.URL)
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = server.Client()
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		inputs := validWebhookInputs()
+		inputs["url"] = server.URL + "/deployments"
+		inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+		inputs["signingSecret"] = "signing-secret-value"
+		lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        inputs,
+		}
+		recorder := &webhookReplayLeasedTaskClient{}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+			types.StepRunEventTypeStarted,
+			types.StepRunEventTypeProgress,
+			types.StepRunEventTypeSucceeded,
+		}))
+
+		err = executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+		g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+			types.StepRunEventTypeStarted,
+			types.StepRunEventTypeProgress,
+			types.StepRunEventTypeSucceeded,
+		}))
+		g.Expect(recorder.timelineCalls).To(Equal(2))
+	})
+	t.Run("replay mode skips DNS signing and HTTP transport", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not be used during replay")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return nil, errors.New("HTTP should not be used during replay")
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: *storedWebhookSuccessTimeline(lease.TaskID, step.StepRunID),
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
+		g.Expect(recorder.events).To(BeEmpty())
+	})
+	t.Run("replay rejects mismatched lease identity before reconstruction", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookLookupIPAddrToPublicHost(t)
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return nil, errors.New("HTTP should not be used when replay lease mismatches")
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		event := storedWebhookSuccessEvent(lease.TaskID, step.StepRunID)
+		event.TaskLeaseID = uuid.New()
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: api.TaskTimeline{
+				TaskID: lease.TaskID,
+				Events: []api.StepRunEvent{
+					event,
+				},
+			},
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).To(MatchError(ContainSubstring("stored webhook replay lease does not match")))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
+		g.Expect(recorder.events).To(BeEmpty())
+	})
+	t.Run("interrupted replay fails closed before duplicate HTTP request", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookLookupIPAddrToPublicHost(t)
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: api.TaskTimeline{
+				TaskID: lease.TaskID,
+				Events: []api.StepRunEvent{{
+					ID:        uuid.New(),
+					TaskID:    lease.TaskID,
+					StepRunID: step.StepRunID,
+					Sequence:  1,
+					Type:      types.StepRunEventTypeStarted,
+				}, {
+					ID:        uuid.New(),
+					TaskID:    lease.TaskID,
+					StepRunID: step.StepRunID,
+					Sequence:  2,
+					Type:      types.StepRunEventTypeProgress,
+					Message:   "sending webhook attempt 1 of 2",
+				}},
+			},
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook replay is incomplete")))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
+		g.Expect(recorder.events).To(BeEmpty())
+	})
+	t.Run("replay reconstructs stored outputs", func(t *testing.T) {
+		g := NewWithT(t)
+		stepRunID := uuid.New()
+		result, ok, err := webhookReplayResultFromTimeline(storedWebhookSuccessTimeline(uuid.New(), stepRunID), stepRunID)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(ok).To(BeTrue())
+		g.Expect(result.StatusCode).To(Equal(http.StatusAccepted))
+		g.Expect(result.Attempts).To(Equal(1))
+		g.Expect(result.Outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "remoteId", Value: "remote-123"}))
+	})
+}
+
 func TestExecuteTaskLeaseHeartbeatsAndRunsWebhookStep(t *testing.T) {
 	g := NewWithT(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1593,4 +1778,94 @@ func setWebhookAttemptMetricSink(t *testing.T, sink chan<- webhookAttemptMetric)
 	oldSink := webhookAttemptMetricSink
 	webhookAttemptMetricSink = sink
 	t.Cleanup(func() { webhookAttemptMetricSink = oldSink })
+}
+
+type webhookReplayLeasedTaskClient struct {
+	recordingLeasedTaskClient
+	timeline      api.TaskTimeline
+	timelineErr   error
+	timelineCalls int
+}
+
+func (c *webhookReplayLeasedTaskClient) GetTaskTimeline(_ context.Context, taskID uuid.UUID) (*api.TaskTimeline, error) {
+	c.timelineCalls++
+	if c.timelineErr != nil {
+		return nil, c.timelineErr
+	}
+	if c.timeline.TaskID == uuid.Nil {
+		c.timeline.TaskID = taskID
+	}
+	return &c.timeline, nil
+}
+
+func (c *webhookReplayLeasedTaskClient) RecordStepRunEvent(
+	ctx context.Context,
+	stepRunID uuid.UUID,
+	request api.AgentStepRunEventRequest,
+) (*api.StepRunEvent, error) {
+	event, err := c.recordingLeasedTaskClient.RecordStepRunEvent(ctx, stepRunID, request)
+	if err != nil {
+		return nil, err
+	}
+	if c.timeline.TaskID == uuid.Nil {
+		c.timeline.TaskID = uuid.New()
+	}
+	c.timeline.Events = append(c.timeline.Events, api.StepRunEvent{
+		ID:              uuid.New(),
+		TaskID:          c.timeline.TaskID,
+		StepRunID:       stepRunID,
+		Sequence:        request.Sequence,
+		Type:            request.Type,
+		Message:         request.Message,
+		ProgressPercent: request.ProgressPercent,
+		Outputs:         apiOutputsFromAgentRequests(request.Outputs),
+	})
+	return event, nil
+}
+
+func storedWebhookSuccessTimeline(taskID, stepRunID uuid.UUID) *api.TaskTimeline {
+	return &api.TaskTimeline{
+		TaskID: taskID,
+		Events: []api.StepRunEvent{
+			storedWebhookSuccessEvent(taskID, stepRunID),
+		},
+	}
+}
+
+func storedWebhookSuccessEvent(taskID, stepRunID uuid.UUID) api.StepRunEvent {
+	return api.StepRunEvent{
+		ID:        uuid.New(),
+		TaskID:    taskID,
+		StepRunID: stepRunID,
+		Sequence:  3,
+		Type:      types.StepRunEventTypeSucceeded,
+		Message:   "Webhook succeeded",
+		Outputs: []api.StepRunOutput{
+			{Name: "statusCode", Value: rawJSONValue(202)},
+			{Name: "attempts", Value: rawJSONValue(1)},
+			{Name: "remoteId", Value: rawJSONValue("remote-123")},
+		},
+	}
+}
+
+func apiOutputsFromAgentRequests(outputs []api.AgentStepRunOutputRequest) []api.StepRunOutput {
+	values := make([]api.StepRunOutput, 0, len(outputs))
+	for _, output := range outputs {
+		values = append(values, api.StepRunOutput{
+			ID:        uuid.New(),
+			Name:      output.Name,
+			Value:     rawJSONValue(output.Value),
+			Sensitive: output.Sensitive,
+			Redacted:  output.Sensitive,
+		})
+	}
+	return values
+}
+
+func rawJSONValue(value any) json.RawMessage {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }

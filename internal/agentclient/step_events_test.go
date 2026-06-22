@@ -82,6 +82,55 @@ func TestRecordStepRunEventFailsMissingDisabledOrEmptyEndpoint(t *testing.T) {
 	}
 }
 
+func TestGetTaskTimelineUsesAuthenticatedTemplate(t *testing.T) {
+	taskID := uuid.New()
+	stepRunID := uuid.New()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/api/v1/agents/agent/tasks/"+taskID.String()+"/timeline"; got != want {
+			t.Fatalf("expected path %q, got %q", want, got)
+		}
+		if got, want := r.Header.Get("Authorization"), "Bearer test-token"; got != want {
+			t.Fatalf("expected authorization %q, got %q", want, got)
+		}
+		_ = json.NewEncoder(w).Encode(api.TaskTimeline{
+			TaskID: taskID,
+			Events: []api.StepRunEvent{{
+				ID:        uuid.New(),
+				TaskID:    taskID,
+				StepRunID: stepRunID,
+				Sequence:  3,
+				Type:      types.StepRunEventTypeSucceeded,
+			}},
+		})
+	}))
+	defer server.Close()
+	client := testStepEventClient("")
+	client.taskTimelineEndpointTemplate = server.URL + "/api/v1/agents/agent/tasks/{taskId}/timeline"
+
+	timeline, err := client.GetTaskTimeline(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("expected task timeline request to succeed: %v", err)
+	}
+	if timeline == nil || timeline.TaskID != taskID || len(timeline.Events) != 1 {
+		t.Fatalf("unexpected timeline: %#v", timeline)
+	}
+	if timeline.Events[0].StepRunID != stepRunID || timeline.Events[0].Type != types.StepRunEventTypeSucceeded {
+		t.Fatalf("unexpected timeline event: %#v", timeline.Events[0])
+	}
+}
+
+func TestGetTaskTimelineReturnsNilWhenEndpointMissing(t *testing.T) {
+	client := testStepEventClient("")
+
+	timeline, err := client.GetTaskTimeline(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("expected missing optional endpoint to be a no-op: %v", err)
+	}
+	if timeline != nil {
+		t.Fatalf("expected nil timeline for missing endpoint, got %#v", timeline)
+	}
+}
+
 func testStepEventClient(endpointTemplate string) *Client {
 	token := jwt.New()
 	_ = token.Set(jwt.ExpirationKey, time.Now().Add(time.Hour))

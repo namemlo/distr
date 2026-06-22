@@ -123,6 +123,15 @@ func AgentRouter(r chiopenapi.Router) {
 				With(option.Response(http.StatusOK, api.AgentTaskLease{}))
 		})
 		agentRoutes.With(agentStepEventsFeatureFlagMiddleware).Group(func(r chiopenapi.Router) {
+			type AgentTaskTimelineRouteRequest struct {
+				AgentID uuid.UUID `path:"agentId"`
+				TaskID  uuid.UUID `path:"taskId"`
+			}
+
+			r.Get("/tasks/{taskId}/timeline", getAgentTaskTimelineHandler()).
+				With(option.Request(AgentTaskTimelineRouteRequest{})).
+				With(option.Response(http.StatusOK, api.TaskTimeline{}))
+
 			type AgentStepRunEventRouteRequest struct {
 				AgentID   uuid.UUID `path:"agentId"`
 				StepRunID uuid.UUID `path:"stepRunId"`
@@ -706,6 +715,41 @@ func postAgentTaskHeartbeatHandler() http.HandlerFunc {
 		})
 		respondAgentTaskLeaseResult(w, r, log, err, func() {
 			RespondJSON(w, mapping.TaskLeaseToAPI(*lease))
+		})
+	}
+}
+
+func getAgentTaskTimelineHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := uuid.Parse(r.PathValue("agentId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		taskID, err := uuid.Parse(r.PathValue("taskId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		deploymentTarget := internalctx.GetDeploymentTarget(ctx)
+		if deploymentTarget.ID != agentID {
+			http.NotFound(w, r)
+			return
+		}
+		task, err := db.GetTask(ctx, taskID, deploymentTarget.OrganizationID)
+		if err == nil && task.DeploymentTargetID != deploymentTarget.ID {
+			err = apierrors.ErrNotFound
+		}
+		if err != nil {
+			respondStepEventResult(w, r, log, err, func() {})
+			return
+		}
+		timeline, err := db.GetTaskTimeline(ctx, taskID, deploymentTarget.OrganizationID)
+		respondStepEventResult(w, r, log, err, func() {
+			RespondJSON(w, mapping.TaskTimelineToAPI(*timeline))
 		})
 	}
 }

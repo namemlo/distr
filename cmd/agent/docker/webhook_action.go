@@ -21,6 +21,7 @@ import (
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 )
 
 const (
@@ -190,6 +191,13 @@ func executeWebhookStep(
 	step api.AgentTaskLeaseStep,
 	client leasedTaskClient,
 ) error {
+	if step.ActionType == webhookActionType && step.ActionVersion == types.AgentActionVersionV1 {
+		if _, replayed, err := webhookReplayResult(ctx, lease, step.StepRunID, client); err != nil {
+			return err
+		} else if replayed {
+			return nil
+		}
+	}
 	sequence := int64(1)
 	if err := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeStarted, "starting webhook", nil, nil); err != nil {
 		return err
@@ -243,6 +251,142 @@ func executeWebhookStep(
 	outputs = append(outputs, result.Outputs...)
 	sequence++
 	return recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeSucceeded, "Webhook succeeded", nil, outputs, secretValues...)
+}
+
+func webhookReplayResult(
+	ctx context.Context,
+	lease api.AgentTaskLease,
+	stepRunID uuid.UUID,
+	client leasedTaskClient,
+) (webhookRunResult, bool, error) {
+	timelineClient, ok := client.(taskTimelineClient)
+	if !ok {
+		return webhookRunResult{}, false, nil
+	}
+	timeline, err := timelineClient.GetTaskTimeline(ctx, lease.TaskID)
+	if err != nil {
+		return webhookRunResult{}, false, err
+	}
+	return webhookReplayResultFromTimelineForLease(timeline, lease.TaskID, stepRunID, lease.ID)
+}
+
+func webhookReplayResultFromTimeline(
+	timeline *api.TaskTimeline,
+	stepRunID uuid.UUID,
+) (webhookRunResult, bool, error) {
+	return webhookReplayResultFromTimelineForLease(timeline, uuid.Nil, stepRunID, uuid.Nil)
+}
+
+func webhookReplayResultFromTimelineForLease(
+	timeline *api.TaskTimeline,
+	taskID uuid.UUID,
+	stepRunID uuid.UUID,
+	leaseID uuid.UUID,
+) (webhookRunResult, bool, error) {
+	if timeline == nil {
+		return webhookRunResult{}, false, nil
+	}
+	var success *api.StepRunEvent
+	var incomplete bool
+	var failed bool
+	for i := range timeline.Events {
+		event := &timeline.Events[i]
+		if event.StepRunID != stepRunID {
+			continue
+		}
+		if taskID != uuid.Nil && event.TaskID != uuid.Nil && event.TaskID != taskID {
+			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay task does not match active lease")
+		}
+		if leaseID != uuid.Nil && event.TaskLeaseID != uuid.Nil && event.TaskLeaseID != leaseID {
+			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay lease does not match active lease")
+		}
+		switch event.Type {
+		case types.StepRunEventTypeSucceeded:
+			success = event
+		case types.StepRunEventTypeFailed:
+			failed = true
+		case types.StepRunEventTypeStarted,
+			types.StepRunEventTypeProgress,
+			types.StepRunEventTypeLog,
+			types.StepRunEventTypeOutput:
+			incomplete = true
+		}
+	}
+	if success == nil {
+		if failed {
+			return webhookRunResult{}, false, fmt.Errorf("webhook replay is already failed; refusing to re-execute external request")
+		}
+		if incomplete {
+			return webhookRunResult{}, false, fmt.Errorf("webhook replay is incomplete; refusing to re-execute external request")
+		}
+		return webhookRunResult{}, false, nil
+	}
+	result := webhookRunResult{}
+	hasStatusCode := false
+	hasAttempts := false
+	for _, output := range success.Outputs {
+		value, err := webhookStoredOutputValue(output.Value)
+		if err != nil {
+			return webhookRunResult{}, false, err
+		}
+		switch output.Name {
+		case "statusCode":
+			statusCode, ok := webhookStoredIntOutput(value)
+			if !ok {
+				return webhookRunResult{}, false, fmt.Errorf("stored webhook statusCode output is invalid")
+			}
+			result.StatusCode = statusCode
+			hasStatusCode = true
+		case "attempts":
+			attempts, ok := webhookStoredIntOutput(value)
+			if !ok {
+				return webhookRunResult{}, false, fmt.Errorf("stored webhook attempts output is invalid")
+			}
+			result.Attempts = attempts
+			hasAttempts = true
+		default:
+			result.Outputs = append(result.Outputs, api.AgentStepRunOutputRequest{
+				Name:      output.Name,
+				Value:     value,
+				Sensitive: output.Sensitive,
+			})
+		}
+	}
+	if !hasStatusCode || !hasAttempts {
+		return webhookRunResult{}, false, fmt.Errorf("stored webhook success is missing built-in outputs")
+	}
+	return result, true, nil
+}
+
+func webhookStoredOutputValue(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, fmt.Errorf("decode stored webhook output: %w", err)
+	}
+	return value, nil
+}
+
+func webhookStoredIntOutput(value any) (int, bool) {
+	switch typed := value.(type) {
+	case json.Number:
+		number, err := typed.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(number), true
+	case float64:
+		number := int(typed)
+		return number, typed == float64(number)
+	case int:
+		return typed, true
+	default:
+		return 0, false
+	}
 }
 
 func runWebhookAction(

@@ -53,6 +53,10 @@ type stepEventClient interface {
 	RecordStepRunEvent(context.Context, uuid.UUID, api.AgentStepRunEventRequest) (*api.StepRunEvent, error)
 }
 
+type taskTimelineClient interface {
+	GetTaskTimeline(context.Context, uuid.UUID) (*api.TaskTimeline, error)
+}
+
 type leasedTaskClient interface {
 	stepEventClient
 	HeartbeatTaskLease(context.Context, uuid.UUID, string) (*api.AgentTaskLease, error)
