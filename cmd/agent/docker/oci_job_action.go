@@ -20,9 +20,12 @@ import (
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/gofrs/flock"
 )
 
 var ociJobEnvNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var ociJobProcessMutationLocks sync.Map
 
 const (
 	ociJobAllowedRegistriesEnv = "DISTR_OCI_JOB_ALLOWED_REGISTRIES"
@@ -482,10 +485,11 @@ func inspectOCIJobContainer(ctx context.Context, lock *ociJobContainerLock, cont
 func acquireOCIJobContainerLock(ctx context.Context, containerName string) (*ociJobContainerLock, error) {
 	root := ociJobContainerLockRoot()
 	lockDir := filepath.Join(root, "distr-oci-job-lock-"+containerName)
+	mutationLockPath := ociJobContainerMutationLockPath(root, containerName)
 	staleAfter := ociJobContainerLockStaleAfter()
 	for {
 		if _, statErr := os.Stat(lockDir); statErr == nil {
-			recovered, recoverErr := recoverStaleOCIJobContainerLock(lockDir, staleAfter)
+			recovered, recoverErr := recoverStaleOCIJobContainerLock(ctx, lockDir, mutationLockPath, staleAfter)
 			if recoverErr != nil {
 				return nil, recoverErr
 			}
@@ -504,7 +508,7 @@ func acquireOCIJobContainerLock(ctx context.Context, containerName string) (*oci
 		} else if !os.IsNotExist(statErr) {
 			return nil, fmt.Errorf("reserve OCI job container: %w", statErr)
 		}
-		release, acquired, err := tryPublishOCIJobContainerLock(lockDir, containerName, staleAfter)
+		release, acquired, err := tryPublishOCIJobContainerLock(lockDir, containerName, mutationLockPath, staleAfter)
 		if err != nil {
 			return nil, err
 		}
@@ -514,12 +518,11 @@ func acquireOCIJobContainerLock(ctx context.Context, containerName string) (*oci
 	}
 }
 
-func tryPublishOCIJobContainerLock(lockDir, containerName string, staleAfter time.Duration) (*ociJobContainerLock, bool, error) {
+func tryPublishOCIJobContainerLock(lockDir, containerName, mutationLockPath string, staleAfter time.Duration) (*ociJobContainerLock, bool, error) {
 	ownerToken := newOCIJobContainerLockOwnerToken(containerName)
-	pendingDir := lockDir + ".pending-" + ownerToken
+	pendingDir := lockDir + ".p-" + ownerToken
 	if err := os.Mkdir(pendingDir, 0o700); err != nil {
 		if os.IsExist(err) {
-			_ = os.RemoveAll(pendingDir)
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("reserve OCI job container: %w", err)
@@ -539,15 +542,17 @@ func tryPublishOCIJobContainerLock(lockDir, containerName string, staleAfter tim
 	ownerPath := filepath.Join(lockDir, "owner-"+ownerToken)
 	stopHeartbeat := startOCIJobContainerLockHeartbeat(ownerPath, staleAfter)
 	return &ociJobContainerLock{
-		ownerPath:     ownerPath,
-		stopHeartbeat: stopHeartbeat,
+		ownerPath:        ownerPath,
+		mutationLockPath: mutationLockPath,
+		stopHeartbeat:    stopHeartbeat,
 	}, true, nil
 }
 
 type ociJobContainerLock struct {
-	ownerPath     string
-	stopHeartbeat func()
-	stopOnce      sync.Once
+	ownerPath        string
+	mutationLockPath string
+	stopHeartbeat    func()
+	stopOnce         sync.Once
 }
 
 func (l *ociJobContainerLock) release() {
@@ -589,19 +594,103 @@ func (l *ociJobContainerLock) ensureOwned() error {
 	return fmt.Errorf("OCI job container reservation lost")
 }
 
+func (l *ociJobContainerLock) lockMutation(ctx context.Context) (func(), error) {
+	if l == nil || l.mutationLockPath == "" {
+		return func() {}, nil
+	}
+	return lockOCIJobContainerMutation(ctx, l.mutationLockPath)
+}
+
+func lockOCIJobContainerMutation(ctx context.Context, path string) (func(), error) {
+	processUnlock, err := lockOCIJobProcessMutation(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	fileLock := flock.New(path)
+	locked, err := fileLock.TryLockContext(ctx, 50*time.Millisecond)
+	if err != nil {
+		processUnlock()
+		return nil, ociJobContainerMutationLockError(err)
+	}
+	if !locked {
+		processUnlock()
+		return nil, fmt.Errorf("lock OCI job container mutation: lock was not acquired")
+	}
+	return func() {
+		_ = fileLock.Unlock()
+		processUnlock()
+	}, nil
+}
+
+func lockOCIJobProcessMutation(ctx context.Context, path string) (func(), error) {
+	value, _ := ociJobProcessMutationLocks.LoadOrStore(path, make(chan struct{}, 1))
+	lock := value.(chan struct{})
+	select {
+	case lock <- struct{}{}:
+		return func() { <-lock }, nil
+	case <-ctx.Done():
+		return nil, ociJobContainerMutationLockError(ctx.Err())
+	}
+}
+
+func ociJobContainerMutationLockError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("OCI job timed out")
+	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("OCI job canceled")
+	}
+	return fmt.Errorf("lock OCI job container mutation: %w", err)
+}
+
+func ociJobContainerMutationLockPath(root, containerName string) string {
+	return filepath.Join(root, "distr-oci-job-mutation-lock-"+containerName+".lock")
+}
+
 func newOCIJobContainerLockOwnerToken(containerName string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", containerName, os.Getpid(), time.Now().UnixNano())))
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:16])
 }
 
 func releaseOCIJobContainerLock(ownerPath string) {
 	_ = os.Remove(ownerPath)
 }
 
-func recoverStaleOCIJobContainerLock(lockDir string, staleAfter time.Duration) (bool, error) {
+func recoverStaleOCIJobContainerLock(ctx context.Context, lockDir, mutationLockPath string, staleAfter time.Duration) (bool, error) {
 	if staleAfter <= 0 {
 		return false, nil
 	}
+	stale, err := staleOCIJobContainerLockNeedsRecovery(lockDir, staleAfter)
+	if err != nil {
+		return false, err
+	}
+	if !stale {
+		return false, nil
+	}
+	unlockMutation, err := lockOCIJobContainerMutation(ctx, mutationLockPath)
+	if err != nil {
+		return false, err
+	}
+	defer unlockMutation()
+	stale, err = staleOCIJobContainerLockNeedsRecovery(lockDir, staleAfter)
+	if err != nil {
+		return false, err
+	}
+	if !stale {
+		return false, nil
+	}
+	staleDir := lockDir + fmt.Sprintf(".stale-%d", time.Now().UnixNano())
+	if err := os.Rename(lockDir, staleDir); err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, nil
+	}
+	_ = os.RemoveAll(staleDir)
+	return true, nil
+}
+
+func staleOCIJobContainerLockNeedsRecovery(lockDir string, staleAfter time.Duration) (bool, error) {
 	info, err := ociJobContainerLockOwnerInfo(lockDir)
 	if os.IsNotExist(err) {
 		if _, statErr := os.Stat(lockDir); os.IsNotExist(statErr) {
@@ -614,14 +703,6 @@ func recoverStaleOCIJobContainerLock(lockDir string, staleAfter time.Duration) (
 	} else if time.Since(info.ModTime()) <= staleAfter {
 		return false, nil
 	}
-	staleDir := lockDir + fmt.Sprintf(".stale-%d", time.Now().UnixNano())
-	if err := os.Rename(lockDir, staleDir); err != nil {
-		if os.IsNotExist(err) {
-			return true, nil
-		}
-		return false, nil
-	}
-	_ = os.RemoveAll(staleDir)
 	return true, nil
 }
 
@@ -830,6 +911,11 @@ func readOCIJobContainerLogs(ctx context.Context, lock *ociJobContainerLock, con
 }
 
 func runDockerCommandBoundedOwned(ctx context.Context, lock *ociJobContainerLock, command string, args ...string) ([]byte, error) {
+	unlockMutation, err := lock.lockMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockMutation()
 	if err := lock.ensureOwned(); err != nil {
 		return nil, err
 	}
