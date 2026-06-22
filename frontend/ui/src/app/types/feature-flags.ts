@@ -11,7 +11,8 @@ export type ExperimentalFeatureFlagKey =
   | 'task_queue'
   | 'runbooks'
   | 'retention_policies'
-  | 'observability_metrics';
+  | 'observability_metrics'
+  | 'observability_tracing';
 
 export interface ExperimentalFeatureFlag {
   key: ExperimentalFeatureFlagKey;

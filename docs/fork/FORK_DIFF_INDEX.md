@@ -748,3 +748,18 @@ Use one entry per pull request:
 - Tests: Metrics tests cover Prometheus output, base labels, HTTP counters/errors/latency, and task counters/duration. Service tests cover metrics router gating. Task queue tests cover transition hooks. Feature flag tests cover backend and frontend flag plumbing.
 - Upstream contribution notes: Community-neutral metrics foundation; no OpenTelemetry spans, dashboards, external vendor exporters, or business metrics.
 - Compatibility notes: Existing deployment-target metrics, tracing, logging, RBAC, authentication, action registry, task queue behavior, and agent protocol behavior are unchanged except for optional metrics observations when the flag is enabled.
+
+### PR-047b - Observability tracing
+
+- Status: Implemented locally; tracing abstraction, OpenTelemetry wrapper, HTTP middleware, task transition spans, feature flag, documentation, and ADR completed.
+- Upstream base: `6a82cf6f`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=observability_tracing`.
+- User-facing behavior: None. PR-047b emits tracing spans only when the feature flag is enabled.
+- Database changes: None.
+- API changes: No API endpoints are added.
+- UI changes: No page is added. The frontend feature flag model recognizes `observability_tracing` for future UI gating.
+- Agent protocol changes: None.
+- Documentation: Added PR-047b notes and ADR-0047b.
+- Tests: Tracing tests cover OTEL span attributes, HTTP request spans, no-op tracer behavior, and task lifecycle spans. Service tests cover disabled no-op providers. Task queue tests cover transition hooks. Feature flag tests cover backend and frontend flag plumbing.
+- Upstream contribution notes: Community-neutral tracing foundation; no dashboards, metrics changes, log correlation, exporter customization, step-level tracing, or business spans.
+- Compatibility notes: Existing metrics, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged except for optional tracing observations when the flag is enabled.

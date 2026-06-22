@@ -63,6 +63,7 @@ export class FeatureFlagService {
   public readonly isRunbooksEnabled$ = this.isExperimentalFeatureEnabled$('runbooks');
   public readonly isRetentionPoliciesEnabled$ = this.isExperimentalFeatureEnabled$('retention_policies');
   public readonly isObservabilityMetricsEnabled$ = this.isExperimentalFeatureEnabled$('observability_metrics');
+  public readonly isObservabilityTracingEnabled$ = this.isExperimentalFeatureEnabled$('observability_tracing');
 
   isExperimentalFeatureEnabled$(key: ExperimentalFeatureFlagKey): Observable<boolean> {
     return this.getExperimentalFeatureFlags().pipe(

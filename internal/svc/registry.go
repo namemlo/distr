@@ -17,6 +17,7 @@ import (
 	"github.com/distr-sh/distr/internal/jobs"
 	"github.com/distr-sh/distr/internal/migrations"
 	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
+	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/oidc"
 	distrprometheus "github.com/distr-sh/distr/internal/prometheus"
 	"github.com/distr-sh/distr/internal/registry"
@@ -43,7 +44,9 @@ type Registry struct {
 	promRegistry                *prometheus.Registry
 	promCollector               *distrprometheus.DistrCollector
 	metricsRecorder             obsermetrics.Recorder
+	observabilityTracers        obsertracing.Tracers
 	observabilityMetricsEnabled bool
+	observabilityTracingEnabled bool
 	s3Client                    *s3.Client
 }
 
@@ -71,9 +74,10 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		zap.String("edition", buildconfig.Edition()),
 		zap.Bool("release", buildconfig.IsRelease()))
 
+	experimentalFeatures := featureflags.NewRegistry(env.ExperimentalFeatureFlags())
 	reg.promCollector = distrprometheus.NewDistrCollector()
-	reg.observabilityMetricsEnabled = featureflags.NewRegistry(env.ExperimentalFeatureFlags()).
-		IsEnabled(featureflags.KeyObservabilityMetrics)
+	reg.observabilityMetricsEnabled = experimentalFeatures.IsEnabled(featureflags.KeyObservabilityMetrics)
+	reg.observabilityTracingEnabled = experimentalFeatures.IsEnabled(featureflags.KeyObservabilityTracing)
 	if reg.observabilityMetricsEnabled {
 		reg.metricsRecorder = obsermetrics.NewPrometheusRecorder(obsermetrics.BaseLabels{
 			Service:     "hub",
@@ -83,10 +87,11 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 	}
 	reg.promRegistry = createPrometheusRegistry(reg.promCollector, prometheusCollector(reg.metricsRecorder))
 
-	if tracers, err := reg.createTracer(ctx); err != nil {
+	if tracers, err := reg.createTracer(ctx, reg.observabilityTracingEnabled); err != nil {
 		return nil, err
 	} else {
 		reg.tracers = tracers
+		reg.observabilityTracers = reg.createObservabilityTracers()
 	}
 
 	if mailer, err := createMailer(ctx); err != nil {
@@ -168,10 +173,10 @@ func (r *Registry) GetRouter() http.Handler {
 		r.GetLogger(),
 		r.GetDbPool(),
 		r.GetMailer(),
-		r.GetTracers(),
 		r.GetOIDCer(),
 		r.GetPrometheusCollector(),
 		r.GetObservabilityMetricsRecorder(),
+		r.GetObservabilityTracers(),
 	)
 }
 
@@ -235,6 +240,21 @@ func (r *Registry) GetPrometheusCollector() *distrprometheus.DistrCollector {
 
 func (r *Registry) GetObservabilityMetricsRecorder() obsermetrics.Recorder {
 	return r.metricsRecorder
+}
+
+func (r *Registry) GetObservabilityTracers() obsertracing.Tracers {
+	return r.observabilityTracers
+}
+
+func (r *Registry) createObservabilityTracers() obsertracing.Tracers {
+	if !r.observabilityTracingEnabled {
+		noop := obsertracing.NoopTracer{}
+		return obsertracing.Tracers{Default: noop, Agent: noop}
+	}
+	return obsertracing.Tracers{
+		Default: obsertracing.NewOtelTracer(r.GetTracers().Default(), "github.com/distr-sh/distr/hub"),
+		Agent:   obsertracing.NewOtelTracer(r.GetTracers().Agent(), "github.com/distr-sh/distr/agent-api"),
+	}
 }
 
 func prometheusCollector(recorder obsermetrics.Recorder) prometheus.Collector {

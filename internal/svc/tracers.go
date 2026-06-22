@@ -11,24 +11,37 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 func (r *Registry) GetTracers() *tracers.Tracers {
 	return r.tracers
 }
 
-func (reg *Registry) createTracer(ctx context.Context) (*tracers.Tracers, error) {
+func (reg *Registry) createTracer(ctx context.Context, enabled bool) (*tracers.Tracers, error) {
 	otel.SetLogger(zapr.NewLogger(reg.logger))
 
-	tpopts := []trace.TracerProviderOption{}
+	if !enabled {
+		provider := oteltrace.NewNoopTracerProvider()
+		otel.SetTracerProvider(provider)
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
+		return &tracers.Tracers{
+			DefaultProvider:  provider,
+			AlwaysProvider:   provider,
+			AgentProvider:    provider,
+			RegistryProvider: provider,
+		}, nil
+	}
+
+	tpopts := []sdktrace.TracerProviderOption{}
 	tmps := []propagation.TextMapPropagator{propagation.TraceContext{}, propagation.Baggage{}}
 
 	if env.OtelExporterOtlpEnabled() {
 		if exp, err := otlptracegrpc.New(ctx); err != nil {
 			return nil, err
 		} else {
-			tpopts = append(tpopts, trace.WithSpanProcessor(trace.NewBatchSpanProcessor(exp)))
+			tpopts = append(tpopts, sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(exp)))
 		}
 	}
 
@@ -36,49 +49,49 @@ func (reg *Registry) createTracer(ctx context.Context) (*tracers.Tracers, error)
 		if exp, err := sentryotlp.NewTraceExporter(ctx, env.SentryDSN()); err != nil {
 			return nil, err
 		} else {
-			tpopts = append(tpopts, trace.WithSpanProcessor(trace.NewBatchSpanProcessor(exp)))
+			tpopts = append(tpopts, sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(exp)))
 		}
 	}
 
 	tracers := tracers.Tracers{
-		DefaultProvider: trace.NewTracerProvider(tpopts...),
-		AlwaysProvider:  trace.NewTracerProvider(append(tpopts, trace.WithSampler(trace.AlwaysSample()))...),
+		DefaultProvider: sdktrace.NewTracerProvider(tpopts...),
+		AlwaysProvider:  sdktrace.NewTracerProvider(append(tpopts, sdktrace.WithSampler(sdktrace.AlwaysSample()))...),
 	}
 
 	otel.SetTracerProvider(tracers.DefaultProvider)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(tmps...))
 
 	if cfg := env.OtelAgentSampler(); cfg != nil {
-		tracers.AgentProvider = trace.NewTracerProvider(append(
+		tracers.AgentProvider = sdktrace.NewTracerProvider(append(
 			tpopts,
-			trace.WithSampler(samplerFromConfig(cfg)),
+			sdktrace.WithSampler(samplerFromConfig(cfg)),
 		)...)
 	}
 
 	if cfg := env.OtelRegistrySampler(); cfg != nil {
-		tracers.RegistryProvider = trace.NewTracerProvider(append(
+		tracers.RegistryProvider = sdktrace.NewTracerProvider(append(
 			tpopts,
-			trace.WithSampler(samplerFromConfig(cfg)),
+			sdktrace.WithSampler(samplerFromConfig(cfg)),
 		)...)
 	}
 
 	return &tracers, nil
 }
 
-func samplerFromConfig(cfg *env.SamplerConfig) trace.Sampler {
+func samplerFromConfig(cfg *env.SamplerConfig) sdktrace.Sampler {
 	switch cfg.Sampler {
 	case env.SamplerAlwaysOn:
-		return trace.AlwaysSample()
+		return sdktrace.AlwaysSample()
 	case env.SamplerAlwaysOff:
-		return trace.NeverSample()
+		return sdktrace.NeverSample()
 	case env.SamplerTraceIDRatio:
-		return trace.TraceIDRatioBased(cfg.Arg)
+		return sdktrace.TraceIDRatioBased(cfg.Arg)
 	case env.SamplerParentBasedAlwaysOn:
-		return trace.ParentBased(trace.AlwaysSample())
+		return sdktrace.ParentBased(sdktrace.AlwaysSample())
 	case env.SamplerParsedBasedAlwaysOff:
-		return trace.ParentBased(trace.NeverSample())
+		return sdktrace.ParentBased(sdktrace.NeverSample())
 	case env.SamplerParentBasedTraceIDRatio:
-		return trace.ParentBased(trace.TraceIDRatioBased(cfg.Arg))
+		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Arg))
 	default:
 		panic(fmt.Sprintf("invalid SamplerType: %v", cfg.Sampler))
 	}

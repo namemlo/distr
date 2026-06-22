@@ -11,9 +11,9 @@ import (
 	"github.com/distr-sh/distr/internal/handlers"
 	"github.com/distr-sh/distr/internal/middleware"
 	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
+	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/oidc"
 	"github.com/distr-sh/distr/internal/prometheus"
-	"github.com/distr-sh/distr/internal/tracers"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
@@ -62,10 +62,10 @@ func NewRouter(
 	logger *zap.Logger,
 	db *pgxpool.Pool,
 	mailer *mailx.Mailer,
-	tracers *tracers.Tracers,
 	oidcer *oidc.OIDCer,
 	prometheusCollector *prometheus.DistrCollector,
 	metricsRecorder obsermetrics.Recorder,
+	tracingTracers obsertracing.Tracers,
 ) http.Handler {
 	baseRouter := chi.NewRouter()
 	baseRouter.Use(
@@ -96,7 +96,7 @@ func NewRouter(
 			Layout:      "responsive",
 		}),
 	)
-	openapiRouter.Route("/api", ApiRouter(logger, db, mailer, tracers, oidcer, prometheusCollector, metricsRecorder))
+	openapiRouter.Route("/api", ApiRouter(logger, db, mailer, oidcer, prometheusCollector, metricsRecorder, tracingTracers))
 
 	baseRouter.Mount("/internal", InternalRouter())
 	baseRouter.Mount("/status", StatusRouter())
@@ -111,10 +111,10 @@ func ApiRouter(
 	logger *zap.Logger,
 	db *pgxpool.Pool,
 	mailer *mailx.Mailer,
-	tracers *tracers.Tracers,
 	oidcer *oidc.OIDCer,
 	prometheusCollector *prometheus.DistrCollector,
 	metricsRecorder obsermetrics.Recorder,
+	tracingTracers obsertracing.Tracers,
 ) func(r chiopenapi.Router) {
 	requestSize1MiB := chimiddleware.RequestSize(1024 * 1024)
 	requestSize50MiB := chimiddleware.RequestSize(50 * 1024 * 1024)
@@ -127,20 +127,19 @@ func ApiRouter(
 			middleware.Sentry,
 			middleware.LoggerCtxMiddleware(logger),
 			middleware.LoggingMiddleware,
-			middleware.ContextInjectorMiddleware(db, mailer, oidcer, prometheusCollector, metricsRecorder),
+			middleware.ContextInjectorMiddleware(db, mailer, oidcer, prometheusCollector, metricsRecorder, tracingTracers.Default),
 		}
 		if metricsRecorder != nil {
 			baseMiddleware = append(baseMiddleware, obsermetrics.HTTPMiddleware(metricsRecorder))
 		}
 		r.Use(baseMiddleware...)
 
-		r.Route("/public/v1", PublicRouter(tracers))
+		r.Route("/public/v1", PublicRouter(tracingTracers.Default))
 
 		r.Route("/v1", func(r chiopenapi.Router) {
 			r.Group(func(r chiopenapi.Router) {
 				r.Use(
-					middleware.OTEL(tracers.Default()),
-					requestSize1MiB,
+					tracingMiddleware(tracingTracers.Default, requestSize1MiB)...,
 				)
 
 				// public routes go here
@@ -219,16 +218,14 @@ func ApiRouter(
 			r.Group(func(r chiopenapi.Router) {
 				r.Group(func(r chiopenapi.Router) {
 					r.Use(
-						middleware.OTEL(tracers.Agent()),
-						requestSize50MiB,
+						tracingMiddleware(tracingTracers.Agent, requestSize50MiB)...,
 					)
 					r.Route("/", handlers.AgentRouter)
 				})
 
 				r.Group(func(r chiopenapi.Router) {
 					r.Use(
-						middleware.OTEL(tracers.Default()),
-						requestSize1MiB,
+						tracingMiddleware(tracingTracers.Default, requestSize1MiB)...,
 					)
 					r.Route("/support-bundle-collect", handlers.SupportBundleScriptRouter)
 				})
@@ -269,12 +266,21 @@ func ReadyRouter(db *pgxpool.Pool) http.Handler {
 	return router
 }
 
-func PublicRouter(tracers *tracers.Tracers) func(r chiopenapi.Router) {
+func PublicRouter(tracingTracer obsertracing.Tracer) func(r chiopenapi.Router) {
 	return func(r chiopenapi.Router) {
-		r.Use(middleware.OTEL(tracers.Default()))
+		if middlewares := tracingMiddleware(tracingTracer); len(middlewares) > 0 {
+			r.Use(middlewares...)
+		}
 
 		r.Route("/license-keys", handlers.PublicLicenseKeysRouter)
 	}
+}
+
+func tracingMiddleware(tracer obsertracing.Tracer, middlewares ...func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
+	if tracer != nil && tracer.Enabled() {
+		return append([]func(http.Handler) http.Handler{obsertracing.HTTPMiddleware(tracer)}, middlewares...)
+	}
+	return middlewares
 }
 
 func FrontendRouter() http.Handler {

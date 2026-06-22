@@ -25,6 +25,7 @@ const (
 	KeyDeploymentTimeline   Key = "deployment_timeline"
 	KeyRetentionPolicies    Key = "retention_policies"
 	KeyObservabilityMetrics Key = "observability_metrics"
+	KeyObservabilityTracing Key = "observability_tracing"
 )
 
 type Flag struct {
@@ -141,6 +142,12 @@ var definitions = []definition{
 		Key:         KeyObservabilityMetrics,
 		Label:       "Observability Metrics",
 		Description: "Enables Prometheus metrics for HTTP traffic and task execution instrumentation.",
+		Milestone:   "Milestone G",
+	},
+	{
+		Key:         KeyObservabilityTracing,
+		Label:       "Observability Tracing",
+		Description: "Enables OpenTelemetry tracing for HTTP traffic and task execution instrumentation.",
 		Milestone:   "Milestone G",
 	},
 }
