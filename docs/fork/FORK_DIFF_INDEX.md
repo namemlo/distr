@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-042 are implemented locally. PR-042 adds the provider-agnostic traffic-provider contract, capability model, provider registry, and webhook reference provider.
+PR-000 through PR-043 are implemented locally. PR-043 adds the backend-only blue-green lifecycle foundation for slots, health checks, traffic shift planning, promotion, retention, and rollback.
 
 ## Tracking Template
 
@@ -673,3 +673,18 @@ Use one entry per pull request:
 - Tests: Traffic-provider tests cover registry construction, capability checks, webhook payloads, idempotency forwarding, prepare response decoding, non-success status handling, unsafe configuration rejection, duplicate provider rejection, and unknown provider rejection.
 - Upstream contribution notes: Community-neutral traffic abstraction with webhook reference provider; no Envoy, Nginx, cloud load balancer, scheduler, task execution, or blue-green assumptions.
 - Compatibility notes: Existing Deployment Process, Deployment Plan, Task Queue, task lease, rolling state machine, Docker/Kubernetes agent, runbook, webhook action, release bundle, and deployment behavior is unchanged.
+
+### PR-043 - Blue-green strategy
+
+- Status: Implemented locally; blue-green lifecycle package, slot states, health verification gating, traffic shift/rollback request planning, promotion, retention policy handling, documentation, and ADR completed.
+- Upstream base: `d6d490c6`
+- Feature flag: None.
+- User-facing behavior: None. PR-043 adds backend-only lifecycle semantics for later orchestration.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-043 notes and ADR-0043.
+- Tests: Blue-green lifecycle tests cover slot initialization, invalid configuration rejection, health-check gating, shift request planning, promotion retention behavior, and rollback request planning.
+- Upstream contribution notes: Community-neutral blue-green lifecycle semantics; no Envoy, Nginx, cloud load balancer, scheduler, task execution, provider invocation, or UI assumptions.
+- Compatibility notes: Existing Deployment Process, Deployment Plan, Task Queue, task lease, rolling state machine, traffic-provider interface, Docker/Kubernetes agent, runbook, webhook action, release bundle, and deployment behavior is unchanged.
