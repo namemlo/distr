@@ -546,12 +546,45 @@ func TestOCIJobContainerReservationRecoversUnownedInitializationRace(t *testing.
 	lockDir := filepath.Join(ociJobContainerLockRoot(), "distr-oci-job-lock-"+containerName)
 	g.Expect(os.Mkdir(lockDir, 0o700)).To(Succeed())
 
-	release, err := acquireOCIJobContainerLock(ctx, containerName)
+	lock, err := acquireOCIJobContainerLock(ctx, containerName)
 	g.Expect(err).ToNot(HaveOccurred())
 
 	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(HaveLen(1))
-	release()
+	lock.release()
 	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(BeEmpty())
+}
+
+func TestOCIJobContainerReservationFenceRejectsStaleOwnerAfterReclaim(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	t.Setenv(ociJobLockStaleAfterEnv, "1")
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "job completed")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	containerName := ociJobContainerName("sha256:job-key")
+
+	ownerA, err := acquireOCIJobContainerLock(ctx, containerName)
+	g.Expect(err).ToNot(HaveOccurred())
+	defer ownerA.release()
+	ownerA.stop()
+	oldTime := time.Now().Add(-time.Hour)
+	g.Expect(os.Chtimes(ownerA.ownerPath, oldTime, oldTime)).To(Succeed())
+
+	ownerB, err := acquireOCIJobContainerLock(ctx, containerName)
+	g.Expect(err).ToNot(HaveOccurred())
+	defer ownerB.release()
+
+	_, err = runDockerCommandBoundedOwned(ctx, ownerA, "docker", "run", "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	g.Expect(err).To(MatchError(ContainSubstring("OCI job container reservation lost")))
+
+	_, err = runDockerCommandBoundedOwned(ctx, ownerB, "docker", "run", "registry.example.com/jobs/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(fakeDockerCommandCount(readFakeDockerCommands(t, argsFile), "run")).To(Equal(1))
 }
 
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {

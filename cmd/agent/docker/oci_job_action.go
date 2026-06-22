@@ -376,27 +376,30 @@ func runOCIJob(
 	if updateStatus != nil {
 		updateStatus("starting OCI job container")
 	}
-	releaseContainerLock, err := acquireOCIJobContainerLock(ctx, containerName)
+	containerLock, err := acquireOCIJobContainerLock(ctx, containerName)
 	if err != nil {
 		return result, err
 	}
-	defer releaseContainerLock()
-	if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
+	defer containerLock.release()
+	if inspected, exists, err := inspectOCIJobContainer(ctx, containerLock, containerName); err != nil {
 		return result, err
 	} else if exists {
 		if err := validateOCIJobContainerIdentity(inspected, identity); err != nil {
 			return result, err
 		}
 		if shouldRecreateOCIJobContainer(inspected, input) {
-			if err := removeOCIJobContainer(ctx, containerName); err != nil {
+			if err := removeOCIJobContainer(ctx, containerLock, containerName); err != nil {
 				return result, err
 			}
 		} else {
-			return finishExistingOCIJobContainer(ctx, containerName, inspected, input.ExpectedExitCodes)
+			return finishExistingOCIJobContainer(ctx, containerLock, containerName, inspected, input.ExpectedExitCodes)
 		}
 	}
 	if len(input.SecretEnvironment) > 0 {
-		cleanupOCIJobSecretStagingDir(ctx, containerName)
+		if err := containerLock.ensureOwned(); err != nil {
+			return result, err
+		}
+		cleanupOCIJobSecretStagingDir(ctx, containerLock, containerName)
 	}
 	envFile, cleanupEnv, err := writeOCIJobEnvFile(input.Environment)
 	if err != nil {
@@ -407,28 +410,31 @@ func runOCIJob(
 	if err != nil {
 		return result, err
 	}
+	if err := containerLock.ensureOwned(); err != nil {
+		return result, err
+	}
 	cleanupSecretEnvOnReturn := true
 	defer func() {
 		if cleanupSecretEnvOnReturn {
 			cleanupSecretEnv()
 		}
 	}()
-	out, runErr := runDockerCommandBounded(ctx, "docker", dockerRunOCIJobArgs(input, containerName, identity, envFile, secretEnvFile)...)
+	out, runErr := runDockerCommandBoundedOwned(ctx, containerLock, "docker", dockerRunOCIJobArgs(input, containerName, identity, envFile, secretEnvFile)...)
 	status := redactStringWithSecretValues(strings.TrimSpace(string(out)), secretValues)
 	result.Status = status
 	result.ExitCode = dockerCommandExitCode(runErr)
 	if runErr != nil && isOCIJobContainerNameConflict(status, containerName) {
-		if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
+		if inspected, exists, err := inspectOCIJobContainer(ctx, containerLock, containerName); err != nil {
 			return result, err
 		} else if exists {
 			if err := validateOCIJobContainerIdentity(inspected, identity); err != nil {
 				return result, err
 			}
-			return finishExistingOCIJobContainer(ctx, containerName, inspected, input.ExpectedExitCodes)
+			return finishExistingOCIJobContainer(ctx, containerLock, containerName, inspected, input.ExpectedExitCodes)
 		}
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+		if stopErr := stopOCIJobContainer(containerLock, containerName); stopErr != nil {
 			cleanupSecretEnvOnReturn = false
 			return result, ociJobContextFailureWithStop(ctxErr, stopErr)
 		}
@@ -450,8 +456,8 @@ func runOCIJob(
 	return result, nil
 }
 
-func inspectOCIJobContainer(ctx context.Context, containerName string) (ociJobContainerInspect, bool, error) {
-	out, err := runDockerCommandBounded(ctx, "docker", "inspect", "--format", "{{json .}}", "--type", "container", containerName)
+func inspectOCIJobContainer(ctx context.Context, lock *ociJobContainerLock, containerName string) (ociJobContainerInspect, bool, error) {
+	out, err := runDockerCommandBoundedOwned(ctx, lock, "docker", "inspect", "--format", "{{json .}}", "--type", "container", containerName)
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		if text == "" && dockerCommandExitCode(err) == 1 {
@@ -473,7 +479,7 @@ func inspectOCIJobContainer(ctx context.Context, containerName string) (ociJobCo
 	return inspected, true, nil
 }
 
-func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func(), error) {
+func acquireOCIJobContainerLock(ctx context.Context, containerName string) (*ociJobContainerLock, error) {
 	root := ociJobContainerLockRoot()
 	lockDir := filepath.Join(root, "distr-oci-job-lock-"+containerName)
 	staleAfter := ociJobContainerLockStaleAfter()
@@ -508,7 +514,7 @@ func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func
 	}
 }
 
-func tryPublishOCIJobContainerLock(lockDir, containerName string, staleAfter time.Duration) (func(), bool, error) {
+func tryPublishOCIJobContainerLock(lockDir, containerName string, staleAfter time.Duration) (*ociJobContainerLock, bool, error) {
 	ownerToken := newOCIJobContainerLockOwnerToken(containerName)
 	pendingDir := lockDir + ".pending-" + ownerToken
 	if err := os.Mkdir(pendingDir, 0o700); err != nil {
@@ -532,10 +538,55 @@ func tryPublishOCIJobContainerLock(lockDir, containerName string, staleAfter tim
 	}
 	ownerPath := filepath.Join(lockDir, "owner-"+ownerToken)
 	stopHeartbeat := startOCIJobContainerLockHeartbeat(ownerPath, staleAfter)
-	return func() {
-		stopHeartbeat()
-		releaseOCIJobContainerLock(ownerPath)
+	return &ociJobContainerLock{
+		ownerPath:     ownerPath,
+		stopHeartbeat: stopHeartbeat,
 	}, true, nil
+}
+
+type ociJobContainerLock struct {
+	ownerPath     string
+	stopHeartbeat func()
+	stopOnce      sync.Once
+}
+
+func (l *ociJobContainerLock) release() {
+	if l == nil {
+		return
+	}
+	l.stop()
+	releaseOCIJobContainerLock(l.ownerPath)
+}
+
+func (l *ociJobContainerLock) stop() {
+	if l == nil || l.stopHeartbeat == nil {
+		return
+	}
+	l.stopOnce.Do(l.stopHeartbeat)
+}
+
+func (l *ociJobContainerLock) ensureOwned() error {
+	if l == nil {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Dir(l.ownerPath))
+	if os.IsNotExist(err) {
+		return fmt.Errorf("OCI job container reservation lost")
+	}
+	if err != nil {
+		return fmt.Errorf("verify OCI job container reservation: %w", err)
+	}
+	ownerName := filepath.Base(l.ownerPath)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "owner-") {
+			continue
+		}
+		if entry.Name() == ownerName {
+			return nil
+		}
+		return fmt.Errorf("OCI job container reservation lost")
+	}
+	return fmt.Errorf("OCI job container reservation lost")
 }
 
 func newOCIJobContainerLockOwnerToken(containerName string) string {
@@ -653,6 +704,7 @@ func isOCIJobContainerNameConflict(output, containerName string) bool {
 
 func finishExistingOCIJobContainer(
 	ctx context.Context,
+	lock *ociJobContainerLock,
 	containerName string,
 	inspected ociJobContainerInspect,
 	expectedExitCodes []int,
@@ -663,11 +715,14 @@ func finishExistingOCIJobContainer(
 	secretMountSource := inspectedSecretEnvMountSource(inspected)
 	switch status {
 	case "running":
-		code, err := waitOCIJobContainer(ctx, containerName)
+		code, err := waitOCIJobContainer(ctx, lock, containerName)
 		if err != nil {
 			if ctx.Err() != nil {
-				if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+				if stopErr := stopOCIJobContainer(lock, containerName); stopErr != nil {
 					return result, fmt.Errorf("%w; %v", err, stopErr)
+				}
+				if err := lock.ensureOwned(); err != nil {
+					return result, err
 				}
 				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
@@ -675,20 +730,26 @@ func finishExistingOCIJobContainer(
 		}
 		result.ExitCode = code
 	case "created":
-		if err := startExistingOCIJobContainer(ctx, containerName); err != nil {
+		if err := startExistingOCIJobContainer(ctx, lock, containerName); err != nil {
 			if ctx.Err() != nil {
-				if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+				if stopErr := stopOCIJobContainer(lock, containerName); stopErr != nil {
 					return result, fmt.Errorf("%w; %v", err, stopErr)
+				}
+				if err := lock.ensureOwned(); err != nil {
+					return result, err
 				}
 				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
 			return result, err
 		}
-		code, err := waitOCIJobContainer(ctx, containerName)
+		code, err := waitOCIJobContainer(ctx, lock, containerName)
 		if err != nil {
 			if ctx.Err() != nil {
-				if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+				if stopErr := stopOCIJobContainer(lock, containerName); stopErr != nil {
 					return result, fmt.Errorf("%w; %v", err, stopErr)
+				}
+				if err := lock.ensureOwned(); err != nil {
+					return result, err
 				}
 				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
@@ -703,16 +764,22 @@ func finishExistingOCIJobContainer(
 		return result, fmt.Errorf("existing OCI job container is in unsupported state %q", status)
 	}
 	if !ociJobExpectedExitCode(result.ExitCode, expectedExitCodes) {
+		if err := lock.ensureOwned(); err != nil {
+			return result, err
+		}
 		cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 		return result, fmt.Errorf("OCI job exited with code %d", result.ExitCode)
+	}
+	if err := lock.ensureOwned(); err != nil {
+		return result, err
 	}
 	cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 	result.Status = fmt.Sprintf("reused existing OCI job container with exit code %d", result.ExitCode)
 	return result, nil
 }
 
-func startExistingOCIJobContainer(ctx context.Context, containerName string) error {
-	out, err := runDockerCommandBounded(ctx, "docker", "start", containerName)
+func startExistingOCIJobContainer(ctx context.Context, lock *ociJobContainerLock, containerName string) error {
+	out, err := runDockerCommandBoundedOwned(ctx, lock, "docker", "start", containerName)
 	text := strings.TrimSpace(string(out))
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
@@ -726,8 +793,8 @@ func startExistingOCIJobContainer(ctx context.Context, containerName string) err
 	return nil
 }
 
-func waitOCIJobContainer(ctx context.Context, containerName string) (int, error) {
-	out, err := runDockerCommandBounded(ctx, "docker", "wait", containerName)
+func waitOCIJobContainer(ctx context.Context, lock *ociJobContainerLock, containerName string) (int, error) {
+	out, err := runDockerCommandBoundedOwned(ctx, lock, "docker", "wait", containerName)
 	text := strings.TrimSpace(string(out))
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
@@ -752,14 +819,25 @@ func ociJobContextFailureWithStop(ctxErr error, stopErr error) error {
 	return fmt.Errorf("OCI job canceled; %w", stopErr)
 }
 
-func readOCIJobContainerLogs(ctx context.Context, containerName string, secretValues []string) (string, error) {
-	out, err := runDockerCommandBounded(ctx, "docker", "logs", containerName)
+func readOCIJobContainerLogs(ctx context.Context, lock *ociJobContainerLock, containerName string, secretValues []string) (string, error) {
+	out, err := runDockerCommandBoundedOwned(ctx, lock, "docker", "logs", containerName)
 	text := redactStringWithSecretValues(strings.TrimSpace(string(out)), secretValues)
 	if err != nil {
 		redactedErr := redactErrorWithSecretValues(err, secretValues)
 		return "", fmt.Errorf("read OCI job container logs: %w: %s", redactedErr, text)
 	}
 	return text, nil
+}
+
+func runDockerCommandBoundedOwned(ctx context.Context, lock *ociJobContainerLock, command string, args ...string) ([]byte, error) {
+	if err := lock.ensureOwned(); err != nil {
+		return nil, err
+	}
+	out, err := runDockerCommandBounded(ctx, command, args...)
+	if ownerErr := lock.ensureOwned(); ownerErr != nil {
+		return out, ownerErr
+	}
+	return out, err
 }
 
 func runDockerCommandBounded(ctx context.Context, command string, args ...string) ([]byte, error) {
@@ -820,25 +898,25 @@ func (b *boundedOutput) String() string {
 	return value[:b.limit-len(suffix)] + suffix
 }
 
-func stopOCIJobContainer(containerName string) error {
+func stopOCIJobContainer(lock *ociJobContainerLock, containerName string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stopOut, stopErr := runDockerCommandBounded(ctx, "docker", "stop", "--time", "5", containerName)
+	stopOut, stopErr := runDockerCommandBoundedOwned(ctx, lock, "docker", "stop", "--time", "5", containerName)
 	if stopErr != nil {
 		killCtx, killCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer killCancel()
-		killOut, killErr := runDockerCommandBounded(killCtx, "docker", "kill", containerName)
+		killOut, killErr := runDockerCommandBoundedOwned(killCtx, lock, "docker", "kill", containerName)
 		if killErr != nil {
 			return fmt.Errorf("stop OCI job container: stop failed: %v: %s; kill failed: %v: %s", stopErr, strings.TrimSpace(string(stopOut)), killErr, strings.TrimSpace(string(killOut)))
 		}
 	}
-	return verifyOCIJobContainerStopped(containerName)
+	return verifyOCIJobContainerStopped(lock, containerName)
 }
 
-func verifyOCIJobContainerStopped(containerName string) error {
+func verifyOCIJobContainerStopped(lock *ociJobContainerLock, containerName string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	inspected, exists, err := inspectOCIJobContainer(ctx, containerName)
+	inspected, exists, err := inspectOCIJobContainer(ctx, lock, containerName)
 	if err != nil {
 		return fmt.Errorf("verify OCI job container stopped: %w", err)
 	}
@@ -848,8 +926,8 @@ func verifyOCIJobContainerStopped(containerName string) error {
 	return fmt.Errorf("stop OCI job container: container is still running after stop/kill")
 }
 
-func removeOCIJobContainer(ctx context.Context, containerName string) error {
-	out, err := runDockerCommandBounded(ctx, "docker", "rm", "--force", containerName)
+func removeOCIJobContainer(ctx context.Context, lock *ociJobContainerLock, containerName string) error {
+	out, err := runDockerCommandBoundedOwned(ctx, lock, "docker", "rm", "--force", containerName)
 	if err != nil {
 		return fmt.Errorf("remove OCI job container for recreation: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -1007,17 +1085,20 @@ func resolveOCIJobSecretStagingDir() (string, error) {
 	return resolveOCIJobMountPath(stagingDir, ociJobSecretStagingDirEnv)
 }
 
-func cleanupOCIJobSecretStagingDir(ctx context.Context, containerName string) {
+func cleanupOCIJobSecretStagingDir(ctx context.Context, lock *ociJobContainerLock, containerName string) {
 	stagingDir, err := resolveOCIJobSecretStagingDir()
 	if err != nil {
 		return
 	}
 	protected := map[string]struct{}{}
-	if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err == nil && exists {
+	if inspected, exists, err := inspectOCIJobContainer(ctx, lock, containerName); err == nil && exists {
 		if source := inspectedSecretEnvMountSource(inspected); source != "" {
 			protected[filepath.Clean(source)] = struct{}{}
 		}
 	} else if err != nil {
+		return
+	}
+	if err := lock.ensureOwned(); err != nil {
 		return
 	}
 	entries, err := os.ReadDir(stagingDir)
@@ -1032,6 +1113,9 @@ func cleanupOCIJobSecretStagingDir(ctx context.Context, containerName string) {
 		dir := filepath.Join(stagingDir, entry.Name())
 		if _, ok := protected[filepath.Clean(filepath.Join(dir, "env"))]; ok {
 			continue
+		}
+		if err := lock.ensureOwned(); err != nil {
+			return
 		}
 		_ = os.RemoveAll(dir)
 	}
