@@ -132,7 +132,7 @@ For `distr.oci.job`, the agent:
 - writes public environment variables to a temporary env file, and injects resolved `secretEnvironment` through a separate read-only mounted shell env file and explicit `--entrypoint /bin/sh` wrapper instead of Docker environment metadata
 - runs `docker run` with a deterministic container name, `--read-only`, `--security-opt no-new-privileges`, `--cap-drop ALL`, `--log-driver none`, the selected allowlisted network, optional canonical read-only allowlisted volumes, optional user, and optional CPU/memory limits
 - removes stale unreferenced secret staging directories only for the current deterministic operation, removes mounted per-operation secret staging once a reclaimed container is terminal or stopped during timeout/cancellation, reuses exited deterministic containers, waits running deterministic containers, starts created deterministic containers, recreates unstarted created containers with missing secret mounts, and rejects unsupported existing-container states on retry, lease reclaim, or agent restart without replaying retained raw Docker logs
-- stops the container on timeout or cancellation
+- stops the container on timeout or cancellation, falls back to `docker kill` if stop fails, and verifies the container is no longer running before removing mounted secret staging
 - emits `SUCCEEDED` with non-sensitive `containerName`, `exitCode`, and `status` outputs when the exit code is expected
 - emits `FAILED` with redacted error and stderr-style details when validation or execution fails
 

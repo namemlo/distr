@@ -665,12 +665,27 @@ func TestDockerCommandHelper(t *testing.T) {
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "inspect" {
 		if inspect := os.Getenv("FAKE_DOCKER_EXISTING_INSPECT"); inspect != "" {
+			if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+				if _, err := os.Stat(path); err == nil {
+					inspect = fakeDockerStoppedInspect(inspect)
+				}
+			}
 			fmt.Fprint(os.Stdout, inspect)
+			os.Exit(0)
+		}
+		if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+			if _, err := os.Stat(path); err == nil {
+				fmt.Fprint(os.Stdout, fakeDockerStoppedInspect(`{"State":{"Status":"running","Running":true,"ExitCode":0},"Config":{"Labels":{}}}`))
+				os.Exit(0)
+			}
+		}
+		if fakeDockerCommandWasRecorded("stop") || fakeDockerCommandWasRecorded("kill") {
+			fmt.Fprint(os.Stdout, fakeDockerStoppedInspect(`{"State":{"Status":"running","Running":true,"ExitCode":0},"Config":{"Labels":{}}}`))
 			os.Exit(0)
 		}
 		state := os.Getenv("FAKE_DOCKER_EXISTING_STATE")
 		if state == "" {
-			fmt.Fprint(os.Stderr, "Error: No such object")
+			fmt.Fprint(os.Stdout, "Error: No such object")
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stdout, `{"State":%s,"Config":{"Labels":{}}}`, state)
@@ -696,6 +711,31 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "stop" {
+		if rawCode := os.Getenv("FAKE_DOCKER_STOP_EXIT_CODE"); rawCode != "" {
+			code, err := strconv.Atoi(rawCode)
+			if err != nil {
+				os.Exit(2)
+			}
+			fmt.Fprint(os.Stderr, "fake docker stop failed")
+			os.Exit(code)
+		}
+		if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+			_ = os.WriteFile(path, []byte("stopped"), 0o600)
+		}
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "kill" {
+		if rawCode := os.Getenv("FAKE_DOCKER_KILL_EXIT_CODE"); rawCode != "" {
+			code, err := strconv.Atoi(rawCode)
+			if err != nil {
+				os.Exit(2)
+			}
+			fmt.Fprint(os.Stderr, "fake docker kill failed")
+			os.Exit(code)
+		}
+		if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+			_ = os.WriteFile(path, []byte("killed"), 0o600)
+		}
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "rm" {
@@ -774,6 +814,40 @@ func checkFakeDockerSecretFileContainerReadable(dockerArgs []string) error {
 		return nil
 	}
 	return fmt.Errorf("secret env file volume was not mounted")
+}
+
+func fakeDockerStoppedInspect(inspect string) string {
+	data := map[string]any{}
+	if err := json.Unmarshal([]byte(inspect), &data); err != nil {
+		return inspect
+	}
+	state, _ := data["State"].(map[string]any)
+	if state == nil {
+		state = map[string]any{}
+		data["State"] = state
+	}
+	state["Status"] = "exited"
+	state["Running"] = false
+	if _, ok := state["ExitCode"]; !ok {
+		state["ExitCode"] = 137
+	}
+	out, err := json.Marshal(data)
+	if err != nil {
+		return inspect
+	}
+	return string(out)
+}
+
+func fakeDockerCommandWasRecorded(name string) bool {
+	path := os.Getenv("FAKE_DOCKER_COMMAND_ARGS_FILE")
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), `["docker","`+name+`"`)
 }
 
 func writeFakeDockerContainerMetadata(path string, dockerArgs []string) error {

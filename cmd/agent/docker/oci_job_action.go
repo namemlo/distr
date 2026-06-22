@@ -401,13 +401,21 @@ func runOCIJob(
 	if err != nil {
 		return result, err
 	}
-	defer cleanupSecretEnv()
+	cleanupSecretEnvOnReturn := true
+	defer func() {
+		if cleanupSecretEnvOnReturn {
+			cleanupSecretEnv()
+		}
+	}()
 	out, runErr := runDockerCommandBounded(ctx, "docker", dockerRunOCIJobArgs(input, containerName, identity, envFile, secretEnvFile)...)
 	status := redactStringWithSecretValues(strings.TrimSpace(string(out)), secretValues)
 	result.Status = status
 	result.ExitCode = dockerCommandExitCode(runErr)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		stopOCIJobContainer(containerName)
+		if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+			cleanupSecretEnvOnReturn = false
+			return result, ociJobContextFailureWithStop(ctxErr, stopErr)
+		}
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
 			return result, fmt.Errorf("OCI job timed out")
 		}
@@ -430,6 +438,9 @@ func inspectOCIJobContainer(ctx context.Context, containerName string) (ociJobCo
 	out, err := runDockerCommandBounded(ctx, "docker", "inspect", "--format", "{{json .}}", "--type", "container", containerName)
 	text := strings.TrimSpace(string(out))
 	if err != nil {
+		if text == "" && dockerCommandExitCode(err) == 1 {
+			return ociJobContainerInspect{}, false, nil
+		}
 		if strings.Contains(strings.ToLower(text), "no such") || strings.Contains(strings.ToLower(text), "not found") {
 			return ociJobContainerInspect{}, false, nil
 		}
@@ -472,7 +483,9 @@ func finishExistingOCIJobContainer(
 		code, err := waitOCIJobContainer(ctx, containerName)
 		if err != nil {
 			if ctx.Err() != nil {
-				stopOCIJobContainer(containerName)
+				if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+					return result, fmt.Errorf("%w; %v", err, stopErr)
+				}
 				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
 			return result, err
@@ -481,7 +494,9 @@ func finishExistingOCIJobContainer(
 	case "created":
 		if err := startExistingOCIJobContainer(ctx, containerName); err != nil {
 			if ctx.Err() != nil {
-				stopOCIJobContainer(containerName)
+				if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+					return result, fmt.Errorf("%w; %v", err, stopErr)
+				}
 				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
 			return result, err
@@ -489,7 +504,9 @@ func finishExistingOCIJobContainer(
 		code, err := waitOCIJobContainer(ctx, containerName)
 		if err != nil {
 			if ctx.Err() != nil {
-				stopOCIJobContainer(containerName)
+				if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
+					return result, fmt.Errorf("%w; %v", err, stopErr)
+				}
 				cleanupOCIJobSecretMountSource(secretMountSource, containerName)
 			}
 			return result, err
@@ -543,6 +560,13 @@ func waitOCIJobContainer(ctx context.Context, containerName string) (int, error)
 		return -1, fmt.Errorf("decode OCI job exit code %q: %w", text, err)
 	}
 	return code, nil
+}
+
+func ociJobContextFailureWithStop(ctxErr error, stopErr error) error {
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return fmt.Errorf("OCI job timed out; %w", stopErr)
+	}
+	return fmt.Errorf("OCI job canceled; %w", stopErr)
 }
 
 func readOCIJobContainerLogs(ctx context.Context, containerName string, secretValues []string) (string, error) {
@@ -613,10 +637,32 @@ func (b *boundedOutput) String() string {
 	return value[:b.limit-len(suffix)] + suffix
 }
 
-func stopOCIJobContainer(containerName string) {
+func stopOCIJobContainer(containerName string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, _ = runDockerCommandBounded(ctx, "docker", "stop", "--time", "5", containerName)
+	stopOut, stopErr := runDockerCommandBounded(ctx, "docker", "stop", "--time", "5", containerName)
+	if stopErr != nil {
+		killCtx, killCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer killCancel()
+		killOut, killErr := runDockerCommandBounded(killCtx, "docker", "kill", containerName)
+		if killErr != nil {
+			return fmt.Errorf("stop OCI job container: stop failed: %v: %s; kill failed: %v: %s", stopErr, strings.TrimSpace(string(stopOut)), killErr, strings.TrimSpace(string(killOut)))
+		}
+	}
+	return verifyOCIJobContainerStopped(containerName)
+}
+
+func verifyOCIJobContainerStopped(containerName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	inspected, exists, err := inspectOCIJobContainer(ctx, containerName)
+	if err != nil {
+		return fmt.Errorf("verify OCI job container stopped: %w", err)
+	}
+	if !exists || !inspected.State.Running {
+		return nil
+	}
+	return fmt.Errorf("stop OCI job container: container is still running after stop/kill")
 }
 
 func removeOCIJobContainer(ctx context.Context, containerName string) error {
