@@ -793,3 +793,18 @@ Use one entry per pull request:
 - Tests: Correlation tests cover trace, metrics, dashboard, unified context, deterministic label ordering, and empty-base behavior. Feature flag tests cover backend and frontend flag plumbing.
 - Upstream contribution notes: Community-neutral link utilities; no dashboard UI, API enrichment, Grafana API calls, alerting, log correlation, storage, metrics changes, or tracing changes.
 - Compatibility notes: Existing dashboards, metrics, tracing, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.
+
+### PR-047c3 - Observability dashboard API enrichment
+
+- Status: Implemented locally; dashboard API correlation metadata, static query templates, documentation, and ADR completed.
+- Upstream base: `bf01b424`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=observability_dashboards,observability_correlation`.
+- User-facing behavior: None. When correlation is enabled, the dashboard catalog includes optional trace link templates, metric query templates, and correlation hints.
+- Database changes: None.
+- API changes: Extended `GET /api/v1/observability/dashboards` with optional `traceLinkTemplate`, `metricsQueryTemplate`, and `correlationHints` fields.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-047c3 notes and ADR-0047c3.
+- Tests: Dashboard tests cover static correlation metadata and immutable copies. Handler tests cover base responses, enriched metadata, and deterministic output.
+- Upstream contribution notes: Community-neutral API metadata layer; no dashboard UI, Grafana API integration, alerting, log correlation, storage, metrics changes, or tracing changes.
+- Compatibility notes: Existing dashboards, metrics, tracing, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.
