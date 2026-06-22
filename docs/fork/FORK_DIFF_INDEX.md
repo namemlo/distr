@@ -733,3 +733,18 @@ Use one entry per pull request:
 - Tests: Type tests cover built-in role permissions, permission parsing, and isolated role-definition copies. Middleware tests cover organization-scoped permission allow/deny behavior, super-admin compatibility, and unsupported scope rejection.
 - Upstream contribution notes: Community-neutral RBAC foundation; no adopter-specific policy language, external IAM dependency, or role migration.
 - Compatibility notes: Organization scope is enforced first. Application, environment, tenant/customer, and tag-set scopes are known but unsupported until later PRs add policy bindings.
+
+### PR-047a - Observability metrics
+
+- Status: Implemented locally; metrics recorder abstraction, Prometheus recorder, HTTP middleware, task transition hooks, feature flag, documentation, and ADR completed.
+- Upstream base: `0b6f7d53`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=observability_metrics`; the metrics server also requires `METRICS_ENABLED=true`.
+- User-facing behavior: None. PR-047a exposes Prometheus metrics only when the feature flag and metrics server env var are enabled.
+- Database changes: None.
+- API changes: No API endpoints are added. The existing metrics server route exposes `/metrics` only when observability metrics are enabled.
+- UI changes: No page is added. The frontend feature flag model recognizes `observability_metrics` for future UI gating.
+- Agent protocol changes: None.
+- Documentation: Added PR-047a notes and ADR-0047a.
+- Tests: Metrics tests cover Prometheus output, base labels, HTTP counters/errors/latency, and task counters/duration. Service tests cover metrics router gating. Task queue tests cover transition hooks. Feature flag tests cover backend and frontend flag plumbing.
+- Upstream contribution notes: Community-neutral metrics foundation; no OpenTelemetry spans, dashboards, external vendor exporters, or business metrics.
+- Compatibility notes: Existing deployment-target metrics, tracing, logging, RBAC, authentication, action registry, task queue behavior, and agent protocol behavior are unchanged except for optional metrics observations when the flag is enabled.

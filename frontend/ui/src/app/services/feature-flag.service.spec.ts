@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, and retention policy feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, and observability metrics feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -76,6 +76,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isRetentionPoliciesEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isObservabilityMetricsEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -128,6 +131,13 @@ describe('FeatureFlagService', () => {
         key: 'retention_policies',
         label: 'Retention Policies',
         description: 'Preview cleanup candidates before running retention jobs.',
+        milestone: 'Milestone G',
+        enabled: true,
+      },
+      {
+        key: 'observability_metrics',
+        label: 'Observability Metrics',
+        description: 'Enables Prometheus metrics for HTTP traffic and task execution instrumentation.',
         milestone: 'Milestone G',
         enabled: true,
       },

@@ -162,7 +162,7 @@ func NewDefault(
 			middleware.Sentry,
 			middleware.LoggerCtxMiddleware(logger),
 			middleware.LoggingMiddleware,
-			middleware.ContextInjectorMiddleware(pool, mailer, nil, nil),
+			middleware.ContextInjectorMiddleware(pool, mailer, nil, nil, nil),
 			auth.ArtifactsAuthentication.Middleware,
 			auth.ArtifactsAuthentication.ValidatorMiddleware(func(value authinfo.AuthInfoWithOrganization) error {
 				if value.CurrentOrg() == nil {

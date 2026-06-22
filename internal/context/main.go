@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/distr-sh/distr/internal/db/queryable"
+	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
 	"github.com/distr-sh/distr/internal/oidc"
 	"github.com/distr-sh/distr/internal/prometheus"
 	"github.com/go-mailx/mailx"
@@ -30,6 +31,7 @@ const (
 	ctxKeyLicenseKey
 	ctxKeyPrometheusCollector
 	ctxKeyS3Client
+	ctxKeyObservabilityMetricsRecorder
 )
 
 func GetDb(ctx context.Context) queryable.Queryable {
@@ -105,6 +107,21 @@ func WithPrometheusCollector(ctx context.Context, collector *prometheus.DistrCol
 	}
 
 	return context.WithValue(ctx, ctxKeyPrometheusCollector, collector)
+}
+
+func GetObservabilityMetricsRecorder(ctx context.Context) obsermetrics.Recorder {
+	if recorder, ok := ctx.Value(ctxKeyObservabilityMetricsRecorder).(obsermetrics.Recorder); ok {
+		return recorder
+	}
+	return nil
+}
+
+func WithObservabilityMetricsRecorder(ctx context.Context, recorder obsermetrics.Recorder) context.Context {
+	if recorder == nil {
+		return ctx
+	}
+
+	return context.WithValue(ctx, ctxKeyObservabilityMetricsRecorder, recorder)
 }
 
 func GetS3Client(ctx context.Context) *s3.Client {
