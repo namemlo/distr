@@ -20,6 +20,7 @@ const (
 	KeyAgentCapabilities   Key = "agent_capabilities"
 	KeyAgentTaskLeases     Key = "agent_task_leases"
 	KeyStepEvents          Key = "step_events"
+	KeyStepTemplates       Key = "step_templates"
 	KeyRunbooks            Key = "runbooks"
 )
 
@@ -108,6 +109,12 @@ var definitions = []definition{
 		Label:       "Step Events",
 		Description: "Stores structured step lifecycle events, redacted log chunks, and bounded step outputs.",
 		Milestone:   "Milestone D",
+	},
+	{
+		Key:         KeyStepTemplates,
+		Label:       "Step Templates",
+		Description: "Installs reusable step definitions with versioned schemas and compatibility metadata.",
+		Milestone:   "Milestone E",
 	},
 	{
 		Key:         KeyRunbooks,

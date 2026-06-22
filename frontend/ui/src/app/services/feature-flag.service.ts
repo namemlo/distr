@@ -57,6 +57,7 @@ export class FeatureFlagService {
   public readonly isDeploymentProcessesEnabled$ = this.isExperimentalFeatureEnabled$('deployment_processes');
   public readonly isScopedVariablesV2Enabled$ = this.isExperimentalFeatureEnabled$('scoped_variables_v2');
   public readonly isDeploymentPlansEnabled$ = this.isExperimentalFeatureEnabled$('deployment_plans');
+  public readonly isStepTemplatesEnabled$ = this.isExperimentalFeatureEnabled$('step_templates');
   public readonly isTaskQueueEnabled$ = this.isExperimentalFeatureEnabled$('task_queue');
 
   isExperimentalFeatureEnabled$(key: ExperimentalFeatureFlagKey): Observable<boolean> {
