@@ -29,6 +29,7 @@ const (
 	ociJobAllowedNetworksEnv   = "DISTR_OCI_JOB_ALLOWED_NETWORKS"
 	ociJobAllowedMountRootsEnv = "DISTR_OCI_JOB_ALLOWED_MOUNT_ROOTS"
 	ociJobSecretStagingDirEnv  = "DISTR_OCI_JOB_SECRET_STAGING_DIR"
+	ociJobLockStaleAfterEnv    = "DISTR_OCI_JOB_LOCK_STALE_AFTER_MS"
 	ociJobSecretEnvMountPath   = "/run/distr/secret-env"
 	ociJobSecretEnvDirPrefix   = "distr-oci-job-secret-env-"
 	ociJobMaxStatusBytes       = types.MaxStepRunLogChunkBodyLength
@@ -475,13 +476,30 @@ func inspectOCIJobContainer(ctx context.Context, containerName string) (ociJobCo
 func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func(), error) {
 	root := ociJobContainerLockRoot()
 	lockDir := filepath.Join(root, "distr-oci-job-lock-"+containerName)
+	staleAfter := ociJobContainerLockStaleAfter()
 	for {
 		err := os.Mkdir(lockDir, 0o700)
 		if err == nil {
-			return func() { _ = os.Remove(lockDir) }, nil
+			ownerPath := filepath.Join(lockDir, "owner")
+			if writeErr := os.WriteFile(ownerPath, []byte(fmt.Sprintf("pid=%d\n", os.Getpid())), 0o600); writeErr != nil {
+				_ = os.RemoveAll(lockDir)
+				return nil, fmt.Errorf("reserve OCI job container: %w", writeErr)
+			}
+			stopHeartbeat := startOCIJobContainerLockHeartbeat(ownerPath, staleAfter)
+			return func() {
+				stopHeartbeat()
+				_ = os.RemoveAll(lockDir)
+			}, nil
 		}
 		if !os.IsExist(err) {
 			return nil, fmt.Errorf("reserve OCI job container: %w", err)
+		}
+		recovered, recoverErr := recoverStaleOCIJobContainerLock(lockDir, staleAfter)
+		if recoverErr != nil {
+			return nil, recoverErr
+		}
+		if recovered {
+			continue
 		}
 		select {
 		case <-ctx.Done():
@@ -492,6 +510,69 @@ func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+func recoverStaleOCIJobContainerLock(lockDir string, staleAfter time.Duration) (bool, error) {
+	if staleAfter <= 0 {
+		return false, nil
+	}
+	info, err := os.Stat(filepath.Join(lockDir, "owner"))
+	if os.IsNotExist(err) {
+		info, err = os.Stat(lockDir)
+	}
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect OCI job container reservation: %w", err)
+	}
+	if time.Since(info.ModTime()) <= staleAfter {
+		return false, nil
+	}
+	staleDir := lockDir + fmt.Sprintf(".stale-%d", time.Now().UnixNano())
+	if err := os.Rename(lockDir, staleDir); err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, nil
+	}
+	_ = os.RemoveAll(staleDir)
+	return true, nil
+}
+
+func startOCIJobContainerLockHeartbeat(ownerPath string, staleAfter time.Duration) func() {
+	interval := 5 * time.Second
+	if staleAfter > 0 && staleAfter/3 < interval {
+		interval = staleAfter / 3
+	}
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				now := time.Now()
+				_ = os.Chtimes(ownerPath, now, now)
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() { close(stop) }
+}
+
+func ociJobContainerLockStaleAfter() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(ociJobLockStaleAfterEnv)); raw != "" {
+		ms, err := strconv.Atoi(raw)
+		if err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 2 * time.Minute
 }
 
 func ociJobContainerLockRoot() string {

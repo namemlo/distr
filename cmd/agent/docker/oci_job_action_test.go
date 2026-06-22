@@ -474,6 +474,46 @@ func TestExecuteOCIJobStepSerializesSameOperationRace(t *testing.T) {
 	g.Expect(findFakeDockerCommand(commands, "inspect")).NotTo(BeNil())
 }
 
+func TestExecuteOCIJobStepRecoversStaleContainerReservationAfterCrash(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	t.Setenv(ociJobLockStaleAfterEnv, "1")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "job completed")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	containerName := ociJobContainerName(inputs["idempotencyKey"].(string))
+	lockDir := filepath.Join(ociJobContainerLockRoot(), "distr-oci-job-lock-"+containerName)
+	g.Expect(os.Mkdir(lockDir, 0o700)).To(Succeed())
+	ownerPath := filepath.Join(lockDir, "owner")
+	g.Expect(os.WriteFile(ownerPath, []byte("pid=crashed\n"), 0o600)).To(Succeed())
+	oldTime := time.Now().Add(-time.Hour)
+	g.Expect(os.Chtimes(ownerPath, oldTime, oldTime)).To(Succeed())
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:      uuid.New(),
+		Key:            "cleanup",
+		ActionType:     ociJobActionType,
+		ActionVersion:  types.AgentActionVersionV1,
+		Inputs:         inputs,
+		IdempotencyKey: "sha256:job-key",
+	}
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeOCIJobStep(ctx, lease, step, recorder)
+
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(fakeDockerCommandCount(readFakeDockerCommands(t, argsFile), "run")).To(Equal(1))
+	_, statErr := os.Stat(lockDir)
+	g.Expect(os.IsNotExist(statErr)).To(BeTrue())
+}
+
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
 	tests := []struct {
 		name  string
