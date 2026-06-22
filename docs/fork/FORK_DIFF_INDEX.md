@@ -553,3 +553,18 @@ Use one entry per pull request:
 - Tests: Added `TestWebhookActionAuditTrailIntegritySuite` plus reserved audit-output validation coverage.
 - Upstream contribution notes: Community-neutral webhook observability and replay-integrity hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing webhook inputs remain valid. Existing PR-031/PR-032 stored successes without audit outputs remain replayable unless strict replay verification is explicitly enabled.
+
+### PR-035 - Webhook self-contained runtime
+
+- Status: Implemented locally; self-contained runtime flag, cached-only resolution, local timeline replay path, duplicate-step local replay coverage, documentation, and ADR completed.
+- Upstream base: `164df4a7`
+- Feature flag: `WEBHOOK_SELF_CONTAINED_MODE=true` enables self-contained runtime behavior. `DISTR_WEBHOOK_RESOLVED_IP_CACHE` supplies cached host-to-IP mappings for non-IP webhook targets.
+- User-facing behavior: Webhook actions keep the same configured inputs and outputs. When self-contained mode is enabled, webhook execution does not call the hidden task timeline endpoint and does not perform live DNS lookup for non-IP hosts.
+- Database changes: None. This PR does not introduce a Docker-agent local database.
+- API changes: None. Existing hidden timeline APIs remain available for normal mode.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-035.
+- Agent protocol changes: Docker agents can opt into self-contained mode, replay from a local in-process event mirror during a lease execution, and fail closed when cached resolution is missing for a non-IP webhook host. The final configured outbound webhook HTTP request remains unchanged.
+- Documentation: Added PR-035 notes and ADR-0035.
+- Tests: Added `TestWebhookActionSelfContainedRuntimeSuite` plus focused regression coverage for existing replay, audit, validation, and heartbeat paths.
+- Upstream contribution notes: Community-neutral webhook autonomy hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing agents remain on normal timeline and DNS behavior unless `WEBHOOK_SELF_CONTAINED_MODE=true` is configured. Self-contained replay is in-process for this PR and does not persist across agent restarts.

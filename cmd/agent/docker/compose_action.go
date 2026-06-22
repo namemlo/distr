@@ -164,6 +164,9 @@ func executeTaskLease(
 	client leasedTaskClient,
 	apply composeDeployApplyFunc,
 ) error {
+	if webhookSelfContainedModeEnabled() {
+		client = newSelfContainedLeasedTaskClient(client, lease)
+	}
 	for _, step := range lease.Steps {
 		if _, err := client.HeartbeatTaskLease(ctx, lease.TaskID, lease.LeaseToken); err != nil {
 			return fmt.Errorf("heartbeat task lease: %w", err)

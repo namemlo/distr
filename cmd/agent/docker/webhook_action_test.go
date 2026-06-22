@@ -2091,6 +2091,206 @@ func TestWebhookActionAuditTrailIntegritySuite(t *testing.T) {
 	})
 }
 
+func TestWebhookActionSelfContainedRuntimeSuite(t *testing.T) {
+	t.Run("uses cached resolution without DNS lookup during execution", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookSelfContainedModeEnv, "true")
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		t.Setenv(webhookResolvedIPCacheEnv, "hooks.example.com=203.0.113.10")
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not be used in self-contained mode")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				g.Expect(request.URL.Hostname()).To(Equal("hooks.example.com"))
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		input, err := decodeWebhookActionInput(validWebhookInputs())
+		g.Expect(err).NotTo(HaveOccurred())
+
+		result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(result.StatusCode).To(Equal(http.StatusAccepted))
+		g.Expect(result.Attempts).To(Equal(1))
+		g.Expect(result.AuditTrail.Events[0].DNS.ResolvedAddressCount).To(Equal(1))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+	})
+
+	t.Run("fails closed when cached resolution is missing", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookSelfContainedModeEnv, "true")
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not be used in self-contained mode")
+		})
+		input, err := decodeWebhookActionInput(validWebhookInputs())
+		g.Expect(err).NotTo(HaveOccurred())
+
+		_, err = runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook self-contained mode requires cached resolution")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+	})
+
+	t.Run("replay uses local timeline without timeline API calls", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookSelfContainedModeEnv, "true")
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		event := storedWebhookSuccessEvent(lease.TaskID, step.StepRunID)
+		event.OrganizationID = lease.OrganizationID
+		event.AgentID = lease.AgentID
+		event.TaskLeaseID = lease.ID
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: api.TaskTimeline{
+				OrganizationID: lease.OrganizationID,
+				TaskID:         lease.TaskID,
+				Events:         []api.StepRunEvent{event},
+			},
+			timelineErr: errors.New("timeline API should not be used in self-contained mode"),
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(recorder.timelineCalls).To(Equal(0))
+		g.Expect(recorder.events).To(BeEmpty())
+	})
+
+	t.Run("local replay rejects tampered audit chain before network", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookSelfContainedModeEnv, "true")
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		t.Setenv(webhookResolvedIPCacheEnv, "hooks.example.com=203.0.113.10")
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not be used in self-contained replay")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: api.TaskTimeline{
+				OrganizationID: lease.OrganizationID,
+				TaskID:         lease.TaskID,
+			},
+		}
+		g.Expect(executeWebhookStep(context.Background(), lease, step, recorder)).To(Succeed())
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+		tamperedTimeline := recorder.timeline
+		tamperStoredAuditTrailStatus(t, &tamperedTimeline, http.StatusInternalServerError)
+		replayClient := &webhookReplayLeasedTaskClient{
+			timeline:    tamperedTimeline,
+			timelineErr: errors.New("timeline API should not be used in self-contained mode"),
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, replayClient)
+
+		g.Expect(err).To(MatchError(ContainSubstring("stored webhook audit trail hash mismatch")))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(replayClient.timelineCalls).To(Equal(0))
+		g.Expect(replayClient.events).To(BeEmpty())
+	})
+
+	t.Run("execute task lease replays duplicate webhook step from local event store", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookSelfContainedModeEnv, "true")
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		t.Setenv(webhookResolvedIPCacheEnv, "hooks.example.com=203.0.113.10")
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not be used in self-contained mode")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		lease := api.AgentTaskLease{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AgentID:        uuid.New(),
+			TaskID:         uuid.New(),
+			LeaseToken:     "lease-token",
+			Steps:          []api.AgentTaskLeaseStep{step, step},
+		}
+		recorder := &recordingLeasedTaskClient{}
+		apply := func(_ context.Context, _ api.AgentDeployment, _ composeDeployOptions, _ func(string)) (*AgentDeployment, string, error) {
+			t.Fatal("compose apply should not run for webhook actions")
+			return nil, "", nil
+		}
+
+		err := executeTaskLease(context.Background(), lease, recorder, apply)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+			types.StepRunEventTypeStarted,
+			types.StepRunEventTypeProgress,
+			types.StepRunEventTypeSucceeded,
+		}))
+	})
+}
+
 func TestExecuteTaskLeaseHeartbeatsAndRunsWebhookStep(t *testing.T) {
 	g := NewWithT(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -2264,6 +2464,13 @@ type webhookReplayLeasedTaskClient struct {
 	timeline      api.TaskTimeline
 	timelineErr   error
 	timelineCalls int
+}
+
+func (c *webhookReplayLeasedTaskClient) LocalTaskTimeline(_ context.Context, taskID uuid.UUID, _ uuid.UUID) (*api.TaskTimeline, error) {
+	if c.timeline.TaskID == uuid.Nil {
+		c.timeline.TaskID = taskID
+	}
+	return &c.timeline, nil
 }
 
 func (c *webhookReplayLeasedTaskClient) GetTaskTimeline(_ context.Context, taskID uuid.UUID, _ uuid.UUID) (*api.TaskTimeline, error) {
