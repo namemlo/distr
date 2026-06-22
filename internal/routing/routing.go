@@ -10,6 +10,7 @@ import (
 	"github.com/distr-sh/distr/internal/frontend"
 	"github.com/distr-sh/distr/internal/handlers"
 	"github.com/distr-sh/distr/internal/middleware"
+	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
 	"github.com/distr-sh/distr/internal/oidc"
 	"github.com/distr-sh/distr/internal/prometheus"
 	"github.com/distr-sh/distr/internal/tracers"
@@ -64,6 +65,7 @@ func NewRouter(
 	tracers *tracers.Tracers,
 	oidcer *oidc.OIDCer,
 	prometheusCollector *prometheus.DistrCollector,
+	metricsRecorder obsermetrics.Recorder,
 ) http.Handler {
 	baseRouter := chi.NewRouter()
 	baseRouter.Use(
@@ -94,7 +96,7 @@ func NewRouter(
 			Layout:      "responsive",
 		}),
 	)
-	openapiRouter.Route("/api", ApiRouter(logger, db, mailer, tracers, oidcer, prometheusCollector))
+	openapiRouter.Route("/api", ApiRouter(logger, db, mailer, tracers, oidcer, prometheusCollector, metricsRecorder))
 
 	baseRouter.Mount("/internal", InternalRouter())
 	baseRouter.Mount("/status", StatusRouter())
@@ -112,20 +114,25 @@ func ApiRouter(
 	tracers *tracers.Tracers,
 	oidcer *oidc.OIDCer,
 	prometheusCollector *prometheus.DistrCollector,
+	metricsRecorder obsermetrics.Recorder,
 ) func(r chiopenapi.Router) {
 	requestSize1MiB := chimiddleware.RequestSize(1024 * 1024)
 	requestSize50MiB := chimiddleware.RequestSize(50 * 1024 * 1024)
 
 	return func(r chiopenapi.Router) {
-		r.Use(
+		baseMiddleware := []func(http.Handler) http.Handler{
 			chimiddleware.RequestID,
 			chimiddleware.ClientIPFromRemoteAddr,
 			chimiddleware.ClientIPFromXFF(),
 			middleware.Sentry,
 			middleware.LoggerCtxMiddleware(logger),
 			middleware.LoggingMiddleware,
-			middleware.ContextInjectorMiddleware(db, mailer, oidcer, prometheusCollector),
-		)
+			middleware.ContextInjectorMiddleware(db, mailer, oidcer, prometheusCollector, metricsRecorder),
+		}
+		if metricsRecorder != nil {
+			baseMiddleware = append(baseMiddleware, obsermetrics.HTTPMiddleware(metricsRecorder))
+		}
+		r.Use(baseMiddleware...)
 
 		r.Route("/public/v1", PublicRouter(tracers))
 

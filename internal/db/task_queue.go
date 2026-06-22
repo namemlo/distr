@@ -9,6 +9,7 @@ import (
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgerrcode"
@@ -213,6 +214,7 @@ func TransitionTaskState(ctx context.Context, request types.TransitionTaskStateR
 	if err != nil {
 		return nil, err
 	}
+	recordTaskTransitionMetric(ctx, task)
 	return task, nil
 }
 
@@ -1097,6 +1099,21 @@ func updateTaskStatus(ctx context.Context, id, orgID uuid.UUID, status types.Tas
 		}
 	}
 	return nil
+}
+
+func recordTaskTransitionMetric(ctx context.Context, task *types.Task) {
+	recorder := internalctx.GetObservabilityMetricsRecorder(ctx)
+	if recorder == nil || task == nil {
+		return
+	}
+	observation := obsermetrics.TaskObservation{Status: strings.ToLower(string(task.Status))}
+	if task.Status.IsTerminal() && task.StartedAt != nil && task.CompletedAt != nil {
+		observation.Duration = task.CompletedAt.Sub(*task.StartedAt)
+		if observation.Duration < 0 {
+			observation.Duration = 0
+		}
+	}
+	recorder.ObserveTask(observation)
 }
 
 func taskIDs(tasks []types.Task) []uuid.UUID {

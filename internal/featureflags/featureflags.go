@@ -9,21 +9,22 @@ import (
 type Key string
 
 const (
-	KeyEnvironments        Key = "environments"
-	KeyLifecycles          Key = "lifecycles"
-	KeyChannels            Key = "channels"
-	KeyReleaseBundles      Key = "release_bundles"
-	KeyDeploymentProcesses Key = "deployment_processes"
-	KeyScopedVariablesV2   Key = "scoped_variables_v2"
-	KeyDeploymentPlans     Key = "deployment_plans"
-	KeyTaskQueue           Key = "task_queue"
-	KeyAgentCapabilities   Key = "agent_capabilities"
-	KeyAgentTaskLeases     Key = "agent_task_leases"
-	KeyStepEvents          Key = "step_events"
-	KeyStepTemplates       Key = "step_templates"
-	KeyRunbooks            Key = "runbooks"
-	KeyDeploymentTimeline  Key = "deployment_timeline"
-	KeyRetentionPolicies   Key = "retention_policies"
+	KeyEnvironments         Key = "environments"
+	KeyLifecycles           Key = "lifecycles"
+	KeyChannels             Key = "channels"
+	KeyReleaseBundles       Key = "release_bundles"
+	KeyDeploymentProcesses  Key = "deployment_processes"
+	KeyScopedVariablesV2    Key = "scoped_variables_v2"
+	KeyDeploymentPlans      Key = "deployment_plans"
+	KeyTaskQueue            Key = "task_queue"
+	KeyAgentCapabilities    Key = "agent_capabilities"
+	KeyAgentTaskLeases      Key = "agent_task_leases"
+	KeyStepEvents           Key = "step_events"
+	KeyStepTemplates        Key = "step_templates"
+	KeyRunbooks             Key = "runbooks"
+	KeyDeploymentTimeline   Key = "deployment_timeline"
+	KeyRetentionPolicies    Key = "retention_policies"
+	KeyObservabilityMetrics Key = "observability_metrics"
 )
 
 type Flag struct {
@@ -134,6 +135,12 @@ var definitions = []definition{
 		Key:         KeyRetentionPolicies,
 		Label:       "Retention Policies",
 		Description: "Previews release, task, and log cleanup with safety blocks before retention jobs can run.",
+		Milestone:   "Milestone G",
+	},
+	{
+		Key:         KeyObservabilityMetrics,
+		Label:       "Observability Metrics",
+		Description: "Enables Prometheus metrics for HTTP traffic and task execution instrumentation.",
 		Milestone:   "Milestone G",
 	},
 }

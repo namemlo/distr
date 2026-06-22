@@ -10,7 +10,8 @@ export type ExperimentalFeatureFlagKey =
   | 'step_templates'
   | 'task_queue'
   | 'runbooks'
-  | 'retention_policies';
+  | 'retention_policies'
+  | 'observability_metrics';
 
 export interface ExperimentalFeatureFlag {
   key: ExperimentalFeatureFlagKey;

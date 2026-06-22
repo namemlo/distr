@@ -13,8 +13,10 @@ import (
 	"github.com/distr-sh/distr/internal/buildconfig"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/env"
+	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/jobs"
 	"github.com/distr-sh/distr/internal/migrations"
+	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
 	"github.com/distr-sh/distr/internal/oidc"
 	distrprometheus "github.com/distr-sh/distr/internal/prometheus"
 	"github.com/distr-sh/distr/internal/registry"
@@ -30,17 +32,19 @@ import (
 )
 
 type Registry struct {
-	dbPool            *pgxpool.Pool
-	logger            *zap.Logger
-	mailer            *mailx.Mailer
-	execDbMigrations  bool
-	artifactsRegistry http.Handler
-	tracers           *tracers.Tracers
-	jobsScheduler     *jobs.Scheduler
-	oidcer            *oidc.OIDCer
-	promRegistry      *prometheus.Registry
-	promCollector     *distrprometheus.DistrCollector
-	s3Client          *s3.Client
+	dbPool                      *pgxpool.Pool
+	logger                      *zap.Logger
+	mailer                      *mailx.Mailer
+	execDbMigrations            bool
+	artifactsRegistry           http.Handler
+	tracers                     *tracers.Tracers
+	jobsScheduler               *jobs.Scheduler
+	oidcer                      *oidc.OIDCer
+	promRegistry                *prometheus.Registry
+	promCollector               *distrprometheus.DistrCollector
+	metricsRecorder             obsermetrics.Recorder
+	observabilityMetricsEnabled bool
+	s3Client                    *s3.Client
 }
 
 func New(ctx context.Context, options ...RegistryOption) (*Registry, error) {
@@ -68,7 +72,16 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		zap.Bool("release", buildconfig.IsRelease()))
 
 	reg.promCollector = distrprometheus.NewDistrCollector()
-	reg.promRegistry = createPrometheusRegistry(reg.promCollector)
+	reg.observabilityMetricsEnabled = featureflags.NewRegistry(env.ExperimentalFeatureFlags()).
+		IsEnabled(featureflags.KeyObservabilityMetrics)
+	if reg.observabilityMetricsEnabled {
+		reg.metricsRecorder = obsermetrics.NewPrometheusRecorder(obsermetrics.BaseLabels{
+			Service:     "hub",
+			Environment: env.SentryEnvironment(),
+			Version:     buildconfig.Version(),
+		})
+	}
+	reg.promRegistry = createPrometheusRegistry(reg.promCollector, prometheusCollector(reg.metricsRecorder))
 
 	if tracers, err := reg.createTracer(ctx); err != nil {
 		return nil, err
@@ -158,6 +171,7 @@ func (r *Registry) GetRouter() http.Handler {
 		r.GetTracers(),
 		r.GetOIDCer(),
 		r.GetPrometheusCollector(),
+		r.GetObservabilityMetricsRecorder(),
 	)
 }
 
@@ -167,6 +181,9 @@ func (r *Registry) GetArtifactsRouter() http.Handler {
 
 func (r *Registry) GetMetricsRouter() http.Handler {
 	m := chi.NewMux()
+	if !r.observabilityMetricsEnabled {
+		return m
+	}
 
 	if metricsToken := env.MetricsBearerToken(); metricsToken != nil {
 		expectedToken := []byte(*metricsToken)
@@ -205,7 +222,7 @@ func (r *Registry) GetArtifactsServer() server.Server {
 }
 
 func (r *Registry) GetMetricsServer() server.Server {
-	if env.MetricsEnabled() {
+	if env.MetricsEnabled() && r.observabilityMetricsEnabled {
 		return server.NewServer(r.GetMetricsRouter(), r.logger.With(zap.String("server", "metrics")))
 	} else {
 		return server.NewNoop()
@@ -214,6 +231,15 @@ func (r *Registry) GetMetricsServer() server.Server {
 
 func (r *Registry) GetPrometheusCollector() *distrprometheus.DistrCollector {
 	return r.promCollector
+}
+
+func (r *Registry) GetObservabilityMetricsRecorder() obsermetrics.Recorder {
+	return r.metricsRecorder
+}
+
+func prometheusCollector(recorder obsermetrics.Recorder) prometheus.Collector {
+	collector, _ := recorder.(prometheus.Collector)
+	return collector
 }
 
 func (r *Registry) GetS3Client() *s3.Client {
