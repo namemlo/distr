@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS StepTemplateVersion;
+DROP TABLE IF EXISTS StepTemplate;

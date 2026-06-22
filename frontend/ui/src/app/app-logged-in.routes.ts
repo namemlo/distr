@@ -40,6 +40,7 @@ import {FeatureFlagService} from './services/feature-flag.service';
 import {OrganizationService} from './services/organization.service';
 import {ToastService} from './services/toast.service';
 import {SidebarLinksPageComponent} from './sidebar-links/sidebar-links-page.component';
+import {StepTemplatesComponent} from './step-templates/step-templates.component';
 import {SubscriptionCallbackComponent} from './subscription/subscription-callback.component';
 import {SubscriptionComponent} from './subscription/subscription.component';
 import {SupportBundleDetailComponent} from './support-bundles/detail/support-bundle-detail.component';
@@ -244,6 +245,19 @@ export const routes: Routes = [
           experimentalFeatureEnabledGuard('lifecycles'),
           experimentalFeatureEnabledGuard('channels'),
           experimentalFeatureEnabledGuard('deployment_processes'),
+        ],
+      },
+      {
+        path: 'step-templates',
+        component: StepTemplatesComponent,
+        canActivate: [
+          requireVendor,
+          requiredRoleGuard('admin'),
+          experimentalFeatureEnabledGuard('environments'),
+          experimentalFeatureEnabledGuard('lifecycles'),
+          experimentalFeatureEnabledGuard('channels'),
+          experimentalFeatureEnabledGuard('deployment_processes'),
+          experimentalFeatureEnabledGuard('step_templates'),
         ],
       },
       {

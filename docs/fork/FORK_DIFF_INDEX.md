@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-034 are implemented locally. PR-034 adds deterministic webhook audit trail outputs, chained audit hashes, and strict replay verification for tamper-detectable stored webhook success history without a database schema migration.
+PR-000 through PR-037 are implemented locally. PR-037 adds organization-scoped Step Template import/install APIs and a feature-flagged vendor admin UI for catalog preview and tenant-installed templates.
 
 ## Tracking Template
 
@@ -583,3 +583,18 @@ Use one entry per pull request:
 - Tests: Added `TestWebhookActionPolicyEngineSuite`, `internal/policy` unit tests, and action registry policy-field validation coverage.
 - Upstream contribution notes: Community-neutral webhook governance hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: With no policy env vars configured, existing webhook behavior is allowed. Configured policy limits fail closed on invalid values and deny before network/signing work.
+
+### PR-037 - Step Template import UI
+
+- Status: Implemented locally; schema, repository, API, Angular import UI, route/sidebar integration, documentation, and ADR completed.
+- Upstream base: `330d8939`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=step_templates`; the UI route/sidebar also require `environments`, `lifecycles`, `channels`, and `deployment_processes`.
+- User-facing behavior: Vendor admins can view a built-in Step Template catalog, preview default input bindings, install catalog templates into their organization, and list installed template versions.
+- Database changes: Added organization-scoped `StepTemplate` and `StepTemplateVersion` tables with unique source installs per organization and version uniqueness per template.
+- API changes: Added feature-flagged `GET /api/v1/step-templates`, `GET /api/v1/step-templates/{stepTemplateId}`, and `POST /api/v1/step-templates/import`.
+- UI changes: Added Step Templates route, sidebar link, Angular service/types, catalog table, preview dialog, import action, installed-template table, and error/loading states.
+- Agent protocol changes: None.
+- Documentation: Added PR-037 notes and ADR-0037.
+- Tests: Repository, migration, handler, integration, Angular service, and Angular component tests were added.
+- Upstream contribution notes: Community-neutral Step Template catalog/install surface; no adopter-specific terminology, external marketplace dependency, or execution behavior.
+- Compatibility notes: Existing Deployment Process, Task Queue, action execution, Docker/Kubernetes agents, and webhook behavior are unchanged. Installed templates are additive and gated behind the `step_templates` experimental flag.

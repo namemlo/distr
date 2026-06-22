@@ -191,6 +191,7 @@ func ApiRouter(
 					r.Route("/release-bundles", handlers.ReleaseBundlesRouter)
 					r.Route("/secrets", handlers.SecretsRouter)
 					r.Route("/settings", handlers.SettingsRouter)
+					r.Route("/step-templates", handlers.StepTemplatesRouter)
 					r.With(middleware.ProFeature).Route("/support-bundles", handlers.SupportBundlesRouter)
 					r.Route("/tasks", handlers.TasksRouter)
 					r.Route("/tutorial-progress", handlers.TutorialsRouter)

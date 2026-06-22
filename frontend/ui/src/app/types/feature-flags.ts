@@ -6,6 +6,7 @@ export type ExperimentalFeatureFlagKey =
   | 'deployment_processes'
   | 'scoped_variables_v2'
   | 'deployment_plans'
+  | 'step_templates'
   | 'task_queue'
   | 'runbooks';
 

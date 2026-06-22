@@ -136,6 +136,10 @@ export class SideBarComponent {
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isDeploymentProcessesEnabled$, {initialValue: false})
       : signal(false);
+  protected readonly isStepTemplatesFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isStepTemplatesEnabled$, {initialValue: false})
+      : signal(false);
   protected readonly isDeploymentPlansFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isDeploymentPlansEnabled$, {initialValue: false})
