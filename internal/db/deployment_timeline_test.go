@@ -1,0 +1,276 @@
+package db_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/distr-sh/distr/internal/apierrors"
+	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	. "github.com/onsi/gomega"
+)
+
+func TestDeploymentTimelineRepositoryListsFilteredItemsAndMarksLastSuccessful(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	targetID := deps.plan.Targets[0].DeploymentTargetID
+	firstTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(markTaskSucceeded(ctx, deps.orgID, firstTasks[0].ID)).To(Succeed())
+
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue deploy updated",
+		targetID,
+	)
+	secondTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   secondPlan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(markTaskSucceeded(ctx, deps.orgID, secondTasks[0].ID)).To(Succeed())
+
+	timeline, err := db.GetDeploymentTimeline(ctx, types.DeploymentTimelineQuery{
+		OrganizationID:      deps.orgID,
+		ApplicationID:       &deps.applicationID,
+		EnvironmentID:       &deps.devEnvironmentID,
+		DeploymentTargetID:  &targetID,
+		Limit:               20,
+		IncludeNonTerminal:  true,
+		IncludeRedeployInfo: true,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(timeline.Items).To(HaveLen(2))
+	g.Expect(timeline.Items[0].TaskID).To(Equal(secondTasks[0].ID))
+	g.Expect(timeline.Items[0].ReleaseNumber).NotTo(BeEmpty())
+	g.Expect(timeline.Items[0].DeploymentTargetName).To(Equal("cluster-a"))
+	g.Expect(timeline.Items[0].ActorUserAccountID).To(Equal(&deps.actorID))
+	g.Expect(timeline.Items[0].LastSuccessful).To(BeTrue())
+	g.Expect(timeline.Items[1].TaskID).To(Equal(firstTasks[0].ID))
+	g.Expect(timeline.Items[1].LastSuccessful).To(BeFalse())
+}
+
+func TestDeploymentTimelineRepositoryIgnoresNonDeploymentTasks(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	deploymentTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	runbookPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Runbook-shaped task",
+		deps.plan.Targets[0].DeploymentTargetID,
+	)
+	runbookTaskID := insertTimelineTestTaskWithType(t, ctx, runbookPlan.ID, deps.orgID, types.TaskTypeRunbook)
+
+	timeline, err := db.GetDeploymentTimeline(ctx, types.DeploymentTimelineQuery{
+		OrganizationID:     deps.orgID,
+		IncludeNonTerminal: true,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(timeline.Items).To(ContainElement(WithTransform(
+		func(item types.DeploymentTimelineItem) uuid.UUID { return item.TaskID },
+		Equal(deploymentTasks[0].ID),
+	)))
+	g.Expect(timeline.Items).NotTo(ContainElement(WithTransform(
+		func(item types.DeploymentTimelineItem) uuid.UUID { return item.TaskID },
+		Equal(runbookTaskID),
+	)))
+
+	_, err = db.CompareDeploymentTimelineTasks(ctx, types.DeploymentTimelineCompareRequest{
+		OrganizationID: deps.orgID,
+		BaseTaskID:     deploymentTasks[0].ID,
+		CompareTaskID:  runbookTaskID,
+	})
+	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+}
+
+func TestDeploymentTimelineRepositoryAllowsHistoricalTasksWithoutActor(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:   deps.orgID,
+		DeploymentPlanID: deps.plan.ID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	timeline, err := db.GetDeploymentTimeline(ctx, types.DeploymentTimelineQuery{
+		OrganizationID:      deps.orgID,
+		IncludeNonTerminal:  true,
+		IncludeRedeployInfo: true,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(timeline.Items).To(HaveLen(1))
+	g.Expect(timeline.Items[0].TaskID).To(Equal(tasks[0].ID))
+	g.Expect(timeline.Items[0].ActorUserAccountID).To(BeNil())
+	g.Expect(timeline.Items[0].RedeployAvailable).To(BeTrue())
+}
+
+func TestDeploymentTimelineRepositoryComparesReleaseProcessAndVariables(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	targetID := deps.plan.Targets[0].DeploymentTargetID
+	firstTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t,
+		ctx,
+		deps,
+		"Task queue deploy with process changes",
+		targetID,
+	)
+	secondTasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   secondPlan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	comparison, err := db.CompareDeploymentTimelineTasks(ctx, types.DeploymentTimelineCompareRequest{
+		OrganizationID: deps.orgID,
+		BaseTaskID:     firstTasks[0].ID,
+		CompareTaskID:  secondTasks[0].ID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(comparison.Base.TaskID).To(Equal(firstTasks[0].ID))
+	g.Expect(comparison.Compare.TaskID).To(Equal(secondTasks[0].ID))
+	g.Expect(comparison.Process.Changed).To(BeTrue())
+	g.Expect(comparison.Process.BaseRevisionNumber).To(Equal(1))
+	g.Expect(comparison.Process.CompareRevisionNumber).To(Equal(2))
+	g.Expect(comparison.Components).To(ContainElement(WithTransform(
+		func(change types.DeploymentTimelineComponentChange) string { return change.Key },
+		Equal("app"),
+	)))
+	g.Expect(comparison.Variables).To(ContainElement(WithTransform(
+		func(change types.DeploymentTimelineVariableChange) string { return change.Key },
+		Equal("api_token"),
+	)))
+}
+
+func TestDeploymentTimelineRepositoryCreatesRedeployPlanFromTask(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	task, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	redeploy, err := db.CreateDeploymentPlanFromTimelineTask(ctx, types.CreateDeploymentTimelineRedeployRequest{
+		OrganizationID:     deps.orgID,
+		TaskID:             task[0].ID,
+		ActorUserAccountID: deps.actorID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(redeploy.Warning).To(ContainSubstring("Deploy previous release"))
+	g.Expect(redeploy.Plan.ID).NotTo(Equal(deps.plan.ID))
+	g.Expect(redeploy.Plan.ReleaseBundleID).To(Equal(deps.plan.ReleaseBundleID))
+	g.Expect(redeploy.Plan.EnvironmentID).To(Equal(deps.plan.EnvironmentID))
+	g.Expect(redeploy.Plan.Targets).To(HaveLen(1))
+	g.Expect(redeploy.Plan.Targets[0].DeploymentTargetID).To(Equal(deps.plan.Targets[0].DeploymentTargetID))
+}
+
+func markTaskSucceeded(ctx context.Context, orgID, taskID uuid.UUID) error {
+	if _, err := db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: orgID,
+		TaskID:         taskID,
+		Status:         types.TaskStatusRunning,
+	}); err != nil {
+		return err
+	}
+	_, err := db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: orgID,
+		TaskID:         taskID,
+		Status:         types.TaskStatusSucceeded,
+	})
+	return err
+}
+
+func insertTimelineTestTaskWithType(
+	t *testing.T,
+	ctx context.Context,
+	planID uuid.UUID,
+	orgID uuid.UUID,
+	taskType types.TaskType,
+) uuid.UUID {
+	t.Helper()
+	var taskID uuid.UUID
+	err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`INSERT INTO Task AS t (
+			organization_id,
+			task_type,
+			deployment_plan_id,
+			deployment_plan_target_id,
+			deployment_target_id,
+			application_id,
+			release_bundle_id,
+			channel_id,
+			environment_id,
+			status
+		)
+		SELECT
+			dp.organization_id,
+			@taskType,
+			dp.id,
+			dpt.id,
+			dpt.deployment_target_id,
+			dp.application_id,
+			dp.release_bundle_id,
+			dp.channel_id,
+			dp.environment_id,
+			@status
+		FROM DeploymentPlan dp
+		JOIN DeploymentPlanTarget dpt
+			ON dpt.deployment_plan_id = dp.id
+			AND dpt.organization_id = dp.organization_id
+		WHERE dp.id = @deploymentPlanId
+			AND dp.organization_id = @organizationId
+		ORDER BY dpt.sort_order, dpt.deployment_target_id
+		LIMIT 1
+		RETURNING t.id`,
+		pgx.NamedArgs{
+			"deploymentPlanId": planID,
+			"organizationId":   orgID,
+			"taskType":         taskType,
+			"status":           types.TaskStatusQueued,
+		},
+	).Scan(&taskID)
+	if err != nil {
+		t.Fatalf("insert %s task: %v", taskType, err)
+	}
+	return taskID
+}

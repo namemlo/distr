@@ -75,6 +75,7 @@ type Task struct {
 	ReleaseBundleID        uuid.UUID          `json:"releaseBundleId"`
 	ChannelID              uuid.UUID          `json:"channelId"`
 	EnvironmentID          uuid.UUID          `json:"environmentId"`
+	ActorUserAccountID     *uuid.UUID         `json:"actorUserAccountId,omitempty"`
 	Status                 types.TaskStatus   `json:"status"`
 	QueueOrder             int64              `json:"queueOrder"`
 	Locks                  []TaskResourceLock `json:"locks"`

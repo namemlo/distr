@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-043 are implemented locally. PR-043 adds the backend-only blue-green lifecycle foundation for slots, health checks, traffic shift planning, promotion, retention, and rollback.
+PR-000 through PR-044 are implemented locally. PR-044 adds a feature-flagged deployment timeline, comparison view, task actor persistence, task-log links, and deploy-previous-release plan creation.
 
 ## Tracking Template
 
@@ -688,3 +688,18 @@ Use one entry per pull request:
 - Tests: Blue-green lifecycle tests cover slot initialization, invalid configuration rejection, health-check gating, shift request planning, promotion retention behavior, and rollback request planning.
 - Upstream contribution notes: Community-neutral blue-green lifecycle semantics; no Envoy, Nginx, cloud load balancer, scheduler, task execution, provider invocation, or UI assumptions.
 - Compatibility notes: Existing Deployment Process, Deployment Plan, Task Queue, task lease, rolling state machine, traffic-provider interface, Docker/Kubernetes agent, runbook, webhook action, release bundle, and deployment behavior is unchanged.
+
+### PR-044 - Deployment timeline and compare
+
+- Status: Implemented locally; timeline repository, task actor persistence, API, Angular UI, documentation, and ADR completed.
+- Upstream base: `288c87b0`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=deployment_timeline`; the API and UI also require `task_queue`, `deployment_plans`, `release_bundles`, `deployment_processes`, `scoped_variables_v2`, `channels`, `lifecycles`, and `environments`.
+- User-facing behavior: Vendor admins can open Deployment Timeline, filter deployment history, select two entries to compare, open task logs, see the last successful deployment per application/environment/target, and create a deployment plan for a previous release.
+- Database changes: Added nullable `Task.actor_user_account_id` with an organization/actor index for timeline display.
+- API changes: Added `GET /api/v1/deployment-timeline`, `GET /api/v1/deployment-timeline/compare`, and `POST /api/v1/deployment-timeline/{taskId}/redeploy`.
+- UI changes: Added Deployment Timeline route, sidebar link, Angular service/types, timeline table, local filters, compare panel, task-log links, and deploy-previous-release confirmation.
+- Agent protocol changes: None.
+- Documentation: Added PR-044 notes and ADR-0044.
+- Tests: Repository tests cover timeline filtering, last-successful marking, actor persistence, compare, and deploy-previous-release plan creation. Handler tests cover list, compare, and redeploy. Angular service and component tests cover requests, filtering, compare, and confirmation.
+- Upstream contribution notes: Community-neutral timeline and comparison surface; no adopter-specific terminology, provider-specific orchestration, scheduler behavior, or rollback claim.
+- Compatibility notes: Existing tasks remain valid with a null actor. Deploy previous release creates a new deployment plan and does not reverse external state or database changes. Existing deployment execution, task leases, rolling and blue-green primitives, traffic-provider interface, Docker/Kubernetes agents, runbooks, webhook action, and release-bundle behavior are unchanged.

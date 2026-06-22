@@ -22,6 +22,7 @@ const (
 	KeyStepEvents          Key = "step_events"
 	KeyStepTemplates       Key = "step_templates"
 	KeyRunbooks            Key = "runbooks"
+	KeyDeploymentTimeline  Key = "deployment_timeline"
 )
 
 type Flag struct {
@@ -120,6 +121,12 @@ var definitions = []definition{
 		Key:         KeyRunbooks,
 		Label:       "Runbooks",
 		Description: "Provides versioned operational processes that are not tied to release promotion.",
+		Milestone:   "Milestone F",
+	},
+	{
+		Key:         KeyDeploymentTimeline,
+		Label:       "Deployment Timeline",
+		Description: "Displays deployment history, compares releases and plan snapshots, and previews deploying previous releases.",
 		Milestone:   "Milestone F",
 	},
 }

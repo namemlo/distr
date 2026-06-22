@@ -156,6 +156,7 @@ type Task struct {
 	ReleaseBundleID        uuid.UUID          `db:"release_bundle_id" json:"releaseBundleId"`
 	ChannelID              uuid.UUID          `db:"channel_id" json:"channelId"`
 	EnvironmentID          uuid.UUID          `db:"environment_id" json:"environmentId"`
+	ActorUserAccountID     *uuid.UUID         `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
 	Status                 TaskStatus         `db:"status" json:"status"`
 	QueueOrder             int64              `db:"queue_order" json:"queueOrder"`
 	Locks                  []TaskResourceLock `db:"-" json:"locks"`
