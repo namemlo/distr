@@ -28,6 +28,8 @@ const (
 	webhookAllowedHostsEnv        = "DISTR_WEBHOOK_ALLOWED_HOSTS"
 	webhookAllowedPrivateHostsEnv = "DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS"
 	webhookStrictReplayVerifyEnv  = "STRICT_REPLAY_VERIFY"
+	webhookSelfContainedModeEnv   = "WEBHOOK_SELF_CONTAINED_MODE"
+	webhookResolvedIPCacheEnv     = "DISTR_WEBHOOK_RESOLVED_IP_CACHE"
 	webhookMaxRequestBodyBytes    = 64 * 1024
 	webhookMaxResponseBodyBytes   = 64 * 1024
 	webhookMaxResponseHeaderBytes = 16 * 1024
@@ -116,6 +118,91 @@ type webhookAttemptMetric struct {
 	StatusCode int
 	Duration   time.Duration
 	Failed     bool
+}
+
+type localTaskTimelineClient interface {
+	LocalTaskTimeline(context.Context, uuid.UUID, uuid.UUID) (*api.TaskTimeline, error)
+}
+
+type selfContainedLeasedTaskClient struct {
+	delegate leasedTaskClient
+	lease    api.AgentTaskLease
+	events   []api.StepRunEvent
+}
+
+func newSelfContainedLeasedTaskClient(delegate leasedTaskClient, lease api.AgentTaskLease) leasedTaskClient {
+	return &selfContainedLeasedTaskClient{
+		delegate: delegate,
+		lease:    lease,
+	}
+}
+
+func (c *selfContainedLeasedTaskClient) HeartbeatTaskLease(ctx context.Context, taskID uuid.UUID, leaseToken string) (*api.AgentTaskLease, error) {
+	return c.delegate.HeartbeatTaskLease(ctx, taskID, leaseToken)
+}
+
+func (c *selfContainedLeasedTaskClient) RecordStepRunEvent(
+	ctx context.Context,
+	stepRunID uuid.UUID,
+	request api.AgentStepRunEventRequest,
+) (*api.StepRunEvent, error) {
+	event, err := c.delegate.RecordStepRunEvent(ctx, stepRunID, request)
+	if err != nil {
+		return nil, err
+	}
+	occurredAt := time.Now().UTC()
+	if request.OccurredAt != nil {
+		occurredAt = request.OccurredAt.UTC()
+	}
+	c.events = append(c.events, api.StepRunEvent{
+		ID:              uuid.New(),
+		OccurredAt:      occurredAt,
+		OrganizationID:  c.lease.OrganizationID,
+		TaskID:          c.lease.TaskID,
+		StepRunID:       stepRunID,
+		TaskLeaseID:     c.lease.ID,
+		AgentID:         c.lease.AgentID,
+		Sequence:        request.Sequence,
+		Type:            request.Type,
+		Message:         request.Message,
+		ProgressPercent: request.ProgressPercent,
+		Details:         request.Details,
+		Outputs:         webhookStepRunOutputsFromRequests(request.Outputs),
+	})
+	return event, nil
+}
+
+func (c *selfContainedLeasedTaskClient) LocalTaskTimeline(_ context.Context, taskID uuid.UUID, leaseID uuid.UUID) (*api.TaskTimeline, error) {
+	timeline := &api.TaskTimeline{
+		OrganizationID: c.lease.OrganizationID,
+		TaskID:         taskID,
+	}
+	if taskID != c.lease.TaskID || (leaseID != uuid.Nil && c.lease.ID != uuid.Nil && leaseID != c.lease.ID) {
+		return timeline, nil
+	}
+	timeline.Events = append(timeline.Events, c.events...)
+	return timeline, nil
+}
+
+func webhookStepRunOutputsFromRequests(outputs []api.AgentStepRunOutputRequest) []api.StepRunOutput {
+	if len(outputs) == 0 {
+		return nil
+	}
+	values := make([]api.StepRunOutput, 0, len(outputs))
+	for _, output := range outputs {
+		data, err := json.Marshal(output.Value)
+		if err != nil {
+			data = []byte("null")
+		}
+		values = append(values, api.StepRunOutput{
+			ID:        uuid.New(),
+			Name:      output.Name,
+			Value:     data,
+			Sensitive: output.Sensitive,
+			Redacted:  output.Sensitive,
+		})
+	}
+	return values
 }
 
 type webhookAuditExport struct {
@@ -311,6 +398,17 @@ func webhookReplayResult(
 	stepRunID uuid.UUID,
 	client leasedTaskClient,
 ) (webhookRunResult, bool, error) {
+	if webhookSelfContainedModeEnabled() {
+		localTimelineClient, ok := client.(localTaskTimelineClient)
+		if !ok {
+			return webhookRunResult{}, false, nil
+		}
+		timeline, err := localTimelineClient.LocalTaskTimeline(ctx, lease.TaskID, lease.ID)
+		if err != nil {
+			return webhookRunResult{}, false, err
+		}
+		return webhookReplayResultFromTimelineForLease(timeline, lease.OrganizationID, lease.AgentID, lease.TaskID, stepRunID, lease.ID)
+	}
 	timelineClient, ok := client.(taskTimelineClient)
 	if !ok {
 		return webhookRunResult{}, false, nil
@@ -675,6 +773,10 @@ func webhookStrictReplayVerifyEnabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(webhookStrictReplayVerifyEnv)), "true")
 }
 
+func webhookSelfContainedModeEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(webhookSelfContainedModeEnv)), "true")
+}
+
 func runWebhookAction(
 	ctx context.Context,
 	input webhookActionInput,
@@ -954,6 +1056,16 @@ func lookupWebhookTargetIPs(ctx context.Context, hostPort, host string, policy w
 		}
 		return []net.IPAddr{{IP: ip}}, nil
 	}
+	if webhookSelfContainedModeEnabled() {
+		ips, found, err := cachedWebhookTargetIPs(hostPort, host, policy)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, fmt.Errorf("webhook self-contained mode requires cached resolution for %s", normalizeWebhookHost(host))
+		}
+		return ips, nil
+	}
 	ips, err := webhookLookupIPAddr(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("webhook host did not resolve: %w", err)
@@ -967,6 +1079,77 @@ func lookupWebhookTargetIPs(ctx context.Context, hostPort, host string, policy w
 		}
 	}
 	return ips, nil
+}
+
+func cachedWebhookTargetIPs(hostPort, host string, policy webhookOutboundPolicy) ([]net.IPAddr, bool, error) {
+	raw := strings.TrimSpace(os.Getenv(webhookResolvedIPCacheEnv))
+	if raw == "" {
+		return nil, false, nil
+	}
+	candidates := map[string]struct{}{
+		normalizeWebhookHost(hostPort): {},
+		normalizeWebhookHost(host):     {},
+	}
+	for _, entry := range strings.FieldsFunc(raw, isWebhookResolvedIPCacheEntrySeparator) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, false, fmt.Errorf("%s contains invalid entry", webhookResolvedIPCacheEnv)
+		}
+		key = normalizeWebhookHost(key)
+		if _, ok := candidates[key]; !ok {
+			continue
+		}
+		ips, err := parseCachedWebhookTargetIPs(value, policy.isPrivateHostAllowed(hostPort, host))
+		if err != nil {
+			return nil, false, err
+		}
+		return ips, true, nil
+	}
+	return nil, false, nil
+}
+
+func isWebhookResolvedIPCacheEntrySeparator(r rune) bool {
+	switch r {
+	case ',', ';', '\n', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
+func parseCachedWebhookTargetIPs(value string, privateAllowed bool) ([]net.IPAddr, error) {
+	var ips []net.IPAddr
+	for _, item := range strings.FieldsFunc(value, isWebhookResolvedIPCacheIPSeparator) {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		ip := net.ParseIP(item)
+		if ip == nil {
+			return nil, fmt.Errorf("%s contains invalid IP address", webhookResolvedIPCacheEnv)
+		}
+		if isUnsafeWebhookIP(ip) && !privateAllowed {
+			return nil, fmt.Errorf("webhook host resolves to unsafe address")
+		}
+		ips = append(ips, net.IPAddr{IP: ip})
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("%s contains empty cached resolution", webhookResolvedIPCacheEnv)
+	}
+	return ips, nil
+}
+
+func isWebhookResolvedIPCacheIPSeparator(r rune) bool {
+	switch r {
+	case '|', ' ', '\t':
+		return true
+	default:
+		return false
+	}
 }
 
 func newWebhookHTTPClient(policy webhookOutboundPolicy, resolvedTarget webhookResolvedTarget) *http.Client {
