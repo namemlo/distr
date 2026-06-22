@@ -83,6 +83,8 @@ func isSuperAdmin(ctx context.Context) bool {
 	return false
 }
 
+// RequireAnyUserRole remains for exact persisted-role gates, such as admin-only
+// operations. Resource authorization should prefer scoped permission middleware.
 func RequireAnyUserRole(userRoles ...types.UserRole) func(handler http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
@@ -103,8 +105,56 @@ func RequireAnyUserRole(userRoles ...types.UserRole) func(handler http.Handler) 
 	}
 }
 
+func RequireScopedPermission(scoped types.ScopedPermission) func(handler http.Handler) http.Handler {
+	return RequireAnyScopedPermission(scoped.Scope, scoped.Permission)
+}
+
+func RequireOrganizationPermission(permission types.Permission) func(handler http.Handler) http.Handler {
+	return RequireScopedPermission(types.OrganizationPermission(permission))
+}
+
+func RequireAnyOrganizationPermission(permissions ...types.Permission) func(handler http.Handler) http.Handler {
+	return RequireAnyScopedPermission(types.PermissionScopeOrganization, permissions...)
+}
+
+func RequireAnyScopedPermission(scope types.PermissionScope, permissions ...types.Permission) func(handler http.Handler) http.Handler {
+	return func(handler http.Handler) http.Handler {
+		fn := func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			if !scope.Supported() {
+				http.Error(w, "unsupported permission scope", http.StatusForbidden)
+				return
+			}
+			if isSuperAdmin(ctx) {
+				handler.ServeHTTP(w, r)
+				return
+			}
+			auth, err := auth.Authentication.Get(ctx)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+			if auth.CurrentUserRole() == nil {
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+			for _, permission := range permissions {
+				if auth.CurrentUserRole().HasScopedPermission(types.ScopedPermission{
+					Permission: permission,
+					Scope:      scope,
+				}) {
+					handler.ServeHTTP(w, r)
+					return
+				}
+			}
+			http.Error(w, "insufficient permissions", http.StatusForbidden)
+		}
+		return http.HandlerFunc(fn)
+	}
+}
+
 var (
-	RequireReadWriteOrAdmin = RequireAnyUserRole(types.UserRoleReadWrite, types.UserRoleAdmin)
+	RequireReadWriteOrAdmin = RequireAnyOrganizationPermission(types.AllMutationPermissions()...)
 	RequireAdmin            = RequireAnyUserRole(types.UserRoleAdmin)
 )
 
