@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability metrics, observability tracing, and observability dashboards feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability metrics, observability tracing, observability dashboards, and observability correlation feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -85,6 +85,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isObservabilityDashboardsEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isObservabilityCorrelationEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -158,6 +161,13 @@ describe('FeatureFlagService', () => {
         key: 'observability_dashboards',
         label: 'Observability Dashboards',
         description: 'Publishes static Grafana dashboard templates for observability review.',
+        milestone: 'Milestone G',
+        enabled: true,
+      },
+      {
+        key: 'observability_correlation',
+        label: 'Observability Correlation',
+        description: 'Builds deterministic Grafana links between traces, metrics, and dashboards.',
         milestone: 'Milestone G',
         enabled: true,
       },

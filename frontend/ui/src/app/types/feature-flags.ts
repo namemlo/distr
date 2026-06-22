@@ -13,7 +13,8 @@ export type ExperimentalFeatureFlagKey =
   | 'retention_policies'
   | 'observability_metrics'
   | 'observability_tracing'
-  | 'observability_dashboards';
+  | 'observability_dashboards'
+  | 'observability_correlation';
 
 export interface ExperimentalFeatureFlag {
   key: ExperimentalFeatureFlagKey;
