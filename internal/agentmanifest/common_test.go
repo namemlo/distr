@@ -50,6 +50,10 @@ func TestGetTemplateDataIncludesAgentProtocolEndpoints(t *testing.T) {
 		"https://hub.example.com/root/api/v1/agents/"+targetID.String()+"/tasks/{taskId}/heartbeat"; got != want {
 		t.Fatalf("expected task heartbeat endpoint template %q, got %q", want, got)
 	}
+	if got, want := data["taskTimelineEndpointTemplate"],
+		"https://hub.example.com/root/api/v1/agents/"+targetID.String()+"/tasks/{taskId}/timeline"; got != want {
+		t.Fatalf("expected task timeline endpoint template %q, got %q", want, got)
+	}
 	if got, want := data["stepEventEndpointTemplate"],
 		"https://hub.example.com/root/api/v1/agents/"+targetID.String()+"/step-runs/{stepRunId}/events"; got != want {
 		t.Fatalf("expected step event endpoint template %q, got %q", want, got)

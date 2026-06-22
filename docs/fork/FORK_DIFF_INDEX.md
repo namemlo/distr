@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-030 are implemented locally. PR-030 hardens the Docker-agent `distr.webhook` runtime envelope with direct-run execution deadlines, global retry ceiling enforcement, transport connect/TLS/header limits, bounded response streaming, cancellation propagation, and non-blocking attempt metrics while preserving existing Compose, OCI, file-render, webhook request/response schema, and legacy resource-poll deployment behavior.
+PR-000 through PR-031 are implemented locally. PR-031 makes Docker-agent `distr.webhook` replay-aware with a hidden agent task-timeline read, stored-success replay suppression, deterministic output reconstruction, and fail-closed interrupted replay handling while preserving existing Compose, OCI, file-render, webhook request/response schema, and legacy resource-poll deployment behavior.
 
 ## Tracking Template
 
@@ -493,3 +493,18 @@ Use one entry per pull request:
 - Tests: Added Docker-agent tests for direct-run deadline propagation, global retry ceiling enforcement, transport runtime limits, non-blocking attempt metrics, cancellation during retry backoff, response streaming cutoff, and the expanded webhook security contract suite. Docker-agent focused tests passed locally with dummy agent endpoint environment values.
 - Upstream contribution notes: Community-neutral webhook runtime hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, webhook request/response schema, and legacy Docker resource-poll deployment behavior are unchanged. No approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-031 behavior is added in PR-030.
+
+### PR-031 - Webhook idempotent replay
+
+- Status: Implemented locally; hidden agent task timeline read, optional agent client helper, manifest endpoint wiring, webhook replay preflight, deterministic success-output reconstruction, interrupted replay fail-closed behavior, documentation, and ADR completed.
+- Upstream base: `543b8e08`
+- Feature flag: Adds no new flag. Uses the existing `task_queue`, `agent_task_leases`, and `step_events` gated agent protocol.
+- User-facing behavior: Webhook actions keep the same inputs and outputs, but re-entering a step with stored success no longer emits new events or sends another external HTTP request. Re-entering a step with incomplete stored webhook history fails closed before any new external side effect.
+- Database changes: None. Reuses StepRunEvent and StepRunOutput from PR-024.
+- API changes: Added hidden agent-authenticated `GET /api/v1/agents/{id}/tasks/{taskId}/timeline`, scoped to the authenticated deployment target.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-031.
+- Agent protocol changes: Docker and Kubernetes manifests include optional `DISTR_TASK_TIMELINE_ENDPOINT_TEMPLATE`. Docker agents use the task timeline before webhook execution to suppress replayed successes and refuse incomplete replays before DNS, signing, transport setup, or HTTP requests.
+- Documentation: Added PR-031 notes and ADR-0031.
+- Tests: Added agent client timeline tests, manifest endpoint tests, and `TestWebhookActionIdempotentReplaySuite` for duplicate execution, zero-network replay, interrupted replay fail-closed behavior, and stored output reconstruction. Docker-agent, agentclient, agentmanifest, and handler tests passed locally.
+- Upstream contribution notes: Community-neutral webhook replay hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, webhook request/response schema, and legacy Docker resource-poll deployment behavior are unchanged. Older manifests without `DISTR_TASK_TIMELINE_ENDPOINT_TEMPLATE` continue to run without replay preflight until refreshed. No approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-032 behavior is added in PR-031.
