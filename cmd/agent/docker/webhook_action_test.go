@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -323,7 +324,19 @@ func TestWebhookActionHMACSignatureIgnoresURLFragment(t *testing.T) {
 	g.Expect(withoutFragmentSignature).To(Equal(withFragmentSignature))
 }
 
-func TestNewWebhookHTTPClientRejectsUnsafeTargetThroughHTTPSProxy(t *testing.T) {
+func TestWebhookRequestBodyNilAndEmptyObjectShareDigest(t *testing.T) {
+	g := NewWithT(t)
+
+	nilBody, err := webhookRequestBodyBytes(nil)
+	g.Expect(err).NotTo(HaveOccurred())
+	emptyObjectBody, err := webhookRequestBodyBytes(map[string]any{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(string(nilBody)).To(Equal(`{}`))
+	g.Expect(webhookBodyDigest(nilBody)).To(Equal(webhookBodyDigest(emptyObjectBody)))
+}
+
+func TestNewWebhookHTTPClientRejectsUnsafeTargetThroughProxyEnvironment(t *testing.T) {
 	g := NewWithT(t)
 	var connectCount int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +349,7 @@ func TestNewWebhookHTTPClientRejectsUnsafeTargetThroughHTTPSProxy(t *testing.T) 
 	proxyURL, err := url.Parse(proxy.URL)
 	g.Expect(err).NotTo(HaveOccurred())
 	t.Setenv("HTTPS_PROXY", proxy.URL)
-	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("HTTP_PROXY", proxy.URL)
 	t.Setenv("NO_PROXY", "")
 	t.Setenv(webhookAllowedHostsEnv, "localhost")
 	t.Setenv(webhookAllowedPrivateHostsEnv, proxyURL.Host)
@@ -357,6 +370,73 @@ func TestNewWebhookHTTPClientRejectsUnsafeTargetThroughHTTPSProxy(t *testing.T) 
 
 	g.Expect(err).To(MatchError(ContainSubstring("webhook host resolves to unsafe address")))
 	g.Expect(atomic.LoadInt32(&connectCount)).To(Equal(int32(0)))
+}
+
+func TestRunWebhookActionRejectsUnsafeResolvedAddressBeforeAttempt(t *testing.T) {
+	g := NewWithT(t)
+	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	})
+	progress := []string{}
+	input := webhookActionInput{
+		URL:                 "https://hooks.example.com/deployments",
+		Method:              http.MethodPost,
+		Body:                map[string]any{"deploymentId": "dep-123"},
+		SigningSecret:       "signing-secret",
+		IdempotencyKey:      "idem-123",
+		TimeoutSeconds:      1,
+		ExpectedStatusCodes: []int{http.StatusOK},
+		Retry: webhookRetryPolicy{
+			MaxAttempts: 3,
+		},
+	}
+
+	result, err := runWebhookAction(context.Background(), input, func(message string) error {
+		progress = append(progress, message)
+		return nil
+	})
+
+	g.Expect(err).To(MatchError(ContainSubstring("webhook host resolves to unsafe address")))
+	g.Expect(result.Attempts).To(Equal(0))
+	g.Expect(progress).To(BeEmpty())
+}
+
+func TestRunWebhookActionUsesPinnedResolvedAddressForDial(t *testing.T) {
+	g := NewWithT(t)
+	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	lookups := 0
+	setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+		lookups++
+		if lookups == 1 {
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	})
+	var dialAddress string
+	setWebhookDialContext(t, func(_ context.Context, _ string, address string) (net.Conn, error) {
+		dialAddress = address
+		return nil, errors.New("stop after pinned dial")
+	})
+	input := webhookActionInput{
+		URL:                 "https://hooks.example.com/deployments",
+		Method:              http.MethodPost,
+		Body:                map[string]any{"deploymentId": "dep-123"},
+		SigningSecret:       "signing-secret",
+		IdempotencyKey:      "idem-123",
+		TimeoutSeconds:      1,
+		ExpectedStatusCodes: []int{http.StatusOK},
+		Retry: webhookRetryPolicy{
+			MaxAttempts: 1,
+		},
+	}
+
+	result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+	g.Expect(err).To(MatchError(ContainSubstring("stop after pinned dial")))
+	g.Expect(result.Attempts).To(Equal(1))
+	g.Expect(lookups).To(Equal(1))
+	g.Expect(dialAddress).To(Equal("203.0.113.10:443"))
 }
 
 func TestWebhookActionInputRejectsRedirectToUnsafeTargets(t *testing.T) {
@@ -391,6 +471,146 @@ func TestWebhookActionInputRejectsRedirectToUnsafeTargets(t *testing.T) {
 
 	g.Expect(err).To(MatchError(ContainSubstring("webhook host resolves to unsafe address")))
 	g.Expect(atomic.LoadInt32(&requestCount)).To(Equal(int32(1)))
+}
+
+func TestWebhookActionInputRejectsRedirectToUnsafeResolvedHost(t *testing.T) {
+	g := NewWithT(t)
+	var requestCount int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		http.Redirect(w, r, "https://redirect.example.com/latest/meta-data", http.StatusFound)
+	}))
+	defer server.Close()
+	serverURL, err := url.Parse(server.URL)
+	g.Expect(err).NotTo(HaveOccurred())
+	t.Setenv(webhookAllowedHostsEnv, strings.Join([]string{serverURL.Host, "redirect.example.com"}, ","))
+	t.Setenv(webhookAllowedPrivateHostsEnv, serverURL.Host)
+	setWebhookLookupIPAddr(t, func(_ context.Context, host string) ([]net.IPAddr, error) {
+		g.Expect(host).To(Equal("redirect.example.com"))
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	})
+	oldClient := webhookHTTPClientForTest
+	webhookHTTPClientForTest = server.Client()
+	t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+	input := webhookActionInput{
+		URL:                 server.URL + "/deployments",
+		Method:              http.MethodPost,
+		Body:                map[string]any{"deploymentId": "dep-123"},
+		SigningSecret:       "signing-secret",
+		IdempotencyKey:      "idem-123",
+		TimeoutSeconds:      1,
+		ExpectedStatusCodes: []int{http.StatusOK},
+		Retry: webhookRetryPolicy{
+			MaxAttempts: 1,
+		},
+	}
+
+	_, err = runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+	g.Expect(err).To(MatchError(ContainSubstring("webhook host resolves to unsafe address")))
+	g.Expect(atomic.LoadInt32(&requestCount)).To(Equal(int32(1)))
+}
+
+func TestRunWebhookActionRejectsUntrustedTLSCertificate(t *testing.T) {
+	g := NewWithT(t)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	setWebhookPolicyEnvForURL(t, server.URL)
+	input := webhookActionInput{
+		URL:                 server.URL + "/deployments",
+		Method:              http.MethodPost,
+		Body:                map[string]any{"deploymentId": "dep-123"},
+		SigningSecret:       "signing-secret",
+		IdempotencyKey:      "idem-123",
+		TimeoutSeconds:      1,
+		ExpectedStatusCodes: []int{http.StatusOK},
+		Retry: webhookRetryPolicy{
+			MaxAttempts: 2,
+		},
+	}
+
+	result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+	g.Expect(err).To(MatchError(ContainSubstring("certificate")))
+	g.Expect(result.Attempts).To(Equal(1))
+}
+
+func TestWebhookActionSecurityContractSuite(t *testing.T) {
+	t.Run("SSRF via DNS fails before attempts", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+		})
+		input := webhookActionInput{
+			URL:                 "https://hooks.example.com/deployments",
+			Method:              http.MethodPost,
+			Body:                map[string]any{"deploymentId": "dep-123"},
+			SigningSecret:       "signing-secret",
+			IdempotencyKey:      "idem-123",
+			TimeoutSeconds:      1,
+			ExpectedStatusCodes: []int{http.StatusOK},
+			Retry: webhookRetryPolicy{
+				MaxAttempts: 2,
+			},
+		}
+
+		result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook host resolves to unsafe address")))
+		g.Expect(result.Attempts).To(Equal(0))
+	})
+	t.Run("proxy environment is ignored", func(t *testing.T) {
+		g := NewWithT(t)
+		var proxyRequests int32
+		proxy := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			atomic.AddInt32(&proxyRequests, 1)
+		}))
+		defer proxy.Close()
+		t.Setenv("HTTP_PROXY", proxy.URL)
+		t.Setenv("HTTPS_PROXY", proxy.URL)
+		t.Setenv("NO_PROXY", "")
+		t.Setenv(webhookAllowedHostsEnv, "localhost")
+		input := webhookActionInput{
+			URL:                 "https://localhost./deployments",
+			Method:              http.MethodPost,
+			Body:                map[string]any{"deploymentId": "dep-123"},
+			SigningSecret:       "signing-secret",
+			IdempotencyKey:      "idem-123",
+			TimeoutSeconds:      1,
+			ExpectedStatusCodes: []int{http.StatusOK},
+			Retry: webhookRetryPolicy{
+				MaxAttempts: 1,
+			},
+		}
+
+		_, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook host resolves to unsafe address")))
+		g.Expect(atomic.LoadInt32(&proxyRequests)).To(Equal(int32(0)))
+	})
+	t.Run("signing ignores query order and fragment", func(t *testing.T) {
+		g := NewWithT(t)
+		first, err := url.Parse("https://hooks.example.com/deployments?b=2&a=1#section")
+		g.Expect(err).NotTo(HaveOccurred())
+		second, err := url.Parse("https://hooks.example.com/deployments?a=1&b=2")
+		g.Expect(err).NotTo(HaveOccurred())
+		digest := webhookBodyDigest([]byte(`{"ok":true}`))
+
+		firstSignature := webhookSignature("signing-secret", webhookCanonicalData("POST", first, "2026-06-22T12:34:56Z", "idem-123", digest))
+		secondSignature := webhookSignature("signing-secret", webhookCanonicalData("POST", second, "2026-06-22T12:34:56Z", "idem-123", digest))
+
+		g.Expect(firstSignature).To(Equal(secondSignature))
+	})
+	t.Run("DNS failures are non-retryable", func(t *testing.T) {
+		g := NewWithT(t)
+		err := &net.DNSError{Err: "temporary DNS failure", Name: "hooks.example.com", IsTemporary: true}
+
+		g.Expect(isRetryableWebhookAttemptError(0, err)).To(BeFalse())
+	})
 }
 
 func TestExecuteWebhookStepPreservesResolvedSigningSecretBytes(t *testing.T) {
@@ -725,6 +945,7 @@ func TestExecuteWebhookStepDoesNotRetryOversizedResponseBody(t *testing.T) {
 func TestExecuteWebhookStepRejectsOversizedResponseBody(t *testing.T) {
 	g := NewWithT(t)
 	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddrToPublicHost(t)
 	declaredRemoteID := strings.Repeat("x", webhookMaxResponseBodyBytes)
 	oversizedBody := []byte(`{"id":"` + declaredRemoteID + `"}`)
 	responseBody := &countingReadCloser{data: oversizedBody}
@@ -775,6 +996,7 @@ func TestExecuteWebhookStepRejectsOversizedResponseBody(t *testing.T) {
 func TestRunWebhookActionDoesNotRetryPermanentTransportError(t *testing.T) {
 	g := NewWithT(t)
 	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddrToPublicHost(t)
 	inputs := validWebhookInputs()
 	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
 	inputs["signingSecret"] = "signing-secret-value"
@@ -802,9 +1024,55 @@ func TestRunWebhookActionDoesNotRetryPermanentTransportError(t *testing.T) {
 	g.Expect(roundTrips).To(Equal(1))
 }
 
+func TestWebhookAttemptRetryClassification(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		err       error
+		wantRetry bool
+	}{
+		{
+			name:      "EOF response body read",
+			err:       io.ErrUnexpectedEOF,
+			wantRetry: true,
+		},
+		{
+			name:      "temporary body read timeout",
+			err:       timeoutReadError{},
+			wantRetry: true,
+		},
+		{
+			name:      "temporary DNS failure",
+			err:       &net.DNSError{Err: "temporary DNS failure", Name: "hooks.example.com", IsTemporary: true},
+			wantRetry: false,
+		},
+		{
+			name:      "unsafe IP validation failure",
+			err:       fmt.Errorf("webhook host resolves to unsafe address"),
+			wantRetry: false,
+		},
+		{
+			name:      "oversized response body",
+			status:    http.StatusOK,
+			err:       fmt.Errorf("webhook response body is too large"),
+			wantRetry: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			retry := isRetryableWebhookAttemptError(tt.status, tt.err)
+
+			g.Expect(retry).To(Equal(tt.wantRetry))
+		})
+	}
+}
+
 func TestRunWebhookActionRetriesTransientResponseBodyReadError(t *testing.T) {
 	g := NewWithT(t)
 	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddrToPublicHost(t)
 	inputs := validWebhookInputs()
 	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
 	inputs["signingSecret"] = "signing-secret-value"
@@ -846,6 +1114,7 @@ func TestRunWebhookActionRetriesTransientResponseBodyReadError(t *testing.T) {
 func TestRunWebhookActionRetriesTransientResponseBodyNetworkError(t *testing.T) {
 	g := NewWithT(t)
 	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddrToPublicHost(t)
 	inputs := validWebhookInputs()
 	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
 	inputs["signingSecret"] = "signing-secret-value"
@@ -1022,4 +1291,25 @@ func setWebhookPolicyEnvForURL(t *testing.T, rawURL string) {
 	}
 	t.Setenv(webhookAllowedHostsEnv, parsed.Host)
 	t.Setenv(webhookAllowedPrivateHostsEnv, parsed.Host)
+}
+
+func setWebhookLookupIPAddr(t *testing.T, lookup func(context.Context, string) ([]net.IPAddr, error)) {
+	t.Helper()
+	oldLookup := webhookLookupIPAddr
+	webhookLookupIPAddr = lookup
+	t.Cleanup(func() { webhookLookupIPAddr = oldLookup })
+}
+
+func setWebhookLookupIPAddrToPublicHost(t *testing.T) {
+	t.Helper()
+	setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+	})
+}
+
+func setWebhookDialContext(t *testing.T, dial func(context.Context, string, string) (net.Conn, error)) {
+	t.Helper()
+	oldDial := webhookDialContext
+	webhookDialContext = dial
+	t.Cleanup(func() { webhookDialContext = oldDial })
 }

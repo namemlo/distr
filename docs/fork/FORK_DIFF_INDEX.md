@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-028 are implemented locally. PR-028 adds the Docker-agent `distr.webhook` action with trusted outbound host allowlisting, signed HTTPS JSON requests, secret-header and signing-secret lease resolution, retry/idempotency handling, declared response outputs, and agent plus Hub redaction while preserving existing Compose, OCI, file-render, and legacy resource-poll deployment behavior.
+PR-000 through PR-029 are implemented locally. PR-029 hardens the Docker-agent `distr.webhook` network boundary with deterministic DNS preflight validation, pinned dialing, redirect target DNS validation, explicit proxy-environment bypass tests, TLS verification coverage, and retry classification finalization while preserving existing Compose, OCI, file-render, webhook action, and legacy resource-poll deployment behavior.
 
 ## Tracking Template
 
@@ -463,3 +463,18 @@ Use one entry per pull request:
 - Tests: Action registry schema/order tests, Docker capability tests, webhook validation/signing/retry/idempotency/output/redaction/task-lease dispatch tests, task lease webhook secret resolution tests, and Hub-side StepRun webhook secret redaction tests were added. Focused `go test ./internal/actionregistry`, Docker-agent tests with dummy agent endpoint environment values, and focused live PostgreSQL `internal/db` tests passed locally.
 - Upstream contribution notes: Community-neutral webhook action adapter; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, and legacy Docker resource-poll deployment behavior are unchanged when no webhook task lease is claimed. No Helm typed action, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-029 behavior is added in PR-028.
+
+### PR-029 - Webhook network hardening
+
+- Status: Implemented locally; DNS preflight validation, pinned dialing, redirect target DNS validation, proxy environment regression coverage, TLS verification coverage, retry classification tests, documentation, and ADR completed.
+- Upstream base: `18c6f32b`
+- Feature flag: Adds no new flag. Hardens the existing `distr.webhook` Docker-agent execution path introduced in PR-028.
+- User-facing behavior: Webhook actions keep the same inputs and outputs, but unsafe DNS results now fail before any webhook attempt is emitted or HTTP transport is used. Default TLS certificate verification remains enforced.
+- Database changes: None.
+- API changes: None.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-029.
+- Agent protocol changes: The Docker agent pre-resolves webhook hostnames through the default resolver, validates every resolved IP with the existing unsafe-IP policy, pins the validated address for the outbound dial, revalidates redirect targets including DNS even though redirects are not followed, ignores `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`, and treats DNS, validation, TLS, and oversized-body failures as non-retryable.
+- Documentation: Added PR-029 notes and ADR-0029.
+- Tests: Added Docker-agent tests for unsafe DNS preflight before attempts, pinned DNS dialing, redirect target DNS validation, explicit proxy environment bypass, untrusted TLS certificate rejection, nil body digest equivalence, and retry classification. Docker-agent focused tests passed locally with dummy agent endpoint environment values.
+- Upstream contribution notes: Community-neutral webhook hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, webhook request/response schema, and legacy Docker resource-poll deployment behavior are unchanged. No approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-030 behavior is added in PR-029.
