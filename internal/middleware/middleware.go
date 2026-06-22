@@ -17,6 +17,7 @@ import (
 	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/featureflags"
 	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
+	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/oidc"
 	"github.com/distr-sh/distr/internal/prometheus"
 	"github.com/distr-sh/distr/internal/types"
@@ -39,6 +40,7 @@ func ContextInjectorMiddleware(
 	oidcer *oidc.OIDCer,
 	prometheusCollector *prometheus.DistrCollector,
 	metricsRecorder obsermetrics.Recorder,
+	tracingTracer obsertracing.Tracer,
 ) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +49,7 @@ func ContextInjectorMiddleware(
 			ctx = internalctx.WithMailer(ctx, mailer)
 			ctx = internalctx.WithPrometheusCollector(ctx, prometheusCollector)
 			ctx = internalctx.WithObservabilityMetricsRecorder(ctx, metricsRecorder)
+			ctx = internalctx.WithObservabilityTracer(ctx, tracingTracer)
 			ctx = internalctx.WithOIDCer(ctx, oidcer)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

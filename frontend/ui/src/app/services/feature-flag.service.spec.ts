@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, and observability metrics feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability metrics, and observability tracing feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -79,6 +79,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isObservabilityMetricsEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isObservabilityTracingEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -138,6 +141,13 @@ describe('FeatureFlagService', () => {
         key: 'observability_metrics',
         label: 'Observability Metrics',
         description: 'Enables Prometheus metrics for HTTP traffic and task execution instrumentation.',
+        milestone: 'Milestone G',
+        enabled: true,
+      },
+      {
+        key: 'observability_tracing',
+        label: 'Observability Tracing',
+        description: 'Enables OpenTelemetry tracing for HTTP traffic and task execution instrumentation.',
         milestone: 'Milestone G',
         enabled: true,
       },

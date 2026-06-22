@@ -10,7 +10,7 @@ func TestParseEnabledKeys(t *testing.T) {
 	g := NewWithT(t)
 
 	keys, err := ParseEnabledKeys(
-		"release_bundles, environments\nlifecycles agent_capabilities agent_task_leases step_events observability_metrics release_bundles",
+		"release_bundles, environments\nlifecycles agent_capabilities agent_task_leases step_events observability_metrics observability_tracing release_bundles",
 	)
 
 	g.Expect(err).NotTo(HaveOccurred())
@@ -22,6 +22,7 @@ func TestParseEnabledKeys(t *testing.T) {
 		KeyAgentTaskLeases,
 		KeyStepEvents,
 		KeyObservabilityMetrics,
+		KeyObservabilityTracing,
 	}))
 }
 
@@ -85,6 +86,11 @@ func TestRegistryMarksEnabledFlags(t *testing.T) {
 	g.Expect(observabilityMetrics.Label).To(Equal("Observability Metrics"))
 	g.Expect(observabilityMetrics.Description).NotTo(BeEmpty())
 	g.Expect(observabilityMetrics.Milestone).To(Equal("Milestone G"))
+	observabilityTracing := findFlag(flags, KeyObservabilityTracing)
+	g.Expect(observabilityTracing.Key).To(Equal(KeyObservabilityTracing))
+	g.Expect(observabilityTracing.Label).To(Equal("Observability Tracing"))
+	g.Expect(observabilityTracing.Description).NotTo(BeEmpty())
+	g.Expect(observabilityTracing.Milestone).To(Equal("Milestone G"))
 }
 
 func findFlag(flags []Flag, key Key) Flag {

@@ -10,6 +10,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
+	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgerrcode"
@@ -215,6 +216,7 @@ func TransitionTaskState(ctx context.Context, request types.TransitionTaskStateR
 		return nil, err
 	}
 	recordTaskTransitionMetric(ctx, task)
+	recordTaskTransitionSpan(ctx, task)
 	return task, nil
 }
 
@@ -1114,6 +1116,19 @@ func recordTaskTransitionMetric(ctx context.Context, task *types.Task) {
 		}
 	}
 	recorder.ObserveTask(observation)
+}
+
+func recordTaskTransitionSpan(ctx context.Context, task *types.Task) {
+	tracer := internalctx.GetObservabilityTracer(ctx)
+	if tracer == nil || task == nil {
+		return
+	}
+	obsertracing.ObserveTaskTransition(ctx, tracer, obsertracing.TaskObservation{
+		TaskID:      task.ID.String(),
+		Status:      string(task.Status),
+		StartedAt:   task.StartedAt,
+		CompletedAt: task.CompletedAt,
+	})
 }
 
 func taskIDs(tasks []types.Task) []uuid.UUID {

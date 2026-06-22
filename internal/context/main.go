@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/distr-sh/distr/internal/db/queryable"
 	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
+	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/oidc"
 	"github.com/distr-sh/distr/internal/prometheus"
 	"github.com/go-mailx/mailx"
@@ -32,6 +33,7 @@ const (
 	ctxKeyPrometheusCollector
 	ctxKeyS3Client
 	ctxKeyObservabilityMetricsRecorder
+	ctxKeyObservabilityTracer
 )
 
 func GetDb(ctx context.Context) queryable.Queryable {
@@ -122,6 +124,21 @@ func WithObservabilityMetricsRecorder(ctx context.Context, recorder obsermetrics
 	}
 
 	return context.WithValue(ctx, ctxKeyObservabilityMetricsRecorder, recorder)
+}
+
+func GetObservabilityTracer(ctx context.Context) obsertracing.Tracer {
+	if tracer, ok := ctx.Value(ctxKeyObservabilityTracer).(obsertracing.Tracer); ok {
+		return tracer
+	}
+	return nil
+}
+
+func WithObservabilityTracer(ctx context.Context, tracer obsertracing.Tracer) context.Context {
+	if tracer == nil || !tracer.Enabled() {
+		return ctx
+	}
+
+	return context.WithValue(ctx, ctxKeyObservabilityTracer, tracer)
 }
 
 func GetS3Client(ctx context.Context) *s3.Client {
