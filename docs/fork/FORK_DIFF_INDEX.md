@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-038 are implemented locally. PR-038 adds restricted condition validation/evaluation and stable output-variable naming for deterministic workflow references.
+PR-000 through PR-039 are implemented locally. PR-039 adds the versioned runbook model, immutable runbook snapshots, and a reserved runbook task type.
 
 ## Tracking Template
 
@@ -613,3 +613,18 @@ Use one entry per pull request:
 - Tests: Condition parser/evaluator tests, deployment process validation tests, step-event output validation tests, and deployment-plan invalid-condition blocker coverage were added.
 - Upstream contribution notes: Community-neutral condition/output foundation; no adopter-specific terminology, script execution, or general-purpose expression language.
 - Compatibility notes: Existing valid conditions and output names continue to work. Invalid free-form conditions and unstable output names are rejected before they can become workflow references.
+
+### PR-039 - Runbook model
+
+- Status: Implemented locally; backend model, API, repository, migration, canonical snapshots, task type discriminator, documentation, and ADR completed.
+- Upstream base: `72219691`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=runbooks`.
+- User-facing behavior: Feature-flagged API callers can create, list, read, update, and delete Runbooks; create and read immutable revisions; and publish a revision snapshot.
+- Database changes: Added `Runbook`, `RunbookRevision`, `RunbookStep`, `RunbookStepDependency`, and `RunbookSnapshot` tables. Added defaulted `Task.task_type` constrained to `deployment` or `runbook`.
+- API changes: Added feature-flagged endpoints under `/api/v1/runbooks` for CRUD, revision list/create/read, and revision publication.
+- UI changes: None. Runbook UI and schedules remain PR-040.
+- Agent protocol changes: None. Existing deployment task creation writes `deployment`; `runbook` task execution is reserved for future PRs.
+- Documentation: Added PR-039 notes and ADR-0039.
+- Tests: API validation, mapping, handler, repository, canonical snapshot, migration, and deployment task default tests were added.
+- Upstream contribution notes: Community-neutral runbook foundation; no adopter-specific terminology, scheduler, script runner, or external workflow engine.
+- Compatibility notes: Existing Deployment Process, Task Queue, task lease, step event, Docker/Kubernetes agent, release bundle, and deployment behavior is unchanged. No runbook UI, schedule, execution, approval, guided failure, retention, notification, or agent behavior is added in PR-039.

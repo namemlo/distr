@@ -71,6 +71,15 @@ func (r Registry) ValidateSteps(steps []types.DeploymentProcessStep) error {
 	return nil
 }
 
+func (r Registry) ValidateRunbookSteps(steps []types.RunbookStep) error {
+	for _, step := range steps {
+		if err := r.ValidateInput(step.ActionType, step.InputBindings); err != nil {
+			return apierrors.NewBadRequest(fmt.Sprintf("step %q %s", step.Key, badRequestMessage(err)))
+		}
+	}
+	return nil
+}
+
 func mustBuildRegistry(actions []types.ActionDefinition) Registry {
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)

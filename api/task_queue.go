@@ -67,6 +67,7 @@ type Task struct {
 	QueuedAt               time.Time          `json:"queuedAt"`
 	StartedAt              *time.Time         `json:"startedAt,omitempty"`
 	CompletedAt            *time.Time         `json:"completedAt,omitempty"`
+	TaskType               types.TaskType     `json:"taskType"`
 	DeploymentPlanID       uuid.UUID          `json:"deploymentPlanId"`
 	DeploymentPlanTargetID uuid.UUID          `json:"deploymentPlanTargetId"`
 	DeploymentTargetID     uuid.UUID          `json:"deploymentTargetId"`

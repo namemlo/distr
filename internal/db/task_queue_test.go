@@ -33,6 +33,7 @@ func TestTaskQueueRepositoryCreatesTasksForReadyPlanInQueueOrder(t *testing.T) {
 	g.Expect(tasks).To(HaveLen(2))
 	g.Expect(tasks[0].Status).To(Equal(types.TaskStatusQueued))
 	g.Expect(tasks[1].Status).To(Equal(types.TaskStatusQueued))
+	g.Expect(tasks[0].TaskType).To(Equal(types.TaskTypeDeployment))
 	g.Expect(tasks[0].QueueOrder).To(BeNumerically("<", tasks[1].QueueOrder))
 	g.Expect(tasks[0].DeploymentPlanID).To(Equal(deps.plan.ID))
 	g.Expect(tasks[0].DeploymentPlanTargetID).To(Equal(deps.plan.Targets[0].ID))

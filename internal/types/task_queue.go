@@ -29,6 +29,22 @@ func (s TaskStatus) IsTerminal() bool {
 	return s == TaskStatusSucceeded || s == TaskStatusFailed || s == TaskStatusCanceled
 }
 
+type TaskType string
+
+const (
+	TaskTypeDeployment TaskType = "deployment"
+	TaskTypeRunbook    TaskType = "runbook"
+)
+
+func (t TaskType) IsValid() bool {
+	switch t {
+	case TaskTypeDeployment, TaskTypeRunbook:
+		return true
+	default:
+		return false
+	}
+}
+
 type TaskConcurrencyPolicy string
 
 const (
@@ -132,6 +148,7 @@ type Task struct {
 	StartedAt              *time.Time         `db:"started_at" json:"startedAt,omitempty"`
 	CompletedAt            *time.Time         `db:"completed_at" json:"completedAt,omitempty"`
 	OrganizationID         uuid.UUID          `db:"organization_id" json:"organizationId"`
+	TaskType               TaskType           `db:"task_type" json:"taskType"`
 	DeploymentPlanID       uuid.UUID          `db:"deployment_plan_id" json:"deploymentPlanId"`
 	DeploymentPlanTargetID uuid.UUID          `db:"deployment_plan_target_id" json:"deploymentPlanTargetId"`
 	DeploymentTargetID     uuid.UUID          `db:"deployment_target_id" json:"deploymentTargetId"`

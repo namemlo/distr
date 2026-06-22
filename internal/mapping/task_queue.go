@@ -13,6 +13,7 @@ func TaskToAPI(task types.Task) api.Task {
 		QueuedAt:               task.QueuedAt,
 		StartedAt:              task.StartedAt,
 		CompletedAt:            task.CompletedAt,
+		TaskType:               task.TaskType,
 		DeploymentPlanID:       task.DeploymentPlanID,
 		DeploymentPlanTargetID: task.DeploymentPlanTargetID,
 		DeploymentTargetID:     task.DeploymentTargetID,

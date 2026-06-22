@@ -1,0 +1,8 @@
+DROP TABLE IF EXISTS RunbookSnapshot;
+DROP TABLE IF EXISTS RunbookStepDependency;
+DROP TABLE IF EXISTS RunbookStep;
+DROP TABLE IF EXISTS RunbookRevision;
+DROP TABLE IF EXISTS Runbook;
+
+ALTER TABLE Task
+  DROP COLUMN IF EXISTS task_type;
