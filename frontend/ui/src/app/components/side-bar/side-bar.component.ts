@@ -10,6 +10,7 @@ import {
   faArrowRightLong,
   faArrowUpRightFromSquare,
   faAsterisk,
+  faBookOpen,
   faBox,
   faBoxesStacked,
   faBuilding,
@@ -93,6 +94,7 @@ export class SideBarComponent {
   protected readonly faHome = faHome;
   protected readonly faChevronDown = faChevronDown;
   protected readonly faAsterisk = faAsterisk;
+  protected readonly faBookOpen = faBookOpen;
   protected readonly faLifeRing = faLifeRing;
   protected readonly faHandHoldingDollar = faHandHoldingDollar;
   protected feedbackAlert = true;
@@ -139,6 +141,10 @@ export class SideBarComponent {
   protected readonly isStepTemplatesFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isStepTemplatesEnabled$, {initialValue: false})
+      : signal(false);
+  protected readonly isRunbooksFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isRunbooksEnabled$, {initialValue: false})
       : signal(false);
   protected readonly isDeploymentPlansFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')

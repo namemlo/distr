@@ -59,6 +59,7 @@ export class FeatureFlagService {
   public readonly isDeploymentPlansEnabled$ = this.isExperimentalFeatureEnabled$('deployment_plans');
   public readonly isStepTemplatesEnabled$ = this.isExperimentalFeatureEnabled$('step_templates');
   public readonly isTaskQueueEnabled$ = this.isExperimentalFeatureEnabled$('task_queue');
+  public readonly isRunbooksEnabled$ = this.isExperimentalFeatureEnabled$('runbooks');
 
   isExperimentalFeatureEnabled$(key: ExperimentalFeatureFlagKey): Observable<boolean> {
     return this.getExperimentalFeatureFlags().pipe(

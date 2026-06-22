@@ -33,6 +33,7 @@ import {NotificationRecordsComponent} from './notification-records/notification-
 import {OrganizationBrandingComponent} from './organization-branding/organization-branding.component';
 import {OrganizationSettingsComponent} from './organization-settings/organization-settings.component';
 import {ReleaseBundlesComponent} from './release-bundles/release-bundles.component';
+import {RunbooksComponent} from './runbooks/runbooks.component';
 import {CustomerSecretsPageComponent} from './secrets/customer-secrets-page.component';
 import {SecretsPage} from './secrets/secrets-page.component';
 import {AuthService} from './services/auth.service';
@@ -259,6 +260,11 @@ export const routes: Routes = [
           experimentalFeatureEnabledGuard('deployment_processes'),
           experimentalFeatureEnabledGuard('step_templates'),
         ],
+      },
+      {
+        path: 'runbooks',
+        component: RunbooksComponent,
+        canActivate: [requireVendor, requiredRoleGuard('admin'), experimentalFeatureEnabledGuard('runbooks')],
       },
       {
         path: 'deployment-plans',

@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, scoped variable, deployment plan, and task queue feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, and runbook feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -70,6 +70,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isTaskQueueEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isRunbooksEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -109,6 +112,13 @@ describe('FeatureFlagService', () => {
         label: 'Task Queue',
         description: 'Create durable task records from deployment plans.',
         milestone: 'Milestone D',
+        enabled: true,
+      },
+      {
+        key: 'runbooks',
+        label: 'Runbooks',
+        description: 'Version operational workflows.',
+        milestone: 'Milestone F',
         enabled: true,
       },
     ]);
