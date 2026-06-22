@@ -664,6 +664,12 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "inspect" {
+		if path := os.Getenv("FAKE_DOCKER_CONTAINER_INSPECT_FILE"); path != "" {
+			if data, err := os.ReadFile(path); err == nil {
+				fmt.Fprint(os.Stdout, string(data))
+				os.Exit(0)
+			}
+		}
 		if inspect := os.Getenv("FAKE_DOCKER_EXISTING_INSPECT"); inspect != "" {
 			if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
 				if _, err := os.Stat(path); err == nil {
@@ -753,6 +759,12 @@ func TestDockerCommandHelper(t *testing.T) {
 		}
 		if path := os.Getenv("FAKE_DOCKER_CONTAINER_METADATA_FILE"); path != "" {
 			if err := writeFakeDockerContainerMetadata(path, dockerArgs); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
+		if path := os.Getenv("FAKE_DOCKER_CONTAINER_INSPECT_FILE"); path != "" {
+			if err := writeFakeDockerContainerInspect(path, dockerArgs); err != nil {
 				fmt.Fprint(os.Stderr, err.Error())
 				os.Exit(2)
 			}
@@ -920,4 +932,59 @@ func writeFakeDockerContainerMetadata(path string, dockerArgs []string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+func writeFakeDockerContainerInspect(path string, dockerArgs []string) error {
+	labels := map[string]string{}
+	mounts := []map[string]any{}
+	for i := 2; i < len(dockerArgs); i++ {
+		switch dockerArgs[i] {
+		case "--label":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --label value")
+			}
+			key, value, ok := strings.Cut(dockerArgs[i], "=")
+			if ok {
+				labels[key] = value
+			}
+		case "--volume":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --volume value")
+			}
+			bind := dockerArgs[i]
+			if source := fakeDockerSecretEnvSourceFromBind(bind); source != "" {
+				mounts = append(mounts, map[string]any{
+					"Source":      source,
+					"Destination": ociJobSecretEnvMountPath,
+				})
+			}
+		case "--name", "--network", "--security-opt", "--cap-drop", "--user", "--cpus", "--memory", "--entrypoint", "--env-file", "--log-driver":
+			i++
+		}
+	}
+	data, err := json.Marshal(map[string]any{
+		"State": map[string]any{
+			"Status":   "exited",
+			"Running":  false,
+			"ExitCode": 0,
+		},
+		"Mounts": mounts,
+		"Config": map[string]any{
+			"Labels": labels,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+func fakeDockerSecretEnvSourceFromBind(bind string) string {
+	suffix := ":" + ociJobSecretEnvMountPath + ":ro"
+	if strings.HasSuffix(bind, suffix) {
+		return strings.TrimSuffix(bind, suffix)
+	}
+	return ""
 }

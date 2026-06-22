@@ -375,6 +375,11 @@ func runOCIJob(
 	if updateStatus != nil {
 		updateStatus("starting OCI job container")
 	}
+	releaseContainerLock, err := acquireOCIJobContainerLock(ctx, containerName)
+	if err != nil {
+		return result, err
+	}
+	defer releaseContainerLock()
 	if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
 		return result, err
 	} else if exists {
@@ -411,6 +416,16 @@ func runOCIJob(
 	status := redactStringWithSecretValues(strings.TrimSpace(string(out)), secretValues)
 	result.Status = status
 	result.ExitCode = dockerCommandExitCode(runErr)
+	if runErr != nil && isOCIJobContainerNameConflict(status, containerName) {
+		if inspected, exists, err := inspectOCIJobContainer(ctx, containerName); err != nil {
+			return result, err
+		} else if exists {
+			if err := validateOCIJobContainerIdentity(inspected, identity); err != nil {
+				return result, err
+			}
+			return finishExistingOCIJobContainer(ctx, containerName, inspected, input.ExpectedExitCodes)
+		}
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if stopErr := stopOCIJobContainer(containerName); stopErr != nil {
 			cleanupSecretEnvOnReturn = false
@@ -457,6 +472,37 @@ func inspectOCIJobContainer(ctx context.Context, containerName string) (ociJobCo
 	return inspected, true, nil
 }
 
+func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func(), error) {
+	root := ociJobContainerLockRoot()
+	lockDir := filepath.Join(root, "distr-oci-job-lock-"+containerName)
+	for {
+		err := os.Mkdir(lockDir, 0o700)
+		if err == nil {
+			return func() { _ = os.Remove(lockDir) }, nil
+		}
+		if !os.IsExist(err) {
+			return nil, fmt.Errorf("reserve OCI job container: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("OCI job timed out")
+			}
+			return nil, fmt.Errorf("OCI job canceled")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func ociJobContainerLockRoot() string {
+	if stagingDir := strings.TrimSpace(os.Getenv(ociJobSecretStagingDirEnv)); stagingDir != "" {
+		if root, err := resolveOCIJobMountPath(stagingDir, ociJobSecretStagingDirEnv); err == nil {
+			return root
+		}
+	}
+	return os.TempDir()
+}
+
 func validateOCIJobContainerIdentity(inspected ociJobContainerInspect, identity ociJobOperationIdentity) error {
 	labels := inspected.Config.Labels
 	expected := ociJobExpectedLabels(identity)
@@ -466,6 +512,11 @@ func validateOCIJobContainerIdentity(inspected ociJobContainerInspect, identity 
 		}
 	}
 	return nil
+}
+
+func isOCIJobContainerNameConflict(output, containerName string) bool {
+	output = strings.ToLower(output)
+	return strings.Contains(output, "conflict") && strings.Contains(output, strings.ToLower(containerName))
 }
 
 func finishExistingOCIJobContainer(

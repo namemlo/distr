@@ -428,6 +428,52 @@ func TestExecuteOCIJobStepDoesNotDeleteConcurrentSecretStaging(t *testing.T) {
 	g.Expect(fakeDockerCommandCount(readFakeDockerCommands(t, argsFile), "run")).To(Equal(2))
 }
 
+func TestExecuteOCIJobStepSerializesSameOperationRace(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	ctx := context.Background()
+	argsFile := filepath.Join(t.TempDir(), "docker-commands.jsonl")
+	inspectFile := filepath.Join(t.TempDir(), "container-inspect.json")
+	t.Setenv("GO_WANT_DOCKER_COMMAND_HELPER", "1")
+	t.Setenv("DISTR_AGENT_VERSION_ID", uuid.NewString())
+	t.Setenv("FAKE_DOCKER_COMMAND_ARGS_FILE", argsFile)
+	t.Setenv("FAKE_DOCKER_CONTAINER_INSPECT_FILE", inspectFile)
+	t.Setenv("FAKE_DOCKER_RUN_OUTPUT", "job completed")
+	t.Setenv("FAKE_DOCKER_RUN_SLEEP_MS", "500")
+	t.Setenv("FAKE_DOCKER_VERIFY_SECRET_FILE_AFTER_SLEEP", "1")
+	oldExecCommandContext := execCommandContext
+	execCommandContext = fakeDockerCommandContext
+	t.Cleanup(func() { execCommandContext = oldExecCommandContext })
+	inputs := validOCIJobInputs()
+	inputs["secretEnvironment"] = map[string]any{"API_TOKEN": "same-operation-secret"}
+	lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:        uuid.New(),
+		Key:              "cleanup",
+		ActionType:       ociJobActionType,
+		ActionVersion:    types.AgentActionVersionV1,
+		Inputs:           inputs,
+		SecretReferences: []string{"secret:job_api_token"},
+		IdempotencyKey:   "sha256:job-key",
+	}
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- executeOCIJobStep(ctx, lease, step, &recordingLeasedTaskClient{})
+	}()
+	go func() {
+		errCh <- executeOCIJobStep(ctx, lease, step, &recordingLeasedTaskClient{})
+	}()
+
+	errA := <-errCh
+	errB := <-errCh
+
+	g.Expect(errA).ToNot(HaveOccurred())
+	g.Expect(errB).ToNot(HaveOccurred())
+	commands := readFakeDockerCommands(t, argsFile)
+	g.Expect(fakeDockerCommandCount(commands, "run")).To(Equal(1))
+	g.Expect(findFakeDockerCommand(commands, "inspect")).NotTo(BeNil())
+}
+
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
 	tests := []struct {
 		name  string
