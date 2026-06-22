@@ -808,3 +808,18 @@ Use one entry per pull request:
 - Tests: Dashboard tests cover static correlation metadata and immutable copies. Handler tests cover base responses, enriched metadata, and deterministic output.
 - Upstream contribution notes: Community-neutral API metadata layer; no dashboard UI, Grafana API integration, alerting, log correlation, storage, metrics changes, or tracing changes.
 - Compatibility notes: Existing dashboards, metrics, tracing, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.
+
+### PR-047d - Observability documentation pack
+
+- Status: Implemented locally; observability reference guide, examples, Grafana static integration guide, feature flag matrix, and fork notes completed.
+- Upstream base: `a1143ec3`
+- Feature flag: None added. Documents existing `observability_metrics`, `observability_tracing`, `observability_dashboards`, and `observability_correlation` flags.
+- User-facing behavior: None. Documentation only.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added `docs/observability/` reference pages and PR-047d notes.
+- Tests: Markdown formatting, local markdown link validation, docs-only diff check, and whitespace check.
+- Upstream contribution notes: Community-neutral documentation for the observability suite; no runtime behavior, Grafana provisioning, dashboard UI, alerting, log correlation, or storage changes.
+- Compatibility notes: Existing dashboards, metrics, tracing, correlation, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.
