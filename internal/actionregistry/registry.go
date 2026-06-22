@@ -16,7 +16,7 @@ type Registry struct {
 
 var defaultRegistry = mustBuildRegistry(defaultActions())
 
-const webhookBuiltInOutputCount = 4
+const webhookBuiltInOutputCount = 7
 
 func DefaultRegistry() Registry {
 	return defaultRegistry
@@ -483,8 +483,23 @@ func defaultActions() []types.ActionDefinition {
 					"attempts":           map[string]any{"type": "integer", "minimum": 1},
 					"signingKeyVersion":  map[string]any{"type": "integer", "minimum": 1},
 					"keyRotationApplied": map[string]any{"type": "boolean"},
+					"auditChainRoot":     map[string]any{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+					"auditEventHash":     map[string]any{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+					"auditTrail": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"events": map[string]any{
+								"type": "array",
+								"items": map[string]any{
+									"type": "object",
+								},
+							},
+						},
+						"required":             []any{"events"},
+						"additionalProperties": false,
+					},
 				},
-				[]any{"statusCode", "attempts", "signingKeyVersion", "keyRotationApplied"},
+				[]any{"statusCode", "attempts", "signingKeyVersion", "keyRotationApplied", "auditChainRoot", "auditEventHash", "auditTrail"},
 			),
 		},
 	}
@@ -566,7 +581,7 @@ func validateWebhookRegistryInput(input map[string]any) error {
 
 func isWebhookReservedOutputName(name string) bool {
 	switch name {
-	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied":
+	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied", "auditChainRoot", "auditEventHash", "auditTrail":
 		return true
 	default:
 		return false

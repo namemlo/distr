@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-033 are implemented locally. PR-033 tightens Docker-agent `distr.webhook` replay and signing boundaries with organization and agent lease context, lease-scoped hidden timeline reads, tenant-bound HMAC metadata, and replay rejection for cross-tenant or cross-agent history.
+PR-000 through PR-034 are implemented locally. PR-034 adds deterministic webhook audit trail outputs, chained audit hashes, and strict replay verification for tamper-detectable stored webhook success history without a database schema migration.
 
 ## Tracking Template
 
@@ -538,3 +538,18 @@ Use one entry per pull request:
 - Tests: Added Docker-agent tenant-bound signature and replay boundary tests plus agent client `leaseId` timeline coverage.
 - Upstream contribution notes: Community-neutral webhook authorization-boundary hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing webhook input shape and output names are unchanged. Existing public task timeline reads remain unchanged. Older agent clients without `leaseId` cannot use the hidden agent replay timeline until refreshed, but agents without `DISTR_TASK_TIMELINE_ENDPOINT_TEMPLATE` continue to run without replay preflight as before.
+
+### PR-034 - Webhook audit trail
+
+- Status: Implemented locally; deterministic audit export, chained audit hashes, strict replay verification, redaction-boundary tests, action registry schema updates, documentation, and ADR completed.
+- Upstream base: `c5f7f13f`
+- Feature flag: Adds no new flag. Strict stored-history replay verification is controlled by `STRICT_REPLAY_VERIFY=true`.
+- User-facing behavior: Webhook actions keep the same configured inputs and declared outputs, but successful executions now emit reserved non-secret audit outputs for forensic replay integrity.
+- Database changes: None. Reuses existing StepRunEvent and StepRunOutput storage.
+- API changes: None. The action registry output schema now includes reserved `auditChainRoot`, `auditEventHash`, and `auditTrail` outputs for `distr.webhook`.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-034.
+- Agent protocol changes: Docker agents record deterministic webhook audit events for target resolution, each HTTP attempt, and final completion. Replay verifies stored audit chains when present and fails closed for missing audit outputs when `STRICT_REPLAY_VERIFY=true`.
+- Documentation: Added PR-034 notes and ADR-0034.
+- Tests: Added `TestWebhookActionAuditTrailIntegritySuite` plus reserved audit-output validation coverage.
+- Upstream contribution notes: Community-neutral webhook observability and replay-integrity hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing webhook inputs remain valid. Existing PR-031/PR-032 stored successes without audit outputs remain replayable unless strict replay verification is explicitly enabled.

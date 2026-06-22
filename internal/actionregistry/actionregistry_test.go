@@ -332,6 +332,16 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			want: "reserved",
 		},
 		{
+			name:       "webhook rejects reserved audit output name",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"signingSecret":"webhook_signing_key",
+				"outputs":[{"name":"auditTrail","pointer":"/audit","type":"object"}]
+			}`),
+			want: "reserved",
+		},
+		{
 			name:       "webhook rejects invalid retry policy",
 			actionType: "distr.webhook",
 			input: jsonObject(t, `{

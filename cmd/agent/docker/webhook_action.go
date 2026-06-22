@@ -27,6 +27,7 @@ import (
 const (
 	webhookAllowedHostsEnv        = "DISTR_WEBHOOK_ALLOWED_HOSTS"
 	webhookAllowedPrivateHostsEnv = "DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS"
+	webhookStrictReplayVerifyEnv  = "STRICT_REPLAY_VERIFY"
 	webhookMaxRequestBodyBytes    = 64 * 1024
 	webhookMaxResponseBodyBytes   = 64 * 1024
 	webhookMaxResponseHeaderBytes = 16 * 1024
@@ -35,7 +36,7 @@ const (
 	webhookConnectTimeout         = 10 * time.Second
 	webhookTLSHandshakeTimeout    = 10 * time.Second
 	webhookResponseHeaderTimeout  = 10 * time.Second
-	webhookBuiltInOutputCount     = 4
+	webhookBuiltInOutputCount     = 7
 	webhookMaxSigningSecrets      = 8
 )
 
@@ -63,6 +64,9 @@ type webhookActionInput struct {
 	IdempotencyKey      string                     `json:"idempotencyKey"`
 	Outputs             []webhookOutputDeclaration `json:"outputs"`
 	TenantID            uuid.UUID                  `json:"-"`
+	LeaseID             uuid.UUID                  `json:"-"`
+	TaskID              uuid.UUID                  `json:"-"`
+	StepRunID           uuid.UUID                  `json:"-"`
 }
 
 type webhookRetryPolicy struct {
@@ -97,6 +101,7 @@ type webhookRunResult struct {
 	KeyRotationApplied bool
 	Outputs            []api.AgentStepRunOutputRequest
 	RedactionValues    []string
+	AuditTrail         webhookAuditExport
 }
 
 type webhookSigningConfig struct {
@@ -111,6 +116,34 @@ type webhookAttemptMetric struct {
 	StatusCode int
 	Duration   time.Duration
 	Failed     bool
+}
+
+type webhookAuditExport struct {
+	Events []webhookAuditEvent `json:"events"`
+}
+
+type webhookAuditEvent struct {
+	AuditEventID       string                  `json:"auditEventId"`
+	ParentAuditEventID string                  `json:"parentAuditEventId,omitempty"`
+	EventHash          string                  `json:"eventHash"`
+	EventType          string                  `json:"eventType"`
+	TenantID           string                  `json:"tenantId,omitempty"`
+	LeaseID            string                  `json:"leaseId,omitempty"`
+	TaskID             string                  `json:"taskId,omitempty"`
+	StepRunID          string                  `json:"stepRunId,omitempty"`
+	Attempt            int                     `json:"attempt,omitempty"`
+	StatusCode         int                     `json:"statusCode,omitempty"`
+	RetryReason        string                  `json:"retryReason,omitempty"`
+	DNS                *webhookAuditDNSSummary `json:"dns,omitempty"`
+	SigningKeyVersion  int                     `json:"signingKeyVersion,omitempty"`
+	KeyRotationApplied *bool                   `json:"keyRotationApplied,omitempty"`
+}
+
+type webhookAuditDNSSummary struct {
+	Host                 string `json:"host"`
+	Port                 string `json:"port"`
+	ResolvedAddressCount int    `json:"resolvedAddressCount"`
+	PrivateHostAllowed   bool   `json:"privateHostAllowed"`
 }
 
 func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error) {
@@ -234,6 +267,9 @@ func executeWebhookStep(
 		return recordFailure(err)
 	}
 	input.TenantID = lease.OrganizationID
+	input.LeaseID = lease.ID
+	input.TaskID = lease.TaskID
+	input.StepRunID = step.StepRunID
 	if input.IdempotencyKey == "" {
 		input.IdempotencyKey = strings.TrimSpace(step.IdempotencyKey)
 	}
@@ -263,6 +299,7 @@ func executeWebhookStep(
 		{Name: "signingKeyVersion", Value: result.SigningKeyVersion},
 		{Name: "keyRotationApplied", Value: result.KeyRotationApplied},
 	}
+	outputs = append(outputs, webhookAuditOutputRequests(result.AuditTrail)...)
 	outputs = append(outputs, result.Outputs...)
 	sequence++
 	return recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeSucceeded, "Webhook succeeded", nil, outputs, secretValues...)
@@ -350,11 +387,15 @@ func webhookReplayResultFromTimelineForLease(
 	result := webhookRunResult{}
 	hasStatusCode := false
 	hasAttempts := false
+	var auditChainRoot string
+	var auditEventHash string
+	hasAuditTrail := false
 	for _, output := range success.Outputs {
 		value, err := webhookStoredOutputValue(output.Value)
 		if err != nil {
 			return webhookRunResult{}, false, err
 		}
+		var ok bool
 		switch output.Name {
 		case "statusCode":
 			statusCode, ok := webhookStoredIntOutput(value)
@@ -382,6 +423,21 @@ func webhookReplayResultFromTimelineForLease(
 				return webhookRunResult{}, false, fmt.Errorf("stored webhook keyRotationApplied output is invalid")
 			}
 			result.KeyRotationApplied = keyRotationApplied
+		case "auditChainRoot":
+			auditChainRoot, ok = webhookStoredStringOutput(value)
+			if !ok {
+				return webhookRunResult{}, false, fmt.Errorf("stored webhook auditChainRoot output is invalid")
+			}
+		case "auditEventHash":
+			auditEventHash, ok = webhookStoredStringOutput(value)
+			if !ok {
+				return webhookRunResult{}, false, fmt.Errorf("stored webhook auditEventHash output is invalid")
+			}
+		case "auditTrail":
+			if err := webhookDecodeStoredOutput(output.Value, &result.AuditTrail); err != nil {
+				return webhookRunResult{}, false, fmt.Errorf("stored webhook auditTrail output is invalid: %w", err)
+			}
+			hasAuditTrail = true
 		default:
 			result.Outputs = append(result.Outputs, api.AgentStepRunOutputRequest{
 				Name:      output.Name,
@@ -392,6 +448,13 @@ func webhookReplayResultFromTimelineForLease(
 	}
 	if !hasStatusCode || !hasAttempts {
 		return webhookRunResult{}, false, fmt.Errorf("stored webhook success is missing built-in outputs")
+	}
+	if hasAuditTrail {
+		if err := webhookVerifyAuditTrail(result.AuditTrail, auditChainRoot, auditEventHash, result); err != nil {
+			return webhookRunResult{}, false, err
+		}
+	} else if webhookStrictReplayVerifyEnabled() {
+		return webhookRunResult{}, false, fmt.Errorf("stored webhook audit trail is missing")
 	}
 	return result, true, nil
 }
@@ -432,6 +495,186 @@ func webhookStoredBoolOutput(value any) (bool, bool) {
 	return typed, ok
 }
 
+func webhookStoredStringOutput(value any) (string, bool) {
+	typed, ok := value.(string)
+	return typed, ok
+}
+
+func webhookDecodeStoredOutput(raw json.RawMessage, target any) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("empty output")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	return decoder.Decode(target)
+}
+
+func webhookNewAuditTrail(input webhookActionInput, first webhookAuditEvent) (webhookAuditExport, error) {
+	return webhookAppendAuditEvent(webhookAuditExport{}, input, first)
+}
+
+func webhookAppendAttemptAudit(
+	audit webhookAuditExport,
+	input webhookActionInput,
+	attempt int,
+	statusCode int,
+	retryReason string,
+) webhookAuditExport {
+	next, err := webhookAppendAuditEvent(audit, input, webhookAuditEvent{
+		EventType:   "attempt",
+		Attempt:     attempt,
+		StatusCode:  statusCode,
+		RetryReason: retryReason,
+	})
+	if err != nil {
+		return audit
+	}
+	return next
+}
+
+func webhookAppendCompletedAudit(
+	audit webhookAuditExport,
+	input webhookActionInput,
+	statusCode int,
+	attempts int,
+	signingConfig webhookSigningConfig,
+) webhookAuditExport {
+	keyRotationApplied := signingConfig.KeyRotationApplied
+	next, err := webhookAppendAuditEvent(audit, input, webhookAuditEvent{
+		EventType:          "completed",
+		Attempt:            attempts,
+		StatusCode:         statusCode,
+		SigningKeyVersion:  signingConfig.ActiveVersion,
+		KeyRotationApplied: &keyRotationApplied,
+	})
+	if err != nil {
+		return audit
+	}
+	return next
+}
+
+func webhookAppendAuditEvent(audit webhookAuditExport, input webhookActionInput, event webhookAuditEvent) (webhookAuditExport, error) {
+	event.TenantID = webhookUUIDString(input.TenantID)
+	event.LeaseID = webhookUUIDString(input.LeaseID)
+	event.TaskID = webhookUUIDString(input.TaskID)
+	event.StepRunID = webhookUUIDString(input.StepRunID)
+	if len(audit.Events) > 0 {
+		event.ParentAuditEventID = audit.Events[len(audit.Events)-1].EventHash
+	}
+	hash, err := webhookAuditEventHash(event)
+	if err != nil {
+		return audit, err
+	}
+	event.EventHash = hash
+	event.AuditEventID = hash
+	audit.Events = append(audit.Events, event)
+	return audit, nil
+}
+
+func webhookAuditOutputRequests(audit webhookAuditExport) []api.AgentStepRunOutputRequest {
+	if len(audit.Events) == 0 {
+		return nil
+	}
+	return []api.AgentStepRunOutputRequest{
+		{Name: "auditChainRoot", Value: audit.Events[0].EventHash},
+		{Name: "auditEventHash", Value: audit.Events[len(audit.Events)-1].EventHash},
+		{Name: "auditTrail", Value: audit},
+	}
+}
+
+func webhookVerifyAuditTrail(audit webhookAuditExport, rootHash, finalHash string, result webhookRunResult) error {
+	if len(audit.Events) == 0 {
+		return fmt.Errorf("stored webhook audit trail is empty")
+	}
+	if rootHash == "" {
+		return fmt.Errorf("stored webhook auditChainRoot output is missing")
+	}
+	if finalHash == "" {
+		return fmt.Errorf("stored webhook auditEventHash output is missing")
+	}
+	for i := range audit.Events {
+		event := audit.Events[i]
+		if i == 0 {
+			if event.ParentAuditEventID != "" {
+				return fmt.Errorf("stored webhook audit trail parent mismatch")
+			}
+		} else if event.ParentAuditEventID != audit.Events[i-1].EventHash {
+			return fmt.Errorf("stored webhook audit trail parent mismatch")
+		}
+		expectedHash, err := webhookAuditEventHash(event)
+		if err != nil {
+			return err
+		}
+		if event.EventHash != expectedHash || event.AuditEventID != expectedHash {
+			return fmt.Errorf("stored webhook audit trail hash mismatch")
+		}
+	}
+	if rootHash != "" && rootHash != audit.Events[0].EventHash {
+		return fmt.Errorf("stored webhook audit trail root mismatch")
+	}
+	if finalHash != "" && finalHash != audit.Events[len(audit.Events)-1].EventHash {
+		return fmt.Errorf("stored webhook audit trail final hash mismatch")
+	}
+	final := audit.Events[len(audit.Events)-1]
+	if final.EventType != "completed" {
+		return fmt.Errorf("stored webhook audit trail is incomplete")
+	}
+	if final.StatusCode != result.StatusCode || final.Attempt != result.Attempts {
+		return fmt.Errorf("stored webhook audit trail does not match success outputs")
+	}
+	if final.SigningKeyVersion != 0 && result.SigningKeyVersion != 0 && final.SigningKeyVersion != result.SigningKeyVersion {
+		return fmt.Errorf("stored webhook audit trail does not match signing key version")
+	}
+	return nil
+}
+
+func webhookAuditEventHash(event webhookAuditEvent) (string, error) {
+	payload := struct {
+		ParentAuditEventID string                  `json:"parentAuditEventId,omitempty"`
+		EventType          string                  `json:"eventType"`
+		TenantID           string                  `json:"tenantId,omitempty"`
+		LeaseID            string                  `json:"leaseId,omitempty"`
+		TaskID             string                  `json:"taskId,omitempty"`
+		StepRunID          string                  `json:"stepRunId,omitempty"`
+		Attempt            int                     `json:"attempt,omitempty"`
+		StatusCode         int                     `json:"statusCode,omitempty"`
+		RetryReason        string                  `json:"retryReason,omitempty"`
+		DNS                *webhookAuditDNSSummary `json:"dns,omitempty"`
+		SigningKeyVersion  int                     `json:"signingKeyVersion,omitempty"`
+		KeyRotationApplied *bool                   `json:"keyRotationApplied,omitempty"`
+	}{
+		ParentAuditEventID: event.ParentAuditEventID,
+		EventType:          event.EventType,
+		TenantID:           event.TenantID,
+		LeaseID:            event.LeaseID,
+		TaskID:             event.TaskID,
+		StepRunID:          event.StepRunID,
+		Attempt:            event.Attempt,
+		StatusCode:         event.StatusCode,
+		RetryReason:        event.RetryReason,
+		DNS:                event.DNS,
+		SigningKeyVersion:  event.SigningKeyVersion,
+		KeyRotationApplied: event.KeyRotationApplied,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("webhook audit event must be valid JSON: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func webhookUUIDString(id uuid.UUID) string {
+	if id == uuid.Nil {
+		return ""
+	}
+	return id.String()
+}
+
+func webhookStrictReplayVerifyEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(webhookStrictReplayVerifyEnv)), "true")
+}
+
 func runWebhookAction(
 	ctx context.Context,
 	input webhookActionInput,
@@ -452,6 +695,18 @@ func runWebhookAction(
 		return webhookRunResult{}, err
 	}
 	resolvedTarget, err := resolveWebhookTarget(runCtx, endpoint, policy)
+	if err != nil {
+		return webhookRunResult{}, err
+	}
+	auditTrail, err := webhookNewAuditTrail(input, webhookAuditEvent{
+		EventType: "resolvedTarget",
+		DNS: &webhookAuditDNSSummary{
+			Host:                 normalizeWebhookHost(endpoint.Hostname()),
+			Port:                 resolvedTarget.port,
+			ResolvedAddressCount: len(resolvedTarget.ips),
+			PrivateHostAllowed:   policy.isPrivateHostAllowed(endpoint.Host, endpoint.Hostname()),
+		},
+	})
 	if err != nil {
 		return webhookRunResult{}, err
 	}
@@ -477,6 +732,7 @@ func runWebhookAction(
 			KeyRotationApplied: signingConfig.KeyRotationApplied,
 			Outputs:            outputs,
 			RedactionValues:    []string{signature},
+			AuditTrail:         auditTrail,
 		}
 	}
 	client := newWebhookHTTPClient(policy, resolvedTarget)
@@ -507,27 +763,33 @@ func runWebhookAction(
 		lastStatus = statusCode
 		if err != nil {
 			if runCtx.Err() != nil {
+				auditTrail = webhookAppendAttemptAudit(auditTrail, input, attempt, statusCode, "context canceled")
 				return resultFor(lastStatus, attempt, nil), webhookContextError(runCtx, "webhook")
 			}
 			if isRetryableWebhookAttemptError(statusCode, err) && attempt < maxAttempts {
+				auditTrail = webhookAppendAttemptAudit(auditTrail, input, attempt, statusCode, "retryable transport error")
 				if err := sleepWebhookBackoff(runCtx, input.Retry.BackoffSeconds); err != nil {
 					return resultFor(lastStatus, attempt, nil), err
 				}
 				continue
 			}
+			auditTrail = webhookAppendAttemptAudit(auditTrail, input, attempt, statusCode, "")
 			return resultFor(lastStatus, attempt, nil), err
 		}
 		if _, ok := retryableStatuses[statusCode]; ok && attempt < maxAttempts {
+			auditTrail = webhookAppendAttemptAudit(auditTrail, input, attempt, statusCode, fmt.Sprintf("retryable status %d", statusCode))
 			if err := sleepWebhookBackoff(runCtx, input.Retry.BackoffSeconds); err != nil {
 				return resultFor(statusCode, attempt, nil), err
 			}
 			continue
 		}
+		auditTrail = webhookAppendAttemptAudit(auditTrail, input, attempt, statusCode, "")
 		if _, ok := expectedStatuses[statusCode]; ok {
 			outputs, err := extractWebhookDeclaredOutputs(responseBody, input.Outputs)
 			if err != nil {
 				return resultFor(statusCode, attempt, nil), err
 			}
+			auditTrail = webhookAppendCompletedAudit(auditTrail, input, statusCode, attempt, signingConfig)
 			return resultFor(statusCode, attempt, outputs), nil
 		}
 		return resultFor(statusCode, attempt, nil), fmt.Errorf("webhook returned unexpected status %d", statusCode)
@@ -1091,7 +1353,7 @@ func validateWebhookOutputs(outputs []webhookOutputDeclaration) error {
 
 func isReservedWebhookOutputName(name string) bool {
 	switch name {
-	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied":
+	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied", "auditChainRoot", "auditEventHash", "auditTrail":
 		return true
 	default:
 		return false

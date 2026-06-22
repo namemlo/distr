@@ -140,6 +140,18 @@ func TestWebhookActionInputRejectsUnsafeTargetsAndPlaintextHeaders(t *testing.T)
 			message: "outputs name attempts is reserved",
 		},
 		{
+			name: "reserved auditTrail output name",
+			setup: func(t *testing.T) {
+				t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+			},
+			mutate: func(inputs map[string]any) {
+				inputs["outputs"] = []any{
+					map[string]any{"name": "auditTrail", "pointer": "/audit", "type": "object"},
+				}
+			},
+			message: "outputs name auditTrail is reserved",
+		},
+		{
 			name: "too many declared outputs",
 			setup: func(t *testing.T) {
 				t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
@@ -1948,6 +1960,137 @@ func TestWebhookActionIdempotentReplaySuite(t *testing.T) {
 	})
 }
 
+func TestWebhookActionAuditTrailIntegritySuite(t *testing.T) {
+	t.Run("deterministic audit chain across retries without secret leakage", func(t *testing.T) {
+		g := NewWithT(t)
+		const signingSecret = "signing-secret-value"
+		const headerSecret = "Bearer secret-token"
+		orgID := uuid.New()
+		leaseID := uuid.New()
+		var requests int32
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if atomic.AddInt32(&requests, 1) == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"retry":true}`))
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"remote-123"}`))
+		}))
+		defer server.Close()
+		setWebhookPolicyEnvForURL(t, server.URL)
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = server.Client()
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		inputs := validWebhookInputs()
+		inputs["url"] = server.URL + "/deployments"
+		inputs["secretHeaders"] = map[string]any{"Authorization": headerSecret}
+		inputs["signingSecret"] = signingSecret
+		inputs["retry"] = map[string]any{
+			"maxAttempts":          2,
+			"backoffSeconds":       0,
+			"retryableStatusCodes": []any{503},
+		}
+		inputs["expectedStatusCodes"] = []any{202}
+		inputs["body"] = map[string]any{"deploymentId": "dep-123", "secret": "body-secret"}
+		lease := api.AgentTaskLease{ID: leaseID, OrganizationID: orgID, AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        inputs,
+		}
+		recorder := &webhookReplayLeasedTaskClient{}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(2)))
+		succeeded := recorder.events[len(recorder.events)-1]
+		var auditExport struct {
+			Events []struct {
+				AuditEventID       string `json:"auditEventId"`
+				ParentAuditEventID string `json:"parentAuditEventId,omitempty"`
+				EventHash          string `json:"eventHash"`
+				EventType          string `json:"eventType"`
+				TenantID           string `json:"tenantId"`
+				LeaseID            string `json:"leaseId"`
+				Attempt            int    `json:"attempt,omitempty"`
+				StatusCode         int    `json:"statusCode,omitempty"`
+				RetryReason        string `json:"retryReason,omitempty"`
+			} `json:"events"`
+		}
+		decodeAgentOutput(t, succeeded.Outputs, "auditTrail", &auditExport)
+		g.Expect(auditExport.Events).To(HaveLen(4))
+		g.Expect(agentOutputValue(t, succeeded.Outputs, "auditChainRoot")).To(Equal(auditExport.Events[0].EventHash))
+		g.Expect(agentOutputValue(t, succeeded.Outputs, "auditEventHash")).To(Equal(auditExport.Events[len(auditExport.Events)-1].EventHash))
+		for i, event := range auditExport.Events {
+			g.Expect(event.AuditEventID).NotTo(BeEmpty())
+			g.Expect(event.EventHash).To(Equal(event.AuditEventID))
+			g.Expect(event.TenantID).To(Equal(orgID.String()))
+			g.Expect(event.LeaseID).To(Equal(leaseID.String()))
+			if i == 0 {
+				g.Expect(event.ParentAuditEventID).To(BeEmpty())
+			} else {
+				g.Expect(event.ParentAuditEventID).To(Equal(auditExport.Events[i-1].EventHash))
+			}
+		}
+		g.Expect(auditExport.Events[1].EventType).To(Equal("attempt"))
+		g.Expect(auditExport.Events[1].Attempt).To(Equal(1))
+		g.Expect(auditExport.Events[1].StatusCode).To(Equal(http.StatusServiceUnavailable))
+		g.Expect(auditExport.Events[1].RetryReason).To(Equal("retryable status 503"))
+		g.Expect(auditExport.Events[2].EventType).To(Equal("attempt"))
+		g.Expect(auditExport.Events[2].Attempt).To(Equal(2))
+		g.Expect(auditExport.Events[2].StatusCode).To(Equal(http.StatusAccepted))
+		auditJSON := agentOutputJSON(t, succeeded.Outputs, "auditTrail")
+		g.Expect(auditJSON).NotTo(ContainSubstring(signingSecret))
+		g.Expect(auditJSON).NotTo(ContainSubstring(headerSecret))
+		g.Expect(auditJSON).NotTo(ContainSubstring("body-secret"))
+	})
+
+	t.Run("strict replay rejects tampered audit chain before network", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv("STRICT_REPLAY_VERIFY", "true")
+		var requests int32
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&requests, 1)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"remote-123"}`))
+		}))
+		defer server.Close()
+		setWebhookPolicyEnvForURL(t, server.URL)
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = server.Client()
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		inputs := validWebhookInputs()
+		inputs["url"] = server.URL + "/deployments"
+		inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+		inputs["signingSecret"] = "signing-secret-value"
+		inputs["expectedStatusCodes"] = []any{202}
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        inputs,
+		}
+		recorder := &webhookReplayLeasedTaskClient{}
+		g.Expect(executeWebhookStep(context.Background(), lease, step, recorder)).To(Succeed())
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+		tamperedTimeline := recorder.timeline
+		tamperStoredAuditTrailStatus(t, &tamperedTimeline, http.StatusInternalServerError)
+		replayClient := &webhookReplayLeasedTaskClient{timeline: tamperedTimeline}
+
+		err := executeWebhookStep(context.Background(), lease, step, replayClient)
+
+		g.Expect(err).To(MatchError(ContainSubstring("stored webhook audit trail hash mismatch")))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+		g.Expect(replayClient.events).To(BeEmpty())
+	})
+}
+
 func TestExecuteTaskLeaseHeartbeatsAndRunsWebhookStep(t *testing.T) {
 	g := NewWithT(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -2196,6 +2339,69 @@ func apiOutputsFromAgentRequests(outputs []api.AgentStepRunOutputRequest) []api.
 		})
 	}
 	return values
+}
+
+func agentOutputValue(t *testing.T, outputs []api.AgentStepRunOutputRequest, name string) any {
+	t.Helper()
+	for _, output := range outputs {
+		if output.Name == name {
+			return output.Value
+		}
+	}
+	t.Fatalf("output %q not found in %#v", name, outputs)
+	return nil
+}
+
+func decodeAgentOutput(t *testing.T, outputs []api.AgentStepRunOutputRequest, name string, target any) {
+	t.Helper()
+	data := []byte(agentOutputJSON(t, outputs, name))
+	if err := json.Unmarshal(data, target); err != nil {
+		t.Fatalf("decode output %q: %v; payload=%s", name, err, string(data))
+	}
+}
+
+func agentOutputJSON(t *testing.T, outputs []api.AgentStepRunOutputRequest, name string) string {
+	t.Helper()
+	data, err := json.Marshal(agentOutputValue(t, outputs, name))
+	if err != nil {
+		t.Fatalf("marshal output %q: %v", name, err)
+	}
+	return string(data)
+}
+
+func tamperStoredAuditTrailStatus(t *testing.T, timeline *api.TaskTimeline, statusCode int) {
+	t.Helper()
+	for eventIndex := range timeline.Events {
+		event := &timeline.Events[eventIndex]
+		if event.Type != types.StepRunEventTypeSucceeded {
+			continue
+		}
+		for outputIndex := range event.Outputs {
+			output := &event.Outputs[outputIndex]
+			if output.Name != "auditTrail" {
+				continue
+			}
+			var audit map[string]any
+			if err := json.Unmarshal(output.Value, &audit); err != nil {
+				t.Fatalf("decode stored auditTrail: %v", err)
+			}
+			events, ok := audit["events"].([]any)
+			if !ok || len(events) == 0 {
+				t.Fatalf("stored auditTrail has no events: %#v", audit)
+			}
+			for _, rawEvent := range events {
+				entry, ok := rawEvent.(map[string]any)
+				if !ok || entry["eventType"] != "attempt" {
+					continue
+				}
+				entry["statusCode"] = statusCode
+				output.Value = rawJSONValue(audit)
+				return
+			}
+			t.Fatalf("stored auditTrail has no attempt event: %#v", audit)
+		}
+	}
+	t.Fatalf("stored auditTrail output not found")
 }
 
 func rawJSONValue(value any) json.RawMessage {
