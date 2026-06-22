@@ -34,6 +34,8 @@ const (
 
 var webhookNow = time.Now
 var webhookHTTPClientForTest *http.Client
+var webhookLookupIPAddr = net.DefaultResolver.LookupIPAddr
+var webhookDialContext = (&net.Dialer{}).DialContext
 var webhookUnsafeIPPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
 }
@@ -70,6 +72,12 @@ type webhookOutputDeclaration struct {
 type webhookOutboundPolicy struct {
 	allowedHosts        map[string]struct{}
 	allowedPrivateHosts map[string]struct{}
+}
+
+type webhookResolvedTarget struct {
+	host string
+	port string
+	ips  []net.IPAddr
 }
 
 type webhookRunResult struct {
@@ -237,6 +245,10 @@ func runWebhookAction(
 	if err != nil {
 		return webhookRunResult{}, err
 	}
+	resolvedTarget, err := resolveWebhookTarget(ctx, endpoint, policy)
+	if err != nil {
+		return webhookRunResult{}, err
+	}
 	body, err := webhookRequestBodyBytes(input.Body)
 	if err != nil {
 		return webhookRunResult{}, err
@@ -255,7 +267,7 @@ func runWebhookAction(
 			RedactionValues: []string{signature},
 		}
 	}
-	client := newWebhookHTTPClient(policy)
+	client := newWebhookHTTPClient(policy, resolvedTarget)
 	expectedStatuses := intSet(input.ExpectedStatusCodes)
 	retryableStatuses := intSet(input.Retry.RetryableStatusCodes)
 	maxAttempts := input.Retry.MaxAttempts
@@ -310,6 +322,10 @@ func isRetryableWebhookAttemptError(statusCode int, err error) bool {
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return false
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
@@ -408,7 +424,53 @@ func validateWebhookTargetURL(rawURL string, policy webhookOutboundPolicy) (*url
 	return endpoint, nil
 }
 
-func newWebhookHTTPClient(policy webhookOutboundPolicy) *http.Client {
+func resolveWebhookTarget(ctx context.Context, endpoint *url.URL, policy webhookOutboundPolicy) (webhookResolvedTarget, error) {
+	port := endpoint.Port()
+	if port == "" {
+		port = defaultWebhookPort(endpoint.Scheme)
+	}
+	ips, err := lookupWebhookTargetIPs(ctx, endpoint.Host, endpoint.Hostname(), policy)
+	if err != nil {
+		return webhookResolvedTarget{}, err
+	}
+	return webhookResolvedTarget{
+		host: normalizeWebhookHost(endpoint.Hostname()),
+		port: port,
+		ips:  ips,
+	}, nil
+}
+
+func defaultWebhookPort(scheme string) string {
+	if scheme == "https" {
+		return "443"
+	}
+	return ""
+}
+
+func lookupWebhookTargetIPs(ctx context.Context, hostPort, host string, policy webhookOutboundPolicy) ([]net.IPAddr, error) {
+	privateAllowed := policy.isPrivateHostAllowed(hostPort, host)
+	if ip := net.ParseIP(host); ip != nil {
+		if isUnsafeWebhookIP(ip) && !privateAllowed {
+			return nil, fmt.Errorf("webhook host resolves to unsafe address")
+		}
+		return []net.IPAddr{{IP: ip}}, nil
+	}
+	ips, err := webhookLookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("webhook host did not resolve: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("webhook host did not resolve")
+	}
+	for _, ip := range ips {
+		if isUnsafeWebhookIP(ip.IP) && !privateAllowed {
+			return nil, fmt.Errorf("webhook host resolves to unsafe address")
+		}
+	}
+	return ips, nil
+}
+
+func newWebhookHTTPClient(policy webhookOutboundPolicy, resolvedTarget webhookResolvedTarget) *http.Client {
 	if webhookHTTPClientForTest != nil {
 		clone := *webhookHTTPClientForTest
 		clone.CheckRedirect = webhookCheckRedirect(policy)
@@ -416,8 +478,6 @@ func newWebhookHTTPClient(policy webhookOutboundPolicy) *http.Client {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	resolver := net.DefaultResolver
-	dialer := &net.Dialer{}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
@@ -426,20 +486,14 @@ func newWebhookHTTPClient(policy webhookOutboundPolicy) *http.Client {
 		if !policy.isHostAllowed(address, host) {
 			return nil, fmt.Errorf("webhook host is not allowlisted")
 		}
-		ips, err := resolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		if len(ips) == 0 {
-			return nil, fmt.Errorf("webhook host did not resolve")
-		}
-		privateAllowed := policy.isPrivateHostAllowed(address, host)
-		for _, ip := range ips {
-			if isUnsafeWebhookIP(ip.IP) && !privateAllowed {
-				return nil, fmt.Errorf("webhook host resolves to unsafe address")
+		ips := resolvedTarget.ips
+		if normalizeWebhookHost(host) != resolvedTarget.host || port != resolvedTarget.port {
+			ips, err = lookupWebhookTargetIPs(ctx, address, host, policy)
+			if err != nil {
+				return nil, err
 			}
 		}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		return webhookDialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 	}
 	return &http.Client{
 		Transport:     transport,
@@ -449,7 +503,11 @@ func newWebhookHTTPClient(policy webhookOutboundPolicy) *http.Client {
 
 func webhookCheckRedirect(policy webhookOutboundPolicy) func(*http.Request, []*http.Request) error {
 	return func(request *http.Request, _ []*http.Request) error {
-		if _, err := validateWebhookTargetURL(request.URL.String(), policy); err != nil {
+		endpoint, err := validateWebhookTargetURL(request.URL.String(), policy)
+		if err != nil {
+			return err
+		}
+		if _, err := resolveWebhookTarget(request.Context(), endpoint, policy); err != nil {
 			return err
 		}
 		return http.ErrUseLastResponse
