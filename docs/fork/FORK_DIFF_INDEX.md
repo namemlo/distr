@@ -718,3 +718,18 @@ Use one entry per pull request:
 - Tests: Repository tests cover release candidates, currently-deployed safety blocks, failed-task candidates, dry-run cleanup jobs, and apply rejection. Handler tests cover request normalization, malformed IDs, and feature-flag rejection.
 - Upstream contribution notes: Community-neutral retention planning surface; no adopter-specific terminology, provider-specific cleanup worker, scheduler, or destructive deletion.
 - Compatibility notes: Cleanup apply is explicitly rejected in this PR. Existing deployment execution, task leases, deployment timeline, rolling and blue-green primitives, traffic-provider interface, Docker/Kubernetes agents, runbooks, webhook action, and release-bundle behavior are unchanged.
+
+### PR-046 - Expanded RBAC
+
+- Status: Implemented locally; permission constants, built-in role definitions, organization-scoped permission middleware, documentation, and ADR completed.
+- Upstream base: `a3bda802`
+- Feature flag: None.
+- User-facing behavior: None. Existing persisted role values and token claims remain unchanged.
+- Database changes: None.
+- API changes: No new endpoints. Existing mutation routes that use `RequireReadWriteOrAdmin` now pass through mutation permission checks.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-046 notes and ADR-0046.
+- Tests: Type tests cover built-in role permissions, permission parsing, and isolated role-definition copies. Middleware tests cover organization-scoped permission allow/deny behavior, super-admin compatibility, and unsupported scope rejection.
+- Upstream contribution notes: Community-neutral RBAC foundation; no adopter-specific policy language, external IAM dependency, or role migration.
+- Compatibility notes: Organization scope is enforced first. Application, environment, tenant/customer, and tag-set scopes are known but unsupported until later PRs add policy bindings.
