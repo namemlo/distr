@@ -491,7 +491,7 @@ func TestExecuteOCIJobStepRecoversStaleContainerReservationAfterCrash(t *testing
 	containerName := ociJobContainerName(inputs["idempotencyKey"].(string))
 	lockDir := filepath.Join(ociJobContainerLockRoot(), "distr-oci-job-lock-"+containerName)
 	g.Expect(os.Mkdir(lockDir, 0o700)).To(Succeed())
-	ownerPath := filepath.Join(lockDir, "owner")
+	ownerPath := filepath.Join(lockDir, "owner-crashed")
 	g.Expect(os.WriteFile(ownerPath, []byte("pid=crashed\n"), 0o600)).To(Succeed())
 	oldTime := time.Now().Add(-time.Hour)
 	g.Expect(os.Chtimes(ownerPath, oldTime, oldTime)).To(Succeed())
@@ -510,35 +510,31 @@ func TestExecuteOCIJobStepRecoversStaleContainerReservationAfterCrash(t *testing
 
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(fakeDockerCommandCount(readFakeDockerCommands(t, argsFile), "run")).To(Equal(1))
-	_, statErr := os.Stat(lockDir)
-	g.Expect(os.IsNotExist(statErr)).To(BeTrue())
+	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(BeEmpty())
 }
 
 func TestOCIJobContainerReservationReleaseChecksOwnerToken(t *testing.T) {
 	g := NewWithT(t)
 	setOCIJobPolicyEnv(t)
 	t.Setenv(ociJobLockStaleAfterEnv, "1")
-	ctx := context.Background()
 	containerName := ociJobContainerName("sha256:job-key")
 	lockDir := filepath.Join(ociJobContainerLockRoot(), "distr-oci-job-lock-"+containerName)
-	ownerPath := filepath.Join(lockDir, "owner")
-
-	releaseA, err := acquireOCIJobContainerLock(ctx, containerName)
-	g.Expect(err).ToNot(HaveOccurred())
-	oldTime := time.Now().Add(-time.Hour)
-	g.Expect(os.Chtimes(ownerPath, oldTime, oldTime)).To(Succeed())
-	releaseB, err := acquireOCIJobContainerLock(ctx, containerName)
-	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(os.Mkdir(lockDir, 0o700)).To(Succeed())
+	ownerAPath := filepath.Join(lockDir, "owner-owner-a")
+	g.Expect(os.WriteFile(ownerAPath, []byte("pid=crashed\n"), 0o600)).To(Succeed())
+	releaseA := func() { releaseOCIJobContainerLock(ownerAPath) }
+	g.Expect(os.RemoveAll(lockDir)).To(Succeed())
+	g.Expect(os.Mkdir(lockDir, 0o700)).To(Succeed())
+	ownerBPath := filepath.Join(lockDir, "owner-owner-b")
+	g.Expect(os.WriteFile(ownerBPath, []byte("pid=active\n"), 0o600)).To(Succeed())
 
 	releaseA()
 
-	_, statErr := os.Stat(lockDir)
-	g.Expect(statErr).ToNot(HaveOccurred())
+	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(HaveLen(1))
 
-	releaseB()
+	releaseOCIJobContainerLock(ownerBPath)
 
-	_, statErr = os.Stat(lockDir)
-	g.Expect(os.IsNotExist(statErr)).To(BeTrue())
+	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(BeEmpty())
 }
 
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
@@ -1508,6 +1504,15 @@ func writeFakeOCIJobSecretStaging(t *testing.T, containerName, suffix string) (s
 		t.Fatalf("write fake OCI job secret staging file: %v", err)
 	}
 	return dir, source
+}
+
+func ociJobTestLockOwnerFiles(t *testing.T, lockDir string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(lockDir, "owner-*"))
+	if err != nil {
+		t.Fatalf("list OCI job lock owners: %v", err)
+	}
+	return matches
 }
 
 func readFakeDockerCommands(t *testing.T, path string) [][]string {
