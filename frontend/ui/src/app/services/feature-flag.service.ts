@@ -65,6 +65,7 @@ export class FeatureFlagService {
   public readonly isObservabilityMetricsEnabled$ = this.isExperimentalFeatureEnabled$('observability_metrics');
   public readonly isObservabilityTracingEnabled$ = this.isExperimentalFeatureEnabled$('observability_tracing');
   public readonly isObservabilityDashboardsEnabled$ = this.isExperimentalFeatureEnabled$('observability_dashboards');
+  public readonly isObservabilityCorrelationEnabled$ = this.isExperimentalFeatureEnabled$('observability_correlation');
 
   isExperimentalFeatureEnabled$(key: ExperimentalFeatureFlagKey): Observable<boolean> {
     return this.getExperimentalFeatureFlags().pipe(

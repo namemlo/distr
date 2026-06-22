@@ -778,3 +778,18 @@ Use one entry per pull request:
 - Tests: Dashboard tests cover static definition count, JSON validity, and immutable copies. Handler tests cover response shape and disabled flag behavior. Feature flag tests cover backend and frontend flag plumbing.
 - Upstream contribution notes: Community-neutral static dashboard catalog; no correlation links, Grafana API integration, dashboard UI, alerting, log correlation, runtime analytics engine, metrics changes, or tracing changes.
 - Compatibility notes: Existing metrics, tracing, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.
+
+### PR-047c2 - Observability correlation links
+
+- Status: Implemented locally; pure correlation link builders, Grafana base URL config, feature flag, documentation, and ADR completed.
+- Upstream base: `73f4d0c4`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=observability_correlation`.
+- User-facing behavior: None. PR-047c2 adds pure link-building utilities for future callers.
+- Database changes: None.
+- API changes: None. The dashboard catalog endpoint from PR-047c1 is unchanged.
+- UI changes: No page is added. The frontend feature flag model recognizes `observability_correlation` for future UI gating.
+- Agent protocol changes: None.
+- Documentation: Added PR-047c2 notes and ADR-0047c2.
+- Tests: Correlation tests cover trace, metrics, dashboard, unified context, deterministic label ordering, and empty-base behavior. Feature flag tests cover backend and frontend flag plumbing.
+- Upstream contribution notes: Community-neutral link utilities; no dashboard UI, API enrichment, Grafana API calls, alerting, log correlation, storage, metrics changes, or tracing changes.
+- Compatibility notes: Existing dashboards, metrics, tracing, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.

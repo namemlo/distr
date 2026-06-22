@@ -98,6 +98,7 @@ var (
 	metricsEnabled                          bool
 	metricsAddr                             string
 	metricsBearerToken                      *string
+	observabilityGrafanaBaseURL             string
 	experimentalFeatureFlags                []featureflags.Key
 )
 
@@ -280,6 +281,7 @@ func Initialize() {
 	metricsEnabled = envutil.GetEnvParsedOrDefault("METRICS_ENABLED", strconv.ParseBool, false)
 	metricsAddr = envutil.GetEnvOrDefault("METRICS_ADDR", ":3000", envutil.GetEnvOpts{})
 	metricsBearerToken = envutil.GetEnvOrNil("METRICS_BEARER_TOKEN")
+	observabilityGrafanaBaseURL = envutil.GetEnv("OBSERVABILITY_GRAFANA_BASE_URL")
 	experimentalFeatureFlags = envutil.GetEnvParsedOrDefault(
 		"DISTR_EXPERIMENTAL_FEATURE_FLAGS",
 		featureflags.ParseEnabledKeys,
@@ -605,6 +607,10 @@ func MetricsAddr() string {
 
 func MetricsBearerToken() *string {
 	return metricsBearerToken
+}
+
+func ObservabilityGrafanaBaseURL() string {
+	return observabilityGrafanaBaseURL
 }
 
 func ExperimentalFeatureFlags() []featureflags.Key {
