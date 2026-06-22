@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-039 are implemented locally. PR-039 adds the versioned runbook model, immutable runbook snapshots, and a reserved runbook task type.
+PR-000 through PR-040 are implemented locally. PR-040 adds the feature-flagged Runbooks UI, typed frontend service wiring, revision publishing controls, and read-only history/schedule surfaces for later execution work.
 
 ## Tracking Template
 
@@ -628,3 +628,18 @@ Use one entry per pull request:
 - Tests: API validation, mapping, handler, repository, canonical snapshot, migration, and deployment task default tests were added.
 - Upstream contribution notes: Community-neutral runbook foundation; no adopter-specific terminology, scheduler, script runner, or external workflow engine.
 - Compatibility notes: Existing Deployment Process, Task Queue, task lease, step event, Docker/Kubernetes agent, release bundle, and deployment behavior is unchanged. No runbook UI, schedule, execution, approval, guided failure, retention, notification, or agent behavior is added in PR-039.
+
+### PR-040 - Runbook UI and schedules
+
+- Status: Implemented locally; feature-flagged route/sidebar, typed Angular runbook service, editor, revision publish controls, read-only history/schedule surfaces, documentation, and ADR completed.
+- Upstream base: `e6699c11`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=runbooks`.
+- User-facing behavior: Vendor administrators can open the Runbooks page, list and filter runbooks, create/update/delete runbook metadata, create structured revisions, view revisions, and publish revisions. History and schedules are visible as non-submitting surfaces until execution and scheduler APIs exist.
+- Database changes: None.
+- API changes: None. The UI consumes the PR-039 `/api/v1/runbooks` CRUD, revision, and publish endpoints.
+- UI changes: Added the Runbooks route, sidebar entry, Angular service, typed frontend models, editor tab, history tab, schedules tab, and focused component/service tests.
+- Agent protocol changes: None. Runbook run-now, scheduling, task lease, and agent execution behavior remains future scope.
+- Documentation: Added PR-040 notes and ADR-0040.
+- Tests: Runbook service, Runbooks component, and feature-flag frontend tests were added.
+- Upstream contribution notes: Community-neutral UI shell over existing runbook APIs; no adopter-specific scheduling, runner, script execution, or external workflow engine assumptions.
+- Compatibility notes: Existing Deployment Process, Task Queue, task lease, step event, Docker/Kubernetes agent, webhook, release bundle, and deployment behavior is unchanged.

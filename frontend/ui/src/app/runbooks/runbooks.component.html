@@ -1,0 +1,407 @@
+<div class="p-4 sm:ml-64">
+  <div class="mx-auto flex max-w-7xl flex-col gap-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Runbooks</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Operational workflows for repeatable application tasks.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" class="distr-button-secondary" (click)="load()">
+          <fa-icon [icon]="faRotateRight" />
+        </button>
+        <button type="button" class="distr-button-primary" (click)="showCreateRunbookDialog()">
+          <fa-icon [icon]="faPlus" />
+          <span>New Runbook</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="border-b border-gray-200 dark:border-gray-700">
+      <nav class="-mb-px flex gap-4 text-sm font-medium" aria-label="Runbook sections">
+        <button
+          type="button"
+          class="border-b-2 px-1 py-3"
+          [class.border-blue-600]="activeTab() === 'editor'"
+          [class.text-blue-600]="activeTab() === 'editor'"
+          [class.border-transparent]="activeTab() !== 'editor'"
+          [class.text-gray-500]="activeTab() !== 'editor'"
+          (click)="selectTab('editor')">
+          Editor
+        </button>
+        <button
+          type="button"
+          class="border-b-2 px-1 py-3"
+          [class.border-blue-600]="activeTab() === 'history'"
+          [class.text-blue-600]="activeTab() === 'history'"
+          [class.border-transparent]="activeTab() !== 'history'"
+          [class.text-gray-500]="activeTab() !== 'history'"
+          (click)="selectTab('history')">
+          History
+        </button>
+        <button
+          type="button"
+          class="border-b-2 px-1 py-3"
+          [class.border-blue-600]="activeTab() === 'schedules'"
+          [class.text-blue-600]="activeTab() === 'schedules'"
+          [class.border-transparent]="activeTab() !== 'schedules'"
+          [class.text-gray-500]="activeTab() !== 'schedules'"
+          (click)="selectTab('schedules')">
+          Schedules
+        </button>
+      </nav>
+    </div>
+
+    @if (loadError()) {
+      <div
+        class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+        {{ loadError() }}
+      </div>
+    }
+
+    <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,520px)]">
+      <section class="min-w-0">
+        <form [formGroup]="filterForm" class="mb-3">
+          <label for="runbook-search" class="sr-only">Search</label>
+          <div class="relative">
+            <fa-icon [icon]="faMagnifyingGlass" class="pointer-events-none absolute left-3 top-2.5 text-gray-400" />
+            <input
+              id="runbook-search"
+              type="search"
+              formControlName="search"
+              class="distr-input pl-9"
+              placeholder="Search runbooks" />
+          </div>
+        </form>
+
+        <div class="overflow-hidden border border-gray-200 dark:border-gray-700">
+          <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
+            <thead class="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              <tr>
+                <th scope="col" class="px-4 py-3 text-left">Name</th>
+                <th scope="col" class="px-4 py-3 text-left">Application</th>
+                <th scope="col" class="px-4 py-3 text-left">Sort</th>
+                <th scope="col" class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+              @if (loading()) {
+                <tr>
+                  <td colspan="4" class="px-4 py-5 text-center text-gray-500 dark:text-gray-400">Loading...</td>
+                </tr>
+              } @else if (filteredRunbooks().length === 0) {
+                <tr>
+                  <td colspan="4" class="px-4 py-5 text-center text-gray-500 dark:text-gray-400">No runbooks found.</td>
+                </tr>
+              } @else {
+                @for (runbook of filteredRunbooks(); track runbook.id) {
+                  <tr
+                    class="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800"
+                    [class.bg-blue-50]="selectedRunbook()?.id === runbook.id"
+                    [class.dark:bg-blue-950]="selectedRunbook()?.id === runbook.id"
+                    (click)="selectRunbook(runbook)">
+                    <td class="px-4 py-3">
+                      <div class="font-medium text-gray-900 dark:text-white">{{ runbook.name }}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">{{ runbook.description || '-' }}</div>
+                    </td>
+                    <td class="px-4 py-3 text-gray-700 dark:text-gray-200">
+                      {{ applicationName(runbook.applicationId) }}
+                    </td>
+                    <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ runbook.sortOrder }}</td>
+                    <td class="px-4 py-3">
+                      <div class="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          class="distr-button-secondary"
+                          (click)="$event.stopPropagation(); showUpdateRunbookDialog(runbook)">
+                          <fa-icon [icon]="faEdit" />
+                        </button>
+                        <button
+                          type="button"
+                          class="distr-button-danger"
+                          (click)="$event.stopPropagation(); delete(runbook)">
+                          <fa-icon [icon]="faTrash" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                }
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="min-w-0 border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
+        @if (selectedRunbook()) {
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ selectedRunbook()!.name }}</h2>
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                {{ applicationName(selectedRunbook()!.applicationId) }}
+              </p>
+            </div>
+            <button type="button" class="distr-button-primary" (click)="showCreateRevisionDialog()">
+              <fa-icon [icon]="faPlus" />
+              <span>Revision</span>
+            </button>
+          </div>
+
+          @if (activeTab() === 'editor') {
+            <div class="mt-4">
+              @if (revisionsError()) {
+                <div
+                  class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+                  {{ revisionsError() }}
+                </div>
+              }
+              @if (revisionsLoading()) {
+                <p class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">Loading revisions...</p>
+              } @else if (revisions().length === 0) {
+                <p class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">No revisions found.</p>
+              } @else {
+                <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                  @for (revision of revisions(); track revision.id) {
+                    <div class="py-3">
+                      <div class="flex items-center justify-between gap-3">
+                        <div>
+                          <div class="font-medium text-gray-900 dark:text-white">
+                            Revision {{ revision.revisionNumber }}
+                          </div>
+                          <div class="text-xs text-gray-500 dark:text-gray-400">
+                            {{ revision.createdAt | date: 'medium' }} · {{ revision.steps.length }} steps
+                          </div>
+                        </div>
+                        <div class="flex gap-2">
+                          <button type="button" class="distr-button-secondary" (click)="showRevisionDetail(revision)">
+                            <fa-icon [icon]="faEye" />
+                          </button>
+                          <button type="button" class="distr-button-primary" (click)="publishRevision(revision)">
+                            <fa-icon [icon]="faBookOpen" />
+                            <span>Publish</span>
+                          </button>
+                        </div>
+                      </div>
+                      <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">{{ revision.description || '-' }}</p>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+
+          @if (activeTab() === 'history') {
+            <div class="mt-4 divide-y divide-gray-200 text-sm dark:divide-gray-700">
+              <div class="flex items-center justify-between py-3">
+                <span class="text-gray-700 dark:text-gray-200">Latest revision</span>
+                <span class="font-medium text-gray-900 dark:text-white">
+                  {{ latestRevision()?.revisionNumber || '-' }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between py-3">
+                <span class="text-gray-700 dark:text-gray-200">Run history</span>
+                <button type="button" class="distr-button-secondary" disabled>
+                  <fa-icon [icon]="faPlay" />
+                  <span>Run</span>
+                </button>
+              </div>
+            </div>
+          }
+
+          @if (activeTab() === 'schedules') {
+            <div class="mt-4 space-y-3 text-sm">
+              <div class="grid gap-2 sm:grid-cols-[1fr_140px]">
+                <input class="distr-input" value="0 2 * * *" disabled />
+                <button type="button" class="distr-button-secondary" disabled>Save</button>
+              </div>
+              <p class="text-gray-500 dark:text-gray-400">Schedules attach to published revisions.</p>
+            </div>
+          }
+        } @else {
+          <p class="py-12 text-center text-sm text-gray-500 dark:text-gray-400">Select a runbook.</p>
+        }
+      </section>
+    </div>
+  </div>
+</div>
+
+<ng-template #runbookDialog>
+  <form [formGroup]="runbookForm" class="space-y-4 p-4" (ngSubmit)="submitRunbookForm()">
+    <div class="flex items-center justify-between gap-3">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Runbook</h2>
+      <button type="button" class="distr-button-secondary" (click)="closeDialog()">
+        <fa-icon [icon]="faXmark" />
+      </button>
+    </div>
+    <div>
+      <label for="runbook-application" class="distr-label">Application</label>
+      <select id="runbook-application" formControlName="applicationId" class="distr-input">
+        @for (application of applications(); track application.id) {
+          <option [value]="application.id">{{ application.name }}</option>
+        }
+      </select>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-[1fr_120px]">
+      <div>
+        <label for="runbook-name" class="distr-label">Name</label>
+        <input id="runbook-name" type="text" formControlName="name" class="distr-input" autotrim />
+      </div>
+      <div>
+        <label for="runbook-sort-order" class="distr-label">Sort Order</label>
+        <input id="runbook-sort-order" type="number" formControlName="sortOrder" class="distr-input" min="0" />
+      </div>
+    </div>
+    <div>
+      <label for="runbook-description" class="distr-label">Description</label>
+      <textarea id="runbook-description" formControlName="description" class="distr-input" rows="3"></textarea>
+    </div>
+    <div class="flex justify-end gap-2">
+      <button type="button" class="distr-button-secondary" (click)="closeDialog()">Cancel</button>
+      <button type="submit" class="distr-button-primary" [disabled]="formLoading()">Save</button>
+    </div>
+  </form>
+</ng-template>
+
+<ng-template #revisionDialog>
+  <form [formGroup]="revisionForm" class="max-h-[80vh] space-y-4 overflow-y-auto p-4" (ngSubmit)="submitRevisionForm()">
+    <div class="flex items-center justify-between gap-3">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Runbook Revision</h2>
+      <button type="button" class="distr-button-secondary" (click)="closeDialog()">
+        <fa-icon [icon]="faXmark" />
+      </button>
+    </div>
+    <div>
+      <label for="runbook-revision-description" class="distr-label">Description</label>
+      <input id="runbook-revision-description" type="text" formControlName="description" class="distr-input" autotrim />
+    </div>
+    <div formArrayName="steps" class="space-y-4">
+      @for (step of stepsArray.controls; track $index) {
+        <fieldset [formGroupName]="$index" class="space-y-3 border border-gray-200 p-3 dark:border-gray-700">
+          <div class="flex items-center justify-between gap-3">
+            <legend class="text-sm font-semibold text-gray-900 dark:text-white">Step {{ $index + 1 }}</legend>
+            <button
+              type="button"
+              class="distr-button-secondary"
+              (click)="removeStep($index)"
+              [disabled]="stepsArray.length === 1">
+              <fa-icon [icon]="faTrash" />
+            </button>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="distr-label">Key</label>
+              <input type="text" formControlName="key" class="distr-input" autotrim />
+            </div>
+            <div>
+              <label class="distr-label">Name</label>
+              <input type="text" formControlName="name" class="distr-input" autotrim />
+            </div>
+            <div>
+              <label class="distr-label">Action Type</label>
+              <input type="text" formControlName="actionType" class="distr-input" autotrim />
+            </div>
+            <div>
+              <label class="distr-label">Execution Location</label>
+              <select formControlName="executionLocation" class="distr-input">
+                <option value="hub">Hub</option>
+                <option value="target">Target</option>
+              </select>
+            </div>
+            <div>
+              <label class="distr-label">Failure Mode</label>
+              <select formControlName="failureMode" class="distr-input">
+                <option value="fail">Fail</option>
+                <option value="continue">Continue</option>
+              </select>
+            </div>
+            <div>
+              <label class="distr-label">Sort Order</label>
+              <input type="number" formControlName="sortOrder" class="distr-input" min="0" />
+            </div>
+            <div>
+              <label class="distr-label">Timeout Seconds</label>
+              <input type="number" formControlName="timeoutSeconds" class="distr-input" min="0" />
+            </div>
+            <div>
+              <label class="distr-label">Retry Attempts</label>
+              <input type="number" formControlName="retryMaxAttempts" class="distr-input" min="0" />
+            </div>
+            <div>
+              <label class="distr-label">Retry Interval Seconds</label>
+              <input type="number" formControlName="retryIntervalSeconds" class="distr-input" min="0" />
+            </div>
+            <div>
+              <label class="distr-label">Step Template Version</label>
+              <input type="text" formControlName="stepTemplateVersionId" class="distr-input" autotrim />
+            </div>
+          </div>
+          <div>
+            <label class="distr-label">Condition</label>
+            <input type="text" formControlName="condition" class="distr-input" autotrim />
+          </div>
+          <div>
+            <label class="distr-label">Input Bindings JSON</label>
+            <textarea formControlName="inputBindingsText" class="distr-input font-mono text-xs" rows="4"></textarea>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="distr-label">Required Permissions</label>
+              <textarea formControlName="requiredPermissionsText" class="distr-input" rows="2"></textarea>
+            </div>
+            <div>
+              <label class="distr-label">Dependencies</label>
+              <textarea formControlName="dependenciesText" class="distr-input" rows="2"></textarea>
+            </div>
+          </div>
+        </fieldset>
+      }
+    </div>
+    <div class="flex justify-between gap-2">
+      <button type="button" class="distr-button-secondary" (click)="addStep()">
+        <fa-icon [icon]="faPlus" />
+        <span>Step</span>
+      </button>
+      <div class="flex gap-2">
+        <button type="button" class="distr-button-secondary" (click)="closeDialog()">Cancel</button>
+        <button type="submit" class="distr-button-primary" [disabled]="formLoading()">Create</button>
+      </div>
+    </div>
+  </form>
+</ng-template>
+
+<ng-template #revisionDetailDialog>
+  @if (selectedRevision()) {
+    <div class="max-h-[80vh] space-y-4 overflow-y-auto p-4">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+          Revision {{ selectedRevision()!.revisionNumber }}
+        </h2>
+        <button type="button" class="distr-button-secondary" (click)="closeDialog(false)">
+          <fa-icon [icon]="faXmark" />
+        </button>
+      </div>
+      <div class="space-y-3">
+        @for (step of selectedRevision()!.steps; track step.id) {
+          <div class="border border-gray-200 p-3 text-sm dark:border-gray-700">
+            <div class="font-medium text-gray-900 dark:text-white">{{ step.name }} · {{ step.key }}</div>
+            <div class="mt-2 grid gap-1 text-gray-600 dark:text-gray-300">
+              <span>Action: {{ step.actionType }}</span>
+              <span>Location: {{ step.executionLocation }}</span>
+              <span>Condition: {{ step.condition || '-' }}</span>
+              <span>Timeout: {{ step.timeoutSeconds }}</span>
+              <span
+                >Retry: {{ step.retryPolicy.maxAttempts }} attempts /
+                {{ step.retryPolicy.intervalSeconds }} seconds</span
+              >
+              <span>Permissions: {{ step.requiredPermissions.join(', ') || '-' }}</span>
+              <span>Dependencies: {{ step.dependencies.join(', ') || '-' }}</span>
+              <span>Step Template: {{ step.stepTemplateVersionId || '-' }}</span>
+            </div>
+            <pre class="mt-3 overflow-x-auto bg-gray-50 p-2 text-xs dark:bg-gray-950">{{
+              step.inputBindings | json
+            }}</pre>
+          </div>
+        }
+      </div>
+    </div>
+  }
+</ng-template>
