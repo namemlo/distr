@@ -175,6 +175,7 @@ func (l *Lifecycle) PlanTrafficShift() (provider.ShiftRequest, error) {
 	if !l.ReadyForTrafficShift() {
 		return provider.ShiftRequest{}, fmt.Errorf("health checks are not passing")
 	}
+	l.PreviousActiveSlot = l.ActiveSlot
 	l.Phase = PhaseShift
 	l.InactiveSlot.State = SlotStateShifting
 	return provider.ShiftRequest{
@@ -236,6 +237,9 @@ func (l *Lifecycle) PlanRollback(reason string) (provider.RollbackRequest, error
 	}
 	l.Phase = PhaseRollback
 	l.RollbackReason = reason
+	if l.PreviousActiveSlot.Name != "" {
+		l.ActiveSlot = l.PreviousActiveSlot
+	}
 	l.ActiveSlot.State = SlotStateActive
 	l.InactiveSlot.State = SlotStateRolledBack
 	return provider.RollbackRequest{

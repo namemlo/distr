@@ -84,12 +84,15 @@ func TestLifecyclePlansRollbackFromObservationPhase(t *testing.T) {
 	g.Expect(lifecycle.RecordHealthCheck(HealthCheck{Name: "readiness", Status: HealthStatusPassed})).To(Succeed())
 	_, err := lifecycle.PlanTrafficShift()
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lifecycle.PreviousActiveSlot.Name).To(Equal("blue"))
+	g.Expect(lifecycle.PreviousActiveSlot.State).To(Equal(SlotStateActive))
 	g.Expect(lifecycle.MarkTrafficShifted()).To(Succeed())
 
 	rollback, err := lifecycle.PlanRollback("post-shift health degraded")
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(lifecycle.Phase).To(Equal(PhaseRollback))
+	g.Expect(lifecycle.ActiveSlot.Name).To(Equal("blue"))
 	g.Expect(lifecycle.InactiveSlot.State).To(Equal(SlotStateRolledBack))
 	g.Expect(lifecycle.ActiveSlot.State).To(Equal(SlotStateActive))
 	g.Expect(lifecycle.RollbackReason).To(Equal("post-shift health degraded"))
