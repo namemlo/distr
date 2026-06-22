@@ -62,6 +62,7 @@ type webhookActionInput struct {
 	ExpectedStatusCodes []int                      `json:"expectedStatusCodes"`
 	IdempotencyKey      string                     `json:"idempotencyKey"`
 	Outputs             []webhookOutputDeclaration `json:"outputs"`
+	TenantID            uuid.UUID                  `json:"-"`
 }
 
 type webhookRetryPolicy struct {
@@ -232,6 +233,7 @@ func executeWebhookStep(
 	if err != nil {
 		return recordFailure(err)
 	}
+	input.TenantID = lease.OrganizationID
 	if input.IdempotencyKey == "" {
 		input.IdempotencyKey = strings.TrimSpace(step.IdempotencyKey)
 	}
@@ -276,28 +278,33 @@ func webhookReplayResult(
 	if !ok {
 		return webhookRunResult{}, false, nil
 	}
-	timeline, err := timelineClient.GetTaskTimeline(ctx, lease.TaskID)
+	timeline, err := timelineClient.GetTaskTimeline(ctx, lease.TaskID, lease.ID)
 	if err != nil {
 		return webhookRunResult{}, false, err
 	}
-	return webhookReplayResultFromTimelineForLease(timeline, lease.TaskID, stepRunID, lease.ID)
+	return webhookReplayResultFromTimelineForLease(timeline, lease.OrganizationID, lease.AgentID, lease.TaskID, stepRunID, lease.ID)
 }
 
 func webhookReplayResultFromTimeline(
 	timeline *api.TaskTimeline,
 	stepRunID uuid.UUID,
 ) (webhookRunResult, bool, error) {
-	return webhookReplayResultFromTimelineForLease(timeline, uuid.Nil, stepRunID, uuid.Nil)
+	return webhookReplayResultFromTimelineForLease(timeline, uuid.Nil, uuid.Nil, uuid.Nil, stepRunID, uuid.Nil)
 }
 
 func webhookReplayResultFromTimelineForLease(
 	timeline *api.TaskTimeline,
+	organizationID uuid.UUID,
+	agentID uuid.UUID,
 	taskID uuid.UUID,
 	stepRunID uuid.UUID,
 	leaseID uuid.UUID,
 ) (webhookRunResult, bool, error) {
 	if timeline == nil {
 		return webhookRunResult{}, false, nil
+	}
+	if organizationID != uuid.Nil && timeline.OrganizationID != uuid.Nil && timeline.OrganizationID != organizationID {
+		return webhookRunResult{}, false, fmt.Errorf("stored webhook replay organization does not match active lease")
 	}
 	var success *api.StepRunEvent
 	var incomplete bool
@@ -306,6 +313,12 @@ func webhookReplayResultFromTimelineForLease(
 		event := &timeline.Events[i]
 		if event.StepRunID != stepRunID {
 			continue
+		}
+		if organizationID != uuid.Nil && event.OrganizationID != uuid.Nil && event.OrganizationID != organizationID {
+			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay organization does not match active lease")
+		}
+		if agentID != uuid.Nil && event.AgentID != uuid.Nil && event.AgentID != agentID {
+			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay agent does not match active lease")
 		}
 		if taskID != uuid.Nil && event.TaskID != uuid.Nil && event.TaskID != taskID {
 			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay task does not match active lease")
@@ -454,7 +467,7 @@ func runWebhookAction(
 	}
 	signature := webhookSignature(
 		signingConfig.ActiveSecret,
-		webhookCanonicalData(input.Method, endpoint, timestamp, input.IdempotencyKey, bodyDigest),
+		webhookCanonicalDataWithTenant(input.Method, endpoint, timestamp, input.IdempotencyKey, bodyDigest, input.TenantID),
 	)
 	resultFor := func(statusCode, attempts int, outputs []api.AgentStepRunOutputRequest) webhookRunResult {
 		return webhookRunResult{
@@ -584,6 +597,9 @@ func sendWebhookAttempt(
 	request.Header.Set("X-Distr-Body-Digest", bodyDigest)
 	request.Header.Set("X-Distr-Signature", signature)
 	request.Header.Set("X-Distr-Key-Version", strconv.Itoa(signingKeyVersion))
+	if input.TenantID != uuid.Nil {
+		request.Header.Set("X-Distr-Tenant-ID", input.TenantID.String())
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send webhook request: %w", err)
@@ -812,6 +828,10 @@ func webhookBodyDigest(body []byte) string {
 }
 
 func webhookCanonicalData(method string, endpoint *url.URL, timestamp, idempotencyKey, bodyDigest string) string {
+	return webhookCanonicalDataWithTenant(method, endpoint, timestamp, idempotencyKey, bodyDigest, uuid.Nil)
+}
+
+func webhookCanonicalDataWithTenant(method string, endpoint *url.URL, timestamp, idempotencyKey, bodyDigest string, tenantID uuid.UUID) string {
 	path := endpoint.EscapedPath()
 	if path == "" {
 		path = "/"
@@ -819,13 +839,17 @@ func webhookCanonicalData(method string, endpoint *url.URL, timestamp, idempoten
 	if query := endpoint.Query().Encode(); query != "" {
 		path += "?" + query
 	}
-	return strings.Join([]string{
+	parts := []string{
 		strings.ToUpper(strings.TrimSpace(method)),
 		path,
 		timestamp,
 		idempotencyKey,
 		bodyDigest,
-	}, "\n")
+	}
+	if tenantID != uuid.Nil {
+		parts = append(parts, "tenant:"+tenantID.String())
+	}
+	return strings.Join(parts, "\n")
 }
 
 func webhookSignature(secret string, canonical string) string {
@@ -1135,7 +1159,7 @@ func isWebhookSensitiveHeaderName(name string) bool {
 
 func isWebhookReservedHeaderName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version":
+	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version", "x-distr-tenant-id":
 		return true
 	default:
 		return false

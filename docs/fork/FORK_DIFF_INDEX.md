@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-032 are implemented locally. PR-032 extends Docker-agent `distr.webhook` signing with ordered key rotation, versioned signature metadata, audit outputs, multi-key verification, and rotated secret lease resolution while preserving legacy single-secret behavior and PR-031 replay compatibility.
+PR-000 through PR-033 are implemented locally. PR-033 tightens Docker-agent `distr.webhook` replay and signing boundaries with organization and agent lease context, lease-scoped hidden timeline reads, tenant-bound HMAC metadata, and replay rejection for cross-tenant or cross-agent history.
 
 ## Tracking Template
 
@@ -523,3 +523,18 @@ Use one entry per pull request:
 - Tests: Added Docker-agent key rotation signing, validation, verification, audit-output, and redaction tests; action registry rotation schema tests; and task lease rotated secret resolution coverage.
 - Upstream contribution notes: Community-neutral webhook key lifecycle support; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing single-secret webhook inputs remain valid and map to signing key version 1. PR-031 stored success events without key-version outputs remain replayable. Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, and legacy Docker resource-poll deployment behavior are unchanged.
+
+### PR-033 - Webhook tenant isolation
+
+- Status: Implemented locally; lease context propagation, lease-scoped hidden timeline read, organization metadata mapping, tenant-bound signing metadata, replay boundary checks, documentation, and ADR completed.
+- Upstream base: `f4d20c0e`
+- Feature flag: Adds no new flag. Hardens the existing `distr.webhook` Docker-agent action and PR-031 hidden replay timeline endpoint.
+- User-facing behavior: Webhook actions keep the same inputs and outputs, but replayed stored success history is only trusted when it matches the active organization, task lease, and authenticated agent. Outbound signed webhook requests now include `X-Distr-Tenant-ID`.
+- Database changes: None. Reuses existing organization, lease, agent, TaskLease, StepRunEvent, StepRunLogChunk, and StepRunOutput fields.
+- API changes: Hidden agent task lease responses include `organizationId` and `agentId`. Hidden agent task timeline reads require `leaseId` and return organization metadata on timeline/event/log/output payloads. Public task timeline behavior is unchanged.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-033.
+- Agent protocol changes: Docker agents pass the active task lease id when reading stored timeline history, bind webhook HMAC canonical data to the lease organization id, send `X-Distr-Tenant-ID`, and reject replay history with mismatched organization or agent identity before DNS, signing, transport setup, or HTTP requests.
+- Documentation: Added PR-033 notes and ADR-0033.
+- Tests: Added Docker-agent tenant-bound signature and replay boundary tests plus agent client `leaseId` timeline coverage.
+- Upstream contribution notes: Community-neutral webhook authorization-boundary hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing webhook input shape and output names are unchanged. Existing public task timeline reads remain unchanged. Older agent clients without `leaseId` cannot use the hidden agent replay timeline until refreshed, but agents without `DISTR_TASK_TIMELINE_ENDPOINT_TEMPLATE` continue to run without replay preflight as before.

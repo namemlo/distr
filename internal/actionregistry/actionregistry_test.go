@@ -302,6 +302,16 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			want: "Authorization",
 		},
 		{
+			name:       "webhook rejects reserved tenant header",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"headers":{"X-Distr-Tenant-ID":"00000000-0000-0000-0000-000000000001"},
+				"signingSecret":"webhook_signing_key"
+			}`),
+			want: "reserved",
+		},
+		{
 			name:       "webhook rejects malformed output declaration",
 			actionType: "distr.webhook",
 			input: jsonObject(t, `{

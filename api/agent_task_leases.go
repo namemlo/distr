@@ -21,17 +21,19 @@ func (r *HeartbeatAgentTaskLeaseRequest) Validate() error {
 }
 
 type AgentTaskLease struct {
-	ID           uuid.UUID            `json:"id"`
-	CreatedAt    time.Time            `json:"createdAt"`
-	UpdatedAt    time.Time            `json:"updatedAt"`
-	TaskID       uuid.UUID            `json:"taskId"`
-	PlanChecksum string               `json:"planChecksum"`
-	LeaseToken   string               `json:"leaseToken"`
-	LeasedAt     time.Time            `json:"leasedAt"`
-	ExpiresAt    time.Time            `json:"expiresAt"`
-	HeartbeatAt  time.Time            `json:"heartbeatAt"`
-	Attempt      int                  `json:"attempt"`
-	Steps        []AgentTaskLeaseStep `json:"steps"`
+	ID             uuid.UUID            `json:"id"`
+	CreatedAt      time.Time            `json:"createdAt"`
+	UpdatedAt      time.Time            `json:"updatedAt"`
+	OrganizationID uuid.UUID            `json:"organizationId"`
+	TaskID         uuid.UUID            `json:"taskId"`
+	AgentID        uuid.UUID            `json:"agentId"`
+	PlanChecksum   string               `json:"planChecksum"`
+	LeaseToken     string               `json:"leaseToken"`
+	LeasedAt       time.Time            `json:"leasedAt"`
+	ExpiresAt      time.Time            `json:"expiresAt"`
+	HeartbeatAt    time.Time            `json:"heartbeatAt"`
+	Attempt        int                  `json:"attempt"`
+	Steps          []AgentTaskLeaseStep `json:"steps"`
 }
 
 type AgentTaskLeaseStep struct {
