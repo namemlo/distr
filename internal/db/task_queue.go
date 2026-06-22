@@ -24,6 +24,7 @@ const taskOutputExpr = `
 	t.started_at,
 	t.completed_at,
 	t.organization_id,
+	t.task_type,
 	t.deployment_plan_id,
 	t.deployment_plan_target_id,
 	t.deployment_target_id,
@@ -362,6 +363,7 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) 
 	rows, err := db.Query(ctx,
 		`INSERT INTO Task AS t (
 			organization_id,
+			task_type,
 			deployment_plan_id,
 			deployment_plan_target_id,
 			deployment_target_id,
@@ -373,6 +375,7 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) 
 		)
 		SELECT
 			dp.organization_id,
+			@taskType,
 			dp.id,
 			dpt.id,
 			dpt.deployment_target_id,
@@ -393,6 +396,7 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) 
 		pgx.NamedArgs{
 			"deploymentPlanId": planID,
 			"organizationId":   orgID,
+			"taskType":         types.TaskTypeDeployment,
 			"status":           types.TaskStatusQueued,
 		},
 	)
