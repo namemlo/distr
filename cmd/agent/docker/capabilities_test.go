@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestDockerCapabilityReportAdvertisesComposeDeployAction(t *testing.T) {
+func TestDockerCapabilityReportAdvertisesTypedActions(t *testing.T) {
 	g := NewWithT(t)
 
 	report := dockerCapabilityReport()
@@ -16,6 +16,10 @@ func TestDockerCapabilityReportAdvertisesComposeDeployAction(t *testing.T) {
 	g.Expect(report.Validate()).To(Succeed())
 	g.Expect(report.SupportedActions).To(ContainElement(api.AgentActionCapabilityRequest{
 		ActionType: composeDeployActionType,
+		Versions:   []string{types.AgentActionVersionV1},
+	}))
+	g.Expect(report.SupportedActions).To(ContainElement(api.AgentActionCapabilityRequest{
+		ActionType: ociJobActionType,
 		Versions:   []string{types.AgentActionVersionV1},
 	}))
 }

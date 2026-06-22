@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -648,8 +650,151 @@ func TestDockerCommandHelper(t *testing.T) {
 	if dockerArgs[0] != "docker" {
 		os.Exit(2)
 	}
+	if path := os.Getenv("FAKE_DOCKER_COMMAND_ARGS_FILE"); path != "" {
+		data, _ := json.Marshal(dockerArgs)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			os.Exit(2)
+		}
+		_, _ = f.Write(append(data, '\n'))
+		_ = f.Close()
+	}
 	if len(dockerArgs) >= 2 && dockerArgs[1] == "info" {
 		fmt.Fprint(os.Stdout, "active")
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "inspect" {
+		if path := os.Getenv("FAKE_DOCKER_CONTAINER_INSPECT_FILE"); path != "" {
+			if data, err := os.ReadFile(path); err == nil {
+				fmt.Fprint(os.Stdout, string(data))
+				os.Exit(0)
+			}
+		}
+		if inspect := os.Getenv("FAKE_DOCKER_EXISTING_INSPECT"); inspect != "" {
+			if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+				if _, err := os.Stat(path); err == nil {
+					inspect = fakeDockerStoppedInspect(inspect)
+				}
+			}
+			fmt.Fprint(os.Stdout, inspect)
+			os.Exit(0)
+		}
+		if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+			if _, err := os.Stat(path); err == nil {
+				fmt.Fprint(os.Stdout, fakeDockerStoppedInspect(`{"State":{"Status":"running","Running":true,"ExitCode":0},"Config":{"Labels":{}}}`))
+				os.Exit(0)
+			}
+		}
+		if fakeDockerCommandWasRecorded("stop") || fakeDockerCommandWasRecorded("kill") {
+			fmt.Fprint(os.Stdout, fakeDockerStoppedInspect(`{"State":{"Status":"running","Running":true,"ExitCode":0},"Config":{"Labels":{}}}`))
+			os.Exit(0)
+		}
+		state := os.Getenv("FAKE_DOCKER_EXISTING_STATE")
+		if state == "" {
+			fmt.Fprint(os.Stdout, "Error: No such object")
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stdout, `{"State":%s,"Config":{"Labels":{}}}`, state)
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "logs" {
+		fmt.Fprint(os.Stdout, os.Getenv("FAKE_DOCKER_LOGS"))
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "wait" {
+		if rawSleep := os.Getenv("FAKE_DOCKER_WAIT_SLEEP_MS"); rawSleep != "" {
+			ms, err := strconv.Atoi(rawSleep)
+			if err != nil {
+				os.Exit(2)
+			}
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		code := os.Getenv("FAKE_DOCKER_WAIT_EXIT_CODE")
+		if code == "" {
+			code = "0"
+		}
+		fmt.Fprint(os.Stdout, code)
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "stop" {
+		if rawCode := os.Getenv("FAKE_DOCKER_STOP_EXIT_CODE"); rawCode != "" {
+			code, err := strconv.Atoi(rawCode)
+			if err != nil {
+				os.Exit(2)
+			}
+			fmt.Fprint(os.Stderr, "fake docker stop failed")
+			os.Exit(code)
+		}
+		if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+			_ = os.WriteFile(path, []byte("stopped"), 0o600)
+		}
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "kill" {
+		if rawCode := os.Getenv("FAKE_DOCKER_KILL_EXIT_CODE"); rawCode != "" {
+			code, err := strconv.Atoi(rawCode)
+			if err != nil {
+				os.Exit(2)
+			}
+			fmt.Fprint(os.Stderr, "fake docker kill failed")
+			os.Exit(code)
+		}
+		if path := os.Getenv("FAKE_DOCKER_STOP_STATE_FILE"); path != "" {
+			_ = os.WriteFile(path, []byte("killed"), 0o600)
+		}
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "rm" {
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "start" {
+		os.Exit(0)
+	}
+	if len(dockerArgs) >= 2 && dockerArgs[1] == "run" {
+		if os.Getenv("FAKE_DOCKER_REQUIRE_SECRET_FILE_CONTAINER_READABLE") == "1" {
+			if err := checkFakeDockerSecretFileContainerReadable(dockerArgs); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
+		if path := os.Getenv("FAKE_DOCKER_CONTAINER_METADATA_FILE"); path != "" {
+			if err := writeFakeDockerContainerMetadata(path, dockerArgs); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
+		if path := os.Getenv("FAKE_DOCKER_CONTAINER_INSPECT_FILE"); path != "" {
+			if err := writeFakeDockerContainerInspect(path, dockerArgs); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
+		if rawSleep := os.Getenv("FAKE_DOCKER_RUN_SLEEP_MS"); rawSleep != "" {
+			ms, err := strconv.Atoi(rawSleep)
+			if err != nil {
+				os.Exit(2)
+			}
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		if os.Getenv("FAKE_DOCKER_VERIFY_SECRET_FILE_AFTER_SLEEP") == "1" {
+			source := fakeDockerSecretEnvSourceFromRun(dockerArgs)
+			if source == "" {
+				fmt.Fprint(os.Stderr, "secret env file volume was not mounted")
+				os.Exit(2)
+			}
+			if _, err := os.Stat(source); err != nil {
+				fmt.Fprint(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
+		fmt.Fprint(os.Stdout, os.Getenv("FAKE_DOCKER_RUN_OUTPUT"))
+		if rawCode := os.Getenv("FAKE_DOCKER_RUN_EXIT_CODE"); rawCode != "" {
+			code, err := strconv.Atoi(rawCode)
+			if err != nil {
+				os.Exit(2)
+			}
+			os.Exit(code)
+		}
 		os.Exit(0)
 	}
 	if len(dockerArgs) >= 3 && dockerArgs[1] == "stack" && dockerArgs[2] == "deploy" {
@@ -658,4 +803,188 @@ func TestDockerCommandHelper(t *testing.T) {
 		os.Exit(1)
 	}
 	os.Exit(2)
+}
+
+func checkFakeDockerSecretFileContainerReadable(dockerArgs []string) error {
+	suffix := ":" + ociJobSecretEnvMountPath + ":ro"
+	for i := 2; i < len(dockerArgs)-1; i++ {
+		if dockerArgs[i] != "--volume" {
+			continue
+		}
+		bind := dockerArgs[i+1]
+		if !strings.HasSuffix(bind, suffix) {
+			continue
+		}
+		source := strings.TrimSuffix(bind, suffix)
+		info, err := os.Stat(source)
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm()&0o004 == 0 {
+			return fmt.Errorf("secret env file is not readable by a non-owner container user: %v", info.Mode().Perm())
+		}
+		return nil
+	}
+	return fmt.Errorf("secret env file volume was not mounted")
+}
+
+func fakeDockerStoppedInspect(inspect string) string {
+	data := map[string]any{}
+	if err := json.Unmarshal([]byte(inspect), &data); err != nil {
+		return inspect
+	}
+	state, _ := data["State"].(map[string]any)
+	if state == nil {
+		state = map[string]any{}
+		data["State"] = state
+	}
+	state["Status"] = "exited"
+	state["Running"] = false
+	if _, ok := state["ExitCode"]; !ok {
+		state["ExitCode"] = 137
+	}
+	out, err := json.Marshal(data)
+	if err != nil {
+		return inspect
+	}
+	return string(out)
+}
+
+func fakeDockerCommandWasRecorded(name string) bool {
+	path := os.Getenv("FAKE_DOCKER_COMMAND_ARGS_FILE")
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), `["docker","`+name+`"`)
+}
+
+func writeFakeDockerContainerMetadata(path string, dockerArgs []string) error {
+	env := []string{}
+	labels := map[string]string{}
+	binds := []string{}
+	logDriver := ""
+	image := ""
+	cmd := []string{}
+	for i := 2; i < len(dockerArgs); i++ {
+		arg := dockerArgs[i]
+		switch arg {
+		case "--name", "--network", "--security-opt", "--cap-drop", "--user", "--cpus", "--memory", "--entrypoint":
+			i++
+		case "--log-driver":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --log-driver value")
+			}
+			logDriver = dockerArgs[i]
+		case "--env-file":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --env-file value")
+			}
+			data, err := os.ReadFile(dockerArgs[i])
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				if strings.TrimSpace(line) != "" {
+					env = append(env, line)
+				}
+			}
+		case "--label":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --label value")
+			}
+			key, value, ok := strings.Cut(dockerArgs[i], "=")
+			if ok {
+				labels[key] = value
+			}
+		case "--volume":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --volume value")
+			}
+			binds = append(binds, dockerArgs[i])
+		case "--read-only":
+		default:
+			image = arg
+			cmd = append(cmd, dockerArgs[i+1:]...)
+			i = len(dockerArgs)
+		}
+	}
+	data, err := json.Marshal(map[string]any{
+		"Config": map[string]any{
+			"Env":    env,
+			"Image":  image,
+			"Cmd":    cmd,
+			"Labels": labels,
+		},
+		"HostConfig": map[string]any{
+			"Binds":     binds,
+			"LogConfig": map[string]any{"Type": logDriver},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+func writeFakeDockerContainerInspect(path string, dockerArgs []string) error {
+	labels := map[string]string{}
+	mounts := []map[string]any{}
+	for i := 2; i < len(dockerArgs); i++ {
+		switch dockerArgs[i] {
+		case "--label":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --label value")
+			}
+			key, value, ok := strings.Cut(dockerArgs[i], "=")
+			if ok {
+				labels[key] = value
+			}
+		case "--volume":
+			i++
+			if i >= len(dockerArgs) {
+				return fmt.Errorf("missing --volume value")
+			}
+			bind := dockerArgs[i]
+			if source := fakeDockerSecretEnvSourceFromBind(bind); source != "" {
+				mounts = append(mounts, map[string]any{
+					"Source":      source,
+					"Destination": ociJobSecretEnvMountPath,
+				})
+			}
+		case "--name", "--network", "--security-opt", "--cap-drop", "--user", "--cpus", "--memory", "--entrypoint", "--env-file", "--log-driver":
+			i++
+		}
+	}
+	data, err := json.Marshal(map[string]any{
+		"State": map[string]any{
+			"Status":   "exited",
+			"Running":  false,
+			"ExitCode": 0,
+		},
+		"Mounts": mounts,
+		"Config": map[string]any{
+			"Labels": labels,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+func fakeDockerSecretEnvSourceFromBind(bind string) string {
+	suffix := ":" + ociJobSecretEnvMountPath + ":ro"
+	if strings.HasSuffix(bind, suffix) {
+		return strings.TrimSuffix(bind, suffix)
+	}
+	return ""
 }

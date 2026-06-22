@@ -229,6 +229,91 @@ func defaultActions() []types.ActionDefinition {
 				[]any{"projectName", "strategy", "status"},
 			),
 		},
+		{
+			Type:        "distr.oci.job",
+			Name:        "OCI one-shot job",
+			Description: "Runs one immutable OCI image as a bounded, policy-constrained one-shot Docker job.",
+			InputSchema: objectSchema(
+				map[string]any{
+					"imageDigest": map[string]any{
+						"type":    "string",
+						"pattern": `^\S+@sha256:[A-Fa-f0-9]{64}$`,
+					},
+					"command": map[string]any{
+						"type":     "array",
+						"items":    map[string]any{"type": "string", "minLength": 1},
+						"minItems": 1,
+					},
+					"arguments": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "string"},
+					},
+					"environment": map[string]any{
+						"type":                 "object",
+						"additionalProperties": map[string]any{"type": "string"},
+					},
+					"secretEnvironment": map[string]any{
+						"type":                 "object",
+						"additionalProperties": map[string]any{"type": "string", "minLength": 1},
+					},
+					"network": map[string]any{"type": "string", "minLength": 1},
+					"volumes": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"source":   map[string]any{"type": "string", "minLength": 1},
+								"target":   map[string]any{"type": "string", "minLength": 1},
+								"readOnly": map[string]any{"type": "boolean"},
+							},
+							"required":             []any{"source", "target", "readOnly"},
+							"additionalProperties": false,
+						},
+					},
+					"timeoutSeconds": map[string]any{"type": "integer", "minimum": 1},
+					"expectedExitCodes": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "integer", "minimum": 0, "maximum": 255},
+						"minItems":    1,
+						"uniqueItems": true,
+					},
+					"idempotencyKey": map[string]any{
+						"type":      "string",
+						"minLength": 1,
+						"maxLength": 128,
+						"pattern":   `^[A-Za-z0-9_.:-]+$`,
+					},
+					"runAsUser": map[string]any{"type": "string", "minLength": 1},
+					"resources": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"cpus":        map[string]any{"type": "number", "exclusiveMinimum": 0},
+							"memoryBytes": map[string]any{"type": "integer", "minimum": 1},
+						},
+						"additionalProperties": false,
+					},
+					"security": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"privileged":              map[string]any{"const": false},
+							"readOnlyRootFilesystem":  map[string]any{"const": true},
+							"dropCapabilities":        map[string]any{"type": "array", "items": map[string]any{"type": "string", "minLength": 1}},
+							"noNewPrivilegesDisabled": map[string]any{"const": false},
+						},
+						"additionalProperties": false,
+					},
+				},
+				[]any{"imageDigest", "command"},
+			),
+			OutputSchema: objectSchema(
+				map[string]any{
+					"containerName": map[string]any{"type": "string"},
+					"exitCode":      map[string]any{"type": "integer"},
+					"status":        map[string]any{"type": "string"},
+				},
+				[]any{"containerName", "exitCode", "status"},
+			),
+		},
 	}
 }
 
