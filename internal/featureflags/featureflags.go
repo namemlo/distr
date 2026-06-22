@@ -23,6 +23,7 @@ const (
 	KeyStepTemplates       Key = "step_templates"
 	KeyRunbooks            Key = "runbooks"
 	KeyDeploymentTimeline  Key = "deployment_timeline"
+	KeyRetentionPolicies   Key = "retention_policies"
 )
 
 type Flag struct {
@@ -128,6 +129,12 @@ var definitions = []definition{
 		Label:       "Deployment Timeline",
 		Description: "Displays deployment history, compares releases and plan snapshots, and previews deploying previous releases.",
 		Milestone:   "Milestone F",
+	},
+	{
+		Key:         KeyRetentionPolicies,
+		Label:       "Retention Policies",
+		Description: "Previews release, task, and log cleanup with safety blocks before retention jobs can run.",
+		Milestone:   "Milestone G",
 	},
 }
 

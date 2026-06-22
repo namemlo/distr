@@ -61,6 +61,7 @@ export class FeatureFlagService {
   public readonly isStepTemplatesEnabled$ = this.isExperimentalFeatureEnabled$('step_templates');
   public readonly isTaskQueueEnabled$ = this.isExperimentalFeatureEnabled$('task_queue');
   public readonly isRunbooksEnabled$ = this.isExperimentalFeatureEnabled$('runbooks');
+  public readonly isRetentionPoliciesEnabled$ = this.isExperimentalFeatureEnabled$('retention_policies');
 
   isExperimentalFeatureEnabled$(key: ExperimentalFeatureFlagKey): Observable<boolean> {
     return this.getExperimentalFeatureFlags().pipe(
