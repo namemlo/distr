@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-040 are implemented locally. PR-040 adds the feature-flagged Runbooks UI, typed frontend service wiring, revision publishing controls, and read-only history/schedule surfaces for later execution work.
+PR-000 through PR-041 are implemented locally. PR-041 adds the rolling deployment state-machine foundation for windows, per-target state, and failure-threshold decisions.
 
 ## Tracking Template
 
@@ -643,3 +643,18 @@ Use one entry per pull request:
 - Tests: Runbook service, Runbooks component, and feature-flag frontend tests were added.
 - Upstream contribution notes: Community-neutral UI shell over existing runbook APIs; no adopter-specific scheduling, runner, script execution, or external workflow engine assumptions.
 - Compatibility notes: Existing Deployment Process, Task Queue, task lease, step event, Docker/Kubernetes agent, webhook, release bundle, and deployment behavior is unchanged.
+
+### PR-041 - Rolling deployment strategy
+
+- Status: Implemented locally; rolling deployment state-machine package, window selection, per-target states, failure-threshold decisions, documentation, and ADR completed.
+- Upstream base: `93626b7d`
+- Feature flag: None.
+- User-facing behavior: None. PR-041 adds backend-only rolling semantics for later scheduler/task integration.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None. Existing deployment task lease and agent execution behavior is unchanged.
+- Documentation: Added PR-041 notes and ADR-0041.
+- Tests: Rolling state-machine tests cover target normalization, window limits, terminal-window advancement, pause/abort threshold actions, percentage thresholds, and invalid configuration rejection.
+- Upstream contribution notes: Community-neutral rolling semantics; no adopter-specific deployment provider, traffic switch, task scheduler, or UI assumptions.
+- Compatibility notes: Existing Deployment Process, Deployment Plan, Task Queue, task lease, Docker/Kubernetes agent, runbook, webhook, release bundle, and deployment behavior is unchanged.
