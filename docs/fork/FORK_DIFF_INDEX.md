@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-041 are implemented locally. PR-041 adds the rolling deployment state-machine foundation for windows, per-target state, and failure-threshold decisions.
+PR-000 through PR-042 are implemented locally. PR-042 adds the provider-agnostic traffic-provider contract, capability model, provider registry, and webhook reference provider.
 
 ## Tracking Template
 
@@ -658,3 +658,18 @@ Use one entry per pull request:
 - Tests: Rolling state-machine tests cover target normalization, window limits, terminal-window advancement, pause/abort threshold actions, percentage thresholds, and invalid configuration rejection.
 - Upstream contribution notes: Community-neutral rolling semantics; no adopter-specific deployment provider, traffic switch, task scheduler, or UI assumptions.
 - Compatibility notes: Existing Deployment Process, Deployment Plan, Task Queue, task lease, Docker/Kubernetes agent, runbook, webhook, release bundle, and deployment behavior is unchanged.
+
+### PR-042 - Traffic-provider interface
+
+- Status: Implemented locally; traffic-provider contract, capability model, provider registry, webhook reference provider, documentation, and ADR completed.
+- Upstream base: `9d0e81d9`
+- Feature flag: None.
+- User-facing behavior: None. PR-042 adds backend-only provider abstractions for later progressive-delivery controllers.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-042 notes and ADR-0042.
+- Tests: Traffic-provider tests cover registry construction, capability checks, webhook payloads, idempotency forwarding, prepare response decoding, non-success status handling, unsafe configuration rejection, duplicate provider rejection, and unknown provider rejection.
+- Upstream contribution notes: Community-neutral traffic abstraction with webhook reference provider; no Envoy, Nginx, cloud load balancer, scheduler, task execution, or blue-green assumptions.
+- Compatibility notes: Existing Deployment Process, Deployment Plan, Task Queue, task lease, rolling state machine, Docker/Kubernetes agent, runbook, webhook action, release bundle, and deployment behavior is unchanged.
