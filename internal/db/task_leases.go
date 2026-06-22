@@ -562,6 +562,8 @@ func resolveTaskLeaseStepSecrets(
 		return resolveOCIJobSecretEnvironment(ctx, task, step.InputBindings)
 	case "distr.file.render":
 		return resolveFileRenderSecretVariables(ctx, task, step.InputBindings)
+	case "distr.webhook":
+		return resolveWebhookSecrets(ctx, task, step.InputBindings)
 	default:
 		return []string{}, nil
 	}
@@ -697,6 +699,63 @@ func resolveFileRenderSecretVariables(
 	}
 	inputBindings["variables"] = variables
 	inputBindings["secretVariables"] = resolvedSecretVariables
+	sort.Strings(references)
+	return references, nil
+}
+
+func resolveWebhookSecrets(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	headers, ok := mapStringAny(inputBindings["headers"])
+	if !ok {
+		if _, exists := inputBindings["headers"]; exists {
+			return nil, apierrors.NewBadRequest("webhook headers must be an object")
+		}
+		headers = map[string]any{}
+	}
+	secretHeaders, ok := mapStringAny(inputBindings["secretHeaders"])
+	if !ok {
+		if _, exists := inputBindings["secretHeaders"]; exists {
+			return nil, apierrors.NewBadRequest("webhook secretHeaders must be an object")
+		}
+		secretHeaders = map[string]any{}
+	}
+	signingReference, ok := stringValue(inputBindings["signingSecret"])
+	if !ok || strings.TrimSpace(signingReference) == "" {
+		return nil, apierrors.NewBadRequest("webhook signingSecret must be a secret reference")
+	}
+	signingReference = strings.TrimSpace(signingReference)
+	signingValue, err := getTaskLeaseSecretValue(ctx, task, signingReference)
+	if err != nil {
+		return nil, err
+	}
+	references := []string{"secret:" + signingReference}
+	resolvedSecretHeaders := map[string]any{}
+	for rawName, rawReference := range secretHeaders {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return nil, apierrors.NewBadRequest("webhook secretHeaders name is required")
+		}
+		if _, exists := headers[name]; exists {
+			return nil, apierrors.NewBadRequest("webhook headers conflicts with secretHeaders")
+		}
+		reference, ok := stringValue(rawReference)
+		if !ok || strings.TrimSpace(reference) == "" {
+			return nil, apierrors.NewBadRequest("webhook secretHeaders value must be a secret reference")
+		}
+		reference = strings.TrimSpace(reference)
+		value, err := getTaskLeaseSecretValue(ctx, task, reference)
+		if err != nil {
+			return nil, err
+		}
+		resolvedSecretHeaders[name] = value
+		references = append(references, "secret:"+reference)
+	}
+	inputBindings["headers"] = headers
+	inputBindings["secretHeaders"] = resolvedSecretHeaders
+	inputBindings["signingSecret"] = signingValue
 	sort.Strings(references)
 	return references, nil
 }

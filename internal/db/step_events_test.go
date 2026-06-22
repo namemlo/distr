@@ -273,6 +273,201 @@ func TestStepEventRepositoryRedactsResolvedFileRenderSecretFromEventsLogsAndOutp
 	g.Expect(string(logsPayload)).NotTo(ContainSubstring(secretValue))
 }
 
+func TestStepEventRepositoryRedactsResolvedWebhookSecretsFromEventsLogsAndOutputs(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	const headerSecret = "Bearer webhook-value-9274"
+	const signingSecret = "webhook-signing-value-9274"
+	fixture := createWebhookSecretStepEventFixture(t, ctx, headerSecret, signingSecret)
+
+	event, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       1,
+		Type:           types.StepRunEventTypeStarted,
+		Message:        "webhook failed with " + headerSecret,
+		Details: map[string]any{
+			"error":     "webhook stderr returned " + signingSecret,
+			"signature": signingSecret,
+		},
+		Logs: []types.RecordStepRunLogChunkRequest{
+			{
+				Stream:   types.StepRunLogStreamStderr,
+				Severity: types.StepRunLogSeverityError,
+				Body:     "stderr contains " + headerSecret + " and " + signingSecret,
+			},
+		},
+		Outputs: []types.RecordStepRunOutputRequest{
+			{
+				Name: "diagnostics",
+				Value: map[string]any{
+					"message": "output contains " + headerSecret,
+					"signing": signingSecret,
+				},
+			},
+		},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(event.Redacted).To(BeTrue())
+	g.Expect(event.Message).To(Equal("webhook failed with [REDACTED]"))
+	g.Expect(event.Details["error"]).To(Equal("webhook stderr returned [REDACTED]"))
+	g.Expect(event.Details["signature"]).To(Equal("[REDACTED]"))
+	g.Expect(event.Logs).To(HaveLen(1))
+	g.Expect(event.Logs[0].Body).To(Equal("stderr contains [REDACTED] and [REDACTED]"))
+	g.Expect(event.Logs[0].Redacted).To(BeTrue())
+	g.Expect(event.Outputs).To(HaveLen(1))
+	g.Expect(string(event.Outputs[0].Value)).To(ContainSubstring("[REDACTED]"))
+	g.Expect(string(event.Outputs[0].Value)).NotTo(ContainSubstring(headerSecret))
+	g.Expect(string(event.Outputs[0].Value)).NotTo(ContainSubstring(signingSecret))
+	eventPayload, err := json.Marshal(event)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(eventPayload)).NotTo(ContainSubstring(headerSecret))
+	g.Expect(string(eventPayload)).NotTo(ContainSubstring(signingSecret))
+
+	timeline, err := db.GetTaskTimeline(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	timelinePayload, err := json.Marshal(timeline)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(timelinePayload)).NotTo(ContainSubstring(headerSecret))
+	g.Expect(string(timelinePayload)).NotTo(ContainSubstring(signingSecret))
+
+	logs, err := db.GetTaskLogs(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	logsPayload, err := json.Marshal(logs)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(logsPayload)).NotTo(ContainSubstring(headerSecret))
+	g.Expect(string(logsPayload)).NotTo(ContainSubstring(signingSecret))
+}
+
+func TestStepEventRepositoryRedactsWebhookSignaturesFromEventsLogsAndOutputs(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	const headerSecret = "Bearer webhook-value-9274"
+	const signingSecret = "webhook-signing-value-9274"
+	const signature = "sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	fixture := createWebhookSecretStepEventFixture(t, ctx, headerSecret, signingSecret)
+
+	event, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       1,
+		Type:           types.StepRunEventTypeStarted,
+		Message:        "webhook failed with signature " + signature,
+		Details: map[string]any{
+			"error":     "webhook stderr returned " + signature,
+			"signature": signature,
+		},
+		Logs: []types.RecordStepRunLogChunkRequest{
+			{
+				Stream:   types.StepRunLogStreamStderr,
+				Severity: types.StepRunLogSeverityError,
+				Body:     "stderr contains " + signature,
+			},
+		},
+		Outputs: []types.RecordStepRunOutputRequest{
+			{
+				Name: "diagnostics",
+				Value: map[string]any{
+					"message": "output contains " + signature,
+				},
+			},
+		},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(event.Redacted).To(BeTrue())
+	g.Expect(event.Message).To(Equal("webhook failed with signature [REDACTED]"))
+	g.Expect(event.Details["error"]).To(Equal("webhook stderr returned [REDACTED]"))
+	g.Expect(event.Details["signature"]).To(Equal("[REDACTED]"))
+	g.Expect(event.Logs).To(HaveLen(1))
+	g.Expect(event.Logs[0].Body).To(Equal("stderr contains [REDACTED]"))
+	g.Expect(event.Outputs).To(HaveLen(1))
+	g.Expect(string(event.Outputs[0].Value)).To(ContainSubstring("[REDACTED]"))
+	g.Expect(string(event.Outputs[0].Value)).NotTo(ContainSubstring(signature))
+	eventPayload, err := json.Marshal(event)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(eventPayload)).NotTo(ContainSubstring(signature))
+
+	timeline, err := db.GetTaskTimeline(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	timelinePayload, err := json.Marshal(timeline)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(timelinePayload)).NotTo(ContainSubstring(signature))
+
+	logs, err := db.GetTaskLogs(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	logsPayload, err := json.Marshal(logs)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(logsPayload)).NotTo(ContainSubstring(signature))
+}
+
+func TestStepEventRepositoryRedactsWireNormalizedWebhookSecretHeaderValue(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	const headerSecret = " secret-value "
+	const normalizedHeaderSecret = "secret-value"
+	const signingSecret = "webhook-signing-value-9274"
+	fixture := createWebhookSecretStepEventFixture(t, ctx, headerSecret, signingSecret)
+
+	event, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       1,
+		Type:           types.StepRunEventTypeStarted,
+		Message:        "webhook echoed " + normalizedHeaderSecret,
+		Details: map[string]any{
+			"error": "webhook stderr returned " + normalizedHeaderSecret,
+		},
+		Logs: []types.RecordStepRunLogChunkRequest{
+			{
+				Stream:   types.StepRunLogStreamStderr,
+				Severity: types.StepRunLogSeverityError,
+				Body:     "stderr contains " + normalizedHeaderSecret,
+			},
+		},
+		Outputs: []types.RecordStepRunOutputRequest{
+			{
+				Name: "diagnostics",
+				Value: map[string]any{
+					"message": "output contains " + normalizedHeaderSecret,
+				},
+			},
+		},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(event.Redacted).To(BeTrue())
+	g.Expect(event.Message).To(Equal("webhook echoed [REDACTED]"))
+	g.Expect(event.Details["error"]).To(Equal("webhook stderr returned [REDACTED]"))
+	g.Expect(event.Logs).To(HaveLen(1))
+	g.Expect(event.Logs[0].Body).To(Equal("stderr contains [REDACTED]"))
+	g.Expect(event.Outputs).To(HaveLen(1))
+	g.Expect(string(event.Outputs[0].Value)).To(ContainSubstring("[REDACTED]"))
+	g.Expect(string(event.Outputs[0].Value)).NotTo(ContainSubstring(normalizedHeaderSecret))
+	eventPayload, err := json.Marshal(event)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(eventPayload)).NotTo(ContainSubstring(normalizedHeaderSecret))
+
+	timeline, err := db.GetTaskTimeline(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	timelinePayload, err := json.Marshal(timeline)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(timelinePayload)).NotTo(ContainSubstring(normalizedHeaderSecret))
+
+	logs, err := db.GetTaskLogs(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	logsPayload, err := json.Marshal(logs)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(logsPayload)).NotTo(ContainSubstring(normalizedHeaderSecret))
+}
+
 func TestStepEventRepositoryReplaysSameSequenceIdempotently(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -816,6 +1011,53 @@ func createFileRenderSecretStepEventFixture(
 			"organizationId": deps.orgID,
 			"key":            "render_api_token",
 			"value":          secretValue,
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	return stepEventFixture{
+		orgID:      deps.orgID,
+		agentID:    tasks[0].DeploymentTargetID,
+		taskID:     tasks[0].ID,
+		stepRunID:  tasks[0].StepRuns[0].ID,
+		leaseID:    lease.ID,
+		leaseToken: lease.LeaseToken,
+	}
+}
+
+func createWebhookSecretStepEventFixture(
+	t *testing.T,
+	ctx context.Context,
+	headerSecret string,
+	signingSecret string,
+) stepEventFixture {
+	t.Helper()
+	g := NewWithT(t)
+	webhook := taskLeaseWebhookStep("webhook", "Notify webhook", 10)
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{webhook})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES
+			(@organizationId, @authKey, @authValue, @updatedBy),
+			(@organizationId, @signingKey, @signingValue, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"authKey":        "webhook_auth_token",
+			"authValue":      headerSecret,
+			"signingKey":     "webhook_signing_key",
+			"signingValue":   signingSecret,
 			"updatedBy":      deps.actorID,
 		},
 	)
