@@ -560,6 +560,8 @@ func resolveTaskLeaseStepSecrets(
 		return resolveComposeRegistryAuthSecrets(ctx, task, step.InputBindings)
 	case "distr.oci.job":
 		return resolveOCIJobSecretEnvironment(ctx, task, step.InputBindings)
+	case "distr.file.render":
+		return resolveFileRenderSecretVariables(ctx, task, step.InputBindings)
 	default:
 		return []string{}, nil
 	}
@@ -648,6 +650,53 @@ func resolveOCIJobSecretEnvironment(
 	}
 	inputBindings["environment"] = environment
 	inputBindings["secretEnvironment"] = resolvedSecretEnvironment
+	sort.Strings(references)
+	return references, nil
+}
+
+func resolveFileRenderSecretVariables(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	secretVariables, ok := mapStringAny(inputBindings["secretVariables"])
+	if !ok {
+		if _, exists := inputBindings["secretVariables"]; exists {
+			return nil, apierrors.NewBadRequest("file render secretVariables must be an object")
+		}
+		return []string{}, nil
+	}
+	variables, ok := mapStringAny(inputBindings["variables"])
+	if !ok {
+		if _, exists := inputBindings["variables"]; exists {
+			return nil, apierrors.NewBadRequest("file render variables must be an object")
+		}
+		variables = map[string]any{}
+	}
+	resolvedSecretVariables := map[string]any{}
+	references := make([]string, 0, len(secretVariables))
+	for rawName, rawReference := range secretVariables {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return nil, apierrors.NewBadRequest("file render secretVariables name is required")
+		}
+		if _, exists := variables[name]; exists {
+			return nil, apierrors.NewBadRequest("file render variables conflicts with secretVariables")
+		}
+		reference, ok := stringValue(rawReference)
+		if !ok || strings.TrimSpace(reference) == "" {
+			return nil, apierrors.NewBadRequest("file render secretVariables value must be a secret reference")
+		}
+		reference = strings.TrimSpace(reference)
+		value, err := getTaskLeaseSecretValue(ctx, task, reference)
+		if err != nil {
+			return nil, err
+		}
+		resolvedSecretVariables[name] = value
+		references = append(references, "secret:"+reference)
+	}
+	inputBindings["variables"] = variables
+	inputBindings["secretVariables"] = resolvedSecretVariables
 	sort.Strings(references)
 	return references, nil
 }

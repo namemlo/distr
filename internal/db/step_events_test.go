@@ -212,6 +212,67 @@ func TestStepEventRepositoryRedactsResolvedOCIJobSecretFromEventsLogsAndOutputs(
 	g.Expect(string(logsPayload)).NotTo(ContainSubstring(secretValue))
 }
 
+func TestStepEventRepositoryRedactsResolvedFileRenderSecretFromEventsLogsAndOutputs(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	const secretValue = "render-value-9274"
+	fixture := createFileRenderSecretStepEventFixture(t, ctx, secretValue)
+
+	event, err := db.RecordAgentStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID: fixture.orgID,
+		AgentID:        fixture.agentID,
+		StepRunID:      fixture.stepRunID,
+		LeaseToken:     fixture.leaseToken,
+		Sequence:       1,
+		Type:           types.StepRunEventTypeStarted,
+		Message:        "render failed with " + secretValue,
+		Details: map[string]any{
+			"error": "render stderr returned " + secretValue,
+		},
+		Logs: []types.RecordStepRunLogChunkRequest{
+			{
+				Stream:   types.StepRunLogStreamStderr,
+				Severity: types.StepRunLogSeverityError,
+				Body:     "stderr contains " + secretValue,
+			},
+		},
+		Outputs: []types.RecordStepRunOutputRequest{
+			{
+				Name: "diagnostics",
+				Value: map[string]any{
+					"message": "output contains " + secretValue,
+				},
+			},
+		},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(event.Redacted).To(BeTrue())
+	g.Expect(event.Message).To(Equal("render failed with [REDACTED]"))
+	g.Expect(event.Details["error"]).To(Equal("render stderr returned [REDACTED]"))
+	g.Expect(event.Logs).To(HaveLen(1))
+	g.Expect(event.Logs[0].Body).To(Equal("stderr contains [REDACTED]"))
+	g.Expect(event.Logs[0].Redacted).To(BeTrue())
+	g.Expect(event.Outputs).To(HaveLen(1))
+	g.Expect(string(event.Outputs[0].Value)).To(ContainSubstring("[REDACTED]"))
+	g.Expect(string(event.Outputs[0].Value)).NotTo(ContainSubstring(secretValue))
+	eventPayload, err := json.Marshal(event)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(eventPayload)).NotTo(ContainSubstring(secretValue))
+
+	timeline, err := db.GetTaskTimeline(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	timelinePayload, err := json.Marshal(timeline)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(timelinePayload)).NotTo(ContainSubstring(secretValue))
+
+	logs, err := db.GetTaskLogs(ctx, fixture.taskID, fixture.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	logsPayload, err := json.Marshal(logs)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(logsPayload)).NotTo(ContainSubstring(secretValue))
+}
+
 func TestStepEventRepositoryReplaysSameSequenceIdempotently(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -712,6 +773,48 @@ func createOCIJobSecretStepEventFixture(
 		pgx.NamedArgs{
 			"organizationId": deps.orgID,
 			"key":            "job_api_token",
+			"value":          secretValue,
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	return stepEventFixture{
+		orgID:      deps.orgID,
+		agentID:    tasks[0].DeploymentTargetID,
+		taskID:     tasks[0].ID,
+		stepRunID:  tasks[0].StepRuns[0].ID,
+		leaseID:    lease.ID,
+		leaseToken: lease.LeaseToken,
+	}
+}
+
+func createFileRenderSecretStepEventFixture(
+	t *testing.T,
+	ctx context.Context,
+	secretValue string,
+) stepEventFixture {
+	t.Helper()
+	g := NewWithT(t)
+	render := taskLeaseFileRenderStep("render", "Render config", 10)
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{render})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES (@organizationId, @key, @value, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"key":            "render_api_token",
 			"value":          secretValue,
 			"updatedBy":      deps.actorID,
 		},

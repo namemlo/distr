@@ -314,6 +314,58 @@ func defaultActions() []types.ActionDefinition {
 				[]any{"containerName", "exitCode", "status"},
 			),
 		},
+		{
+			Type:        "distr.file.render",
+			Name:        "File render",
+			Description: "Renders a text file from scoped variables using the target agent's allowlisted destination roots.",
+			InputSchema: objectSchema(
+				map[string]any{
+					"destinationPath": map[string]any{
+						"type":      "string",
+						"minLength": 1,
+						"pattern":   `^[^/\\].*`,
+					},
+					"template": map[string]any{"type": "string"},
+					"variables": map[string]any{
+						"type":                 "object",
+						"additionalProperties": map[string]any{"type": "string"},
+					},
+					"secretVariables": map[string]any{
+						"type":                 "object",
+						"additionalProperties": map[string]any{"type": "string", "minLength": 1},
+					},
+					"mode": map[string]any{
+						"type":    "string",
+						"pattern": `^0?[0-7]{3}$`,
+					},
+					"owner": map[string]any{
+						"type":    "string",
+						"pattern": `^[0-9]+$`,
+					},
+					"group": map[string]any{
+						"type":    "string",
+						"pattern": `^[0-9]+$`,
+					},
+					"backup": map[string]any{"type": "boolean"},
+					"idempotencyKey": map[string]any{
+						"type":      "string",
+						"minLength": 1,
+						"maxLength": 128,
+						"pattern":   `^[A-Za-z0-9_.:-]+$`,
+					},
+					"timeoutSeconds": map[string]any{"type": "integer", "minimum": 1},
+				},
+				[]any{"destinationPath", "template"},
+			),
+			OutputSchema: objectSchema(
+				map[string]any{
+					"destinationPath": map[string]any{"type": "string"},
+					"changed":         map[string]any{"type": "boolean"},
+					"backupPath":      map[string]any{"type": "string"},
+				},
+				[]any{"destinationPath", "changed"},
+			),
+		},
 	}
 }
 

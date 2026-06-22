@@ -22,4 +22,8 @@ func TestDockerCapabilityReportAdvertisesTypedActions(t *testing.T) {
 		ActionType: ociJobActionType,
 		Versions:   []string{types.AgentActionVersionV1},
 	}))
+	g.Expect(report.SupportedActions).To(ContainElement(api.AgentActionCapabilityRequest{
+		ActionType: fileRenderActionType,
+		Versions:   []string{types.AgentActionVersionV1},
+	}))
 }

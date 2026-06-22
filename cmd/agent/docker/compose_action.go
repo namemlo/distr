@@ -173,6 +173,10 @@ func executeTaskLease(
 			if err := executeOCIJobStep(ctx, lease, step, client); err != nil {
 				return err
 			}
+		case fileRenderActionType:
+			if err := executeFileRenderStep(ctx, lease, step, client); err != nil {
+				return err
+			}
 		default:
 			if err := recordUnsupportedStep(ctx, lease, step, client); err != nil {
 				return err
