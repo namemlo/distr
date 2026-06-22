@@ -21,6 +21,7 @@ func TaskToAPI(task types.Task) api.Task {
 		ReleaseBundleID:        task.ReleaseBundleID,
 		ChannelID:              task.ChannelID,
 		EnvironmentID:          task.EnvironmentID,
+		ActorUserAccountID:     task.ActorUserAccountID,
 		Status:                 task.Status,
 		QueueOrder:             task.QueueOrder,
 		Locks:                  List(task.Locks, TaskResourceLockToAPI),

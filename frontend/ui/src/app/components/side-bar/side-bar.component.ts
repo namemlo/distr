@@ -15,6 +15,7 @@ import {
   faBoxesStacked,
   faBuilding,
   faChevronDown,
+  faClockRotateLeft,
   faCreditCard,
   faDashboard,
   faDiagramProject,
@@ -95,6 +96,7 @@ export class SideBarComponent {
   protected readonly faChevronDown = faChevronDown;
   protected readonly faAsterisk = faAsterisk;
   protected readonly faBookOpen = faBookOpen;
+  protected readonly faClockRotateLeft = faClockRotateLeft;
   protected readonly faLifeRing = faLifeRing;
   protected readonly faHandHoldingDollar = faHandHoldingDollar;
   protected feedbackAlert = true;
@@ -149,6 +151,14 @@ export class SideBarComponent {
   protected readonly isDeploymentPlansFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isDeploymentPlansEnabled$, {initialValue: false})
+      : signal(false);
+  protected readonly isTaskQueueFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isTaskQueueEnabled$, {initialValue: false})
+      : signal(false);
+  protected readonly isDeploymentTimelineFeatureEnabled =
+    this.auth.isVendor() && this.auth.hasRole('admin')
+      ? toSignal(this.featureFlags.isDeploymentTimelineEnabled$, {initialValue: false})
       : signal(false);
   protected readonly isScopedVariablesFeatureEnabled =
     this.auth.isVendor() && this.auth.hasRole('admin')

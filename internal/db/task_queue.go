@@ -32,6 +32,7 @@ const taskOutputExpr = `
 	t.release_bundle_id,
 	t.channel_id,
 	t.environment_id,
+	t.actor_user_account_id,
 	t.status,
 	t.queue_order
 `
@@ -123,7 +124,12 @@ func CreateTasksForDeploymentPlan(
 		if err := ensureDeploymentPlanReleaseBundlePublishedForTaskCreation(ctx, *plan); err != nil {
 			return err
 		}
-		created, err := insertTasksForDeploymentPlan(ctx, request.DeploymentPlanID, request.OrganizationID)
+		created, err := insertTasksForDeploymentPlan(
+			ctx,
+			request.DeploymentPlanID,
+			request.OrganizationID,
+			uuidOrNil(request.ActorUserAccountID),
+		)
 		if err != nil {
 			return err
 		}
@@ -358,7 +364,14 @@ func isAllowedStepRunTransition(from, to types.StepRunStatus) bool {
 	}
 }
 
-func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) ([]types.Task, error) {
+func uuidOrNil(id uuid.UUID) any {
+	if id == uuid.Nil {
+		return nil
+	}
+	return id
+}
+
+func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID, actorUserAccountID any) ([]types.Task, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
 		`INSERT INTO Task AS t (
@@ -371,6 +384,7 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) 
 			release_bundle_id,
 			channel_id,
 			environment_id,
+			actor_user_account_id,
 			status
 		)
 		SELECT
@@ -383,6 +397,7 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) 
 			dp.release_bundle_id,
 			dp.channel_id,
 			dp.environment_id,
+			@actorUserAccountId,
 			@status
 		FROM DeploymentPlan dp
 		JOIN DeploymentPlanTarget dpt
@@ -394,10 +409,11 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID) 
 		ON CONFLICT (deployment_plan_id, deployment_plan_target_id) DO NOTHING
 		RETURNING `+taskOutputExpr,
 		pgx.NamedArgs{
-			"deploymentPlanId": planID,
-			"organizationId":   orgID,
-			"taskType":         types.TaskTypeDeployment,
-			"status":           types.TaskStatusQueued,
+			"deploymentPlanId":   planID,
+			"organizationId":     orgID,
+			"taskType":           types.TaskTypeDeployment,
+			"actorUserAccountId": actorUserAccountID,
+			"status":             types.TaskStatusQueued,
 		},
 	)
 	if err != nil {

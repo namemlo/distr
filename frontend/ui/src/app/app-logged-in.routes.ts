@@ -22,6 +22,7 @@ import {PartnerUsersComponent} from './components/users/partners/partner-users.c
 import {VendorUsersComponent} from './components/users/vendors/vendor-users.component';
 import {DeploymentPlansComponent} from './deployment-plans/deployment-plans.component';
 import {DeploymentProcessesComponent} from './deployment-processes/deployment-processes.component';
+import {DeploymentTimelineComponent} from './deployment-timeline/deployment-timeline.component';
 import {DeploymentTargetDetailComponent} from './deployments/deployment-target-details/deployment-target-detail.component';
 import {DeploymentTargetsComponent} from './deployments/deployment-targets.component';
 import {EnvironmentsComponent} from './environments/environments.component';
@@ -279,6 +280,23 @@ export const routes: Routes = [
           experimentalFeatureEnabledGuard('deployment_processes'),
           experimentalFeatureEnabledGuard('scoped_variables_v2'),
           experimentalFeatureEnabledGuard('deployment_plans'),
+        ],
+      },
+      {
+        path: 'deployment-timeline',
+        component: DeploymentTimelineComponent,
+        canActivate: [
+          requireVendor,
+          requiredRoleGuard('admin'),
+          experimentalFeatureEnabledGuard('environments'),
+          experimentalFeatureEnabledGuard('lifecycles'),
+          experimentalFeatureEnabledGuard('channels'),
+          experimentalFeatureEnabledGuard('release_bundles'),
+          experimentalFeatureEnabledGuard('deployment_processes'),
+          experimentalFeatureEnabledGuard('scoped_variables_v2'),
+          experimentalFeatureEnabledGuard('deployment_plans'),
+          experimentalFeatureEnabledGuard('task_queue'),
+          experimentalFeatureEnabledGuard('deployment_timeline'),
         ],
       },
       {
