@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/distr-sh/distr/api"
+	"github.com/distr-sh/distr/internal/policy"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -2291,6 +2292,300 @@ func TestWebhookActionSelfContainedRuntimeSuite(t *testing.T) {
 	})
 }
 
+func TestWebhookActionPolicyEngineSuite(t *testing.T) {
+	t.Run("tenant rate limit blocks before DNS", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookPolicyEngineForTest(t, policy.NewWebhookPolicyEngine(policy.WebhookPolicyConfig{
+			TenantRequestsPerSecond: 1,
+		}))
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		first := api.AgentTaskLeaseStep{StepRunID: uuid.New(), Key: "notify", ActionType: webhookActionType, ActionVersion: types.AgentActionVersionV1, Inputs: validWebhookInputs()}
+		second := first
+		second.StepRunID = uuid.New()
+
+		g.Expect(executeWebhookStep(context.Background(), lease, first, &recordingLeasedTaskClient{})).To(Succeed())
+		lookupCount := atomic.LoadInt32(&lookups)
+		err := executeWebhookStep(context.Background(), lease, second, &recordingLeasedTaskClient{})
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook policy denied: tenant rate limit exceeded")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(lookupCount))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+	})
+
+	t.Run("corridor saturation blocks before DNS", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookPolicyEngineForTest(t, policy.NewWebhookPolicyEngine(policy.WebhookPolicyConfig{
+			CorridorRequestsPerSecond: map[string]int{"PH": 1},
+		}))
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		inputs := validWebhookInputs()
+		inputs["corridor"] = "PH"
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		first := api.AgentTaskLeaseStep{StepRunID: uuid.New(), Key: "notify", ActionType: webhookActionType, ActionVersion: types.AgentActionVersionV1, Inputs: inputs}
+		second := first
+		second.StepRunID = uuid.New()
+
+		g.Expect(executeWebhookStep(context.Background(), lease, first, &recordingLeasedTaskClient{})).To(Succeed())
+		lookupCount := atomic.LoadInt32(&lookups)
+		err := executeWebhookStep(context.Background(), lease, second, &recordingLeasedTaskClient{})
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook policy denied: corridor rate limit exceeded")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(lookupCount))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+	})
+
+	t.Run("concurrent corridor rps enforcement is deterministic", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookPolicyEngineForTest(t, policy.NewWebhookPolicyEngine(policy.WebhookPolicyConfig{
+			CorridorRequestsPerSecond: map[string]int{"PH": 1},
+		}))
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		inputs := validWebhookInputs()
+		inputs["corridor"] = "PH"
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			step := api.AgentTaskLeaseStep{
+				StepRunID:     uuid.New(),
+				Key:           fmt.Sprintf("notify-%d", i),
+				ActionType:    webhookActionType,
+				ActionVersion: types.AgentActionVersionV1,
+				Inputs:        inputs,
+			}
+			go func(step api.AgentTaskLeaseStep) {
+				<-start
+				results <- executeWebhookStep(context.Background(), lease, step, &recordingLeasedTaskClient{})
+			}(step)
+		}
+		close(start)
+
+		var allowed int
+		var denied int
+		for i := 0; i < 2; i++ {
+			err := <-results
+			if err == nil {
+				allowed++
+				continue
+			}
+			g.Expect(err).To(MatchError(ContainSubstring("webhook policy denied: corridor rate limit exceeded")))
+			denied++
+		}
+
+		g.Expect(allowed).To(Equal(1))
+		g.Expect(denied).To(Equal(1))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(1)))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(1)))
+	})
+
+	t.Run("open circuit breaker blocks before DNS and HTTP", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookPolicyEngineForTest(t, policy.NewWebhookPolicyEngine(policy.WebhookPolicyConfig{
+			OpenCircuitHosts: []string{"hooks.example.com"},
+		}))
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not run when circuit is open")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return nil, errors.New("HTTP should not run when circuit is open")
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{StepRunID: uuid.New(), Key: "notify", ActionType: webhookActionType, ActionVersion: types.AgentActionVersionV1, Inputs: validWebhookInputs()}
+
+		err := executeWebhookStep(context.Background(), lease, step, &recordingLeasedTaskClient{})
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook policy denied: circuit breaker open")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
+	})
+
+	t.Run("circuit breaker opens on endpoint failure storm", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookPolicyEngineForTest(t, policy.NewWebhookPolicyEngine(policy.WebhookPolicyConfig{
+			EndpointFailureLimit: 2,
+		}))
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"error":"down"}`)),
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			step := api.AgentTaskLeaseStep{
+				StepRunID:     uuid.New(),
+				Key:           fmt.Sprintf("notify-failure-%d", i),
+				ActionType:    webhookActionType,
+				ActionVersion: types.AgentActionVersionV1,
+				Inputs:        validWebhookInputs(),
+			}
+			go func(step api.AgentTaskLeaseStep) {
+				<-start
+				results <- executeWebhookStep(context.Background(), lease, step, &recordingLeasedTaskClient{})
+			}(step)
+		}
+		close(start)
+		for i := 0; i < 2; i++ {
+			g.Expect(<-results).To(MatchError(ContainSubstring("webhook returned unexpected status 503")))
+		}
+		lookupCount := atomic.LoadInt32(&lookups)
+		requestCount := atomic.LoadInt32(&requests)
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify-after-failures",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, &recordingLeasedTaskClient{})
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook policy denied: endpoint failure threshold exceeded")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(lookupCount))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(requestCount))
+	})
+
+	t.Run("retry storm is blocked at policy layer", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookPolicyEngineForTest(t, policy.NewWebhookPolicyEngine(policy.WebhookPolicyConfig{
+			MaxRetryAttempts: 1,
+		}))
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not run for blocked retry storm")
+		})
+		inputs := validWebhookInputs()
+		inputs["retry"] = map[string]any{
+			"maxAttempts":          2,
+			"backoffSeconds":       0,
+			"retryableStatusCodes": []any{503},
+		}
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{StepRunID: uuid.New(), Key: "notify", ActionType: webhookActionType, ActionVersion: types.AgentActionVersionV1, Inputs: inputs}
+
+		err := executeWebhookStep(context.Background(), lease, step, &recordingLeasedTaskClient{})
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook policy denied: retry storm detected")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+	})
+
+	t.Run("replay still enforces policy without DNS or HTTP", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookPolicyEngineForTest(t, policy.NewWebhookPolicyEngine(policy.WebhookPolicyConfig{
+			OpenCircuitHosts: []string{"hooks.example.com"},
+		}))
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not run during policy-blocked replay")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return nil, errors.New("HTTP should not run during policy-blocked replay")
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{StepRunID: uuid.New(), Key: "notify", ActionType: webhookActionType, ActionVersion: types.AgentActionVersionV1, Inputs: validWebhookInputs()}
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: *storedWebhookSuccessTimeline(lease.TaskID, step.StepRunID),
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook policy denied: circuit breaker open")))
+		g.Expect(recorder.timelineCalls).To(Equal(1))
+		g.Expect(recorder.events).To(BeEmpty())
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
+	})
+}
+
 func TestExecuteTaskLeaseHeartbeatsAndRunsWebhookStep(t *testing.T) {
 	g := NewWithT(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -2457,6 +2752,13 @@ func setWebhookAttemptMetricSink(t *testing.T, sink chan<- webhookAttemptMetric)
 	oldSink := webhookAttemptMetricSink
 	webhookAttemptMetricSink = sink
 	t.Cleanup(func() { webhookAttemptMetricSink = oldSink })
+}
+
+func setWebhookPolicyEngineForTest(t *testing.T, engine policy.WebhookPolicyEvaluator) {
+	t.Helper()
+	oldEngine := webhookPolicyEngineForTest
+	webhookPolicyEngineForTest = engine
+	t.Cleanup(func() { webhookPolicyEngineForTest = oldEngine })
 }
 
 type webhookReplayLeasedTaskClient struct {
