@@ -28,7 +28,12 @@ const (
 	webhookAllowedPrivateHostsEnv = "DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS"
 	webhookMaxRequestBodyBytes    = 64 * 1024
 	webhookMaxResponseBodyBytes   = 64 * 1024
+	webhookMaxResponseHeaderBytes = 16 * 1024
+	webhookMaxRetryAttempts       = 5
 	webhookDefaultTimeoutSeconds  = 30
+	webhookConnectTimeout         = 10 * time.Second
+	webhookTLSHandshakeTimeout    = 10 * time.Second
+	webhookResponseHeaderTimeout  = 10 * time.Second
 	webhookBuiltInOutputCount     = 2
 )
 
@@ -36,6 +41,7 @@ var webhookNow = time.Now
 var webhookHTTPClientForTest *http.Client
 var webhookLookupIPAddr = net.DefaultResolver.LookupIPAddr
 var webhookDialContext = (&net.Dialer{}).DialContext
+var webhookAttemptMetricSink chan<- webhookAttemptMetric
 var webhookUnsafeIPPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
 }
@@ -85,6 +91,13 @@ type webhookRunResult struct {
 	Attempts        int
 	Outputs         []api.AgentStepRunOutputRequest
 	RedactionValues []string
+}
+
+type webhookAttemptMetric struct {
+	Attempt    int
+	StatusCode int
+	Duration   time.Duration
+	Failed     bool
 }
 
 func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error) {
@@ -144,8 +157,8 @@ func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error)
 	if input.TimeoutSeconds < 1 {
 		return input, fmt.Errorf("timeoutSeconds must be greater than 0")
 	}
-	if input.Retry.MaxAttempts < 1 || input.Retry.MaxAttempts > 5 {
-		return input, fmt.Errorf("retry.maxAttempts must be between 1 and 5")
+	if input.Retry.MaxAttempts < 1 || input.Retry.MaxAttempts > webhookMaxRetryAttempts {
+		return input, fmt.Errorf("retry.maxAttempts must be between 1 and %d", webhookMaxRetryAttempts)
 	}
 	if input.Retry.BackoffSeconds < 0 || input.Retry.BackoffSeconds > 60 {
 		return input, fmt.Errorf("retry.backoffSeconds must be between 0 and 60")
@@ -237,6 +250,12 @@ func runWebhookAction(
 	input webhookActionInput,
 	emitProgress func(string) error,
 ) (webhookRunResult, error) {
+	runCtx := ctx
+	if input.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
 	policy, err := loadWebhookOutboundPolicy()
 	if err != nil {
 		return webhookRunResult{}, err
@@ -245,7 +264,7 @@ func runWebhookAction(
 	if err != nil {
 		return webhookRunResult{}, err
 	}
-	resolvedTarget, err := resolveWebhookTarget(ctx, endpoint, policy)
+	resolvedTarget, err := resolveWebhookTarget(runCtx, endpoint, policy)
 	if err != nil {
 		return webhookRunResult{}, err
 	}
@@ -274,21 +293,31 @@ func runWebhookAction(
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
+	if maxAttempts > webhookMaxRetryAttempts {
+		maxAttempts = webhookMaxRetryAttempts
+	}
 	var lastStatus int
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := emitProgress(fmt.Sprintf("sending webhook attempt %d of %d", attempt, maxAttempts)); err != nil {
 			return resultFor(0, attempt, nil), err
 		}
+		attemptStarted := time.Now()
 		responseBody, statusCode, err := sendWebhookAttempt(
-			ctx, client, input, endpoint, body, bodyDigest, timestamp, signature,
+			runCtx, client, input, endpoint, body, bodyDigest, timestamp, signature,
 		)
+		emitWebhookAttemptMetric(webhookAttemptMetric{
+			Attempt:    attempt,
+			StatusCode: statusCode,
+			Duration:   time.Since(attemptStarted),
+			Failed:     err != nil,
+		})
 		lastStatus = statusCode
 		if err != nil {
-			if ctx.Err() != nil {
-				return resultFor(lastStatus, attempt, nil), webhookContextError(ctx, "webhook")
+			if runCtx.Err() != nil {
+				return resultFor(lastStatus, attempt, nil), webhookContextError(runCtx, "webhook")
 			}
 			if isRetryableWebhookAttemptError(statusCode, err) && attempt < maxAttempts {
-				if err := sleepWebhookBackoff(ctx, input.Retry.BackoffSeconds); err != nil {
+				if err := sleepWebhookBackoff(runCtx, input.Retry.BackoffSeconds); err != nil {
 					return resultFor(lastStatus, attempt, nil), err
 				}
 				continue
@@ -296,7 +325,7 @@ func runWebhookAction(
 			return resultFor(lastStatus, attempt, nil), err
 		}
 		if _, ok := retryableStatuses[statusCode]; ok && attempt < maxAttempts {
-			if err := sleepWebhookBackoff(ctx, input.Retry.BackoffSeconds); err != nil {
+			if err := sleepWebhookBackoff(runCtx, input.Retry.BackoffSeconds); err != nil {
 				return resultFor(statusCode, attempt, nil), err
 			}
 			continue
@@ -311,6 +340,16 @@ func runWebhookAction(
 		return resultFor(statusCode, attempt, nil), fmt.Errorf("webhook returned unexpected status %d", statusCode)
 	}
 	return resultFor(lastStatus, maxAttempts, nil), fmt.Errorf("webhook did not complete")
+}
+
+func emitWebhookAttemptMetric(metric webhookAttemptMetric) {
+	if webhookAttemptMetricSink == nil {
+		return
+	}
+	select {
+	case webhookAttemptMetricSink <- metric:
+	default:
+	}
 }
 
 func isRetryableWebhookAttemptError(statusCode int, err error) bool {
@@ -478,6 +517,9 @@ func newWebhookHTTPClient(policy webhookOutboundPolicy, resolvedTarget webhookRe
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	transport.TLSHandshakeTimeout = webhookTLSHandshakeTimeout
+	transport.ResponseHeaderTimeout = webhookResponseHeaderTimeout
+	transport.MaxResponseHeaderBytes = webhookMaxResponseHeaderBytes
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
@@ -493,7 +535,9 @@ func newWebhookHTTPClient(policy webhookOutboundPolicy, resolvedTarget webhookRe
 				return nil, err
 			}
 		}
-		return webhookDialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		dialCtx, cancel := context.WithTimeout(ctx, webhookConnectTimeout)
+		defer cancel()
+		return webhookDialContext(dialCtx, network, net.JoinHostPort(ips[0].IP.String(), port))
 	}
 	return &http.Client{
 		Transport:     transport,
