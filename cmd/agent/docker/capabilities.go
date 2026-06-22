@@ -9,6 +9,7 @@ import (
 const composeDeployActionType = "distr.compose.deploy"
 const ociJobActionType = "distr.oci.job"
 const fileRenderActionType = "distr.file.render"
+const webhookActionType = "distr.webhook"
 
 func dockerCapabilityReport() api.AgentCapabilitiesRequest {
 	report := agentclient.DefaultCapabilityReport(
@@ -27,6 +28,10 @@ func dockerCapabilityReport() api.AgentCapabilitiesRequest {
 		},
 		{
 			ActionType: fileRenderActionType,
+			Versions:   []string{types.AgentActionVersionV1},
+		},
+		{
+			ActionType: webhookActionType,
 			Versions:   []string{types.AgentActionVersionV1},
 		},
 	}

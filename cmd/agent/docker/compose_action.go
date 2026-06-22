@@ -177,6 +177,10 @@ func executeTaskLease(
 			if err := executeFileRenderStep(ctx, lease, step, client); err != nil {
 				return err
 			}
+		case webhookActionType:
+			if err := executeWebhookStep(ctx, lease, step, client); err != nil {
+				return err
+			}
 		default:
 			if err := recordUnsupportedStep(ctx, lease, step, client); err != nil {
 				return err

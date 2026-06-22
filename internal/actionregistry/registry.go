@@ -16,6 +16,8 @@ type Registry struct {
 
 var defaultRegistry = mustBuildRegistry(defaultActions())
 
+const webhookBuiltInOutputCount = 2
+
 func DefaultRegistry() Registry {
 	return defaultRegistry
 }
@@ -51,6 +53,11 @@ func (r Registry) ValidateInput(actionType string, input map[string]any) error {
 		return apierrors.NewBadRequest(
 			fmt.Sprintf("actionType %q inputBindings do not match schema: %s", actionType, err.Error()),
 		)
+	}
+	if actionType == "distr.webhook" {
+		if err := validateWebhookRegistryInput(input); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -366,6 +373,176 @@ func defaultActions() []types.ActionDefinition {
 				[]any{"destinationPath", "changed"},
 			),
 		},
+		{
+			Type:        "distr.webhook",
+			Name:        "Webhook",
+			Description: "Calls a trusted outbound HTTPS webhook with signed JSON, secret headers, retry policy, and declared response outputs.",
+			InputSchema: objectSchema(
+				map[string]any{
+					"url": map[string]any{
+						"type":    "string",
+						"format":  "uri",
+						"pattern": `^https://`,
+					},
+					"method": map[string]any{
+						"type": "string",
+						"enum": []any{"GET", "POST", "PUT", "PATCH", "DELETE"},
+					},
+					"headers": map[string]any{
+						"type":                 "object",
+						"propertyNames":        webhookHeaderNameSchema(),
+						"additionalProperties": map[string]any{"type": "string"},
+					},
+					"secretHeaders": map[string]any{
+						"type":                 "object",
+						"propertyNames":        webhookHeaderNameSchema(),
+						"additionalProperties": webhookSecretReferenceSchema(),
+					},
+					"body":          map[string]any{},
+					"sensitiveBody": map[string]any{"type": "boolean"},
+					"signingSecret": webhookSecretReferenceSchema(),
+					"timeoutSeconds": map[string]any{
+						"type":    "integer",
+						"minimum": 1,
+						"maximum": 300,
+					},
+					"retry": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"maxAttempts": map[string]any{
+								"type":    "integer",
+								"minimum": 1,
+								"maximum": 5,
+							},
+							"backoffSeconds": map[string]any{
+								"type":    "integer",
+								"minimum": 0,
+								"maximum": 60,
+							},
+							"retryableStatusCodes": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
+								"minItems":    1,
+								"uniqueItems": true,
+							},
+						},
+						"additionalProperties": false,
+					},
+					"expectedStatusCodes": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
+						"minItems":    1,
+						"uniqueItems": true,
+					},
+					"idempotencyKey": map[string]any{
+						"type":      "string",
+						"minLength": 1,
+						"maxLength": 128,
+						"pattern":   `^[A-Za-z0-9_.:-]+$`,
+					},
+					"outputs": map[string]any{
+						"type":     "array",
+						"maxItems": types.MaxStepRunEventOutputItemCount - webhookBuiltInOutputCount,
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"name": map[string]any{
+									"type":      "string",
+									"minLength": 1,
+									"maxLength": 128,
+									"pattern":   `^[A-Za-z_][A-Za-z0-9_.-]*$`,
+								},
+								"pointer": map[string]any{
+									"type":      "string",
+									"minLength": 1,
+									"pattern":   `^/`,
+								},
+								"type": map[string]any{
+									"type": "string",
+									"enum": []any{"string", "number", "boolean", "object", "array"},
+								},
+								"required":  map[string]any{"type": "boolean"},
+								"sensitive": map[string]any{"type": "boolean"},
+							},
+							"required":             []any{"name", "pointer", "type"},
+							"additionalProperties": false,
+						},
+					},
+				},
+				[]any{"url", "signingSecret"},
+			),
+			OutputSchema: objectSchema(
+				map[string]any{
+					"statusCode": map[string]any{"type": "integer"},
+					"attempts":   map[string]any{"type": "integer", "minimum": 1},
+				},
+				[]any{"statusCode", "attempts"},
+			),
+		},
+	}
+}
+
+func webhookHeaderNameSchema() map[string]any {
+	return map[string]any{
+		"type":    "string",
+		"pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$",
+	}
+}
+
+func webhookSecretReferenceSchema() map[string]any {
+	return map[string]any{
+		"type":      "string",
+		"minLength": 1,
+		"maxLength": 128,
+		"pattern":   `^[A-Za-z0-9_.:-]+$`,
+	}
+}
+
+func validateWebhookRegistryInput(input map[string]any) error {
+	headers, _ := input["headers"].(map[string]any)
+	for name := range headers {
+		if isWebhookSensitiveHeaderName(name) {
+			return apierrors.NewBadRequest(fmt.Sprintf("webhook headers cannot include %s; use secretHeaders", name))
+		}
+	}
+	outputs, _ := input["outputs"].([]any)
+	if len(outputs) > types.MaxStepRunEventOutputItemCount-webhookBuiltInOutputCount {
+		return apierrors.NewBadRequest("webhook outputs contains too many entries")
+	}
+	seen := map[string]struct{}{}
+	for _, rawOutput := range outputs {
+		output, _ := rawOutput.(map[string]any)
+		name, _ := output["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if isWebhookReservedOutputName(name) {
+			return apierrors.NewBadRequest(fmt.Sprintf("webhook outputs name %s is reserved", name))
+		}
+		if _, ok := seen[name]; ok {
+			return apierrors.NewBadRequest("webhook outputs contains duplicate name")
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+func isWebhookReservedOutputName(name string) bool {
+	switch name {
+	case "statusCode", "attempts":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWebhookSensitiveHeaderName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "authorization", "proxy-authorization", "x-api-key", "cookie", "x-distr-signature":
+		return true
+	default:
+		return false
 	}
 }
 

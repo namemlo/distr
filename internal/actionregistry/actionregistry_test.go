@@ -2,6 +2,7 @@ package actionregistry
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
 
 	actions := DefaultRegistry().List()
 
-	g.Expect(actions).To(HaveLen(6))
+	g.Expect(actions).To(HaveLen(7))
 	g.Expect(actionTypes(actions)).To(Equal([]string{
 		"distr.preflight",
 		"distr.http.check",
@@ -22,11 +23,22 @@ func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
 		"distr.compose.deploy",
 		"distr.oci.job",
 		"distr.file.render",
+		"distr.webhook",
 	}))
 	g.Expect(actions[0].Name).To(Equal("Preflight checks"))
 	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("$schema", "https://json-schema.org/draft/2020-12/schema"))
 	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("type", "object"))
 	g.Expect(actions[0].OutputSchema).To(HaveKeyWithValue("type", "object"))
+}
+
+func TestRegistryContainsWebhookV1(t *testing.T) {
+	g := NewWithT(t)
+
+	action, ok := DefaultRegistry().Get("distr.webhook")
+
+	g.Expect(ok).To(BeTrue())
+	g.Expect(action.Type).To(Equal("distr.webhook"))
+	g.Expect(actionCapabilityID(action.Type, types.AgentActionVersionV1)).To(Equal("distr.webhook.v1"))
 }
 
 func TestDefaultRegistryReturnsActionByType(t *testing.T) {
@@ -97,6 +109,23 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 		"backup":true,
 		"idempotencyKey":"runtime-config",
 		"timeoutSeconds":30
+	}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.webhook", jsonObject(t, `{
+		"url":"https://hooks.example.com/deployments",
+		"method":"POST",
+		"headers":{"X-Deployment":"demo"},
+		"secretHeaders":{"Authorization":"webhook_auth_token"},
+		"body":{"deploymentId":"dep-123"},
+		"sensitiveBody":true,
+		"signingSecret":"webhook_signing_key",
+		"timeoutSeconds":30,
+		"retry":{"maxAttempts":3,"backoffSeconds":1,"retryableStatusCodes":[429,500,502,503,504]},
+		"expectedStatusCodes":[200,202],
+		"idempotencyKey":"notify-demo",
+		"outputs":[
+			{"name":"remoteId","pointer":"/id","type":"string","required":true},
+			{"name":"accepted","pointer":"/accepted","type":"boolean","sensitive":true}
+		]
 	}`))).To(Succeed())
 }
 
@@ -239,6 +268,55 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			}`),
 			want: "mode",
 		},
+		{
+			name:       "webhook rejects non-https url",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"http://hooks.example.com/deployments",
+				"signingSecret":"webhook_signing_key"
+			}`),
+			want: "url",
+		},
+		{
+			name:       "webhook rejects plaintext authorization header",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"headers":{"Authorization":"Bearer plain-secret"},
+				"signingSecret":"webhook_signing_key"
+			}`),
+			want: "Authorization",
+		},
+		{
+			name:       "webhook rejects malformed output declaration",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"signingSecret":"webhook_signing_key",
+				"outputs":[{"name":"remoteId","pointer":"id","type":"string"}]
+			}`),
+			want: "pointer",
+		},
+		{
+			name:       "webhook rejects reserved output name",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"signingSecret":"webhook_signing_key",
+				"outputs":[{"name":"attempts","pointer":"/attempts","type":"number"}]
+			}`),
+			want: "reserved",
+		},
+		{
+			name:       "webhook rejects invalid retry policy",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"signingSecret":"webhook_signing_key",
+				"retry":{"maxAttempts":0}
+			}`),
+			want: "maxAttempts",
+		},
 	}
 
 	for _, tt := range tests {
@@ -251,6 +329,28 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			g.Expect(strings.ToLower(err.Error())).To(ContainSubstring(strings.ToLower(tt.want)))
 		})
 	}
+}
+
+func TestDefaultRegistryRejectsWebhookTooManyDeclaredOutputs(t *testing.T) {
+	registry := DefaultRegistry()
+	g := NewWithT(t)
+	outputs := make([]any, 0, types.MaxStepRunEventOutputItemCount-1)
+	for i := 0; i < types.MaxStepRunEventOutputItemCount-1; i++ {
+		outputs = append(outputs, map[string]any{
+			"name":    fmt.Sprintf("remoteId%d", i),
+			"pointer": fmt.Sprintf("/items/%d/id", i),
+			"type":    "string",
+		})
+	}
+
+	err := registry.ValidateInput("distr.webhook", map[string]any{
+		"url":           "https://hooks.example.com/deployments",
+		"signingSecret": "webhook_signing_key",
+		"outputs":       outputs,
+	})
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(strings.ToLower(err.Error())).To(ContainSubstring("maxitems"))
 }
 
 func TestDefaultRegistryValidatesDeploymentProcessSteps(t *testing.T) {
@@ -285,6 +385,10 @@ func actionTypes(actions []types.ActionDefinition) []string {
 		values = append(values, action.Type)
 	}
 	return values
+}
+
+func actionCapabilityID(actionType, version string) string {
+	return actionType + ".v" + strings.TrimPrefix(version, "v")
 }
 
 func jsonObject(t *testing.T, raw string) map[string]any {

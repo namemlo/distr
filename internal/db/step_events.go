@@ -489,6 +489,8 @@ func getStepRunSecretValuesForRedaction(ctx context.Context, orgID, stepRunID uu
 		return getOCIJobSecretValuesForRedaction(ctx, task, inputBindings)
 	case "distr.file.render":
 		return getFileRenderSecretValuesForRedaction(ctx, task, inputBindings)
+	case "distr.webhook":
+		return getWebhookSecretValuesForRedaction(ctx, task, inputBindings)
 	default:
 		return nil, nil
 	}
@@ -581,6 +583,51 @@ func getFileRenderSecretValuesForRedaction(
 		}
 	}
 	return values, nil
+}
+
+func getWebhookSecretValuesForRedaction(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	values := []string{}
+	signingReference, ok := stringValue(inputBindings["signingSecret"])
+	if ok && strings.TrimSpace(signingReference) != "" {
+		value, err := getTaskLeaseSecretValue(ctx, task, strings.TrimSpace(signingReference))
+		if err != nil {
+			return nil, err
+		}
+		if value != "" {
+			values = appendStepRunSecretRedactionValue(values, value)
+		}
+	}
+	secretHeaders, ok := mapStringAny(inputBindings["secretHeaders"])
+	if !ok {
+		return values, nil
+	}
+	for _, rawReference := range secretHeaders {
+		reference, ok := stringValue(rawReference)
+		if !ok || strings.TrimSpace(reference) == "" {
+			continue
+		}
+		value, err := getTaskLeaseSecretValue(ctx, task, strings.TrimSpace(reference))
+		if err != nil {
+			return nil, err
+		}
+		if value != "" {
+			values = appendStepRunSecretRedactionValue(values, value)
+		}
+	}
+	return values, nil
+}
+
+func appendStepRunSecretRedactionValue(values []string, value string) []string {
+	values = append(values, value)
+	trimmed := strings.TrimSpace(value)
+	if trimmed != "" && trimmed != value {
+		values = append(values, trimmed)
+	}
+	return values
 }
 
 func getTaskLeaseForStepRunEvent(

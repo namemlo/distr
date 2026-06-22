@@ -218,6 +218,65 @@ func TestTaskLeaseRepositoryResolvesFileRenderSecretVariablesOnlyForAgentLease(t
 	g.Expect(secretVariables).To(HaveKeyWithValue("apiToken", "super-secret-render-token"))
 }
 
+func TestTaskLeaseRepositoryResolvesWebhookSecretsOnlyForAgentLease(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	webhook := taskLeaseWebhookStep("webhook", "Notify webhook", 10)
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{webhook})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES
+			(@organizationId, @authKey, @authValue, @updatedBy),
+			(@organizationId, @signingKey, @signingValue, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"authKey":        "webhook_auth_token",
+			"authValue":      "Bearer super-secret-webhook-token",
+			"signingKey":     "webhook_signing_key",
+			"signingValue":   "super-secret-signing-key",
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	planPayload, err := json.Marshal(deps.plan.Steps[0].InputBindings)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(planPayload)).NotTo(ContainSubstring("super-secret-webhook-token"))
+	g.Expect(string(planPayload)).NotTo(ContainSubstring("super-secret-signing-key"))
+	g.Expect(string(planPayload)).To(ContainSubstring("webhook_auth_token"))
+	g.Expect(string(planPayload)).To(ContainSubstring("webhook_signing_key"))
+	g.Expect(deps.plan.ProcessSnapshotID).NotTo(BeNil())
+	snapshot, err := db.GetProcessSnapshot(ctx, *deps.plan.ProcessSnapshotID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	snapshotPayload, err := json.Marshal(snapshot.Revision.Steps[0].InputBindings)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(snapshotPayload)).NotTo(ContainSubstring("super-secret-webhook-token"))
+	g.Expect(string(snapshotPayload)).NotTo(ContainSubstring("super-secret-signing-key"))
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	g.Expect(lease.Steps).To(HaveLen(1))
+	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:webhook_auth_token"))
+	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:webhook_signing_key"))
+	headers := lease.Steps[0].InputBindings["headers"].(map[string]any)
+	g.Expect(headers).To(HaveKeyWithValue("X-Deployment", "demo"))
+	g.Expect(headers).NotTo(HaveKey("Authorization"))
+	secretHeaders := lease.Steps[0].InputBindings["secretHeaders"].(map[string]any)
+	g.Expect(secretHeaders).To(HaveKeyWithValue("Authorization", "Bearer super-secret-webhook-token"))
+	g.Expect(lease.Steps[0].InputBindings).To(HaveKeyWithValue("signingSecret", "super-secret-signing-key"))
+}
+
 func TestTaskLeaseRepositoryReturnsNilWhenNoQueuedTaskForAgent(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -982,6 +1041,38 @@ func taskLeaseFileRenderStep(key, name string, sortOrder int) types.DeploymentPr
 			},
 			"mode":   "0640",
 			"backup": true,
+		},
+		FailureMode:          "fail",
+		TimeoutSeconds:       120,
+		RetryMaxAttempts:     3,
+		RetryIntervalSeconds: 10,
+		RequiredPermissions:  []string{"deploy:write"},
+		SortOrder:            sortOrder,
+	}
+}
+
+func taskLeaseWebhookStep(key, name string, sortOrder int) types.DeploymentProcessStep {
+	return types.DeploymentProcessStep{
+		Key:               key,
+		Name:              name,
+		ActionType:        "distr.webhook",
+		ExecutionLocation: "target",
+		InputBindings: map[string]any{
+			"url":     "https://hooks.example.com/deployments",
+			"method":  "POST",
+			"headers": map[string]any{"X-Deployment": "demo"},
+			"secretHeaders": map[string]any{
+				"Authorization": "webhook_auth_token",
+			},
+			"body": map[string]any{
+				"deploymentId": "dep-123",
+			},
+			"signingSecret":       "webhook_signing_key",
+			"timeoutSeconds":      30,
+			"expectedStatusCodes": []any{200, 202},
+			"outputs": []any{
+				map[string]any{"name": "remoteId", "pointer": "/id", "type": "string", "required": true},
+			},
 		},
 		FailureMode:          "fail",
 		TimeoutSeconds:       120,

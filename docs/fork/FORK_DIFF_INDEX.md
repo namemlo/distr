@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-027 are implemented locally. PR-027 adds the Docker-agent `distr.file.render` action with restricted scoped templates, trusted destination-root allowlisting, lease-time and Hub-side secret redaction, `os.Root` beneath-root atomic writes, private temporary files, descriptor-checked backups, secret-aware mode defaults, mode/owner controls, and retry-safe no-op behavior while preserving existing Compose, OCI, and legacy resource-poll deployment behavior.
+PR-000 through PR-028 are implemented locally. PR-028 adds the Docker-agent `distr.webhook` action with trusted outbound host allowlisting, signed HTTPS JSON requests, secret-header and signing-secret lease resolution, retry/idempotency handling, declared response outputs, and agent plus Hub redaction while preserving existing Compose, OCI, file-render, and legacy resource-poll deployment behavior.
 
 ## Tracking Template
 
@@ -448,3 +448,18 @@ Use one entry per pull request:
 - Tests: Action registry schema/order tests, Docker capability tests, file render validation/write/backup/mode/private-temp/tamper/equal-content-metadata-rollback/backup-non-widening/redaction/idempotency/symlink/path-swap/destination-swap/cancellation/task-lease dispatch tests, task lease file-render secret resolution tests, and Hub-side StepRun file-render secret redaction tests were added. Focused `go test ./internal/actionregistry`, Docker-agent tests with dummy agent endpoint environment values, and focused live PostgreSQL `internal/db` tests passed locally.
 - Upstream contribution notes: Community-neutral file render action adapter; no adopter-specific terminology, no webhook/UI behavior, and no arbitrary host shell execution.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, and legacy Docker resource-poll deployment behavior are unchanged when no file render task lease is claimed. No webhook action, Helm typed action, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-028 behavior is added in PR-027.
+
+### PR-028 - Webhook action
+
+- Status: Implemented locally; action registry, Docker agent capability report, webhook adapter, lease-time secret resolution, StepRun redaction, documentation, focused tests, and ADR completed.
+- Upstream base: `4826c357`
+- Feature flag: Adds no new flag. End-to-end execution uses existing `agent_capabilities`, `task_queue`, `agent_task_leases`, and `step_events` feature-flagged endpoints.
+- User-facing behavior: Target-executed Tasks can run `distr.webhook` on Docker agents that advertise action version `1`; the agent emits structured started/progress/succeeded/failed step events and non-secret outputs for status code, attempts, and declared response values.
+- Database changes: None. Reuses AgentCapabilityReport, AgentActionCapability, Task, StepRun, TaskLease, StepRunEvent, StepRunLogChunk, StepRunOutput, and Secret from earlier roadmap PRs.
+- API changes: None. Reuses hidden capability, lease, heartbeat, and step-event endpoints.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-028.
+- Agent protocol changes: Docker agents advertise `distr.webhook` version `1`, claim a task lease through the existing lease flow, heartbeat before and during webhook execution, enforce trusted `DISTR_WEBHOOK_ALLOWED_HOSTS` and `DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS` policy, reject non-HTTPS URLs and URL credentials, disable redirects, sign bounded JSON requests with timestamp/body-digest/signature/idempotency headers, retry only configured transient failures, preserve the same idempotency key across attempts and lease reclaim, and emit only declared bounded outputs.
+- Documentation: Added PR-028 notes and ADR-0028.
+- Tests: Action registry schema/order tests, Docker capability tests, webhook validation/signing/retry/idempotency/output/redaction/task-lease dispatch tests, task lease webhook secret resolution tests, and Hub-side StepRun webhook secret redaction tests were added. Focused `go test ./internal/actionregistry`, Docker-agent tests with dummy agent endpoint environment values, and focused live PostgreSQL `internal/db` tests passed locally.
+- Upstream contribution notes: Community-neutral webhook action adapter; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, and legacy Docker resource-poll deployment behavior are unchanged when no webhook task lease is claimed. No Helm typed action, approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-029 behavior is added in PR-028.
