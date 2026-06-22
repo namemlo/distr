@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-031 are implemented locally. PR-031 makes Docker-agent `distr.webhook` replay-aware with a hidden agent task-timeline read, stored-success replay suppression, deterministic output reconstruction, and fail-closed interrupted replay handling while preserving existing Compose, OCI, file-render, webhook request/response schema, and legacy resource-poll deployment behavior.
+PR-000 through PR-032 are implemented locally. PR-032 extends Docker-agent `distr.webhook` signing with ordered key rotation, versioned signature metadata, audit outputs, multi-key verification, and rotated secret lease resolution while preserving legacy single-secret behavior and PR-031 replay compatibility.
 
 ## Tracking Template
 
@@ -508,3 +508,18 @@ Use one entry per pull request:
 - Tests: Added agent client timeline tests, manifest endpoint tests, and `TestWebhookActionIdempotentReplaySuite` for duplicate execution, zero-network replay, interrupted replay fail-closed behavior, and stored output reconstruction. Docker-agent, agentclient, agentmanifest, and handler tests passed locally.
 - Upstream contribution notes: Community-neutral webhook replay hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, webhook request/response schema, and legacy Docker resource-poll deployment behavior are unchanged. Older manifests without `DISTR_TASK_TIMELINE_ENDPOINT_TEMPLATE` continue to run without replay preflight until refreshed. No approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-032 behavior is added in PR-031.
+
+### PR-032 - Webhook key rotation
+
+- Status: Implemented locally; multi-key signing, versioned request metadata, audit outputs, verification helper, lease-time rotated secret resolution, redaction support, documentation, and ADR completed.
+- Upstream base: `910bfcc4`
+- Feature flag: Adds no new flag. Extends the existing `distr.webhook` Docker-agent action introduced in PR-028.
+- User-facing behavior: Webhook actions may now use legacy `signingSecret` or ordered `signingSecrets`; rotated-key executions sign with the latest key and emit non-secret signing key audit outputs.
+- Database changes: None. Reuses existing Secret, TaskLease, StepRunEvent, and StepRunOutput storage.
+- API changes: None. The action registry contract for `distr.webhook` accepts `signingSecrets` and reserves the new built-in audit outputs.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-032.
+- Agent protocol changes: Docker agents include `X-Distr-Key-Version` on webhook attempts, record `signingKeyVersion` and `keyRotationApplied` outputs, reject ambiguous or invalid key rotation configuration, and can verify signatures against active or previous keys without accepting mismatched version headers.
+- Documentation: Added PR-032 notes and ADR-0032.
+- Tests: Added Docker-agent key rotation signing, validation, verification, audit-output, and redaction tests; action registry rotation schema tests; and task lease rotated secret resolution coverage.
+- Upstream contribution notes: Community-neutral webhook key lifecycle support; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing single-secret webhook inputs remain valid and map to signing key version 1. PR-031 stored success events without key-version outputs remain replayable. Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, and legacy Docker resource-poll deployment behavior are unchanged.

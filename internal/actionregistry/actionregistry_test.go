@@ -129,6 +129,20 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 	}`))).To(Succeed())
 }
 
+func TestDefaultRegistryValidatesWebhookSigningSecretRotation(t *testing.T) {
+	registry := DefaultRegistry()
+	g := NewWithT(t)
+
+	g.Expect(registry.ValidateInput("distr.webhook", jsonObject(t, `{
+		"url":"https://hooks.example.com/deployments",
+		"method":"POST",
+		"secretHeaders":{"Authorization":"webhook_auth_token"},
+		"signingSecrets":["webhook_signing_key_v1","webhook_signing_key_v2"],
+		"expectedStatusCodes":[200,202],
+		"idempotencyKey":"notify-demo"
+	}`))).To(Succeed())
+}
+
 func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 	registry := DefaultRegistry()
 
@@ -316,6 +330,23 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 				"retry":{"maxAttempts":0}
 			}`),
 			want: "maxAttempts",
+		},
+		{
+			name:       "webhook rejects missing signing secret config",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments"
+			}`),
+			want: "signing",
+		},
+		{
+			name:       "webhook rejects duplicate signing secrets",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"signingSecrets":["webhook_signing_key","webhook_signing_key"]
+			}`),
+			want: "duplicate",
 		},
 	}
 

@@ -35,7 +35,8 @@ const (
 	webhookConnectTimeout         = 10 * time.Second
 	webhookTLSHandshakeTimeout    = 10 * time.Second
 	webhookResponseHeaderTimeout  = 10 * time.Second
-	webhookBuiltInOutputCount     = 2
+	webhookBuiltInOutputCount     = 4
+	webhookMaxSigningSecrets      = 8
 )
 
 var webhookNow = time.Now
@@ -55,6 +56,7 @@ type webhookActionInput struct {
 	Body                any                        `json:"body"`
 	SensitiveBody       bool                       `json:"sensitiveBody"`
 	SigningSecret       string                     `json:"signingSecret"`
+	SigningSecrets      []string                   `json:"signingSecrets"`
 	TimeoutSeconds      int                        `json:"timeoutSeconds"`
 	Retry               webhookRetryPolicy         `json:"retry"`
 	ExpectedStatusCodes []int                      `json:"expectedStatusCodes"`
@@ -88,10 +90,19 @@ type webhookResolvedTarget struct {
 }
 
 type webhookRunResult struct {
-	StatusCode      int
-	Attempts        int
-	Outputs         []api.AgentStepRunOutputRequest
-	RedactionValues []string
+	StatusCode         int
+	Attempts           int
+	SigningKeyVersion  int
+	KeyRotationApplied bool
+	Outputs            []api.AgentStepRunOutputRequest
+	RedactionValues    []string
+}
+
+type webhookSigningConfig struct {
+	Secrets            []string
+	ActiveSecret       string
+	ActiveVersion      int
+	KeyRotationApplied bool
 }
 
 type webhookAttemptMetric struct {
@@ -152,8 +163,8 @@ func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error)
 	if !isSupportedWebhookMethod(input.Method) {
 		return input, fmt.Errorf("method is unsupported")
 	}
-	if strings.TrimSpace(input.SigningSecret) == "" {
-		return input, fmt.Errorf("signingSecret is required")
+	if _, err := webhookSigningConfigForInput(input); err != nil {
+		return input, err
 	}
 	if input.TimeoutSeconds < 1 {
 		return input, fmt.Errorf("timeoutSeconds must be greater than 0")
@@ -247,6 +258,8 @@ func executeWebhookStep(
 	outputs := []api.AgentStepRunOutputRequest{
 		{Name: "statusCode", Value: result.StatusCode},
 		{Name: "attempts", Value: result.Attempts},
+		{Name: "signingKeyVersion", Value: result.SigningKeyVersion},
+		{Name: "keyRotationApplied", Value: result.KeyRotationApplied},
 	}
 	outputs = append(outputs, result.Outputs...)
 	sequence++
@@ -344,6 +357,18 @@ func webhookReplayResultFromTimelineForLease(
 			}
 			result.Attempts = attempts
 			hasAttempts = true
+		case "signingKeyVersion":
+			signingKeyVersion, ok := webhookStoredIntOutput(value)
+			if !ok {
+				return webhookRunResult{}, false, fmt.Errorf("stored webhook signingKeyVersion output is invalid")
+			}
+			result.SigningKeyVersion = signingKeyVersion
+		case "keyRotationApplied":
+			keyRotationApplied, ok := webhookStoredBoolOutput(value)
+			if !ok {
+				return webhookRunResult{}, false, fmt.Errorf("stored webhook keyRotationApplied output is invalid")
+			}
+			result.KeyRotationApplied = keyRotationApplied
 		default:
 			result.Outputs = append(result.Outputs, api.AgentStepRunOutputRequest{
 				Name:      output.Name,
@@ -389,6 +414,11 @@ func webhookStoredIntOutput(value any) (int, bool) {
 	}
 }
 
+func webhookStoredBoolOutput(value any) (bool, bool) {
+	typed, ok := value.(bool)
+	return typed, ok
+}
+
 func runWebhookAction(
 	ctx context.Context,
 	input webhookActionInput,
@@ -418,16 +448,22 @@ func runWebhookAction(
 	}
 	bodyDigest := webhookBodyDigest(body)
 	timestamp := webhookNow().UTC().Format(time.RFC3339)
+	signingConfig, err := webhookSigningConfigForInput(input)
+	if err != nil {
+		return webhookRunResult{}, err
+	}
 	signature := webhookSignature(
-		input.SigningSecret,
+		signingConfig.ActiveSecret,
 		webhookCanonicalData(input.Method, endpoint, timestamp, input.IdempotencyKey, bodyDigest),
 	)
 	resultFor := func(statusCode, attempts int, outputs []api.AgentStepRunOutputRequest) webhookRunResult {
 		return webhookRunResult{
-			StatusCode:      statusCode,
-			Attempts:        attempts,
-			Outputs:         outputs,
-			RedactionValues: []string{signature},
+			StatusCode:         statusCode,
+			Attempts:           attempts,
+			SigningKeyVersion:  signingConfig.ActiveVersion,
+			KeyRotationApplied: signingConfig.KeyRotationApplied,
+			Outputs:            outputs,
+			RedactionValues:    []string{signature},
 		}
 	}
 	client := newWebhookHTTPClient(policy, resolvedTarget)
@@ -447,7 +483,7 @@ func runWebhookAction(
 		}
 		attemptStarted := time.Now()
 		responseBody, statusCode, err := sendWebhookAttempt(
-			runCtx, client, input, endpoint, body, bodyDigest, timestamp, signature,
+			runCtx, client, input, endpoint, body, bodyDigest, timestamp, signature, signingConfig.ActiveVersion,
 		)
 		emitWebhookAttemptMetric(webhookAttemptMetric{
 			Attempt:    attempt,
@@ -529,6 +565,7 @@ func sendWebhookAttempt(
 	bodyDigest string,
 	timestamp string,
 	signature string,
+	signingKeyVersion int,
 ) ([]byte, int, error) {
 	request, err := http.NewRequestWithContext(ctx, input.Method, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
@@ -546,6 +583,7 @@ func sendWebhookAttempt(
 	request.Header.Set("X-Distr-Timestamp", timestamp)
 	request.Header.Set("X-Distr-Body-Digest", bodyDigest)
 	request.Header.Set("X-Distr-Signature", signature)
+	request.Header.Set("X-Distr-Key-Version", strconv.Itoa(signingKeyVersion))
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send webhook request: %w", err)
@@ -796,6 +834,82 @@ func webhookSignature(secret string, canonical string) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
+func webhookSigningConfigForInput(input webhookActionInput) (webhookSigningConfig, error) {
+	if len(input.SigningSecrets) > 0 {
+		if strings.TrimSpace(input.SigningSecret) != "" {
+			return webhookSigningConfig{}, fmt.Errorf("signingSecret and signingSecrets cannot both be set")
+		}
+		return webhookSigningConfigFromSecrets(input.SigningSecrets)
+	}
+	if strings.TrimSpace(input.SigningSecret) == "" {
+		return webhookSigningConfig{}, fmt.Errorf("signingSecret or signingSecrets is required")
+	}
+	return webhookSigningConfig{
+		Secrets:            []string{input.SigningSecret},
+		ActiveSecret:       input.SigningSecret,
+		ActiveVersion:      1,
+		KeyRotationApplied: false,
+	}, nil
+}
+
+func webhookSigningConfigFromSecrets(secrets []string) (webhookSigningConfig, error) {
+	if len(secrets) == 0 {
+		return webhookSigningConfig{}, fmt.Errorf("signingSecrets is required")
+	}
+	if len(secrets) > webhookMaxSigningSecrets {
+		return webhookSigningConfig{}, fmt.Errorf("signingSecrets contains too many entries")
+	}
+	seen := map[string]struct{}{}
+	for _, secret := range secrets {
+		if strings.TrimSpace(secret) == "" {
+			return webhookSigningConfig{}, fmt.Errorf("signingSecrets contains empty secret")
+		}
+		if _, ok := seen[secret]; ok {
+			return webhookSigningConfig{}, fmt.Errorf("signingSecrets contains duplicate secret")
+		}
+		seen[secret] = struct{}{}
+	}
+	activeVersion := len(secrets)
+	return webhookSigningConfig{
+		Secrets:            append([]string(nil), secrets...),
+		ActiveSecret:       secrets[activeVersion-1],
+		ActiveVersion:      activeVersion,
+		KeyRotationApplied: activeVersion > 1,
+	}, nil
+}
+
+func webhookVerifySignature(secrets []string, keyVersion string, canonicalData string, signature string) (int, bool) {
+	signingConfig, err := webhookSigningConfigFromSecrets(secrets)
+	if err != nil {
+		return 0, false
+	}
+	keyVersion = strings.TrimSpace(keyVersion)
+	if keyVersion != "" {
+		version, err := strconv.Atoi(keyVersion)
+		if err != nil || version < 1 || version > len(signingConfig.Secrets) {
+			return 0, false
+		}
+		return version, webhookSignatureMatches(signingConfig.Secrets[version-1], canonicalData, signature)
+	}
+	if len(signingConfig.Secrets) > 1 {
+		return 0, false
+	}
+	if webhookSignatureMatches(signingConfig.ActiveSecret, canonicalData, signature) {
+		return signingConfig.ActiveVersion, true
+	}
+	for i := len(signingConfig.Secrets) - 2; i >= 0; i-- {
+		if webhookSignatureMatches(signingConfig.Secrets[i], canonicalData, signature) {
+			return i + 1, true
+		}
+	}
+	return 0, false
+}
+
+func webhookSignatureMatches(secret string, canonicalData string, signature string) bool {
+	expected := webhookSignature(secret, canonicalData)
+	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
 func extractWebhookDeclaredOutputs(
 	responseBody []byte,
 	declarations []webhookOutputDeclaration,
@@ -953,7 +1067,7 @@ func validateWebhookOutputs(outputs []webhookOutputDeclaration) error {
 
 func isReservedWebhookOutputName(name string) bool {
 	switch name {
-	case "statusCode", "attempts":
+	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied":
 		return true
 	default:
 		return false
@@ -1021,7 +1135,7 @@ func isWebhookSensitiveHeaderName(name string) bool {
 
 func isWebhookReservedHeaderName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature":
+	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version":
 		return true
 	default:
 		return false
@@ -1052,8 +1166,13 @@ func intSet(values []int) map[int]struct{} {
 }
 
 func webhookSecretValues(input webhookActionInput) []string {
-	values := make([]string, 0, len(input.SecretHeaders)+1)
-	if input.SigningSecret != "" {
+	values := make([]string, 0, len(input.SecretHeaders)+1+len(input.SigningSecrets))
+	for _, secret := range input.SigningSecrets {
+		if secret != "" {
+			values = appendWebhookSecretValue(values, secret)
+		}
+	}
+	if len(input.SigningSecrets) == 0 && input.SigningSecret != "" {
 		values = appendWebhookSecretValue(values, input.SigningSecret)
 	}
 	for _, value := range input.SecretHeaders {
