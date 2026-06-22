@@ -17,29 +17,38 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/distr-sh/distr/api"
+	"github.com/distr-sh/distr/internal/policy"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
 
 const (
-	webhookAllowedHostsEnv        = "DISTR_WEBHOOK_ALLOWED_HOSTS"
-	webhookAllowedPrivateHostsEnv = "DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS"
-	webhookStrictReplayVerifyEnv  = "STRICT_REPLAY_VERIFY"
-	webhookSelfContainedModeEnv   = "WEBHOOK_SELF_CONTAINED_MODE"
-	webhookResolvedIPCacheEnv     = "DISTR_WEBHOOK_RESOLVED_IP_CACHE"
-	webhookMaxRequestBodyBytes    = 64 * 1024
-	webhookMaxResponseBodyBytes   = 64 * 1024
-	webhookMaxResponseHeaderBytes = 16 * 1024
-	webhookMaxRetryAttempts       = 5
-	webhookDefaultTimeoutSeconds  = 30
-	webhookConnectTimeout         = 10 * time.Second
-	webhookTLSHandshakeTimeout    = 10 * time.Second
-	webhookResponseHeaderTimeout  = 10 * time.Second
-	webhookBuiltInOutputCount     = 7
-	webhookMaxSigningSecrets      = 8
+	webhookAllowedHostsEnv         = "DISTR_WEBHOOK_ALLOWED_HOSTS"
+	webhookAllowedPrivateHostsEnv  = "DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS"
+	webhookStrictReplayVerifyEnv   = "STRICT_REPLAY_VERIFY"
+	webhookSelfContainedModeEnv    = "WEBHOOK_SELF_CONTAINED_MODE"
+	webhookResolvedIPCacheEnv      = "DISTR_WEBHOOK_RESOLVED_IP_CACHE"
+	webhookTenantRPSEnv            = "DISTR_WEBHOOK_TENANT_RPS"
+	webhookAgentRPSEnv             = "DISTR_WEBHOOK_AGENT_RPS"
+	webhookAgentConcurrencyEnv     = "DISTR_WEBHOOK_AGENT_CONCURRENCY"
+	webhookCorridorRPSEnv          = "DISTR_WEBHOOK_CORRIDOR_RPS"
+	webhookOpenCircuitHostsEnv     = "DISTR_WEBHOOK_OPEN_CIRCUIT_HOSTS"
+	webhookMaxRetryAttemptsEnv     = "DISTR_WEBHOOK_MAX_RETRY_ATTEMPTS"
+	webhookEndpointFailureLimitEnv = "DISTR_WEBHOOK_ENDPOINT_FAILURE_LIMIT"
+	webhookMaxRequestBodyBytes     = 64 * 1024
+	webhookMaxResponseBodyBytes    = 64 * 1024
+	webhookMaxResponseHeaderBytes  = 16 * 1024
+	webhookMaxRetryAttempts        = 5
+	webhookDefaultTimeoutSeconds   = 30
+	webhookConnectTimeout          = 10 * time.Second
+	webhookTLSHandshakeTimeout     = 10 * time.Second
+	webhookResponseHeaderTimeout   = 10 * time.Second
+	webhookBuiltInOutputCount      = 7
+	webhookMaxSigningSecrets       = 8
 )
 
 var webhookNow = time.Now
@@ -47,6 +56,10 @@ var webhookHTTPClientForTest *http.Client
 var webhookLookupIPAddr = net.DefaultResolver.LookupIPAddr
 var webhookDialContext = (&net.Dialer{}).DialContext
 var webhookAttemptMetricSink chan<- webhookAttemptMetric
+var webhookPolicyEngineForTest policy.WebhookPolicyEvaluator
+var webhookPolicyEngineOnce sync.Once
+var webhookPolicyEngineDefault policy.WebhookPolicyEvaluator
+var webhookPolicyEngineDefaultErr error
 var webhookUnsafeIPPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
 }
@@ -64,6 +77,8 @@ type webhookActionInput struct {
 	Retry               webhookRetryPolicy         `json:"retry"`
 	ExpectedStatusCodes []int                      `json:"expectedStatusCodes"`
 	IdempotencyKey      string                     `json:"idempotencyKey"`
+	Corridor            string                     `json:"corridor"`
+	Priority            string                     `json:"priority"`
 	Outputs             []webhookOutputDeclaration `json:"outputs"`
 	TenantID            uuid.UUID                  `json:"-"`
 	LeaseID             uuid.UUID                  `json:"-"`
@@ -252,6 +267,8 @@ func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error)
 	}
 	input.URL = strings.TrimSpace(input.URL)
 	input.Method = strings.ToUpper(strings.TrimSpace(input.Method))
+	input.Corridor = strings.TrimSpace(input.Corridor)
+	input.Priority = strings.ToLower(strings.TrimSpace(input.Priority))
 	if input.Method == "" {
 		input.Method = http.MethodPost
 	}
@@ -299,6 +316,9 @@ func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error)
 	if input.IdempotencyKey != "" && !isWebhookTokenValue(input.IdempotencyKey) {
 		return input, fmt.Errorf("idempotencyKey contains unsupported characters")
 	}
+	if input.Corridor != "" && !isWebhookTokenValue(input.Corridor) {
+		return input, fmt.Errorf("corridor contains unsupported characters")
+	}
 	if _, err := webhookRequestBodyBytes(input.Body); err != nil {
 		return input, err
 	}
@@ -324,9 +344,21 @@ func executeWebhookStep(
 	client leasedTaskClient,
 ) error {
 	if step.ActionType == webhookActionType && step.ActionVersion == types.AgentActionVersionV1 {
-		if _, replayed, err := webhookReplayResult(ctx, lease, step.StepRunID, client); err != nil {
+		if replayResult, replayed, err := webhookReplayResult(ctx, lease, step.StepRunID, client); err != nil {
 			return err
 		} else if replayed {
+			input, err := decodeWebhookActionInput(step.Inputs)
+			if err != nil {
+				return err
+			}
+			releasePolicy, err := evaluateWebhookPolicy(ctx, lease, input, true)
+			if err != nil {
+				return err
+			}
+			releasePolicy(policy.WebhookPolicyResult{
+				StatusCode: replayResult.StatusCode,
+				Replay:     true,
+			})
 			return nil
 		}
 	}
@@ -363,6 +395,10 @@ func executeWebhookStep(
 	if input.IdempotencyKey == "" {
 		return recordFailure(fmt.Errorf("idempotencyKey is required"))
 	}
+	releasePolicy, err := evaluateWebhookPolicy(ctx, lease, input, false)
+	if err != nil {
+		return recordFailure(err)
+	}
 	secretValues = webhookSecretValues(input)
 	runCtx, runCancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
 	defer runCancel()
@@ -372,6 +408,10 @@ func executeWebhookStep(
 		return recordStepEvent(runCtx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeProgress, message, nil, nil, secretValues...)
 	}
 	result, err := runWebhookAction(runCtx, input, emitProgress)
+	releasePolicy(policy.WebhookPolicyResult{
+		StatusCode: result.StatusCode,
+		Err:        err,
+	})
 	secretValues = append(secretValues, result.RedactionValues...)
 	stopHeartbeat()
 	if heartbeatErr := taskLeaseHeartbeatError(heartbeatErrCh); heartbeatErr != nil {
@@ -418,6 +458,150 @@ func webhookReplayResult(
 		return webhookRunResult{}, false, err
 	}
 	return webhookReplayResultFromTimelineForLease(timeline, lease.OrganizationID, lease.AgentID, lease.TaskID, stepRunID, lease.ID)
+}
+
+func evaluateWebhookPolicy(
+	ctx context.Context,
+	lease api.AgentTaskLease,
+	input webhookActionInput,
+	replay bool,
+) (policy.WebhookPolicyRelease, error) {
+	engine, err := currentWebhookPolicyEngine()
+	if err != nil {
+		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), err
+	}
+	if engine == nil {
+		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), nil
+	}
+	endpoint, err := url.Parse(input.URL)
+	if err != nil {
+		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), fmt.Errorf("url is invalid: %w", err)
+	}
+	decision, release, err := engine.EvaluateWebhookPolicy(ctx, policy.WebhookPolicyInput{
+		TenantID: lease.OrganizationID,
+		AgentID:  lease.AgentID,
+		Corridor: input.Corridor,
+		Host:     normalizeWebhookHost(endpoint.Hostname()),
+		RetryMax: input.Retry.MaxAttempts,
+		Replay:   replay,
+		Priority: input.Priority,
+	})
+	if err != nil {
+		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), fmt.Errorf("webhook policy evaluation failed: %w", err)
+	}
+	if !decision.Allowed {
+		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), policy.FormatWebhookPolicyDenial(decision.Reason)
+	}
+	if release == nil {
+		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), nil
+	}
+	return release, nil
+}
+
+func currentWebhookPolicyEngine() (policy.WebhookPolicyEvaluator, error) {
+	if webhookPolicyEngineForTest != nil {
+		return webhookPolicyEngineForTest, nil
+	}
+	webhookPolicyEngineOnce.Do(func() {
+		config, err := loadWebhookPolicyConfigFromEnv()
+		if err != nil {
+			webhookPolicyEngineDefaultErr = err
+			return
+		}
+		webhookPolicyEngineDefault = policy.NewWebhookPolicyEngine(config)
+	})
+	return webhookPolicyEngineDefault, webhookPolicyEngineDefaultErr
+}
+
+func loadWebhookPolicyConfigFromEnv() (policy.WebhookPolicyConfig, error) {
+	tenantRPS, err := webhookOptionalPositiveIntEnv(webhookTenantRPSEnv)
+	if err != nil {
+		return policy.WebhookPolicyConfig{}, err
+	}
+	agentRPS, err := webhookOptionalPositiveIntEnv(webhookAgentRPSEnv)
+	if err != nil {
+		return policy.WebhookPolicyConfig{}, err
+	}
+	agentConcurrency, err := webhookOptionalPositiveIntEnv(webhookAgentConcurrencyEnv)
+	if err != nil {
+		return policy.WebhookPolicyConfig{}, err
+	}
+	corridorRPS, err := webhookCorridorPolicyEnv(webhookCorridorRPSEnv)
+	if err != nil {
+		return policy.WebhookPolicyConfig{}, err
+	}
+	maxRetryAttempts, err := webhookOptionalPositiveIntEnv(webhookMaxRetryAttemptsEnv)
+	if err != nil {
+		return policy.WebhookPolicyConfig{}, err
+	}
+	endpointFailureLimit, err := webhookOptionalPositiveIntEnv(webhookEndpointFailureLimitEnv)
+	if err != nil {
+		return policy.WebhookPolicyConfig{}, err
+	}
+	return policy.WebhookPolicyConfig{
+		TenantRequestsPerSecond:   tenantRPS,
+		AgentRequestsPerSecond:    agentRPS,
+		AgentConcurrentExecutions: agentConcurrency,
+		CorridorRequestsPerSecond: corridorRPS,
+		OpenCircuitHosts:          webhookPolicyListEnv(webhookOpenCircuitHostsEnv),
+		MaxRetryAttempts:          maxRetryAttempts,
+		EndpointFailureLimit:      endpointFailureLimit,
+	}, nil
+}
+
+func webhookOptionalPositiveIntEnv(name string) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return value, nil
+}
+
+func webhookCorridorPolicyEnv(name string) (map[string]int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil, nil
+	}
+	values := map[string]int{}
+	for _, entry := range strings.FieldsFunc(raw, isWebhookResolvedIPCacheEntrySeparator) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, fmt.Errorf("%s contains invalid entry", name)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" || !isWebhookTokenValue(key) {
+			return nil, fmt.Errorf("%s contains invalid corridor", name)
+		}
+		limit, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || limit < 1 {
+			return nil, fmt.Errorf("%s contains invalid corridor limit", name)
+		}
+		values[key] = limit
+	}
+	return values, nil
+}
+
+func webhookPolicyListEnv(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	var values []string
+	for _, item := range strings.FieldsFunc(raw, isWebhookResolvedIPCacheEntrySeparator) {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
 }
 
 func webhookReplayResultFromTimeline(

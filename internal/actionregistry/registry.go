@@ -446,6 +446,16 @@ func defaultActions() []types.ActionDefinition {
 						"maxLength": 128,
 						"pattern":   `^[A-Za-z0-9_.:-]+$`,
 					},
+					"corridor": map[string]any{
+						"type":      "string",
+						"minLength": 1,
+						"maxLength": 128,
+						"pattern":   `^[A-Za-z0-9_.:-]+$`,
+					},
+					"priority": map[string]any{
+						"type": "string",
+						"enum": []any{"high", "normal", "low"},
+					},
 					"outputs": map[string]any{
 						"type":     "array",
 						"maxItems": types.MaxStepRunEventOutputItemCount - webhookBuiltInOutputCount,

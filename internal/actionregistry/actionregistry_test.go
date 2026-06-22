@@ -122,6 +122,8 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 		"retry":{"maxAttempts":3,"backoffSeconds":1,"retryableStatusCodes":[429,500,502,503,504]},
 		"expectedStatusCodes":[200,202],
 		"idempotencyKey":"notify-demo",
+		"corridor":"PH",
+		"priority":"high",
 		"outputs":[
 			{"name":"remoteId","pointer":"/id","type":"string","required":true},
 			{"name":"accepted","pointer":"/accepted","type":"boolean","sensitive":true}

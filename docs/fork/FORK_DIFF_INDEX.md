@@ -568,3 +568,18 @@ Use one entry per pull request:
 - Tests: Added `TestWebhookActionSelfContainedRuntimeSuite` plus focused regression coverage for existing replay, audit, validation, and heartbeat paths.
 - Upstream contribution notes: Community-neutral webhook autonomy hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing agents remain on normal timeline and DNS behavior unless `WEBHOOK_SELF_CONTAINED_MODE=true` is configured. Self-contained replay is in-process for this PR and does not persist across agent restarts.
+
+### PR-036 - Webhook policy engine
+
+- Status: Implemented locally; policy package, tenant/agent/corridor limits, circuit breaker, retry-storm and endpoint-failure controls, replay enforcement, documentation, and ADR completed.
+- Upstream base: `7579d8d8`
+- Feature flag: Adds no single feature flag. Policy controls are enabled by setting `DISTR_WEBHOOK_TENANT_RPS`, `DISTR_WEBHOOK_AGENT_RPS`, `DISTR_WEBHOOK_AGENT_CONCURRENCY`, `DISTR_WEBHOOK_CORRIDOR_RPS`, `DISTR_WEBHOOK_OPEN_CIRCUIT_HOSTS`, `DISTR_WEBHOOK_MAX_RETRY_ATTEMPTS`, or `DISTR_WEBHOOK_ENDPOINT_FAILURE_LIMIT`.
+- User-facing behavior: Webhook actions keep existing required inputs and outputs. Optional `corridor` and `priority` metadata can now be supplied for policy evaluation.
+- Database changes: None. Policy state is in-process for this PR.
+- API changes: None. The action registry input schema accepts optional `corridor` and `priority` fields for `distr.webhook`.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-036.
+- Agent protocol changes: Docker agents evaluate policy after replay validation and before DNS, signing, or outbound HTTP. Replay must also pass policy before returning stored success.
+- Documentation: Added PR-036 notes and ADR-0036.
+- Tests: Added `TestWebhookActionPolicyEngineSuite`, `internal/policy` unit tests, and action registry policy-field validation coverage.
+- Upstream contribution notes: Community-neutral webhook governance hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: With no policy env vars configured, existing webhook behavior is allowed. Configured policy limits fail closed on invalid values and deny before network/signing work.
