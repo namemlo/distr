@@ -13,6 +13,7 @@ import (
 
 	"github.com/distr-sh/distr/internal/actionregistry"
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/conditions"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -403,6 +404,10 @@ func addDeploymentPlanSteps(plan *types.DeploymentPlan, snapshot types.ProcessSn
 		}
 		return steps[i].Key < steps[j].Key
 	})
+	stepKeys := map[string]struct{}{}
+	for _, step := range steps {
+		stepKeys[step.Key] = struct{}{}
+	}
 	includedCount := 0
 	for _, step := range steps {
 		action, ok := registry.Get(step.ActionType)
@@ -420,6 +425,15 @@ func addDeploymentPlanSteps(plan *types.DeploymentPlan, snapshot types.ProcessSn
 				types.DeploymentPlanIssueSeverityBlocker,
 				"invalid_action_input",
 				"steps."+step.Key+".inputBindings",
+				err.Error(),
+			)
+		}
+		if err := validateDeploymentPlanStepCondition(step, stepKeys); err != nil {
+			addDeploymentPlanIssue(
+				plan,
+				types.DeploymentPlanIssueSeverityBlocker,
+				"invalid_step_condition",
+				"steps."+step.Key+".condition",
 				err.Error(),
 			)
 		}
@@ -462,6 +476,22 @@ func addDeploymentPlanSteps(plan *types.DeploymentPlan, snapshot types.ProcessSn
 			"process snapshot has no steps applicable to the selected channel and environment",
 		)
 	}
+}
+
+func validateDeploymentPlanStepCondition(step types.DeploymentProcessStep, stepKeys map[string]struct{}) error {
+	if err := conditions.Validate(step.Condition); err != nil {
+		return fmt.Errorf("condition is invalid: %w", err)
+	}
+	refs, err := conditions.OutputReferences(step.Condition)
+	if err != nil {
+		return fmt.Errorf("condition is invalid: %w", err)
+	}
+	for _, ref := range refs {
+		if _, ok := stepKeys[ref.StepKey]; !ok {
+			return fmt.Errorf("condition references unknown output step %q", ref.StepKey)
+		}
+	}
+	return nil
 }
 
 func addDeploymentPlanAgentCapabilityIssues(ctx context.Context, plan *types.DeploymentPlan) {

@@ -2,10 +2,13 @@ package types
 
 import (
 	"encoding/json"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+var stepRunOutputNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 
 const (
 	MaxStepRunEventMessageLength   = 2048
@@ -106,6 +109,10 @@ type RecordStepRunOutputRequest struct {
 	Name      string
 	Value     any
 	Sensitive bool
+}
+
+func IsValidStepRunOutputName(name string) bool {
+	return stepRunOutputNamePattern.MatchString(name)
 }
 
 type TaskTimeline struct {

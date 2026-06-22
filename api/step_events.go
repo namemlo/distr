@@ -100,6 +100,9 @@ func (r *AgentStepRunEventRequest) Validate() error {
 		if len(r.Outputs[i].Name) > MaxStepRunOutputNameLength {
 			return validation.NewValidationFailedError(fmt.Sprintf("outputs[%d].name is too long", i))
 		}
+		if !types.IsValidStepRunOutputName(r.Outputs[i].Name) {
+			return validation.NewValidationFailedError(fmt.Sprintf("outputs[%d].name is invalid", i))
+		}
 		if data, err := json.Marshal(r.Outputs[i].Value); err != nil {
 			return validation.NewValidationFailedError(fmt.Sprintf("outputs[%d].value must be valid JSON", i))
 		} else if len(data) > MaxStepRunOutputValueBytes {
