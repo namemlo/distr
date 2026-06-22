@@ -12,7 +12,8 @@ export type ExperimentalFeatureFlagKey =
   | 'runbooks'
   | 'retention_policies'
   | 'observability_metrics'
-  | 'observability_tracing';
+  | 'observability_tracing'
+  | 'observability_dashboards';
 
 export interface ExperimentalFeatureFlag {
   key: ExperimentalFeatureFlagKey;

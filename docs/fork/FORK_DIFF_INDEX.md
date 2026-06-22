@@ -763,3 +763,18 @@ Use one entry per pull request:
 - Tests: Tracing tests cover OTEL span attributes, HTTP request spans, no-op tracer behavior, and task lifecycle spans. Service tests cover disabled no-op providers. Task queue tests cover transition hooks. Feature flag tests cover backend and frontend flag plumbing.
 - Upstream contribution notes: Community-neutral tracing foundation; no dashboards, metrics changes, log correlation, exporter customization, step-level tracing, or business spans.
 - Compatibility notes: Existing metrics, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged except for optional tracing observations when the flag is enabled.
+
+### PR-047c1 - Observability static dashboards
+
+- Status: Implemented locally; static Grafana dashboard definitions, read-only dashboard catalog API, feature flag, documentation, and ADR completed.
+- Upstream base: `060f2369`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=observability_dashboards`.
+- User-facing behavior: None. PR-047c1 exposes static dashboard templates only when the feature flag is enabled.
+- Database changes: None.
+- API changes: Added `GET /api/v1/observability/dashboards`, returning static dashboard definitions and versions.
+- UI changes: No page is added. The frontend feature flag model recognizes `observability_dashboards` for future UI gating.
+- Agent protocol changes: None.
+- Documentation: Added PR-047c1 notes and ADR-0047c1.
+- Tests: Dashboard tests cover static definition count, JSON validity, and immutable copies. Handler tests cover response shape and disabled flag behavior. Feature flag tests cover backend and frontend flag plumbing.
+- Upstream contribution notes: Community-neutral static dashboard catalog; no correlation links, Grafana API integration, dashboard UI, alerting, log correlation, runtime analytics engine, metrics changes, or tracing changes.
+- Compatibility notes: Existing metrics, tracing, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.
