@@ -52,8 +52,8 @@ func stepEventEndpoint(endpointTemplate string, stepRunID uuid.UUID) string {
 	return strings.ReplaceAll(endpointTemplate, "{stepRunId}", stepRunID.String())
 }
 
-func (c *Client) GetTaskTimeline(ctx context.Context, taskID uuid.UUID) (*api.TaskTimeline, error) {
-	endpoint := taskTimelineEndpoint(c.taskTimelineEndpointTemplate, taskID)
+func (c *Client) GetTaskTimeline(ctx context.Context, taskID uuid.UUID, leaseID uuid.UUID) (*api.TaskTimeline, error) {
+	endpoint := taskTimelineEndpoint(c.taskTimelineEndpointTemplate, taskID, leaseID)
 	if endpoint == "" {
 		return nil, nil
 	}
@@ -72,10 +72,18 @@ func (c *Client) GetTaskTimeline(ctx context.Context, taskID uuid.UUID) (*api.Ta
 	return &timeline, nil
 }
 
-func taskTimelineEndpoint(endpointTemplate string, taskID uuid.UUID) string {
+func taskTimelineEndpoint(endpointTemplate string, taskID uuid.UUID, leaseID uuid.UUID) string {
 	endpointTemplate = strings.TrimSpace(endpointTemplate)
 	if endpointTemplate == "" {
 		return ""
 	}
-	return strings.ReplaceAll(endpointTemplate, "{taskId}", taskID.String())
+	endpoint := strings.ReplaceAll(endpointTemplate, "{taskId}", taskID.String())
+	if leaseID != uuid.Nil {
+		separator := "?"
+		if strings.Contains(endpoint, "?") {
+			separator = "&"
+		}
+		endpoint += separator + "leaseId=" + leaseID.String()
+	}
+	return endpoint
 }

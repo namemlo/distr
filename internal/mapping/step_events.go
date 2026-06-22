@@ -7,8 +7,9 @@ import (
 
 func TaskTimelineToAPI(timeline types.TaskTimeline) api.TaskTimeline {
 	return api.TaskTimeline{
-		TaskID: timeline.TaskID,
-		Events: List(timeline.Events, StepRunEventToAPI),
+		OrganizationID: timeline.OrganizationID,
+		TaskID:         timeline.TaskID,
+		Events:         List(timeline.Events, StepRunEventToAPI),
 	}
 }
 
@@ -17,6 +18,7 @@ func StepRunEventToAPI(event types.StepRunEvent) api.StepRunEvent {
 		ID:              event.ID,
 		CreatedAt:       event.CreatedAt,
 		OccurredAt:      event.OccurredAt,
+		OrganizationID:  event.OrganizationID,
 		TaskID:          event.TaskID,
 		StepRunID:       event.StepRunID,
 		TaskLeaseID:     event.TaskLeaseID,
@@ -34,35 +36,37 @@ func StepRunEventToAPI(event types.StepRunEvent) api.StepRunEvent {
 
 func StepRunLogChunkToAPI(log types.StepRunLogChunk) api.StepRunLogChunk {
 	return api.StepRunLogChunk{
-		ID:          log.ID,
-		CreatedAt:   log.CreatedAt,
-		OccurredAt:  log.OccurredAt,
-		EventID:     log.EventID,
-		TaskID:      log.TaskID,
-		StepRunID:   log.StepRunID,
-		TaskLeaseID: log.TaskLeaseID,
-		AgentID:     log.AgentID,
-		ChunkIndex:  log.ChunkIndex,
-		Stream:      log.Stream,
-		Severity:    log.Severity,
-		Body:        log.Body,
-		Redacted:    log.Redacted,
+		ID:             log.ID,
+		CreatedAt:      log.CreatedAt,
+		OccurredAt:     log.OccurredAt,
+		EventID:        log.EventID,
+		OrganizationID: log.OrganizationID,
+		TaskID:         log.TaskID,
+		StepRunID:      log.StepRunID,
+		TaskLeaseID:    log.TaskLeaseID,
+		AgentID:        log.AgentID,
+		ChunkIndex:     log.ChunkIndex,
+		Stream:         log.Stream,
+		Severity:       log.Severity,
+		Body:           log.Body,
+		Redacted:       log.Redacted,
 	}
 }
 
 func StepRunOutputToAPI(output types.StepRunOutput) api.StepRunOutput {
 	return api.StepRunOutput{
-		ID:          output.ID,
-		CreatedAt:   output.CreatedAt,
-		UpdatedAt:   output.UpdatedAt,
-		EventID:     output.EventID,
-		TaskID:      output.TaskID,
-		StepRunID:   output.StepRunID,
-		TaskLeaseID: output.TaskLeaseID,
-		AgentID:     output.AgentID,
-		Name:        output.Name,
-		Value:       output.Value,
-		Sensitive:   output.Sensitive,
-		Redacted:    output.Redacted,
+		ID:             output.ID,
+		CreatedAt:      output.CreatedAt,
+		UpdatedAt:      output.UpdatedAt,
+		EventID:        output.EventID,
+		OrganizationID: output.OrganizationID,
+		TaskID:         output.TaskID,
+		StepRunID:      output.StepRunID,
+		TaskLeaseID:    output.TaskLeaseID,
+		AgentID:        output.AgentID,
+		Name:           output.Name,
+		Value:          output.Value,
+		Sensitive:      output.Sensitive,
+		Redacted:       output.Redacted,
 	}
 }

@@ -54,7 +54,7 @@ type stepEventClient interface {
 }
 
 type taskTimelineClient interface {
-	GetTaskTimeline(context.Context, uuid.UUID) (*api.TaskTimeline, error)
+	GetTaskTimeline(context.Context, uuid.UUID, uuid.UUID) (*api.TaskTimeline, error)
 }
 
 type leasedTaskClient interface {

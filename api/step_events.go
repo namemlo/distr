@@ -114,14 +114,16 @@ func (r *AgentStepRunEventRequest) Validate() error {
 }
 
 type TaskTimeline struct {
-	TaskID uuid.UUID      `json:"taskId"`
-	Events []StepRunEvent `json:"events"`
+	OrganizationID uuid.UUID      `json:"organizationId"`
+	TaskID         uuid.UUID      `json:"taskId"`
+	Events         []StepRunEvent `json:"events"`
 }
 
 type StepRunEvent struct {
 	ID              uuid.UUID              `json:"id"`
 	CreatedAt       time.Time              `json:"createdAt"`
 	OccurredAt      time.Time              `json:"occurredAt"`
+	OrganizationID  uuid.UUID              `json:"organizationId"`
 	TaskID          uuid.UUID              `json:"taskId"`
 	StepRunID       uuid.UUID              `json:"stepRunId"`
 	TaskLeaseID     uuid.UUID              `json:"taskLeaseId"`
@@ -137,32 +139,34 @@ type StepRunEvent struct {
 }
 
 type StepRunLogChunk struct {
-	ID          uuid.UUID                `json:"id"`
-	CreatedAt   time.Time                `json:"createdAt"`
-	OccurredAt  time.Time                `json:"occurredAt"`
-	EventID     uuid.UUID                `json:"eventId"`
-	TaskID      uuid.UUID                `json:"taskId"`
-	StepRunID   uuid.UUID                `json:"stepRunId"`
-	TaskLeaseID uuid.UUID                `json:"taskLeaseId"`
-	AgentID     uuid.UUID                `json:"agentId"`
-	ChunkIndex  int                      `json:"chunkIndex"`
-	Stream      types.StepRunLogStream   `json:"stream"`
-	Severity    types.StepRunLogSeverity `json:"severity"`
-	Body        string                   `json:"body"`
-	Redacted    bool                     `json:"redacted"`
+	ID             uuid.UUID                `json:"id"`
+	CreatedAt      time.Time                `json:"createdAt"`
+	OccurredAt     time.Time                `json:"occurredAt"`
+	EventID        uuid.UUID                `json:"eventId"`
+	OrganizationID uuid.UUID                `json:"organizationId"`
+	TaskID         uuid.UUID                `json:"taskId"`
+	StepRunID      uuid.UUID                `json:"stepRunId"`
+	TaskLeaseID    uuid.UUID                `json:"taskLeaseId"`
+	AgentID        uuid.UUID                `json:"agentId"`
+	ChunkIndex     int                      `json:"chunkIndex"`
+	Stream         types.StepRunLogStream   `json:"stream"`
+	Severity       types.StepRunLogSeverity `json:"severity"`
+	Body           string                   `json:"body"`
+	Redacted       bool                     `json:"redacted"`
 }
 
 type StepRunOutput struct {
-	ID          uuid.UUID       `json:"id"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
-	EventID     uuid.UUID       `json:"eventId"`
-	TaskID      uuid.UUID       `json:"taskId"`
-	StepRunID   uuid.UUID       `json:"stepRunId"`
-	TaskLeaseID uuid.UUID       `json:"taskLeaseId"`
-	AgentID     uuid.UUID       `json:"agentId"`
-	Name        string          `json:"name"`
-	Value       json.RawMessage `json:"value,omitempty"`
-	Sensitive   bool            `json:"sensitive"`
-	Redacted    bool            `json:"redacted"`
+	ID             uuid.UUID       `json:"id"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+	EventID        uuid.UUID       `json:"eventId"`
+	OrganizationID uuid.UUID       `json:"organizationId"`
+	TaskID         uuid.UUID       `json:"taskId"`
+	StepRunID      uuid.UUID       `json:"stepRunId"`
+	TaskLeaseID    uuid.UUID       `json:"taskLeaseId"`
+	AgentID        uuid.UUID       `json:"agentId"`
+	Name           string          `json:"name"`
+	Value          json.RawMessage `json:"value,omitempty"`
+	Sensitive      bool            `json:"sensitive"`
+	Redacted       bool            `json:"redacted"`
 }

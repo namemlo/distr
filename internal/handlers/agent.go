@@ -731,6 +731,11 @@ func getAgentTaskTimelineHandler() http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		leaseID, err := uuid.Parse(r.URL.Query().Get("leaseId"))
+		if err != nil {
+			http.Error(w, "leaseId is required", http.StatusBadRequest)
+			return
+		}
 
 		ctx := r.Context()
 		log := internalctx.GetLogger(ctx)
@@ -747,7 +752,7 @@ func getAgentTaskTimelineHandler() http.HandlerFunc {
 			respondStepEventResult(w, r, log, err, func() {})
 			return
 		}
-		timeline, err := db.GetTaskTimeline(ctx, taskID, deploymentTarget.OrganizationID)
+		timeline, err := db.GetTaskTimelineForLease(ctx, taskID, deploymentTarget.OrganizationID, leaseID, deploymentTarget.ID)
 		respondStepEventResult(w, r, log, err, func() {
 			RespondJSON(w, mapping.TaskTimelineToAPI(*timeline))
 		})

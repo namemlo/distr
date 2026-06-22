@@ -7,17 +7,19 @@ import (
 
 func TaskLeaseToAPI(lease types.TaskLease) api.AgentTaskLease {
 	return api.AgentTaskLease{
-		ID:           lease.ID,
-		CreatedAt:    lease.CreatedAt,
-		UpdatedAt:    lease.UpdatedAt,
-		TaskID:       lease.TaskID,
-		PlanChecksum: lease.PlanChecksum,
-		LeaseToken:   lease.LeaseToken,
-		LeasedAt:     lease.LeasedAt,
-		ExpiresAt:    lease.ExpiresAt,
-		HeartbeatAt:  lease.HeartbeatAt,
-		Attempt:      lease.Attempt,
-		Steps:        List(lease.Steps, TaskLeaseStepToAPI),
+		ID:             lease.ID,
+		CreatedAt:      lease.CreatedAt,
+		UpdatedAt:      lease.UpdatedAt,
+		OrganizationID: lease.OrganizationID,
+		TaskID:         lease.TaskID,
+		AgentID:        lease.AgentID,
+		PlanChecksum:   lease.PlanChecksum,
+		LeaseToken:     lease.LeaseToken,
+		LeasedAt:       lease.LeasedAt,
+		ExpiresAt:      lease.ExpiresAt,
+		HeartbeatAt:    lease.HeartbeatAt,
+		Attempt:        lease.Attempt,
+		Steps:          List(lease.Steps, TaskLeaseStepToAPI),
 	}
 }
 

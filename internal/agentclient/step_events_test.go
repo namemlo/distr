@@ -84,10 +84,14 @@ func TestRecordStepRunEventFailsMissingDisabledOrEmptyEndpoint(t *testing.T) {
 
 func TestGetTaskTimelineUsesAuthenticatedTemplate(t *testing.T) {
 	taskID := uuid.New()
+	leaseID := uuid.New()
 	stepRunID := uuid.New()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.URL.Path, "/api/v1/agents/agent/tasks/"+taskID.String()+"/timeline"; got != want {
 			t.Fatalf("expected path %q, got %q", want, got)
+		}
+		if got, want := r.URL.Query().Get("leaseId"), leaseID.String(); got != want {
+			t.Fatalf("expected leaseId query %q, got %q", want, got)
 		}
 		if got, want := r.Header.Get("Authorization"), "Bearer test-token"; got != want {
 			t.Fatalf("expected authorization %q, got %q", want, got)
@@ -107,7 +111,7 @@ func TestGetTaskTimelineUsesAuthenticatedTemplate(t *testing.T) {
 	client := testStepEventClient("")
 	client.taskTimelineEndpointTemplate = server.URL + "/api/v1/agents/agent/tasks/{taskId}/timeline"
 
-	timeline, err := client.GetTaskTimeline(context.Background(), taskID)
+	timeline, err := client.GetTaskTimeline(context.Background(), taskID, leaseID)
 	if err != nil {
 		t.Fatalf("expected task timeline request to succeed: %v", err)
 	}
@@ -122,7 +126,7 @@ func TestGetTaskTimelineUsesAuthenticatedTemplate(t *testing.T) {
 func TestGetTaskTimelineReturnsNilWhenEndpointMissing(t *testing.T) {
 	client := testStepEventClient("")
 
-	timeline, err := client.GetTaskTimeline(context.Background(), uuid.New())
+	timeline, err := client.GetTaskTimeline(context.Background(), uuid.New(), uuid.New())
 	if err != nil {
 		t.Fatalf("expected missing optional endpoint to be a no-op: %v", err)
 	}

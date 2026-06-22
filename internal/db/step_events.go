@@ -147,6 +147,8 @@ func GetTaskTimeline(ctx context.Context, taskID, orgID uuid.UUID) (*types.TaskT
 			AND sr.organization_id = sre.organization_id
 		JOIN TaskLease tl
 			ON tl.id = sre.task_lease_id
+			AND tl.task_id = sre.task_id
+			AND tl.agent_id = sre.agent_id
 			AND tl.organization_id = sre.organization_id
 		WHERE sre.task_id = @taskId
 			AND sre.organization_id = @organizationId
@@ -159,6 +161,60 @@ func GetTaskTimeline(ctx context.Context, taskID, orgID uuid.UUID) (*types.TaskT
 	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 	if err != nil {
 		return nil, fmt.Errorf("could not collect StepRunEvent timeline: %w", err)
+	}
+	events := make([]types.StepRunEvent, 0, len(ids))
+	for _, id := range ids {
+		event, err := getStepRunEvent(ctx, id, orgID)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, *event)
+	}
+	return &types.TaskTimeline{
+		OrganizationID: orgID,
+		TaskID:         taskID,
+		Events:         events,
+	}, nil
+}
+
+func GetTaskTimelineForLease(ctx context.Context, taskID, orgID, taskLeaseID, agentID uuid.UUID) (*types.TaskTimeline, error) {
+	if taskLeaseID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("taskLeaseId is required")
+	}
+	if agentID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("agentId is required")
+	}
+	if _, err := getTask(ctx, taskID, orgID); err != nil {
+		return nil, err
+	}
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx,
+		`SELECT sre.id
+		FROM StepRunEvent sre
+		JOIN StepRun sr
+			ON sr.id = sre.step_run_id
+			AND sr.organization_id = sre.organization_id
+		JOIN TaskLease tl
+			ON tl.id = sre.task_lease_id
+			AND tl.organization_id = sre.organization_id
+		WHERE sre.task_id = @taskId
+			AND sre.organization_id = @organizationId
+			AND sre.task_lease_id = @taskLeaseId
+			AND sre.agent_id = @agentId
+		ORDER BY sr.sort_order, tl.attempt, sre.sequence, sre.id`,
+		pgx.NamedArgs{
+			"taskId":         taskID,
+			"organizationId": orgID,
+			"taskLeaseId":    taskLeaseID,
+			"agentId":        agentID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query StepRunEvent lease timeline: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("could not collect StepRunEvent lease timeline: %w", err)
 	}
 	events := make([]types.StepRunEvent, 0, len(ids))
 	for _, id := range ids {

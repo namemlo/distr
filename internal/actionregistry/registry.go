@@ -584,7 +584,7 @@ func isWebhookSensitiveHeaderName(name string) bool {
 
 func isWebhookReservedHeaderName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version":
+	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version", "x-distr-tenant-id":
 		return true
 	default:
 		return false

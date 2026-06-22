@@ -93,6 +93,16 @@ func TestWebhookActionInputRejectsUnsafeTargetsAndPlaintextHeaders(t *testing.T)
 			message: "headers cannot include Authorization",
 		},
 		{
+			name: "reserved tenant header",
+			setup: func(t *testing.T) {
+				t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+			},
+			mutate: func(inputs map[string]any) {
+				inputs["headers"] = map[string]any{"X-Distr-Tenant-ID": "00000000-0000-0000-0000-000000000001"}
+			},
+			message: "headers cannot include reserved header X-Distr-Tenant-ID",
+		},
+		{
 			name: "duplicate output names",
 			setup: func(t *testing.T) {
 				t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
@@ -196,6 +206,50 @@ func TestExecuteWebhookStepRejectsReservedOutputNamesBeforeHTTPRequest(t *testin
 		types.StepRunEventTypeFailed,
 	}))
 	g.Expect(recorder.events[1].Message).To(ContainSubstring("outputs name statusCode is reserved"))
+}
+
+func TestWebhookActionTenantIsolationRejectsSpoofedTenantHeader(t *testing.T) {
+	g := NewWithT(t)
+	requestSent := false
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestSent = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	setWebhookPolicyEnvForURL(t, server.URL)
+	oldClient := webhookHTTPClientForTest
+	webhookHTTPClientForTest = server.Client()
+	t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+	inputs := validWebhookInputs()
+	inputs["url"] = server.URL + "/deployments"
+	inputs["headers"] = map[string]any{"X-Distr-Tenant-ID": uuid.New().String()}
+	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+	inputs["signingSecret"] = "signing-secret-value"
+	lease := api.AgentTaskLease{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		AgentID:        uuid.New(),
+		TaskID:         uuid.New(),
+		LeaseToken:     "lease-token",
+	}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		Key:           "notify",
+		ActionType:    webhookActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        inputs,
+	}
+	recorder := &recordingLeasedTaskClient{}
+
+	err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+	g.Expect(err).To(MatchError(ContainSubstring("headers cannot include reserved header X-Distr-Tenant-ID")))
+	g.Expect(requestSent).To(BeFalse())
+	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeFailed,
+	}))
+	g.Expect(recorder.events[1].Message).To(ContainSubstring("headers cannot include reserved header X-Distr-Tenant-ID"))
 }
 
 func TestExecuteWebhookStepRejectsTooManyDeclaredOutputsBeforeHTTPRequest(t *testing.T) {
@@ -939,6 +993,64 @@ func TestExecuteWebhookStepPreservesResolvedSigningSecretBytes(t *testing.T) {
 	g.Expect(signature).To(Equal(expectedSignature))
 }
 
+func TestExecuteWebhookStepBindsOrganizationToSignature(t *testing.T) {
+	g := NewWithT(t)
+	const signingSecret = "signing-secret-value"
+	orgID := uuid.New()
+	agentID := uuid.New()
+	var signature string
+	var tenantHeader string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		signature = r.Header.Get("X-Distr-Signature")
+		tenantHeader = r.Header.Get("X-Distr-Tenant-ID")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	setWebhookPolicyEnvForURL(t, server.URL)
+	oldClient := webhookHTTPClientForTest
+	webhookHTTPClientForTest = server.Client()
+	t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+	oldNow := webhookNow
+	webhookNow = func() time.Time { return time.Date(2026, 6, 22, 12, 34, 56, 0, time.UTC) }
+	t.Cleanup(func() { webhookNow = oldNow })
+	inputs := validWebhookInputs()
+	inputs["url"] = server.URL + "/deployments"
+	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+	inputs["signingSecret"] = signingSecret
+	inputs["outputs"] = []any{}
+	lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: orgID, AgentID: agentID, TaskID: uuid.New(), LeaseToken: "lease-token"}
+	step := api.AgentTaskLeaseStep{
+		StepRunID:     uuid.New(),
+		Key:           "notify",
+		ActionType:    webhookActionType,
+		ActionVersion: types.AgentActionVersionV1,
+		Inputs:        inputs,
+	}
+	recorder := &recordingLeasedTaskClient{}
+	endpoint, err := url.Parse(server.URL + "/deployments")
+	g.Expect(err).NotTo(HaveOccurred())
+	body, err := webhookRequestBodyBytes(map[string]any{"deploymentId": "dep-123"})
+	g.Expect(err).NotTo(HaveOccurred())
+	expectedSignature := webhookSignature(
+		signingSecret,
+		webhookCanonicalDataWithTenant(
+			http.MethodPost,
+			endpoint,
+			"2026-06-22T12:34:56Z",
+			"notify-demo",
+			webhookBodyDigest(body),
+			orgID,
+		),
+	)
+
+	err = executeWebhookStep(context.Background(), lease, step, recorder)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(signature).To(Equal(expectedSignature))
+	g.Expect(tenantHeader).To(Equal(orgID.String()))
+}
+
 func TestExecuteWebhookStepRedactsWireNormalizedSecretHeaderValue(t *testing.T) {
 	g := NewWithT(t)
 	const headerSecret = " secret-value "
@@ -1666,6 +1778,94 @@ func TestWebhookActionIdempotentReplaySuite(t *testing.T) {
 		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
 		g.Expect(recorder.events).To(BeEmpty())
 	})
+	t.Run("replay rejects mismatched organization before DNS and HTTP", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not be used when replay organization mismatches")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return nil, errors.New("HTTP should not be used when replay organization mismatches")
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		event := storedWebhookSuccessEvent(lease.TaskID, step.StepRunID)
+		event.OrganizationID = uuid.New()
+		event.AgentID = lease.AgentID
+		event.TaskLeaseID = lease.ID
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: api.TaskTimeline{
+				OrganizationID: event.OrganizationID,
+				TaskID:         lease.TaskID,
+				Events:         []api.StepRunEvent{event},
+			},
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).To(MatchError(ContainSubstring("stored webhook replay organization does not match")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
+		g.Expect(recorder.events).To(BeEmpty())
+	})
+	t.Run("replay rejects mismatched agent before DNS and HTTP", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		var lookups int32
+		setWebhookLookupIPAddr(t, func(context.Context, string) ([]net.IPAddr, error) {
+			atomic.AddInt32(&lookups, 1)
+			return nil, errors.New("DNS should not be used when replay agent mismatches")
+		})
+		var requests int32
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&requests, 1)
+				return nil, errors.New("HTTP should not be used when replay agent mismatches")
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		lease := api.AgentTaskLease{ID: uuid.New(), OrganizationID: uuid.New(), AgentID: uuid.New(), TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        validWebhookInputs(),
+		}
+		event := storedWebhookSuccessEvent(lease.TaskID, step.StepRunID)
+		event.OrganizationID = lease.OrganizationID
+		event.AgentID = uuid.New()
+		event.TaskLeaseID = lease.ID
+		recorder := &webhookReplayLeasedTaskClient{
+			timeline: api.TaskTimeline{
+				OrganizationID: lease.OrganizationID,
+				TaskID:         lease.TaskID,
+				Events:         []api.StepRunEvent{event},
+			},
+		}
+
+		err := executeWebhookStep(context.Background(), lease, step, recorder)
+
+		g.Expect(err).To(MatchError(ContainSubstring("stored webhook replay agent does not match")))
+		g.Expect(atomic.LoadInt32(&lookups)).To(Equal(int32(0)))
+		g.Expect(atomic.LoadInt32(&requests)).To(Equal(int32(0)))
+		g.Expect(recorder.events).To(BeEmpty())
+	})
 	t.Run("interrupted replay fails closed before duplicate HTTP request", func(t *testing.T) {
 		g := NewWithT(t)
 		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
@@ -1923,7 +2123,7 @@ type webhookReplayLeasedTaskClient struct {
 	timelineCalls int
 }
 
-func (c *webhookReplayLeasedTaskClient) GetTaskTimeline(_ context.Context, taskID uuid.UUID) (*api.TaskTimeline, error) {
+func (c *webhookReplayLeasedTaskClient) GetTaskTimeline(_ context.Context, taskID uuid.UUID, _ uuid.UUID) (*api.TaskTimeline, error) {
 	c.timelineCalls++
 	if c.timelineErr != nil {
 		return nil, c.timelineErr
