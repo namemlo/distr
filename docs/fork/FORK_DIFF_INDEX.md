@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-037 are implemented locally. PR-037 adds organization-scoped Step Template import/install APIs and a feature-flagged vendor admin UI for catalog preview and tenant-installed templates.
+PR-000 through PR-038 are implemented locally. PR-038 adds restricted condition validation/evaluation and stable output-variable naming for deterministic workflow references.
 
 ## Tracking Template
 
@@ -598,3 +598,18 @@ Use one entry per pull request:
 - Tests: Repository, migration, handler, integration, Angular service, and Angular component tests were added.
 - Upstream contribution notes: Community-neutral Step Template catalog/install surface; no adopter-specific terminology, external marketplace dependency, or execution behavior.
 - Compatibility notes: Existing Deployment Process, Task Queue, action execution, Docker/Kubernetes agents, and webhook behavior are unchanged. Installed templates are additive and gated behind the `step_templates` experimental flag.
+
+### PR-038 - Output variables and conditions
+
+- Status: Implemented locally; restricted condition package, deployment process validation, output-reference cycle checks, output-name validation, deployment-plan blocker handling, documentation, and ADR completed.
+- Upstream base: `2a21d0c1`
+- Feature flag: Uses the existing `deployment_processes` and step-event surfaces; no new feature flag is added.
+- User-facing behavior: Invalid process step conditions are rejected during revision validation, output references must target known steps, and stable output names are enforced for step event writes.
+- Database changes: None. Reuses DeploymentProcessStep condition fields and StepRunOutput from earlier roadmap PRs.
+- API changes: Tightened validation for deployment process revision `condition` fields and agent step event output names.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-038 notes and ADR-0038.
+- Tests: Condition parser/evaluator tests, deployment process validation tests, step-event output validation tests, and deployment-plan invalid-condition blocker coverage were added.
+- Upstream contribution notes: Community-neutral condition/output foundation; no adopter-specific terminology, script execution, or general-purpose expression language.
+- Compatibility notes: Existing valid conditions and output names continue to work. Invalid free-form conditions and unstable output names are rejected before they can become workflow references.

@@ -471,6 +471,9 @@ func validateRecordAgentStepRunEventRequest(request *types.RecordAgentStepRunEve
 		if len(request.Outputs[i].Name) > types.MaxStepRunOutputNameLength {
 			return apierrors.NewBadRequest(fmt.Sprintf("outputs[%d].name is too long", i))
 		}
+		if !types.IsValidStepRunOutputName(request.Outputs[i].Name) {
+			return apierrors.NewBadRequest(fmt.Sprintf("outputs[%d].name is invalid", i))
+		}
 		if _, ok := seenOutputs[request.Outputs[i].Name]; ok {
 			return apierrors.NewBadRequest("outputs contains duplicate name")
 		}

@@ -98,6 +98,16 @@ func TestAgentStepRunEventRequestValidate(t *testing.T) {
 			wantError: "outputs contains duplicate name",
 		},
 		{
+			name: "invalid output name",
+			request: AgentStepRunEventRequest{
+				LeaseToken: "lease-token",
+				Sequence:   1,
+				Type:       types.StepRunEventTypeOutput,
+				Outputs:    []AgentStepRunOutputRequest{{Name: "status code", Value: 200}},
+			},
+			wantError: "outputs[0].name is invalid",
+		},
+		{
 			name: "oversized log body",
 			request: AgentStepRunEventRequest{
 				LeaseToken: "lease-token",

@@ -204,6 +204,36 @@ func TestDeploymentPlanRepositoryBlocksUnresolvedRequiredVariables(t *testing.T)
 		To(ContainElement("required_variable_unresolved"))
 }
 
+func TestDeploymentPlanRepositoryBlocksInvalidStepCondition(t *testing.T) {
+	ctx := deploymentPlanDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Standard deploy")
+	revision.Steps[0].Condition = `channel =~ "Stable"`
+	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
+	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID:  deps.orgID,
+		ReleaseBundleID: published.ID,
+		EnvironmentID:   deps.devEnvironmentID,
+		TargetIDs:       []uuid.UUID{targetID},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusBlocked))
+	g.Expect(deploymentPlanIssueCodes(plan.Issues, types.DeploymentPlanIssueSeverityBlocker)).
+		To(ContainElement("invalid_step_condition"))
+}
+
 func TestDeploymentPlanRepositoryPreservesOrganizationIsolation(t *testing.T) {
 	ctx := deploymentPlanDBTestContext(t)
 	g := NewWithT(t)

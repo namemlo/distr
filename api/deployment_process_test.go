@@ -212,6 +212,26 @@ func TestCreateDeploymentProcessRevisionRequestValidateRejectsInvalidSteps(t *te
 			wantErr: `step dependency "missing" does not exist`,
 		},
 		{
+			name:    "invalid condition",
+			mutate:  func(r *CreateDeploymentProcessRevisionRequest) { r.Steps[0].Condition = `channel =~ "Stable"` },
+			wantErr: "condition is invalid",
+		},
+		{
+			name: "condition output reference missing step",
+			mutate: func(r *CreateDeploymentProcessRevisionRequest) {
+				r.Steps[0].Condition = `output("missing", "status") == "ok"`
+			},
+			wantErr: `step condition output reference "missing" does not exist`,
+		},
+		{
+			name: "condition output reference cycle",
+			mutate: func(r *CreateDeploymentProcessRevisionRequest) {
+				r.Steps[0].Condition = `output("prepare", "status") == "ok"`
+				r.Steps[1].Condition = `output("build", "status") == "ok"`
+			},
+			wantErr: "step dependencies must not contain cycles",
+		},
+		{
 			name:    "self dependency",
 			mutate:  func(r *CreateDeploymentProcessRevisionRequest) { r.Steps[0].Dependencies = []string{"build"} },
 			wantErr: "step cannot depend on itself",

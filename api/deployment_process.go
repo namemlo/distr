@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/distr-sh/distr/internal/actionregistry"
+	"github.com/distr-sh/distr/internal/conditions"
 	"github.com/distr-sh/distr/internal/validation"
 	"github.com/google/uuid"
 )
@@ -106,6 +107,9 @@ func (r *CreateDeploymentProcessRevisionRequest) Validate() error {
 			return validation.NewValidationFailedError(
 				fmt.Sprintf("step %q %s", step.Key, strings.TrimPrefix(err.Error(), "bad request: ")),
 			)
+		}
+		if err := conditions.Validate(step.Condition); err != nil {
+			return validation.NewValidationFailedError(fmt.Sprintf("step %q condition is invalid: %s", step.Key, err.Error()))
 		}
 	}
 
@@ -220,6 +224,22 @@ func validateDeploymentProcessStepDependencies(
 				return validation.NewValidationFailedError(fmt.Sprintf("step dependency %q does not exist", dependency))
 			}
 			dependencies = append(dependencies, dependency)
+		}
+		refs, err := conditions.OutputReferences(step.Condition)
+		if err != nil {
+			return validation.NewValidationFailedError(fmt.Sprintf("step %q condition is invalid: %s", step.Key, err.Error()))
+		}
+		for _, ref := range refs {
+			if _, ok := stepKeys[ref.StepKey]; !ok {
+				return validation.NewValidationFailedError(
+					fmt.Sprintf("step condition output reference %q does not exist", ref.StepKey),
+				)
+			}
+			if _, ok := seenDependencies[ref.StepKey]; ok {
+				continue
+			}
+			seenDependencies[ref.StepKey] = struct{}{}
+			dependencies = append(dependencies, ref.StepKey)
 		}
 		graph[step.Key] = dependencies
 	}
