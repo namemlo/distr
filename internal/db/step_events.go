@@ -591,6 +591,21 @@ func getWebhookSecretValuesForRedaction(
 	inputBindings map[string]any,
 ) ([]string, error) {
 	values := []string{}
+	if signingReferences, ok := stringSliceValue(inputBindings["signingSecrets"]); ok {
+		for _, signingReference := range signingReferences {
+			signingReference = strings.TrimSpace(signingReference)
+			if signingReference == "" {
+				continue
+			}
+			value, err := getTaskLeaseSecretValue(ctx, task, signingReference)
+			if err != nil {
+				return nil, err
+			}
+			if value != "" {
+				values = appendStepRunSecretRedactionValue(values, value)
+			}
+		}
+	}
 	signingReference, ok := stringValue(inputBindings["signingSecret"])
 	if ok && strings.TrimSpace(signingReference) != "" {
 		value, err := getTaskLeaseSecretValue(ctx, task, strings.TrimSpace(signingReference))

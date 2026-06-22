@@ -987,6 +987,7 @@ func TestExecuteWebhookStepSendsSignedRequestRetriesAndExtractsOutputs(t *testin
 	const signingSecret = "signing-secret-value"
 	var idempotencyKeys []string
 	var signatures []string
+	var keyVersions []string
 	var bodies []string
 	attempts := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -996,6 +997,7 @@ func TestExecuteWebhookStepSendsSignedRequestRetriesAndExtractsOutputs(t *testin
 		bodies = append(bodies, string(body))
 		idempotencyKeys = append(idempotencyKeys, r.Header.Get("Idempotency-Key"))
 		signatures = append(signatures, r.Header.Get("X-Distr-Signature"))
+		keyVersions = append(keyVersions, r.Header.Get("X-Distr-Key-Version"))
 		g.Expect(r.Method).To(Equal(http.MethodPost))
 		g.Expect(r.Header.Get("Authorization")).To(Equal(headerSecret))
 		g.Expect(r.Header.Get("X-Distr-Timestamp")).To(Equal("2026-06-22T12:34:56Z"))
@@ -1051,6 +1053,7 @@ func TestExecuteWebhookStepSendsSignedRequestRetriesAndExtractsOutputs(t *testin
 	g.Expect(idempotencyKeys).To(Equal([]string{"notify-demo", "notify-demo"}))
 	g.Expect(signatures).To(HaveLen(2))
 	g.Expect(signatures[0]).To(Equal(signatures[1]))
+	g.Expect(keyVersions).To(Equal([]string{"1", "1"}))
 	g.Expect(bodies).To(Equal([]string{`{"deploymentId":"dep-123"}`, `{"deploymentId":"dep-123"}`}))
 	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
 		types.StepRunEventTypeStarted,
@@ -1061,6 +1064,8 @@ func TestExecuteWebhookStepSendsSignedRequestRetriesAndExtractsOutputs(t *testin
 	outputs := recorder.events[3].Outputs
 	g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "statusCode", Value: 202}))
 	g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "attempts", Value: 2}))
+	g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "signingKeyVersion", Value: 1}))
+	g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "keyRotationApplied", Value: false}))
 	g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "remoteId", Value: "remote-123"}))
 	g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "accepted", Sensitive: true}))
 	g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "echo", Value: "[REDACTED]"}))
@@ -1069,6 +1074,119 @@ func TestExecuteWebhookStepSendsSignedRequestRetriesAndExtractsOutputs(t *testin
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(payload)).NotTo(ContainSubstring(headerSecret))
 	g.Expect(string(payload)).NotTo(ContainSubstring(signingSecret))
+}
+
+func TestWebhookActionKeyRotationSuite(t *testing.T) {
+	t.Run("signs with active key version and records audit outputs", func(t *testing.T) {
+		g := NewWithT(t)
+		ctx := context.Background()
+		const oldSecret = "old-signing-secret"
+		const activeSecret = "new-signing-secret"
+		var signature string
+		var keyVersion string
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			signature = r.Header.Get("X-Distr-Signature")
+			keyVersion = r.Header.Get("X-Distr-Key-Version")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"remote-123"}`))
+		}))
+		defer server.Close()
+		setWebhookPolicyEnvForURL(t, server.URL)
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = server.Client()
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+		oldNow := webhookNow
+		webhookNow = func() time.Time { return time.Date(2026, 6, 22, 12, 34, 56, 0, time.UTC) }
+		t.Cleanup(func() { webhookNow = oldNow })
+		inputs := validWebhookInputs()
+		inputs["url"] = server.URL + "/deployments"
+		delete(inputs, "signingSecret")
+		inputs["signingSecrets"] = []any{oldSecret, activeSecret}
+		inputs["retry"] = map[string]any{"maxAttempts": 1, "backoffSeconds": 0, "retryableStatusCodes": []any{503}}
+		inputs["expectedStatusCodes"] = []any{202}
+		lease := api.AgentTaskLease{TaskID: uuid.New(), LeaseToken: "lease-token"}
+		step := api.AgentTaskLeaseStep{
+			StepRunID:     uuid.New(),
+			Key:           "notify",
+			ActionType:    webhookActionType,
+			ActionVersion: types.AgentActionVersionV1,
+			Inputs:        inputs,
+		}
+		recorder := &recordingLeasedTaskClient{}
+		endpoint, err := url.Parse(server.URL + "/deployments")
+		g.Expect(err).NotTo(HaveOccurred())
+		body, err := webhookRequestBodyBytes(map[string]any{"deploymentId": "dep-123"})
+		g.Expect(err).NotTo(HaveOccurred())
+		expectedSignature := webhookSignature(
+			activeSecret,
+			webhookCanonicalData(http.MethodPost, endpoint, "2026-06-22T12:34:56Z", "notify-demo", webhookBodyDigest(body)),
+		)
+
+		err = executeWebhookStep(ctx, lease, step, recorder)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(signature).To(Equal(expectedSignature))
+		g.Expect(keyVersion).To(Equal("2"))
+		g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
+			types.StepRunEventTypeStarted,
+			types.StepRunEventTypeProgress,
+			types.StepRunEventTypeSucceeded,
+		}))
+		outputs := recorder.events[2].Outputs
+		g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "statusCode", Value: 202}))
+		g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "attempts", Value: 1}))
+		g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "signingKeyVersion", Value: 2}))
+		g.Expect(outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "keyRotationApplied", Value: true}))
+		payload, err := json.Marshal(recorder.events)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(string(payload)).NotTo(ContainSubstring(oldSecret))
+		g.Expect(string(payload)).NotTo(ContainSubstring(activeSecret))
+	})
+
+	t.Run("rejects empty and duplicate rotated keys", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		inputs := validWebhookInputs()
+		delete(inputs, "signingSecret")
+		inputs["signingSecrets"] = []any{"old-secret", " "}
+
+		_, err := decodeWebhookActionInput(inputs)
+		g.Expect(err).To(MatchError(ContainSubstring("signingSecrets contains empty secret")))
+
+		inputs["signingSecrets"] = []any{"same-secret", "same-secret"}
+		_, err = decodeWebhookActionInput(inputs)
+		g.Expect(err).To(MatchError(ContainSubstring("signingSecrets contains duplicate secret")))
+	})
+}
+
+func TestWebhookActionKeyRotationVerificationSuite(t *testing.T) {
+	g := NewWithT(t)
+	endpoint, err := url.Parse("https://hooks.example.com/deployments?b=2&a=1")
+	g.Expect(err).NotTo(HaveOccurred())
+	canonical := webhookCanonicalData(
+		http.MethodPost,
+		endpoint,
+		"2026-06-22T12:34:56Z",
+		"notify-demo",
+		"sha256:body",
+	)
+	secrets := []string{"old-secret", "new-secret"}
+	signatureV1 := webhookSignature("old-secret", canonical)
+	signatureV2 := webhookSignature("new-secret", canonical)
+
+	version, ok := webhookVerifySignature(secrets, "2", canonical, signatureV2)
+	g.Expect(ok).To(BeTrue())
+	g.Expect(version).To(Equal(2))
+
+	_, ok = webhookVerifySignature(secrets, "1", canonical, signatureV2)
+	g.Expect(ok).To(BeFalse())
+
+	_, ok = webhookVerifySignature(secrets, "", canonical, signatureV1)
+	g.Expect(ok).To(BeFalse())
+
+	version, ok = webhookVerifySignature([]string{"legacy-secret"}, "", canonical, webhookSignature("legacy-secret", canonical))
+	g.Expect(ok).To(BeTrue())
+	g.Expect(version).To(Equal(1))
 }
 
 func TestExecuteWebhookStepRetriesOnConfigured429ExpectedStatus(t *testing.T) {
@@ -1609,6 +1727,24 @@ func TestWebhookActionIdempotentReplaySuite(t *testing.T) {
 		g.Expect(result.StatusCode).To(Equal(http.StatusAccepted))
 		g.Expect(result.Attempts).To(Equal(1))
 		g.Expect(result.Outputs).To(ContainElement(api.AgentStepRunOutputRequest{Name: "remoteId", Value: "remote-123"}))
+	})
+	t.Run("replay reconstructs stored key rotation audit outputs", func(t *testing.T) {
+		g := NewWithT(t)
+		taskID := uuid.New()
+		stepRunID := uuid.New()
+		event := storedWebhookSuccessEvent(taskID, stepRunID)
+		event.Outputs = append(event.Outputs,
+			api.StepRunOutput{Name: "signingKeyVersion", Value: rawJSONValue(2)},
+			api.StepRunOutput{Name: "keyRotationApplied", Value: rawJSONValue(true)},
+		)
+		timeline := &api.TaskTimeline{TaskID: taskID, Events: []api.StepRunEvent{event}}
+
+		result, ok, err := webhookReplayResultFromTimeline(timeline, stepRunID)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(ok).To(BeTrue())
+		g.Expect(result.SigningKeyVersion).To(Equal(2))
+		g.Expect(result.KeyRotationApplied).To(BeTrue())
 	})
 }
 

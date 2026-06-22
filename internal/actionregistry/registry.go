@@ -16,7 +16,7 @@ type Registry struct {
 
 var defaultRegistry = mustBuildRegistry(defaultActions())
 
-const webhookBuiltInOutputCount = 2
+const webhookBuiltInOutputCount = 4
 
 func DefaultRegistry() Registry {
 	return defaultRegistry
@@ -401,6 +401,12 @@ func defaultActions() []types.ActionDefinition {
 					"body":          map[string]any{},
 					"sensitiveBody": map[string]any{"type": "boolean"},
 					"signingSecret": webhookSecretReferenceSchema(),
+					"signingSecrets": map[string]any{
+						"type":     "array",
+						"items":    webhookSecretReferenceSchema(),
+						"minItems": 1,
+						"maxItems": 8,
+					},
 					"timeoutSeconds": map[string]any{
 						"type":    "integer",
 						"minimum": 1,
@@ -469,14 +475,16 @@ func defaultActions() []types.ActionDefinition {
 						},
 					},
 				},
-				[]any{"url", "signingSecret"},
+				[]any{"url"},
 			),
 			OutputSchema: objectSchema(
 				map[string]any{
-					"statusCode": map[string]any{"type": "integer"},
-					"attempts":   map[string]any{"type": "integer", "minimum": 1},
+					"statusCode":         map[string]any{"type": "integer"},
+					"attempts":           map[string]any{"type": "integer", "minimum": 1},
+					"signingKeyVersion":  map[string]any{"type": "integer", "minimum": 1},
+					"keyRotationApplied": map[string]any{"type": "boolean"},
 				},
-				[]any{"statusCode", "attempts"},
+				[]any{"statusCode", "attempts", "signingKeyVersion", "keyRotationApplied"},
 			),
 		},
 	}
@@ -499,10 +507,38 @@ func webhookSecretReferenceSchema() map[string]any {
 }
 
 func validateWebhookRegistryInput(input map[string]any) error {
+	signingSecret, _ := input["signingSecret"].(string)
+	signingSecrets, _ := input["signingSecrets"].([]any)
+	if strings.TrimSpace(signingSecret) == "" && len(signingSecrets) == 0 {
+		return apierrors.NewBadRequest("webhook signingSecret or signingSecrets is required")
+	}
+	if strings.TrimSpace(signingSecret) != "" && len(signingSecrets) > 0 {
+		return apierrors.NewBadRequest("webhook signingSecret and signingSecrets cannot both be set")
+	}
+	seenSigningSecrets := map[string]struct{}{}
+	for _, rawSecret := range signingSecrets {
+		secret, _ := rawSecret.(string)
+		if strings.TrimSpace(secret) == "" {
+			return apierrors.NewBadRequest("webhook signingSecrets contains empty secret")
+		}
+		if _, ok := seenSigningSecrets[secret]; ok {
+			return apierrors.NewBadRequest("webhook signingSecrets contains duplicate secret")
+		}
+		seenSigningSecrets[secret] = struct{}{}
+	}
 	headers, _ := input["headers"].(map[string]any)
 	for name := range headers {
 		if isWebhookSensitiveHeaderName(name) {
 			return apierrors.NewBadRequest(fmt.Sprintf("webhook headers cannot include %s; use secretHeaders", name))
+		}
+		if isWebhookReservedHeaderName(name) {
+			return apierrors.NewBadRequest(fmt.Sprintf("webhook headers cannot include reserved header %s", name))
+		}
+	}
+	secretHeaders, _ := input["secretHeaders"].(map[string]any)
+	for name := range secretHeaders {
+		if isWebhookReservedHeaderName(name) {
+			return apierrors.NewBadRequest(fmt.Sprintf("webhook secretHeaders cannot include reserved header %s", name))
 		}
 	}
 	outputs, _ := input["outputs"].([]any)
@@ -530,7 +566,7 @@ func validateWebhookRegistryInput(input map[string]any) error {
 
 func isWebhookReservedOutputName(name string) bool {
 	switch name {
-	case "statusCode", "attempts":
+	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied":
 		return true
 	default:
 		return false
@@ -539,7 +575,16 @@ func isWebhookReservedOutputName(name string) bool {
 
 func isWebhookSensitiveHeaderName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "authorization", "proxy-authorization", "x-api-key", "cookie", "x-distr-signature":
+	case "authorization", "proxy-authorization", "x-api-key", "cookie":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWebhookReservedHeaderName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version":
 		return true
 	default:
 		return false

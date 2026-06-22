@@ -277,6 +277,53 @@ func TestTaskLeaseRepositoryResolvesWebhookSecretsOnlyForAgentLease(t *testing.T
 	g.Expect(lease.Steps[0].InputBindings).To(HaveKeyWithValue("signingSecret", "super-secret-signing-key"))
 }
 
+func TestTaskLeaseRepositoryResolvesWebhookSigningSecretRotationOnlyForAgentLease(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	webhook := taskLeaseWebhookStep("webhook", "Notify webhook", 10)
+	delete(webhook.InputBindings, "signingSecret")
+	webhook.InputBindings["signingSecrets"] = []any{"webhook_signing_key_v1", "webhook_signing_key_v2"}
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{webhook})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES
+			(@organizationId, @authKey, @authValue, @updatedBy),
+			(@organizationId, @signingKeyV1, @signingValueV1, @updatedBy),
+			(@organizationId, @signingKeyV2, @signingValueV2, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"authKey":        "webhook_auth_token",
+			"authValue":      "Bearer super-secret-webhook-token",
+			"signingKeyV1":   "webhook_signing_key_v1",
+			"signingValueV1": "super-secret-signing-key-v1",
+			"signingKeyV2":   "webhook_signing_key_v2",
+			"signingValueV2": "super-secret-signing-key-v2",
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	g.Expect(lease.Steps).To(HaveLen(1))
+	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:webhook_signing_key_v1"))
+	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:webhook_signing_key_v2"))
+	g.Expect(lease.Steps[0].InputBindings).NotTo(HaveKey("signingSecret"))
+	g.Expect(lease.Steps[0].InputBindings).To(HaveKeyWithValue("signingSecrets", []any{"super-secret-signing-key-v1", "super-secret-signing-key-v2"}))
+}
+
 func TestTaskLeaseRepositoryReturnsNilWhenNoQueuedTaskForAgent(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)

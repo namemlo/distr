@@ -722,16 +722,52 @@ func resolveWebhookSecrets(
 		}
 		secretHeaders = map[string]any{}
 	}
-	signingReference, ok := stringValue(inputBindings["signingSecret"])
-	if !ok || strings.TrimSpace(signingReference) == "" {
-		return nil, apierrors.NewBadRequest("webhook signingSecret must be a secret reference")
+	signingReference, hasSigningReference := stringValue(inputBindings["signingSecret"])
+	rawSigningReferences, hasSigningReferences := inputBindings["signingSecrets"]
+	signingReferences, ok := stringSliceValue(rawSigningReferences)
+	if hasSigningReferences && !ok {
+		return nil, apierrors.NewBadRequest("webhook signingSecrets must be secret references")
 	}
-	signingReference = strings.TrimSpace(signingReference)
-	signingValue, err := getTaskLeaseSecretValue(ctx, task, signingReference)
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(signingReference) != "" && len(signingReferences) > 0 {
+		return nil, apierrors.NewBadRequest("webhook signingSecret and signingSecrets cannot both be set")
 	}
-	references := []string{"secret:" + signingReference}
+	if !hasSigningReference && len(signingReferences) == 0 {
+		return nil, apierrors.NewBadRequest("webhook signingSecret or signingSecrets must be a secret reference")
+	}
+	references := []string{}
+	if len(signingReferences) > 0 {
+		resolvedSigningSecrets := make([]any, 0, len(signingReferences))
+		seenSigningReferences := map[string]struct{}{}
+		for _, rawReference := range signingReferences {
+			reference := strings.TrimSpace(rawReference)
+			if reference == "" {
+				return nil, apierrors.NewBadRequest("webhook signingSecrets must be secret references")
+			}
+			if _, exists := seenSigningReferences[reference]; exists {
+				return nil, apierrors.NewBadRequest("webhook signingSecrets contains duplicate secret reference")
+			}
+			seenSigningReferences[reference] = struct{}{}
+			value, err := getTaskLeaseSecretValue(ctx, task, reference)
+			if err != nil {
+				return nil, err
+			}
+			resolvedSigningSecrets = append(resolvedSigningSecrets, value)
+			references = append(references, "secret:"+reference)
+		}
+		inputBindings["signingSecrets"] = resolvedSigningSecrets
+		delete(inputBindings, "signingSecret")
+	} else {
+		if !hasSigningReference || strings.TrimSpace(signingReference) == "" {
+			return nil, apierrors.NewBadRequest("webhook signingSecret must be a secret reference")
+		}
+		signingReference = strings.TrimSpace(signingReference)
+		signingValue, err := getTaskLeaseSecretValue(ctx, task, signingReference)
+		if err != nil {
+			return nil, err
+		}
+		references = append(references, "secret:"+signingReference)
+		inputBindings["signingSecret"] = signingValue
+	}
 	resolvedSecretHeaders := map[string]any{}
 	for rawName, rawReference := range secretHeaders {
 		name := strings.TrimSpace(rawName)
@@ -755,7 +791,6 @@ func resolveWebhookSecrets(
 	}
 	inputBindings["headers"] = headers
 	inputBindings["secretHeaders"] = resolvedSecretHeaders
-	inputBindings["signingSecret"] = signingValue
 	sort.Strings(references)
 	return references, nil
 }
@@ -798,6 +833,25 @@ func mapStringAny(value any) (map[string]any, bool) {
 func stringValue(value any) (string, bool) {
 	typed, ok := value.(string)
 	return typed, ok
+}
+
+func stringSliceValue(value any) ([]string, bool) {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...), true
+	case []any:
+		values := make([]string, 0, len(typed))
+		for _, rawValue := range typed {
+			value, ok := stringValue(rawValue)
+			if !ok {
+				return nil, false
+			}
+			values = append(values, value)
+		}
+		return values, true
+	default:
+		return nil, false
+	}
 }
 
 func getReadyTaskLeaseStepCandidates(ctx context.Context, taskID, orgID uuid.UUID) ([]taskLeaseStepCandidate, error) {
