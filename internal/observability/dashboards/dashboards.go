@@ -9,9 +9,18 @@ type Definition struct {
 	Category    string
 	Version     string
 	Template    json.RawMessage
+	Correlation CorrelationMetadata
+}
+
+type CorrelationMetadata struct {
+	MetricName           string
+	MetricsQueryTemplate string
+	DashboardVariables   []string
 }
 
 const dashboardVersion = "1.0.0"
+
+var defaultDashboardVariables = []string{"environment", "service"}
 
 var definitions = []Definition{
 	{
@@ -20,6 +29,11 @@ var definitions = []Definition{
 		Description: "HTTP request volume, status classes, and latency for the Distr hub API.",
 		Category:    "http",
 		Version:     dashboardVersion,
+		Correlation: CorrelationMetadata{
+			MetricName:           "distr_http_requests_total",
+			MetricsQueryTemplate: "sum(rate(distr_http_requests_total[$__rate_interval])) by (status_class)",
+			DashboardVariables:   defaultDashboardVariables,
+		},
 		Template: json.RawMessage(`{
   "uid": "distr-http-overview",
   "title": "Distr HTTP Overview",
@@ -70,6 +84,11 @@ var definitions = []Definition{
 		Description: "Task execution counts and durations from durable task state transitions.",
 		Category:    "tasks",
 		Version:     dashboardVersion,
+		Correlation: CorrelationMetadata{
+			MetricName:           "distr_task_executions_total",
+			MetricsQueryTemplate: "sum(rate(distr_task_executions_total[$__rate_interval])) by (status)",
+			DashboardVariables:   defaultDashboardVariables,
+		},
 		Template: json.RawMessage(`{
   "uid": "distr-task-execution-overview",
   "title": "Distr Task Execution Overview",
@@ -109,6 +128,11 @@ var definitions = []Definition{
 		Description: "Process and Go runtime health signals exposed by the metrics endpoint.",
 		Category:    "service-health",
 		Version:     dashboardVersion,
+		Correlation: CorrelationMetadata{
+			MetricName:           "up",
+			MetricsQueryTemplate: `up{job="${service}"}`,
+			DashboardVariables:   []string{"service"},
+		},
 		Template: json.RawMessage(`{
   "uid": "distr-service-health-overview",
   "title": "Distr Service Health Overview",
@@ -159,6 +183,7 @@ func Definitions() []Definition {
 	copied := make([]Definition, 0, len(definitions))
 	for _, definition := range definitions {
 		definition.Template = append(json.RawMessage{}, definition.Template...)
+		definition.Correlation.DashboardVariables = append([]string{}, definition.Correlation.DashboardVariables...)
 		copied = append(copied, definition)
 	}
 	return copied
