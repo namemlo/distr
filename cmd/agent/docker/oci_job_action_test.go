@@ -537,6 +537,23 @@ func TestOCIJobContainerReservationReleaseChecksOwnerToken(t *testing.T) {
 	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(BeEmpty())
 }
 
+func TestOCIJobContainerReservationRecoversUnownedInitializationRace(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	t.Setenv(ociJobLockStaleAfterEnv, "1")
+	ctx := context.Background()
+	containerName := ociJobContainerName("sha256:job-key")
+	lockDir := filepath.Join(ociJobContainerLockRoot(), "distr-oci-job-lock-"+containerName)
+	g.Expect(os.Mkdir(lockDir, 0o700)).To(Succeed())
+
+	release, err := acquireOCIJobContainerLock(ctx, containerName)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(HaveLen(1))
+	release()
+	g.Expect(ociJobTestLockOwnerFiles(t, lockDir)).To(BeEmpty())
+}
+
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
 	tests := []struct {
 		name  string

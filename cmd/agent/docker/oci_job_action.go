@@ -498,24 +498,44 @@ func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func
 		} else if !os.IsNotExist(statErr) {
 			return nil, fmt.Errorf("reserve OCI job container: %w", statErr)
 		}
-		err := os.Mkdir(lockDir, 0o700)
-		if err == nil {
-			ownerToken := newOCIJobContainerLockOwnerToken(containerName)
-			ownerPath := filepath.Join(lockDir, "owner-"+ownerToken)
-			if writeErr := os.WriteFile(ownerPath, []byte(fmt.Sprintf("pid=%d\n", os.Getpid())), 0o600); writeErr != nil {
-				_ = os.RemoveAll(lockDir)
-				return nil, fmt.Errorf("reserve OCI job container: %w", writeErr)
-			}
-			stopHeartbeat := startOCIJobContainerLockHeartbeat(ownerPath, staleAfter)
-			return func() {
-				stopHeartbeat()
-				releaseOCIJobContainerLock(ownerPath)
-			}, nil
+		release, acquired, err := tryPublishOCIJobContainerLock(lockDir, containerName, staleAfter)
+		if err != nil {
+			return nil, err
 		}
-		if !os.IsExist(err) {
-			return nil, fmt.Errorf("reserve OCI job container: %w", err)
+		if acquired {
+			return release, nil
 		}
 	}
+}
+
+func tryPublishOCIJobContainerLock(lockDir, containerName string, staleAfter time.Duration) (func(), bool, error) {
+	ownerToken := newOCIJobContainerLockOwnerToken(containerName)
+	pendingDir := lockDir + ".pending-" + ownerToken
+	if err := os.Mkdir(pendingDir, 0o700); err != nil {
+		if os.IsExist(err) {
+			_ = os.RemoveAll(pendingDir)
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("reserve OCI job container: %w", err)
+	}
+	pendingOwnerPath := filepath.Join(pendingDir, "owner-"+ownerToken)
+	if err := os.WriteFile(pendingOwnerPath, []byte(fmt.Sprintf("pid=%d\n", os.Getpid())), 0o600); err != nil {
+		_ = os.RemoveAll(pendingDir)
+		return nil, false, fmt.Errorf("reserve OCI job container: %w", err)
+	}
+	if err := os.Rename(pendingDir, lockDir); err != nil {
+		_ = os.RemoveAll(pendingDir)
+		if _, statErr := os.Stat(lockDir); statErr == nil {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("reserve OCI job container: %w", err)
+	}
+	ownerPath := filepath.Join(lockDir, "owner-"+ownerToken)
+	stopHeartbeat := startOCIJobContainerLockHeartbeat(ownerPath, staleAfter)
+	return func() {
+		stopHeartbeat()
+		releaseOCIJobContainerLock(ownerPath)
+	}, true, nil
 }
 
 func newOCIJobContainerLockOwnerToken(containerName string) string {
