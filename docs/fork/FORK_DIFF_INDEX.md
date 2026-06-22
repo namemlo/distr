@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-044 are implemented locally. PR-044 adds a feature-flagged deployment timeline, comparison view, task actor persistence, task-log links, and deploy-previous-release plan creation.
+PR-000 through PR-045 are implemented locally. PR-045 adds feature-flagged retention policies, cleanup previews, safety blocks, and dry-run cleanup jobs.
 
 ## Tracking Template
 
@@ -703,3 +703,18 @@ Use one entry per pull request:
 - Tests: Repository tests cover timeline filtering, last-successful marking, actor persistence, compare, and deploy-previous-release plan creation. Handler tests cover list, compare, and redeploy. Angular service and component tests cover requests, filtering, compare, and confirmation.
 - Upstream contribution notes: Community-neutral timeline and comparison surface; no adopter-specific terminology, provider-specific orchestration, scheduler behavior, or rollback claim.
 - Compatibility notes: Existing tasks remain valid with a null actor. Deploy previous release creates a new deployment plan and does not reverse external state or database changes. Existing deployment execution, task leases, rolling and blue-green primitives, traffic-provider interface, Docker/Kubernetes agents, runbooks, webhook action, and release-bundle behavior are unchanged.
+
+### PR-045 - Retention policies
+
+- Status: Implemented locally; repository, API, feature flag, documentation, and ADR completed.
+- Upstream base: `50e862a0`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=retention_policies`; the API also requires `task_queue`, `release_bundles`, and `environments`.
+- User-facing behavior: Feature-flagged API callers can create retention policies, preview release/task/log cleanup candidates, inspect safety blocks, and record dry-run cleanup jobs.
+- Database changes: Added `RetentionPolicy`, `RetentionCleanupJob`, and `ReleaseBundle.retention_protected`.
+- API changes: Added `/api/v1/retention-policies` list/create/get endpoints plus policy preview and dry-run cleanup-job endpoints.
+- UI changes: No page is added in this PR. The frontend feature flag model recognizes `retention_policies` for future UI gating.
+- Agent protocol changes: None.
+- Documentation: Added PR-045 notes and ADR-0045.
+- Tests: Repository tests cover release candidates, currently-deployed safety blocks, failed-task candidates, dry-run cleanup jobs, and apply rejection. Handler tests cover request normalization, malformed IDs, and feature-flag rejection.
+- Upstream contribution notes: Community-neutral retention planning surface; no adopter-specific terminology, provider-specific cleanup worker, scheduler, or destructive deletion.
+- Compatibility notes: Cleanup apply is explicitly rejected in this PR. Existing deployment execution, task leases, deployment timeline, rolling and blue-green primitives, traffic-provider interface, Docker/Kubernetes agents, runbooks, webhook action, and release-bundle behavior are unchanged.

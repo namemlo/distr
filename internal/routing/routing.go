@@ -190,6 +190,7 @@ func ApiRouter(
 					r.Route("/organization", handlers.OrganizationRouter)
 					r.Route("/organizations", handlers.OrganizationsRouter)
 					r.Route("/release-bundles", handlers.ReleaseBundlesRouter)
+					r.Route("/retention-policies", handlers.RetentionPoliciesRouter)
 					r.Route("/runbooks", handlers.RunbooksRouter)
 					r.Route("/secrets", handlers.SecretsRouter)
 					r.Route("/settings", handlers.SettingsRouter)

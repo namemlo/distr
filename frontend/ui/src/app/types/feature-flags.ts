@@ -9,7 +9,8 @@ export type ExperimentalFeatureFlagKey =
   | 'deployment_timeline'
   | 'step_templates'
   | 'task_queue'
-  | 'runbooks';
+  | 'runbooks'
+  | 'retention_policies';
 
 export interface ExperimentalFeatureFlag {
   key: ExperimentalFeatureFlagKey;
