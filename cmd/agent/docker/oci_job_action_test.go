@@ -514,6 +514,33 @@ func TestExecuteOCIJobStepRecoversStaleContainerReservationAfterCrash(t *testing
 	g.Expect(os.IsNotExist(statErr)).To(BeTrue())
 }
 
+func TestOCIJobContainerReservationReleaseChecksOwnerToken(t *testing.T) {
+	g := NewWithT(t)
+	setOCIJobPolicyEnv(t)
+	t.Setenv(ociJobLockStaleAfterEnv, "1")
+	ctx := context.Background()
+	containerName := ociJobContainerName("sha256:job-key")
+	lockDir := filepath.Join(ociJobContainerLockRoot(), "distr-oci-job-lock-"+containerName)
+	ownerPath := filepath.Join(lockDir, "owner")
+
+	releaseA, err := acquireOCIJobContainerLock(ctx, containerName)
+	g.Expect(err).ToNot(HaveOccurred())
+	oldTime := time.Now().Add(-time.Hour)
+	g.Expect(os.Chtimes(ownerPath, oldTime, oldTime)).To(Succeed())
+	releaseB, err := acquireOCIJobContainerLock(ctx, containerName)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	releaseA()
+
+	_, statErr := os.Stat(lockDir)
+	g.Expect(statErr).ToNot(HaveOccurred())
+
+	releaseB()
+
+	_, statErr = os.Stat(lockDir)
+	g.Expect(os.IsNotExist(statErr)).To(BeTrue())
+}
+
 func TestExecuteOCIJobStepUsesCanonicalMountSourceInDockerArgs(t *testing.T) {
 	tests := []struct {
 		name  string

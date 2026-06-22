@@ -481,14 +481,15 @@ func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func
 		err := os.Mkdir(lockDir, 0o700)
 		if err == nil {
 			ownerPath := filepath.Join(lockDir, "owner")
-			if writeErr := os.WriteFile(ownerPath, []byte(fmt.Sprintf("pid=%d\n", os.Getpid())), 0o600); writeErr != nil {
+			ownerToken := newOCIJobContainerLockOwnerToken(containerName)
+			if writeErr := os.WriteFile(ownerPath, []byte(fmt.Sprintf("token=%s\npid=%d\n", ownerToken, os.Getpid())), 0o600); writeErr != nil {
 				_ = os.RemoveAll(lockDir)
 				return nil, fmt.Errorf("reserve OCI job container: %w", writeErr)
 			}
-			stopHeartbeat := startOCIJobContainerLockHeartbeat(ownerPath, staleAfter)
+			stopHeartbeat := startOCIJobContainerLockHeartbeat(ownerPath, ownerToken, staleAfter)
 			return func() {
 				stopHeartbeat()
-				_ = os.RemoveAll(lockDir)
+				releaseOCIJobContainerLock(lockDir, ownerPath, ownerToken)
 			}, nil
 		}
 		if !os.IsExist(err) {
@@ -510,6 +511,25 @@ func acquireOCIJobContainerLock(ctx context.Context, containerName string) (func
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+func newOCIJobContainerLockOwnerToken(containerName string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", containerName, os.Getpid(), time.Now().UnixNano())))
+	return hex.EncodeToString(sum[:])
+}
+
+func releaseOCIJobContainerLock(lockDir, ownerPath, ownerToken string) {
+	if ociJobContainerLockOwnerMatches(ownerPath, ownerToken) {
+		_ = os.RemoveAll(lockDir)
+	}
+}
+
+func ociJobContainerLockOwnerMatches(ownerPath, ownerToken string) bool {
+	data, err := os.ReadFile(ownerPath)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "token="+ownerToken+"\n")
 }
 
 func recoverStaleOCIJobContainerLock(lockDir string, staleAfter time.Duration) (bool, error) {
@@ -540,7 +560,7 @@ func recoverStaleOCIJobContainerLock(lockDir string, staleAfter time.Duration) (
 	return true, nil
 }
 
-func startOCIJobContainerLockHeartbeat(ownerPath string, staleAfter time.Duration) func() {
+func startOCIJobContainerLockHeartbeat(ownerPath, ownerToken string, staleAfter time.Duration) func() {
 	interval := 5 * time.Second
 	if staleAfter > 0 && staleAfter/3 < interval {
 		interval = staleAfter / 3
@@ -555,6 +575,9 @@ func startOCIJobContainerLockHeartbeat(ownerPath string, staleAfter time.Duratio
 		for {
 			select {
 			case <-ticker.C:
+				if !ociJobContainerLockOwnerMatches(ownerPath, ownerToken) {
+					return
+				}
 				now := time.Now()
 				_ = os.Chtimes(ownerPath, now, now)
 			case <-stop:
