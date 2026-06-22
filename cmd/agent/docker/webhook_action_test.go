@@ -538,6 +538,171 @@ func TestRunWebhookActionRejectsUntrustedTLSCertificate(t *testing.T) {
 	g.Expect(result.Attempts).To(Equal(1))
 }
 
+func TestRunWebhookActionAppliesInputTimeoutToDirectRun(t *testing.T) {
+	g := NewWithT(t)
+	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddrToPublicHost(t)
+	inputs := validWebhookInputs()
+	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+	inputs["signingSecret"] = "signing-secret-value"
+	inputs["timeoutSeconds"] = 30
+	inputs["expectedStatusCodes"] = []any{202}
+	input, err := decodeWebhookActionInput(inputs)
+	g.Expect(err).NotTo(HaveOccurred())
+	var requestDeadline time.Time
+	oldClient := webhookHTTPClientForTest
+	webhookHTTPClientForTest = &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			deadline, ok := request.Context().Deadline()
+			g.Expect(ok).To(BeTrue())
+			requestDeadline = deadline
+			return &http.Response{
+				StatusCode: http.StatusAccepted,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				Request:    request,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+	start := time.Now()
+
+	result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Attempts).To(Equal(1))
+	g.Expect(requestDeadline.IsZero()).To(BeFalse())
+	g.Expect(requestDeadline.Sub(start)).To(BeNumerically(">", 0))
+	g.Expect(requestDeadline.Sub(start)).To(BeNumerically("<=", 31*time.Second))
+}
+
+func TestRunWebhookActionClampsRetryAttemptsToGlobalCeiling(t *testing.T) {
+	g := NewWithT(t)
+	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddrToPublicHost(t)
+	inputs := validWebhookInputs()
+	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+	inputs["signingSecret"] = "signing-secret-value"
+	inputs["retry"] = map[string]any{
+		"maxAttempts":          5,
+		"backoffSeconds":       0,
+		"retryableStatusCodes": []any{503},
+	}
+	input, err := decodeWebhookActionInput(inputs)
+	g.Expect(err).NotTo(HaveOccurred())
+	input.Retry.MaxAttempts = 10
+	roundTrips := 0
+	oldClient := webhookHTTPClientForTest
+	webhookHTTPClientForTest = &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			roundTrips++
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+				Request:    request,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+
+	result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+	g.Expect(err).To(MatchError(ContainSubstring("webhook returned unexpected status 503")))
+	g.Expect(result.Attempts).To(Equal(5))
+	g.Expect(roundTrips).To(Equal(5))
+}
+
+func TestNewWebhookHTTPClientAppliesRuntimeIsolationLimits(t *testing.T) {
+	g := NewWithT(t)
+	policy := webhookOutboundPolicy{
+		allowedHosts: map[string]struct{}{
+			"hooks.example.com": {},
+		},
+	}
+	resolvedTarget := webhookResolvedTarget{
+		host: "hooks.example.com",
+		port: "443",
+		ips:  []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}},
+	}
+	var dialDeadline time.Time
+	setWebhookDialContext(t, func(ctx context.Context, _ string, _ string) (net.Conn, error) {
+		deadline, ok := ctx.Deadline()
+		g.Expect(ok).To(BeTrue())
+		dialDeadline = deadline
+		return nil, errors.New("stop after dial deadline capture")
+	})
+
+	client := newWebhookHTTPClient(policy, resolvedTarget)
+	transport, ok := client.Transport.(*http.Transport)
+	g.Expect(ok).To(BeTrue())
+
+	g.Expect(transport.Proxy).To(BeNil())
+	g.Expect(transport.TLSHandshakeTimeout).To(Equal(10 * time.Second))
+	g.Expect(transport.ResponseHeaderTimeout).To(Equal(10 * time.Second))
+	g.Expect(transport.MaxResponseHeaderBytes).To(Equal(int64(16 * 1024)))
+	start := time.Now()
+	_, err := transport.DialContext(context.Background(), "tcp", "hooks.example.com:443")
+	g.Expect(err).To(MatchError(ContainSubstring("stop after dial deadline capture")))
+	g.Expect(dialDeadline.IsZero()).To(BeFalse())
+	g.Expect(dialDeadline.Sub(start)).To(BeNumerically(">", 0))
+	g.Expect(dialDeadline.Sub(start)).To(BeNumerically("<=", 11*time.Second))
+}
+
+func TestRunWebhookActionEmitsNonBlockingAttemptMetrics(t *testing.T) {
+	g := NewWithT(t)
+	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	setWebhookLookupIPAddrToPublicHost(t)
+	inputs := validWebhookInputs()
+	inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+	inputs["signingSecret"] = "signing-secret-value"
+	inputs["expectedStatusCodes"] = []any{202}
+	input, err := decodeWebhookActionInput(inputs)
+	g.Expect(err).NotTo(HaveOccurred())
+	oldClient := webhookHTTPClientForTest
+	webhookHTTPClientForTest = &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusAccepted,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+				Request:    request,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+	metrics := make(chan webhookAttemptMetric, 1)
+	setWebhookAttemptMetricSink(t, metrics)
+
+	result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Attempts).To(Equal(1))
+	select {
+	case metric := <-metrics:
+		g.Expect(metric.Attempt).To(Equal(1))
+		g.Expect(metric.StatusCode).To(Equal(http.StatusAccepted))
+		g.Expect(metric.Failed).To(BeFalse())
+		g.Expect(metric.Duration).To(BeNumerically(">=", 0))
+	default:
+		t.Fatal("expected webhook attempt metric")
+	}
+
+	blockingMetrics := make(chan webhookAttemptMetric)
+	setWebhookAttemptMetricSink(t, blockingMetrics)
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := runWebhookAction(context.Background(), input, func(string) error { return nil })
+		done <- runErr
+	}()
+	select {
+	case err := <-done:
+		g.Expect(err).NotTo(HaveOccurred())
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("webhook attempt metric sink blocked execution")
+	}
+}
+
 func TestWebhookActionSecurityContractSuite(t *testing.T) {
 	t.Run("SSRF via DNS fails before attempts", func(t *testing.T) {
 		g := NewWithT(t)
@@ -610,6 +775,115 @@ func TestWebhookActionSecurityContractSuite(t *testing.T) {
 		err := &net.DNSError{Err: "temporary DNS failure", Name: "hooks.example.com", IsTemporary: true}
 
 		g.Expect(isRetryableWebhookAttemptError(0, err)).To(BeFalse())
+	})
+	t.Run("direct runs carry execution deadline", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookLookupIPAddrToPublicHost(t)
+		inputs := validWebhookInputs()
+		inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+		inputs["signingSecret"] = "signing-secret-value"
+		inputs["timeoutSeconds"] = 30
+		inputs["expectedStatusCodes"] = []any{202}
+		input, err := decodeWebhookActionInput(inputs)
+		g.Expect(err).NotTo(HaveOccurred())
+		var requestHasDeadline bool
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				_, requestHasDeadline = request.Context().Deadline()
+				return &http.Response{
+					StatusCode: http.StatusAccepted,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id":"remote-123"}`)),
+					Request:    request,
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+
+		result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(result.Attempts).To(Equal(1))
+		g.Expect(requestHasDeadline).To(BeTrue())
+	})
+	t.Run("cancellation stops retry backoff", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookLookupIPAddrToPublicHost(t)
+		inputs := validWebhookInputs()
+		inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+		inputs["signingSecret"] = "signing-secret-value"
+		inputs["retry"] = map[string]any{
+			"maxAttempts":          5,
+			"backoffSeconds":       1,
+			"retryableStatusCodes": []any{503},
+		}
+		input, err := decodeWebhookActionInput(inputs)
+		g.Expect(err).NotTo(HaveOccurred())
+		ctx, cancel := context.WithCancel(context.Background())
+		roundTrips := 0
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				roundTrips++
+				cancel()
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{}`)),
+					Request:    request,
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+
+		result, err := runWebhookAction(ctx, input, func(string) error { return nil })
+
+		g.Expect(err).To(MatchError("webhook canceled"))
+		g.Expect(result.Attempts).To(Equal(1))
+		g.Expect(roundTrips).To(Equal(1))
+	})
+	t.Run("retry attempts are globally capped", func(t *testing.T) {
+		g := NewWithT(t)
+		t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+		setWebhookLookupIPAddrToPublicHost(t)
+		inputs := validWebhookInputs()
+		inputs["secretHeaders"] = map[string]any{"Authorization": "Bearer token"}
+		inputs["signingSecret"] = "signing-secret-value"
+		input, err := decodeWebhookActionInput(inputs)
+		g.Expect(err).NotTo(HaveOccurred())
+		input.Retry.MaxAttempts = 10
+		roundTrips := 0
+		oldClient := webhookHTTPClientForTest
+		webhookHTTPClientForTest = &http.Client{
+			Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				roundTrips++
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{}`)),
+					Request:    request,
+				}, nil
+			}),
+		}
+		t.Cleanup(func() { webhookHTTPClientForTest = oldClient })
+
+		result, err := runWebhookAction(context.Background(), input, func(string) error { return nil })
+
+		g.Expect(err).To(MatchError(ContainSubstring("webhook returned unexpected status 503")))
+		g.Expect(result.Attempts).To(Equal(5))
+		g.Expect(roundTrips).To(Equal(5))
+	})
+	t.Run("large streaming responses stop at cap", func(t *testing.T) {
+		g := NewWithT(t)
+		body := &countingReadCloser{data: []byte(strings.Repeat("x", webhookMaxResponseBodyBytes+2))}
+
+		_, err := readWebhookResponseBody(body)
+
+		g.Expect(err).To(MatchError("webhook response body is too large"))
+		g.Expect(body.bytesRead).To(Equal(webhookMaxResponseBodyBytes + 1))
 	})
 }
 
@@ -1312,4 +1586,11 @@ func setWebhookDialContext(t *testing.T, dial func(context.Context, string, stri
 	oldDial := webhookDialContext
 	webhookDialContext = dial
 	t.Cleanup(func() { webhookDialContext = oldDial })
+}
+
+func setWebhookAttemptMetricSink(t *testing.T, sink chan<- webhookAttemptMetric) {
+	t.Helper()
+	oldSink := webhookAttemptMetricSink
+	webhookAttemptMetricSink = sink
+	t.Cleanup(func() { webhookAttemptMetricSink = oldSink })
 }

@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-029 are implemented locally. PR-029 hardens the Docker-agent `distr.webhook` network boundary with deterministic DNS preflight validation, pinned dialing, redirect target DNS validation, explicit proxy-environment bypass tests, TLS verification coverage, and retry classification finalization while preserving existing Compose, OCI, file-render, webhook action, and legacy resource-poll deployment behavior.
+PR-000 through PR-030 are implemented locally. PR-030 hardens the Docker-agent `distr.webhook` runtime envelope with direct-run execution deadlines, global retry ceiling enforcement, transport connect/TLS/header limits, bounded response streaming, cancellation propagation, and non-blocking attempt metrics while preserving existing Compose, OCI, file-render, webhook request/response schema, and legacy resource-poll deployment behavior.
 
 ## Tracking Template
 
@@ -478,3 +478,18 @@ Use one entry per pull request:
 - Tests: Added Docker-agent tests for unsafe DNS preflight before attempts, pinned DNS dialing, redirect target DNS validation, explicit proxy environment bypass, untrusted TLS certificate rejection, nil body digest equivalence, and retry classification. Docker-agent focused tests passed locally with dummy agent endpoint environment values.
 - Upstream contribution notes: Community-neutral webhook hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
 - Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, webhook request/response schema, and legacy Docker resource-poll deployment behavior are unchanged. No approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-030 behavior is added in PR-029.
+
+### PR-030 - Webhook runtime isolation
+
+- Status: Implemented locally; direct-run deadline propagation, global retry ceiling enforcement, transport runtime limits, bounded response streaming coverage, cancellation coverage, non-blocking metrics hook, documentation, and ADR completed.
+- Upstream base: `60aaebc3`
+- Feature flag: Adds no new flag. Hardens the existing `distr.webhook` Docker-agent execution path introduced in PR-028 and network-hardened in PR-029.
+- User-facing behavior: Webhook actions keep the same inputs and outputs, but execution is now bounded across DNS resolution, connect, TLS handshake, response headers, response body streaming, retry loops, and retry backoff.
+- Database changes: None.
+- API changes: None.
+- UI changes: None. No Angular route, sidebar entry, or page is added in PR-030.
+- Agent protocol changes: The Docker agent derives a webhook run context from `timeoutSeconds`, clamps retry attempts to the global ceiling even for direct internal callers, applies fixed connect/TLS/response-header/max-header-byte transport limits, preserves the existing response body cap through streaming reads, propagates cancellation through HTTP requests and retry backoff, and emits best-effort non-blocking in-process attempt metrics.
+- Documentation: Added PR-030 notes and ADR-0030.
+- Tests: Added Docker-agent tests for direct-run deadline propagation, global retry ceiling enforcement, transport runtime limits, non-blocking attempt metrics, cancellation during retry backoff, response streaming cutoff, and the expanded webhook security contract suite. Docker-agent focused tests passed locally with dummy agent endpoint environment values.
+- Upstream contribution notes: Community-neutral webhook runtime hardening; no adopter-specific terminology, no UI behavior, no arbitrary host shell execution, and no generic plugin runner.
+- Compatibility notes: Existing Environment, Lifecycle, Channel, Release Bundle, Deployment Process, Process Snapshot, Variable Snapshot, Deployment Plan preview/UI, Task Queue create/read APIs, locks/concurrency semantics, deployment target, deployment, release-name, frontend planning UI, Kubernetes agent behavior, Compose action behavior, OCI job behavior, file render behavior, webhook request/response schema, and legacy Docker resource-poll deployment behavior are unchanged. No approvals, guided failure, retention, notifications, Angular task timeline UI, or PR-031 behavior is added in PR-030.
