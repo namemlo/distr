@@ -14,13 +14,14 @@ func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
 
 	actions := DefaultRegistry().List()
 
-	g.Expect(actions).To(HaveLen(5))
+	g.Expect(actions).To(HaveLen(6))
 	g.Expect(actionTypes(actions)).To(Equal([]string{
 		"distr.preflight",
 		"distr.http.check",
 		"distr.wait",
 		"distr.compose.deploy",
 		"distr.oci.job",
+		"distr.file.render",
 	}))
 	g.Expect(actions[0].Name).To(Equal("Preflight checks"))
 	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("$schema", "https://json-schema.org/draft/2020-12/schema"))
@@ -84,6 +85,18 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 		"runAsUser":"1000:1000",
 		"resources":{"cpus":0.5,"memoryBytes":134217728},
 		"security":{"readOnlyRootFilesystem":true,"dropCapabilities":["ALL"]}
+	}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.file.render", jsonObject(t, `{
+		"destinationPath":"app/config/runtime.json",
+		"template":"{\"apiUrl\":\"${apiUrl}\",\"token\":\"${secrets.apiToken}\"}\n",
+		"variables":{"apiUrl":"https://api.example.com"},
+		"secretVariables":{"apiToken":"api_token"},
+		"mode":"0640",
+		"owner":"1000",
+		"group":"1000",
+		"backup":true,
+		"idempotencyKey":"runtime-config",
+		"timeoutSeconds":30
 	}`))).To(Succeed())
 }
 
@@ -195,6 +208,36 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 				"security":{"readOnlyRootFilesystem":false}
 			}`),
 			want: "readOnlyRootFilesystem",
+		},
+		{
+			name:       "file render requires destination path",
+			actionType: "distr.file.render",
+			input: jsonObject(t, `{
+				"template":"PORT=${port}\n",
+				"variables":{"port":"8080"}
+			}`),
+			want: "destinationPath",
+		},
+		{
+			name:       "file render rejects absolute destination path",
+			actionType: "distr.file.render",
+			input: jsonObject(t, `{
+				"destinationPath":"/etc/passwd",
+				"template":"PORT=${port}\n",
+				"variables":{"port":"8080"}
+			}`),
+			want: "destinationPath",
+		},
+		{
+			name:       "file render rejects invalid mode",
+			actionType: "distr.file.render",
+			input: jsonObject(t, `{
+				"destinationPath":"app/config/runtime.env",
+				"template":"PORT=${port}\n",
+				"variables":{"port":"8080"},
+				"mode":"9999"
+			}`),
+			want: "mode",
 		},
 	}
 

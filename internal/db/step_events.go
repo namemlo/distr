@@ -487,6 +487,8 @@ func getStepRunSecretValuesForRedaction(ctx context.Context, orgID, stepRunID uu
 		return getComposeRegistrySecretValuesForRedaction(ctx, task, inputBindings)
 	case "distr.oci.job":
 		return getOCIJobSecretValuesForRedaction(ctx, task, inputBindings)
+	case "distr.file.render":
+		return getFileRenderSecretValuesForRedaction(ctx, task, inputBindings)
 	default:
 		return nil, nil
 	}
@@ -540,6 +542,32 @@ func getOCIJobSecretValuesForRedaction(
 	}
 	values := make([]string, 0, len(secretEnvironment))
 	for _, rawReference := range secretEnvironment {
+		reference, ok := stringValue(rawReference)
+		if !ok || strings.TrimSpace(reference) == "" {
+			continue
+		}
+		value, err := getTaskLeaseSecretValue(ctx, task, strings.TrimSpace(reference))
+		if err != nil {
+			return nil, err
+		}
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values, nil
+}
+
+func getFileRenderSecretValuesForRedaction(
+	ctx context.Context,
+	task types.Task,
+	inputBindings map[string]any,
+) ([]string, error) {
+	secretVariables, ok := mapStringAny(inputBindings["secretVariables"])
+	if !ok {
+		return nil, nil
+	}
+	values := make([]string, 0, len(secretVariables))
+	for _, rawReference := range secretVariables {
 		reference, ok := stringValue(rawReference)
 		if !ok || strings.TrimSpace(reference) == "" {
 			continue

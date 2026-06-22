@@ -173,6 +173,51 @@ func TestTaskLeaseRepositoryResolvesOCIJobSecretEnvironmentOnlyForAgentLease(t *
 	g.Expect(secretEnvironment).To(HaveKeyWithValue("API_TOKEN", "super-secret-job-token"))
 }
 
+func TestTaskLeaseRepositoryResolvesFileRenderSecretVariablesOnlyForAgentLease(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	render := taskLeaseFileRenderStep("render", "Render config", 10)
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{render})
+	_, err := internalctx.GetDb(ctx).Exec(
+		ctx,
+		`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+		VALUES (@organizationId, @key, @value, @updatedBy)`,
+		pgx.NamedArgs{
+			"organizationId": deps.orgID,
+			"key":            "render_api_token",
+			"value":          "super-secret-render-token",
+			"updatedBy":      deps.actorID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	planPayload, err := json.Marshal(deps.plan.Steps[0].InputBindings)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(planPayload)).NotTo(ContainSubstring("super-secret-render-token"))
+	g.Expect(string(planPayload)).To(ContainSubstring("secretVariables"))
+	g.Expect(string(planPayload)).To(ContainSubstring("render_api_token"))
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	g.Expect(lease.Steps).To(HaveLen(1))
+	g.Expect(lease.Steps[0].SecretReferences).To(ContainElement("secret:render_api_token"))
+	variables := lease.Steps[0].InputBindings["variables"].(map[string]any)
+	g.Expect(variables).To(HaveKeyWithValue("apiUrl", "https://api.example.com"))
+	g.Expect(variables).NotTo(HaveKey("apiToken"))
+	secretVariables := lease.Steps[0].InputBindings["secretVariables"].(map[string]any)
+	g.Expect(secretVariables).To(HaveKeyWithValue("apiToken", "super-secret-render-token"))
+}
+
 func TestTaskLeaseRepositoryReturnsNilWhenNoQueuedTaskForAgent(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -910,6 +955,33 @@ func taskLeaseOCIJobStep(key, name string, sortOrder int) types.DeploymentProces
 			"network":           "none",
 			"timeoutSeconds":    60,
 			"expectedExitCodes": []any{0},
+		},
+		FailureMode:          "fail",
+		TimeoutSeconds:       120,
+		RetryMaxAttempts:     3,
+		RetryIntervalSeconds: 10,
+		RequiredPermissions:  []string{"deploy:write"},
+		SortOrder:            sortOrder,
+	}
+}
+
+func taskLeaseFileRenderStep(key, name string, sortOrder int) types.DeploymentProcessStep {
+	return types.DeploymentProcessStep{
+		Key:               key,
+		Name:              name,
+		ActionType:        "distr.file.render",
+		ExecutionLocation: "target",
+		InputBindings: map[string]any{
+			"destinationPath": "app/config/runtime.env",
+			"template":        "API_URL=${apiUrl}\nAPI_TOKEN=${secrets.apiToken}\n",
+			"variables": map[string]any{
+				"apiUrl": "https://api.example.com",
+			},
+			"secretVariables": map[string]any{
+				"apiToken": "render_api_token",
+			},
+			"mode":   "0640",
+			"backup": true,
 		},
 		FailureMode:          "fail",
 		TimeoutSeconds:       120,

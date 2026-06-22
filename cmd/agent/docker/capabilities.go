@@ -8,6 +8,7 @@ import (
 
 const composeDeployActionType = "distr.compose.deploy"
 const ociJobActionType = "distr.oci.job"
+const fileRenderActionType = "distr.file.render"
 
 func dockerCapabilityReport() api.AgentCapabilitiesRequest {
 	report := agentclient.DefaultCapabilityReport(
@@ -22,6 +23,10 @@ func dockerCapabilityReport() api.AgentCapabilitiesRequest {
 		},
 		{
 			ActionType: ociJobActionType,
+			Versions:   []string{types.AgentActionVersionV1},
+		},
+		{
+			ActionType: fileRenderActionType,
 			Versions:   []string{types.AgentActionVersionV1},
 		},
 	}
