@@ -178,6 +178,14 @@ func UpdateVariableSet(ctx context.Context, variableSet *types.VariableSet) erro
 		if _, err := getVariableSet(ctx, variableSet.ID, variableSet.OrganizationID, true); err != nil {
 			return err
 		}
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			variableSet.OrganizationID,
+			types.ConfigAsCodeResourceKindVariableSetDefinition,
+			variableSet.ID,
+		); err != nil {
+			return err
+		}
 		if err := normalizeVariableSet(variableSet); err != nil {
 			return err
 		}
@@ -240,22 +248,40 @@ func UpdateVariableSet(ctx context.Context, variableSet *types.VariableSet) erro
 }
 
 func DeleteVariableSetWithID(ctx context.Context, id, orgID uuid.UUID) error {
-	db := internalctx.GetDb(ctx)
-	cmd, err := db.Exec(ctx,
-		`DELETE FROM VariableSet WHERE id = @id AND organization_id = @organizationId`,
-		pgx.NamedArgs{"id": id, "organizationId": orgID},
-	)
-	if err != nil {
-		var pgError *pgconn.PgError
-		if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
-			return fmt.Errorf("could not delete VariableSet: %w", apierrors.ErrConflict)
+	return RunTx(ctx, func(ctx context.Context) error {
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			orgID,
+			types.ConfigAsCodeResourceKindVariableSetDefinition,
+			id,
+		); err != nil {
+			return err
 		}
-		return fmt.Errorf("could not delete VariableSet: %w", err)
-	}
-	if cmd.RowsAffected() == 0 {
-		return apierrors.ErrNotFound
-	}
-	return nil
+		if err := DeleteConfigAsCodeAuthorityForResource(
+			ctx,
+			orgID,
+			types.ConfigAsCodeResourceKindVariableSetDefinition,
+			id,
+		); err != nil {
+			return err
+		}
+		db := internalctx.GetDb(ctx)
+		cmd, err := db.Exec(ctx,
+			`DELETE FROM VariableSet WHERE id = @id AND organization_id = @organizationId`,
+			pgx.NamedArgs{"id": id, "organizationId": orgID},
+		)
+		if err != nil {
+			var pgError *pgconn.PgError
+			if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+				return fmt.Errorf("could not delete VariableSet: %w", apierrors.ErrConflict)
+			}
+			return fmt.Errorf("could not delete VariableSet: %w", err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return apierrors.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func ResolveVariablesPreview(

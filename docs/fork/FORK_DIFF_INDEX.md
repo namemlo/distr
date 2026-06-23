@@ -823,3 +823,18 @@ Use one entry per pull request:
 - Tests: Markdown formatting, local markdown link validation, docs-only diff check, and whitespace check.
 - Upstream contribution notes: Community-neutral documentation for the observability suite; no runtime behavior, Grafana provisioning, dashboard UI, alerting, log correlation, or storage changes.
 - Compatibility notes: Existing dashboards, metrics, tracing, correlation, RBAC, authentication, action registry, deployment process logic, task transition semantics, and agent protocol behavior are unchanged.
+
+### PR-048 - Config as Code foundation
+
+- Status: Implemented locally; strict typed validation package, validation API, authority persistence, mutation guards, frontend authority service/badge, examples, documentation, and ADR completed.
+- Upstream base: `30b893ab`
+- Feature flag: Uses `DISTR_EXPERIMENTAL_FEATURE_FLAGS=config_as_code`.
+- User-facing behavior: Users can validate Config as Code YAML/JSON documents and see Git-managed authority on supported resource pages. Git-managed edit/delete/revision/import/publish controls are disabled where applicable, and backend mutation guards remain authoritative for all supported resource families.
+- Database changes: Added `ConfigAsCodeAuthority` and `ConfigAsCodeAuthorityAuditEvent` tables for org-scoped authority state, non-secret authority-change audit records, and repository-path constraints aligned with API validation.
+- API changes: Added `POST /api/v1/config-as-code/validate` and authority APIs under `/api/v1/config-as-code/authorities`.
+- UI changes: Added frontend config-as-code types/service, feature flag support, reusable authority badge, and read-only state for Git-managed deployment processes, channels, lifecycles, variable sets, step templates, and runbooks.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0048, `docs/config-as-code/`, examples, and PR-048 fork notes.
+- Tests: Added parser/schema/checksum/secret-safety tests, duplicate JSON key tests, strict channel rule/source/variable semantic tests, repository-path tests including drive-relative paths, authority race tests, feature flag tests, handler tests, DB migration/authority tests, runbook publish guard tests, frontend service tests, and UI guard tests across supported resource pages. Live PostgreSQL authority repository tests require `DISTR_TEST_DATABASE_URL`.
+- Upstream contribution notes: Community-neutral Config as Code validation and authority foundation; no Git provider integrations, repository credentials, import/apply/export workflows, branch protection, sync/reconciliation, secret resolution, planner, deployment, task, or agent behavior changes.
+- Compatibility notes: Existing resources default to `DATABASE_MANAGED`; reads remain available for Git-managed resources, while normal database mutation paths return `409 Conflict`.

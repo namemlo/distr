@@ -5,19 +5,24 @@ import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {ApplicationsService} from '../services/applications.service';
 import {ChannelsService} from '../services/channels.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
 import {CustomerOrganizationsService} from '../services/customer-organizations.service';
 import {DeploymentTargetsService} from '../services/deployment-targets.service';
 import {EnvironmentsService} from '../services/environments.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {OverlayService} from '../services/overlay.service';
 import {SecretsService} from '../services/secrets.service';
 import {ToastService} from '../services/toast.service';
 import {VariableSetsService} from '../services/variable-sets.service';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {Secret} from '../types/secret';
 import {VariableSet} from '../types/variable-set';
 import {VariableSetsComponent} from './variable-sets.component';
 
 describe('VariableSetsComponent', () => {
   let variableSetsService: any;
+  let configAsCodeService: any;
+  let featureFlagService: any;
   let applicationsService: any;
   let channelsService: any;
   let environmentsService: any;
@@ -71,6 +76,16 @@ describe('VariableSetsComponent', () => {
       ],
     },
   ];
+  const gitManagedVariableSetAuthority: ConfigAsCodeAuthority = {
+    resourceKind: 'VariableSetDefinition',
+    resourceId: 'variable-set-1',
+    authority: 'GIT_MANAGED',
+    repositoryPath: 'variable-sets/runtime-defaults.yaml',
+    sourceRevision: '6dcb09f',
+    documentChecksum: 'sha256:1234',
+    updatedByUserId: 'user-1',
+    updatedAt: '2026-06-21T11:00:00Z',
+  };
   const applications = [{id: 'application-1', name: 'Payments'}] as Application[];
   const channels = [
     {
@@ -120,6 +135,12 @@ describe('VariableSetsComponent', () => {
       delete: vi.fn(),
       resolvePreview: vi.fn(),
     };
+    configAsCodeService = {
+      listAuthorities: vi.fn(),
+    };
+    featureFlagService = {
+      isConfigAsCodeEnabled$: of(false),
+    };
     applicationsService = {
       list: vi.fn(),
     };
@@ -166,6 +187,7 @@ describe('VariableSetsComponent', () => {
         },
       ])
     );
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: []}));
     applicationsService.list.mockReturnValue(of(applications));
     channelsService.list.mockReturnValue(of(channels));
     environmentsService.list.mockReturnValue(of(environments));
@@ -179,6 +201,8 @@ describe('VariableSetsComponent', () => {
       imports: [VariableSetsComponent],
       providers: [
         {provide: VariableSetsService, useValue: variableSetsService},
+        {provide: ConfigAsCodeService, useValue: configAsCodeService},
+        {provide: FeatureFlagService, useValue: featureFlagService},
         {provide: ApplicationsService, useValue: applicationsService},
         {provide: ChannelsService, useValue: channelsService},
         {provide: EnvironmentsService, useValue: environmentsService},
@@ -199,6 +223,24 @@ describe('VariableSetsComponent', () => {
     expect((component as any).secrets()).toEqual(secrets);
     expect((component as any).channels()).toEqual(channels);
     expect((component as any).environments()).toEqual(environments);
+  });
+
+  it('loads config-as-code authorities and blocks Git-managed variable set mutations', async () => {
+    featureFlagService.isConfigAsCodeEnabled$ = of(true);
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: [gitManagedVariableSetAuthority]}));
+    const {component} = createComponent();
+
+    expect((component as any).authorityFor(variableSets[0])).toEqual(gitManagedVariableSetAuthority);
+    expect((component as any).isGitManaged(variableSets[0])).toBe(true);
+
+    (component as any).showUpdateDialog(variableSets[0]);
+    (component as any).delete(variableSets[0]);
+    await Promise.resolve();
+
+    expect(overlay.showModal).not.toHaveBeenCalled();
+    expect(overlay.confirm).not.toHaveBeenCalled();
+    expect(variableSetsService.delete).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('This variable set is managed from Git.');
   });
 
   it('shows load errors', () => {

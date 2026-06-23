@@ -15,16 +15,20 @@ import {
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
-import {filter, firstValueFrom, forkJoin, map, startWith, take} from 'rxjs';
+import {catchError, filter, firstValueFrom, forkJoin, map, of, startWith, switchMap, take} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
+import {ConfigAsCodeAuthorityBadgeComponent} from '../components/config-as-code-authority-badge/config-as-code-authority-badge.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
 import {ApplicationsService} from '../services/applications.service';
 import {ChannelsService} from '../services/channels.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
 import {DeploymentProcessesService} from '../services/deployment-processes.service';
 import {EnvironmentsService} from '../services/environments.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {DialogRef, OverlayService} from '../services/overlay.service';
 import {ToastService} from '../services/toast.service';
 import {Channel} from '../types/channel';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {
   CreateDeploymentProcessRevisionRequest,
   CreateUpdateDeploymentProcessRequest,
@@ -38,7 +42,15 @@ import {Environment} from '../types/environment';
 @Component({
   templateUrl: './deployment-processes.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReactiveFormsModule, FontAwesomeModule, DecimalPipe, DatePipe, JsonPipe, AutotrimDirective],
+  imports: [
+    ReactiveFormsModule,
+    FontAwesomeModule,
+    DecimalPipe,
+    DatePipe,
+    JsonPipe,
+    AutotrimDirective,
+    ConfigAsCodeAuthorityBadgeComponent,
+  ],
 })
 export class DeploymentProcessesComponent {
   protected readonly faMagnifyingGlass = faMagnifyingGlass;
@@ -53,6 +65,8 @@ export class DeploymentProcessesComponent {
   protected readonly faCode = faCode;
 
   private readonly deploymentProcessesService = inject(DeploymentProcessesService);
+  private readonly configAsCodeService = inject(ConfigAsCodeService);
+  private readonly featureFlagService = inject(FeatureFlagService);
   private readonly applicationsService = inject(ApplicationsService);
   private readonly channelsService = inject(ChannelsService);
   private readonly environmentsService = inject(EnvironmentsService);
@@ -64,6 +78,7 @@ export class DeploymentProcessesComponent {
   protected readonly applications = signal<Application[]>([]);
   protected readonly channels = signal<Channel[]>([]);
   protected readonly environments = signal<Environment[]>([]);
+  protected readonly authorities = signal<Record<string, ConfigAsCodeAuthority>>({});
   protected readonly filteredDeploymentProcesses = signal<DeploymentProcess[]>([]);
   protected readonly revisions = signal<DeploymentProcessRevision[]>([]);
   protected readonly selectedProcess = signal<DeploymentProcess | undefined>(undefined);
@@ -116,20 +131,39 @@ export class DeploymentProcessesComponent {
       applications: this.applicationsService.list().pipe(take(1)),
       channels: this.channelsService.list(),
       environments: this.environmentsService.list(),
-    }).subscribe({
-      next: ({deploymentProcesses, applications, channels, environments}) => {
-        this.deploymentProcesses.set(deploymentProcesses);
-        this.applications.set(applications);
-        this.channels.set(channels);
-        this.environments.set(environments);
-        this.applyFilter(this.filterForm.controls.search.value);
-        this.loading.set(false);
-      },
-      error: (e) => {
-        this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load deployment processes.');
-        this.loading.set(false);
-      },
-    });
+      configAsCodeEnabled: this.featureFlagService.isConfigAsCodeEnabled$.pipe(catchError(() => of(false))),
+    })
+      .pipe(
+        switchMap((loaded) => {
+          if (!loaded.configAsCodeEnabled) {
+            return of({...loaded, authorities: [] as ConfigAsCodeAuthority[]});
+          }
+          return this.configAsCodeService
+            .listAuthorities()
+            .pipe(map((response) => ({...loaded, authorities: response.authorities})));
+        })
+      )
+      .subscribe({
+        next: ({deploymentProcesses, applications, channels, environments, authorities}) => {
+          this.deploymentProcesses.set(deploymentProcesses);
+          this.applications.set(applications);
+          this.channels.set(channels);
+          this.environments.set(environments);
+          this.authorities.set(
+            Object.fromEntries(
+              authorities
+                .filter((authority) => authority.resourceKind === 'DeploymentProcess')
+                .map((authority) => [authority.resourceId, authority])
+            )
+          );
+          this.applyFilter(this.filterForm.controls.search.value);
+          this.loading.set(false);
+        },
+        error: (e) => {
+          this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load deployment processes.');
+          this.loading.set(false);
+        },
+      });
   }
 
   protected showCreateProcessDialog() {
@@ -145,6 +179,9 @@ export class DeploymentProcessesComponent {
   }
 
   protected showUpdateProcessDialog(process: DeploymentProcess) {
+    if (this.blockGitManaged(process)) {
+      return;
+    }
     this.closeDialog(false);
     this.processForm.setValue({
       id: process.id,
@@ -184,6 +221,10 @@ export class DeploymentProcessesComponent {
         sortOrder: value.sortOrder,
       };
       if (value.id) {
+        const process = this.deploymentProcesses().find((item) => item.id === value.id);
+        if (process && this.blockGitManaged(process)) {
+          return;
+        }
         await firstValueFrom(this.deploymentProcessesService.update(value.id, request));
       } else {
         await firstValueFrom(this.deploymentProcessesService.create(request));
@@ -198,6 +239,9 @@ export class DeploymentProcessesComponent {
   }
 
   protected delete(process: DeploymentProcess) {
+    if (this.blockGitManaged(process)) {
+      return;
+    }
     this.overlay
       .confirm({
         message: {
@@ -231,6 +275,9 @@ export class DeploymentProcessesComponent {
   }
 
   protected showCreateRevisionDialog(process: DeploymentProcess) {
+    if (this.blockGitManaged(process)) {
+      return;
+    }
     this.closeDialog(false);
     this.selectedProcess.set(process);
     this.revisionForm.reset({description: ''});
@@ -268,6 +315,9 @@ export class DeploymentProcessesComponent {
     this.formLoading.set(true);
     try {
       const process = this.selectedProcess()!;
+      if (this.blockGitManaged(process)) {
+        return;
+      }
       await firstValueFrom(this.deploymentProcessesService.createRevision(process.id, request));
       this.closeDialog();
       await this.showRevisionsDialog(process);
@@ -303,6 +353,14 @@ export class DeploymentProcessesComponent {
   protected channelsForSelectedProcess(): Channel[] {
     const applicationId = this.selectedProcess()?.applicationId ?? this.processForm.controls.applicationId.value;
     return this.channels().filter((channel) => channel.applicationId === applicationId);
+  }
+
+  protected authorityFor(process: DeploymentProcess): ConfigAsCodeAuthority | undefined {
+    return this.authorities()[process.id];
+  }
+
+  protected isGitManaged(process: DeploymentProcess): boolean {
+    return this.authorityFor(process)?.authority === 'GIT_MANAGED';
   }
 
   private async loadRevisions(processId: string) {
@@ -439,5 +497,13 @@ export class DeploymentProcessesComponent {
     if (msg) {
       this.toast.error(msg);
     }
+  }
+
+  private blockGitManaged(process: DeploymentProcess): boolean {
+    if (!this.isGitManaged(process)) {
+      return false;
+    }
+    this.toast.error('This deployment process is managed from Git.');
+    return true;
   }
 }

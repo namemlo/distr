@@ -14,21 +14,31 @@ import {
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
-import {filter, firstValueFrom, forkJoin, map, startWith} from 'rxjs';
+import {catchError, filter, firstValueFrom, forkJoin, map, of, startWith, switchMap} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
+import {ConfigAsCodeAuthorityBadgeComponent} from '../components/config-as-code-authority-badge/config-as-code-authority-badge.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
 import {ApplicationsService} from '../services/applications.service';
 import {ChannelsService} from '../services/channels.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {LifecyclesService} from '../services/lifecycles.service';
 import {DialogRef, OverlayService} from '../services/overlay.service';
 import {ToastService} from '../services/toast.service';
 import {Channel, CreateUpdateChannelRequest} from '../types/channel';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {Lifecycle} from '../types/lifecycle';
 
 @Component({
   templateUrl: './channels.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReactiveFormsModule, FontAwesomeModule, DecimalPipe, AutotrimDirective],
+  imports: [
+    ReactiveFormsModule,
+    FontAwesomeModule,
+    DecimalPipe,
+    AutotrimDirective,
+    ConfigAsCodeAuthorityBadgeComponent,
+  ],
 })
 export class ChannelsComponent {
   protected readonly faMagnifyingGlass = faMagnifyingGlass;
@@ -42,6 +52,8 @@ export class ChannelsComponent {
   protected readonly faTriangleExclamation = faTriangleExclamation;
 
   private readonly channelsService = inject(ChannelsService);
+  private readonly configAsCodeService = inject(ConfigAsCodeService);
+  private readonly featureFlagService = inject(FeatureFlagService);
   private readonly applicationsService = inject(ApplicationsService);
   private readonly lifecyclesService = inject(LifecyclesService);
   private readonly toast = inject(ToastService);
@@ -74,6 +86,7 @@ export class ChannelsComponent {
   });
 
   protected readonly filteredChannels = signal<Channel[]>([]);
+  protected readonly authorities = signal<Record<string, ConfigAsCodeAuthority>>({});
 
   private readonly channelDialog = viewChild.required<TemplateRef<unknown>>('channelDialog');
   private modalRef?: DialogRef;
@@ -92,19 +105,38 @@ export class ChannelsComponent {
       channels: this.channelsService.list(),
       applications: this.applicationsService.list(),
       lifecycles: this.lifecyclesService.list(),
-    }).subscribe({
-      next: ({channels, applications, lifecycles}) => {
-        this.channels.set(channels);
-        this.applications.set(applications);
-        this.lifecycles.set(lifecycles);
-        this.applyFilter(this.filterForm.controls.search.value);
-        this.loading.set(false);
-      },
-      error: (e) => {
-        this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load channels.');
-        this.loading.set(false);
-      },
-    });
+      configAsCodeEnabled: this.featureFlagService.isConfigAsCodeEnabled$.pipe(catchError(() => of(false))),
+    })
+      .pipe(
+        switchMap((loaded) => {
+          if (!loaded.configAsCodeEnabled) {
+            return of({...loaded, authorities: [] as ConfigAsCodeAuthority[]});
+          }
+          return this.configAsCodeService
+            .listAuthorities()
+            .pipe(map((response) => ({...loaded, authorities: response.authorities})));
+        })
+      )
+      .subscribe({
+        next: ({channels, applications, lifecycles, authorities}) => {
+          this.channels.set(channels);
+          this.applications.set(applications);
+          this.lifecycles.set(lifecycles);
+          this.authorities.set(
+            Object.fromEntries(
+              authorities
+                .filter((authority) => authority.resourceKind === 'Channel')
+                .map((authority) => [authority.resourceId, authority])
+            )
+          );
+          this.applyFilter(this.filterForm.controls.search.value);
+          this.loading.set(false);
+        },
+        error: (e) => {
+          this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load channels.');
+          this.loading.set(false);
+        },
+      });
   }
 
   protected showCreateDialog() {
@@ -126,6 +158,10 @@ export class ChannelsComponent {
   }
 
   protected showUpdateDialog(channel: Channel) {
+    if (this.isGitManaged(channel)) {
+      this.toast.error('This channel is managed from Git.');
+      return;
+    }
     this.closeDialog(false);
     this.channelForm.setValue({
       id: channel.id,
@@ -189,6 +225,10 @@ export class ChannelsComponent {
   }
 
   protected delete(channel: Channel) {
+    if (this.isGitManaged(channel)) {
+      this.toast.error('This channel is managed from Git.');
+      return;
+    }
     this.overlay
       .confirm({
         message: {
@@ -221,6 +261,14 @@ export class ChannelsComponent {
 
   protected lifecycleName(lifecycleID: string): string {
     return this.lifecycles().find((lifecycle) => lifecycle.id === lifecycleID)?.name ?? lifecycleID;
+  }
+
+  protected authorityFor(channel: Channel): ConfigAsCodeAuthority | undefined {
+    return this.authorities()[channel.id];
+  }
+
+  protected isGitManaged(channel: Channel): boolean {
+    return this.authorityFor(channel)?.authority === 'GIT_MANAGED';
   }
 
   private applyFilter(search: string) {

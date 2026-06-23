@@ -5,17 +5,22 @@ import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {ApplicationsService} from '../services/applications.service';
 import {ChannelsService} from '../services/channels.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
 import {DeploymentProcessesService} from '../services/deployment-processes.service';
 import {EnvironmentsService} from '../services/environments.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {OverlayService} from '../services/overlay.service';
 import {ToastService} from '../services/toast.service';
 import {Channel} from '../types/channel';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {DeploymentProcess, DeploymentProcessRevision, DeploymentProcessStepRequest} from '../types/deployment-process';
 import {Environment} from '../types/environment';
 import {DeploymentProcessesComponent} from './deployment-processes.component';
 
 describe('DeploymentProcessesComponent', () => {
   let deploymentProcessesService: any;
+  let configAsCodeService: any;
+  let featureFlagService: any;
   let applicationsService: any;
   let channelsService: any;
   let environmentsService: any;
@@ -91,6 +96,16 @@ describe('DeploymentProcessesComponent', () => {
       sortOrder: 10,
     },
   ];
+  const gitManagedProcessAuthority: ConfigAsCodeAuthority = {
+    resourceKind: 'DeploymentProcess',
+    resourceId: 'process-1',
+    authority: 'GIT_MANAGED',
+    repositoryPath: 'deployment-processes/standard.yaml',
+    sourceRevision: '6dcb09f',
+    documentChecksum: 'sha256:1234',
+    updatedByUserId: 'user-1',
+    updatedAt: '2026-06-21T09:00:00Z',
+  };
   const revisions: DeploymentProcessRevision[] = [
     {
       id: 'revision-1',
@@ -134,6 +149,12 @@ describe('DeploymentProcessesComponent', () => {
       getRevision: vi.fn(),
       createRevision: vi.fn(),
     };
+    configAsCodeService = {
+      listAuthorities: vi.fn(),
+    };
+    featureFlagService = {
+      isConfigAsCodeEnabled$: of(false),
+    };
     applicationsService = {list: vi.fn()};
     channelsService = {list: vi.fn()};
     environmentsService = {list: vi.fn()};
@@ -153,6 +174,7 @@ describe('DeploymentProcessesComponent', () => {
     deploymentProcessesService.listRevisions.mockReturnValue(of(revisions));
     deploymentProcessesService.getRevision.mockReturnValue(of(revisions[0]));
     deploymentProcessesService.createRevision.mockReturnValue(of(revisions[0]));
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: []}));
     applicationsService.list.mockReturnValue(of(applications));
     channelsService.list.mockReturnValue(of(channels));
     environmentsService.list.mockReturnValue(of(environments));
@@ -163,6 +185,8 @@ describe('DeploymentProcessesComponent', () => {
       imports: [DeploymentProcessesComponent],
       providers: [
         {provide: DeploymentProcessesService, useValue: deploymentProcessesService},
+        {provide: ConfigAsCodeService, useValue: configAsCodeService},
+        {provide: FeatureFlagService, useValue: featureFlagService},
         {provide: ApplicationsService, useValue: applicationsService},
         {provide: ChannelsService, useValue: channelsService},
         {provide: EnvironmentsService, useValue: environmentsService},
@@ -179,6 +203,25 @@ describe('DeploymentProcessesComponent', () => {
     expect((component as any).applicationName('application-1')).toBe('Payments');
     expect((component as any).channelName('channel-1')).toBe('Stable');
     expect((component as any).environmentName('environment-1')).toBe('Production');
+  });
+
+  it('loads config-as-code authorities and blocks Git-managed process mutations', async () => {
+    featureFlagService.isConfigAsCodeEnabled$ = of(true);
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: [gitManagedProcessAuthority]}));
+    const {component} = createComponent();
+
+    expect((component as any).authorityFor(processes[0])).toEqual(gitManagedProcessAuthority);
+    expect((component as any).isGitManaged(processes[0])).toBe(true);
+
+    (component as any).showUpdateProcessDialog(processes[0]);
+    (component as any).showCreateRevisionDialog(processes[0]);
+    (component as any).delete(processes[0]);
+    await Promise.resolve();
+
+    expect(overlay.showModal).not.toHaveBeenCalled();
+    expect(overlay.confirm).not.toHaveBeenCalled();
+    expect(deploymentProcessesService.createRevision).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('This deployment process is managed from Git.');
   });
 
   it('shows load errors', () => {

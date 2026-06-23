@@ -14,19 +14,23 @@ import {
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
-import {catchError, filter, firstValueFrom, forkJoin, map, of, startWith} from 'rxjs';
+import {catchError, filter, firstValueFrom, forkJoin, map, of, startWith, switchMap} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
+import {ConfigAsCodeAuthorityBadgeComponent} from '../components/config-as-code-authority-badge/config-as-code-authority-badge.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
 import {ApplicationsService} from '../services/applications.service';
 import {ChannelsService} from '../services/channels.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
 import {CustomerOrganizationsService} from '../services/customer-organizations.service';
 import {DeploymentTargetsService} from '../services/deployment-targets.service';
 import {EnvironmentsService} from '../services/environments.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {DialogRef, OverlayService} from '../services/overlay.service';
 import {SecretsService} from '../services/secrets.service';
 import {ToastService} from '../services/toast.service';
 import {VariableSetsService} from '../services/variable-sets.service';
 import {Channel} from '../types/channel';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {Environment} from '../types/environment';
 import {Secret} from '../types/secret';
 import {
@@ -100,7 +104,14 @@ const variableTypeOptions: VariableTypeOption[] = [
 @Component({
   templateUrl: './variable-sets.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReactiveFormsModule, FontAwesomeModule, DecimalPipe, JsonPipe, AutotrimDirective],
+  imports: [
+    ReactiveFormsModule,
+    FontAwesomeModule,
+    DecimalPipe,
+    JsonPipe,
+    AutotrimDirective,
+    ConfigAsCodeAuthorityBadgeComponent,
+  ],
 })
 export class VariableSetsComponent {
   protected readonly faMagnifyingGlass = faMagnifyingGlass;
@@ -116,6 +127,8 @@ export class VariableSetsComponent {
   protected readonly variableTypeOptions = variableTypeOptions;
 
   private readonly variableSetsService = inject(VariableSetsService);
+  private readonly configAsCodeService = inject(ConfigAsCodeService);
+  private readonly featureFlagService = inject(FeatureFlagService);
   private readonly applicationsService = inject(ApplicationsService);
   private readonly channelsService = inject(ChannelsService);
   private readonly environmentsService = inject(EnvironmentsService);
@@ -127,6 +140,7 @@ export class VariableSetsComponent {
   private readonly fb = inject(FormBuilder).nonNullable;
 
   protected readonly variableSets = signal<VariableSet[]>([]);
+  protected readonly authorities = signal<Record<string, ConfigAsCodeAuthority>>({});
   protected readonly applications = signal<Application[]>([]);
   protected readonly channels = signal<Channel[]>([]);
   protected readonly environments = signal<Environment[]>([]);
@@ -199,31 +213,51 @@ export class VariableSetsComponent {
       customerOrganizations: this.customerOrganizationsService
         .getCustomerOrganizations()
         .pipe(catchError(() => of([] as CustomerOrganizationOption[]))),
-    }).subscribe({
-      next: ({
-        variableSets,
-        applications,
-        secrets,
-        channels,
-        environments,
-        deploymentTargets,
-        customerOrganizations,
-      }) => {
-        this.variableSets.set(variableSets);
-        this.applications.set(applications);
-        this.secrets.set(secrets.filter((secret) => !secret.customerOrganizationId));
-        this.channels.set(channels);
-        this.environments.set(environments);
-        this.deploymentTargets.set(deploymentTargets);
-        this.customerOrganizations.set(customerOrganizations.map((it) => ({id: it.id, name: it.name})));
-        this.applyFilter(this.filterForm.controls.search.value);
-        this.loading.set(false);
-      },
-      error: (e) => {
-        this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load variable sets.');
-        this.loading.set(false);
-      },
-    });
+      configAsCodeEnabled: this.featureFlagService.isConfigAsCodeEnabled$.pipe(catchError(() => of(false))),
+    })
+      .pipe(
+        switchMap((loaded) => {
+          if (!loaded.configAsCodeEnabled) {
+            return of({...loaded, authorities: [] as ConfigAsCodeAuthority[]});
+          }
+          return this.configAsCodeService
+            .listAuthorities()
+            .pipe(map((response) => ({...loaded, authorities: response.authorities})));
+        })
+      )
+      .subscribe({
+        next: ({
+          variableSets,
+          applications,
+          secrets,
+          channels,
+          environments,
+          deploymentTargets,
+          customerOrganizations,
+          authorities,
+        }) => {
+          this.variableSets.set(variableSets);
+          this.authorities.set(
+            Object.fromEntries(
+              authorities
+                .filter((authority) => authority.resourceKind === 'VariableSetDefinition')
+                .map((authority) => [authority.resourceId, authority])
+            )
+          );
+          this.applications.set(applications);
+          this.secrets.set(secrets.filter((secret) => !secret.customerOrganizationId));
+          this.channels.set(channels);
+          this.environments.set(environments);
+          this.deploymentTargets.set(deploymentTargets);
+          this.customerOrganizations.set(customerOrganizations.map((it) => ({id: it.id, name: it.name})));
+          this.applyFilter(this.filterForm.controls.search.value);
+          this.loading.set(false);
+        },
+        error: (e) => {
+          this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load variable sets.');
+          this.loading.set(false);
+        },
+      });
   }
 
   protected showCreateDialog() {
@@ -241,6 +275,9 @@ export class VariableSetsComponent {
   }
 
   protected showUpdateDialog(variableSet: VariableSet) {
+    if (this.blockGitManaged(variableSet)) {
+      return;
+    }
     this.closeDialog(false);
     this.selectedApplicationIds.set([...variableSet.applicationIds]);
     this.variableSetForm.reset({
@@ -356,6 +393,10 @@ export class VariableSetsComponent {
     try {
       const id = this.variableSetForm.controls.id.value;
       if (id) {
+        const variableSet = this.variableSets().find((item) => item.id === id);
+        if (variableSet && this.blockGitManaged(variableSet)) {
+          return;
+        }
         await firstValueFrom(this.variableSetsService.update(id, request));
       } else {
         await firstValueFrom(this.variableSetsService.create(request));
@@ -373,6 +414,9 @@ export class VariableSetsComponent {
   }
 
   protected delete(variableSet: VariableSet) {
+    if (this.blockGitManaged(variableSet)) {
+      return;
+    }
     this.overlay
       .confirm({
         message: {
@@ -419,6 +463,14 @@ export class VariableSetsComponent {
       keys.push(`+${variableSet.variables.length - keys.length}`);
     }
     return keys.join(', ');
+  }
+
+  protected authorityFor(variableSet: VariableSet): ConfigAsCodeAuthority | undefined {
+    return this.authorities()[variableSet.id];
+  }
+
+  protected isGitManaged(variableSet: VariableSet): boolean {
+    return this.authorityFor(variableSet)?.authority === 'GIT_MANAGED';
   }
 
   protected showPreviewDialog(variableSet: VariableSet) {
@@ -765,5 +817,13 @@ export class VariableSetsComponent {
       .split(',')
       .map((it) => it.trim())
       .filter((it) => it.length > 0);
+  }
+
+  private blockGitManaged(variableSet: VariableSet): boolean {
+    if (!this.isGitManaged(variableSet)) {
+      return false;
+    }
+    this.toast.error('This variable set is managed from Git.');
+    return true;
   }
 }
