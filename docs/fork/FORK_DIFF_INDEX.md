@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-045 are implemented locally. PR-045 adds feature-flagged retention policies, cleanup previews, safety blocks, and dry-run cleanup jobs.
+PR-000 through PR-049 are implemented locally. PR-049 adds compatibility metadata, legacy deployment timeline projection, operator backfill, upgrade guidance, and opt-in performance fixtures.
 
 ## Tracking Template
 
@@ -838,3 +838,18 @@ Use one entry per pull request:
 - Tests: Added parser/schema/checksum/secret-safety tests, duplicate JSON key tests, strict channel rule/source/variable semantic tests, repository-path tests including drive-relative paths, authority race tests, feature flag tests, handler tests, DB migration/authority tests, runbook publish guard tests, frontend service tests, and UI guard tests across supported resource pages. Live PostgreSQL authority repository tests require `DISTR_TEST_DATABASE_URL`.
 - Upstream contribution notes: Community-neutral Config as Code validation and authority foundation; no Git provider integrations, repository credentials, import/apply/export workflows, branch protection, sync/reconciliation, secret resolution, planner, deployment, task, or agent behavior changes.
 - Compatibility notes: Existing resources default to `DATABASE_MANAGED`; reads remain available for Git-managed resources, while normal database mutation paths return `409 Conflict`.
+
+### PR-049 - Compatibility and migration release
+
+- Status: Implemented locally; compatibility adapter, metadata migration, backfill, timeline read-through, command, documentation, and benchmark fixtures completed.
+- Upstream base: `ac744097`
+- Feature flag: None.
+- User-facing behavior: Existing direct deployment history appears in deployment timeline as `legacy_deployment` entries with unavailable advanced dimensions explicitly marked unavailable.
+- Database changes: Added additive `DeploymentCompatibilityMetadata` table with deterministic synthetic release identity, checksum, canonical payload, availability flags, and organization/revision uniqueness.
+- API changes: None. The public deployment API and agent-facing behavior remain unchanged.
+- UI changes: None. Existing timeline consumers receive additional source/availability fields.
+- Agent protocol changes: None.
+- Documentation: Added PR-049 notes, ADR-0049, upgrade guide, and PR-049 performance fixture guide.
+- Tests: Added adapter tests, live PostgreSQL repository/backfill tests, timeline legacy-entry tests, command tests, migration schema tests, and opt-in benchmarks.
+- Upstream contribution notes: Community-neutral compatibility layer; no adopter-specific migration UI, destructive cleanup, provider behavior, or agent protocol change.
+- Compatibility notes: Original `Deployment` and `DeploymentRevision` rows are not rewritten. Compatibility metadata can be removed without deleting original history. Legacy entries do not fabricate process snapshots, variable snapshots, channels, environments, actors, task logs, or executable redeploy plans.

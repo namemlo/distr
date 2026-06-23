@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
@@ -35,31 +36,86 @@ func CompareDeploymentTimelineTasks(
 	if request.OrganizationID == uuid.Nil {
 		return nil, apierrors.NewBadRequest("organizationId is required")
 	}
-	if request.BaseTaskID == uuid.Nil {
-		return nil, apierrors.NewBadRequest("baseTaskId is required")
-	}
-	if request.CompareTaskID == uuid.Nil {
-		return nil, apierrors.NewBadRequest("compareTaskId is required")
-	}
-	items, err := queryDeploymentTimelineItems(ctx, types.DeploymentTimelineQuery{
-		OrganizationID:      request.OrganizationID,
-		IncludeNonTerminal:  true,
-		IncludeRedeployInfo: true,
-	}, []uuid.UUID{request.BaseTaskID, request.CompareTaskID})
-	if err != nil {
+	if err := validateDeploymentTimelineCompareRef(
+		"base",
+		request.BaseTaskID,
+		request.BaseLegacyDeploymentRevisionID,
+	); err != nil {
 		return nil, err
 	}
-	itemByTaskID := make(map[uuid.UUID]types.DeploymentTimelineItem, len(items))
-	for _, item := range items {
-		itemByTaskID[item.TaskID] = item
+	if err := validateDeploymentTimelineCompareRef(
+		"compare",
+		request.CompareTaskID,
+		request.CompareLegacyDeploymentRevisionID,
+	); err != nil {
+		return nil, err
 	}
-	base, ok := itemByTaskID[request.BaseTaskID]
+
+	taskIDs := make([]uuid.UUID, 0, 2)
+	if request.BaseTaskID != uuid.Nil {
+		taskIDs = append(taskIDs, request.BaseTaskID)
+	}
+	if request.CompareTaskID != uuid.Nil {
+		taskIDs = append(taskIDs, request.CompareTaskID)
+	}
+
+	items := []types.DeploymentTimelineItem{}
+	if len(taskIDs) > 0 {
+		taskItems, err := queryDeploymentTimelineItems(ctx, types.DeploymentTimelineQuery{
+			OrganizationID:      request.OrganizationID,
+			IncludeNonTerminal:  true,
+			IncludeRedeployInfo: true,
+		}, taskIDs)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, taskItems...)
+	}
+
+	legacyRevisionIDs := make([]uuid.UUID, 0, 2)
+	if request.BaseLegacyDeploymentRevisionID != uuid.Nil {
+		legacyRevisionIDs = append(legacyRevisionIDs, request.BaseLegacyDeploymentRevisionID)
+	}
+	if request.CompareLegacyDeploymentRevisionID != uuid.Nil {
+		legacyRevisionIDs = append(legacyRevisionIDs, request.CompareLegacyDeploymentRevisionID)
+	}
+	if len(legacyRevisionIDs) > 0 {
+		legacyItems, err := queryLegacyDeploymentTimelineItems(
+			ctx,
+			types.DeploymentTimelineQuery{OrganizationID: request.OrganizationID},
+			len(legacyRevisionIDs),
+			legacyRevisionIDs,
+		)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, legacyItems...)
+	}
+
+	base, ok := findDeploymentTimelineCompareItem(
+		items,
+		request.BaseTaskID,
+		request.BaseLegacyDeploymentRevisionID,
+	)
 	if !ok {
 		return nil, apierrors.ErrNotFound
 	}
-	compare, ok := itemByTaskID[request.CompareTaskID]
+	compare, ok := findDeploymentTimelineCompareItem(
+		items,
+		request.CompareTaskID,
+		request.CompareLegacyDeploymentRevisionID,
+	)
 	if !ok {
 		return nil, apierrors.ErrNotFound
+	}
+
+	comparison := &types.DeploymentTimelineComparison{
+		Base:       base,
+		Compare:    compare,
+		Components: compareTimelineComponents(base.Components, compare.Components),
+	}
+	if base.DeploymentPlanID == uuid.Nil || compare.DeploymentPlanID == uuid.Nil {
+		return comparison, nil
 	}
 
 	basePlan, err := GetDeploymentPlan(ctx, base.DeploymentPlanID, request.OrganizationID)
@@ -70,27 +126,14 @@ func CompareDeploymentTimelineTasks(
 	if err != nil {
 		return nil, err
 	}
-	baseRelease, err := GetReleaseBundle(ctx, base.ReleaseBundleID, request.OrganizationID)
-	if err != nil {
-		return nil, err
-	}
-	compareRelease, err := GetReleaseBundle(ctx, compare.ReleaseBundleID, request.OrganizationID)
-	if err != nil {
-		return nil, err
-	}
-
 	process, err := compareTimelineProcess(ctx, basePlan, comparePlan, request.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
-	return &types.DeploymentTimelineComparison{
-		Base:       base,
-		Compare:    compare,
-		Process:    process,
-		Components: compareTimelineComponents(baseRelease.Components, compareRelease.Components),
-		Steps:      compareTimelineSteps(basePlan.Steps, comparePlan.Steps),
-		Variables:  compareTimelineVariables(basePlan.Variables, comparePlan.Variables),
-	}, nil
+	comparison.Process = process
+	comparison.Steps = compareTimelineSteps(basePlan.Steps, comparePlan.Steps)
+	comparison.Variables = compareTimelineVariables(basePlan.Variables, comparePlan.Variables)
+	return comparison, nil
 }
 
 func CreateDeploymentPlanFromTimelineTask(
@@ -133,6 +176,7 @@ func queryDeploymentTimelineItems(
 	if query.OrganizationID == uuid.Nil {
 		return nil, apierrors.NewBadRequest("organizationId is required")
 	}
+	includeLegacy := taskIDs == nil
 	if taskIDs == nil {
 		taskIDs = []uuid.UUID{}
 	}
@@ -263,6 +307,15 @@ func queryDeploymentTimelineItems(
 		); err != nil {
 			return nil, fmt.Errorf("could not scan deployment timeline item: %w", err)
 		}
+		item.Source = types.DeploymentTimelineItemSourceTask
+		item.Availability = types.DeploymentCompatibilityAvailability{
+			ProcessSnapshot:  item.ProcessSnapshotID != nil,
+			VariableSnapshot: item.VariableSnapshotID != nil,
+			Channel:          true,
+			Environment:      true,
+			TaskLogs:         true,
+			RedeployPlan:     query.IncludeRedeployInfo && item.ReleaseBundleID != uuid.Nil,
+		}
 		item.RedeployAvailable = query.IncludeRedeployInfo && item.ReleaseBundleID != uuid.Nil
 		items = append(items, item)
 	}
@@ -276,7 +329,148 @@ func queryDeploymentTimelineItems(
 		}
 		items[i].Components = components
 	}
+	if includeLegacy {
+		legacyItems, err := queryLegacyDeploymentTimelineItems(ctx, query, limit, nil)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, legacyItems...)
+		sort.SliceStable(items, func(i, j int) bool {
+			left := deploymentTimelineSortTime(items[i])
+			right := deploymentTimelineSortTime(items[j])
+			if left.Equal(right) {
+				return items[i].LegacyDeploymentRevisionID.String()+items[i].TaskID.String() >
+					items[j].LegacyDeploymentRevisionID.String()+items[j].TaskID.String()
+			}
+			return left.After(right)
+		})
+		if len(items) > limit {
+			items = items[:limit]
+		}
+	}
 	return items, nil
+}
+
+func queryLegacyDeploymentTimelineItems(
+	ctx context.Context,
+	query types.DeploymentTimelineQuery,
+	limit int,
+	legacyRevisionIDs []uuid.UUID,
+) ([]types.DeploymentTimelineItem, error) {
+	if len(legacyRevisionIDs) == 0 && (query.ReleaseBundleID != nil || query.EnvironmentID != nil) {
+		return []types.DeploymentTimelineItem{}, nil
+	}
+	if legacyRevisionIDs == nil {
+		legacyRevisionIDs = []uuid.UUID{}
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(
+		ctx,
+		`SELECT
+			dcm.legacy_deployment_id,
+			dcm.legacy_deployment_revision_id,
+			dcm.deployment_target_id,
+			dcm.application_id,
+			a.name AS application_name,
+			dcm.application_version_id,
+			av.name AS application_version_name,
+			dcm.synthetic_release_id,
+			dr.created_at,
+			dt.customer_organization_id,
+			dt.name AS deployment_target_name,
+			dcm.process_snapshot_available,
+			dcm.variable_snapshot_available,
+			dcm.channel_available,
+			dcm.environment_available,
+			dcm.task_logs_available,
+			dcm.redeploy_plan_available
+		FROM DeploymentCompatibilityMetadata dcm
+		JOIN DeploymentRevision dr
+			ON dr.id = dcm.legacy_deployment_revision_id
+		JOIN DeploymentTarget dt
+			ON dt.id = dcm.deployment_target_id
+			AND dt.organization_id = dcm.organization_id
+		JOIN Application a
+			ON a.id = dcm.application_id
+			AND a.organization_id = dcm.organization_id
+		JOIN ApplicationVersion av
+			ON av.id = dcm.application_version_id
+		WHERE dcm.organization_id = @organizationId
+			AND (cardinality(@legacyRevisionIds::uuid[]) = 0 OR dcm.legacy_deployment_revision_id = ANY(@legacyRevisionIds::uuid[]))
+			AND (@applicationId::uuid IS NULL OR dcm.application_id = @applicationId::uuid)
+			AND (@deploymentTargetId::uuid IS NULL OR dcm.deployment_target_id = @deploymentTargetId::uuid)
+			AND (@customerOrganizationId::uuid IS NULL OR dt.customer_organization_id = @customerOrganizationId::uuid)
+		ORDER BY dr.created_at DESC, dcm.legacy_deployment_revision_id DESC
+		LIMIT @limit`,
+		pgx.NamedArgs{
+			"organizationId":         query.OrganizationID,
+			"legacyRevisionIds":      legacyRevisionIDs,
+			"applicationId":          query.ApplicationID,
+			"deploymentTargetId":     query.DeploymentTargetID,
+			"customerOrganizationId": query.CustomerOrganizationID,
+			"limit":                  limit,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query legacy deployment timeline: %w", err)
+	}
+	defer rows.Close()
+	items := []types.DeploymentTimelineItem{}
+	for rows.Next() {
+		var item types.DeploymentTimelineItem
+		var applicationVersionID uuid.UUID
+		var applicationVersionName string
+		if err := rows.Scan(
+			&item.LegacyDeploymentID,
+			&item.LegacyDeploymentRevisionID,
+			&item.DeploymentTargetID,
+			&item.ApplicationID,
+			&item.ApplicationName,
+			&applicationVersionID,
+			&applicationVersionName,
+			&item.SyntheticReleaseID,
+			&item.QueuedAt,
+			&item.CustomerOrganizationID,
+			&item.DeploymentTargetName,
+			&item.Availability.ProcessSnapshot,
+			&item.Availability.VariableSnapshot,
+			&item.Availability.Channel,
+			&item.Availability.Environment,
+			&item.Availability.TaskLogs,
+			&item.Availability.RedeployPlan,
+		); err != nil {
+			return nil, fmt.Errorf("could not scan legacy deployment timeline item: %w", err)
+		}
+		item.Source = types.DeploymentTimelineItemSourceLegacyDeployment
+		item.CompletedAt = timePtr(item.QueuedAt)
+		item.Components = []types.DeploymentTimelineComponent{
+			{
+				Key:     "application",
+				Name:    item.ApplicationName,
+				Type:    types.ReleaseBundleComponentTypeApplicationVersion,
+				Version: applicationVersionName,
+			},
+		}
+		_ = applicationVersionID
+		items = append(items, item)
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("could not collect legacy deployment timeline: %w", rows.Err())
+	}
+	return items, nil
+}
+
+func deploymentTimelineSortTime(item types.DeploymentTimelineItem) time.Time {
+	if item.CompletedAt != nil {
+		return *item.CompletedAt
+	}
+	if item.StartedAt != nil {
+		return *item.StartedAt
+	}
+	return item.QueuedAt
 }
 
 func getDeploymentTimelineComponents(
@@ -298,6 +492,40 @@ func getDeploymentTimelineComponents(
 		})
 	}
 	return components, nil
+}
+
+func validateDeploymentTimelineCompareRef(label string, taskID, legacyRevisionID uuid.UUID) error {
+	count := 0
+	if taskID != uuid.Nil {
+		count++
+	}
+	if legacyRevisionID != uuid.Nil {
+		count++
+	}
+	switch count {
+	case 0:
+		return apierrors.NewBadRequest(label + "TaskId or " + label + "LegacyDeploymentRevisionId is required")
+	case 1:
+		return nil
+	default:
+		return apierrors.NewBadRequest(label + " must reference exactly one timeline entry")
+	}
+}
+
+func findDeploymentTimelineCompareItem(
+	items []types.DeploymentTimelineItem,
+	taskID uuid.UUID,
+	legacyRevisionID uuid.UUID,
+) (types.DeploymentTimelineItem, bool) {
+	for _, item := range items {
+		if taskID != uuid.Nil && item.TaskID == taskID {
+			return item, true
+		}
+		if legacyRevisionID != uuid.Nil && item.LegacyDeploymentRevisionID == legacyRevisionID {
+			return item, true
+		}
+	}
+	return types.DeploymentTimelineItem{}, false
 }
 
 func compareTimelineProcess(
@@ -334,11 +562,11 @@ func compareTimelineProcess(
 }
 
 func compareTimelineComponents(
-	baseComponents []types.ReleaseBundleComponent,
-	compareComponents []types.ReleaseBundleComponent,
+	baseComponents []types.DeploymentTimelineComponent,
+	compareComponents []types.DeploymentTimelineComponent,
 ) []types.DeploymentTimelineComponentChange {
-	baseByKey := releaseComponentsByKey(baseComponents)
-	compareByKey := releaseComponentsByKey(compareComponents)
+	baseByKey := timelineComponentsByKey(baseComponents)
+	compareByKey := timelineComponentsByKey(compareComponents)
 	keys := sortedUnionKeys(baseByKey, compareByKey)
 	changes := make([]types.DeploymentTimelineComponentChange, 0, len(keys))
 	for _, key := range keys {
@@ -435,8 +663,8 @@ func compareTimelineVariables(
 	return changes
 }
 
-func releaseComponentsByKey(components []types.ReleaseBundleComponent) map[string]types.ReleaseBundleComponent {
-	byKey := make(map[string]types.ReleaseBundleComponent, len(components))
+func timelineComponentsByKey(components []types.DeploymentTimelineComponent) map[string]types.DeploymentTimelineComponent {
+	byKey := make(map[string]types.DeploymentTimelineComponent, len(components))
 	for _, component := range components {
 		byKey[component.Key] = component
 	}
@@ -524,6 +752,10 @@ func uuidPointersEqual(left, right *uuid.UUID) bool {
 }
 
 func boolPtr(value bool) *bool {
+	return &value
+}
+
+func timePtr(value time.Time) *time.Time {
 	return &value
 }
 

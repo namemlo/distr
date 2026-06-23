@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
@@ -127,6 +128,120 @@ func TestDeploymentTimelineRepositoryAllowsHistoricalTasksWithoutActor(t *testin
 	g.Expect(timeline.Items[0].TaskID).To(Equal(tasks[0].ID))
 	g.Expect(timeline.Items[0].ActorUserAccountID).To(BeNil())
 	g.Expect(timeline.Items[0].RedeployAvailable).To(BeTrue())
+}
+
+func TestDeploymentTimelineRepositoryIncludesLegacyCompatibilityEntries(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, _, versionID := createReleaseBundleDependencies(t, ctx)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, orgID, "legacy-target")
+	request := api.DeploymentRequest{
+		DeploymentTargetID:   targetID,
+		ApplicationVersionID: versionID,
+		ValuesHash:           []byte("stored-values-hash"),
+	}
+	g.Expect(db.CreateDeployment(ctx, &request)).To(Succeed())
+	revision, err := db.CreateDeploymentRevision(ctx, &request)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = db.BackfillLegacyDeploymentCompatibility(ctx, types.DeploymentCompatibilityBackfillRequest{
+		OrganizationID: orgID,
+		Apply:          true,
+		BatchSize:      10,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	timeline, err := db.GetDeploymentTimeline(ctx, types.DeploymentTimelineQuery{
+		OrganizationID:      orgID,
+		ApplicationID:       &applicationID,
+		DeploymentTargetID:  &targetID,
+		IncludeRedeployInfo: true,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(timeline.Items).To(HaveLen(1))
+	item := timeline.Items[0]
+	g.Expect(item.Source).To(Equal(types.DeploymentTimelineItemSourceLegacyDeployment))
+	g.Expect(item.TaskID).To(Equal(uuid.Nil))
+	g.Expect(item.DeploymentPlanID).To(Equal(uuid.Nil))
+	g.Expect(item.ReleaseBundleID).To(Equal(uuid.Nil))
+	g.Expect(item.ChannelID).To(Equal(uuid.Nil))
+	g.Expect(item.EnvironmentID).To(Equal(uuid.Nil))
+	g.Expect(item.LegacyDeploymentID).To(Equal(*request.DeploymentID))
+	g.Expect(item.LegacyDeploymentRevisionID).To(Equal(revision.ID))
+	g.Expect(item.DeploymentTargetID).To(Equal(targetID))
+	g.Expect(item.ApplicationID).To(Equal(applicationID))
+	g.Expect(item.Components).To(HaveLen(1))
+	g.Expect(item.Components[0].Type).To(Equal(types.ReleaseBundleComponentTypeApplicationVersion))
+	g.Expect(item.Availability.ProcessSnapshot).To(BeFalse())
+	g.Expect(item.Availability.VariableSnapshot).To(BeFalse())
+	g.Expect(item.Availability.Channel).To(BeFalse())
+	g.Expect(item.Availability.Environment).To(BeFalse())
+	g.Expect(item.Availability.TaskLogs).To(BeFalse())
+	g.Expect(item.Availability.RedeployPlan).To(BeFalse())
+	g.Expect(item.RedeployAvailable).To(BeFalse())
+}
+
+func TestDeploymentTimelineRepositoryComparesLegacyCompatibilityEntries(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	targetID := deps.plan.Targets[0].DeploymentTargetID
+	task, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	firstRequest := api.DeploymentRequest{
+		DeploymentTargetID:   targetID,
+		ApplicationVersionID: deps.versionID,
+		ValuesHash:           []byte("first-values-hash"),
+	}
+	g.Expect(db.CreateDeployment(ctx, &firstRequest)).To(Succeed())
+	firstRevision, err := db.CreateDeploymentRevision(ctx, &firstRequest)
+	g.Expect(err).NotTo(HaveOccurred())
+	secondRequest := api.DeploymentRequest{
+		DeploymentTargetID:   targetID,
+		ApplicationVersionID: deps.versionID,
+		ValuesHash:           []byte("second-values-hash"),
+	}
+	g.Expect(db.CreateDeployment(ctx, &secondRequest)).To(Succeed())
+	secondRevision, err := db.CreateDeploymentRevision(ctx, &secondRequest)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = db.BackfillLegacyDeploymentCompatibility(ctx, types.DeploymentCompatibilityBackfillRequest{
+		OrganizationID: deps.orgID,
+		Apply:          true,
+		BatchSize:      10,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	legacyComparison, err := db.CompareDeploymentTimelineTasks(ctx, types.DeploymentTimelineCompareRequest{
+		OrganizationID:                    deps.orgID,
+		BaseLegacyDeploymentRevisionID:    firstRevision.ID,
+		CompareLegacyDeploymentRevisionID: secondRevision.ID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(legacyComparison.Base.LegacyDeploymentRevisionID).To(Equal(firstRevision.ID))
+	g.Expect(legacyComparison.Compare.LegacyDeploymentRevisionID).To(Equal(secondRevision.ID))
+	g.Expect(legacyComparison.Base.Source).To(Equal(types.DeploymentTimelineItemSourceLegacyDeployment))
+	g.Expect(legacyComparison.Compare.Source).To(Equal(types.DeploymentTimelineItemSourceLegacyDeployment))
+	g.Expect(legacyComparison.Components).NotTo(BeEmpty())
+	g.Expect(legacyComparison.Steps).To(BeEmpty())
+	g.Expect(legacyComparison.Variables).To(BeEmpty())
+	g.Expect(legacyComparison.Process.Changed).To(BeFalse())
+
+	mixedComparison, err := db.CompareDeploymentTimelineTasks(ctx, types.DeploymentTimelineCompareRequest{
+		OrganizationID:                 deps.orgID,
+		BaseLegacyDeploymentRevisionID: firstRevision.ID,
+		CompareTaskID:                  task[0].ID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(mixedComparison.Base.LegacyDeploymentRevisionID).To(Equal(firstRevision.ID))
+	g.Expect(mixedComparison.Compare.TaskID).To(Equal(task[0].ID))
+	g.Expect(mixedComparison.Components).NotTo(BeEmpty())
+	g.Expect(mixedComparison.Steps).To(BeEmpty())
+	g.Expect(mixedComparison.Variables).To(BeEmpty())
 }
 
 func TestDeploymentTimelineRepositoryComparesReleaseProcessAndVariables(t *testing.T) {
