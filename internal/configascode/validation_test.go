@@ -142,6 +142,198 @@ spec:
 	}
 }
 
+func TestValidateDocumentsRejectsMissingRequiredEnvelopeFieldsAndWrongTypes(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantPath  string
+		wantError string
+	}{
+		{
+			name: "missing metadata name",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  path: channels/stable.yaml
+spec:
+  description: Stable channel
+`,
+			wantPath:  "$[0].metadata.name",
+			wantError: "must be a non-empty string",
+		},
+		{
+			name: "kind must be string",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: 42
+metadata:
+  name: stable
+  path: channels/stable.yaml
+spec: {}
+`,
+			wantPath:  "$[0].kind",
+			wantError: "must be a non-empty string",
+		},
+		{
+			name: "spec is required",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  name: stable
+  path: channels/stable.yaml
+`,
+			wantPath:  "$[0].spec",
+			wantError: "spec must be an object",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			result := ValidateDocuments([]byte(tt.input))
+
+			g.Expect(result.Valid).To(BeFalse())
+			g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+				"DocumentIndex": Equal(0),
+				"Path":          Equal(tt.wantPath),
+				"Message":       ContainSubstring(tt.wantError),
+			})))
+		})
+	}
+}
+
+func TestValidateDocumentsRejectsInvalidKindSpecificSchemas(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantPath  string
+		wantError string
+	}{
+		{
+			name: "deployment process steps must be array",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: DeploymentProcess
+metadata:
+  name: deploy
+  path: processes/deploy.yaml
+spec:
+  steps: not-an-array
+`,
+			wantPath:  "$[0].spec.steps",
+			wantError: "must be an array",
+		},
+		{
+			name: "deployment process step requires action type",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: DeploymentProcess
+metadata:
+  name: deploy
+  path: processes/deploy.yaml
+spec:
+  steps:
+    - key: wait
+`,
+			wantPath:  "$[0].spec.steps[0].actionType",
+			wantError: "must be a non-empty string",
+		},
+		{
+			name: "channel isDefault must be boolean",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  name: stable
+  path: channels/stable.yaml
+spec:
+  isDefault: "true"
+`,
+			wantPath:  "$[0].spec.isDefault",
+			wantError: "must be a boolean",
+		},
+		{
+			name: "lifecycle phase requires name",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Lifecycle
+metadata:
+  name: default
+  path: lifecycles/default.yaml
+spec:
+  phases:
+    - sortOrder: 10
+`,
+			wantPath:  "$[0].spec.phases[0].name",
+			wantError: "must be a non-empty string",
+		},
+		{
+			name: "variable definition requires type",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: VariableSetDefinition
+metadata:
+  name: prod-vars
+  path: variable-sets/prod.yaml
+spec:
+  variables:
+    - name: REGION
+`,
+			wantPath:  "$[0].spec.variables[0].type",
+			wantError: "must be a non-empty string",
+		},
+		{
+			name: "step template source must be object",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: StepTemplateReference
+metadata:
+  name: notify
+  path: step-templates/notify.yaml
+spec:
+  source: github
+  template: notify
+`,
+			wantPath:  "$[0].spec.source",
+			wantError: "must be an object",
+		},
+		{
+			name: "runbook step input bindings must be object",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Runbook
+metadata:
+  name: restart
+  path: runbooks/restart.yaml
+spec:
+  steps:
+    - key: notify
+      actionType: distr.notify
+      inputBindings: invalid
+`,
+			wantPath:  "$[0].spec.steps[0].inputBindings",
+			wantError: "must be an object",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			result := ValidateDocuments([]byte(tt.input))
+
+			g.Expect(result.Valid).To(BeFalse())
+			g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+				"DocumentIndex": Equal(0),
+				"Path":          Equal(tt.wantPath),
+				"Message":       ContainSubstring(tt.wantError),
+			})))
+		})
+	}
+}
 func TestValidateDocumentsRejectsUnsafeYAMLAndPaths(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -222,6 +414,94 @@ spec: {}
 	}
 }
 
+func TestValidateDocumentsRejectsAdditionalUnsafeRepositoryPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		wantError string
+	}{
+		{name: "normalized traversal", path: "channels/../stable.yaml", wantError: "traversal"},
+		{name: "backslash traversal", path: `channels\..\stable.yaml`, wantError: "backslash"},
+		{name: "windows drive", path: "C:/repo/channel.yaml", wantError: "relative repository path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			input := `
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  name: stable
+  path: ` + tt.path + `
+spec: {}
+`
+
+			result := ValidateDocuments([]byte(input))
+
+			g.Expect(result.Valid).To(BeFalse())
+			g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+				"DocumentIndex": Equal(0),
+				"Path":          Equal("$[0].metadata.path"),
+				"Message":       ContainSubstring(tt.wantError),
+			})))
+		})
+	}
+}
+
+func TestValidateDocumentsRejectsDuplicateJSONKeys(t *testing.T) {
+	g := NewWithT(t)
+	input := []byte(`{
+  "apiVersion": "distr.sh/v1alpha1",
+  "kind": "Channel",
+  "kind": "Lifecycle",
+  "metadata": {
+    "name": "stable",
+    "path": "channels/stable.yaml"
+  },
+  "spec": {}
+}`)
+
+	result := ValidateDocuments(input)
+
+	g.Expect(result.Valid).To(BeFalse())
+	g.Expect(result.Documents).To(BeEmpty())
+	g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"Path":    Equal("$.kind"),
+		"Message": ContainSubstring("duplicate key"),
+	})))
+}
+
+func TestValidateDocumentsCanonicalizesEquivalentNumericRepresentations(t *testing.T) {
+	g := NewWithT(t)
+	yamlInput := []byte(`
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  name: stable
+  path: channels/stable.yaml
+spec:
+  sortOrder: 1
+`)
+	jsonInput := []byte(`{
+  "apiVersion": "distr.sh/v1alpha1",
+  "kind": "Channel",
+  "metadata": {
+    "name": "stable",
+    "path": "channels/stable.yaml"
+  },
+  "spec": {
+    "sortOrder": 1.0e0
+  }
+}`)
+
+	yamlResult := ValidateDocuments(yamlInput)
+	jsonResult := ValidateDocuments(jsonInput)
+
+	g.Expect(yamlResult.Valid).To(BeTrue())
+	g.Expect(jsonResult.Valid).To(BeTrue())
+	g.Expect(yamlResult.Documents[0].CanonicalChecksum).To(Equal(jsonResult.Documents[0].CanonicalChecksum))
+}
 func TestValidateDocumentsRejectsOversizedAndExcessivelyNestedDocuments(t *testing.T) {
 	g := NewWithT(t)
 	oversized := []byte(strings.Repeat("a", 1048577))
@@ -277,6 +557,86 @@ spec:
 	}
 }
 
+func TestValidateDocumentsRejectsNestedSecretLikeFieldsAndInvalidReferences(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantPath  string
+		wantError string
+	}{
+		{
+			name: "nested api key in deployment input bindings",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: DeploymentProcess
+metadata:
+  name: deploy
+  path: processes/deploy.yaml
+spec:
+  steps:
+    - key: call-api
+      actionType: distr.http
+      inputBindings:
+        apiKey: plaintext-fixture-value
+`,
+			wantPath:  "$[0].spec.steps[0].inputBindings.apiKey",
+			wantError: "plaintext secret values are not allowed",
+		},
+		{
+			name: "nested credential in runbook input bindings",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Runbook
+metadata:
+  name: restart
+  path: runbooks/restart.yaml
+spec:
+  steps:
+    - key: restart
+      actionType: distr.http
+      inputBindings:
+        credential: plaintext-fixture-value
+`,
+			wantPath:  "$[0].spec.steps[0].inputBindings.credential",
+			wantError: "plaintext secret values are not allowed",
+		},
+		{
+			name: "reference must be non-empty string",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: VariableSetDefinition
+metadata:
+  name: prod-vars
+  path: variable-sets/prod.yaml
+spec:
+  variables:
+    - name: DATABASE_PASSWORD
+      type: secret
+      secretRef: {}
+`,
+			wantPath:  "$[0].spec.variables[0].secretRef",
+			wantError: "must be a non-empty string reference",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			result := ValidateDocuments([]byte(tt.input))
+
+			g.Expect(result.Valid).To(BeFalse())
+			g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+				"DocumentIndex": Equal(0),
+				"Path":          Equal(tt.wantPath),
+				"Message":       ContainSubstring(tt.wantError),
+			})))
+			for _, issue := range result.Errors {
+				g.Expect(issue.Message).NotTo(ContainSubstring("plaintext-fixture-value"))
+			}
+		})
+	}
+}
 func TestValidateDocumentsAcceptsSecretReferencesWhereSchemaPermits(t *testing.T) {
 	g := NewWithT(t)
 	input := []byte(`

@@ -25,7 +25,7 @@ Supported kinds:
 - `StepTemplateReference`
 - `Runbook`
 
-Validation rejects unsupported versions or kinds, unknown fields, duplicate YAML keys, absolute paths, path traversal, oversized or deeply nested documents, YAML aliases/anchors, and plaintext secret-like values.
+Validation rejects unsupported versions or kinds, unknown fields, duplicate YAML or JSON keys, absolute paths, Windows drive paths, backslash paths, path traversal, oversized or deeply nested documents, YAML aliases/anchors, wrong field types, missing required fields, and plaintext secret-like values. Valid YAML and equivalent JSON produce the same canonical checksum, including equivalent numeric representations.
 
 ## Authority
 
@@ -51,4 +51,4 @@ Changing authority records stores repository path, source revision, document che
 
 ## Secret Restrictions
 
-Git-managed documents must not contain plaintext passwords, tokens, private keys, connection strings, or secret defaults. Use references such as `secretRef`, `accountRef`, or `certificateRef` where the schema permits.
+Git-managed documents must not contain plaintext passwords, tokens, API keys, access keys, authorization values, credentials, private keys, connection strings, or secret defaults. Use non-empty string references such as `secretRef`, `accountRef`, or `certificateRef` where the schema permits.

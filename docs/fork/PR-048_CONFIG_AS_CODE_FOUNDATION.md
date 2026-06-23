@@ -6,13 +6,13 @@ PR-048 adds the first Config as Code foundation behind `config_as_code`. It vali
 
 ## Included
 
-- Strict validation for `distr.sh/v1alpha1` envelopes.
+- Strict validation for `distr.sh/v1alpha1` envelopes, required metadata, kind-specific schemas, and typed nested fields.
 - Supported kinds: `DeploymentProcess`, `Channel`, `Lifecycle`, `VariableSetDefinition`, `StepTemplateReference`, and `Runbook`.
-- Canonical JSON checksums for valid documents.
-- Plaintext-secret rejection with redacted validation messages.
+- Canonical JSON checksums for valid documents, including format-independent numeric normalization.
+- Plaintext-secret rejection with redacted validation messages, nested credential-key scanning, and typed non-empty reference fields.
 - `POST /api/v1/config-as-code/validate`.
 - Org-scoped authority APIs under `/api/v1/config-as-code/authorities`.
-- `DATABASE_MANAGED` and `GIT_MANAGED` authority persistence plus non-secret audit events.
+- `DATABASE_MANAGED` and `GIT_MANAGED` authority persistence plus non-secret audit events and shared repository-path validation.
 - Server-side mutation guards for the supported resource families.
 - Frontend service/types, feature flag plumbing, and authority badge/read-only controls for deployment processes, channels, lifecycles, variable sets, step templates, and runbooks.
 
@@ -33,4 +33,4 @@ PR-048 adds the first Config as Code foundation behind `config_as_code`. It vali
 - `pnpm exec prettier --check ...`
 - `git diff --check`
 
-Live PostgreSQL repository tests use `DISTR_TEST_DATABASE_URL`; they skip when that environment variable is unavailable.
+Live PostgreSQL repository tests use `DISTR_TEST_DATABASE_URL`; they skip when that environment variable is unavailable. Authority tests include a row-lock race covering a Git authority switch serialized against channel update/delete paths.

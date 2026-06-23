@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,58 +22,71 @@ const (
 	maxDocumentDepth   = 64
 )
 
+type valueKind int
+
+const (
+	valueAny valueKind = iota
+	valueString
+	valueBool
+	valueInteger
+	valueObject
+	valueArray
+)
+
 var supportedKinds = map[string]kindSchema{
 	"DeploymentProcess": {
 		specFields: map[string]fieldSchema{
-			"description": {},
-			"steps":       {arrayItemFields: deploymentStepFields()},
-			"application": {},
+			"description": {kind: valueString},
+			"application": {kind: valueString},
+			"steps":       {kind: valueArray, required: true, arrayItem: objectItem(deploymentStepFields(), false)},
 		},
 	},
 	"Channel": {
 		specFields: map[string]fieldSchema{
-			"application": {},
-			"description": {},
-			"isDefault":   {},
-			"lifecycle":   {},
-			"rules":       {},
-			"sortOrder":   {},
+			"application": {kind: valueString},
+			"description": {kind: valueString},
+			"isDefault":   {kind: valueBool},
+			"lifecycle":   {kind: valueString},
+			"rules":       {kind: valueArray, arrayItem: objectItem(nil, true)},
+			"sortOrder":   {kind: valueInteger},
 		},
 	},
 	"Lifecycle": {
 		specFields: map[string]fieldSchema{
-			"description": {},
-			"phases":      {},
+			"description": {kind: valueString},
+			"phases": {
+				kind:     valueArray,
+				required: true,
+				arrayItem: objectItem(map[string]fieldSchema{
+					"name":        {kind: valueString, required: true},
+					"description": {kind: valueString},
+					"sortOrder":   {kind: valueInteger},
+				}, false),
+			},
 		},
 	},
 	"VariableSetDefinition": {
 		specFields: map[string]fieldSchema{
-			"description": {},
+			"description": {kind: valueString},
 			"variables": {
-				arrayItemFields: map[string]fieldSchema{
-					"name":           {},
-					"type":           {},
-					"description":    {},
-					"default":        {},
-					"secretRef":      {reference: true},
-					"accountRef":     {reference: true},
-					"certificateRef": {reference: true},
-				},
+				kind:      valueArray,
+				required:  true,
+				arrayItem: objectItem(variableDefinitionFields(), false),
 			},
 		},
 	},
 	"StepTemplateReference": {
 		specFields: map[string]fieldSchema{
-			"description": {},
-			"source":      {},
-			"template":    {},
-			"version":     {},
+			"description": {kind: valueString},
+			"source":      {kind: valueObject, required: true, allowUnknownFields: true},
+			"template":    {kind: valueString, required: true},
+			"version":     {kind: valueString},
 		},
 	},
 	"Runbook": {
 		specFields: map[string]fieldSchema{
-			"description": {},
-			"steps":       {arrayItemFields: deploymentStepFields()},
+			"description": {kind: valueString},
+			"steps":       {kind: valueArray, required: true, arrayItem: objectItem(deploymentStepFields(), false)},
 		},
 	},
 }
@@ -82,8 +96,12 @@ type kindSchema struct {
 }
 
 type fieldSchema struct {
-	arrayItemFields map[string]fieldSchema
-	reference       bool
+	kind               valueKind
+	required           bool
+	fields             map[string]fieldSchema
+	arrayItem          *fieldSchema
+	allowUnknownFields bool
+	reference          bool
 }
 
 func ValidateDocuments(input []byte) ValidationResult {
@@ -123,6 +141,14 @@ func parseDocuments(input []byte) ([]any, []Issue) {
 }
 
 func parseJSONDocuments(input []byte) ([]any, []Issue) {
+	duplicateIssues, err := detectJSONDuplicateKeys(input)
+	if err != nil {
+		return nil, []Issue{{DocumentIndex: -1, Path: "$", Message: fmt.Sprintf("invalid JSON: %s", err.Error())}}
+	}
+	if len(duplicateIssues) > 0 {
+		return nil, duplicateIssues
+	}
+
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	decoder.UseNumber()
 	var raw any
@@ -138,6 +164,81 @@ func parseJSONDocuments(input []byte) ([]any, []Issue) {
 	default:
 		return []any{raw}, nil
 	}
+}
+
+func detectJSONDuplicateKeys(input []byte) ([]Issue, error) {
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+	issues, err := scanJSONValue(decoder, "$")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, fmt.Errorf("trailing content")
+	}
+	return issues, nil
+}
+
+func scanJSONValue(decoder *json.Decoder, issuePath string) ([]Issue, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil, nil
+	}
+
+	var issues []Issue
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return nil, fmt.Errorf("object key must be a string")
+			}
+			childPath := issuePath + "." + key
+			if _, ok := seen[key]; ok {
+				issues = append(issues, Issue{DocumentIndex: -1, Path: childPath, Message: fmt.Sprintf("duplicate key %q", key)})
+			}
+			seen[key] = struct{}{}
+			childIssues, err := scanJSONValue(decoder, childPath)
+			if err != nil {
+				return nil, err
+			}
+			issues = append(issues, childIssues...)
+		}
+		endToken, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if endToken != json.Delim('}') {
+			return nil, fmt.Errorf("object is not closed")
+		}
+	case '[':
+		for i := 0; decoder.More(); i++ {
+			childIssues, err := scanJSONValue(decoder, fmt.Sprintf("%s[%d]", issuePath, i))
+			if err != nil {
+				return nil, err
+			}
+			issues = append(issues, childIssues...)
+		}
+		endToken, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if endToken != json.Delim(']') {
+			return nil, fmt.Errorf("array is not closed")
+		}
+	default:
+		return nil, fmt.Errorf("unexpected JSON delimiter")
+	}
+	return issues, nil
 }
 
 func parseYAMLDocuments(input []byte) ([]any, []Issue) {
@@ -257,27 +358,28 @@ func (r *ValidationResult) validateDocument(index int, document any) {
 		"spec":       {},
 	})
 
-	apiVersion, _ := root["apiVersion"].(string)
-	if apiVersion != apiVersionV1Alpha1 {
+	apiVersion, apiVersionOK := r.requireNonEmptyString(index, basePath+".apiVersion", root["apiVersion"])
+	if apiVersionOK && apiVersion != apiVersionV1Alpha1 {
 		r.addError(index, basePath+".apiVersion", "unsupported apiVersion")
 	}
-	kind, _ := root["kind"].(string)
-	schema, ok := supportedKinds[kind]
-	if !ok {
+	kind, kindOK := r.requireNonEmptyString(index, basePath+".kind", root["kind"])
+	schema, schemaOK := supportedKinds[kind]
+	if kindOK && !schemaOK {
 		r.addError(index, basePath+".kind", "unsupported kind")
 	}
-	metadata, _ := root["metadata"].(map[string]any)
-	if metadata == nil {
-		r.addError(index, basePath+".metadata", "metadata must be an object")
-	} else {
+
+	var name string
+	var repositoryPath string
+	metadata, metadataOK := r.requireObject(index, basePath+".metadata", root["metadata"], "metadata must be an object")
+	if metadataOK {
 		r.rejectUnknownFields(index, basePath+".metadata", metadata, map[string]fieldSchema{"name": {}, "path": {}})
-		r.validateMetadataPath(index, basePath+".metadata.path", metadata["path"])
+		name, _ = r.requireNonEmptyString(index, basePath+".metadata.name", metadata["name"])
+		repositoryPath, _ = r.validateMetadataPath(index, basePath+".metadata.path", metadata["path"])
 	}
-	spec, _ := root["spec"].(map[string]any)
-	if spec == nil {
-		r.addError(index, basePath+".spec", "spec must be an object")
-	} else if ok {
-		r.validateSpec(index, basePath+".spec", spec, schema.specFields)
+
+	spec, specOK := r.requireObject(index, basePath+".spec", root["spec"], "spec must be an object")
+	if specOK && schemaOK {
+		r.validateFields(index, basePath+".spec", spec, schema.specFields, false)
 	}
 	r.rejectPlaintextSecrets(index, basePath, root, false)
 
@@ -289,8 +391,6 @@ func (r *ValidationResult) validateDocument(index int, document any) {
 		r.addError(index, basePath, "document could not be canonicalized")
 		return
 	}
-	name, _ := metadata["name"].(string)
-	repositoryPath, _ := metadata["path"].(string)
 	r.Documents = append(r.Documents, DocumentResult{
 		Kind:              kind,
 		APIVersion:        apiVersion,
@@ -300,42 +400,140 @@ func (r *ValidationResult) validateDocument(index int, document any) {
 	})
 }
 
-func (r *ValidationResult) validateMetadataPath(index int, issuePath string, rawPath any) {
-	repositoryPath, ok := rawPath.(string)
-	if !ok || strings.TrimSpace(repositoryPath) == "" {
-		r.addError(index, issuePath, "metadata.path must be a non-empty relative repository path")
-		return
+func (r *ValidationResult) validateMetadataPath(index int, issuePath string, rawPath any) (string, bool) {
+	repositoryPath, ok := r.requireNonEmptyString(index, issuePath, rawPath)
+	if !ok {
+		r.Errors[len(r.Errors)-1].Message = "metadata.path must be a non-empty relative repository path"
+		return "", false
 	}
-	repositoryPath = strings.ReplaceAll(repositoryPath, "\\", "/")
-	if path.IsAbs(repositoryPath) || filepath.IsAbs(repositoryPath) {
-		r.addError(index, issuePath, "metadata.path must be a relative repository path")
-		return
+	if err := ValidateRepositoryPath(repositoryPath); err != nil {
+		r.addError(index, issuePath, err.Error())
+		return "", false
+	}
+	return repositoryPath, true
+}
+
+func ValidateRepositoryPath(repositoryPath string) error {
+	repositoryPath = strings.TrimSpace(repositoryPath)
+	if repositoryPath == "" {
+		return fmt.Errorf("repository path must be a non-empty relative repository path")
+	}
+	if strings.Contains(repositoryPath, "\\") {
+		return fmt.Errorf("repository path cannot contain backslash separators")
+	}
+	if path.IsAbs(repositoryPath) || hasWindowsDrivePrefix(repositoryPath) {
+		return fmt.Errorf("repository path must be a relative repository path")
 	}
 	cleaned := path.Clean(repositoryPath)
-	if cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." || strings.Contains(cleaned, "/../") {
-		r.addError(index, issuePath, "metadata.path cannot contain traversal")
+	if cleaned == "." {
+		return fmt.Errorf("repository path must be a non-empty relative repository path")
+	}
+	for _, segment := range strings.Split(repositoryPath, "/") {
+		if segment == ".." {
+			return fmt.Errorf("repository path cannot contain traversal")
+		}
+	}
+	return nil
+}
+
+func (r *ValidationResult) validateFields(index int, issuePath string, value map[string]any, fields map[string]fieldSchema, allowUnknown bool) {
+	if !allowUnknown {
+		r.rejectUnknownFields(index, issuePath, value, fields)
+	}
+	for key, schema := range fields {
+		rawValue, exists := value[key]
+		if !exists {
+			if schema.required {
+				r.addMissingFieldError(index, issuePath+"."+key, schema)
+			}
+			continue
+		}
+		r.validateValue(index, issuePath+"."+key, rawValue, schema)
 	}
 }
 
-func (r *ValidationResult) validateSpec(index int, issuePath string, spec map[string]any, fields map[string]fieldSchema) {
-	r.rejectUnknownFields(index, issuePath, spec, fields)
-	for key, schema := range fields {
-		if schema.arrayItemFields == nil {
-			continue
+func (r *ValidationResult) validateValue(index int, issuePath string, value any, schema fieldSchema) {
+	if schema.reference {
+		if str, ok := value.(string); !ok || strings.TrimSpace(str) == "" {
+			r.addError(index, issuePath, "must be a non-empty string reference")
 		}
-		rawItems, ok := spec[key].([]any)
+		return
+	}
+
+	switch schema.kind {
+	case valueAny:
+		return
+	case valueString:
+		if str, ok := value.(string); !ok || strings.TrimSpace(str) == "" {
+			r.addError(index, issuePath, "must be a non-empty string")
+		}
+	case valueBool:
+		if _, ok := value.(bool); !ok {
+			r.addError(index, issuePath, "must be a boolean")
+		}
+	case valueInteger:
+		if !isIntegerValue(value) {
+			r.addError(index, issuePath, "must be an integer")
+		}
+	case valueObject:
+		object, ok := value.(map[string]any)
 		if !ok {
-			continue
+			r.addError(index, issuePath, "must be an object")
+			return
 		}
-		for i, rawItem := range rawItems {
-			item, ok := rawItem.(map[string]any)
-			if !ok {
-				r.addError(index, fmt.Sprintf("%s.%s[%d]", issuePath, key, i), "array item must be an object")
-				continue
-			}
-			r.rejectUnknownFields(index, fmt.Sprintf("%s.%s[%d]", issuePath, key, i), item, schema.arrayItemFields)
+		if schema.fields != nil || !schema.allowUnknownFields {
+			r.validateFields(index, issuePath, object, schema.fields, schema.allowUnknownFields)
+		}
+	case valueArray:
+		items, ok := value.([]any)
+		if !ok {
+			r.addError(index, issuePath, "must be an array")
+			return
+		}
+		if schema.arrayItem == nil {
+			return
+		}
+		for i, item := range items {
+			r.validateValue(index, fmt.Sprintf("%s[%d]", issuePath, i), item, *schema.arrayItem)
 		}
 	}
+}
+
+func (r *ValidationResult) addMissingFieldError(index int, issuePath string, schema fieldSchema) {
+	if schema.reference {
+		r.addError(index, issuePath, "must be a non-empty string reference")
+		return
+	}
+	switch schema.kind {
+	case valueObject:
+		r.addError(index, issuePath, "must be an object")
+	case valueArray:
+		r.addError(index, issuePath, "must be an array")
+	case valueBool:
+		r.addError(index, issuePath, "must be a boolean")
+	case valueInteger:
+		r.addError(index, issuePath, "must be an integer")
+	default:
+		r.addError(index, issuePath, "must be a non-empty string")
+	}
+}
+
+func (r *ValidationResult) requireObject(index int, issuePath string, raw any, message string) (map[string]any, bool) {
+	value, ok := raw.(map[string]any)
+	if !ok {
+		r.addError(index, issuePath, message)
+		return nil, false
+	}
+	return value, true
+}
+
+func (r *ValidationResult) requireNonEmptyString(index int, issuePath string, raw any) (string, bool) {
+	value, ok := raw.(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		r.addError(index, issuePath, "must be a non-empty string")
+		return "", false
+	}
+	return value, true
 }
 
 func (r *ValidationResult) rejectUnknownFields(index int, issuePath string, value map[string]any, allowed map[string]fieldSchema) {
@@ -378,12 +576,72 @@ func (r *ValidationResult) rejectPlaintextSecrets(index int, issuePath string, v
 }
 
 func canonicalChecksum(value any) (string, error) {
-	canonical, err := json.Marshal(value)
+	normalized, err := canonicalValue(value)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := json.Marshal(normalized)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalValue(value any) (any, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		normalized := make(map[string]any, len(typed))
+		for key, item := range typed {
+			child, err := canonicalValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized[key] = child
+		}
+		return normalized, nil
+	case []any:
+		normalized := make([]any, 0, len(typed))
+		for _, item := range typed {
+			child, err := canonicalValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized = append(normalized, child)
+		}
+		return normalized, nil
+	case json.Number:
+		return canonicalNumber(string(typed))
+	case int:
+		return int64(typed), nil
+	case int64:
+		return typed, nil
+	case float64:
+		return canonicalFloat(typed)
+	default:
+		return value, nil
+	}
+}
+
+func canonicalNumber(value string) (any, error) {
+	if integer, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return integer, nil
+	}
+	floatValue, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return nil, err
+	}
+	return canonicalFloat(floatValue)
+}
+
+func canonicalFloat(value float64) (any, error) {
+	if math.IsInf(value, 0) || math.IsNaN(value) {
+		return nil, fmt.Errorf("invalid number")
+	}
+	if math.Trunc(value) == value && value >= math.MinInt64 && value <= math.MaxInt64 {
+		return int64(value), nil
+	}
+	return value, nil
 }
 
 func tooDeep(value any, depth int) bool {
@@ -427,13 +685,52 @@ func hasDocumentError(errors []Issue, documentIndex int) bool {
 
 func deploymentStepFields() map[string]fieldSchema {
 	return map[string]fieldSchema{
-		"actionType":     {},
-		"description":    {},
-		"inputBindings":  {},
-		"key":            {},
-		"name":           {},
-		"outputBindings": {},
+		"actionType":     {kind: valueString, required: true},
+		"description":    {kind: valueString},
+		"inputBindings":  {kind: valueObject, allowUnknownFields: true},
+		"key":            {kind: valueString, required: true},
+		"name":           {kind: valueString},
+		"outputBindings": {kind: valueObject, allowUnknownFields: true},
 	}
+}
+
+func variableDefinitionFields() map[string]fieldSchema {
+	return map[string]fieldSchema{
+		"name":           {kind: valueString, required: true},
+		"type":           {kind: valueString, required: true},
+		"description":    {kind: valueString},
+		"default":        {kind: valueAny},
+		"secretRef":      {kind: valueString, reference: true},
+		"accountRef":     {kind: valueString, reference: true},
+		"certificateRef": {kind: valueString, reference: true},
+	}
+}
+
+func objectItem(fields map[string]fieldSchema, allowUnknown bool) *fieldSchema {
+	return &fieldSchema{kind: valueObject, fields: fields, allowUnknownFields: allowUnknown}
+}
+
+func isIntegerValue(value any) bool {
+	switch typed := value.(type) {
+	case int:
+		return true
+	case int64:
+		return true
+	case float64:
+		return math.Trunc(typed) == typed && !math.IsInf(typed, 0) && !math.IsNaN(typed)
+	case json.Number:
+		if _, err := strconv.ParseInt(string(typed), 10, 64); err == nil {
+			return true
+		}
+		floatValue, err := strconv.ParseFloat(string(typed), 64)
+		return err == nil && math.Trunc(floatValue) == floatValue && !math.IsInf(floatValue, 0) && !math.IsNaN(floatValue)
+	default:
+		return false
+	}
+}
+
+func hasWindowsDrivePrefix(value string) bool {
+	return len(value) >= 3 && value[1] == ':' && (value[2] == '/' || value[2] == '\\') && unicode.IsLetter(rune(value[0]))
 }
 
 func variableDefinitionLooksSecret(value map[string]any) bool {
@@ -458,6 +755,14 @@ func isSensitiveFieldName(key string) bool {
 		return true
 	case strings.Contains(normalized, "token"):
 		return true
+	case strings.Contains(normalized, "apikey"):
+		return true
+	case strings.Contains(normalized, "accesskey"):
+		return true
+	case strings.Contains(normalized, "authorization"):
+		return true
+	case strings.Contains(normalized, "credential"):
+		return true
 	case strings.Contains(normalized, "privatekey"):
 		return true
 	case strings.Contains(normalized, "connectionstring"):
@@ -473,6 +778,10 @@ func isSensitiveIdentifier(value string) bool {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value, "_", ""), "-", ""))
 	return strings.Contains(normalized, "password") ||
 		strings.Contains(normalized, "token") ||
+		strings.Contains(normalized, "apikey") ||
+		strings.Contains(normalized, "accesskey") ||
+		strings.Contains(normalized, "authorization") ||
+		strings.Contains(normalized, "credential") ||
 		strings.Contains(normalized, "privatekey") ||
 		strings.Contains(normalized, "connectionstring") ||
 		strings.Contains(normalized, "secret")

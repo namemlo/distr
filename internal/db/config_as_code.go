@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/configascode"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -394,12 +395,8 @@ func normalizeConfigAsCodeAuthority(authority *types.ConfigAsCodeAuthority) erro
 	if authority.RepositoryPath == "" {
 		return apierrors.NewBadRequest("repositoryPath is required for Git-managed resources")
 	}
-	if strings.HasPrefix(authority.RepositoryPath, "/") ||
-		strings.HasPrefix(authority.RepositoryPath, `\`) ||
-		strings.HasPrefix(authority.RepositoryPath, "../") ||
-		authority.RepositoryPath == ".." ||
-		strings.Contains(authority.RepositoryPath, "/../") {
-		return apierrors.NewBadRequest("repositoryPath must be a relative repository path without traversal")
+	if err := configascode.ValidateRepositoryPath(authority.RepositoryPath); err != nil {
+		return apierrors.NewBadRequest("repositoryPath " + err.Error())
 	}
 	if authority.DocumentChecksum == "" {
 		return apierrors.NewBadRequest("documentChecksum is required for Git-managed resources")
