@@ -1,0 +1,11 @@
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  name: stable
+  path: channels/stable.yaml
+spec:
+  description: Stable production channel
+  application: example-app
+  lifecycle: default
+  isDefault: true
+  sortOrder: 10

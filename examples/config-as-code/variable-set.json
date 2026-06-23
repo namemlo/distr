@@ -1,0 +1,28 @@
+{
+  "apiVersion": "distr.sh/v1alpha1",
+  "kind": "VariableSetDefinition",
+  "metadata": {
+    "name": "production-references",
+    "path": "variable-sets/production-references.json"
+  },
+  "spec": {
+    "description": "Non-secret variable definitions and safe references",
+    "variables": [
+      {
+        "name": "DATABASE_PASSWORD",
+        "type": "secret",
+        "secretRef": "database-password"
+      },
+      {
+        "name": "TLS_CERTIFICATE",
+        "type": "certificate",
+        "certificateRef": "public-api-tls"
+      },
+      {
+        "name": "CLOUD_ACCOUNT",
+        "type": "account",
+        "accountRef": "production-cloud"
+      }
+    ]
+  }
+}

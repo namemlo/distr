@@ -4,14 +4,19 @@ import {Application} from '@distr-sh/distr-sdk';
 import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {ApplicationsService} from '../services/applications.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {OverlayService} from '../services/overlay.service';
 import {RunbooksService} from '../services/runbooks.service';
 import {ToastService} from '../services/toast.service';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {Runbook, RunbookRevision, RunbookStepRequest} from '../types/runbook';
 import {RunbooksComponent} from './runbooks.component';
 
 describe('RunbooksComponent', () => {
   let runbooksService: any;
+  let configAsCodeService: any;
+  let featureFlagService: any;
   let applicationsService: any;
   let overlay: any;
   let toast: any;
@@ -32,6 +37,16 @@ describe('RunbooksComponent', () => {
       sortOrder: 10,
     },
   ];
+  const gitManagedRunbookAuthority: ConfigAsCodeAuthority = {
+    resourceKind: 'Runbook',
+    resourceId: 'runbook-1',
+    authority: 'GIT_MANAGED',
+    repositoryPath: 'runbooks/rotate-keys.yaml',
+    sourceRevision: '6dcb09f',
+    documentChecksum: 'sha256:1234',
+    updatedByUserId: 'user-1',
+    updatedAt: '2026-06-22T09:00:00Z',
+  };
 
   const revisions: RunbookRevision[] = [
     {
@@ -75,6 +90,12 @@ describe('RunbooksComponent', () => {
       createRevision: vi.fn(),
       publishRevision: vi.fn(),
     };
+    configAsCodeService = {
+      listAuthorities: vi.fn(),
+    };
+    featureFlagService = {
+      isConfigAsCodeEnabled$: of(false),
+    };
     applicationsService = {list: vi.fn()};
     overlay = {
       showModal: vi.fn(),
@@ -103,6 +124,7 @@ describe('RunbooksComponent', () => {
         revision: revisions[0],
       })
     );
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: []}));
     applicationsService.list.mockReturnValue(of(applications));
     overlay.showModal.mockReturnValue({close: vi.fn()} as any);
     overlay.confirm.mockReturnValue(of(true));
@@ -111,6 +133,8 @@ describe('RunbooksComponent', () => {
       imports: [RunbooksComponent],
       providers: [
         {provide: RunbooksService, useValue: runbooksService},
+        {provide: ConfigAsCodeService, useValue: configAsCodeService},
+        {provide: FeatureFlagService, useValue: featureFlagService},
         {provide: ApplicationsService, useValue: applicationsService},
         {provide: OverlayService, useValue: overlay},
         {provide: ToastService, useValue: toast},
@@ -123,6 +147,26 @@ describe('RunbooksComponent', () => {
 
     expect((component as any).runbooks()).toEqual(runbooks);
     expect((component as any).applicationName('application-1')).toBe('Payments');
+  });
+
+  it('loads config-as-code authorities and blocks Git-managed runbook mutations', async () => {
+    featureFlagService.isConfigAsCodeEnabled$ = of(true);
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: [gitManagedRunbookAuthority]}));
+    const {component} = createComponent();
+
+    expect((component as any).authorityFor(runbooks[0])).toEqual(gitManagedRunbookAuthority);
+    expect((component as any).isGitManaged(runbooks[0])).toBe(true);
+
+    (component as any).showUpdateRunbookDialog(runbooks[0]);
+    (component as any).delete(runbooks[0]);
+    (component as any).selectedRunbook.set(runbooks[0]);
+    (component as any).showCreateRevisionDialog();
+    await (component as any).publishRevision(revisions[0]);
+
+    expect(overlay.showModal).not.toHaveBeenCalled();
+    expect(overlay.confirm).not.toHaveBeenCalled();
+    expect(runbooksService.publishRevision).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('This runbook is managed from Git.');
   });
 
   it('shows load errors', () => {

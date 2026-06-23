@@ -50,6 +50,40 @@ func TestRunbookRepositoryCreatesRevisionsAndPublishedSnapshots(t *testing.T) {
 	g.Expect(secondSnapshot.ID).To(Equal(snapshot.ID))
 }
 
+func TestRunbookRepositoryRejectsGitManagedPublish(t *testing.T) {
+	ctx := runbookDBTestContext(t)
+	g := NewWithT(t)
+	deps := createDeploymentProcessDependencies(t, ctx)
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+
+	runbook := types.Runbook{
+		OrganizationID: deps.orgID,
+		ApplicationID:  deps.applicationID,
+		Name:           "Rotate signing keys",
+		Description:    "Operational key rotation",
+		SortOrder:      20,
+	}
+	g.Expect(db.CreateRunbook(ctx, &runbook)).To(Succeed())
+
+	revision := runbookRevisionFixture(deps)
+	revision.RunbookID = runbook.ID
+	g.Expect(db.CreateRunbookRevision(ctx, &revision)).To(Succeed())
+	g.Expect(db.UpsertConfigAsCodeAuthority(ctx, &types.ConfigAsCodeAuthority{
+		OrganizationID:   deps.orgID,
+		ResourceKind:     types.ConfigAsCodeResourceKindRunbook,
+		ResourceID:       runbook.ID,
+		Authority:        types.ConfigAsCodeAuthorityGitManaged,
+		RepositoryPath:   "runbooks/rotate-keys.yaml",
+		SourceRevision:   "6dcb09f",
+		DocumentChecksum: "sha256:1234",
+		UpdatedByUserID:  &actorID,
+	})).To(Succeed())
+
+	_, err := db.PublishRunbookRevision(ctx, runbook.ID, revision.ID, deps.orgID, actorID)
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+}
+
 func TestRunbookRepositoryRejectsInvalidRevisionGraph(t *testing.T) {
 	ctx := runbookDBTestContext(t)
 	g := NewWithT(t)

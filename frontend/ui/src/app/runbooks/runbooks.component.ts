@@ -15,13 +15,17 @@ import {
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
-import {filter, firstValueFrom, forkJoin, map, startWith} from 'rxjs';
+import {catchError, filter, firstValueFrom, forkJoin, map, of, startWith, switchMap} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
+import {ConfigAsCodeAuthorityBadgeComponent} from '../components/config-as-code-authority-badge/config-as-code-authority-badge.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
 import {ApplicationsService} from '../services/applications.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {DialogRef, OverlayService} from '../services/overlay.service';
 import {RunbooksService} from '../services/runbooks.service';
 import {ToastService} from '../services/toast.service';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {
   CreateRunbookRevisionRequest,
   CreateUpdateRunbookRequest,
@@ -36,7 +40,14 @@ type RunbookTab = 'editor' | 'history' | 'schedules';
 @Component({
   templateUrl: './runbooks.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReactiveFormsModule, FontAwesomeModule, DatePipe, JsonPipe, AutotrimDirective],
+  imports: [
+    ReactiveFormsModule,
+    FontAwesomeModule,
+    DatePipe,
+    JsonPipe,
+    AutotrimDirective,
+    ConfigAsCodeAuthorityBadgeComponent,
+  ],
 })
 export class RunbooksComponent {
   protected readonly faBookOpen = faBookOpen;
@@ -51,6 +62,8 @@ export class RunbooksComponent {
   protected readonly faPlay = faPlay;
 
   private readonly runbooksService = inject(RunbooksService);
+  private readonly configAsCodeService = inject(ConfigAsCodeService);
+  private readonly featureFlagService = inject(FeatureFlagService);
   private readonly applicationsService = inject(ApplicationsService);
   private readonly toast = inject(ToastService);
   private readonly overlay = inject(OverlayService);
@@ -58,6 +71,7 @@ export class RunbooksComponent {
 
   protected readonly runbooks = signal<Runbook[]>([]);
   protected readonly applications = signal<Application[]>([]);
+  protected readonly authorities = signal<Record<string, ConfigAsCodeAuthority>>({});
   protected readonly filteredRunbooks = signal<Runbook[]>([]);
   protected readonly revisions = signal<RunbookRevision[]>([]);
   protected readonly selectedRunbook = signal<Runbook | undefined>(undefined);
@@ -112,18 +126,37 @@ export class RunbooksComponent {
     forkJoin({
       runbooks: this.runbooksService.list(),
       applications: this.applicationsService.list(),
-    }).subscribe({
-      next: ({runbooks, applications}) => {
-        this.runbooks.set(runbooks);
-        this.applications.set(applications);
-        this.applyFilter(this.filterForm.controls.search.value);
-        this.loading.set(false);
-      },
-      error: (e) => {
-        this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load runbooks.');
-        this.loading.set(false);
-      },
-    });
+      configAsCodeEnabled: this.featureFlagService.isConfigAsCodeEnabled$.pipe(catchError(() => of(false))),
+    })
+      .pipe(
+        switchMap((loaded) => {
+          if (!loaded.configAsCodeEnabled) {
+            return of({...loaded, authorities: [] as ConfigAsCodeAuthority[]});
+          }
+          return this.configAsCodeService
+            .listAuthorities()
+            .pipe(map((response) => ({...loaded, authorities: response.authorities})));
+        })
+      )
+      .subscribe({
+        next: ({runbooks, applications, authorities}) => {
+          this.runbooks.set(runbooks);
+          this.applications.set(applications);
+          this.authorities.set(
+            Object.fromEntries(
+              authorities
+                .filter((authority) => authority.resourceKind === 'Runbook')
+                .map((authority) => [authority.resourceId, authority])
+            )
+          );
+          this.applyFilter(this.filterForm.controls.search.value);
+          this.loading.set(false);
+        },
+        error: (e) => {
+          this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load runbooks.');
+          this.loading.set(false);
+        },
+      });
   }
 
   protected async selectRunbook(runbook: Runbook) {
@@ -150,6 +183,9 @@ export class RunbooksComponent {
   }
 
   protected showUpdateRunbookDialog(runbook: Runbook) {
+    if (this.blockGitManaged(runbook)) {
+      return;
+    }
     this.closeDialog(false);
     this.runbookForm.setValue({
       id: runbook.id,
@@ -187,6 +223,10 @@ export class RunbooksComponent {
         sortOrder: value.sortOrder,
       };
       if (value.id) {
+        const runbook = this.runbooks().find((item) => item.id === value.id);
+        if (runbook && this.blockGitManaged(runbook)) {
+          return;
+        }
         await firstValueFrom(this.runbooksService.update(value.id, request));
       } else {
         await firstValueFrom(this.runbooksService.create(request));
@@ -201,6 +241,9 @@ export class RunbooksComponent {
   }
 
   protected delete(runbook: Runbook) {
+    if (this.blockGitManaged(runbook)) {
+      return;
+    }
     this.overlay
       .confirm({
         message: {
@@ -229,6 +272,10 @@ export class RunbooksComponent {
   }
 
   protected showCreateRevisionDialog() {
+    const runbook = this.selectedRunbook();
+    if (runbook && this.blockGitManaged(runbook)) {
+      return;
+    }
     this.closeDialog(false);
     this.revisionForm.reset({description: ''});
     this.resetSteps();
@@ -257,6 +304,9 @@ export class RunbooksComponent {
     if (this.revisionForm.invalid || !runbook) {
       return;
     }
+    if (this.blockGitManaged(runbook)) {
+      return;
+    }
 
     const request = this.revisionRequestFromForm();
     if (!request) {
@@ -280,6 +330,9 @@ export class RunbooksComponent {
     if (!runbook) {
       return;
     }
+    if (this.blockGitManaged(runbook)) {
+      return;
+    }
     this.formLoading.set(true);
     try {
       await firstValueFrom(this.runbooksService.publishRevision(runbook.id, revision.id));
@@ -298,6 +351,14 @@ export class RunbooksComponent {
 
   protected latestRevision(): RunbookRevision | undefined {
     return [...this.revisions()].sort((a, b) => b.revisionNumber - a.revisionNumber)[0];
+  }
+
+  protected authorityFor(runbook: Runbook): ConfigAsCodeAuthority | undefined {
+    return this.authorities()[runbook.id];
+  }
+
+  protected isGitManaged(runbook: Runbook): boolean {
+    return this.authorityFor(runbook)?.authority === 'GIT_MANAGED';
   }
 
   private async loadRevisions(runbookId: string) {
@@ -428,5 +489,13 @@ export class RunbooksComponent {
     if (msg) {
       this.toast.error(msg);
     }
+  }
+
+  private blockGitManaged(runbook: Runbook): boolean {
+    if (!this.isGitManaged(runbook)) {
+      return false;
+    }
+    this.toast.error('This runbook is managed from Git.');
+    return true;
   }
 }

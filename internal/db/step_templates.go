@@ -65,6 +65,14 @@ func ImportStepTemplate(ctx context.Context, request types.StepTemplateImport) (
 		} else if err != nil {
 			return err
 		} else {
+			if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+				ctx,
+				request.OrganizationID,
+				types.ConfigAsCodeResourceKindStepTemplateReference,
+				id,
+			); err != nil {
+				return err
+			}
 			templateID = id
 		}
 		return insertStepTemplateVersion(ctx, templateID, request)

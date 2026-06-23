@@ -56,7 +56,7 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
-  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability metrics, observability tracing, observability dashboards, and observability correlation feature flag state', () => {
+  it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability, and config as code feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
@@ -88,6 +88,9 @@ describe('FeatureFlagService', () => {
       expect(enabled).toBe(true);
     });
     service.isObservabilityCorrelationEnabled$.subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isConfigAsCodeEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);
     });
 
@@ -169,6 +172,13 @@ describe('FeatureFlagService', () => {
         label: 'Observability Correlation',
         description: 'Builds deterministic Grafana links between traces, metrics, and dashboards.',
         milestone: 'Milestone G',
+        enabled: true,
+      },
+      {
+        key: 'config_as_code',
+        label: 'Config as Code',
+        description: 'Validates declarative configuration documents and governs Git-managed resource authority.',
+        milestone: 'Milestone H',
         enabled: true,
       },
     ]);

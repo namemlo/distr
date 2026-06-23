@@ -13,13 +13,17 @@ import {
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
-import {filter, firstValueFrom, forkJoin, map, startWith} from 'rxjs';
+import {catchError, filter, firstValueFrom, forkJoin, map, of, startWith, switchMap} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
+import {ConfigAsCodeAuthorityBadgeComponent} from '../components/config-as-code-authority-badge/config-as-code-authority-badge.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
 import {EnvironmentsService} from '../services/environments.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {LifecyclesService} from '../services/lifecycles.service';
 import {DialogRef, OverlayService} from '../services/overlay.service';
 import {ToastService} from '../services/toast.service';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {Environment} from '../types/environment';
 import {
   CreateUpdateLifecyclePhaseRequest,
@@ -41,7 +45,13 @@ type PhaseFormGroup = FormGroup<{
 @Component({
   templateUrl: './lifecycles.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReactiveFormsModule, FontAwesomeModule, DecimalPipe, AutotrimDirective],
+  imports: [
+    ReactiveFormsModule,
+    FontAwesomeModule,
+    DecimalPipe,
+    AutotrimDirective,
+    ConfigAsCodeAuthorityBadgeComponent,
+  ],
 })
 export class LifecyclesComponent {
   protected readonly faMagnifyingGlass = faMagnifyingGlass;
@@ -55,12 +65,15 @@ export class LifecyclesComponent {
   protected readonly faTriangleExclamation = faTriangleExclamation;
 
   private readonly lifecyclesService = inject(LifecyclesService);
+  private readonly configAsCodeService = inject(ConfigAsCodeService);
+  private readonly featureFlagService = inject(FeatureFlagService);
   private readonly environmentsService = inject(EnvironmentsService);
   private readonly toast = inject(ToastService);
   private readonly overlay = inject(OverlayService);
 
   protected readonly lifecycles = signal<Lifecycle[]>([]);
   protected readonly environments = signal<Environment[]>([]);
+  protected readonly authorities = signal<Record<string, ConfigAsCodeAuthority>>({});
   protected readonly loading = signal(true);
   protected readonly loadError = signal<string | undefined>(undefined);
   protected readonly formLoading = signal(false);
@@ -99,18 +112,37 @@ export class LifecyclesComponent {
     forkJoin({
       lifecycles: this.lifecyclesService.list(),
       environments: this.environmentsService.list(),
-    }).subscribe({
-      next: ({lifecycles, environments}) => {
-        this.lifecycles.set(lifecycles);
-        this.environments.set(environments);
-        this.applyFilter(this.filterForm.controls.search.value);
-        this.loading.set(false);
-      },
-      error: (e) => {
-        this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load lifecycles.');
-        this.loading.set(false);
-      },
-    });
+      configAsCodeEnabled: this.featureFlagService.isConfigAsCodeEnabled$.pipe(catchError(() => of(false))),
+    })
+      .pipe(
+        switchMap((loaded) => {
+          if (!loaded.configAsCodeEnabled) {
+            return of({...loaded, authorities: [] as ConfigAsCodeAuthority[]});
+          }
+          return this.configAsCodeService
+            .listAuthorities()
+            .pipe(map((response) => ({...loaded, authorities: response.authorities})));
+        })
+      )
+      .subscribe({
+        next: ({lifecycles, environments, authorities}) => {
+          this.lifecycles.set(lifecycles);
+          this.environments.set(environments);
+          this.authorities.set(
+            Object.fromEntries(
+              authorities
+                .filter((authority) => authority.resourceKind === 'Lifecycle')
+                .map((authority) => [authority.resourceId, authority])
+            )
+          );
+          this.applyFilter(this.filterForm.controls.search.value);
+          this.loading.set(false);
+        },
+        error: (e) => {
+          this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load lifecycles.');
+          this.loading.set(false);
+        },
+      });
   }
 
   protected showCreateDialog() {
@@ -127,6 +159,9 @@ export class LifecyclesComponent {
   }
 
   protected showUpdateDialog(lifecycle: Lifecycle) {
+    if (this.blockGitManaged(lifecycle)) {
+      return;
+    }
     this.closeDialog(false);
     this.clearPhases();
     this.lifecycleForm.patchValue({
@@ -176,6 +211,10 @@ export class LifecyclesComponent {
         phases: value.phases,
       };
       if (value.id) {
+        const lifecycle = this.lifecycles().find((item) => item.id === value.id);
+        if (lifecycle && this.blockGitManaged(lifecycle)) {
+          return;
+        }
         await firstValueFrom(this.lifecyclesService.update(value.id, request));
       } else {
         await firstValueFrom(this.lifecyclesService.create(request));
@@ -193,6 +232,9 @@ export class LifecyclesComponent {
   }
 
   protected delete(lifecycle: Lifecycle) {
+    if (this.blockGitManaged(lifecycle)) {
+      return;
+    }
     this.overlay
       .confirm({
         message: {
@@ -224,6 +266,14 @@ export class LifecyclesComponent {
       .map((id) => this.environments().find((environment) => environment.id === id)?.name)
       .filter((name): name is string => typeof name === 'string');
     return names.join(', ');
+  }
+
+  protected authorityFor(lifecycle: Lifecycle): ConfigAsCodeAuthority | undefined {
+    return this.authorities()[lifecycle.id];
+  }
+
+  protected isGitManaged(lifecycle: Lifecycle): boolean {
+    return this.authorityFor(lifecycle)?.authority === 'GIT_MANAGED';
   }
 
   private createPhaseGroup(phase?: LifecyclePhase | CreateUpdateLifecyclePhaseRequest): PhaseFormGroup {
@@ -273,5 +323,13 @@ export class LifecyclesComponent {
   private nextPhaseSortOrder(): number {
     const maxSortOrder = Math.max(0, ...this.phasesArray.controls.map((phase) => phase.controls.sortOrder.value));
     return maxSortOrder + 10;
+  }
+
+  private blockGitManaged(lifecycle: Lifecycle): boolean {
+    if (!this.isGitManaged(lifecycle)) {
+      return false;
+    }
+    this.toast.error('This lifecycle is managed from Git.');
+    return true;
   }
 }

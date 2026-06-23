@@ -10,12 +10,16 @@ import {
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
-import {firstValueFrom, startWith} from 'rxjs';
+import {catchError, firstValueFrom, forkJoin, map, of, startWith, switchMap} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
+import {ConfigAsCodeAuthorityBadgeComponent} from '../components/config-as-code-authority-badge/config-as-code-authority-badge.component';
 import {AutotrimDirective} from '../directives/autotrim.directive';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {DialogRef, OverlayService} from '../services/overlay.service';
 import {StepTemplatesService} from '../services/step-templates.service';
 import {ToastService} from '../services/toast.service';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {ImportStepTemplateRequest, StepTemplate} from '../types/step-template';
 
 interface CatalogStepTemplate {
@@ -69,7 +73,14 @@ const builtInStepTemplateCatalog: CatalogStepTemplate[] = [
 @Component({
   templateUrl: './step-templates.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReactiveFormsModule, FontAwesomeModule, DatePipe, JsonPipe, AutotrimDirective],
+  imports: [
+    ReactiveFormsModule,
+    FontAwesomeModule,
+    DatePipe,
+    JsonPipe,
+    AutotrimDirective,
+    ConfigAsCodeAuthorityBadgeComponent,
+  ],
 })
 export class StepTemplatesComponent {
   protected readonly faMagnifyingGlass = faMagnifyingGlass;
@@ -80,12 +91,15 @@ export class StepTemplatesComponent {
   protected readonly faXmark = faXmark;
 
   private readonly stepTemplatesService = inject(StepTemplatesService);
+  private readonly configAsCodeService = inject(ConfigAsCodeService);
+  private readonly featureFlagService = inject(FeatureFlagService);
   private readonly toast = inject(ToastService);
   private readonly overlay = inject(OverlayService);
   private readonly fb = inject(FormBuilder).nonNullable;
 
   protected readonly catalogTemplates = builtInStepTemplateCatalog;
   protected readonly templates = signal<StepTemplate[]>([]);
+  protected readonly authorities = signal<Record<string, ConfigAsCodeAuthority>>({});
   protected readonly filteredTemplates = signal<StepTemplate[]>([]);
   protected readonly selectedCatalogTemplate = signal<CatalogStepTemplate | undefined>(undefined);
   protected readonly selectedInstalledTemplate = signal<StepTemplate | undefined>(undefined);
@@ -110,17 +124,38 @@ export class StepTemplatesComponent {
   protected load() {
     this.loading.set(true);
     this.loadError.set(undefined);
-    this.stepTemplatesService.list().subscribe({
-      next: (templates) => {
-        this.templates.set(templates);
-        this.applyFilter(this.filterForm.controls.search.value);
-        this.loading.set(false);
-      },
-      error: (e) => {
-        this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load step templates.');
-        this.loading.set(false);
-      },
-    });
+    forkJoin({
+      templates: this.stepTemplatesService.list(),
+      configAsCodeEnabled: this.featureFlagService.isConfigAsCodeEnabled$.pipe(catchError(() => of(false))),
+    })
+      .pipe(
+        switchMap((loaded) => {
+          if (!loaded.configAsCodeEnabled) {
+            return of({...loaded, authorities: [] as ConfigAsCodeAuthority[]});
+          }
+          return this.configAsCodeService
+            .listAuthorities()
+            .pipe(map((response) => ({...loaded, authorities: response.authorities})));
+        })
+      )
+      .subscribe({
+        next: ({templates, authorities}) => {
+          this.templates.set(templates);
+          this.authorities.set(
+            Object.fromEntries(
+              authorities
+                .filter((authority) => authority.resourceKind === 'StepTemplateReference')
+                .map((authority) => [authority.resourceId, authority])
+            )
+          );
+          this.applyFilter(this.filterForm.controls.search.value);
+          this.loading.set(false);
+        },
+        error: (e) => {
+          this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load step templates.');
+          this.loading.set(false);
+        },
+      });
   }
 
   protected showCatalogPreview(template: CatalogStepTemplate) {
@@ -142,6 +177,10 @@ export class StepTemplatesComponent {
   }
 
   protected async importCatalogTemplate(template: CatalogStepTemplate) {
+    const installed = this.installedTemplateForCatalog(template);
+    if (installed && this.blockGitManaged(installed)) {
+      return;
+    }
     this.formLoading.set(true);
     try {
       await firstValueFrom(this.stepTemplatesService.importTemplate(template.request));
@@ -159,12 +198,29 @@ export class StepTemplatesComponent {
   }
 
   protected isCatalogInstalled(template: CatalogStepTemplate): boolean {
-    return this.templates().some(
+    return this.installedTemplateForCatalog(template) !== undefined;
+  }
+
+  protected installedTemplateForCatalog(template: CatalogStepTemplate): StepTemplate | undefined {
+    return this.templates().find(
       (installed) =>
         installed.sourceType === template.request.sourceType &&
         installed.sourceRef === template.request.sourceRef &&
         installed.versions.some((version) => version.version === template.request.version)
     );
+  }
+
+  protected isCatalogGitManaged(template: CatalogStepTemplate): boolean {
+    const installed = this.installedTemplateForCatalog(template);
+    return installed ? this.isGitManaged(installed) : false;
+  }
+
+  protected authorityFor(template: StepTemplate): ConfigAsCodeAuthority | undefined {
+    return this.authorities()[template.id];
+  }
+
+  protected isGitManaged(template: StepTemplate): boolean {
+    return this.authorityFor(template)?.authority === 'GIT_MANAGED';
   }
 
   protected latestVersion(template: StepTemplate): string {
@@ -188,5 +244,13 @@ export class StepTemplatesComponent {
         );
       })
     );
+  }
+
+  private blockGitManaged(template: StepTemplate): boolean {
+    if (!this.isGitManaged(template)) {
+      return false;
+    }
+    this.toast.error('This step template is managed from Git.');
+    return true;
   }
 }
