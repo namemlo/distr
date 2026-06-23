@@ -6,13 +6,13 @@ PR-048 adds the first Config as Code foundation behind `config_as_code`. It vali
 
 ## Included
 
-- Strict validation for `distr.sh/v1alpha1` envelopes, required metadata, kind-specific schemas, and typed nested fields.
+- Strict validation for `distr.sh/v1alpha1` envelopes, required metadata, kind-specific schemas, typed nested fields, channel rule objects, step-template source references, and variable default/reference semantics.
 - Supported kinds: `DeploymentProcess`, `Channel`, `Lifecycle`, `VariableSetDefinition`, `StepTemplateReference`, and `Runbook`.
 - Canonical JSON checksums for valid documents, including format-independent numeric normalization.
 - Plaintext-secret rejection with redacted validation messages, nested credential-key scanning, and typed non-empty reference fields.
 - `POST /api/v1/config-as-code/validate`.
 - Org-scoped authority APIs under `/api/v1/config-as-code/authorities`.
-- `DATABASE_MANAGED` and `GIT_MANAGED` authority persistence plus non-secret audit events and shared repository-path validation.
+- `DATABASE_MANAGED` and `GIT_MANAGED` authority persistence plus non-secret audit events and shared repository-path validation, including traversal, backslash, absolute, and Windows drive/drive-relative rejection.
 - Server-side mutation guards for the supported resource families.
 - Frontend service/types, feature flag plumbing, and authority badge/read-only controls for deployment processes, channels, lifecycles, variable sets, step templates, and runbooks.
 

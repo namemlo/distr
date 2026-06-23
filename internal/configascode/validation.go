@@ -47,7 +47,7 @@ var supportedKinds = map[string]kindSchema{
 			"description": {kind: valueString},
 			"isDefault":   {kind: valueBool},
 			"lifecycle":   {kind: valueString},
-			"rules":       {kind: valueArray, arrayItem: objectItem(nil, true)},
+			"rules":       {kind: valueArray, arrayItem: objectItem(channelRuleFields(), false)},
 			"sortOrder":   {kind: valueInteger},
 		},
 	},
@@ -78,7 +78,7 @@ var supportedKinds = map[string]kindSchema{
 	"StepTemplateReference": {
 		specFields: map[string]fieldSchema{
 			"description": {kind: valueString},
-			"source":      {kind: valueObject, required: true, allowUnknownFields: true},
+			"source":      {kind: valueObject, required: true, fields: stepTemplateSourceFields()},
 			"template":    {kind: valueString, required: true},
 			"version":     {kind: valueString},
 		},
@@ -102,6 +102,7 @@ type fieldSchema struct {
 	arrayItem          *fieldSchema
 	allowUnknownFields bool
 	reference          bool
+	allowedStrings     []string
 }
 
 func ValidateDocuments(input []byte) ValidationResult {
@@ -380,6 +381,7 @@ func (r *ValidationResult) validateDocument(index int, document any) {
 	spec, specOK := r.requireObject(index, basePath+".spec", root["spec"], "spec must be an object")
 	if specOK && schemaOK {
 		r.validateFields(index, basePath+".spec", spec, schema.specFields, false)
+		r.validateKindSemantics(index, basePath+".spec", kind, spec)
 	}
 	r.rejectPlaintextSecrets(index, basePath, root, false)
 
@@ -464,8 +466,13 @@ func (r *ValidationResult) validateValue(index int, issuePath string, value any,
 	case valueAny:
 		return
 	case valueString:
-		if str, ok := value.(string); !ok || strings.TrimSpace(str) == "" {
+		str, ok := value.(string)
+		if !ok || strings.TrimSpace(str) == "" {
 			r.addError(index, issuePath, "must be a non-empty string")
+			return
+		}
+		if len(schema.allowedStrings) > 0 && !containsString(schema.allowedStrings, strings.TrimSpace(str)) {
+			r.addError(index, issuePath, "must be one of: "+strings.Join(schema.allowedStrings, ", "))
 		}
 	case valueBool:
 		if _, ok := value.(bool); !ok {
@@ -484,6 +491,9 @@ func (r *ValidationResult) validateValue(index int, issuePath string, value any,
 		if schema.fields != nil || !schema.allowUnknownFields {
 			r.validateFields(index, issuePath, object, schema.fields, schema.allowUnknownFields)
 		}
+		if schema.allowUnknownFields {
+			r.validateReferenceFields(index, issuePath, object)
+		}
 	case valueArray:
 		items, ok := value.([]any)
 		if !ok {
@@ -499,6 +509,116 @@ func (r *ValidationResult) validateValue(index int, issuePath string, value any,
 	}
 }
 
+func (r *ValidationResult) validateKindSemantics(index int, specPath string, kind string, spec map[string]any) {
+	switch kind {
+	case "VariableSetDefinition":
+		r.validateVariableDefinitions(index, specPath+".variables", spec["variables"])
+	}
+}
+
+func (r *ValidationResult) validateVariableDefinitions(index int, issuePath string, rawVariables any) {
+	variables, ok := rawVariables.([]any)
+	if !ok {
+		return
+	}
+	for i, rawVariable := range variables {
+		variable, ok := rawVariable.(map[string]any)
+		if !ok {
+			continue
+		}
+		variablePath := fmt.Sprintf("%s[%d]", issuePath, i)
+		r.validateVariableDefinition(index, variablePath, variable)
+	}
+}
+
+func (r *ValidationResult) validateVariableDefinition(index int, issuePath string, variable map[string]any) {
+	rawType, ok := variable["type"].(string)
+	if !ok || strings.TrimSpace(rawType) == "" {
+		return
+	}
+	variableType := strings.TrimSpace(rawType)
+	switch variableType {
+	case "string", "number", "boolean", "json":
+		r.validateDefaultVariable(index, issuePath, variableType, variable)
+	case "secret", "secret_reference":
+		r.validateReferenceVariable(index, issuePath, variableType, "secretRef", variable)
+	case "account", "account_reference":
+		r.validateReferenceVariable(index, issuePath, variableType, "accountRef", variable)
+	case "certificate", "certificate_reference":
+		r.validateReferenceVariable(index, issuePath, variableType, "certificateRef", variable)
+	default:
+		r.addError(index, issuePath+".type", "unsupported variable type")
+	}
+}
+
+func (r *ValidationResult) validateDefaultVariable(index int, issuePath string, variableType string, variable map[string]any) {
+	for _, field := range variableReferenceFields() {
+		if _, exists := variable[field]; exists {
+			r.addError(index, issuePath+"."+field, "reference fields are not allowed for "+variableType+" variables")
+		}
+	}
+	defaultValue, exists := variable["default"]
+	if !exists {
+		r.addError(index, issuePath+".default", "default is required for "+variableType+" variables")
+		return
+	}
+	switch variableType {
+	case "string":
+		if _, ok := defaultValue.(string); !ok {
+			r.addError(index, issuePath+".default", "string variables require a string default")
+		}
+	case "number":
+		if !isNumberValue(defaultValue) {
+			r.addError(index, issuePath+".default", "number variables require a numeric default")
+		}
+	case "boolean":
+		if _, ok := defaultValue.(bool); !ok {
+			r.addError(index, issuePath+".default", "boolean variables require a boolean default")
+		}
+	case "json":
+		if defaultValue == nil {
+			r.addError(index, issuePath+".default", "json variables require a non-null default")
+		}
+	}
+}
+
+func (r *ValidationResult) validateReferenceVariable(index int, issuePath string, variableType string, expectedRef string, variable map[string]any) {
+	if _, exists := variable["default"]; exists {
+		r.addError(index, issuePath+".default", variableType+" variables must not include default")
+	}
+	for _, field := range variableReferenceFields() {
+		_, exists := variable[field]
+		if field == expectedRef {
+			if !exists {
+				r.addError(index, issuePath+"."+field, field+" is required for "+variableType+" variables")
+			}
+			continue
+		}
+		if exists {
+			r.addError(index, issuePath+"."+field, variableType+" variables must not include "+field)
+		}
+	}
+}
+
+func (r *ValidationResult) validateReferenceFields(index int, issuePath string, value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			childPath := issuePath + "." + key
+			if isReferenceField(key) {
+				if str, ok := item.(string); !ok || strings.TrimSpace(str) == "" {
+					r.addError(index, childPath, "must be a non-empty string reference")
+				}
+				continue
+			}
+			r.validateReferenceFields(index, childPath, item)
+		}
+	case []any:
+		for i, item := range typed {
+			r.validateReferenceFields(index, fmt.Sprintf("%s[%d]", issuePath, i), item)
+		}
+	}
+}
 func (r *ValidationResult) addMissingFieldError(index int, issuePath string, schema fieldSchema) {
 	if schema.reference {
 		r.addError(index, issuePath, "must be a non-empty string reference")
@@ -683,6 +803,25 @@ func hasDocumentError(errors []Issue, documentIndex int) bool {
 	return false
 }
 
+func channelRuleFields() map[string]fieldSchema {
+	return map[string]fieldSchema{
+		"allowedVersionRanges":      stringArrayField(),
+		"allowedPrereleasePatterns": stringArrayField(),
+		"allowedSourceBranches":     stringArrayField(),
+		"allowedSourceTags":         stringArrayField(),
+	}
+}
+
+func stepTemplateSourceFields() map[string]fieldSchema {
+	return map[string]fieldSchema{
+		"sourceType": {kind: valueString, required: true, allowedStrings: []string{"builtin", "oci"}},
+		"sourceRef":  {kind: valueString, required: true},
+	}
+}
+
+func stringArrayField() fieldSchema {
+	return fieldSchema{kind: valueArray, arrayItem: &fieldSchema{kind: valueString}}
+}
 func deploymentStepFields() map[string]fieldSchema {
 	return map[string]fieldSchema{
 		"actionType":     {kind: valueString, required: true},
@@ -710,6 +849,21 @@ func objectItem(fields map[string]fieldSchema, allowUnknown bool) *fieldSchema {
 	return &fieldSchema{kind: valueObject, fields: fields, allowUnknownFields: allowUnknown}
 }
 
+func isNumberValue(value any) bool {
+	switch typed := value.(type) {
+	case int:
+		return true
+	case int64:
+		return true
+	case float64:
+		return !math.IsInf(typed, 0) && !math.IsNaN(typed)
+	case json.Number:
+		_, err := strconv.ParseFloat(string(typed), 64)
+		return err == nil
+	default:
+		return false
+	}
+}
 func isIntegerValue(value any) bool {
 	switch typed := value.(type) {
 	case int:
@@ -730,15 +884,27 @@ func isIntegerValue(value any) bool {
 }
 
 func hasWindowsDrivePrefix(value string) bool {
-	return len(value) >= 3 && value[1] == ':' && (value[2] == '/' || value[2] == '\\') && unicode.IsLetter(rune(value[0]))
+	return len(value) >= 2 && value[1] == ':' && unicode.IsLetter(rune(value[0]))
 }
 
 func variableDefinitionLooksSecret(value map[string]any) bool {
 	name, _ := value["name"].(string)
 	variableType, _ := value["type"].(string)
-	return isSensitiveIdentifier(name) || strings.EqualFold(variableType, "secret")
+	return isSensitiveIdentifier(name) || strings.EqualFold(variableType, "secret") || strings.EqualFold(variableType, "secret_reference")
 }
 
+func variableReferenceFields() []string {
+	return []string{"secretRef", "accountRef", "certificateRef"}
+}
+
+func containsString(values []string, candidate string) bool {
+	for _, value := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
 func isReferenceField(key string) bool {
 	switch key {
 	case "secretRef", "accountRef", "certificateRef", "passwordSecretRef", "signingSecretRef":

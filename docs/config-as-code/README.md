@@ -25,7 +25,9 @@ Supported kinds:
 - `StepTemplateReference`
 - `Runbook`
 
-Validation rejects unsupported versions or kinds, unknown fields, duplicate YAML or JSON keys, absolute paths, Windows drive paths, backslash paths, path traversal, oversized or deeply nested documents, YAML aliases/anchors, wrong field types, missing required fields, and plaintext secret-like values. Valid YAML and equivalent JSON produce the same canonical checksum, including equivalent numeric representations.
+Validation rejects unsupported versions or kinds, unknown fields, duplicate YAML or JSON keys, absolute paths, Windows drive paths including drive-relative paths such as `C:repo/file.yaml`, backslash paths, path traversal, oversized or deeply nested documents, YAML aliases/anchors, wrong field types, missing required fields, and plaintext secret-like values. Valid YAML and equivalent JSON produce the same canonical checksum, including equivalent numeric representations.
+
+Nested schemas are strict. `Channel.rules` accepts only `allowedVersionRanges`, `allowedPrereleasePatterns`, `allowedSourceBranches`, and `allowedSourceTags` string arrays. `StepTemplateReference.source` requires `sourceType` (`builtin` or `oci`) and `sourceRef`. `VariableSetDefinition` variables must use supported types (`string`, `number`, `boolean`, `json`, `secret`, `account`, or `certificate`) with either a matching non-secret `default` or the matching reference field.
 
 ## Authority
 

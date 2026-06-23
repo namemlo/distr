@@ -23,7 +23,7 @@ CREATE TABLE ConfigAsCodeAuthority (
     repository_path = ''
     OR (
       repository_path NOT LIKE '/%'
-      AND repository_path !~ '^[A-Za-z]:/'
+      AND repository_path !~ '^[A-Za-z]:'
       AND position(chr(92) in repository_path) = 0
       AND repository_path !~ '(^|/)\.\.(/|$)'
     )

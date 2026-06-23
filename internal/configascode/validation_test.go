@@ -256,6 +256,38 @@ spec:
 			wantError: "must be a boolean",
 		},
 		{
+			name: "channel rule rejects unknown field",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  name: stable
+  path: channels/stable.yaml
+spec:
+  rules:
+    - allowedVersionRanges:
+        - ">= 1.0.0"
+      surprise: true
+`,
+			wantPath:  "$[0].spec.rules[0].surprise",
+			wantError: "unknown field",
+		},
+		{
+			name: "channel rule list must contain strings",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: Channel
+metadata:
+  name: stable
+  path: channels/stable.yaml
+spec:
+  rules:
+    - allowedSourceBranches: main
+`,
+			wantPath:  "$[0].spec.rules[0].allowedSourceBranches",
+			wantError: "must be an array",
+		},
+		{
 			name: "lifecycle phase requires name",
 			input: `
 apiVersion: distr.sh/v1alpha1
@@ -301,6 +333,41 @@ spec:
 			wantError: "must be an object",
 		},
 		{
+			name: "step template source rejects unknown field",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: StepTemplateReference
+metadata:
+  name: notify
+  path: step-templates/notify.yaml
+spec:
+  source:
+    sourceType: builtin
+    sourceRef: builtin/notify
+    token: leak
+  template: notify
+`,
+			wantPath:  "$[0].spec.source.token",
+			wantError: "unknown field",
+		},
+		{
+			name: "step template source type must be known",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: StepTemplateReference
+metadata:
+  name: notify
+  path: step-templates/notify.yaml
+spec:
+  source:
+    sourceType: git
+    sourceRef: community/notify
+  template: notify
+`,
+			wantPath:  "$[0].spec.source.sourceType",
+			wantError: "must be one of",
+		},
+		{
 			name: "runbook step input bindings must be object",
 			input: `
 apiVersion: distr.sh/v1alpha1
@@ -316,6 +383,24 @@ spec:
 `,
 			wantPath:  "$[0].spec.steps[0].inputBindings",
 			wantError: "must be an object",
+		},
+		{
+			name: "dynamic step input reference must be string",
+			input: `
+apiVersion: distr.sh/v1alpha1
+kind: DeploymentProcess
+metadata:
+  name: deploy
+  path: processes/deploy.yaml
+spec:
+  steps:
+    - key: deploy
+      actionType: distr.compose.deploy
+      inputBindings:
+        secretRef: {}
+`,
+			wantPath:  "$[0].spec.steps[0].inputBindings.secretRef",
+			wantError: "must be a non-empty string reference",
 		},
 	}
 
@@ -423,6 +508,7 @@ func TestValidateDocumentsRejectsAdditionalUnsafeRepositoryPaths(t *testing.T) {
 		{name: "normalized traversal", path: "channels/../stable.yaml", wantError: "traversal"},
 		{name: "backslash traversal", path: `channels\..\stable.yaml`, wantError: "backslash"},
 		{name: "windows drive", path: "C:/repo/channel.yaml", wantError: "relative repository path"},
+		{name: "windows drive relative", path: "C:repo/channel.yaml", wantError: "relative repository path"},
 	}
 
 	for _, tt := range tests {
@@ -624,6 +710,111 @@ spec:
 			g := NewWithT(t)
 
 			result := ValidateDocuments([]byte(tt.input))
+
+			g.Expect(result.Valid).To(BeFalse())
+			g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+				"DocumentIndex": Equal(0),
+				"Path":          Equal(tt.wantPath),
+				"Message":       ContainSubstring(tt.wantError),
+			})))
+			for _, issue := range result.Errors {
+				g.Expect(issue.Message).NotTo(ContainSubstring("plaintext-fixture-value"))
+			}
+		})
+	}
+}
+func TestValidateDocumentsRejectsInvalidVariableSemantics(t *testing.T) {
+	tests := []struct {
+		name      string
+		variable  string
+		wantPath  string
+		wantError string
+	}{
+		{
+			name: "unsupported variable type",
+			variable: `
+    - name: REGION
+      type: region
+      default: ap-southeast-1
+`,
+			wantPath:  "$[0].spec.variables[0].type",
+			wantError: "unsupported variable type",
+		},
+		{
+			name: "string variable requires default",
+			variable: `
+    - name: REGION
+      type: string
+`,
+			wantPath:  "$[0].spec.variables[0].default",
+			wantError: "default is required",
+		},
+		{
+			name: "number variable default must be number",
+			variable: `
+    - name: RETRIES
+      type: number
+      default: five
+`,
+			wantPath:  "$[0].spec.variables[0].default",
+			wantError: "number variables require a numeric default",
+		},
+		{
+			name: "non-reference variable rejects reference field",
+			variable: `
+    - name: REGION
+      type: string
+      default: ap-southeast-1
+      secretRef: region-secret
+`,
+			wantPath:  "$[0].spec.variables[0].secretRef",
+			wantError: "reference fields are not allowed",
+		},
+		{
+			name: "secret variable requires secret reference",
+			variable: `
+    - name: DATABASE_PASSWORD
+      type: secret
+`,
+			wantPath:  "$[0].spec.variables[0].secretRef",
+			wantError: "secretRef is required",
+		},
+		{
+			name: "secret variable rejects default",
+			variable: `
+    - name: DATABASE_PASSWORD
+      type: secret
+      secretRef: database-password
+      default: plaintext-fixture-value
+`,
+			wantPath:  "$[0].spec.variables[0].default",
+			wantError: "must not include default",
+		},
+		{
+			name: "account variable rejects wrong reference field",
+			variable: `
+    - name: CLOUD_ACCOUNT
+      type: account
+      certificateRef: prod-tls
+`,
+			wantPath:  "$[0].spec.variables[0].certificateRef",
+			wantError: "must not include certificateRef",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			input := `
+apiVersion: distr.sh/v1alpha1
+kind: VariableSetDefinition
+metadata:
+  name: prod-vars
+  path: variable-sets/prod.yaml
+spec:
+  variables:` + tt.variable
+
+			result := ValidateDocuments([]byte(input))
 
 			g.Expect(result.Valid).To(BeFalse())
 			g.Expect(result.Errors).To(ContainElement(MatchFields(IgnoreExtras, Fields{

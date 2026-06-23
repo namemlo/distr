@@ -146,6 +146,7 @@ func TestConfigAsCodeAuthorityRepositoryRejectsUnsafeRepositoryPaths(t *testing.
 		"channels/../stable.yaml",
 		`channels\..\stable.yaml`,
 		"C:/repo/stable.yaml",
+		"C:repo/stable.yaml",
 		`C:\repo\stable.yaml`,
 	} {
 		authority := types.ConfigAsCodeAuthority{
@@ -223,6 +224,7 @@ func TestConfigAsCodeAuthorityMigrationDefinesAuthorityTable(t *testing.T) {
 	g.Expect(sql).To(ContainSubstring("CHECK (authority IN ('DATABASE_MANAGED', 'GIT_MANAGED'))"))
 	g.Expect(sql).To(ContainSubstring("updated_at TIMESTAMP NOT NULL DEFAULT now()"))
 	g.Expect(sql).To(ContainSubstring("configascodeauthority_resource_unique"))
+	g.Expect(sql).To(ContainSubstring("repository_path !~ '^[A-Za-z]:'"))
 	g.Expect(sql).To(ContainSubstring("position(chr(92) in repository_path) = 0"))
 	g.Expect(sql).To(ContainSubstring("repository_path !~ '(^|/)\\.\\.(/|$)'"))
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE ConfigAsCodeAuthorityAuditEvent"))
