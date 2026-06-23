@@ -25,6 +25,7 @@ describe('DeploymentTimelineService', () => {
       base: {} as any,
       compare: {} as any,
       process: {changed: false},
+      availability: {process: true, steps: true, variables: true},
       components: [],
       steps: [],
       variables: [],
@@ -60,5 +61,26 @@ describe('DeploymentTimelineService', () => {
     expect(redeployReq.request.method).toBe('POST');
     expect(redeployReq.request.body).toBeNull();
     redeployReq.flush(redeploy);
+  });
+
+  it('uses source-specific compare parameters for legacy entries', () => {
+    const comparison = {
+      base: {} as any,
+      compare: {} as any,
+      process: {changed: false},
+      availability: {process: false, steps: false, variables: false},
+      components: [],
+      steps: [],
+      variables: [],
+    };
+
+    (service as any)
+      .compare({legacyDeploymentRevisionId: 'legacy-revision-1'}, {taskId: 'task-2'})
+      .subscribe((result: any) => expect(result.availability.process).toBe(false));
+    const compareReq = http.expectOne(
+      '/api/v1/deployment-timeline/compare?baseLegacyDeploymentRevisionId=legacy-revision-1&compareTaskId=task-2'
+    );
+    expect(compareReq.request.method).toBe('GET');
+    compareReq.flush(comparison);
   });
 });

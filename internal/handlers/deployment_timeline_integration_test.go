@@ -39,7 +39,8 @@ func TestDeploymentTimelineHandlersListCompareAndRedeploy(t *testing.T) {
 	var timeline api.DeploymentTimeline
 	g.Expect(json.Unmarshal(listRecorder.Body.Bytes(), &timeline)).To(Succeed())
 	g.Expect(timeline.Items).To(HaveLen(1))
-	g.Expect(timeline.Items[0].TaskID).To(Equal(tasks[0].ID))
+	g.Expect(timeline.Items[0].TaskID).NotTo(BeNil())
+	g.Expect(*timeline.Items[0].TaskID).To(Equal(tasks[0].ID))
 	g.Expect(timeline.Items[0].ActorUserAccountID).To(Equal(&deps.actorID))
 	g.Expect(timeline.Items[0].Components).To(HaveLen(1))
 	g.Expect(timeline.Items[0].RedeployAvailable).To(BeTrue())
@@ -57,8 +58,10 @@ func TestDeploymentTimelineHandlersListCompareAndRedeploy(t *testing.T) {
 	g.Expect(compareRecorder.Code).To(Equal(http.StatusOK))
 	var comparison api.DeploymentTimelineComparison
 	g.Expect(json.Unmarshal(compareRecorder.Body.Bytes(), &comparison)).To(Succeed())
-	g.Expect(comparison.Base.TaskID).To(Equal(tasks[0].ID))
-	g.Expect(comparison.Compare.TaskID).To(Equal(tasks[0].ID))
+	g.Expect(comparison.Base.TaskID).NotTo(BeNil())
+	g.Expect(*comparison.Base.TaskID).To(Equal(tasks[0].ID))
+	g.Expect(comparison.Compare.TaskID).NotTo(BeNil())
+	g.Expect(*comparison.Compare.TaskID).To(Equal(tasks[0].ID))
 	g.Expect(comparison.Process.Changed).To(BeFalse())
 
 	redeployRecorder := httptest.NewRecorder()

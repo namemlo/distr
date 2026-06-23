@@ -3,6 +3,7 @@ package mapping
 import (
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 )
 
 func DeploymentTimelineToAPI(timeline types.DeploymentTimeline) api.DeploymentTimeline {
@@ -14,25 +15,25 @@ func DeploymentTimelineToAPI(timeline types.DeploymentTimeline) api.DeploymentTi
 func DeploymentTimelineItemToAPI(item types.DeploymentTimelineItem) api.DeploymentTimelineItem {
 	return api.DeploymentTimelineItem{
 		Source:                     item.Source,
-		TaskID:                     item.TaskID,
-		LegacyDeploymentID:         item.LegacyDeploymentID,
-		LegacyDeploymentRevisionID: item.LegacyDeploymentRevisionID,
-		SyntheticReleaseID:         item.SyntheticReleaseID,
-		DeploymentPlanID:           item.DeploymentPlanID,
-		DeploymentPlanTargetID:     item.DeploymentPlanTargetID,
+		TaskID:                     uuidPtrIfNotNil(item.TaskID),
+		LegacyDeploymentID:         uuidPtrIfNotNil(item.LegacyDeploymentID),
+		LegacyDeploymentRevisionID: uuidPtrIfNotNil(item.LegacyDeploymentRevisionID),
+		SyntheticReleaseID:         uuidPtrIfNotNil(item.SyntheticReleaseID),
+		DeploymentPlanID:           uuidPtrIfNotNil(item.DeploymentPlanID),
+		DeploymentPlanTargetID:     uuidPtrIfNotNil(item.DeploymentPlanTargetID),
 		DeploymentTargetID:         item.DeploymentTargetID,
 		ApplicationID:              item.ApplicationID,
 		ApplicationName:            item.ApplicationName,
-		ReleaseBundleID:            item.ReleaseBundleID,
+		ReleaseBundleID:            uuidPtrIfNotNil(item.ReleaseBundleID),
 		ReleaseNumber:              item.ReleaseNumber,
-		ChannelID:                  item.ChannelID,
+		ChannelID:                  uuidPtrIfNotNil(item.ChannelID),
 		ChannelName:                item.ChannelName,
-		EnvironmentID:              item.EnvironmentID,
+		EnvironmentID:              uuidPtrIfNotNil(item.EnvironmentID),
 		EnvironmentName:            item.EnvironmentName,
 		CustomerOrganizationID:     item.CustomerOrganizationID,
 		DeploymentTargetName:       item.DeploymentTargetName,
 		ActorUserAccountID:         item.ActorUserAccountID,
-		Status:                     item.Status,
+		Status:                     taskStatusPtrIfNotEmpty(item.Status),
 		QueuedAt:                   item.QueuedAt,
 		StartedAt:                  item.StartedAt,
 		CompletedAt:                item.CompletedAt,
@@ -58,12 +59,13 @@ func DeploymentTimelineComparisonToAPI(
 	comparison types.DeploymentTimelineComparison,
 ) api.DeploymentTimelineComparison {
 	return api.DeploymentTimelineComparison{
-		Base:       DeploymentTimelineItemToAPI(comparison.Base),
-		Compare:    DeploymentTimelineItemToAPI(comparison.Compare),
-		Process:    DeploymentTimelineProcessChangeToAPI(comparison.Process),
-		Components: List(comparison.Components, DeploymentTimelineComponentChangeToAPI),
-		Steps:      List(comparison.Steps, DeploymentTimelineStepChangeToAPI),
-		Variables:  List(comparison.Variables, DeploymentTimelineVariableChangeToAPI),
+		Base:         DeploymentTimelineItemToAPI(comparison.Base),
+		Compare:      DeploymentTimelineItemToAPI(comparison.Compare),
+		Process:      DeploymentTimelineProcessChangeToAPI(comparison.Process),
+		Availability: comparison.Availability,
+		Components:   List(comparison.Components, DeploymentTimelineComponentChangeToAPI),
+		Steps:        List(comparison.Steps, DeploymentTimelineStepChangeToAPI),
+		Variables:    List(comparison.Variables, DeploymentTimelineVariableChangeToAPI),
 	}
 }
 
@@ -126,6 +128,21 @@ func DeploymentTimelineVariableChangeToAPI(
 	}
 }
 
+func uuidPtrIfNotNil(id uuid.UUID) *uuid.UUID {
+	if id == uuid.Nil {
+		return nil
+	}
+	value := id
+	return &value
+}
+
+func taskStatusPtrIfNotEmpty(status types.TaskStatus) *types.TaskStatus {
+	if status == "" {
+		return nil
+	}
+	value := status
+	return &value
+}
 func DeploymentTimelineRedeployToAPI(redeploy types.DeploymentTimelineRedeploy) api.DeploymentTimelineRedeploy {
 	return api.DeploymentTimelineRedeploy{
 		Plan:    DeploymentPlanToAPI(redeploy.Plan),

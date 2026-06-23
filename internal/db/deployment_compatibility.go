@@ -81,23 +81,52 @@ func BackfillLegacyDeploymentCompatibility(
 	if request.Cursor != nil && request.Cursor.LegacyDeploymentRevisionID == uuid.Nil {
 		return nil, apierrors.NewBadRequest("cursor legacyDeploymentRevisionId is required")
 	}
-	candidates, err := listLegacyDeploymentCompatibilityCandidates(ctx, request)
-	if err != nil {
-		return nil, err
-	}
 	report := &types.DeploymentCompatibilityBackfillReport{}
-	if request.Apply {
-		err = RunTx(ctx, func(txCtx context.Context) error {
-			processLegacyDeploymentCompatibilityCandidates(txCtx, candidates, request, report)
-			return nil
-		})
+	cursor := request.Cursor
+	for {
+		batchRequest := request
+		batchRequest.Cursor = cursor
+		candidates, err := listLegacyDeploymentCompatibilityCandidates(ctx, batchRequest)
 		if err != nil {
 			return nil, err
 		}
-		return report, nil
+		if len(candidates) == 0 {
+			break
+		}
+		batchReport := &types.DeploymentCompatibilityBackfillReport{}
+		if request.Apply {
+			err = RunTx(ctx, func(txCtx context.Context) error {
+				processLegacyDeploymentCompatibilityCandidates(txCtx, candidates, batchRequest, batchReport)
+				return nil
+			})
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			processLegacyDeploymentCompatibilityCandidates(ctx, candidates, batchRequest, batchReport)
+		}
+		mergeDeploymentCompatibilityBackfillReport(report, batchReport)
+		if batchReport.LastCursor == nil {
+			break
+		}
+		cursor = batchReport.LastCursor
 	}
-	processLegacyDeploymentCompatibilityCandidates(ctx, candidates, request, report)
 	return report, nil
+}
+
+func mergeDeploymentCompatibilityBackfillReport(
+	total *types.DeploymentCompatibilityBackfillReport,
+	batch *types.DeploymentCompatibilityBackfillReport,
+) {
+	total.Scanned += batch.Scanned
+	total.Eligible += batch.Eligible
+	total.Projected += batch.Projected
+	total.AlreadyPresent += batch.AlreadyPresent
+	total.Skipped += batch.Skipped
+	total.Failed += batch.Failed
+	if batch.LastCursor != nil {
+		total.LastCursor = batch.LastCursor
+	}
 }
 
 func listLegacyDeploymentCompatibilityCandidates(

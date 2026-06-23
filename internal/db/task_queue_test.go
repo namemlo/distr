@@ -650,7 +650,7 @@ type taskQueuePlanDeps struct {
 	plan             *types.DeploymentPlan
 }
 
-func taskQueueDBTestContext(t *testing.T) context.Context {
+func taskQueueDBTestContext(t testing.TB) context.Context {
 	t.Helper()
 	return deploymentPlanDBTestContext(t)
 }

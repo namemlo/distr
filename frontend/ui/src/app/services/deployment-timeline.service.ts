@@ -3,6 +3,7 @@ import {inject, Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
 import {
   DeploymentTimeline,
+  DeploymentTimelineCompareRef,
   DeploymentTimelineComparison,
   DeploymentTimelineQuery,
   DeploymentTimelineRedeploy,
@@ -20,14 +21,44 @@ export class DeploymentTimelineService {
     return this.httpClient.get<DeploymentTimeline>(baseUrl, {params: this.queryParams(query)});
   }
 
-  compare(baseTaskId: string, compareTaskId: string): Observable<DeploymentTimelineComparison> {
+  compare(
+    base: DeploymentTimelineCompareRef | string,
+    compare: DeploymentTimelineCompareRef | string
+  ): Observable<DeploymentTimelineComparison> {
     return this.httpClient.get<DeploymentTimelineComparison>(`${baseUrl}/compare`, {
-      params: new HttpParams().set('baseTaskId', baseTaskId).set('compareTaskId', compareTaskId),
+      params: this.compareParams(base, compare),
     });
   }
 
   redeploy(taskId: string): Observable<DeploymentTimelineRedeploy> {
     return this.httpClient.post<DeploymentTimelineRedeploy>(`${baseUrl}/${taskId}/redeploy`, null);
+  }
+
+  private compareParams(
+    base: DeploymentTimelineCompareRef | string,
+    compare: DeploymentTimelineCompareRef | string
+  ): HttpParams {
+    let params = new HttpParams();
+    params = this.addCompareRefParams(params, 'base', this.normalizeCompareRef(base));
+    return this.addCompareRefParams(params, 'compare', this.normalizeCompareRef(compare));
+  }
+
+  private normalizeCompareRef(ref: DeploymentTimelineCompareRef | string): DeploymentTimelineCompareRef {
+    return typeof ref === 'string' ? {taskId: ref} : ref;
+  }
+
+  private addCompareRefParams(
+    params: HttpParams,
+    prefix: 'base' | 'compare',
+    ref: DeploymentTimelineCompareRef
+  ): HttpParams {
+    if (ref.taskId) {
+      return params.set(`${prefix}TaskId`, ref.taskId);
+    }
+    if (ref.legacyDeploymentRevisionId) {
+      return params.set(`${prefix}LegacyDeploymentRevisionId`, ref.legacyDeploymentRevisionId);
+    }
+    return params;
   }
 
   private queryParams(query: DeploymentTimelineQuery): HttpParams {

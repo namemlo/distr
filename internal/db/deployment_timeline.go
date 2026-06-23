@@ -11,6 +11,7 @@ import (
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/deploymentcompat"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -110,11 +111,15 @@ func CompareDeploymentTimelineTasks(
 	}
 
 	comparison := &types.DeploymentTimelineComparison{
-		Base:       base,
-		Compare:    compare,
-		Components: compareTimelineComponents(base.Components, compare.Components),
+		Base:         base,
+		Compare:      compare,
+		Availability: deploymentTimelineComparisonAvailability(base, compare),
+		Components:   compareTimelineComponents(base.Components, compare.Components),
 	}
 	if base.DeploymentPlanID == uuid.Nil || compare.DeploymentPlanID == uuid.Nil {
+		return comparison, nil
+	}
+	if !comparison.Availability.Process && !comparison.Availability.Steps && !comparison.Availability.Variables {
 		return comparison, nil
 	}
 
@@ -126,13 +131,19 @@ func CompareDeploymentTimelineTasks(
 	if err != nil {
 		return nil, err
 	}
-	process, err := compareTimelineProcess(ctx, basePlan, comparePlan, request.OrganizationID)
-	if err != nil {
-		return nil, err
+	if comparison.Availability.Process {
+		process, err := compareTimelineProcess(ctx, basePlan, comparePlan, request.OrganizationID)
+		if err != nil {
+			return nil, err
+		}
+		comparison.Process = process
 	}
-	comparison.Process = process
-	comparison.Steps = compareTimelineSteps(basePlan.Steps, comparePlan.Steps)
-	comparison.Variables = compareTimelineVariables(basePlan.Variables, comparePlan.Variables)
+	if comparison.Availability.Steps {
+		comparison.Steps = compareTimelineSteps(basePlan.Steps, comparePlan.Steps)
+	}
+	if comparison.Availability.Variables {
+		comparison.Variables = compareTimelineVariables(basePlan.Variables, comparePlan.Variables)
+	}
 	return comparison, nil
 }
 
@@ -370,40 +381,46 @@ func queryLegacyDeploymentTimelineItems(
 	rows, err := db.Query(
 		ctx,
 		`SELECT
-			dcm.legacy_deployment_id,
-			dcm.legacy_deployment_revision_id,
-			dcm.deployment_target_id,
-			dcm.application_id,
-			a.name AS application_name,
-			dcm.application_version_id,
-			av.name AS application_version_name,
-			dcm.synthetic_release_id,
+			d.id,
+			d.created_at,
+			d.deployment_target_id,
+			dr.id,
 			dr.created_at,
+			dr.deployment_id,
+			dr.application_version_id,
+			dr.values_hash,
+			a.id,
+			a.name,
+			av.name,
+			dcm.synthetic_release_id,
 			dt.customer_organization_id,
-			dt.name AS deployment_target_name,
-			dcm.process_snapshot_available,
-			dcm.variable_snapshot_available,
-			dcm.channel_available,
-			dcm.environment_available,
-			dcm.task_logs_available,
-			dcm.redeploy_plan_available
-		FROM DeploymentCompatibilityMetadata dcm
-		JOIN DeploymentRevision dr
-			ON dr.id = dcm.legacy_deployment_revision_id
+			dt.name,
+			COALESCE(dcm.process_snapshot_available, false),
+			COALESCE(dcm.variable_snapshot_available, false),
+			COALESCE(dcm.channel_available, false),
+			COALESCE(dcm.environment_available, false),
+			COALESCE(dcm.task_logs_available, false),
+			COALESCE(dcm.redeploy_plan_available, false),
+			dcm.id IS NOT NULL
+		FROM DeploymentRevision dr
+		JOIN Deployment d
+			ON d.id = dr.deployment_id
 		JOIN DeploymentTarget dt
-			ON dt.id = dcm.deployment_target_id
-			AND dt.organization_id = dcm.organization_id
-		JOIN Application a
-			ON a.id = dcm.application_id
-			AND a.organization_id = dcm.organization_id
+			ON dt.id = d.deployment_target_id
 		JOIN ApplicationVersion av
-			ON av.id = dcm.application_version_id
-		WHERE dcm.organization_id = @organizationId
-			AND (cardinality(@legacyRevisionIds::uuid[]) = 0 OR dcm.legacy_deployment_revision_id = ANY(@legacyRevisionIds::uuid[]))
-			AND (@applicationId::uuid IS NULL OR dcm.application_id = @applicationId::uuid)
-			AND (@deploymentTargetId::uuid IS NULL OR dcm.deployment_target_id = @deploymentTargetId::uuid)
+			ON av.id = dr.application_version_id
+		JOIN Application a
+			ON a.id = av.application_id
+			AND a.organization_id = dt.organization_id
+		LEFT JOIN DeploymentCompatibilityMetadata dcm
+			ON dcm.organization_id = dt.organization_id
+			AND dcm.legacy_deployment_revision_id = dr.id
+		WHERE dt.organization_id = @organizationId
+			AND (cardinality(@legacyRevisionIds::uuid[]) = 0 OR dr.id = ANY(@legacyRevisionIds::uuid[]))
+			AND (@applicationId::uuid IS NULL OR a.id = @applicationId::uuid)
+			AND (@deploymentTargetId::uuid IS NULL OR d.deployment_target_id = @deploymentTargetId::uuid)
 			AND (@customerOrganizationId::uuid IS NULL OR dt.customer_organization_id = @customerOrganizationId::uuid)
-		ORDER BY dr.created_at DESC, dcm.legacy_deployment_revision_id DESC
+		ORDER BY dr.created_at DESC, dr.id DESC
 		LIMIT @limit`,
 		pgx.NamedArgs{
 			"organizationId":         query.OrganizationID,
@@ -421,40 +438,74 @@ func queryLegacyDeploymentTimelineItems(
 	items := []types.DeploymentTimelineItem{}
 	for rows.Next() {
 		var item types.DeploymentTimelineItem
-		var applicationVersionID uuid.UUID
+		var deployment types.Deployment
+		var revision types.DeploymentRevision
 		var applicationVersionName string
+		var syntheticReleaseID *uuid.UUID
+		var availability types.DeploymentCompatibilityAvailability
+		var metadataPresent bool
 		if err := rows.Scan(
-			&item.LegacyDeploymentID,
-			&item.LegacyDeploymentRevisionID,
-			&item.DeploymentTargetID,
+			&deployment.ID,
+			&deployment.CreatedAt,
+			&deployment.DeploymentTargetID,
+			&revision.ID,
+			&revision.CreatedAt,
+			&revision.DeploymentID,
+			&revision.ApplicationVersionID,
+			&revision.ValuesHash,
 			&item.ApplicationID,
 			&item.ApplicationName,
-			&applicationVersionID,
 			&applicationVersionName,
-			&item.SyntheticReleaseID,
-			&item.QueuedAt,
+			&syntheticReleaseID,
 			&item.CustomerOrganizationID,
 			&item.DeploymentTargetName,
-			&item.Availability.ProcessSnapshot,
-			&item.Availability.VariableSnapshot,
-			&item.Availability.Channel,
-			&item.Availability.Environment,
-			&item.Availability.TaskLogs,
-			&item.Availability.RedeployPlan,
+			&availability.ProcessSnapshot,
+			&availability.VariableSnapshot,
+			&availability.Channel,
+			&availability.Environment,
+			&availability.TaskLogs,
+			&availability.RedeployPlan,
+			&metadataPresent,
 		); err != nil {
 			return nil, fmt.Errorf("could not scan legacy deployment timeline item: %w", err)
 		}
 		item.Source = types.DeploymentTimelineItemSourceLegacyDeployment
+		item.LegacyDeploymentID = deployment.ID
+		item.LegacyDeploymentRevisionID = revision.ID
+		item.DeploymentTargetID = deployment.DeploymentTargetID
+		item.QueuedAt = revision.CreatedAt
 		item.CompletedAt = timePtr(item.QueuedAt)
-		item.Components = []types.DeploymentTimelineComponent{
-			{
-				Key:     "application",
-				Name:    item.ApplicationName,
-				Type:    types.ReleaseBundleComponentTypeApplicationVersion,
-				Version: applicationVersionName,
-			},
+		if metadataPresent {
+			if syntheticReleaseID != nil {
+				item.SyntheticReleaseID = *syntheticReleaseID
+			}
+			item.Availability = availability
+			item.Components = []types.DeploymentTimelineComponent{
+				{
+					Key:     "application",
+					Name:    item.ApplicationName,
+					Type:    types.ReleaseBundleComponentTypeApplicationVersion,
+					Version: applicationVersionName,
+				},
+			}
+		} else {
+			projection, err := deploymentcompat.ProjectLegacyDeployment(
+				deployment,
+				revision,
+				deploymentcompat.ProjectionContext{
+					OrganizationID:         query.OrganizationID,
+					ApplicationID:          item.ApplicationID,
+					ApplicationName:        item.ApplicationName,
+					ApplicationVersionName: applicationVersionName,
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("could not project legacy deployment timeline item: %w", err)
+			}
+			item.SyntheticReleaseID = projection.SyntheticReleaseID
+			item.Availability = projection.Availability
+			item.Components = projection.Components
 		}
-		_ = applicationVersionID
 		items = append(items, item)
 	}
 	if rows.Err() != nil {
@@ -494,6 +545,16 @@ func getDeploymentTimelineComponents(
 	return components, nil
 }
 
+func deploymentTimelineComparisonAvailability(
+	base types.DeploymentTimelineItem,
+	compare types.DeploymentTimelineItem,
+) types.DeploymentTimelineComparisonAvailability {
+	return types.DeploymentTimelineComparisonAvailability{
+		Process:   base.Availability.ProcessSnapshot && compare.Availability.ProcessSnapshot,
+		Steps:     base.Availability.ProcessSnapshot && compare.Availability.ProcessSnapshot,
+		Variables: base.Availability.VariableSnapshot && compare.Availability.VariableSnapshot,
+	}
+}
 func validateDeploymentTimelineCompareRef(label string, taskID, legacyRevisionID uuid.UUID) error {
 	count := 0
 	if taskID != uuid.Nil {

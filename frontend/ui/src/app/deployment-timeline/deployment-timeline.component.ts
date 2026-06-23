@@ -21,6 +21,7 @@ import {ToastService} from '../services/toast.service';
 import {
   DeploymentTaskStatus,
   DeploymentTimelineChangeKind,
+  DeploymentTimelineCompareRef,
   DeploymentTimelineComparison,
   DeploymentTimelineComponentChange,
   DeploymentTimelineItem,
@@ -106,12 +107,12 @@ export class DeploymentTimelineComponent {
       });
   }
 
-  protected selectBase(taskId: string) {
-    this.selectedBaseTaskId.set(taskId);
+  protected selectBase(item: DeploymentTimelineItem | string) {
+    this.selectedBaseTaskId.set(this.timelineItemKeyFromInput(item));
   }
 
-  protected selectCompare(taskId: string) {
-    this.selectedCompareTaskId.set(taskId);
+  protected selectCompare(item: DeploymentTimelineItem | string) {
+    this.selectedCompareTaskId.set(this.timelineItemKeyFromInput(item));
   }
 
   protected canCompare(): boolean {
@@ -119,16 +120,18 @@ export class DeploymentTimelineComponent {
   }
 
   protected async compare() {
-    const baseTaskId = this.selectedBaseTaskId();
-    const compareTaskId = this.selectedCompareTaskId();
-    if (!baseTaskId || !compareTaskId) {
+    const base = this.selectedTimelineItem(this.selectedBaseTaskId());
+    const compare = this.selectedTimelineItem(this.selectedCompareTaskId());
+    if (!base || !compare) {
       return;
     }
 
     this.compareLoading.set(true);
     this.compareError.set(undefined);
     try {
-      this.comparison.set(await firstValueFrom(this.deploymentTimelineService.compare(baseTaskId, compareTaskId)));
+      this.comparison.set(
+        await firstValueFrom(this.deploymentTimelineService.compare(this.compareRef(base), this.compareRef(compare)))
+      );
     } catch (e) {
       this.compareError.set(getFormDisplayedError(e) ?? 'Failed to compare deployments.');
     } finally {
@@ -137,6 +140,9 @@ export class DeploymentTimelineComponent {
   }
 
   protected async deployPreviousRelease(item: DeploymentTimelineItem) {
+    if (!this.canRedeploy(item) || !item.taskId) {
+      return;
+    }
     const confirmed = await firstValueFrom(
       this.overlay.confirm({
         message: {
@@ -166,6 +172,24 @@ export class DeploymentTimelineComponent {
     }
   }
 
+  protected timelineItemKey(item: DeploymentTimelineItem): string {
+    if (item.source === 'legacy_deployment' && item.legacyDeploymentRevisionId) {
+      return `legacy:${item.legacyDeploymentRevisionId}`;
+    }
+    return `task:${item.taskId ?? ''}`;
+  }
+
+  protected canRedeploy(item: DeploymentTimelineItem): boolean {
+    return item.source !== 'legacy_deployment' && Boolean(item.taskId) && item.redeployAvailable;
+  }
+
+  protected comparisonDimensionAvailable(
+    comparison: DeploymentTimelineComparison,
+    dimension: keyof DeploymentTimelineComparison['availability']
+  ): boolean {
+    return comparison.availability?.[dimension] ?? true;
+  }
+
   protected componentSummary(item: DeploymentTimelineItem): string {
     if (item.components.length === 0) {
       return '-';
@@ -189,11 +213,14 @@ export class DeploymentTimelineComponent {
     return this.shortId(item.actorUserAccountId);
   }
 
-  protected logUrl(item: DeploymentTimelineItem): string {
+  protected logUrl(item: DeploymentTimelineItem): string | undefined {
+    if (!item.taskId || item.availability?.taskLogs === false) {
+      return undefined;
+    }
     return `/api/v1/tasks/${item.taskId}/logs`;
   }
 
-  protected statusClass(status: DeploymentTaskStatus): string {
+  protected statusClass(status: DeploymentTaskStatus | undefined): string {
     switch (status) {
       case 'SUCCEEDED':
         return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
@@ -248,6 +275,24 @@ export class DeploymentTimelineComponent {
     return reference || status || '-';
   }
 
+  private timelineItemKeyFromInput(item: DeploymentTimelineItem | string): string {
+    return typeof item === 'string' ? `task:${item}` : this.timelineItemKey(item);
+  }
+
+  private selectedTimelineItem(key: string | undefined): DeploymentTimelineItem | undefined {
+    if (!key) {
+      return undefined;
+    }
+    return this.timelineItems().find((item) => this.timelineItemKey(item) === key);
+  }
+
+  private compareRef(item: DeploymentTimelineItem): DeploymentTimelineCompareRef {
+    if (item.source === 'legacy_deployment') {
+      return {legacyDeploymentRevisionId: item.legacyDeploymentRevisionId};
+    }
+    return {taskId: item.taskId};
+  }
+
   private applyFilter() {
     const search = this.filterForm.controls.search.value.trim().toLowerCase();
     const status = this.filterForm.controls.status.value;
@@ -260,14 +305,16 @@ export class DeploymentTimelineComponent {
           return true;
         }
         return [
-          item.taskId,
-          item.deploymentPlanId,
+          this.timelineItemKey(item),
+          item.taskId ?? '',
+          item.legacyDeploymentRevisionId ?? '',
+          item.deploymentPlanId ?? '',
           item.applicationName,
           item.releaseNumber,
           item.channelName,
           item.environmentName,
           item.deploymentTargetName,
-          item.status,
+          item.status ?? '',
           item.actorUserAccountId ?? '',
           ...item.components.flatMap((component) => [component.name, component.version, component.key]),
         ]
@@ -279,11 +326,11 @@ export class DeploymentTimelineComponent {
   }
 
   private dropMissingSelections() {
-    const taskIDs = new Set(this.timelineItems().map((item) => item.taskId));
-    if (this.selectedBaseTaskId() && !taskIDs.has(this.selectedBaseTaskId()!)) {
+    const itemKeys = new Set(this.timelineItems().map((item) => this.timelineItemKey(item)));
+    if (this.selectedBaseTaskId() && !itemKeys.has(this.selectedBaseTaskId()!)) {
       this.selectedBaseTaskId.set(undefined);
     }
-    if (this.selectedCompareTaskId() && !taskIDs.has(this.selectedCompareTaskId()!)) {
+    if (this.selectedCompareTaskId() && !itemKeys.has(this.selectedCompareTaskId()!)) {
       this.selectedCompareTaskId.set(undefined);
     }
   }

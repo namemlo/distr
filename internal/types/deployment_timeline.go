@@ -78,12 +78,18 @@ type DeploymentTimelineCompareRequest struct {
 }
 
 type DeploymentTimelineComparison struct {
-	Base       DeploymentTimelineItem              `json:"base"`
-	Compare    DeploymentTimelineItem              `json:"compare"`
-	Process    DeploymentTimelineProcessChange     `json:"process"`
-	Components []DeploymentTimelineComponentChange `json:"components"`
-	Steps      []DeploymentTimelineStepChange      `json:"steps"`
-	Variables  []DeploymentTimelineVariableChange  `json:"variables"`
+	Base         DeploymentTimelineItem                   `json:"base"`
+	Compare      DeploymentTimelineItem                   `json:"compare"`
+	Process      DeploymentTimelineProcessChange          `json:"process"`
+	Availability DeploymentTimelineComparisonAvailability `json:"availability"`
+	Components   []DeploymentTimelineComponentChange      `json:"components"`
+	Steps        []DeploymentTimelineStepChange           `json:"steps"`
+	Variables    []DeploymentTimelineVariableChange       `json:"variables"`
+}
+type DeploymentTimelineComparisonAvailability struct {
+	Process   bool `json:"process"`
+	Steps     bool `json:"steps"`
+	Variables bool `json:"variables"`
 }
 
 type DeploymentTimelineChangeKind string

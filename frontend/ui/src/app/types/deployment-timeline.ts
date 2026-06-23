@@ -3,6 +3,7 @@ import {ReleaseBundleComponentType} from './release-bundle';
 
 export type DeploymentTaskStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELED';
 export type DeploymentTimelineChangeKind = 'unchanged' | 'added' | 'removed' | 'changed';
+export type DeploymentTimelineItemSource = 'task' | 'legacy_deployment';
 
 export interface DeploymentTimelineQuery {
   applicationId?: string;
@@ -18,28 +19,42 @@ export interface DeploymentTimeline {
   items: DeploymentTimelineItem[];
 }
 
+export interface DeploymentCompatibilityAvailability {
+  processSnapshot: boolean;
+  variableSnapshot: boolean;
+  channel: boolean;
+  environment: boolean;
+  taskLogs: boolean;
+  redeployPlan: boolean;
+}
+
 export interface DeploymentTimelineItem {
-  taskId: string;
-  deploymentPlanId: string;
-  deploymentPlanTargetId: string;
+  source?: DeploymentTimelineItemSource;
+  taskId?: string;
+  legacyDeploymentId?: string;
+  legacyDeploymentRevisionId?: string;
+  syntheticReleaseId?: string;
+  deploymentPlanId?: string;
+  deploymentPlanTargetId?: string;
   deploymentTargetId: string;
   applicationId: string;
   applicationName: string;
-  releaseBundleId: string;
+  releaseBundleId?: string;
   releaseNumber: string;
-  channelId: string;
+  channelId?: string;
   channelName: string;
-  environmentId: string;
+  environmentId?: string;
   environmentName: string;
   customerOrganizationId?: string;
   deploymentTargetName: string;
   actorUserAccountId?: string;
-  status: DeploymentTaskStatus;
+  status?: DeploymentTaskStatus;
   queuedAt: string;
   startedAt?: string;
   completedAt?: string;
   processSnapshotId?: string;
   variableSnapshotId?: string;
+  availability?: DeploymentCompatibilityAvailability;
   components: DeploymentTimelineComponent[];
   lastSuccessful: boolean;
   redeployAvailable: boolean;
@@ -52,10 +67,22 @@ export interface DeploymentTimelineComponent {
   version: string;
 }
 
+export interface DeploymentTimelineCompareRef {
+  taskId?: string;
+  legacyDeploymentRevisionId?: string;
+}
+
+export interface DeploymentTimelineComparisonAvailability {
+  process: boolean;
+  steps: boolean;
+  variables: boolean;
+}
+
 export interface DeploymentTimelineComparison {
   base: DeploymentTimelineItem;
   compare: DeploymentTimelineItem;
   process: DeploymentTimelineProcessChange;
+  availability: DeploymentTimelineComparisonAvailability;
   components: DeploymentTimelineComponentChange[];
   steps: DeploymentTimelineStepChange[];
   variables: DeploymentTimelineVariableChange[];

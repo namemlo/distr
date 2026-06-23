@@ -74,6 +74,54 @@ func TestBackfillLegacyDeploymentCompatibilityDryRunApplyAndIdempotency(t *testi
 	g.Expect(reloaded.CanonicalChecksum).To(Equal(metadata.CanonicalChecksum))
 }
 
+func TestBackfillLegacyDeploymentCompatibilityProcessesMultipleBatchesAndCanResume(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, _, _, versionID := createReleaseBundleDependencies(t, ctx)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, orgID, "legacy-target")
+	revisions := make([]types.DeploymentRevision, 0, 3)
+	for i := 0; i < 3; i++ {
+		_, revision := createLegacyDeploymentRevisionForTimelineTest(t, ctx, targetID, versionID, "stored-values-hash")
+		revisions = append(revisions, revision)
+	}
+
+	applied, err := db.BackfillLegacyDeploymentCompatibility(ctx, types.DeploymentCompatibilityBackfillRequest{
+		OrganizationID: orgID,
+		Apply:          true,
+		BatchSize:      1,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(applied.Scanned).To(Equal(3))
+	g.Expect(applied.Projected).To(Equal(3))
+	g.Expect(applied.AlreadyPresent).To(Equal(0))
+	g.Expect(applied.LastCursor).NotTo(BeNil())
+	for _, revision := range revisions {
+		_, err := db.GetDeploymentCompatibilityByRevision(ctx, orgID, revision.ID)
+		g.Expect(err).NotTo(HaveOccurred())
+	}
+
+	reapplied, err := db.BackfillLegacyDeploymentCompatibility(ctx, types.DeploymentCompatibilityBackfillRequest{
+		OrganizationID: orgID,
+		Apply:          true,
+		BatchSize:      1,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(reapplied.Scanned).To(Equal(3))
+	g.Expect(reapplied.Projected).To(Equal(0))
+	g.Expect(reapplied.AlreadyPresent).To(Equal(3))
+
+	resumedFromEnd, err := db.BackfillLegacyDeploymentCompatibility(ctx, types.DeploymentCompatibilityBackfillRequest{
+		OrganizationID: orgID,
+		Apply:          true,
+		BatchSize:      1,
+		Cursor:         applied.LastCursor,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(resumedFromEnd.Scanned).To(Equal(0))
+	g.Expect(resumedFromEnd.Projected).To(Equal(0))
+}
+
 func TestDeploymentCompatibilityMigrationDefinesReversibleAdditiveSchema(t *testing.T) {
 	g := NewWithT(t)
 	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "131_deployment_compatibility.up.sql"))

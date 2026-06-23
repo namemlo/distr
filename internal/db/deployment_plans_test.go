@@ -291,7 +291,7 @@ func TestDeploymentPlanMigrationDefinesPlanTables(t *testing.T) {
 	g.Expect(downSQL).To(ContainSubstring("DROP TABLE IF EXISTS DeploymentPlan"))
 }
 
-func deploymentPlanDBTestContext(t *testing.T) context.Context {
+func deploymentPlanDBTestContext(t testing.TB) context.Context {
 	t.Helper()
 	return releaseBundleDBTestContext(t)
 }
