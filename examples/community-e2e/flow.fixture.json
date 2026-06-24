@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "pr050.community-e2e.v1",
+  "product": {
+    "organization": "Demo Vendor",
+    "application": "Demo Service",
+    "environment": "Development",
+    "target": "local-docker-target"
+  },
+  "requiredFeatureFlags": [
+    "environments",
+    "lifecycles",
+    "channels",
+    "release_bundles",
+    "deployment_processes",
+    "scoped_variables_v2",
+    "deployment_plans",
+    "task_queue"
+  ],
+  "releaseBundle": {
+    "releaseNumber": "2026.06.24-demo.1",
+    "status": "PUBLISHED",
+    "components": [
+      {
+        "key": "api",
+        "kind": "oci-image",
+        "name": "registry.example.invalid/community-demo-api",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "key": "worker",
+        "kind": "oci-image",
+        "name": "registry.example.invalid/community-demo-worker",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ]
+  },
+  "deploymentProcess": {
+    "revision": 1,
+    "steps": [
+      {
+        "key": "preflight",
+        "action": "distr.preflight",
+        "inputs": {
+          "target": "local-docker-target"
+        }
+      },
+      {
+        "key": "health-check",
+        "action": "distr.http.check",
+        "inputs": {
+          "url": "http://demo-service.local/ready",
+          "method": "GET",
+          "expectedStatus": 200,
+          "secretHeaders": {
+            "Authorization": "secret-ref:demo-api-token"
+          }
+        }
+      }
+    ]
+  },
+  "deploymentPlan": {
+    "state": "READY",
+    "warnings": [],
+    "blocked": false
+  },
+  "task": {
+    "state": "SUCCEEDED",
+    "lease": {
+      "agent": "local-demo-agent",
+      "target": "local-docker-target",
+      "expiresInSeconds": 300
+    },
+    "events": [
+      {
+        "step": "preflight",
+        "state": "SUCCEEDED",
+        "message": "target checks passed"
+      },
+      {
+        "step": "health-check",
+        "state": "SUCCEEDED",
+        "message": "http check returned 200 with Authorization: [REDACTED]"
+      }
+    ]
+  },
+  "cleanup": [
+    "delete task",
+    "delete deployment target",
+    "delete release bundle",
+    "remove local volumes"
+  ]
+}

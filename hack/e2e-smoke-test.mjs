@@ -11,12 +11,14 @@
  * Requires Node.js 18+ (native fetch).
  */
 
+import {randomBytes} from 'node:crypto';
+
 const BASE_URL = (process.env.DISTR_HOST ?? 'http://localhost:8080').replace(/\/$/, '');
 
-const RUN_ID = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const RUN_ID = randomBytes(8).toString('hex');
 
 const TEST_EMAIL = `e2e-${RUN_ID}@smoke.test`;
-const TEST_PASSWORD = 'E2eSmoke123!';
+const TEST_PASSWORD = `Smoke-${randomBytes(24).toString('base64url')}!aA1`;
 const TEST_NAME = 'E2E Smoke Test';
 
 async function request(method, path, {body, token} = {}) {
@@ -39,6 +41,25 @@ async function request(method, path, {body, token} = {}) {
   return res.json();
 }
 
+async function cleanupDemoOrganization(token) {
+  const deleteResponse = await fetch(`${BASE_URL}/api/v1/organization`, {
+    method: 'DELETE',
+    headers: {Authorization: `Bearer ${token}`},
+  });
+  if (![204, 404].includes(deleteResponse.status)) {
+    const text = await deleteResponse.text();
+    throw new Error(`DELETE /api/v1/organization cleanup returned ${deleteResponse.status}: ${text.trim()}`);
+  }
+
+  const verifyResponse = await fetch(`${BASE_URL}/api/v1/organization`, {
+    headers: {Authorization: `Bearer ${token}`},
+  });
+  if (![401, 403, 404].includes(verifyResponse.status)) {
+    const text = await verifyResponse.text();
+    throw new Error(`demo organization still accessible after cleanup: ${verifyResponse.status}: ${text.trim()}`);
+  }
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`);
@@ -53,7 +74,7 @@ function step(name) {
 
 step('Register user');
 await request('POST', '/api/v1/auth/register', {
-  body: {name: TEST_NAME, email: TEST_EMAIL, password: TEST_PASSWORD},
+  body: {name: TEST_NAME, organizationName: `E2E Smoke ${RUN_ID}`, email: TEST_EMAIL, password: TEST_PASSWORD},
 });
 
 step('Login');
@@ -95,10 +116,7 @@ try {
 
   console.log(`\nAll ${stepNum} smoke test steps passed.`);
 } finally {
-  if (deploymentTargetId) {
-    await request('DELETE', `/api/v1/deployment-targets/${deploymentTargetId}`, {token});
-  }
-  if (applicationId) {
-    await request('DELETE', `/api/v1/applications/${applicationId}`, {token});
+  if (token) {
+    await cleanupDemoOrganization(token);
   }
 }

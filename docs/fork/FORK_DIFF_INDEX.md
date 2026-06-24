@@ -4,7 +4,9 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-049 are implemented locally. PR-049 adds compatibility metadata, legacy deployment timeline projection, operator backfill, upgrade guidance, and opt-in performance fixtures.
+PR-000 through PR-050 are implemented locally. PR-050 adds the community release-hardening package, security
+review checklist, release documentation, live demo wrapper, neutral demo verifier, upstream contribution breakdown, and
+deterministic validation script.
 
 ## Tracking Template
 
@@ -853,3 +855,18 @@ Use one entry per pull request:
 - Tests: Added adapter tests, live PostgreSQL repository/backfill tests, timeline legacy-entry tests, command tests, migration schema tests, and opt-in benchmarks.
 - Upstream contribution notes: Community-neutral compatibility layer; no adopter-specific migration UI, destructive cleanup, provider behavior, or agent protocol change.
 - Compatibility notes: Original `Deployment` and `DeploymentRevision` rows are not rewritten. Compatibility metadata can be removed without deleting original history. Legacy entries do not fabricate process snapshots, variable snapshots, channels, environments, actors, task logs, or executable redeploy plans.
+
+### PR-050 - Community release hardening
+
+- Status: Implemented locally; release-hardening documentation, security checklist, isolated live community demo wrapper, API-only live release-to-task journey, neutral demo verifier, upstream contribution breakdown, validation scripts, and CI gates completed.
+- Upstream base: `fcc472a9`
+- Feature flag: None added. Documents existing experimental feature flags and release gates.
+- User-facing behavior: None at runtime. Operators and contributors gain release-readiness docs, smoke-test checklists, an isolated live local demo wrapper, an API-only live release-to-task verification path, and a credential-free deterministic verifier.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0050, PR-050 fork notes, release readiness, security, operations, upgrade, architecture, API, and upstream contribution docs.
+- Tests: Added `internal/handlers/pr050_community_live_demo_test.go`, `examples/community-e2e/live-demo.mjs`, `examples/community-e2e/run-demo.mjs`, `hack/pr050-license-scan.mjs`, and `hack/pr050-validate-release-hardening.mjs` for the API-only live release-to-task journey, isolated demo orchestration, deterministic demo, Node+Go dependency-license checks, link, impact-section, index, credential-scanner self-tests, static-analysis gate checks, and secret-safety checks.
+- Upstream contribution notes: Provides dependency-ordered upstream slices with compatibility and licensing notes.
+- Compatibility notes: Existing deployment, advanced roadmap, API, UI, schema, and agent behavior is unchanged.
