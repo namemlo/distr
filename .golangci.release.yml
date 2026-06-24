@@ -1,0 +1,26 @@
+version: '2'
+run:
+  allow-parallel-runners: true
+issues:
+  max-issues-per-linter: 100
+  max-same-issues: 100
+linters:
+  default: none
+  enable:
+    - asciicheck
+    - bidichk
+    - errcheck
+    - gocheckcompilerdirectives
+    - govet
+    - ineffassign
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

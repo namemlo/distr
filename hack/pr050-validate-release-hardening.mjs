@@ -10,6 +10,7 @@ const localJwtSecret = 'bG9jYWwtand0LXNlY3JldC1wbGFjZWhvbGRlci0zMi1ieXRlcw==';
 
 const requiredFiles = [
   '.github/workflows/community-release-hardening.yaml',
+  '.golangci.release.yml',
   'docs/adr/0050-community-release-hardening.md',
   'docs/fork/PR-050_COMMUNITY_RELEASE_HARDENING.md',
   'docs/fork/FORK_DIFF_INDEX.md',
@@ -84,6 +85,7 @@ for (const requiredWorkflowText of [
   'go vet ./...',
   'golangci/golangci-lint-action',
   "version: 'v2.12.2'",
+  'args: --config=.golangci.release.yml ./...',
   'pnpm run lint',
   'node hack/pr050-license-scan.mjs',
   'node examples/community-e2e/live-demo.mjs --require-running-hub',
@@ -94,6 +96,33 @@ for (const requiredWorkflowText of [
   }
 }
 
+const releaseLintConfig = readRel('.golangci.release.yml');
+for (const requiredReleaseLintText of [
+  'default: none',
+  '- asciicheck',
+  '- bidichk',
+  '- errcheck',
+  '- gocheckcompilerdirectives',
+  '- govet',
+  '- ineffassign',
+]) {
+  if (!releaseLintConfig.includes(requiredReleaseLintText)) {
+    fail(`release golangci config missing required correctness gate: ${requiredReleaseLintText}`);
+  }
+}
+for (const forbiddenReleaseLintText of [
+  '- dupl',
+  '- lll',
+  '- gci',
+  '- gofmt',
+  '- gofumpt',
+  '- goimports',
+  'formatters:',
+]) {
+  if (releaseLintConfig.includes(forbiddenReleaseLintText)) {
+    fail(`release golangci config should not inherit broad style/debt gate: ${forbiddenReleaseLintText}`);
+  }
+}
 const licenseScanner = readRel('hack/pr050-license-scan.mjs');
 for (const requiredLicenseScanText of [
   'scanNodePackages',

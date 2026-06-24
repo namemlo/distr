@@ -60,7 +60,7 @@ Keep experimental flags enabled only for the surfaces being evaluated.
 - `node hack/pr050-license-scan.mjs` after `pnpm install --frozen-lockfile` and Go modules are available
 - `go test -p=1 ./...`
 - `go vet ./...`
-- `golangci-lint run ./...`
+- `golangci-lint run --config=.golangci.release.yml ./...`
 - `pnpm run lint`
 - live PostgreSQL-backed Go integration tests with `DISTR_TEST_DATABASE_URL`; the API-only live demo does not read DB credentials
 - all Angular tests and community frontend build
