@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"errors"
+	"syscall"
 
 	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/migrations"
@@ -38,16 +40,20 @@ func init() {
 }
 
 func runMigrate(ctx context.Context, opts MigrateOptions) {
-	registry := util.Require(svc.NewDefault(ctx))
-	defer func() { util.Must(registry.Shutdown(ctx)) }()
+	log := svc.NewLogger()
+	defer func() {
+		if err := log.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
+			util.Must(err)
+		}
+	}()
 	if opts.To > 0 {
-		registry.GetLogger().Sugar().Infof("run migrations to schema version %v", opts.To)
-		util.Must(migrations.Migrate(registry.GetLogger(), opts.To))
+		log.Sugar().Infof("run migrations to schema version %v", opts.To)
+		util.Must(migrations.Migrate(log, opts.To))
 	} else if opts.Down {
-		registry.GetLogger().Info("run DOWN migrations")
-		util.Must(migrations.Down(registry.GetLogger()))
+		log.Info("run DOWN migrations")
+		util.Must(migrations.Down(log))
 	} else {
-		registry.GetLogger().Info("run UP migrations")
-		util.Must(migrations.Up(registry.GetLogger()))
+		log.Info("run UP migrations")
+		util.Must(migrations.Up(log))
 	}
 }

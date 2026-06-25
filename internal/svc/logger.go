@@ -10,6 +10,10 @@ func (r *Registry) GetLogger() *zap.Logger {
 	return r.logger
 }
 
+func NewLogger() *zap.Logger {
+	return createLogger()
+}
+
 func createLogger() *zap.Logger {
 	if buildconfig.IsRelease() {
 		config := zap.NewProductionConfig()

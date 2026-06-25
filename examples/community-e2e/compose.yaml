@@ -1,0 +1,44 @@
+name: distr-community-e2e-demo
+
+services:
+  postgres:
+    image: 'postgres:18.4-alpine3.23'
+    environment:
+      POSTGRES_USER: local
+      POSTGRES_PASSWORD: local
+      POSTGRES_DB: distr_demo
+    volumes:
+      - 'postgres:/var/lib/postgresql/data'
+    ports:
+      - '127.0.0.1:15432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U local -d distr_demo']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  mailpit:
+    image: 'axllent/mailpit:v1.30.1'
+    ports:
+      - '127.0.0.1:11025:1025'
+      - '127.0.0.1:18025:8025'
+  storage:
+    image: 'rustfs/rustfs:1.0.0-beta.4'
+    ports:
+      - '127.0.0.1:19000:9000'
+      - '127.0.0.1:19001:9001'
+    volumes:
+      - 'rustfs:/data/'
+    environment:
+      RUSTFS_ACCESS_KEY: local
+      RUSTFS_SECRET_KEY: local
+  demo:
+    image: node:26-alpine
+    working_dir: /workspace
+    command: node examples/community-e2e/run-demo.mjs
+    volumes:
+      - ../..:/workspace:ro
+    network_mode: none
+
+volumes:
+  postgres:
+  rustfs:
