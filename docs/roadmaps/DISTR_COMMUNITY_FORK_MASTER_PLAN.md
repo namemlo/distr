@@ -125,6 +125,8 @@ Manual verification
 Known limitations
 ```
 
+Each pull request must also check whether any edition limit, validation rule, database constraint, or UI rule contradicts the roadmap object model, especially the customer/BYOC foundation where one customer organization may own multiple deployment targets.
+
 ---
 
 ## 2. Community-first design rules
@@ -2341,6 +2343,8 @@ This section is an adoption example, not a core specification.
 
 Emlo-specific templates should initially live in a private integration repository:
 
+The standard EMLO mapping is one real business client per customer organization and one or more deployment targets for its environments, regions, admin surfaces, or servers. Existing `env-settings` folder names such as `paymit_dev` remain compatibility keys, not customer identities.
+
 ```text
 emlo-distr-step-templates
 ```
@@ -2580,6 +2584,8 @@ Minimum test scenarios:
 large step logs
 many scoped variable candidates
 ```
+
+The deployment-target scenario must include many targets under the same customer organization as well as targets spread across many customers.
 
 The goal is to identify bottlenecks, not to promise a universal throughput number.
 
