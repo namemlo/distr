@@ -23,31 +23,43 @@ type DeploymentTimeline struct {
 	Items []DeploymentTimelineItem `json:"items"`
 }
 
+type DeploymentTimelineItemSource string
+
+const (
+	DeploymentTimelineItemSourceTask             DeploymentTimelineItemSource = "task"
+	DeploymentTimelineItemSourceLegacyDeployment DeploymentTimelineItemSource = "legacy_deployment"
+)
+
 type DeploymentTimelineItem struct {
-	TaskID                 uuid.UUID                     `json:"taskId"`
-	DeploymentPlanID       uuid.UUID                     `json:"deploymentPlanId"`
-	DeploymentPlanTargetID uuid.UUID                     `json:"deploymentPlanTargetId"`
-	DeploymentTargetID     uuid.UUID                     `json:"deploymentTargetId"`
-	ApplicationID          uuid.UUID                     `json:"applicationId"`
-	ApplicationName        string                        `json:"applicationName"`
-	ReleaseBundleID        uuid.UUID                     `json:"releaseBundleId"`
-	ReleaseNumber          string                        `json:"releaseNumber"`
-	ChannelID              uuid.UUID                     `json:"channelId"`
-	ChannelName            string                        `json:"channelName"`
-	EnvironmentID          uuid.UUID                     `json:"environmentId"`
-	EnvironmentName        string                        `json:"environmentName"`
-	CustomerOrganizationID *uuid.UUID                    `json:"customerOrganizationId,omitempty"`
-	DeploymentTargetName   string                        `json:"deploymentTargetName"`
-	ActorUserAccountID     *uuid.UUID                    `json:"actorUserAccountId,omitempty"`
-	Status                 TaskStatus                    `json:"status"`
-	QueuedAt               time.Time                     `json:"queuedAt"`
-	StartedAt              *time.Time                    `json:"startedAt,omitempty"`
-	CompletedAt            *time.Time                    `json:"completedAt,omitempty"`
-	ProcessSnapshotID      *uuid.UUID                    `json:"processSnapshotId,omitempty"`
-	VariableSnapshotID     *uuid.UUID                    `json:"variableSnapshotId,omitempty"`
-	Components             []DeploymentTimelineComponent `json:"components"`
-	LastSuccessful         bool                          `json:"lastSuccessful"`
-	RedeployAvailable      bool                          `json:"redeployAvailable"`
+	Source                     DeploymentTimelineItemSource        `json:"source"`
+	TaskID                     uuid.UUID                           `json:"taskId"`
+	LegacyDeploymentID         uuid.UUID                           `json:"legacyDeploymentId,omitempty"`
+	LegacyDeploymentRevisionID uuid.UUID                           `json:"legacyDeploymentRevisionId,omitempty"`
+	SyntheticReleaseID         uuid.UUID                           `json:"syntheticReleaseId,omitempty"`
+	DeploymentPlanID           uuid.UUID                           `json:"deploymentPlanId"`
+	DeploymentPlanTargetID     uuid.UUID                           `json:"deploymentPlanTargetId"`
+	DeploymentTargetID         uuid.UUID                           `json:"deploymentTargetId"`
+	ApplicationID              uuid.UUID                           `json:"applicationId"`
+	ApplicationName            string                              `json:"applicationName"`
+	ReleaseBundleID            uuid.UUID                           `json:"releaseBundleId"`
+	ReleaseNumber              string                              `json:"releaseNumber"`
+	ChannelID                  uuid.UUID                           `json:"channelId"`
+	ChannelName                string                              `json:"channelName"`
+	EnvironmentID              uuid.UUID                           `json:"environmentId"`
+	EnvironmentName            string                              `json:"environmentName"`
+	CustomerOrganizationID     *uuid.UUID                          `json:"customerOrganizationId,omitempty"`
+	DeploymentTargetName       string                              `json:"deploymentTargetName"`
+	ActorUserAccountID         *uuid.UUID                          `json:"actorUserAccountId,omitempty"`
+	Status                     TaskStatus                          `json:"status"`
+	QueuedAt                   time.Time                           `json:"queuedAt"`
+	StartedAt                  *time.Time                          `json:"startedAt,omitempty"`
+	CompletedAt                *time.Time                          `json:"completedAt,omitempty"`
+	ProcessSnapshotID          *uuid.UUID                          `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID         *uuid.UUID                          `json:"variableSnapshotId,omitempty"`
+	Availability               DeploymentCompatibilityAvailability `json:"availability"`
+	Components                 []DeploymentTimelineComponent       `json:"components"`
+	LastSuccessful             bool                                `json:"lastSuccessful"`
+	RedeployAvailable          bool                                `json:"redeployAvailable"`
 }
 
 type DeploymentTimelineComponent struct {
@@ -58,18 +70,26 @@ type DeploymentTimelineComponent struct {
 }
 
 type DeploymentTimelineCompareRequest struct {
-	OrganizationID uuid.UUID
-	BaseTaskID     uuid.UUID
-	CompareTaskID  uuid.UUID
+	OrganizationID                    uuid.UUID
+	BaseTaskID                        uuid.UUID
+	BaseLegacyDeploymentRevisionID    uuid.UUID
+	CompareTaskID                     uuid.UUID
+	CompareLegacyDeploymentRevisionID uuid.UUID
 }
 
 type DeploymentTimelineComparison struct {
-	Base       DeploymentTimelineItem              `json:"base"`
-	Compare    DeploymentTimelineItem              `json:"compare"`
-	Process    DeploymentTimelineProcessChange     `json:"process"`
-	Components []DeploymentTimelineComponentChange `json:"components"`
-	Steps      []DeploymentTimelineStepChange      `json:"steps"`
-	Variables  []DeploymentTimelineVariableChange  `json:"variables"`
+	Base         DeploymentTimelineItem                   `json:"base"`
+	Compare      DeploymentTimelineItem                   `json:"compare"`
+	Process      DeploymentTimelineProcessChange          `json:"process"`
+	Availability DeploymentTimelineComparisonAvailability `json:"availability"`
+	Components   []DeploymentTimelineComponentChange      `json:"components"`
+	Steps        []DeploymentTimelineStepChange           `json:"steps"`
+	Variables    []DeploymentTimelineVariableChange       `json:"variables"`
+}
+type DeploymentTimelineComparisonAvailability struct {
+	Process   bool `json:"process"`
+	Steps     bool `json:"steps"`
+	Variables bool `json:"variables"`
 }
 
 type DeploymentTimelineChangeKind string

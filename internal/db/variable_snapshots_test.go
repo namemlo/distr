@@ -235,7 +235,7 @@ func TestVariableSnapshotMigrationsDefineReversibleSchema(t *testing.T) {
 }
 
 func createReleaseBundleSecretForOrganization(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	orgID uuid.UUID,
 	key string,
@@ -256,7 +256,7 @@ func createReleaseBundleSecretForOrganization(
 }
 
 func createReleaseBundleDockerTargetForOrganization(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	orgID uuid.UUID,
 	name string,
@@ -278,7 +278,7 @@ func createReleaseBundleDockerTargetForOrganization(
 	return target.ID
 }
 
-func createReleaseBundleAgentVersion(t *testing.T, ctx context.Context) uuid.UUID {
+func createReleaseBundleAgentVersion(t testing.TB, ctx context.Context) uuid.UUID {
 	t.Helper()
 	var agentVersionID uuid.UUID
 	if err := internalctx.GetDb(ctx).QueryRow(

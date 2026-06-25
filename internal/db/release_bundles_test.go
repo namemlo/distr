@@ -985,7 +985,7 @@ func TestReleaseBundleDowngradeRepairsProcessSnapshotCanonicalPayload(t *testing
 }
 
 //nolint:dupl
-func releaseBundleDBTestContext(t *testing.T) context.Context {
+func releaseBundleDBTestContext(t testing.TB) context.Context {
 	t.Helper()
 	databaseURL := os.Getenv("DISTR_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -1028,7 +1028,7 @@ func releaseBundleDBTestContext(t *testing.T) context.Context {
 	return internalctx.WithDb(ctx, pool)
 }
 
-func runReleaseBundleTestMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func runReleaseBundleTestMigrations(t testing.TB, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join("..", "migrations", "sql", "*.up.sql"))
 	if err != nil {
@@ -1048,7 +1048,7 @@ func runReleaseBundleTestMigrations(t *testing.T, ctx context.Context, pool *pgx
 	}
 }
 
-func releaseBundleMigrationVersion(t *testing.T, file string) int {
+func releaseBundleMigrationVersion(t testing.TB, file string) int {
 	t.Helper()
 	base := filepath.Base(file)
 	version, err := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
@@ -1058,7 +1058,7 @@ func releaseBundleMigrationVersion(t *testing.T, file string) int {
 	return version
 }
 
-func createReleaseBundleDependencies(t *testing.T, ctx context.Context) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
+func createReleaseBundleDependencies(t testing.TB, ctx context.Context) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	orgID := createReleaseBundleTestOrganization(t, ctx)
 	applicationID, channelID, versionID := createReleaseBundleDependenciesForOrganization(t, ctx, orgID)
@@ -1066,7 +1066,7 @@ func createReleaseBundleDependencies(t *testing.T, ctx context.Context) (uuid.UU
 }
 
 func createReleaseBundleDependenciesForOrganization(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	orgID uuid.UUID,
 ) (uuid.UUID, uuid.UUID, uuid.UUID) {
@@ -1075,7 +1075,7 @@ func createReleaseBundleDependenciesForOrganization(
 }
 
 func createReleaseBundleDependenciesForOrganizationWithRules(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	orgID uuid.UUID,
 	ranges []string,
@@ -1136,7 +1136,7 @@ type releaseBundleEligibilityDependencies struct {
 }
 
 func createReleaseBundleEligibilityDependencies(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 ) releaseBundleEligibilityDependencies {
 	t.Helper()
@@ -1216,7 +1216,7 @@ func createReleaseBundleEligibilityDependencies(
 	}
 }
 
-func createReleaseBundleTestUser(t *testing.T, ctx context.Context, orgID uuid.UUID) uuid.UUID {
+func createReleaseBundleTestUser(t testing.TB, ctx context.Context, orgID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var userID uuid.UUID
 	if err := internalctx.GetDb(ctx).QueryRow(
@@ -1237,7 +1237,7 @@ func createReleaseBundleTestUser(t *testing.T, ctx context.Context, orgID uuid.U
 	return userID
 }
 
-func createReleaseBundleTestOrganization(t *testing.T, ctx context.Context) uuid.UUID {
+func createReleaseBundleTestOrganization(t testing.TB, ctx context.Context) uuid.UUID {
 	t.Helper()
 	var orgID uuid.UUID
 	if err := internalctx.GetDb(ctx).QueryRow(
@@ -1301,7 +1301,7 @@ func ociReleaseBundleFixture(
 }
 
 func createReleaseBundleProcessRevision(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	orgID uuid.UUID,
 	applicationID uuid.UUID,
@@ -1312,7 +1312,7 @@ func createReleaseBundleProcessRevision(
 }
 
 func createReleaseBundleProcessRevisionWithExecutionLocation(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	orgID uuid.UUID,
 	applicationID uuid.UUID,
@@ -1355,7 +1355,7 @@ func createReleaseBundleProcessRevisionWithExecutionLocation(
 }
 
 func markReleaseBundleStatusForTest(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	id uuid.UUID,
 	status types.ReleaseBundleStatus,

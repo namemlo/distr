@@ -64,10 +64,78 @@ describe('DeploymentTimelineComponent', () => {
     },
   ];
 
+  const legacyItems: DeploymentTimelineItem[] = [
+    {
+      source: 'legacy_deployment',
+      taskId: '',
+      legacyDeploymentId: 'legacy-deployment-1',
+      legacyDeploymentRevisionId: 'legacy-revision-1',
+      syntheticReleaseId: 'synthetic-release-1',
+      deploymentPlanId: '',
+      deploymentPlanTargetId: '',
+      deploymentTargetId: 'target-1',
+      applicationId: 'application-1',
+      applicationName: 'Payments',
+      releaseBundleId: '',
+      releaseNumber: 'legacy 1.2.2',
+      channelId: '',
+      channelName: '',
+      environmentId: '',
+      environmentName: '',
+      deploymentTargetName: 'cluster-a',
+      queuedAt: '2026-06-22T08:00:00Z',
+      completedAt: '2026-06-22T08:00:00Z',
+      availability: {
+        processSnapshot: false,
+        variableSnapshot: false,
+        channel: false,
+        environment: false,
+        taskLogs: false,
+        redeployPlan: false,
+      },
+      components: [{key: 'application', name: 'Payments', type: 'application_version', version: '1.2.2'}],
+      lastSuccessful: false,
+      redeployAvailable: false,
+    } as any,
+    {
+      source: 'legacy_deployment',
+      taskId: '',
+      legacyDeploymentId: 'legacy-deployment-2',
+      legacyDeploymentRevisionId: 'legacy-revision-2',
+      syntheticReleaseId: 'synthetic-release-2',
+      deploymentPlanId: '',
+      deploymentPlanTargetId: '',
+      deploymentTargetId: 'target-1',
+      applicationId: 'application-1',
+      applicationName: 'Payments',
+      releaseBundleId: '',
+      releaseNumber: 'legacy 1.2.1',
+      channelId: '',
+      channelName: '',
+      environmentId: '',
+      environmentName: '',
+      deploymentTargetName: 'cluster-a',
+      queuedAt: '2026-06-22T07:00:00Z',
+      completedAt: '2026-06-22T07:00:00Z',
+      availability: {
+        processSnapshot: false,
+        variableSnapshot: false,
+        channel: false,
+        environment: false,
+        taskLogs: false,
+        redeployPlan: false,
+      },
+      components: [{key: 'application', name: 'Payments', type: 'application_version', version: '1.2.1'}],
+      lastSuccessful: false,
+      redeployAvailable: false,
+    } as any,
+  ];
+
   const comparison: DeploymentTimelineComparison = {
     base: items[0],
     compare: items[1],
     process: {baseRevisionNumber: 1, compareRevisionNumber: 2, changed: true},
+    availability: {process: true, steps: true, variables: true},
     components: [
       {
         key: 'api',
@@ -153,11 +221,62 @@ describe('DeploymentTimelineComponent', () => {
     (component as any).selectCompare('task-2');
     await (component as any).compare();
 
-    expect(deploymentTimelineService.compare).toHaveBeenCalledWith('task-1', 'task-2');
+    expect(deploymentTimelineService.compare).toHaveBeenCalledWith({taskId: 'task-1'}, {taskId: 'task-2'});
     expect((component as any).comparison()).toEqual(comparison);
     expect((component as any).changedCount(comparison.components)).toBe(1);
   });
 
+  it('uses source-specific keys and compare refs for legacy entries', async () => {
+    deploymentTimelineService.list.mockReturnValue(of({items: [legacyItems[0], legacyItems[1], items[0]]}));
+    const {component} = createComponent();
+
+    expect((component as any).timelineItemKey(legacyItems[0])).toBe('legacy:legacy-revision-1');
+    expect((component as any).timelineItemKey(legacyItems[1])).toBe('legacy:legacy-revision-2');
+    (component as any).selectBase(legacyItems[0]);
+    (component as any).selectCompare(items[0]);
+    await (component as any).compare();
+
+    expect(deploymentTimelineService.compare).toHaveBeenCalledWith(
+      {legacyDeploymentRevisionId: 'legacy-revision-1'},
+      {taskId: 'task-1'}
+    );
+  });
+
+  it('hides task-only actions for legacy entries', () => {
+    deploymentTimelineService.list.mockReturnValue(of({items: [legacyItems[0], items[0]]}));
+    const {fixture, component} = createComponent();
+
+    expect((component as any).logUrl(legacyItems[0])).toBeUndefined();
+    expect((component as any).canRedeploy(legacyItems[0])).toBe(false);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelectorAll('a[title="Task logs"]').length).toBe(1);
+    expect(fixture.nativeElement.querySelectorAll('button[title="Deploy previous release"]').length).toBe(1);
+  });
+
+  it('renders unavailable comparison dimensions for legacy entries', async () => {
+    const unavailableComparison = {
+      ...comparison,
+      base: legacyItems[0],
+      compare: items[0],
+      availability: {process: false, steps: false, variables: false},
+      process: {changed: false},
+      steps: [],
+      variables: [],
+    } as any;
+    deploymentTimelineService.list.mockReturnValue(of({items: [legacyItems[0], items[0]]}));
+    deploymentTimelineService.compare.mockReturnValue(of(unavailableComparison));
+    const {fixture, component} = createComponent();
+    (component as any).selectBase(legacyItems[0]);
+    (component as any).selectCompare(items[0]);
+    await (component as any).compare();
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('Process unavailable');
+    expect(text).toContain('Variables unavailable');
+    expect(text).toContain('Steps unavailable');
+    expect(text).not.toContain('unchanged');
+  });
   it('creates a deploy previous release plan after confirmation', async () => {
     const {component} = createComponent();
 

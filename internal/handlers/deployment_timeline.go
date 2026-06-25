@@ -88,18 +88,28 @@ func compareDeploymentTimelineHandler() http.HandlerFunc {
 		log := internalctx.GetLogger(ctx)
 		auth := auth.Authentication.Require(ctx)
 
-		baseTaskID, ok := requiredUUIDQueryParam(w, r, "baseTaskId")
+		baseTaskID, ok := optionalUUIDQueryParam(w, r, "baseTaskId")
 		if !ok {
 			return
 		}
-		compareTaskID, ok := requiredUUIDQueryParam(w, r, "compareTaskId")
+		baseLegacyRevisionID, ok := optionalUUIDQueryParam(w, r, "baseLegacyDeploymentRevisionId")
+		if !ok {
+			return
+		}
+		compareTaskID, ok := optionalUUIDQueryParam(w, r, "compareTaskId")
+		if !ok {
+			return
+		}
+		compareLegacyRevisionID, ok := optionalUUIDQueryParam(w, r, "compareLegacyDeploymentRevisionId")
 		if !ok {
 			return
 		}
 		comparison, err := db.CompareDeploymentTimelineTasks(ctx, types.DeploymentTimelineCompareRequest{
-			OrganizationID: *auth.CurrentOrgID(),
-			BaseTaskID:     baseTaskID,
-			CompareTaskID:  compareTaskID,
+			OrganizationID:                    *auth.CurrentOrgID(),
+			BaseTaskID:                        uuidValue(baseTaskID),
+			BaseLegacyDeploymentRevisionID:    uuidValue(baseLegacyRevisionID),
+			CompareTaskID:                     uuidValue(compareTaskID),
+			CompareLegacyDeploymentRevisionID: uuidValue(compareLegacyRevisionID),
 		})
 		respondTaskQueueResult(w, r, log, err, func() {
 			RespondJSON(w, mapping.DeploymentTimelineComparisonToAPI(*comparison))
@@ -220,4 +230,11 @@ func optionalBoolQueryParam(w http.ResponseWriter, r *http.Request, name string)
 		return false, false
 	}
 	return parsed, true
+}
+
+func uuidValue(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
 }
