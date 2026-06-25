@@ -130,6 +130,14 @@ func GetLifecycle(ctx context.Context, id, orgID uuid.UUID) (*types.Lifecycle, e
 
 func UpdateLifecycle(ctx context.Context, lifecycle *types.Lifecycle) error {
 	return RunTx(ctx, func(ctx context.Context) error {
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			lifecycle.OrganizationID,
+			types.ConfigAsCodeResourceKindLifecycle,
+			lifecycle.ID,
+		); err != nil {
+			return err
+		}
 		db := internalctx.GetDb(ctx)
 		rows, err := db.Query(ctx,
 			`UPDATE Lifecycle AS l SET
@@ -179,6 +187,14 @@ func ReplaceLifecyclePhases(
 		if _, err := GetLifecycle(ctx, lifecycleID, orgID); err != nil {
 			return err
 		}
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			orgID,
+			types.ConfigAsCodeResourceKindLifecycle,
+			lifecycleID,
+		); err != nil {
+			return err
+		}
 		return replaceLifecyclePhases(ctx, lifecycleID, orgID, phases)
 	})
 	if err != nil {
@@ -188,22 +204,40 @@ func ReplaceLifecyclePhases(
 }
 
 func DeleteLifecycleWithID(ctx context.Context, id, organizationID uuid.UUID) error {
-	db := internalctx.GetDb(ctx)
-	cmd, err := db.Exec(ctx,
-		`DELETE FROM Lifecycle WHERE id = @id AND organization_id = @organizationId`,
-		pgx.NamedArgs{"id": id, "organizationId": organizationID},
-	)
-	if err != nil {
-		var pgError *pgconn.PgError
-		if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
-			return fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
+	return RunTx(ctx, func(ctx context.Context) error {
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			organizationID,
+			types.ConfigAsCodeResourceKindLifecycle,
+			id,
+		); err != nil {
+			return err
 		}
-		return fmt.Errorf("could not delete Lifecycle: %w", err)
-	}
-	if cmd.RowsAffected() == 0 {
-		return apierrors.ErrNotFound
-	}
-	return nil
+		if err := DeleteConfigAsCodeAuthorityForResource(
+			ctx,
+			organizationID,
+			types.ConfigAsCodeResourceKindLifecycle,
+			id,
+		); err != nil {
+			return err
+		}
+		db := internalctx.GetDb(ctx)
+		cmd, err := db.Exec(ctx,
+			`DELETE FROM Lifecycle WHERE id = @id AND organization_id = @organizationId`,
+			pgx.NamedArgs{"id": id, "organizationId": organizationID},
+		)
+		if err != nil {
+			var pgError *pgconn.PgError
+			if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+				return fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
+			}
+			return fmt.Errorf("could not delete Lifecycle: %w", err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return apierrors.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func getLifecyclePhases(ctx context.Context, lifecycleID uuid.UUID) ([]types.LifecyclePhase, error) {

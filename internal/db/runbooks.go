@@ -169,6 +169,14 @@ func UpdateRunbook(ctx context.Context, runbook *types.Runbook) error {
 		if err != nil {
 			return err
 		}
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			runbook.OrganizationID,
+			types.ConfigAsCodeResourceKindRunbook,
+			runbook.ID,
+		); err != nil {
+			return err
+		}
 		if err := ensureRunbookApplication(ctx, runbook.OrganizationID, runbook.ApplicationID); err != nil {
 			return err
 		}
@@ -216,18 +224,36 @@ func UpdateRunbook(ctx context.Context, runbook *types.Runbook) error {
 }
 
 func DeleteRunbookWithID(ctx context.Context, id, organizationID uuid.UUID) error {
-	db := internalctx.GetDb(ctx)
-	cmd, err := db.Exec(ctx,
-		`DELETE FROM Runbook WHERE id = @id AND organization_id = @organizationId`,
-		pgx.NamedArgs{"id": id, "organizationId": organizationID},
-	)
-	if err != nil {
-		return mapRunbookWriteError("delete", err)
-	}
-	if cmd.RowsAffected() == 0 {
-		return apierrors.ErrNotFound
-	}
-	return nil
+	return RunTx(ctx, func(ctx context.Context) error {
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			organizationID,
+			types.ConfigAsCodeResourceKindRunbook,
+			id,
+		); err != nil {
+			return err
+		}
+		if err := DeleteConfigAsCodeAuthorityForResource(
+			ctx,
+			organizationID,
+			types.ConfigAsCodeResourceKindRunbook,
+			id,
+		); err != nil {
+			return err
+		}
+		db := internalctx.GetDb(ctx)
+		cmd, err := db.Exec(ctx,
+			`DELETE FROM Runbook WHERE id = @id AND organization_id = @organizationId`,
+			pgx.NamedArgs{"id": id, "organizationId": organizationID},
+		)
+		if err != nil {
+			return mapRunbookWriteError("delete", err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return apierrors.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func CreateRunbookRevision(ctx context.Context, revision *types.RunbookRevision) error {
@@ -237,6 +263,14 @@ func CreateRunbookRevision(ctx context.Context, revision *types.RunbookRevision)
 	return RunTx(ctx, func(ctx context.Context) error {
 		runbook, err := getRunbook(ctx, revision.RunbookID, revision.OrganizationID, true)
 		if err != nil {
+			return err
+		}
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			revision.OrganizationID,
+			types.ConfigAsCodeResourceKindRunbook,
+			revision.RunbookID,
+		); err != nil {
 			return err
 		}
 		number, err := nextRunbookRevisionNumber(ctx, runbook.ID)
@@ -327,6 +361,14 @@ func PublishRunbookRevision(
 ) (*types.RunbookSnapshot, error) {
 	var snapshot *types.RunbookSnapshot
 	err := RunTx(ctx, func(ctx context.Context) error {
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			organizationID,
+			types.ConfigAsCodeResourceKindRunbook,
+			runbookID,
+		); err != nil {
+			return err
+		}
 		runbook, revision, err := getRunbookRevisionForSnapshot(ctx, organizationID, runbookID, revisionID)
 		if err != nil {
 			return err

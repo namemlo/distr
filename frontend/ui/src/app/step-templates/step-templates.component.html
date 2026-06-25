@@ -73,7 +73,7 @@
                         type="button"
                         class="distr-btn-secondary px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Install"
-                        [disabled]="isCatalogInstalled(template) || formLoading()"
+                        [disabled]="isCatalogInstalled(template) || isCatalogGitManaged(template) || formLoading()"
                         (click)="importCatalogTemplate(template)">
                         <fa-icon [icon]="faDownload" />
                       </button>
@@ -120,6 +120,9 @@
                       <div class="text-xs text-gray-500 dark:text-gray-400 whitespace-normal">
                         {{ template.sourceRef }}
                       </div>
+                      @if (authorityFor(template); as authority) {
+                        <app-config-as-code-authority-badge [authority]="authority" />
+                      }
                     </td>
                     <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap dark:text-white">
                       {{ template.category || '-' }}
@@ -191,7 +194,7 @@
           <button
             type="button"
             class="text-white distr-btn-primary px-5 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
-            [disabled]="isCatalogInstalled(catalog) || formLoading()"
+            [disabled]="isCatalogInstalled(catalog) || isCatalogGitManaged(catalog) || formLoading()"
             (click)="importCatalogTemplate(catalog)">
             <fa-icon [icon]="faDownload" class="mr-2" />
             Install
@@ -205,6 +208,9 @@
           <div>Action: {{ latestActionType(template) }}</div>
           <div>Version: {{ latestVersion(template) }}</div>
         </div>
+        @if (authorityFor(template); as authority) {
+          <app-config-as-code-authority-badge [authority]="authority" />
+        }
         <pre class="bg-gray-50 dark:bg-gray-800 rounded p-3 text-xs overflow-x-auto">{{
           template.versions[template.versions.length - 1]?.defaultInputBindings | json
         }}</pre>

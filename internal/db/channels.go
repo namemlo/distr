@@ -171,6 +171,14 @@ func UpdateChannel(ctx context.Context, channel *types.Channel) error {
 		if err != nil {
 			return err
 		}
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			channel.OrganizationID,
+			types.ConfigAsCodeResourceKindChannel,
+			channel.ID,
+		); err != nil {
+			return err
+		}
 		if existing.IsDefault && !channel.IsDefault {
 			return fmt.Errorf("could not update Channel: %w", apierrors.ErrConflict)
 		}
@@ -263,6 +271,22 @@ func DeleteChannelWithID(ctx context.Context, id, organizationID uuid.UUID) erro
 		}
 		if isDefault {
 			return fmt.Errorf("could not delete Channel: %w", apierrors.ErrConflict)
+		}
+		if err := EnsureConfigAsCodeDatabaseManagedForUpdate(
+			ctx,
+			organizationID,
+			types.ConfigAsCodeResourceKindChannel,
+			id,
+		); err != nil {
+			return err
+		}
+		if err := DeleteConfigAsCodeAuthorityForResource(
+			ctx,
+			organizationID,
+			types.ConfigAsCodeResourceKindChannel,
+			id,
+		); err != nil {
+			return err
 		}
 
 		cmd, err := db.Exec(ctx,

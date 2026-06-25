@@ -1,0 +1,21 @@
+@if (authority().authority === 'GIT_MANAGED') {
+  <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+    <span
+      class="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:border-blue-700 dark:bg-blue-950 dark:text-blue-200">
+      <fa-icon [icon]="faCodeBranch" />
+      Git managed
+    </span>
+    @if (authority().repositoryPath) {
+      <span class="font-mono">{{ authority().repositoryPath }}</span>
+    }
+    @if (authority().sourceRevision) {
+      <span class="font-mono">{{ authority().sourceRevision }}</span>
+    }
+  </div>
+} @else {
+  <span
+    class="mt-1 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+    <fa-icon [icon]="faDatabase" />
+    Database managed
+  </span>
+}

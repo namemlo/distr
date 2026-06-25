@@ -5,15 +5,20 @@ import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {ApplicationsService} from '../services/applications.service';
 import {ChannelsService} from '../services/channels.service';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {LifecyclesService} from '../services/lifecycles.service';
 import {OverlayService} from '../services/overlay.service';
 import {ToastService} from '../services/toast.service';
 import {Channel} from '../types/channel';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {Lifecycle} from '../types/lifecycle';
 import {ChannelsComponent} from './channels.component';
 
 describe('ChannelsComponent', () => {
   let channelsService: any;
+  let configAsCodeService: any;
+  let featureFlagService: any;
   let applicationsService: any;
   let lifecyclesService: any;
   let overlay: any;
@@ -52,6 +57,16 @@ describe('ChannelsComponent', () => {
     },
   ];
   const applications = [{id: 'application-1', name: 'Payments'}] as Application[];
+  const gitManagedChannelAuthority: ConfigAsCodeAuthority = {
+    resourceKind: 'Channel',
+    resourceId: 'channel-2',
+    authority: 'GIT_MANAGED',
+    repositoryPath: 'channels/hotfix.yaml',
+    sourceRevision: '6dcb09f',
+    documentChecksum: 'sha256:1234',
+    updatedByUserId: 'user-1',
+    updatedAt: '2026-06-20T11:00:00Z',
+  };
   const lifecycles: Lifecycle[] = [
     {
       id: 'lifecycle-1',
@@ -71,6 +86,12 @@ describe('ChannelsComponent', () => {
       update: vi.fn(),
       delete: vi.fn(),
     };
+    configAsCodeService = {
+      listAuthorities: vi.fn(),
+    };
+    featureFlagService = {
+      isConfigAsCodeEnabled$: of(false),
+    };
     applicationsService = {
       list: vi.fn(),
     };
@@ -89,6 +110,7 @@ describe('ChannelsComponent', () => {
     channelsService.create.mockReturnValue(of(channels[0]));
     channelsService.update.mockReturnValue(of(channels[0]));
     channelsService.delete.mockReturnValue(of(undefined));
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: []}));
     applicationsService.list.mockReturnValue(of(applications));
     lifecyclesService.list.mockReturnValue(of(lifecycles));
     overlay.showModal.mockReturnValue({close: vi.fn()} as any);
@@ -98,6 +120,8 @@ describe('ChannelsComponent', () => {
       imports: [ChannelsComponent],
       providers: [
         {provide: ChannelsService, useValue: channelsService},
+        {provide: ConfigAsCodeService, useValue: configAsCodeService},
+        {provide: FeatureFlagService, useValue: featureFlagService},
         {provide: ApplicationsService, useValue: applicationsService},
         {provide: LifecyclesService, useValue: lifecyclesService},
         {provide: OverlayService, useValue: overlay},
@@ -112,6 +136,22 @@ describe('ChannelsComponent', () => {
     expect((component as any).channels()).toEqual(channels);
     expect((component as any).applicationName('application-1')).toBe('Payments');
     expect((component as any).lifecycleName('lifecycle-1')).toBe('Standard');
+  });
+
+  it('loads config-as-code authority badges and blocks Git-managed mutations', () => {
+    featureFlagService.isConfigAsCodeEnabled$ = of(true);
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: [gitManagedChannelAuthority]}));
+    const {component} = createComponent();
+
+    expect((component as any).authorityFor(channels[1])).toEqual(gitManagedChannelAuthority);
+    expect((component as any).isGitManaged(channels[1])).toBe(true);
+
+    (component as any).showUpdateDialog(channels[1]);
+    (component as any).delete(channels[1]);
+
+    expect(overlay.showModal).not.toHaveBeenCalled();
+    expect(overlay.confirm).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('This channel is managed from Git.');
   });
 
   it('shows load errors', () => {

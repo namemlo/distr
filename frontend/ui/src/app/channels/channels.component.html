@@ -70,6 +70,9 @@
                             {{ channel.description }}
                           </div>
                         }
+                        @if (authorityFor(channel); as authority) {
+                          <app-config-as-code-authority-badge [authority]="authority" />
+                        }
                       </div>
                     </div>
                   </td>
@@ -94,14 +97,15 @@
                     <button
                       type="button"
                       (click)="showUpdateDialog(channel)"
-                      class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary"
+                      [disabled]="isGitManaged(channel)"
+                      class="py-2 px-3 flex items-center text-sm font-medium text-center distr-btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Edit">
                       <fa-icon [icon]="faEdit" />
                     </button>
                     <button
                       type="button"
                       (click)="delete(channel)"
-                      [disabled]="channel.isDefault"
+                      [disabled]="channel.isDefault || isGitManaged(channel)"
                       class="py-2 px-3 flex items-center text-sm font-medium text-center text-red-700 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 focus:z-10 focus:ring-4 focus:ring-gray-200 disabled:opacity-50 disabled:cursor-not-allowed dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-red-500 dark:border-gray-600 dark:hover:bg-gray-700"
                       title="Delete">
                       <fa-icon [icon]="faTrash" />

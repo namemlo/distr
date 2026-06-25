@@ -2,14 +2,19 @@ import {HttpErrorResponse} from '@angular/common/http';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
+import {ConfigAsCodeService} from '../services/config-as-code.service';
+import {FeatureFlagService} from '../services/feature-flag.service';
 import {OverlayService} from '../services/overlay.service';
 import {StepTemplatesService} from '../services/step-templates.service';
 import {ToastService} from '../services/toast.service';
+import {ConfigAsCodeAuthority} from '../types/config-as-code';
 import {StepTemplate} from '../types/step-template';
 import {StepTemplatesComponent} from './step-templates.component';
 
 describe('StepTemplatesComponent', () => {
   let stepTemplatesService: any;
+  let configAsCodeService: any;
+  let featureFlagService: any;
   let overlay: any;
   let toast: any;
 
@@ -44,12 +49,28 @@ describe('StepTemplatesComponent', () => {
       ],
     },
   ];
+  const gitManagedTemplateAuthority: ConfigAsCodeAuthority = {
+    resourceKind: 'StepTemplateReference',
+    resourceId: 'template-1',
+    authority: 'GIT_MANAGED',
+    repositoryPath: 'step-templates/http-health-check.yaml',
+    sourceRevision: '6dcb09f',
+    documentChecksum: 'sha256:1234',
+    updatedByUserId: 'user-1',
+    updatedAt: '2026-06-22T11:00:00Z',
+  };
 
   beforeEach(() => {
     stepTemplatesService = {
       list: vi.fn(),
       get: vi.fn(),
       importTemplate: vi.fn(),
+    };
+    configAsCodeService = {
+      listAuthorities: vi.fn(),
+    };
+    featureFlagService = {
+      isConfigAsCodeEnabled$: of(false),
     };
     overlay = {
       showModal: vi.fn(),
@@ -60,12 +81,15 @@ describe('StepTemplatesComponent', () => {
     };
     stepTemplatesService.list.mockReturnValue(of(installedTemplates));
     stepTemplatesService.importTemplate.mockReturnValue(of(installedTemplates[0]));
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: []}));
     overlay.showModal.mockReturnValue({close: vi.fn()} as any);
 
     TestBed.configureTestingModule({
       imports: [StepTemplatesComponent],
       providers: [
         {provide: StepTemplatesService, useValue: stepTemplatesService},
+        {provide: ConfigAsCodeService, useValue: configAsCodeService},
+        {provide: FeatureFlagService, useValue: featureFlagService},
         {provide: OverlayService, useValue: overlay},
         {provide: ToastService, useValue: toast},
       ],
@@ -78,6 +102,20 @@ describe('StepTemplatesComponent', () => {
     expect((component as any).templates()).toEqual(installedTemplates);
     expect((component as any).isCatalogInstalled((component as any).catalogTemplates[0])).toBe(true);
     expect((component as any).catalogTemplates.length).toBeGreaterThan(1);
+  });
+
+  it('loads config-as-code authorities and blocks Git-managed template re-imports', async () => {
+    featureFlagService.isConfigAsCodeEnabled$ = of(true);
+    configAsCodeService.listAuthorities.mockReturnValue(of({authorities: [gitManagedTemplateAuthority]}));
+    const {component} = createComponent();
+
+    expect((component as any).authorityFor(installedTemplates[0])).toEqual(gitManagedTemplateAuthority);
+    expect((component as any).isGitManaged(installedTemplates[0])).toBe(true);
+
+    await (component as any).importCatalogTemplate((component as any).catalogTemplates[0]);
+
+    expect(stepTemplatesService.importTemplate).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('This step template is managed from Git.');
   });
 
   it('shows load errors', () => {

@@ -28,6 +28,7 @@ const (
 	KeyObservabilityTracing     Key = "observability_tracing"
 	KeyObservabilityDashboards  Key = "observability_dashboards"
 	KeyObservabilityCorrelation Key = "observability_correlation"
+	KeyConfigAsCode             Key = "config_as_code"
 )
 
 type Flag struct {
@@ -164,6 +165,7 @@ var definitions = []definition{
 		Description: "Builds deterministic Grafana links between traces, metrics, and dashboards.",
 		Milestone:   "Milestone G",
 	},
+	{Key: KeyConfigAsCode, Label: "Config as Code", Description: "Validates declarative configuration documents and governs Git-managed resource authority.", Milestone: "Milestone H"},
 }
 
 func AllKeys() []Key {
