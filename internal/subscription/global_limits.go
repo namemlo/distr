@@ -20,7 +20,7 @@ const (
 	MaxUsersPerCustomerOrganizationPro       limit.Limit = 10
 	MaxUsersPerCustomerOrganizationTrial     limit.Limit = limit.Unlimited
 
-	MaxDeploymentTargetsPerCustomerOrganizationCommunity limit.Limit = 1
+	MaxDeploymentTargetsPerCustomerOrganizationCommunity limit.Limit = 100
 	MaxDeploymentTargetsPerCustomerOrganizationStarter   limit.Limit = 1
 	MaxDeploymentTargetsPerCustomerOrganizationPro       limit.Limit = 8
 	MaxDeploymentTargetsPerCustomerOrganizationTrial                 = limit.Unlimited
