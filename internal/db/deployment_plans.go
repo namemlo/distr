@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/distr-sh/distr/internal/variableresolution"
 	"github.com/google/uuid"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -514,6 +516,8 @@ func addDeploymentPlanSnapshotData(ctx context.Context, plan *types.DeploymentPl
 			"variableSnapshotId",
 			"variable snapshot could not be resolved",
 		)
+	} else if snapshot.ResolutionMode == types.VariableSnapshotResolutionModeTarget {
+		addDeploymentPlanTargetResolvedVariables(plan, snapshot.Variables)
 	} else {
 		addDeploymentPlanVariables(plan, *snapshot)
 	}
@@ -730,6 +734,91 @@ func addDeploymentPlanVariables(plan *types.DeploymentPlan, snapshot types.Varia
 			)
 		}
 	}
+}
+
+func addDeploymentPlanTargetResolvedVariables(plan *types.DeploymentPlan, variables []types.Variable) {
+	var resolvedForPlan []types.ResolvedVariable
+	for _, target := range plan.Targets {
+		resolved, err := variableresolution.Resolve(variableresolution.Request{
+			Variables: variables,
+			Scope: types.VariableResolutionScope{
+				CustomerOrganizationID: target.CustomerOrganizationID,
+				EnvironmentID:          &plan.EnvironmentID,
+				ChannelID:              &plan.ChannelID,
+				DeploymentTargetID:     &target.DeploymentTargetID,
+				ApplicationID:          &plan.ApplicationID,
+			},
+		})
+		if err != nil {
+			addDeploymentPlanIssue(
+				plan,
+				types.DeploymentPlanIssueSeverityBlocker,
+				"variable_snapshot_resolution_failed",
+				"variables",
+				"immutable variable candidates could not be resolved for the selected target",
+			)
+			return
+		}
+		if resolvedForPlan == nil {
+			resolvedForPlan = resolved
+			continue
+		}
+		if !deploymentPlanResolvedVariablesEqual(resolvedForPlan, resolved) {
+			addDeploymentPlanIssue(
+				plan,
+				types.DeploymentPlanIssueSeverityBlocker,
+				"target_scoped_variables_require_separate_plans",
+				"targets",
+				"selected targets resolve different variable values; create one immutable plan per target",
+			)
+			return
+		}
+	}
+	addDeploymentPlanResolvedVariables(plan, resolvedForPlan)
+}
+
+func addDeploymentPlanResolvedVariables(plan *types.DeploymentPlan, values []types.ResolvedVariable) {
+	sort.SliceStable(values, func(i, j int) bool {
+		if values[i].Key != values[j].Key {
+			return values[i].Key < values[j].Key
+		}
+		if values[i].VariableSetID != values[j].VariableSetID {
+			return values[i].VariableSetID.String() < values[j].VariableSetID.String()
+		}
+		return values[i].VariableID.String() < values[j].VariableID.String()
+	})
+	for _, value := range values {
+		plan.Variables = append(plan.Variables, types.DeploymentPlanVariable{
+			OrganizationID: plan.OrganizationID,
+			VariableSetID:  value.VariableSetID,
+			VariableID:     value.VariableID,
+			Key:            value.Key,
+			Type:           value.Type,
+			IsRequired:     value.IsRequired,
+			Status:         value.Status,
+			Source:         value.Source,
+			Value:          cloneRawMessage(value.Value),
+			ReferenceID:    value.ReferenceID,
+			ReferenceName:  value.ReferenceName,
+			Redacted:       value.Redacted,
+			Trace:          slices.Clone(value.Trace),
+		})
+		if value.IsRequired && value.Status == types.VariableResolutionStatusUnresolved {
+			addDeploymentPlanIssue(
+				plan,
+				types.DeploymentPlanIssueSeverityBlocker,
+				"required_variable_unresolved",
+				"variables."+value.Key,
+				fmt.Sprintf("required variable %q is unresolved", value.Key),
+			)
+		}
+	}
+}
+
+func deploymentPlanResolvedVariablesEqual(left, right []types.ResolvedVariable) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftJSON, rightJSON)
 }
 
 func cloneRawMessage(value json.RawMessage) json.RawMessage {

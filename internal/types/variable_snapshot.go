@@ -7,16 +7,25 @@ import (
 	"github.com/google/uuid"
 )
 
+type VariableSnapshotResolutionMode string
+
+const (
+	VariableSnapshotResolutionModeLegacy VariableSnapshotResolutionMode = "legacy"
+	VariableSnapshotResolutionModeTarget VariableSnapshotResolutionMode = "target_resolved"
+)
+
 type VariableSnapshot struct {
-	ID                uuid.UUID               `db:"id" json:"id"`
-	CreatedAt         time.Time               `db:"created_at" json:"createdAt"`
-	OrganizationID    uuid.UUID               `db:"organization_id" json:"organizationId"`
-	ReleaseBundleID   uuid.UUID               `db:"release_bundle_id" json:"releaseBundleId"`
-	ApplicationID     uuid.UUID               `db:"application_id" json:"applicationId"`
-	ChannelID         uuid.UUID               `db:"channel_id" json:"channelId"`
-	CanonicalChecksum string                  `db:"canonical_checksum" json:"canonicalChecksum"`
-	CanonicalPayload  []byte                  `db:"canonical_payload" json:"-"`
-	Values            []VariableSnapshotValue `db:"-" json:"values"`
+	ID                uuid.UUID                      `db:"id" json:"id"`
+	CreatedAt         time.Time                      `db:"created_at" json:"createdAt"`
+	OrganizationID    uuid.UUID                      `db:"organization_id" json:"organizationId"`
+	ReleaseBundleID   uuid.UUID                      `db:"release_bundle_id" json:"releaseBundleId"`
+	ApplicationID     uuid.UUID                      `db:"application_id" json:"applicationId"`
+	ChannelID         uuid.UUID                      `db:"channel_id" json:"channelId"`
+	CanonicalChecksum string                         `db:"canonical_checksum" json:"canonicalChecksum"`
+	CanonicalPayload  []byte                         `db:"canonical_payload" json:"-"`
+	ResolutionMode    VariableSnapshotResolutionMode `db:"-" json:"resolutionMode"`
+	Variables         []Variable                     `db:"-" json:"-"`
+	Values            []VariableSnapshotValue        `db:"-" json:"values"`
 }
 
 type VariableSnapshotValue struct {

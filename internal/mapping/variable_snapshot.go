@@ -13,6 +13,7 @@ func VariableSnapshotToAPI(snapshot types.VariableSnapshot) api.VariableSnapshot
 		ApplicationID:     snapshot.ApplicationID,
 		ChannelID:         snapshot.ChannelID,
 		CanonicalChecksum: snapshot.CanonicalChecksum,
+		ResolutionMode:    string(snapshot.ResolutionMode),
 		Values:            List(snapshot.Values, VariableSnapshotValueToAPI),
 	}
 }

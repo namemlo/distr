@@ -14,6 +14,7 @@ type VariableSnapshot struct {
 	ApplicationID     uuid.UUID               `json:"applicationId"`
 	ChannelID         uuid.UUID               `json:"channelId"`
 	CanonicalChecksum string                  `json:"canonicalChecksum"`
+	ResolutionMode    string                  `json:"resolutionMode"`
 	Values            []VariableSnapshotValue `json:"values"`
 }
 

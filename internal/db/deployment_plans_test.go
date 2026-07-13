@@ -80,6 +80,98 @@ func TestDeploymentPlanRepositoryCreatesReadyPlanFromPublishedRelease(t *testing
 	g.Expect(listed[0].ID).To(Equal(plan.ID))
 }
 
+func TestDeploymentPlanRepositoryResolvesFrozenTargetScopedVariablesPerPlan(t *testing.T) {
+	ctx := deploymentPlanDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Standard deploy")
+	choiceCustomerID := createVariableSetCustomerOrganizationForOrganization(t, ctx, deps.orgID, "Choice TP")
+	paymitCustomerID := createVariableSetCustomerOrganizationForOrganization(t, ctx, deps.orgID, "Paymit")
+	choiceTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	paymitTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "paymit-dev")
+	for targetID, customerID := range map[uuid.UUID]uuid.UUID{
+		choiceTargetID: choiceCustomerID,
+		paymitTargetID: paymitCustomerID,
+	} {
+		_, err := internalctx.GetDb(ctx).Exec(ctx,
+			`UPDATE DeploymentTarget
+			SET customer_organization_id = @customerOrganizationId
+			WHERE id = @targetId AND organization_id = @organizationId`,
+			pgx.NamedArgs{
+				"customerOrganizationId": customerID,
+				"targetId":               targetID,
+				"organizationId":         deps.orgID,
+			},
+		)
+		g.Expect(err).NotTo(HaveOccurred())
+	}
+	variableSet := types.VariableSet{
+		OrganizationID: deps.orgID,
+		Name:           "Target-scoped endpoints " + uuid.NewString(),
+		ApplicationIDs: []uuid.UUID{deps.applicationID},
+		Variables: []types.Variable{{
+			Key:        "api_url",
+			Type:       types.VariableTypeString,
+			IsRequired: true,
+			ScopedValues: []types.VariableScopedValue{
+				{
+					Scope: types.VariableScope{
+						CustomerOrganizationID: &choiceCustomerID,
+						EnvironmentID:          &deps.devEnvironmentID,
+						DeploymentTargetID:     &choiceTargetID,
+					},
+					Value: json.RawMessage(`"https://choice.example"`),
+				},
+				{
+					Scope: types.VariableScope{
+						CustomerOrganizationID: &paymitCustomerID,
+						EnvironmentID:          &deps.devEnvironmentID,
+						DeploymentTargetID:     &paymitTargetID,
+					},
+					Value: json.RawMessage(`"https://paymit.example"`),
+				},
+			},
+		}},
+	}
+	g.Expect(db.CreateVariableSet(ctx, &variableSet)).To(Succeed())
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	createPlan := func(targetID uuid.UUID) *types.DeploymentPlan {
+		plan, createErr := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+			OrganizationID: deps.orgID, ReleaseBundleID: published.ID,
+			EnvironmentID: deps.devEnvironmentID, TargetIDs: []uuid.UUID{targetID},
+		})
+		g.Expect(createErr).NotTo(HaveOccurred())
+		return plan
+	}
+	choicePlan := createPlan(choiceTargetID)
+	paymitPlan := createPlan(paymitTargetID)
+	g.Expect(choicePlan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(paymitPlan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(deploymentPlanVariableByKey(choicePlan.Variables, "api_url").Value).
+		To(MatchJSON(`"https://choice.example"`))
+	g.Expect(deploymentPlanVariableByKey(paymitPlan.Variables, "api_url").Value).
+		To(MatchJSON(`"https://paymit.example"`))
+
+	variableSet.Variables[0].ScopedValues[0].Value = json.RawMessage(`"https://changed.example"`)
+	g.Expect(db.UpdateVariableSet(ctx, &variableSet)).To(Succeed())
+	newChoicePlan := createPlan(choiceTargetID)
+	g.Expect(deploymentPlanVariableByKey(newChoicePlan.Variables, "api_url").Value).
+		To(MatchJSON(`"https://choice.example"`))
+
+	missingTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "unconfigured-dev")
+	missingPlan := createPlan(missingTargetID)
+	g.Expect(missingPlan.Status).To(Equal(types.DeploymentPlanStatusBlocked))
+	g.Expect(deploymentPlanIssueCodes(missingPlan.Issues, types.DeploymentPlanIssueSeverityBlocker)).
+		To(ContainElement("required_variable_unresolved"))
+}
+
 func TestDeploymentPlanRepositoryPlansFromVariableSnapshotAfterVariableSetUpdate(t *testing.T) {
 	ctx := deploymentPlanDBTestContext(t)
 	g := NewWithT(t)

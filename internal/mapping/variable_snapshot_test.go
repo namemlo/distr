@@ -29,6 +29,7 @@ func TestVariableSnapshotToAPI(t *testing.T) {
 		ApplicationID:     applicationID,
 		ChannelID:         channelID,
 		CanonicalChecksum: "sha256:abc",
+		ResolutionMode:    types.VariableSnapshotResolutionModeTarget,
 		Values: []types.VariableSnapshotValue{
 			{
 				ID:                 valueID,
@@ -60,6 +61,7 @@ func TestVariableSnapshotToAPI(t *testing.T) {
 		ApplicationID:     applicationID,
 		ChannelID:         channelID,
 		CanonicalChecksum: "sha256:abc",
+		ResolutionMode:    string(types.VariableSnapshotResolutionModeTarget),
 		Values: []api.VariableSnapshotValue{
 			{
 				ID:                 valueID,

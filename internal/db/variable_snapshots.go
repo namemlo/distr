@@ -13,6 +13,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/distr-sh/distr/internal/variabledrift"
+	"github.com/distr-sh/distr/internal/variablescope"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -31,10 +32,12 @@ const (
 )
 
 type canonicalVariableSnapshot struct {
-	ReleaseBundleID string                           `json:"releaseBundleId"`
-	ApplicationID   string                           `json:"applicationId"`
-	ChannelID       string                           `json:"channelId"`
-	Values          []canonicalVariableSnapshotValue `json:"values"`
+	ReleaseBundleID string                               `json:"releaseBundleId"`
+	ApplicationID   string                               `json:"applicationId"`
+	ChannelID       string                               `json:"channelId"`
+	ResolutionMode  types.VariableSnapshotResolutionMode `json:"resolutionMode,omitempty"`
+	Variables       []canonicalVariableSnapshotVariable  `json:"variables,omitempty"`
+	Values          []canonicalVariableSnapshotValue     `json:"values"`
 }
 
 type canonicalVariableSnapshotValue struct {
@@ -50,6 +53,26 @@ type canonicalVariableSnapshotValue struct {
 	ReferenceName string                               `json:"referenceName,omitempty"`
 	Redacted      bool                                 `json:"redacted"`
 	Trace         []types.VariableResolutionTraceEntry `json:"trace"`
+}
+
+type canonicalVariableSnapshotVariable struct {
+	VariableSetID string                                 `json:"variableSetId"`
+	VariableID    string                                 `json:"variableId"`
+	Key           string                                 `json:"key"`
+	Type          string                                 `json:"type"`
+	IsRequired    bool                                   `json:"isRequired"`
+	DefaultValue  json.RawMessage                        `json:"defaultValue,omitempty"`
+	ReferenceID   string                                 `json:"referenceId,omitempty"`
+	ReferenceName string                                 `json:"referenceName,omitempty"`
+	ScopedValues  []canonicalVariableSnapshotScopedValue `json:"scopedValues"`
+}
+
+type canonicalVariableSnapshotScopedValue struct {
+	Scope         types.VariableScope `json:"scope"`
+	SortOrder     int                 `json:"sortOrder"`
+	Value         json.RawMessage     `json:"value,omitempty"`
+	ReferenceID   string              `json:"referenceId,omitempty"`
+	ReferenceName string              `json:"referenceName,omitempty"`
 }
 
 func GetVariableSnapshot(ctx context.Context, id, orgID uuid.UUID) (*types.VariableSnapshot, error) {
@@ -100,6 +123,9 @@ func getVariableSnapshot(ctx context.Context, id, orgID uuid.UUID) (*types.Varia
 	if err != nil {
 		return nil, err
 	}
+	if err := hydrateVariableSnapshotResolution(&snapshot); err != nil {
+		return nil, fmt.Errorf("could not decode VariableSnapshot resolution data: %w", err)
+	}
 	return &snapshot, nil
 }
 
@@ -112,8 +138,10 @@ func createVariableSnapshotForReleaseBundle(
 		return nil, err
 	}
 	variableSetIDs := make([]uuid.UUID, 0, len(variableSets))
+	variables := []types.Variable{}
 	for _, variableSet := range variableSets {
 		variableSetIDs = append(variableSetIDs, variableSet.ID)
+		variables = append(variables, variableSet.Variables...)
 	}
 
 	resolved := []types.ResolvedVariable{}
@@ -127,7 +155,7 @@ func createVariableSnapshotForReleaseBundle(
 		}
 	}
 
-	payload, checksum, err := canonicalizeVariableSnapshot(bundle, resolved)
+	payload, checksum, err := canonicalizeVariableSnapshot(bundle, resolved, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -172,6 +200,9 @@ func createVariableSnapshotForReleaseBundle(
 	snapshot.Values, err = getVariableSnapshotValues(ctx, snapshot.ID, snapshot.OrganizationID)
 	if err != nil {
 		return nil, err
+	}
+	if err := hydrateVariableSnapshotResolution(&snapshot); err != nil {
+		return nil, fmt.Errorf("could not decode created VariableSnapshot resolution data: %w", err)
 	}
 	return &snapshot, nil
 }
@@ -353,6 +384,7 @@ func variableSnapshotJSONValue(value types.ResolvedVariable) any {
 func canonicalizeVariableSnapshot(
 	bundle types.ReleaseBundle,
 	values []types.ResolvedVariable,
+	variables []types.Variable,
 ) ([]byte, string, error) {
 	canonicalValues := make([]canonicalVariableSnapshotValue, 0, len(values))
 	for _, value := range values {
@@ -380,10 +412,13 @@ func canonicalizeVariableSnapshot(
 		}
 		return canonicalValues[i].VariableID < canonicalValues[j].VariableID
 	})
+	canonicalVariables := canonicalVariableSnapshotVariables(variables)
 	canonical := canonicalVariableSnapshot{
 		ReleaseBundleID: bundle.ID.String(),
 		ApplicationID:   bundle.ApplicationID.String(),
 		ChannelID:       bundle.ChannelID.String(),
+		ResolutionMode:  types.VariableSnapshotResolutionModeTarget,
+		Variables:       canonicalVariables,
 		Values:          canonicalValues,
 	}
 	payload, err := json.Marshal(canonical)
@@ -392,6 +427,121 @@ func canonicalizeVariableSnapshot(
 	}
 	sum := sha256.Sum256(payload)
 	return payload, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalVariableSnapshotVariables(variables []types.Variable) []canonicalVariableSnapshotVariable {
+	result := make([]canonicalVariableSnapshotVariable, 0, len(variables))
+	for _, variable := range variables {
+		scopedValues := make([]canonicalVariableSnapshotScopedValue, 0, len(variable.ScopedValues))
+		for _, scopedValue := range variable.ScopedValues {
+			scopedValues = append(scopedValues, canonicalVariableSnapshotScopedValue{
+				Scope:         scopedValue.Scope,
+				SortOrder:     scopedValue.SortOrder,
+				Value:         variableSnapshotCandidateValue(variable.Type, scopedValue.Value),
+				ReferenceID:   scopedValue.ReferenceID,
+				ReferenceName: scopedValue.ReferenceName,
+			})
+		}
+		sort.SliceStable(scopedValues, func(i, j int) bool {
+			if scopedValues[i].SortOrder != scopedValues[j].SortOrder {
+				return scopedValues[i].SortOrder < scopedValues[j].SortOrder
+			}
+			return variablescope.Key(scopedValues[i].Scope) < variablescope.Key(scopedValues[j].Scope)
+		})
+		result = append(result, canonicalVariableSnapshotVariable{
+			VariableSetID: variable.VariableSetID.String(),
+			VariableID:    variable.ID.String(),
+			Key:           variable.Key,
+			Type:          string(variable.Type),
+			IsRequired:    variable.IsRequired,
+			DefaultValue:  variableSnapshotCandidateValue(variable.Type, variable.DefaultValue),
+			ReferenceID:   variable.ReferenceID,
+			ReferenceName: variable.ReferenceName,
+			ScopedValues:  scopedValues,
+		})
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Key != result[j].Key {
+			return result[i].Key < result[j].Key
+		}
+		if result[i].VariableSetID != result[j].VariableSetID {
+			return result[i].VariableSetID < result[j].VariableSetID
+		}
+		return result[i].VariableID < result[j].VariableID
+	})
+	return result
+}
+
+func hydrateVariableSnapshotResolution(snapshot *types.VariableSnapshot) error {
+	var canonical canonicalVariableSnapshot
+	if err := json.Unmarshal(snapshot.CanonicalPayload, &canonical); err != nil {
+		return err
+	}
+	if canonical.ResolutionMode == "" {
+		snapshot.ResolutionMode = types.VariableSnapshotResolutionModeLegacy
+		snapshot.Variables = nil
+		return nil
+	}
+	if canonical.ResolutionMode != types.VariableSnapshotResolutionModeTarget {
+		return fmt.Errorf("unsupported resolution mode %q", canonical.ResolutionMode)
+	}
+	variables := make([]types.Variable, 0, len(canonical.Variables))
+	for _, candidate := range canonical.Variables {
+		variableSetID, err := uuid.Parse(candidate.VariableSetID)
+		if err != nil {
+			return fmt.Errorf("variableSetId %q is invalid", candidate.VariableSetID)
+		}
+		variableID, err := uuid.Parse(candidate.VariableID)
+		if err != nil {
+			return fmt.Errorf("variableId %q is invalid", candidate.VariableID)
+		}
+		variable := types.Variable{
+			ID:            variableID,
+			VariableSetID: variableSetID,
+			Key:           candidate.Key,
+			Type:          types.VariableType(candidate.Type),
+			IsRequired:    candidate.IsRequired,
+			DefaultValue:  variableSnapshotCloneRawMessage(candidate.DefaultValue),
+			ReferenceID:   candidate.ReferenceID,
+			ReferenceName: candidate.ReferenceName,
+			ScopedValues:  make([]types.VariableScopedValue, 0, len(candidate.ScopedValues)),
+		}
+		for _, scopedCandidate := range candidate.ScopedValues {
+			variable.ScopedValues = append(variable.ScopedValues, types.VariableScopedValue{
+				VariableSetID: variableSetID,
+				VariableID:    variableID,
+				Scope:         scopedCandidate.Scope,
+				SortOrder:     scopedCandidate.SortOrder,
+				Value:         variableSnapshotCloneRawMessage(scopedCandidate.Value),
+				ReferenceID:   scopedCandidate.ReferenceID,
+				ReferenceName: scopedCandidate.ReferenceName,
+			})
+		}
+		variables = append(variables, variable)
+	}
+	snapshot.ResolutionMode = canonical.ResolutionMode
+	snapshot.Variables = variables
+	return nil
+}
+
+func variableSnapshotCandidateValue(variableType types.VariableType, value json.RawMessage) json.RawMessage {
+	switch variableType {
+	case types.VariableTypeSecretReference,
+		types.VariableTypeAccountReference,
+		types.VariableTypeCertificateReference:
+		return nil
+	default:
+		return variableSnapshotCloneRawMessage(value)
+	}
+}
+
+func variableSnapshotCloneRawMessage(value json.RawMessage) json.RawMessage {
+	if len(value) == 0 {
+		return nil
+	}
+	clone := make([]byte, len(value))
+	copy(clone, value)
+	return clone
 }
 
 func variableSnapshotCanonicalValue(value types.ResolvedVariable) json.RawMessage {
