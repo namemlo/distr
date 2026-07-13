@@ -106,6 +106,32 @@ describe('DeploymentPlansComponent', () => {
         },
       ],
       targetComponents: [],
+      preflightRuns: [
+        {
+          id: 'preflight-1',
+          createdAt: '2026-06-21T09:01:00Z',
+          deploymentPlanId: 'plan-1',
+          planChecksum: 'sha256:plan',
+          status: 'FAILED',
+          checks: [
+            {
+              id: 'check-1',
+              createdAt: '2026-06-21T09:01:00Z',
+              deploymentPreflightRunId: 'preflight-1',
+              deploymentPlanId: 'plan-1',
+              deploymentPlanTargetId: 'plan-target-1',
+              deploymentTargetId: 'target-1',
+              component: 'loyalty-api',
+              checkKey: 'target_platform:loyalty-api',
+              status: 'FAILED',
+              expected: {platform: 'linux/amd64'},
+              actual: {platform: 'linux/arm64'},
+              message: 'target platform changed or does not support linux/amd64',
+              sortOrder: 10,
+            },
+          ],
+        },
+      ],
       steps: [
         {
           id: 'step-1',
@@ -166,6 +192,7 @@ describe('DeploymentPlansComponent', () => {
   beforeEach(() => {
     deploymentPlansService = {
       list: vi.fn(),
+      get: vi.fn(),
       create: vi.fn(),
       execute: vi.fn(),
     };
@@ -197,6 +224,7 @@ describe('DeploymentPlansComponent', () => {
     };
 
     deploymentPlansService.list.mockReturnValue(of(plans));
+    deploymentPlansService.get.mockReturnValue(of(plans[0]));
     deploymentPlansService.create.mockReturnValue(of(plans[0]));
     releaseBundlesService.list.mockReturnValue(of(releaseBundles));
     applicationsService.list.mockReturnValue(of(applications));
@@ -295,6 +323,26 @@ describe('DeploymentPlansComponent', () => {
     expect(router.navigate).not.toHaveBeenCalled();
   });
 
+  it('reloads persisted failed preflight evidence after execution is rejected', async () => {
+    const readyPlan: DeploymentPlan = {...plans[0], status: 'READY', issues: [], preflightRuns: []};
+    const failedPlan: DeploymentPlan = {...readyPlan, preflightRuns: plans[0].preflightRuns};
+    deploymentPlansService.list.mockReturnValue(of([readyPlan]));
+    deploymentPlansService.execute.mockReturnValue(
+      throwError(() => new HttpErrorResponse({status: 409, error: 'Deployment preflight failed'}))
+    );
+    deploymentPlansService.get.mockReturnValue(of(failedPlan));
+    overlay.confirm.mockReturnValue(of(true));
+    const {component} = createComponent();
+    (component as any).selectedDeploymentPlan.set(readyPlan);
+
+    await (component as any).executePlan(readyPlan);
+
+    expect(deploymentPlansService.get).toHaveBeenCalledWith('plan-1');
+    expect((component as any).selectedDeploymentPlan()).toEqual(failedPlan);
+    expect((component as any).deploymentPlans()[0]).toEqual(failedPlan);
+    expect(toast.error).toHaveBeenCalledWith('Deployment preflight failed');
+  });
+
   it('renders JSON and Markdown exports without exposing redacted values', () => {
     const {component} = createComponent();
 
@@ -306,6 +354,8 @@ describe('DeploymentPlansComponent', () => {
     expect(markdown).toContain('Checksum: `sha256:plan`');
     expect(markdown).toContain('## Blockers');
     expect(markdown).toContain('Required variable is unresolved.');
+    expect(markdown).toContain('## Execution Preflight');
+    expect(markdown).toContain('target platform changed or does not support linux/amd64');
     expect(markdown).toContain('API_TOKEN');
     expect(markdown).toContain('redacted');
     expect(markdown).not.toContain('secret-value');

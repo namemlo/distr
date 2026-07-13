@@ -55,7 +55,6 @@ type canonicalDeploymentPlan struct {
 	ProcessSnapshotID  string                                   `json:"processSnapshotId,omitempty"`
 	VariableSnapshotID string                                   `json:"variableSnapshotId,omitempty"`
 	ReleaseContract    *types.ReleaseContract                   `json:"releaseContract,omitempty"`
-	Status             string                                   `json:"status"`
 	Targets            []canonicalDeploymentPlanTarget          `json:"targets"`
 	TargetComponents   []canonicalDeploymentPlanTargetComponent `json:"targetComponents"`
 	Steps              []canonicalDeploymentPlanStep            `json:"steps"`
@@ -231,6 +230,10 @@ func hydrateDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) erro
 		return err
 	}
 	plan.TargetComponents, err = getDeploymentPlanTargetComponents(ctx, plan.ID, plan.OrganizationID)
+	if err != nil {
+		return err
+	}
+	plan.PreflightRuns, err = getDeploymentPreflightRuns(ctx, plan.ID, plan.OrganizationID)
 	if err != nil {
 		return err
 	}
@@ -878,7 +881,6 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 		ProcessSnapshotID:  processSnapshotID,
 		VariableSnapshotID: variableSnapshotID,
 		ReleaseContract:    releasebundles.NormalizedReleaseContract(plan.ReleaseContract),
-		Status:             string(plan.Status),
 		Targets:            targets,
 		TargetComponents:   targetComponents,
 		Steps:              steps,

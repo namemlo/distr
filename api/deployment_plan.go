@@ -52,9 +52,37 @@ type DeploymentPlan struct {
 	CanonicalChecksum  string                          `json:"canonicalChecksum"`
 	Targets            []DeploymentPlanTarget          `json:"targets"`
 	TargetComponents   []DeploymentPlanTargetComponent `json:"targetComponents"`
+	PreflightRuns      []DeploymentPreflightRun        `json:"preflightRuns"`
 	Steps              []DeploymentPlanStep            `json:"steps"`
 	Variables          []DeploymentPlanVariable        `json:"variables"`
 	Issues             []DeploymentPlanIssue           `json:"issues"`
+}
+
+type DeploymentPreflightRun struct {
+	ID                 uuid.UUID                       `json:"id"`
+	CreatedAt          time.Time                       `json:"createdAt"`
+	DeploymentPlanID   uuid.UUID                       `json:"deploymentPlanId"`
+	PlanChecksum       string                          `json:"planChecksum"`
+	ActorUserAccountID *uuid.UUID                      `json:"actorUserAccountId,omitempty"`
+	Status             types.DeploymentPreflightStatus `json:"status"`
+	Checks             []DeploymentPreflightCheck      `json:"checks"`
+}
+
+type DeploymentPreflightCheck struct {
+	ID                       uuid.UUID                            `json:"id"`
+	CreatedAt                time.Time                            `json:"createdAt"`
+	DeploymentPreflightRunID uuid.UUID                            `json:"deploymentPreflightRunId"`
+	DeploymentPlanID         uuid.UUID                            `json:"deploymentPlanId"`
+	DeploymentPlanTargetID   *uuid.UUID                           `json:"deploymentPlanTargetId,omitempty"`
+	DeploymentTargetID       *uuid.UUID                           `json:"deploymentTargetId,omitempty"`
+	TaskID                   *uuid.UUID                           `json:"taskId,omitempty"`
+	Component                string                               `json:"component,omitempty"`
+	CheckKey                 string                               `json:"checkKey"`
+	Status                   types.DeploymentPreflightCheckStatus `json:"status"`
+	Expected                 map[string]any                       `json:"expected"`
+	Actual                   map[string]any                       `json:"actual"`
+	Message                  string                               `json:"message"`
+	SortOrder                int                                  `json:"sortOrder"`
 }
 
 type DeploymentPlanTarget struct {

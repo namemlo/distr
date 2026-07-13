@@ -27,7 +27,12 @@ import {DialogRef, OverlayService} from '../services/overlay.service';
 import {ReleaseBundlesService} from '../services/release-bundles.service';
 import {ToastService} from '../services/toast.service';
 import {Channel} from '../types/channel';
-import {DeploymentPlan, DeploymentPlanIssueSeverity, DeploymentPlanVariable} from '../types/deployment-plan';
+import {
+  DeploymentPlan,
+  DeploymentPlanIssueSeverity,
+  DeploymentPlanVariable,
+  DeploymentPreflightRun,
+} from '../types/deployment-plan';
 import {Environment} from '../types/environment';
 import {ReleaseBundle} from '../types/release-bundle';
 
@@ -214,6 +219,16 @@ export class DeploymentPlansComponent {
       await this.router.navigate(['/deployment-timeline']);
     } catch (e) {
       this.toast.error(getFormDisplayedError(e) ?? 'Failed to execute deployment plan.');
+      try {
+        const refreshedPlan = await firstValueFrom(this.deploymentPlansService.get(plan.id));
+        this.deploymentPlans.update((current) =>
+          current.map((candidate) => (candidate.id === refreshedPlan.id ? refreshedPlan : candidate))
+        );
+        this.selectedDeploymentPlan.set(refreshedPlan);
+        this.applyFilter(this.filterForm.controls.search.value);
+      } catch {
+        this.load();
+      }
     } finally {
       this.executionLoadingPlanId.set(undefined);
     }
@@ -286,6 +301,9 @@ export class DeploymentPlansComponent {
       `Application: ${this.applicationName(plan.applicationId)}`,
       `Channel: ${this.channelName(plan.channelId)}`,
       `Environment: ${this.environmentName(plan.environmentId)}`,
+      '',
+      '## Execution Preflight',
+      ...this.preflightLines(plan),
       ...(plan.releaseContract
         ? [
             '',
@@ -356,6 +374,34 @@ export class DeploymentPlansComponent {
 
   protected planTargetName(plan: DeploymentPlan, deploymentTargetId: string): string {
     return plan.targets.find((target) => target.deploymentTargetId === deploymentTargetId)?.name ?? deploymentTargetId;
+  }
+
+  protected latestPreflight(plan: DeploymentPlan): DeploymentPreflightRun | undefined {
+    return plan.preflightRuns[0];
+  }
+
+  protected preflightTargetName(plan: DeploymentPlan, deploymentTargetId?: string): string {
+    return deploymentTargetId ? this.planTargetName(plan, deploymentTargetId) : 'Plan';
+  }
+
+  protected preflightStatusClass(status: string): string {
+    return status === 'PASSED'
+      ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+      : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300';
+  }
+
+  private preflightLines(plan: DeploymentPlan): string[] {
+    const run = this.latestPreflight(plan);
+    if (!run) {
+      return ['- Not executed yet'];
+    }
+    return [
+      `- ${run.status} at ${run.createdAt} for \`${run.planChecksum}\``,
+      ...run.checks.map(
+        (check) =>
+          `- ${check.status} ${check.checkKey} [${this.preflightTargetName(plan, check.deploymentTargetId)}${check.component ? ` / ${check.component}` : ''}]: ${check.message}`
+      ),
+    ];
   }
 
   private stepLines(plan: DeploymentPlan): string[] {

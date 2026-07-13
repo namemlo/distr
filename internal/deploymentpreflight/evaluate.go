@@ -1,0 +1,291 @@
+package deploymentpreflight
+
+import (
+	"fmt"
+	"slices"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
+)
+
+type StateKey struct {
+	DeploymentTargetID uuid.UUID
+	ApplicationID      uuid.UUID
+	Component          string
+}
+
+type Input struct {
+	Plan                      types.DeploymentPlan
+	PlanPayloadChecksumValid  bool
+	ReleaseEligible           bool
+	ReleaseEligibilityMessage string
+	ReleaseContractValid      bool
+	ReleaseContractMessage    string
+	CurrentTargets            map[uuid.UUID]types.DeploymentTarget
+	CurrentStates             map[StateKey]types.TargetComponentState
+}
+
+func Evaluate(input Input) []types.DeploymentPreflightCheck {
+	checks := make([]types.DeploymentPreflightCheck, 0, 1+len(input.Plan.TargetComponents)*2)
+	add := func(check types.DeploymentPreflightCheck) {
+		check.SortOrder = (len(checks) + 1) * 10
+		if check.Expected == nil {
+			check.Expected = map[string]any{}
+		}
+		if check.Actual == nil {
+			check.Actual = map[string]any{}
+		}
+		checks = append(checks, check)
+	}
+	targetsByPlanTargetID := make(map[uuid.UUID]types.DeploymentPlanTarget, len(input.Plan.Targets))
+	for _, target := range input.Plan.Targets {
+		targetsByPlanTargetID[target.ID] = target
+		checksumStatus := types.DeploymentPreflightCheckStatusPassed
+		checksumMessage := "plan canonical payload matches its checksum"
+		if !input.PlanPayloadChecksumValid {
+			checksumStatus = types.DeploymentPreflightCheckStatusFailed
+			checksumMessage = "plan canonical payload no longer matches its checksum"
+		}
+		planTargetID := target.ID
+		deploymentTargetID := target.DeploymentTargetID
+		add(types.DeploymentPreflightCheck{
+			DeploymentPlanTargetID: &planTargetID,
+			DeploymentTargetID:     &deploymentTargetID,
+			CheckKey:               "plan_checksum",
+			Status:                 checksumStatus,
+			Expected:               map[string]any{"checksum": input.Plan.CanonicalChecksum},
+			Actual:                 map[string]any{"valid": input.PlanPayloadChecksumValid},
+			Message:                checksumMessage,
+		})
+
+		liveTarget, targetFound := input.CurrentTargets[target.DeploymentTargetID]
+		bindingMatches := targetFound && liveTarget.Type == target.Type &&
+			uuidPointersEqual(liveTarget.CustomerOrganizationID, target.CustomerOrganizationID)
+		bindingMessage := "target type and customer binding match the frozen plan"
+		if !bindingMatches {
+			bindingMessage = "target type or customer binding changed after the plan was created"
+		}
+		add(targetCheck(target, "target_binding", statusFor(bindingMatches),
+			map[string]any{
+				"type": target.Type, "customerOrganizationId": uuidPointerString(target.CustomerOrganizationID),
+			},
+			map[string]any{
+				"found": targetFound, "type": liveTarget.Type,
+				"customerOrganizationId": uuidPointerString(liveTarget.CustomerOrganizationID),
+			}, bindingMessage))
+
+		eligibilityMessage := input.ReleaseEligibilityMessage
+		if eligibilityMessage == "" {
+			if input.ReleaseEligible {
+				eligibilityMessage = "release remains eligible for the selected environment and channel lifecycle"
+			} else {
+				eligibilityMessage = "release is not eligible for the selected environment and channel lifecycle"
+			}
+		}
+		add(targetCheck(target, "release_eligibility", statusFor(input.ReleaseEligible),
+			map[string]any{"eligible": true}, map[string]any{"eligible": input.ReleaseEligible}, eligibilityMessage))
+
+		if input.Plan.ReleaseContract != nil {
+			contractMessage := input.ReleaseContractMessage
+			if contractMessage == "" {
+				if input.ReleaseContractValid {
+					contractMessage = "release contract matches the published immutable components and config"
+				} else {
+					contractMessage = "release contract does not match the published immutable components and config"
+				}
+			}
+			add(targetCheck(target, "release_contract", statusFor(input.ReleaseContractValid),
+				map[string]any{"schema": types.ReleaseContractSchemaV1, "valid": true},
+				map[string]any{
+					"schema": input.Plan.ReleaseContract.Schema, "valid": input.ReleaseContractValid,
+				}, contractMessage))
+			add(targetCheck(target, "release_operations", types.DeploymentPreflightCheckStatusPassed,
+				map[string]any{"recorded": true},
+				map[string]any{
+					"migrationRequired":    input.Plan.ReleaseContract.Operations.MigrationRequired,
+					"configChangeRequired": input.Plan.ReleaseContract.Operations.ConfigChangeRequired,
+				}, "migration and configuration-change flags are frozen in the plan"))
+		}
+	}
+	desiredByTargetAndComponent := make(map[StateKey]types.DeploymentPlanTargetComponent, len(input.Plan.TargetComponents))
+	for _, component := range input.Plan.TargetComponents {
+		target := targetsByPlanTargetID[component.DeploymentPlanTargetID]
+		key := StateKey{
+			DeploymentTargetID: component.DeploymentTargetID,
+			ApplicationID:      input.Plan.ApplicationID,
+			Component:          component.Component,
+		}
+		desiredByTargetAndComponent[key] = component
+		liveTarget, targetFound := input.CurrentTargets[component.DeploymentTargetID]
+		platformMatches := targetFound &&
+			liveTarget.Platform == target.Platform &&
+			liveTarget.Platform == component.Platform
+		platformStatus := statusFor(platformMatches)
+		platformMessage := fmt.Sprintf("target platform matches %s", component.Platform)
+		if !platformMatches {
+			platformMessage = fmt.Sprintf("target platform changed or does not support %s", component.Platform)
+		}
+		add(componentCheck(target, component, "target_platform:"+component.Component, platformStatus,
+			map[string]any{"platform": component.Platform},
+			map[string]any{"found": targetFound, "platform": liveTarget.Platform}, platformMessage))
+
+		current, stateFound := input.CurrentStates[key]
+		stateMatches := false
+		if component.ExpectedStateVersion == 0 {
+			stateMatches = !stateFound
+		} else {
+			stateMatches = stateFound &&
+				current.StateVersion == component.ExpectedStateVersion &&
+				current.StateChecksum == component.ExpectedStateChecksum
+		}
+		stateMessage := "target component state matches the frozen plan snapshot"
+		if !stateMatches {
+			stateMessage = "target component state changed after the plan was created"
+		}
+		add(componentCheck(target, component, "target_state:"+component.Component, statusFor(stateMatches),
+			map[string]any{
+				"stateVersion":  component.ExpectedStateVersion,
+				"stateChecksum": component.ExpectedStateChecksum,
+			},
+			map[string]any{
+				"found": stateFound, "stateVersion": current.StateVersion, "stateChecksum": current.StateChecksum,
+			}, stateMessage))
+	}
+
+	if input.Plan.ReleaseContract == nil {
+		return checks
+	}
+	for _, target := range input.Plan.Targets {
+		for _, requirement := range input.Plan.ReleaseContract.Compatibility.Requires {
+			key := StateKey{
+				DeploymentTargetID: target.DeploymentTargetID,
+				ApplicationID:      input.Plan.ApplicationID,
+				Component:          requirement.Component,
+			}
+			version := ""
+			contracts := []string(nil)
+			source := "observed"
+			found := false
+			if desired, ok := desiredByTargetAndComponent[key]; ok {
+				version, contracts, source, found = desired.Version, desired.Contracts, "candidate", true
+			} else if current, ok := input.CurrentStates[key]; ok {
+				version, contracts, found = current.Version, current.Contracts, true
+			}
+			if requirement.MinimumVersion != "" {
+				matches := found && versionAtLeast(version, requirement.MinimumVersion)
+				message := fmt.Sprintf("%s version satisfies >= %s", requirement.Component, requirement.MinimumVersion)
+				if !matches {
+					message = fmt.Sprintf("%s version does not satisfy >= %s", requirement.Component, requirement.MinimumVersion)
+				}
+				add(requirementCheck(target, requirement.Component, "dependency_version:"+requirement.Component,
+					statusFor(matches), map[string]any{"minimumVersion": requirement.MinimumVersion},
+					map[string]any{"found": found, "version": version, "source": source}, message))
+			}
+			if requirement.Contract != "" {
+				matches := found && slices.Contains(contracts, requirement.Contract)
+				message := fmt.Sprintf("%s provides contract %s", requirement.Component, requirement.Contract)
+				if !matches {
+					message = fmt.Sprintf("%s does not provide contract %s", requirement.Component, requirement.Contract)
+				}
+				add(requirementCheck(target, requirement.Component, "dependency_contract:"+requirement.Component,
+					statusFor(matches), map[string]any{"contract": requirement.Contract},
+					map[string]any{"found": found, "contracts": contracts, "source": source}, message))
+			}
+		}
+	}
+	return checks
+}
+
+func componentCheck(
+	target types.DeploymentPlanTarget,
+	component types.DeploymentPlanTargetComponent,
+	key string,
+	status types.DeploymentPreflightCheckStatus,
+	expected, actual map[string]any,
+	message string,
+) types.DeploymentPreflightCheck {
+	planTargetID := target.ID
+	deploymentTargetID := target.DeploymentTargetID
+	return types.DeploymentPreflightCheck{
+		DeploymentPlanTargetID: &planTargetID,
+		DeploymentTargetID:     &deploymentTargetID,
+		Component:              component.Component,
+		CheckKey:               key,
+		Status:                 status,
+		Expected:               expected,
+		Actual:                 actual,
+		Message:                message,
+	}
+}
+
+func requirementCheck(
+	target types.DeploymentPlanTarget,
+	component, key string,
+	status types.DeploymentPreflightCheckStatus,
+	expected, actual map[string]any,
+	message string,
+) types.DeploymentPreflightCheck {
+	planTargetID := target.ID
+	deploymentTargetID := target.DeploymentTargetID
+	return types.DeploymentPreflightCheck{
+		DeploymentPlanTargetID: &planTargetID,
+		DeploymentTargetID:     &deploymentTargetID,
+		Component:              component,
+		CheckKey:               key,
+		Status:                 status,
+		Expected:               expected,
+		Actual:                 actual,
+		Message:                message,
+	}
+}
+
+func targetCheck(
+	target types.DeploymentPlanTarget,
+	key string,
+	status types.DeploymentPreflightCheckStatus,
+	expected, actual map[string]any,
+	message string,
+) types.DeploymentPreflightCheck {
+	planTargetID := target.ID
+	deploymentTargetID := target.DeploymentTargetID
+	return types.DeploymentPreflightCheck{
+		DeploymentPlanTargetID: &planTargetID,
+		DeploymentTargetID:     &deploymentTargetID,
+		CheckKey:               key,
+		Status:                 status,
+		Expected:               expected,
+		Actual:                 actual,
+		Message:                message,
+	}
+}
+
+func uuidPointersEqual(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func uuidPointerString(value *uuid.UUID) string {
+	if value == nil {
+		return ""
+	}
+	return value.String()
+}
+
+func statusFor(passed bool) types.DeploymentPreflightCheckStatus {
+	if passed {
+		return types.DeploymentPreflightCheckStatusPassed
+	}
+	return types.DeploymentPreflightCheckStatusFailed
+}
+
+func versionAtLeast(actual, minimum string) bool {
+	actualVersion, err := semver.StrictNewVersion(actual)
+	if err != nil {
+		return false
+	}
+	minimumVersion, err := semver.StrictNewVersion(minimum)
+	return err == nil && !actualVersion.LessThan(minimumVersion)
+}

@@ -33,9 +33,40 @@ export interface DeploymentPlan {
   canonicalChecksum: string;
   targets: DeploymentPlanTarget[];
   targetComponents: DeploymentPlanTargetComponent[];
+  preflightRuns: DeploymentPreflightRun[];
   steps: DeploymentPlanStep[];
   variables: DeploymentPlanVariable[];
   issues: DeploymentPlanIssue[];
+}
+
+export type DeploymentPreflightStatus = 'PASSED' | 'FAILED';
+export type DeploymentPreflightCheckStatus = 'PASSED' | 'FAILED';
+
+export interface DeploymentPreflightRun {
+  id: string;
+  createdAt: string;
+  deploymentPlanId: string;
+  planChecksum: string;
+  actorUserAccountId?: string;
+  status: DeploymentPreflightStatus;
+  checks: DeploymentPreflightCheck[];
+}
+
+export interface DeploymentPreflightCheck {
+  id: string;
+  createdAt: string;
+  deploymentPreflightRunId: string;
+  deploymentPlanId: string;
+  deploymentPlanTargetId?: string;
+  deploymentTargetId?: string;
+  taskId?: string;
+  component?: string;
+  checkKey: string;
+  status: DeploymentPreflightCheckStatus;
+  expected: Record<string, unknown>;
+  actual: Record<string, unknown>;
+  message: string;
+  sortOrder: number;
 }
 
 export interface DeploymentPlanTarget {

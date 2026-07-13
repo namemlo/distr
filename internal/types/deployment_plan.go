@@ -48,6 +48,7 @@ type DeploymentPlan struct {
 	CanonicalPayload   []byte                          `db:"canonical_payload" json:"-"`
 	Targets            []DeploymentPlanTarget          `db:"-" json:"targets"`
 	TargetComponents   []DeploymentPlanTargetComponent `db:"-" json:"targetComponents"`
+	PreflightRuns      []DeploymentPreflightRun         `db:"-" json:"preflightRuns"`
 	Steps              []DeploymentPlanStep            `db:"-" json:"steps"`
 	Variables          []DeploymentPlanVariable        `db:"-" json:"variables"`
 	Issues             []DeploymentPlanIssue           `db:"-" json:"issues"`

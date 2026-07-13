@@ -870,3 +870,18 @@ Use one entry per pull request:
 - Tests: Added `internal/handlers/pr050_community_live_demo_test.go`, `examples/community-e2e/live-demo.mjs`, `examples/community-e2e/run-demo.mjs`, `hack/pr050-license-scan.mjs`, and `hack/pr050-validate-release-hardening.mjs` for the API-only live release-to-task journey, isolated demo orchestration, deterministic demo, Node+Go dependency-license checks, link, impact-section, index, credential-scanner self-tests, static-analysis gate checks, and secret-safety checks.
 - Upstream contribution notes: Provides dependency-ordered upstream slices with compatibility and licensing notes.
 - Compatibility notes: Existing deployment, advanced roadmap, API, UI, schema, and agent behavior is unchanged.
+
+### PR-051 - Execution preflight and target-component locks
+
+- Status: Implemented locally; live PostgreSQL migration and repository verification remains part of the deployment gate.
+- Upstream base: `570a3bb6`.
+- Feature flag: Uses the existing `deployment_plans` and `task_queue` feature surfaces.
+- User-facing behavior: Operators see persisted execution-time pass/fail checks on Deployment Plan detail and exports.
+- Database changes: Added execution preflight runs/checks and the `target_component` task lock resource.
+- API changes: Deployment Plan responses include ordered preflight runs and checks.
+- UI changes: Deployment Plan detail shows the latest preflight checksum, status, target, component, and result.
+- Agent protocol changes: None.
+- Documentation: Added PR-051 notes and ADR-0051.
+- Tests: Added evaluator, migration, repository, API mapping, and Angular regression coverage.
+- Upstream contribution notes: Community-neutral preflight and concurrency primitives; no provider or adopter names.
+- Compatibility notes: Runtime status no longer changes new plan checksums; legacy payloads remain checksum-valid, and existing target locks remain in place.

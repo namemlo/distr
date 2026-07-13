@@ -168,6 +168,7 @@ describe('DeploymentTimelineComponent', () => {
       canonicalChecksum: 'sha256:plan',
       targets: [],
       targetComponents: [],
+      preflightRuns: [],
       steps: [],
       variables: [],
       issues: [],

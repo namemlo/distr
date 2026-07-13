@@ -15,6 +15,8 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 	processSnapshotID := uuid.New()
 	variableSnapshotID := uuid.New()
 	targetID := uuid.New()
+	planTargetID := uuid.New()
+	preflightRunID := uuid.New()
 	variableSetID := uuid.New()
 	variableID := uuid.New()
 	createdAt := time.Now().UTC()
@@ -31,11 +33,34 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 		CanonicalChecksum:  "sha256:abc",
 		Targets: []types.DeploymentPlanTarget{
 			{
-				ID:                 uuid.New(),
+				ID:                 planTargetID,
 				DeploymentTargetID: targetID,
 				Name:               "cluster-a",
 				Type:               types.DeploymentTypeDocker,
 				SortOrder:          10,
+			},
+		},
+		PreflightRuns: []types.DeploymentPreflightRun{
+			{
+				ID:               preflightRunID,
+				CreatedAt:        createdAt.Add(time.Minute),
+				DeploymentPlanID: uuid.New(),
+				PlanChecksum:     "sha256:abc",
+				Status:           types.DeploymentPreflightStatusPassed,
+				Checks: []types.DeploymentPreflightCheck{
+					{
+						ID:                       uuid.New(),
+						DeploymentPreflightRunID: preflightRunID,
+						DeploymentPlanTargetID:   &planTargetID,
+						DeploymentTargetID:       &targetID,
+						CheckKey:                 "plan_checksum",
+						Status:                   types.DeploymentPreflightCheckStatusPassed,
+						Expected:                 map[string]any{"checksum": "sha256:abc"},
+						Actual:                   map[string]any{"valid": true},
+						Message:                  "plan canonical payload matches its checksum",
+						SortOrder:                10,
+					},
+				},
 			},
 		},
 		Steps: []types.DeploymentPlanStep{
@@ -84,6 +109,10 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 	g.Expect(response.Status).To(Equal(types.DeploymentPlanStatusReady))
 	g.Expect(response.Targets).To(HaveLen(1))
 	g.Expect(response.Targets[0].DeploymentTargetID).To(Equal(targetID))
+	g.Expect(response.PreflightRuns).To(HaveLen(1))
+	g.Expect(response.PreflightRuns[0].ID).To(Equal(preflightRunID))
+	g.Expect(response.PreflightRuns[0].Checks).To(HaveLen(1))
+	g.Expect(response.PreflightRuns[0].Checks[0].CheckKey).To(Equal("plan_checksum"))
 	g.Expect(response.Steps).To(HaveLen(1))
 	g.Expect(response.Steps[0].ActionName).To(Equal("HTTP check"))
 	g.Expect(response.Variables).To(HaveLen(1))

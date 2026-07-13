@@ -42,6 +42,17 @@ func TestTaskQueueRepositoryCreatesTasksForReadyPlanInQueueOrder(t *testing.T) {
 	g.Expect(tasks[0].StepRuns[0].StepKey).To(Equal("deploy"))
 	g.Expect(tasks[0].StepRuns[0].Status).To(Equal(types.StepRunStatusPending))
 
+	executedPlan, err := db.GetDeploymentPlan(ctx, deps.plan.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(executedPlan.Status).To(Equal(types.DeploymentPlanStatusExecuted))
+	g.Expect(executedPlan.CanonicalChecksum).To(Equal(deps.plan.CanonicalChecksum))
+	g.Expect(executedPlan.PreflightRuns).To(HaveLen(1))
+	g.Expect(executedPlan.PreflightRuns[0].Status).To(Equal(types.DeploymentPreflightStatusPassed))
+	g.Expect(executedPlan.PreflightRuns[0].PlanChecksum).To(Equal(deps.plan.CanonicalChecksum))
+	g.Expect(executedPlan.PreflightRuns[0].Checks).NotTo(BeEmpty())
+	g.Expect(executedPlan.PreflightRuns[0].Checks[0].TaskID).NotTo(BeNil())
+	g.Expect(*executedPlan.PreflightRuns[0].Checks[0].TaskID).To(Equal(tasks[0].ID))
+
 	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(listed).To(HaveLen(2))
@@ -89,6 +100,69 @@ func TestTaskQueueRepositoryCreatesDefaultDeploymentTargetLocks(t *testing.T) {
 	g.Expect(tasks[0].Locks[0].ResourceType).To(Equal(types.TaskLockResourceDeploymentTarget))
 	g.Expect(tasks[0].Locks[0].ResourceKey).To(Equal(deps.plan.Targets[0].DeploymentTargetID.String()))
 	g.Expect(tasks[0].Locks[0].ConcurrencyPolicy).To(Equal(types.TaskConcurrencyPolicyQueue))
+}
+
+func TestTaskQueueRepositoryCreatesTargetComponentLocksForAffectedServices(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanWithReleaseContractForTaskQueue(t, ctx)
+
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(tasks).To(HaveLen(1))
+	g.Expect(tasks[0].Locks).To(HaveLen(2))
+	locksByType := make(map[types.TaskLockResourceType]types.TaskResourceLock, len(tasks[0].Locks))
+	for _, lock := range tasks[0].Locks {
+		locksByType[lock.ResourceType] = lock
+	}
+	g.Expect(locksByType[types.TaskLockResourceDeploymentTarget].ResourceKey).
+		To(Equal(deps.plan.Targets[0].DeploymentTargetID.String()))
+	g.Expect(locksByType[types.TaskLockResourceTargetComponent].ResourceKey).
+		To(Equal(deps.plan.Targets[0].DeploymentTargetID.String() + ":api-image"))
+}
+
+func TestTaskQueueRepositoryPersistsFailedPreflightWithoutCreatingTasks(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanWithReleaseContractForTaskQueue(t, ctx)
+
+	_, err := internalctx.GetDb(ctx).Exec(ctx,
+		`UPDATE DeploymentTarget SET platform = @platform WHERE id = @id AND organization_id = @organizationId`,
+		pgx.NamedArgs{
+			"platform":       types.DeploymentTargetPlatformLinuxARM64,
+			"id":             deps.plan.Targets[0].DeploymentTargetID,
+			"organizationId": deps.orgID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	g.Expect(err.Error()).To(ContainSubstring("deployment preflight failed"))
+	plan, err := db.GetDeploymentPlan(ctx, deps.plan.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(plan.PreflightRuns).To(HaveLen(1))
+	g.Expect(plan.PreflightRuns[0].Status).To(Equal(types.DeploymentPreflightStatusFailed))
+	failedChecks := make(map[string]types.DeploymentPreflightCheckStatus)
+	for _, check := range plan.PreflightRuns[0].Checks {
+		failedChecks[check.CheckKey] = check.Status
+	}
+	g.Expect(failedChecks["target_platform:api-image"]).
+		To(Equal(types.DeploymentPreflightCheckStatusFailed))
+	tasks, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(tasks).To(BeEmpty())
 }
 
 func TestTaskQueueRepositoryQueuePolicyPreventsConcurrentRunningTasksForSameTarget(t *testing.T) {
@@ -640,6 +714,28 @@ func TestTaskLockMigrationDefinesLockTables(t *testing.T) {
 	g.Expect(downSQL).To(ContainSubstring("status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED')"))
 }
 
+func TestExecutionPreflightMigrationDefinesEvidenceAndComponentLocks(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "135_execution_preflight.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	upSQL := string(up)
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE DeploymentPreflightRun"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE DeploymentPreflightCheck"))
+	g.Expect(upSQL).To(ContainSubstring("plan_checksum"))
+	g.Expect(upSQL).To(ContainSubstring("'target_component'"))
+	g.Expect(upSQL).To(ContainSubstring("ON DELETE SET NULL (deployment_plan_target_id)"))
+	g.Expect(upSQL).To(ContainSubstring("ON DELETE SET NULL (deployment_target_id)"))
+	g.Expect(upSQL).To(ContainSubstring("ON DELETE SET NULL (task_id)"))
+	preflightSource, err := os.ReadFile("deployment_preflight.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(preflightSource)).To(ContainSubstring("FOR UPDATE OF dt"))
+	g.Expect(string(preflightSource)).To(ContainSubstring("FOR UPDATE OF tcs"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "135_execution_preflight.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS DeploymentPreflightRun"))
+}
+
 type taskQueuePlanDeps struct {
 	orgID            uuid.UUID
 	applicationID    uuid.UUID
@@ -684,6 +780,44 @@ func createReadyDeploymentPlanForTaskQueue(
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	return taskQueuePlanDeps{
+		orgID:            deps.orgID,
+		applicationID:    deps.applicationID,
+		channelID:        deps.channelID,
+		versionID:        deps.versionID,
+		devEnvironmentID: deps.devEnvironmentID,
+		actorID:          actorID,
+		plan:             plan,
+	}
+}
+
+func createReadyDeploymentPlanWithReleaseContractForTaskQueue(
+	t *testing.T,
+	ctx context.Context,
+) taskQueuePlanDeps {
+	t.Helper()
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Task queue contract deploy")
+	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	bundle.ReleaseContract = releaseContractFixture(bundle.Components[0].Digest)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, result, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID:  deps.orgID,
+		ReleaseBundleID: published.ID,
+		EnvironmentID:   deps.devEnvironmentID,
+		TargetIDs:       []uuid.UUID{targetID},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(plan.TargetComponents).To(HaveLen(1))
 	return taskQueuePlanDeps{
 		orgID:            deps.orgID,
 		applicationID:    deps.applicationID,

@@ -20,9 +20,41 @@ func DeploymentPlanToAPI(plan types.DeploymentPlan) api.DeploymentPlan {
 		CanonicalChecksum:  plan.CanonicalChecksum,
 		Targets:            List(plan.Targets, DeploymentPlanTargetToAPI),
 		TargetComponents:   List(plan.TargetComponents, DeploymentPlanTargetComponentToAPI),
+		PreflightRuns:      List(plan.PreflightRuns, DeploymentPreflightRunToAPI),
 		Steps:              List(plan.Steps, DeploymentPlanStepToAPI),
 		Variables:          List(plan.Variables, DeploymentPlanVariableToAPI),
 		Issues:             List(plan.Issues, DeploymentPlanIssueToAPI),
+	}
+}
+
+func DeploymentPreflightRunToAPI(run types.DeploymentPreflightRun) api.DeploymentPreflightRun {
+	return api.DeploymentPreflightRun{
+		ID:                 run.ID,
+		CreatedAt:          run.CreatedAt,
+		DeploymentPlanID:   run.DeploymentPlanID,
+		PlanChecksum:       run.PlanChecksum,
+		ActorUserAccountID: run.ActorUserAccountID,
+		Status:             run.Status,
+		Checks:             List(run.Checks, DeploymentPreflightCheckToAPI),
+	}
+}
+
+func DeploymentPreflightCheckToAPI(check types.DeploymentPreflightCheck) api.DeploymentPreflightCheck {
+	return api.DeploymentPreflightCheck{
+		ID:                       check.ID,
+		CreatedAt:                check.CreatedAt,
+		DeploymentPreflightRunID: check.DeploymentPreflightRunID,
+		DeploymentPlanID:         check.DeploymentPlanID,
+		DeploymentPlanTargetID:   check.DeploymentPlanTargetID,
+		DeploymentTargetID:       check.DeploymentTargetID,
+		TaskID:                   check.TaskID,
+		Component:                check.Component,
+		CheckKey:                 check.CheckKey,
+		Status:                   check.Status,
+		Expected:                 check.Expected,
+		Actual:                   check.Actual,
+		Message:                  check.Message,
+		SortOrder:                check.SortOrder,
 	}
 }
 

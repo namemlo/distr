@@ -70,6 +70,7 @@ type TaskLockResourceType string
 
 const (
 	TaskLockResourceDeploymentTarget       TaskLockResourceType = "deployment_target"
+	TaskLockResourceTargetComponent        TaskLockResourceType = "target_component"
 	TaskLockResourceTenantEnvironment      TaskLockResourceType = "tenant_environment"
 	TaskLockResourceApplicationEnvironment TaskLockResourceType = "application_environment"
 	TaskLockResourceCustom                 TaskLockResourceType = "custom"
@@ -78,6 +79,7 @@ const (
 func (t TaskLockResourceType) IsValid() bool {
 	switch t {
 	case TaskLockResourceDeploymentTarget,
+		TaskLockResourceTargetComponent,
 		TaskLockResourceTenantEnvironment,
 		TaskLockResourceApplicationEnvironment,
 		TaskLockResourceCustom:

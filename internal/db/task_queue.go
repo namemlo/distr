@@ -78,6 +78,11 @@ type taskResourceLockGroup struct {
 	ResourceKey    string
 }
 
+type taskResourceLockSource struct {
+	ResourceType types.TaskLockResourceType `db:"resource_type"`
+	ResourceKey  string                     `db:"resource_key"`
+}
+
 func CreateTasksForDeploymentPlan(
 	ctx context.Context,
 	request types.CreateTasksForDeploymentPlanRequest,
@@ -87,13 +92,11 @@ func CreateTasksForDeploymentPlan(
 	}
 	defaultPolicy, lockResources := normalizeTaskLockResourceRequests(request)
 	var tasks []types.Task
+	var failedPreflight *types.DeploymentPreflightRun
 	err := RunTx(ctx, func(ctx context.Context) error {
 		plan, err := GetDeploymentPlan(ctx, request.DeploymentPlanID, request.OrganizationID)
 		if err != nil {
 			return err
-		}
-		if plan.Status != types.DeploymentPlanStatusReady {
-			return apierrors.NewConflict("deployment plan must be READY before tasks can be created")
 		}
 		existing, err := getTasksByDeploymentPlanID(ctx, request.DeploymentPlanID, request.OrganizationID)
 		if err != nil {
@@ -102,6 +105,9 @@ func CreateTasksForDeploymentPlan(
 		if len(existing) > 0 {
 			tasks = existing
 			return nil
+		}
+		if plan.Status != types.DeploymentPlanStatusReady {
+			return apierrors.NewConflict("deployment plan must be READY before tasks can be created")
 		}
 		lockGroups, err := getDeploymentPlanTaskResourceLockGroups(
 			ctx,
@@ -123,8 +129,13 @@ func CreateTasksForDeploymentPlan(
 			tasks = existing
 			return nil
 		}
-		if err := ensureDeploymentPlanReleaseBundlePublishedForTaskCreation(ctx, *plan); err != nil {
+		preflight, passed, err := evaluateAndPersistDeploymentPreflight(ctx, *plan, request.ActorUserAccountID)
+		if err != nil {
 			return err
+		}
+		if !passed {
+			failedPreflight = preflight
+			return nil
 		}
 		created, err := insertTasksForDeploymentPlan(
 			ctx,
@@ -135,7 +146,9 @@ func CreateTasksForDeploymentPlan(
 		if err != nil {
 			return err
 		}
-		if err := insertTaskResourceLocksForTasks(ctx, created, defaultPolicy, lockResources); err != nil {
+		if err := insertTaskResourceLocksForTasks(
+			ctx, created, plan.TargetComponents, defaultPolicy, lockResources,
+		); err != nil {
 			return err
 		}
 		if err := applyTaskConcurrencyPolicies(ctx, created); err != nil {
@@ -144,11 +157,20 @@ func CreateTasksForDeploymentPlan(
 		if err := insertStepRunsForTasks(ctx, created); err != nil {
 			return err
 		}
+		if err := attachDeploymentPreflightTasks(ctx, preflight.ID, request.OrganizationID); err != nil {
+			return err
+		}
+		if err := markDeploymentPlanExecuted(ctx, plan.ID, plan.OrganizationID); err != nil {
+			return err
+		}
 		tasks, err = getTasksByDeploymentPlanID(ctx, request.DeploymentPlanID, request.OrganizationID)
 		return err
 	})
 	if err != nil {
 		return nil, err
+	}
+	if failedPreflight != nil {
+		return nil, apierrors.NewConflict(deploymentPreflightFailureMessage(*failedPreflight))
 	}
 	return tasks, nil
 }
@@ -300,20 +322,6 @@ func normalizeTaskLockResourceRequests(
 	return defaultPolicy, resources
 }
 
-func ensureDeploymentPlanReleaseBundlePublishedForTaskCreation(
-	ctx context.Context,
-	plan types.DeploymentPlan,
-) error {
-	bundle, err := getReleaseBundle(ctx, plan.ReleaseBundleID, plan.OrganizationID, true)
-	if err != nil {
-		return err
-	}
-	if bundle.Status != types.ReleaseBundleStatusPublished {
-		return apierrors.NewConflict("release bundle must be PUBLISHED before tasks can be created")
-	}
-	return nil
-}
-
 func validateTransitionTaskStateRequest(request types.TransitionTaskStateRequest) error {
 	if request.OrganizationID == uuid.Nil {
 		return apierrors.NewBadRequest("organizationId is required")
@@ -438,29 +446,37 @@ func getDeploymentPlanTaskResourceLockGroups(
 ) ([]taskResourceLockGroup, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
-		`SELECT dpt.deployment_target_id
+		`SELECT CAST(@deploymentTargetType AS text) AS resource_type, dpt.deployment_target_id::text AS resource_key
 		FROM DeploymentPlanTarget dpt
 		WHERE dpt.deployment_plan_id = @deploymentPlanId
 			AND dpt.organization_id = @organizationId
-		ORDER BY dpt.deployment_target_id`,
+		UNION ALL
+		SELECT CAST(@targetComponentType AS text) AS resource_type,
+			dptc.deployment_target_id::text || ':' || dptc.component AS resource_key
+		FROM DeploymentPlanTargetComponent dptc
+		WHERE dptc.deployment_plan_id = @deploymentPlanId
+			AND dptc.organization_id = @organizationId
+		ORDER BY resource_type, resource_key`,
 		pgx.NamedArgs{
-			"deploymentPlanId": planID,
-			"organizationId":   orgID,
+			"deploymentPlanId":     planID,
+			"organizationId":       orgID,
+			"deploymentTargetType": types.TaskLockResourceDeploymentTarget,
+			"targetComponentType":  types.TaskLockResourceTargetComponent,
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query DeploymentPlanTarget locks: %w", err)
+		return nil, fmt.Errorf("could not query deployment plan task locks: %w", err)
 	}
-	deploymentTargetIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	sources, err := pgx.CollectRows(rows, pgx.RowToStructByName[taskResourceLockSource])
 	if err != nil {
-		return nil, fmt.Errorf("could not collect DeploymentPlanTarget locks: %w", err)
+		return nil, fmt.Errorf("could not collect deployment plan task locks: %w", err)
 	}
-	groups := make([]taskResourceLockGroup, 0, len(deploymentTargetIDs)+len(additionalResources))
-	for _, deploymentTargetID := range deploymentTargetIDs {
+	groups := make([]taskResourceLockGroup, 0, len(sources)+len(additionalResources))
+	for _, source := range sources {
 		groups = append(groups, taskResourceLockGroup{
 			OrganizationID: orgID,
-			ResourceType:   types.TaskLockResourceDeploymentTarget,
-			ResourceKey:    deploymentTargetID.String(),
+			ResourceType:   source.ResourceType,
+			ResourceKey:    source.ResourceKey,
 		})
 	}
 	for _, resource := range additionalResources {
@@ -476,13 +492,14 @@ func getDeploymentPlanTaskResourceLockGroups(
 func insertTaskResourceLocksForTasks(
 	ctx context.Context,
 	tasks []types.Task,
+	targetComponents []types.DeploymentPlanTargetComponent,
 	defaultPolicy types.TaskConcurrencyPolicy,
 	additionalResources []types.TaskLockResourceRequest,
 ) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	locks := make([]types.TaskResourceLock, 0, len(tasks)*(1+len(additionalResources)))
+	locks := make([]types.TaskResourceLock, 0, len(tasks)*(1+len(additionalResources))+len(targetComponents))
 	for _, task := range tasks {
 		locks = append(locks, types.TaskResourceLock{
 			OrganizationID:    task.OrganizationID,
@@ -491,6 +508,18 @@ func insertTaskResourceLocksForTasks(
 			ResourceKey:       task.DeploymentTargetID.String(),
 			ConcurrencyPolicy: defaultPolicy,
 		})
+		for _, component := range targetComponents {
+			if component.DeploymentPlanTargetID != task.DeploymentPlanTargetID {
+				continue
+			}
+			locks = append(locks, types.TaskResourceLock{
+				OrganizationID:    task.OrganizationID,
+				TaskID:            task.ID,
+				ResourceType:      types.TaskLockResourceTargetComponent,
+				ResourceKey:       task.DeploymentTargetID.String() + ":" + component.Component,
+				ConcurrencyPolicy: defaultPolicy,
+			})
+		}
 		for _, resource := range additionalResources {
 			locks = append(locks, types.TaskResourceLock{
 				OrganizationID:    task.OrganizationID,
@@ -525,6 +554,30 @@ func insertTaskResourceLocksForTasks(
 	)
 	if err != nil {
 		return mapTaskWriteError("insert resource locks", err)
+	}
+	return nil
+}
+
+func markDeploymentPlanExecuted(ctx context.Context, planID, orgID uuid.UUID) error {
+	database := internalctx.GetDb(ctx)
+	result, err := database.Exec(ctx,
+		`UPDATE DeploymentPlan
+		SET status = @executedStatus
+		WHERE id = @deploymentPlanId
+			AND organization_id = @organizationId
+			AND status = @readyStatus`,
+		pgx.NamedArgs{
+			"deploymentPlanId": planID,
+			"organizationId":   orgID,
+			"executedStatus":   types.DeploymentPlanStatusExecuted,
+			"readyStatus":      types.DeploymentPlanStatusReady,
+		},
+	)
+	if err != nil {
+		return mapTaskWriteError("mark deployment plan executed", err)
+	}
+	if result.RowsAffected() != 1 {
+		return apierrors.NewConflict("deployment plan must be READY before tasks can be created")
 	}
 	return nil
 }
