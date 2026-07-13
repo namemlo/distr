@@ -16,7 +16,10 @@ type Registry struct {
 
 var defaultRegistry = mustBuildRegistry(defaultActions())
 
-const webhookBuiltInOutputCount = 7
+const (
+	webhookResponseBuiltInOutputCount = 7
+	webhookCallbackBuiltInOutputCount = 10
+)
 
 func DefaultRegistry() Registry {
 	return defaultRegistry
@@ -465,9 +468,19 @@ func defaultActions() []types.ActionDefinition {
 						"type": "string",
 						"enum": []any{"high", "normal", "low"},
 					},
+					"completionMode": map[string]any{
+						"type": "string",
+						"enum": []any{"response", "callback"},
+					},
+					"component": map[string]any{
+						"type": "string", "minLength": 1, "maxLength": 256,
+					},
+					"callbackTimeoutSeconds": map[string]any{
+						"type": "integer", "minimum": 1, "maximum": 86400,
+					},
 					"outputs": map[string]any{
 						"type":     "array",
-						"maxItems": types.MaxStepRunEventOutputItemCount - webhookBuiltInOutputCount,
+						"maxItems": types.MaxStepRunEventOutputItemCount - webhookResponseBuiltInOutputCount,
 						"items": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
@@ -517,8 +530,18 @@ func defaultActions() []types.ActionDefinition {
 						"required":             []any{"events"},
 						"additionalProperties": false,
 					},
+					"externalExecutionId":   map[string]any{"type": "string", "format": "uuid"},
+					"providerReference":     map[string]any{"type": "string"},
+					"providerUrl":           map[string]any{"type": "string", "format": "uri"},
+					"actualVersion":         map[string]any{"type": "string"},
+					"actualImage":           map[string]any{"type": "string"},
+					"actualPlatform":        map[string]any{"type": "string", "enum": []any{"linux/amd64", "linux/arm64"}},
+					"actualConfigReference": map[string]any{"type": "string"},
+					"actualConfigChecksum":  map[string]any{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+					"actualHealth":          map[string]any{"type": "string", "enum": []any{"HEALTHY"}},
+					"observedStateChecksum": map[string]any{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
 				},
-				[]any{"statusCode", "attempts", "signingKeyVersion", "keyRotationApplied", "auditChainRoot", "auditEventHash", "auditTrail"},
+				[]any{},
 			),
 		},
 	}
@@ -541,6 +564,11 @@ func webhookSecretReferenceSchema() map[string]any {
 }
 
 func validateWebhookRegistryInput(input map[string]any) error {
+	completionMode, _ := input["completionMode"].(string)
+	component, _ := input["component"].(string)
+	if completionMode == "callback" && strings.TrimSpace(component) == "" {
+		return apierrors.NewBadRequest("webhook component is required for callback completion mode")
+	}
 	signingSecret, _ := input["signingSecret"].(string)
 	signingSecrets, _ := input["signingSecrets"].([]any)
 	if strings.TrimSpace(signingSecret) == "" && len(signingSecrets) == 0 {
@@ -576,7 +604,14 @@ func validateWebhookRegistryInput(input map[string]any) error {
 		}
 	}
 	outputs, _ := input["outputs"].([]any)
-	if len(outputs) > types.MaxStepRunEventOutputItemCount-webhookBuiltInOutputCount {
+	if completionMode == "callback" && len(outputs) > 0 {
+		return apierrors.NewBadRequest("webhook outputs are not supported in callback completion mode; report durable values in the callback")
+	}
+	builtInOutputCount := webhookResponseBuiltInOutputCount
+	if completionMode == "callback" {
+		builtInOutputCount = webhookCallbackBuiltInOutputCount
+	}
+	if len(outputs) > types.MaxStepRunEventOutputItemCount-builtInOutputCount {
 		return apierrors.NewBadRequest("webhook outputs contains too many entries")
 	}
 	seen := map[string]struct{}{}
@@ -587,7 +622,7 @@ func validateWebhookRegistryInput(input map[string]any) error {
 		if name == "" {
 			continue
 		}
-		if isWebhookReservedOutputName(name) {
+		if isWebhookReservedOutputName(name, completionMode == "callback") {
 			return apierrors.NewBadRequest(fmt.Sprintf("webhook outputs name %s is reserved", name))
 		}
 		if _, ok := seen[name]; ok {
@@ -598,9 +633,17 @@ func validateWebhookRegistryInput(input map[string]any) error {
 	return nil
 }
 
-func isWebhookReservedOutputName(name string) bool {
+func isWebhookReservedOutputName(name string, callback bool) bool {
 	switch name {
 	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied", "auditChainRoot", "auditEventHash", "auditTrail":
+		return true
+	}
+	if !callback {
+		return false
+	}
+	switch name {
+	case "externalExecutionId", "providerReference", "providerUrl", "actualVersion", "actualImage", "actualPlatform",
+		"actualConfigReference", "actualConfigChecksum", "actualHealth", "observedStateChecksum":
 		return true
 	default:
 		return false
@@ -618,7 +661,9 @@ func isWebhookSensitiveHeaderName(name string) bool {
 
 func isWebhookReservedHeaderName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version", "x-distr-tenant-id":
+	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version",
+		"x-distr-tenant-id", "x-distr-external-execution-id", "x-distr-plan-checksum",
+		"x-distr-expected-state-version", "x-distr-expected-state-checksum", "x-distr-callback-url":
 		return true
 	default:
 		return false

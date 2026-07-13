@@ -885,3 +885,18 @@ Use one entry per pull request:
 - Tests: Added evaluator, migration, repository, API mapping, and Angular regression coverage.
 - Upstream contribution notes: Community-neutral preflight and concurrency primitives; no provider or adopter names.
 - Compatibility notes: Runtime status no longer changes new plan checksums; legacy payloads remain checksum-valid, and existing target locks remain in place.
+
+### PR-052 - External execution callbacks and observed state
+
+- Status: Implemented locally; focused and live PostgreSQL verification completed.
+- Upstream base: `2ddd5715`.
+- Feature flag: Uses the existing `deployment_plans`, `task_queue`, `step_events`, and Hub webhook feature surfaces.
+- User-facing behavior: Callback-mode Hub webhooks remain running until an authenticated external executor reports a terminal result; exact observed image, platform, configuration identity, and health are retained.
+- Database changes: Added external execution/event history, versioned configuration references on target-component state/history, callback sequence and payload hashes, and optimistic observed-state projection.
+- API changes: Added organization-scoped external execution read and callback endpoints; callback mode adds reserved execution headers to the outbound webhook.
+- UI changes: No new page in this slice. Existing task events and Deployment Timeline receive progress and terminal state; the read model is available for the following operator detail UI slice.
+- Agent protocol changes: None.
+- Documentation: Added PR-052 notes and ADR-0052.
+- Tests: Added callback validation/state tests, registry and security tests, Hub trigger/restart/race tests, mapping/handler tests, migration checks, and live PostgreSQL repository coverage.
+- Upstream contribution notes: Provider-neutral external execution contract; no Jenkins or adopter-specific schema, API, labels, or behavior.
+- Compatibility notes: Existing webhooks default to synchronous response completion. Callback steps require a component and versioned immutable release configuration.

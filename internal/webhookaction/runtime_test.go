@@ -3,9 +3,11 @@ package webhookaction
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +44,9 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 		if r.Header.Get("X-Distr-Signature") == "" {
 			t.Error("missing request signature")
 		}
+		if r.Header.Get("X-Distr-External-Execution-ID") != "external-42" {
+			t.Errorf("missing runtime execution header: %q", r.Header.Get("X-Distr-External-Execution-ID"))
+		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
@@ -76,6 +81,7 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 	input.LeaseID = uuid.New()
 	input.TaskID = uuid.New()
 	input.StepRunID = uuid.New()
+	input.RuntimeHeaders = map[string]string{"X-Distr-External-Execution-ID": "external-42"}
 	var progress []string
 
 	result, err := Run(context.Background(), input, func(message string) error {
@@ -97,5 +103,54 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 	}
 	if len(progress) != 1 || len(result.AuditTrail.Events) < 3 {
 		t.Fatalf("missing progress or audit evidence: progress=%v audit=%#v", progress, result.AuditTrail)
+	}
+}
+
+func TestDecodeInputValidatesCallbackCompletionMode(t *testing.T) {
+	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	input, err := DecodeInput(map[string]any{
+		"url": "https://hooks.example.com/deploy", "completionMode": "callback",
+		"component": "loyalty-api", "callbackTimeoutSeconds": 600, "signingSecret": "test-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.CompletionMode != CompletionModeCallback || input.Component != "loyalty-api" || input.CallbackTimeoutSeconds != 600 {
+		t.Fatalf("unexpected callback input: %#v", input)
+	}
+
+	_, err = DecodeInput(map[string]any{
+		"url": "https://hooks.example.com/deploy", "completionMode": "callback", "signingSecret": "test-secret",
+	})
+	if err == nil || err.Error() != "component is required for callback completion mode" {
+		t.Fatalf("expected callback component error, got %v", err)
+	}
+}
+
+func TestDecodeInputUsesCompletionModeOutputBudget(t *testing.T) {
+	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
+	outputs := func(count int) []any {
+		result := make([]any, 0, count)
+		for i := 0; i < count; i++ {
+			result = append(result, map[string]any{
+				"name": fmt.Sprintf("remoteId%d", i), "pointer": fmt.Sprintf("/items/%d/id", i), "type": "string",
+			})
+		}
+		return result
+	}
+
+	_, err := DecodeInput(map[string]any{
+		"url": "https://hooks.example.com/deploy", "signingSecret": "test-secret",
+		"completionMode": "response", "outputs": outputs(25),
+	})
+	if err != nil {
+		t.Fatalf("response mode lost its output budget: %v", err)
+	}
+	_, err = DecodeInput(map[string]any{
+		"url": "https://hooks.example.com/deploy", "signingSecret": "test-secret",
+		"completionMode": "callback", "component": "loyalty-api", "outputs": outputs(1),
+	})
+	if err == nil || !strings.Contains(err.Error(), "callback completion mode") {
+		t.Fatalf("expected callback output budget error, got %v", err)
 	}
 }

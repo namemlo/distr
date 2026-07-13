@@ -33,6 +33,7 @@ type TargetComponentState struct {
 	Image              string                   `db:"image" json:"image"`
 	Platform           DeploymentTargetPlatform `db:"platform" json:"platform"`
 	Contracts          []string                 `db:"contracts" json:"contracts"`
+	ConfigReference    string                   `db:"config_reference" json:"configReference"`
 	ConfigChecksum     string                   `db:"config_checksum" json:"configChecksum"`
 	Health             TargetComponentHealth    `db:"health" json:"health"`
 	ObservedAt         time.Time                `db:"observed_at" json:"observedAt"`
@@ -53,6 +54,7 @@ type TargetComponentObservation struct {
 	Image                  string                   `db:"image" json:"image"`
 	Platform               DeploymentTargetPlatform `db:"platform" json:"platform"`
 	Contracts              []string                 `db:"contracts" json:"contracts"`
+	ConfigReference        string                   `db:"config_reference" json:"configReference"`
 	ConfigChecksum         string                   `db:"config_checksum" json:"configChecksum"`
 	Health                 TargetComponentHealth    `db:"health" json:"health"`
 	ObservedAt             time.Time                `db:"observed_at" json:"observedAt"`

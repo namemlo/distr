@@ -27,6 +27,7 @@ const targetComponentStateOutputExpr = `
 	tcs.image,
 	tcs.platform,
 	tcs.contracts,
+	tcs.config_reference,
 	tcs.config_checksum,
 	tcs.health,
 	tcs.observed_at

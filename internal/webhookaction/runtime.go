@@ -24,28 +24,37 @@ import (
 )
 
 const (
-	webhookAllowedHostsEnv         = "DISTR_WEBHOOK_ALLOWED_HOSTS"
-	webhookAllowedPrivateHostsEnv  = "DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS"
-	webhookStrictReplayVerifyEnv   = "STRICT_REPLAY_VERIFY"
-	webhookSelfContainedModeEnv    = "WEBHOOK_SELF_CONTAINED_MODE"
-	webhookResolvedIPCacheEnv      = "DISTR_WEBHOOK_RESOLVED_IP_CACHE"
-	webhookTenantRPSEnv            = "DISTR_WEBHOOK_TENANT_RPS"
-	webhookAgentRPSEnv             = "DISTR_WEBHOOK_AGENT_RPS"
-	webhookAgentConcurrencyEnv     = "DISTR_WEBHOOK_AGENT_CONCURRENCY"
-	webhookCorridorRPSEnv          = "DISTR_WEBHOOK_CORRIDOR_RPS"
-	webhookOpenCircuitHostsEnv     = "DISTR_WEBHOOK_OPEN_CIRCUIT_HOSTS"
-	webhookMaxRetryAttemptsEnv     = "DISTR_WEBHOOK_MAX_RETRY_ATTEMPTS"
-	webhookEndpointFailureLimitEnv = "DISTR_WEBHOOK_ENDPOINT_FAILURE_LIMIT"
-	webhookMaxRequestBodyBytes     = 64 * 1024
-	webhookMaxResponseBodyBytes    = 64 * 1024
-	webhookMaxResponseHeaderBytes  = 16 * 1024
-	webhookMaxRetryAttempts        = 5
-	webhookDefaultTimeoutSeconds   = 30
-	webhookConnectTimeout          = 10 * time.Second
-	webhookTLSHandshakeTimeout     = 10 * time.Second
-	webhookResponseHeaderTimeout   = 10 * time.Second
-	webhookBuiltInOutputCount      = 7
-	webhookMaxSigningSecrets       = 8
+	webhookAllowedHostsEnv            = "DISTR_WEBHOOK_ALLOWED_HOSTS"
+	webhookAllowedPrivateHostsEnv     = "DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS"
+	webhookStrictReplayVerifyEnv      = "STRICT_REPLAY_VERIFY"
+	webhookSelfContainedModeEnv       = "WEBHOOK_SELF_CONTAINED_MODE"
+	webhookResolvedIPCacheEnv         = "DISTR_WEBHOOK_RESOLVED_IP_CACHE"
+	webhookTenantRPSEnv               = "DISTR_WEBHOOK_TENANT_RPS"
+	webhookAgentRPSEnv                = "DISTR_WEBHOOK_AGENT_RPS"
+	webhookAgentConcurrencyEnv        = "DISTR_WEBHOOK_AGENT_CONCURRENCY"
+	webhookCorridorRPSEnv             = "DISTR_WEBHOOK_CORRIDOR_RPS"
+	webhookOpenCircuitHostsEnv        = "DISTR_WEBHOOK_OPEN_CIRCUIT_HOSTS"
+	webhookMaxRetryAttemptsEnv        = "DISTR_WEBHOOK_MAX_RETRY_ATTEMPTS"
+	webhookEndpointFailureLimitEnv    = "DISTR_WEBHOOK_ENDPOINT_FAILURE_LIMIT"
+	webhookMaxRequestBodyBytes        = 64 * 1024
+	webhookMaxResponseBodyBytes       = 64 * 1024
+	webhookMaxResponseHeaderBytes     = 16 * 1024
+	webhookMaxRetryAttempts           = 5
+	webhookDefaultTimeoutSeconds      = 30
+	webhookDefaultCallbackSeconds     = 3600
+	webhookConnectTimeout             = 10 * time.Second
+	webhookTLSHandshakeTimeout        = 10 * time.Second
+	webhookResponseHeaderTimeout      = 10 * time.Second
+	webhookResponseBuiltInOutputCount = 7
+	webhookCallbackBuiltInOutputCount = 10
+	webhookMaxSigningSecrets          = 8
+)
+
+type CompletionMode string
+
+const (
+	CompletionModeResponse CompletionMode = "response"
+	CompletionModeCallback CompletionMode = "callback"
 )
 
 var webhookUnsafeIPPrefixes = []netip.Prefix{
@@ -74,25 +83,29 @@ func (o RuntimeOptions) withDefaults() RuntimeOptions {
 }
 
 type Input struct {
-	URL                 string              `json:"url"`
-	Method              string              `json:"method"`
-	Headers             map[string]string   `json:"headers"`
-	SecretHeaders       map[string]string   `json:"secretHeaders"`
-	Body                any                 `json:"body"`
-	SensitiveBody       bool                `json:"sensitiveBody"`
-	SigningSecret       string              `json:"signingSecret"`
-	SigningSecrets      []string            `json:"signingSecrets"`
-	TimeoutSeconds      int                 `json:"timeoutSeconds"`
-	Retry               RetryPolicy         `json:"retry"`
-	ExpectedStatusCodes []int               `json:"expectedStatusCodes"`
-	IdempotencyKey      string              `json:"idempotencyKey"`
-	Corridor            string              `json:"corridor"`
-	Priority            string              `json:"priority"`
-	Outputs             []OutputDeclaration `json:"outputs"`
-	TenantID            uuid.UUID           `json:"-"`
-	LeaseID             uuid.UUID           `json:"-"`
-	TaskID              uuid.UUID           `json:"-"`
-	StepRunID           uuid.UUID           `json:"-"`
+	URL                    string              `json:"url"`
+	Method                 string              `json:"method"`
+	Headers                map[string]string   `json:"headers"`
+	SecretHeaders          map[string]string   `json:"secretHeaders"`
+	Body                   any                 `json:"body"`
+	SensitiveBody          bool                `json:"sensitiveBody"`
+	SigningSecret          string              `json:"signingSecret"`
+	SigningSecrets         []string            `json:"signingSecrets"`
+	TimeoutSeconds         int                 `json:"timeoutSeconds"`
+	Retry                  RetryPolicy         `json:"retry"`
+	ExpectedStatusCodes    []int               `json:"expectedStatusCodes"`
+	IdempotencyKey         string              `json:"idempotencyKey"`
+	Corridor               string              `json:"corridor"`
+	Priority               string              `json:"priority"`
+	Outputs                []OutputDeclaration `json:"outputs"`
+	CompletionMode         CompletionMode      `json:"completionMode"`
+	Component              string              `json:"component"`
+	CallbackTimeoutSeconds int                 `json:"callbackTimeoutSeconds"`
+	TenantID               uuid.UUID           `json:"-"`
+	LeaseID                uuid.UUID           `json:"-"`
+	TaskID                 uuid.UUID           `json:"-"`
+	StepRunID              uuid.UUID           `json:"-"`
+	RuntimeHeaders         map[string]string   `json:"-"`
 }
 
 type RetryPolicy struct {
@@ -193,6 +206,25 @@ func DecodeInput(inputs map[string]any) (Input, error) {
 	input.Method = strings.ToUpper(strings.TrimSpace(input.Method))
 	input.Corridor = strings.TrimSpace(input.Corridor)
 	input.Priority = strings.ToLower(strings.TrimSpace(input.Priority))
+	input.CompletionMode = CompletionMode(strings.ToLower(strings.TrimSpace(string(input.CompletionMode))))
+	input.Component = strings.TrimSpace(input.Component)
+	if input.CompletionMode == "" {
+		input.CompletionMode = CompletionModeResponse
+	}
+	if input.CompletionMode != CompletionModeResponse && input.CompletionMode != CompletionModeCallback {
+		return input, fmt.Errorf("completionMode must be response or callback")
+	}
+	if input.CompletionMode == CompletionModeCallback {
+		if input.Component == "" {
+			return input, fmt.Errorf("component is required for callback completion mode")
+		}
+		if input.CallbackTimeoutSeconds == 0 {
+			input.CallbackTimeoutSeconds = webhookDefaultCallbackSeconds
+		}
+		if input.CallbackTimeoutSeconds < 1 || input.CallbackTimeoutSeconds > 86400 {
+			return input, fmt.Errorf("callbackTimeoutSeconds must be between 1 and 86400")
+		}
+	}
 	if input.Method == "" {
 		input.Method = http.MethodPost
 	}
@@ -255,7 +287,7 @@ func DecodeInput(inputs map[string]any) (Input, error) {
 	if err := validateWebhookStatusCodes("retry.retryableStatusCodes", input.Retry.RetryableStatusCodes); err != nil {
 		return input, err
 	}
-	if err := validateWebhookOutputs(input.Outputs); err != nil {
+	if err := validateWebhookOutputs(input.Outputs, input.CompletionMode); err != nil {
 		return input, err
 	}
 	return input, nil
@@ -619,6 +651,9 @@ func sendWebhookAttempt(
 	request.Header.Set("X-Distr-Key-Version", strconv.Itoa(signingKeyVersion))
 	if input.TenantID != uuid.Nil {
 		request.Header.Set("X-Distr-Tenant-ID", input.TenantID.String())
+	}
+	for name, value := range input.RuntimeHeaders {
+		request.Header.Set(name, value)
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -1178,8 +1213,15 @@ func validateWebhookHeaders(publicHeaders, secretHeaders map[string]string) erro
 	return nil
 }
 
-func validateWebhookOutputs(outputs []OutputDeclaration) error {
-	if len(outputs) > api.MaxStepRunEventOutputItemCount-webhookBuiltInOutputCount {
+func validateWebhookOutputs(outputs []OutputDeclaration, completionMode CompletionMode) error {
+	if completionMode == CompletionModeCallback && len(outputs) > 0 {
+		return fmt.Errorf("outputs are not supported in callback completion mode; report durable values in the callback")
+	}
+	builtInOutputCount := webhookResponseBuiltInOutputCount
+	if completionMode == CompletionModeCallback {
+		builtInOutputCount = webhookCallbackBuiltInOutputCount
+	}
+	if len(outputs) > api.MaxStepRunEventOutputItemCount-builtInOutputCount {
 		return fmt.Errorf("outputs contains too many entries")
 	}
 	seen := map[string]struct{}{}
@@ -1190,7 +1232,7 @@ func validateWebhookOutputs(outputs []OutputDeclaration) error {
 		if output.Name == "" {
 			return fmt.Errorf("outputs name is required")
 		}
-		if isReservedWebhookOutputName(output.Name) {
+		if isReservedWebhookOutputName(output.Name, completionMode == CompletionModeCallback) {
 			return fmt.Errorf("outputs name %s is reserved", output.Name)
 		}
 		if _, ok := seen[output.Name]; ok {
@@ -1207,9 +1249,17 @@ func validateWebhookOutputs(outputs []OutputDeclaration) error {
 	return nil
 }
 
-func isReservedWebhookOutputName(name string) bool {
+func isReservedWebhookOutputName(name string, callback bool) bool {
 	switch name {
 	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied", "auditChainRoot", "auditEventHash", "auditTrail":
+		return true
+	}
+	if !callback {
+		return false
+	}
+	switch name {
+	case "externalExecutionId", "providerReference", "providerUrl", "actualVersion", "actualImage", "actualPlatform",
+		"actualConfigReference", "actualConfigChecksum", "actualHealth", "observedStateChecksum":
 		return true
 	default:
 		return false

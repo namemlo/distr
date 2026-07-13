@@ -190,6 +190,7 @@ func ApiRouter(
 					r.Route("/deployment-processes", handlers.DeploymentProcessesRouter)
 					r.Route("/deployments", handlers.DeploymentsRouter)
 					r.Route("/environments", handlers.EnvironmentsRouter)
+					r.Route("/external-executions", handlers.ExternalExecutionsRouter)
 					r.Route("/experimental-feature-flags", handlers.ExperimentalFeatureFlagsRouter)
 					r.Route("/files", handlers.FileRouter)
 					r.Route("/lifecycles", handlers.LifecyclesRouter)

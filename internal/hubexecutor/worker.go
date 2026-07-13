@@ -4,36 +4,48 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/distr-sh/distr/api"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/stepredaction"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/distr-sh/distr/internal/webhookaction"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
 const (
-	defaultPollInterval      = time.Second
-	defaultHeartbeatInterval = 30 * time.Second
-	defaultMaxConcurrency    = 4
+	defaultPollInterval         = time.Second
+	defaultHeartbeatInterval    = 30 * time.Second
+	defaultExternalPollInterval = time.Second
+	defaultMaxConcurrency       = 4
 )
 
 type Options struct {
-	PollInterval      time.Duration
-	HeartbeatInterval time.Duration
-	MaxConcurrency    int
-	RuntimeOptions    webhookaction.RuntimeOptions
+	PollInterval         time.Duration
+	HeartbeatInterval    time.Duration
+	MaxConcurrency       int
+	RuntimeOptions       webhookaction.RuntimeOptions
+	ExternalPollInterval time.Duration
+	CallbackBaseURL      string
 }
 
 type taskStore interface {
 	Lease(context.Context) (*types.TaskLease, error)
 	Heartbeat(context.Context, types.HeartbeatHubTaskLeaseRequest) (*types.TaskLease, error)
 	Record(context.Context, types.RecordHubStepRunEventRequest) (*types.StepRunEvent, error)
+	PrepareExternalExecution(context.Context, types.PrepareExternalExecutionRequest) (*types.ExternalExecution, error)
+	MarkExternalExecutionTriggered(context.Context, types.MarkExternalExecutionTriggeredRequest) (*types.ExternalExecution, error)
+	GetExternalExecution(context.Context, uuid.UUID, uuid.UUID) (*types.ExternalExecution, error)
+	TimeoutExternalExecution(context.Context, types.TimeoutExternalExecutionRequest) (*types.ExternalExecution, error)
+	FailExternalExecution(context.Context, types.FailExternalExecutionRequest) (*types.ExternalExecution, error)
 }
 
 type Worker struct {
@@ -62,6 +74,13 @@ func newWorker(logger *zap.Logger, store taskStore, options Options) *Worker {
 	if options.MaxConcurrency <= 0 {
 		options.MaxConcurrency = defaultMaxConcurrency
 	}
+	if options.ExternalPollInterval <= 0 {
+		options.ExternalPollInterval = defaultExternalPollInterval
+	}
+	if strings.TrimSpace(options.CallbackBaseURL) == "" {
+		options.CallbackBaseURL = env.Host()
+	}
+	options.CallbackBaseURL = strings.TrimRight(strings.TrimSpace(options.CallbackBaseURL), "/")
 	return &Worker{
 		logger:   logger.With(zap.String("component", "hub-executor")),
 		store:    store,
@@ -202,33 +221,139 @@ func (w *Worker) executeStep(
 	actionCtx, actionCancel := context.WithCancel(ctx)
 	heartbeatDone := make(chan error, 1)
 	go w.heartbeat(actionCtx, actionCancel, lease, heartbeatDone)
-	result, runErr := webhookaction.Run(actionCtx, input, func(message string) error {
-		nextSequence := sequence + 1
-		if err := w.record(
-			actionCtx, lease, step, nextSequence, types.StepRunEventTypeProgress, message, nil,
-		); err != nil {
-			return err
+	stopHeartbeat := func() error {
+		actionCancel()
+		return <-heartbeatDone
+	}
+	var external *types.ExternalExecution
+	if input.CompletionMode == webhookaction.CompletionModeCallback {
+		external, err = w.store.PrepareExternalExecution(actionCtx, types.PrepareExternalExecutionRequest{
+			OrganizationID: lease.OrganizationID, StepRunID: step.StepRunID,
+			Component: input.Component, CallbackTimeoutSeconds: input.CallbackTimeoutSeconds,
+		})
+		if err != nil {
+			heartbeatErr := stopHeartbeat()
+			if heartbeatErr != nil {
+				return recordFailure(fmt.Errorf("heartbeat Hub task lease: %w", heartbeatErr), secretValues)
+			}
+			return recordFailure(err, secretValues)
 		}
-		sequence = nextSequence
-		return nil
-	}, w.options.RuntimeOptions)
-	actionCancel()
-	heartbeatErr := <-heartbeatDone
-	secretValues = append(secretValues, result.RedactionValues...)
+		input.IdempotencyKey = external.IdempotencyKey
+		input.RuntimeHeaders = externalExecutionRuntimeHeaders(*external, w.options.CallbackBaseURL)
+	}
+	var result webhookaction.Result
+	var runErr error
+	webhookInvoked := external == nil
+	if external != nil && external.Status == types.ExternalExecutionStatusQueued {
+		triggered, triggerErr := w.store.MarkExternalExecutionTriggered(actionCtx, types.MarkExternalExecutionTriggeredRequest{
+			OrganizationID: lease.OrganizationID, ExternalExecutionID: external.ID, TriggerAttempts: 1,
+		})
+		if triggerErr == nil {
+			external = triggered
+			webhookInvoked = true
+		} else {
+			current, readErr := w.store.GetExternalExecution(actionCtx, external.ID, lease.OrganizationID)
+			if readErr == nil && current.Status != types.ExternalExecutionStatusQueued {
+				external = current
+				webhookInvoked = false
+			} else if readErr != nil {
+				runErr = fmt.Errorf("%w; reconcile external execution dispatch: %v", triggerErr, readErr)
+			} else {
+				runErr = triggerErr
+			}
+		}
+		if runErr == nil && webhookInvoked {
+			sequence++
+			runErr = w.record(
+				actionCtx, lease, step, sequence, types.StepRunEventTypeProgress,
+				"external execution dispatch committed; invoking external executor", nil,
+			)
+		}
+	}
+	if runErr == nil && webhookInvoked {
+		result, runErr = webhookaction.Run(actionCtx, input, func(message string) error {
+			nextSequence := sequence + 1
+			if err := w.record(
+				actionCtx, lease, step, nextSequence, types.StepRunEventTypeProgress, message, nil,
+			); err != nil {
+				return err
+			}
+			sequence = nextSequence
+			return nil
+		}, w.options.RuntimeOptions)
+		secretValues = append(secretValues, result.RedactionValues...)
+	}
+	if runErr == nil && external != nil {
+		if runErr == nil {
+			switch external.Status {
+			case types.ExternalExecutionStatusRunning:
+				sequence++
+				message := "resuming wait for external execution callback"
+				if webhookInvoked {
+					message = "external executor accepted the request; waiting for callback"
+				}
+				runErr = w.record(
+					actionCtx, lease, step, sequence, types.StepRunEventTypeProgress, message, nil,
+				)
+				if runErr == nil {
+					external, runErr = w.waitForExternalExecution(actionCtx, lease, step, external, &sequence)
+				}
+			case types.ExternalExecutionStatusSucceeded:
+				sequence++
+				runErr = w.record(
+					actionCtx, lease, step, sequence, types.StepRunEventTypeProgress,
+					"external execution already succeeded; finalizing task", nil,
+				)
+			case types.ExternalExecutionStatusFailed,
+				types.ExternalExecutionStatusCanceled,
+				types.ExternalExecutionStatusTimedOut:
+				runErr = externalExecutionError(*external)
+			default:
+				runErr = fmt.Errorf("unsupported external execution status %q", external.Status)
+			}
+		}
+	}
+	if runErr != nil && external != nil && !external.Status.IsTerminal() &&
+		!errors.Is(runErr, context.Canceled) {
+		failed, failErr := w.store.FailExternalExecution(actionCtx, types.FailExternalExecutionRequest{
+			OrganizationID: lease.OrganizationID, ExternalExecutionID: external.ID,
+			Message: runErr.Error(),
+		})
+		if failErr == nil {
+			external = failed
+			switch failed.Status {
+			case types.ExternalExecutionStatusSucceeded:
+				runErr = nil
+			case types.ExternalExecutionStatusFailed,
+				types.ExternalExecutionStatusCanceled,
+				types.ExternalExecutionStatusTimedOut:
+				runErr = externalExecutionError(*failed)
+			}
+		} else {
+			runErr = fmt.Errorf("%w; persist external execution failure: %v", runErr, failErr)
+		}
+	}
+	heartbeatErr := stopHeartbeat()
 	if heartbeatErr != nil {
 		return recordFailure(fmt.Errorf("heartbeat Hub task lease: %w", heartbeatErr), secretValues)
 	}
 	if runErr != nil {
 		return recordFailure(runErr, secretValues)
 	}
-	outputs := []api.AgentStepRunOutputRequest{
-		{Name: "statusCode", Value: result.StatusCode},
-		{Name: "attempts", Value: result.Attempts},
-		{Name: "signingKeyVersion", Value: result.SigningKeyVersion},
-		{Name: "keyRotationApplied", Value: result.KeyRotationApplied},
+	outputs := []api.AgentStepRunOutputRequest{}
+	if webhookInvoked && external == nil {
+		outputs = append(outputs,
+			api.AgentStepRunOutputRequest{Name: "statusCode", Value: result.StatusCode},
+			api.AgentStepRunOutputRequest{Name: "attempts", Value: result.Attempts},
+			api.AgentStepRunOutputRequest{Name: "signingKeyVersion", Value: result.SigningKeyVersion},
+			api.AgentStepRunOutputRequest{Name: "keyRotationApplied", Value: result.KeyRotationApplied},
+		)
+		outputs = append(outputs, webhookaction.AuditOutputRequests(result.AuditTrail)...)
+		outputs = append(outputs, result.Outputs...)
 	}
-	outputs = append(outputs, webhookaction.AuditOutputRequests(result.AuditTrail)...)
-	outputs = append(outputs, result.Outputs...)
+	if external != nil {
+		outputs = append(outputs, externalExecutionOutputs(*external)...)
+	}
 	recordOutputs := make([]types.RecordStepRunOutputRequest, 0, len(outputs))
 	for _, output := range outputs {
 		recordOutputs = append(recordOutputs, types.RecordStepRunOutputRequest{
@@ -239,6 +364,108 @@ func (w *Worker) executeStep(
 	return w.record(
 		ctx, lease, step, sequence, types.StepRunEventTypeSucceeded, "Hub webhook succeeded", recordOutputs,
 	)
+}
+
+func externalExecutionError(execution types.ExternalExecution) error {
+	message := execution.ErrorSummary
+	if message == "" {
+		message = execution.LastMessage
+	}
+	if message == "" {
+		message = "external execution ended with " + string(execution.Status)
+	}
+	return fmt.Errorf("%s", message)
+}
+
+func (w *Worker) waitForExternalExecution(
+	ctx context.Context,
+	lease types.TaskLease,
+	step types.TaskLeaseStep,
+	execution *types.ExternalExecution,
+	sequence *int64,
+) (*types.ExternalExecution, error) {
+	lastCallbackSequence := execution.LastCallbackSequence
+	for {
+		current, err := w.store.GetExternalExecution(ctx, execution.ID, lease.OrganizationID)
+		if err != nil {
+			return execution, fmt.Errorf("read external execution callback state: %w", err)
+		}
+		execution = current
+		if current.LastCallbackSequence > lastCallbackSequence {
+			lastCallbackSequence = current.LastCallbackSequence
+			message := current.LastMessage
+			if message == "" {
+				message = "external execution callback: " + string(current.Status)
+			}
+			*sequence++
+			if err := w.record(ctx, lease, step, *sequence, types.StepRunEventTypeProgress, message, nil); err != nil {
+				return execution, err
+			}
+		}
+		switch current.Status {
+		case types.ExternalExecutionStatusSucceeded:
+			return current, nil
+		case types.ExternalExecutionStatusFailed,
+			types.ExternalExecutionStatusCanceled,
+			types.ExternalExecutionStatusTimedOut:
+			return current, externalExecutionError(*current)
+		}
+		wait := w.options.ExternalPollInterval
+		untilDeadline := time.Until(current.CallbackDeadlineAt)
+		if untilDeadline <= 0 {
+			timedOut, timeoutErr := w.store.TimeoutExternalExecution(ctx, types.TimeoutExternalExecutionRequest{
+				OrganizationID: lease.OrganizationID, ExternalExecutionID: current.ID,
+				Message: "external execution callback timed out",
+			})
+			if timeoutErr != nil {
+				return current, fmt.Errorf("time out external execution: %w", timeoutErr)
+			}
+			return timedOut, fmt.Errorf("external execution callback timed out")
+		}
+		if untilDeadline < wait {
+			wait = untilDeadline
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return current, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func externalExecutionRuntimeHeaders(execution types.ExternalExecution, callbackBaseURL string) map[string]string {
+	callbackURL := callbackBaseURL + "/api/v1/external-executions/" + execution.ID.String() + "/callbacks"
+	return map[string]string{
+		"X-Distr-External-Execution-ID":   execution.ID.String(),
+		"X-Distr-Plan-Checksum":           execution.PlanChecksum,
+		"X-Distr-Expected-State-Version":  strconv.FormatInt(execution.ExpectedStateVersion, 10),
+		"X-Distr-Expected-State-Checksum": execution.ExpectedStateChecksum,
+		"X-Distr-Callback-URL":            callbackURL,
+	}
+}
+
+func externalExecutionOutputs(execution types.ExternalExecution) []api.AgentStepRunOutputRequest {
+	outputs := []api.AgentStepRunOutputRequest{
+		{Name: "externalExecutionId", Value: execution.ID.String()},
+		{Name: "providerReference", Value: execution.ProviderReference},
+		{Name: "providerUrl", Value: execution.ProviderURL},
+		{Name: "actualVersion", Value: execution.ActualVersion},
+		{Name: "actualImage", Value: execution.ActualImage},
+		{Name: "actualConfigReference", Value: execution.ActualConfigReference},
+		{Name: "actualConfigChecksum", Value: execution.ActualConfigChecksum},
+		{Name: "observedStateChecksum", Value: execution.ObservedStateChecksum},
+	}
+	if execution.ActualPlatform != nil {
+		outputs = append(outputs, api.AgentStepRunOutputRequest{Name: "actualPlatform", Value: *execution.ActualPlatform})
+	}
+	if execution.ActualHealth != nil {
+		outputs = append(outputs, api.AgentStepRunOutputRequest{Name: "actualHealth", Value: *execution.ActualHealth})
+	}
+	return outputs
 }
 
 func (w *Worker) heartbeat(
@@ -329,4 +556,39 @@ func (s databaseStore) Record(
 	request types.RecordHubStepRunEventRequest,
 ) (*types.StepRunEvent, error) {
 	return db.RecordHubStepRunEvent(s.context(ctx), request)
+}
+
+func (s databaseStore) PrepareExternalExecution(
+	ctx context.Context,
+	request types.PrepareExternalExecutionRequest,
+) (*types.ExternalExecution, error) {
+	return db.PrepareExternalExecution(s.context(ctx), request)
+}
+
+func (s databaseStore) MarkExternalExecutionTriggered(
+	ctx context.Context,
+	request types.MarkExternalExecutionTriggeredRequest,
+) (*types.ExternalExecution, error) {
+	return db.MarkExternalExecutionTriggered(s.context(ctx), request)
+}
+
+func (s databaseStore) GetExternalExecution(
+	ctx context.Context,
+	id, orgID uuid.UUID,
+) (*types.ExternalExecution, error) {
+	return db.GetExternalExecution(s.context(ctx), id, orgID)
+}
+
+func (s databaseStore) TimeoutExternalExecution(
+	ctx context.Context,
+	request types.TimeoutExternalExecutionRequest,
+) (*types.ExternalExecution, error) {
+	return db.TimeoutExternalExecution(s.context(ctx), request)
+}
+
+func (s databaseStore) FailExternalExecution(
+	ctx context.Context,
+	request types.FailExternalExecutionRequest,
+) (*types.ExternalExecution, error) {
+	return db.FailExternalExecution(s.context(ctx), request)
 }

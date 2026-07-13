@@ -129,6 +129,13 @@ func TestDefaultRegistryValidatesKnownActionInputs(t *testing.T) {
 			{"name":"accepted","pointer":"/accepted","type":"boolean","sensitive":true}
 		]
 	}`))).To(Succeed())
+	g.Expect(registry.ValidateInput("distr.webhook", jsonObject(t, `{
+		"url":"https://hooks.example.com/deployments",
+		"signingSecret":"webhook_signing_key",
+		"completionMode":"callback",
+		"component":"loyalty-api",
+		"callbackTimeoutSeconds":3600
+	}`))).To(Succeed())
 }
 
 func TestDefaultRegistryValidatesWebhookSigningSecretRotation(t *testing.T) {
@@ -314,6 +321,26 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 			want: "reserved",
 		},
 		{
+			name:       "callback webhook requires component",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"completionMode":"callback",
+				"signingSecret":"webhook_signing_key"
+			}`),
+			want: "component",
+		},
+		{
+			name:       "webhook rejects reserved callback header",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"headers":{"X-Distr-Callback-URL":"https://attacker.example.com/callback"},
+				"signingSecret":"webhook_signing_key"
+			}`),
+			want: "reserved",
+		},
+		{
 			name:       "webhook rejects malformed output declaration",
 			actionType: "distr.webhook",
 			input: jsonObject(t, `{
@@ -342,6 +369,18 @@ func TestDefaultRegistryRejectsUnknownActionAndInvalidInputs(t *testing.T) {
 				"outputs":[{"name":"auditTrail","pointer":"/audit","type":"object"}]
 			}`),
 			want: "reserved",
+		},
+		{
+			name:       "callback webhook rejects synchronous response output",
+			actionType: "distr.webhook",
+			input: jsonObject(t, `{
+				"url":"https://hooks.example.com/deployments",
+				"completionMode":"callback",
+				"component":"loyalty-api",
+				"signingSecret":"webhook_signing_key",
+				"outputs":[{"name":"actualImage","pointer":"/image","type":"string"}]
+			}`),
+			want: "callback completion mode",
 		},
 		{
 			name:       "webhook rejects invalid retry policy",
@@ -404,6 +443,33 @@ func TestDefaultRegistryRejectsWebhookTooManyDeclaredOutputs(t *testing.T) {
 
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(strings.ToLower(err.Error())).To(ContainSubstring("maxitems"))
+}
+
+func TestDefaultRegistryPreservesResponseWebhookOutputBudget(t *testing.T) {
+	registry := DefaultRegistry()
+	g := NewWithT(t)
+	responseOutputs := webhookTestOutputs(types.MaxStepRunEventOutputItemCount - webhookResponseBuiltInOutputCount)
+
+	g.Expect(registry.ValidateInput("distr.webhook", map[string]any{
+		"url": "https://hooks.example.com/deployments", "signingSecret": "webhook_signing_key",
+		"completionMode": "response", "outputs": responseOutputs,
+	})).To(Succeed())
+
+	callbackOutputs := webhookTestOutputs(1)
+	g.Expect(registry.ValidateInput("distr.webhook", map[string]any{
+		"url": "https://hooks.example.com/deployments", "signingSecret": "webhook_signing_key",
+		"completionMode": "callback", "component": "loyalty-api", "outputs": callbackOutputs,
+	})).To(MatchError(ContainSubstring("callback completion mode")))
+}
+
+func webhookTestOutputs(count int) []any {
+	outputs := make([]any, 0, count)
+	for i := 0; i < count; i++ {
+		outputs = append(outputs, map[string]any{
+			"name": fmt.Sprintf("remoteId%d", i), "pointer": fmt.Sprintf("/items/%d/id", i), "type": "string",
+		})
+	}
+	return outputs
 }
 
 func TestDefaultRegistryValidatesDeploymentProcessSteps(t *testing.T) {

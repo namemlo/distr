@@ -1102,8 +1102,15 @@ func cancelOlderQueuedTasksForResource(
 }
 
 func releaseTaskResourceLocks(ctx context.Context, taskID, orgID uuid.UUID) error {
+	locks, err := getTaskResourceLocksByTaskID(ctx, taskID, orgID)
+	if err != nil {
+		return err
+	}
+	if err := lockTaskResourceAdvisoryGroups(ctx, taskResourceLockGroupsFromLocks(locks)); err != nil {
+		return err
+	}
 	db := internalctx.GetDb(ctx)
-	_, err := db.Exec(ctx,
+	_, err = db.Exec(ctx,
 		`UPDATE TaskResourceLock
 		SET
 			released_at = COALESCE(released_at, now()),

@@ -58,25 +58,59 @@ func evaluateAndPersistDeploymentPreflight(
 	plan types.DeploymentPlan,
 	actorUserAccountID uuid.UUID,
 ) (*types.DeploymentPreflightRun, bool, error) {
-	currentTargets, err := getDeploymentPreflightTargets(ctx, plan)
+	return evaluateAndPersistDeploymentPreflightScope(ctx, plan, plan, actorUserAccountID)
+}
+
+func evaluateAndPersistDeploymentPreflightForTask(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+	task types.Task,
+) (*types.DeploymentPreflightRun, bool, error) {
+	scoped := plan
+	scoped.Targets = nil
+	for _, target := range plan.Targets {
+		if target.ID == task.DeploymentPlanTargetID && target.DeploymentTargetID == task.DeploymentTargetID {
+			scoped.Targets = []types.DeploymentPlanTarget{target}
+			break
+		}
+	}
+	if len(scoped.Targets) != 1 {
+		return nil, false, fmt.Errorf("deployment task target is not present in its frozen plan")
+	}
+	scoped.TargetComponents = nil
+	for _, component := range plan.TargetComponents {
+		if component.DeploymentPlanTargetID == task.DeploymentPlanTargetID {
+			scoped.TargetComponents = append(scoped.TargetComponents, component)
+		}
+	}
+	return evaluateAndPersistDeploymentPreflightScope(ctx, plan, scoped, uuid.Nil)
+}
+
+func evaluateAndPersistDeploymentPreflightScope(
+	ctx context.Context,
+	canonicalPlan types.DeploymentPlan,
+	evaluationPlan types.DeploymentPlan,
+	actorUserAccountID uuid.UUID,
+) (*types.DeploymentPreflightRun, bool, error) {
+	currentTargets, err := getDeploymentPreflightTargets(ctx, evaluationPlan)
 	if err != nil {
 		return nil, false, err
 	}
-	currentStates, err := getDeploymentPreflightStates(ctx, plan)
+	currentStates, err := getDeploymentPreflightStates(ctx, evaluationPlan)
 	if err != nil {
 		return nil, false, err
 	}
-	canonicalStateValid, err := deploymentPlanCanonicalStateValid(plan)
+	canonicalStateValid, err := deploymentPlanCanonicalStateValid(canonicalPlan)
 	if err != nil {
 		return nil, false, err
 	}
 	releaseEligible, eligibilityMessage, contractValid, contractMessage, err :=
-		getDeploymentPreflightReleaseFacts(ctx, plan)
+		getDeploymentPreflightReleaseFacts(ctx, canonicalPlan)
 	if err != nil {
 		return nil, false, err
 	}
 	checks := deploymentpreflight.Evaluate(deploymentpreflight.Input{
-		Plan:                      plan,
+		Plan:                      evaluationPlan,
 		PlanPayloadChecksumValid:  canonicalStateValid,
 		ReleaseEligible:           releaseEligible,
 		ReleaseEligibilityMessage: eligibilityMessage,
@@ -93,8 +127,8 @@ func evaluateAndPersistDeploymentPreflight(
 		}
 	}
 	run := &types.DeploymentPreflightRun{
-		ID: uuid.New(), OrganizationID: plan.OrganizationID, DeploymentPlanID: plan.ID,
-		PlanChecksum: plan.CanonicalChecksum, Status: status, Checks: checks,
+		ID: uuid.New(), OrganizationID: canonicalPlan.OrganizationID, DeploymentPlanID: canonicalPlan.ID,
+		PlanChecksum: canonicalPlan.CanonicalChecksum, Status: status, Checks: checks,
 	}
 	if actorUserAccountID != uuid.Nil {
 		run.ActorUserAccountID = &actorUserAccountID
@@ -105,7 +139,7 @@ func evaluateAndPersistDeploymentPreflight(
 	if err := insertDeploymentPreflightChecks(ctx, *run); err != nil {
 		return nil, false, err
 	}
-	created, err := getDeploymentPreflightRun(ctx, run.ID, plan.OrganizationID)
+	created, err := getDeploymentPreflightRun(ctx, run.ID, canonicalPlan.OrganizationID)
 	if err != nil {
 		return nil, false, err
 	}
