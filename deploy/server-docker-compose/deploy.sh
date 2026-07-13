@@ -242,6 +242,9 @@ build_image() {
   info "installing tool versions from mise.toml"
   mise install
 
+  info "installing root workspace dependencies from the frozen lockfile"
+  mise exec -- pnpm install --frozen-lockfile
+
   info "building community Hub from source for commit ${commit}"
   VERSION="${DISTR_IMAGE_TAG}" mise run build:hub:community
   cp dist/distr "dist/distr-${arch}"
