@@ -19,6 +19,7 @@ func ReleaseBundleToAPI(bundle types.ReleaseBundle) api.ReleaseBundle {
 		ReleaseNotes:             bundle.ReleaseNotes,
 		SourceRevision:           bundle.SourceRevision,
 		SourceMetadata:           ReleaseBundleSourceMetadataToAPI(bundle),
+		ReleaseContract:          bundle.ReleaseContract,
 		Status:                   bundle.Status,
 		PublishedByUserAccountID: bundle.PublishedByUserAccountID,
 		PublishedAt:              bundle.PublishedAt,

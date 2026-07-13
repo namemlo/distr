@@ -15,6 +15,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/conditions"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgerrcode"
@@ -32,6 +33,7 @@ const deploymentPlanOutputExpr = `
 	dp.environment_id,
 	dp.process_snapshot_id,
 	dp.variable_snapshot_id,
+	dp.release_contract,
 	dp.status,
 	dp.canonical_checksum,
 	dp.canonical_payload
@@ -51,6 +53,7 @@ type canonicalDeploymentPlan struct {
 	EnvironmentID      string                            `json:"environmentId"`
 	ProcessSnapshotID  string                            `json:"processSnapshotId,omitempty"`
 	VariableSnapshotID string                            `json:"variableSnapshotId,omitempty"`
+	ReleaseContract    *types.ReleaseContract            `json:"releaseContract,omitempty"`
 	Status             string                            `json:"status"`
 	Targets            []canonicalDeploymentPlanTarget   `json:"targets"`
 	Steps              []canonicalDeploymentPlanStep     `json:"steps"`
@@ -268,10 +271,12 @@ func resolveDeploymentPlan(
 		EnvironmentID:      request.EnvironmentID,
 		ProcessSnapshotID:  bundle.ProcessSnapshotID,
 		VariableSnapshotID: bundle.VariableSnapshotID,
+		ReleaseContract:    releasebundles.NormalizedReleaseContract(bundle.ReleaseContract),
 		Targets:            targets,
 	}
 	addDeploymentPlanEligibilityBlockers(ctx, plan)
 	addDeploymentPlanSnapshotData(ctx, plan)
+	addDeploymentPlanReleaseContractIssues(plan, *bundle)
 	addDeploymentPlanAgentCapabilityIssues(ctx, plan)
 	addDeploymentPlanIssue(
 		plan,
@@ -286,6 +291,23 @@ func resolveDeploymentPlan(
 		plan.Status = types.DeploymentPlanStatusReady
 	}
 	return plan, nil
+}
+
+func addDeploymentPlanReleaseContractIssues(plan *types.DeploymentPlan, bundle types.ReleaseBundle) {
+	requiresContract := slices.ContainsFunc(plan.Steps, func(step types.DeploymentPlanStep) bool {
+		return step.Included &&
+			strings.EqualFold(strings.TrimSpace(step.ExecutionLocation), "hub") &&
+			step.ActionType == "distr.webhook"
+	})
+	if requiresContract && bundle.ReleaseContract == nil {
+		addDeploymentPlanIssue(
+			plan,
+			types.DeploymentPlanIssueSeverityBlocker,
+			"missing_release_contract",
+			"releaseContract",
+			"Hub webhook deployment requires an immutable release contract",
+		)
+	}
 }
 
 func resolveDeploymentPlanTargets(
@@ -734,6 +756,7 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 		EnvironmentID:      plan.EnvironmentID.String(),
 		ProcessSnapshotID:  processSnapshotID,
 		VariableSnapshotID: variableSnapshotID,
+		ReleaseContract:    releasebundles.NormalizedReleaseContract(plan.ReleaseContract),
 		Status:             string(plan.Status),
 		Targets:            targets,
 		Steps:              steps,
@@ -755,6 +778,7 @@ func insertDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) error
 			environment_id,
 			process_snapshot_id,
 			variable_snapshot_id,
+			release_contract,
 			status,
 			canonical_checksum,
 			canonical_payload
@@ -767,6 +791,7 @@ func insertDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) error
 			@environmentId,
 			@processSnapshotId,
 			@variableSnapshotId,
+			@releaseContract,
 			@status,
 			@canonicalChecksum,
 			@canonicalPayload
@@ -781,6 +806,7 @@ func insertDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) error
 			"environmentId":      plan.EnvironmentID,
 			"processSnapshotId":  plan.ProcessSnapshotID,
 			"variableSnapshotId": plan.VariableSnapshotID,
+			"releaseContract":    plan.ReleaseContract,
 			"status":             plan.Status,
 			"canonicalChecksum":  plan.CanonicalChecksum,
 			"canonicalPayload":   plan.CanonicalPayload,

@@ -490,6 +490,138 @@
           </div>
         }
 
+        @if (bundle.releaseContract; as contract) {
+          <section class="border-t border-gray-200 pt-5 dark:border-gray-700 space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="text-base font-semibold text-gray-900 dark:text-white">Release Contract</h3>
+              <span class="font-mono text-xs text-gray-500 dark:text-gray-400">{{ contract.schema }}</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Source</div>
+                <div class="font-medium text-gray-900 dark:text-white break-all">{{ contract.source.repository }}</div>
+                <div class="text-gray-600 dark:text-gray-300 break-all">{{ contract.source.branch }}</div>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Build</div>
+                <a
+                  [href]="contract.build.externalUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="font-medium text-blue-700 hover:underline dark:text-blue-400">
+                  {{ contract.build.externalId }}
+                </a>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Source Commit</div>
+                <div class="font-mono text-xs text-gray-900 dark:text-white break-all">
+                  {{ contract.source.sourceCommit }}
+                </div>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Built Commit</div>
+                <div class="font-mono text-xs text-gray-900 dark:text-white break-all">
+                  {{ contract.source.builtCommit }}
+                </div>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="distr-table">
+                <thead class="distr-table-head">
+                  <tr>
+                    <th scope="col" class="p-4">Component</th>
+                    <th scope="col" class="p-4">Platform</th>
+                    <th scope="col" class="p-4">Immutable Image</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (component of contract.components; track component.name + component.platform) {
+                    <tr class="distr-table-row">
+                      <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ component.name }}</td>
+                      <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ component.platform }}</td>
+                      <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                        {{ component.image }}
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Affected Components</div>
+                <div class="text-gray-900 dark:text-white">
+                  {{ contract.compatibility.affectedComponents.join(', ') }}
+                </div>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Operations</div>
+                <div class="text-gray-900 dark:text-white">
+                  Migration: {{ contract.operations.migrationRequired ? 'required' : 'not required' }}; config:
+                  {{ contract.operations.configChangeRequired ? 'changed' : 'unchanged' }}
+                </div>
+              </div>
+            </div>
+
+            @if (contract.compatibility.requires.length > 0) {
+              <div>
+                <div class="text-sm text-gray-500 dark:text-gray-400">Dependencies</div>
+                <ul class="mt-1 divide-y divide-gray-200 text-sm dark:divide-gray-700">
+                  @for (
+                    requirement of contract.compatibility.requires;
+                    track requirement.component + requirement.contract
+                  ) {
+                    <li class="py-2 text-gray-900 dark:text-white">
+                      <span class="font-medium">{{ requirement.component }}</span>
+                      @if (requirement.contract) {
+                        <span class="font-mono text-xs"> {{ requirement.contract }}</span>
+                      }
+                      @if (requirement.minimumVersion) {
+                        <span> &gt;= {{ requirement.minimumVersion }}</span>
+                      }
+                      @if (requirement.reason) {
+                        <span class="text-gray-500 dark:text-gray-400"> - {{ requirement.reason }}</span>
+                      }
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Compose Snapshot</div>
+                <div class="text-gray-900 dark:text-white break-all">{{ contract.config.composePath }}</div>
+                <div class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                  {{ contract.config.composeChecksum }}
+                </div>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Service Config Snapshot</div>
+                <div class="text-gray-900 dark:text-white break-all">{{ contract.config.serviceConfigPath }}</div>
+                <div class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                  {{ contract.config.serviceConfigChecksum }}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-sm text-gray-500 dark:text-gray-400">Changes</div>
+              <div class="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">
+                {{ contract.changes.summary }}
+              </div>
+              @if (contract.changes.commits.length > 0) {
+                <div class="mt-1 font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                  {{ contract.changes.commits.join(', ') }}
+                </div>
+              }
+            </div>
+          </section>
+        }
+
         <div class="overflow-x-auto">
           <table class="distr-table">
             <thead class="distr-table-head">

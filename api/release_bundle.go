@@ -18,6 +18,7 @@ type CreateUpdateReleaseBundleRequest struct {
 	ReleaseNotes                string                          `json:"releaseNotes"`
 	SourceRevision              string                          `json:"sourceRevision"`
 	SourceMetadata              *ReleaseBundleSourceMetadata    `json:"sourceMetadata,omitempty"`
+	ReleaseContract             *types.ReleaseContract          `json:"releaseContract,omitempty"`
 	Components                  []ReleaseBundleComponentRequest `json:"components"`
 }
 
@@ -49,6 +50,7 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 	}
 
 	seenKeys := map[string]struct{}{}
+	typedComponents := make([]types.ReleaseBundleComponent, 0, len(r.Components))
 	for i := range r.Components {
 		component := &r.Components[i]
 		component.trim()
@@ -61,6 +63,18 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 		seenKeys[component.Key] = struct{}{}
 		if err := component.validate(); err != nil {
 			return err
+		}
+		typedComponents = append(typedComponents, types.ReleaseBundleComponent{
+			Key: component.Key, Name: component.Name, Type: component.Type, Version: component.Version,
+			ApplicationVersionID: component.ApplicationVersionID, PackageRef: component.PackageRef,
+			Digest: component.Digest, Checksum: component.Checksum, ChildReleaseBundleID: component.ChildReleaseBundleID,
+		})
+	}
+	if r.ReleaseContract != nil {
+		releasebundles.NormalizeReleaseContract(r.ReleaseContract)
+		result := releasebundles.ValidateReleaseContract(*r.ReleaseContract, typedComponents)
+		if !result.Valid {
+			return validation.NewValidationFailedError(result.Errors[0].Message)
 		}
 	}
 	return nil
@@ -228,6 +242,7 @@ type ReleaseBundle struct {
 	ReleaseNotes             string                       `json:"releaseNotes"`
 	SourceRevision           string                       `json:"sourceRevision"`
 	SourceMetadata           *ReleaseBundleSourceMetadata `json:"sourceMetadata,omitempty"`
+	ReleaseContract          *types.ReleaseContract       `json:"releaseContract,omitempty"`
 	Status                   types.ReleaseBundleStatus    `json:"status"`
 	PublishedByUserAccountID *uuid.UUID                   `json:"publishedByUserAccountId,omitempty"`
 	PublishedAt              *time.Time                   `json:"publishedAt,omitempty"`

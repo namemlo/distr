@@ -283,6 +283,77 @@
           </button>
         </div>
 
+        @if (plan.releaseContract; as contract) {
+          <section class="border-t border-gray-200 pt-5 dark:border-gray-700 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Frozen Release Contract</h3>
+              <span class="font-mono text-xs text-gray-500 dark:text-gray-400">{{ contract.schema }}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Source</div>
+                <div class="font-medium text-gray-900 dark:text-white break-all">{{ contract.source.repository }}</div>
+                <div class="text-xs text-gray-600 dark:text-gray-300 break-all">{{ contract.source.branch }}</div>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Build</div>
+                <div class="font-medium text-gray-900 dark:text-white break-all">{{ contract.build.externalId }}</div>
+                <div class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                  {{ contract.source.builtCommit }}
+                </div>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Compose Snapshot</div>
+                <div class="text-gray-900 dark:text-white break-all">{{ contract.config.composePath }}</div>
+                <div class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                  {{ contract.config.composeChecksum }}
+                </div>
+              </div>
+              <div>
+                <div class="text-gray-500 dark:text-gray-400">Service Config</div>
+                <div class="text-gray-900 dark:text-white break-all">{{ contract.config.serviceConfigPath }}</div>
+                <div class="font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                  {{ contract.config.serviceConfigChecksum }}
+                </div>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="distr-table">
+                <thead class="distr-table-head">
+                  <tr>
+                    <th scope="col" class="p-4">Component</th>
+                    <th scope="col" class="p-4">Platform</th>
+                    <th scope="col" class="p-4">Candidate Image</th>
+                    <th scope="col" class="p-4">Migration</th>
+                    <th scope="col" class="p-4">Config</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (component of contract.components; track component.name + component.platform) {
+                    <tr class="distr-table-row">
+                      <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ component.name }}</td>
+                      <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ component.platform }}</td>
+                      <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                        {{ component.image }}
+                      </td>
+                      <td class="px-4 py-3 text-gray-700 dark:text-gray-300">
+                        {{ contract.operations.migrationRequired ? 'Required' : 'None' }}
+                      </td>
+                      <td class="px-4 py-3 text-gray-700 dark:text-gray-300">
+                        {{ contract.operations.configChangeRequired ? 'Changed' : 'Unchanged' }}
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div class="text-sm">
+              <div class="text-gray-500 dark:text-gray-400">Changes</div>
+              <div class="text-gray-900 dark:text-white whitespace-pre-wrap">{{ contract.changes.summary }}</div>
+            </div>
+          </section>
+        }
+
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <section class="space-y-2">
             <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Blockers</h3>

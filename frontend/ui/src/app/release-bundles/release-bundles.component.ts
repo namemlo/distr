@@ -491,12 +491,14 @@ export class ReleaseBundlesComponent {
 
   private releaseBundleRequestFromForm(): CreateUpdateReleaseBundleRequest {
     const value = this.releaseBundleForm.getRawValue();
+    const releaseContract = this.selectedReleaseBundle()?.releaseContract;
     return {
       applicationId: value.applicationId,
       channelId: value.channelId,
       releaseNumber: value.releaseNumber.trim(),
       releaseNotes: value.releaseNotes,
       sourceRevision: value.sourceRevision.trim(),
+      ...(releaseContract ? {releaseContract} : {}),
       components: value.components.map((component) => this.releaseBundleComponentRequest(component)),
     };
   }

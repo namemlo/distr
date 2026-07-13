@@ -204,6 +204,36 @@ func TestDeploymentPlanRepositoryBlocksUnresolvedRequiredVariables(t *testing.T)
 		To(ContainElement("required_variable_unresolved"))
 }
 
+func TestDeploymentPlanRepositoryBlocksHubWebhookWithoutReleaseContract(t *testing.T) {
+	ctx := deploymentPlanDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
+	revision.Steps[0].ActionType = "distr.webhook"
+	revision.Steps[0].ExecutionLocation = "hub"
+	revision.Steps[0].InputBindings = map[string]any{"url": "https://jenkins.example/deploy"}
+	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
+	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID: deps.orgID, ReleaseBundleID: published.ID,
+		EnvironmentID: deps.devEnvironmentID, TargetIDs: []uuid.UUID{targetID},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusBlocked))
+	g.Expect(deploymentPlanIssueCodes(plan.Issues, types.DeploymentPlanIssueSeverityBlocker)).
+		To(ContainElement("missing_release_contract"))
+}
+
 func TestDeploymentPlanRepositoryBlocksInvalidStepCondition(t *testing.T) {
 	ctx := deploymentPlanDBTestContext(t)
 	g := NewWithT(t)

@@ -33,6 +33,32 @@ export interface ReleaseBundleSourceMetadata {
   ciRunUrl: string;
 }
 
+export interface ReleaseContract {
+  schema: 'distr.release-contract/v1';
+  source: {
+    repository: string;
+    branch: string;
+    sourceCommit: string;
+    builtCommit: string;
+  };
+  build: {externalId: string; externalUrl: string};
+  components: Array<{name: string; image: string; platform: 'linux/amd64' | 'linux/arm64'}>;
+  compatibility: {
+    requires: Array<{component: string; contract?: string; minimumVersion?: string; reason?: string}>;
+    affectedComponents: string[];
+  };
+  operations: {migrationRequired: boolean; configChangeRequired: boolean};
+  config: {
+    repositoryCommit: string;
+    composePath: string;
+    serviceConfigPath: string;
+    composeChecksum: string;
+    serviceConfigChecksum: string;
+    immutableObjects: Array<{uri: string; versionId: string; checksum: string}>;
+  };
+  changes: {summary: string; commits: string[]};
+}
+
 export interface ReleaseBundle {
   id: string;
   createdAt: string;
@@ -45,6 +71,7 @@ export interface ReleaseBundle {
   releaseNotes: string;
   sourceRevision: string;
   sourceMetadata?: ReleaseBundleSourceMetadata;
+  releaseContract?: ReleaseContract;
   status: ReleaseBundleStatus;
   publishedByUserAccountId?: string;
   publishedAt?: string;
@@ -72,6 +99,7 @@ export interface CreateUpdateReleaseBundleRequest {
   releaseNotes: string;
   sourceRevision: string;
   sourceMetadata?: ReleaseBundleSourceMetadata;
+  releaseContract?: ReleaseContract;
   components: ReleaseBundleComponentRequest[];
 }
 

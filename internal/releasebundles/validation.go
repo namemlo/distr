@@ -56,6 +56,9 @@ func ValidateBundleContent(bundle types.ReleaseBundle) ValidationResult {
 			result.AddError("canonicalChecksum", "sha256", "canonical payload does not match checksum")
 		}
 	}
+	if bundle.ReleaseContract != nil {
+		result.Merge("", ValidateReleaseContract(*bundle.ReleaseContract, bundle.Components))
+	}
 
 	seenKeys := map[string]struct{}{}
 	for _, component := range bundle.Components {

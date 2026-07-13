@@ -103,6 +103,35 @@ func TestReleaseBundleRepositoryPersistsSourceMetadata(t *testing.T) {
 	g.Expect(string(fetched.CanonicalPayload)).To(ContainSubstring(`"ciRunId":"run-123"`))
 }
 
+func TestReleaseBundleRepositoryPersistsReleaseContract(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, _ := createReleaseBundleDependencies(t, ctx)
+	bundle := ociReleaseBundleFixture(orgID, applicationID, channelID)
+	bundle.ReleaseContract = releaseContractFixture(bundle.Components[0].Digest)
+
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+
+	fetched, err := db.GetReleaseBundle(ctx, bundle.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.ReleaseContract).NotTo(BeNil())
+	g.Expect(fetched.ReleaseContract.Schema).To(Equal(types.ReleaseContractSchemaV1))
+	g.Expect(fetched.ReleaseContract.Components[0].Platform).To(Equal("linux/amd64"))
+	g.Expect(string(fetched.CanonicalPayload)).To(ContainSubstring(`"releaseContract"`))
+}
+
+func TestReleaseContractMigrationDefinesReversibleJSONSchema(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "133_release_contract.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(up)).To(ContainSubstring("ADD COLUMN release_contract JSONB"))
+	g.Expect(string(up)).To(ContainSubstring("jsonb_typeof(release_contract) = 'object'"))
+	g.Expect(string(up)).To(ContainSubstring("ALTER TABLE DeploymentPlan"))
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "133_release_contract.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN IF EXISTS release_contract"))
+}
+
 func TestReleaseBundleRepositoryRejectsInvalidOCIDigest(t *testing.T) {
 	ctx := releaseBundleDBTestContext(t)
 	g := NewWithT(t)
@@ -1297,6 +1326,28 @@ func ociReleaseBundleFixture(
 				Digest:     "sha256:" + strings.Repeat("a", 64),
 			},
 		},
+	}
+}
+
+func releaseContractFixture(digest string) *types.ReleaseContract {
+	checksum := "sha256:" + strings.Repeat("b", 64)
+	return &types.ReleaseContract{
+		Schema: types.ReleaseContractSchemaV1,
+		Source: types.ReleaseContractSource{
+			Repository: "remittance-b2c-backend", Branch: "customization/emlo-remittance/dev",
+			SourceCommit: strings.Repeat("1", 40), BuiltCommit: strings.Repeat("1", 40),
+		},
+		Build: types.ReleaseContractBuild{ExternalID: "jenkins-42", ExternalURL: "https://ci.example/job/42"},
+		Components: []types.ReleaseContractComponent{{
+			Name: "api-image", Image: "registry.example.invalid/org/api@" + digest, Platform: "linux/amd64",
+		}},
+		Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"api-image"}},
+		Config: types.ReleaseContractConfig{
+			RepositoryCommit: strings.Repeat("2", 40), ComposePath: "choice-tp_dev/1/docker-compose.yaml",
+			ServiceConfigPath: "choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+			ComposeChecksum:   checksum, ServiceConfigChecksum: checksum,
+		},
+		Changes: types.ReleaseContractChanges{Summary: "Choice TP loyalty deployment"},
 	}
 }
 

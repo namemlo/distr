@@ -60,6 +60,7 @@ type ReleaseBundle struct {
 	CIProvider                  string                   `db:"ci_provider" json:"ciProvider"`
 	CIRunID                     string                   `db:"ci_run_id" json:"ciRunId"`
 	CIRunURL                    string                   `db:"ci_run_url" json:"ciRunUrl"`
+	ReleaseContract             *ReleaseContract         `db:"release_contract" json:"releaseContract,omitempty"`
 	Status                      ReleaseBundleStatus      `db:"status" json:"status"`
 	PublishedByUserAccountID    *uuid.UUID               `db:"published_by_user_account_id" json:"publishedByUserAccountId,omitempty"` //nolint:lll
 	PublishedAt                 *time.Time               `db:"published_at" json:"publishedAt,omitempty"`

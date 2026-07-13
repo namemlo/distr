@@ -39,6 +39,7 @@ const (
 	rb.ci_provider,
 	rb.ci_run_id,
 	rb.ci_run_url,
+	rb.release_contract,
 	rb.status,
 	rb.published_by_user_account_id,
 	rb.published_at,
@@ -163,6 +164,7 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			ci_provider,
 			ci_run_id,
 			ci_run_url,
+			release_contract,
 			status,
 			canonical_checksum,
 			canonical_payload
@@ -180,6 +182,7 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			@ciProvider,
 			@ciRunId,
 			@ciRunUrl,
+			@releaseContract,
 			@status,
 			@canonicalChecksum,
 			@canonicalPayload
@@ -198,6 +201,7 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			"ciProvider":        bundle.CIProvider,
 			"ciRunId":           bundle.CIRunID,
 			"ciRunUrl":          bundle.CIRunURL,
+			"releaseContract":   bundle.ReleaseContract,
 			"status":            bundle.Status,
 			"canonicalChecksum": bundle.CanonicalChecksum,
 			"canonicalPayload":  bundle.CanonicalPayload,
@@ -423,6 +427,7 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				ci_provider = @ciProvider,
 				ci_run_id = @ciRunId,
 				ci_run_url = @ciRunUrl,
+				release_contract = @releaseContract,
 				canonical_checksum = @canonicalChecksum,
 				canonical_payload = @canonicalPayload,
 				updated_at = now()
@@ -443,6 +448,7 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				"ciProvider":        bundle.CIProvider,
 				"ciRunId":           bundle.CIRunID,
 				"ciRunUrl":          bundle.CIRunURL,
+				"releaseContract":   bundle.ReleaseContract,
 				"canonicalChecksum": bundle.CanonicalChecksum,
 				"canonicalPayload":  bundle.CanonicalPayload,
 			},
@@ -1107,6 +1113,7 @@ func insertReleaseBundleComponents(
 }
 
 func setReleaseBundleCanonicalFields(bundle *types.ReleaseBundle) error {
+	releasebundles.NormalizeReleaseContract(bundle.ReleaseContract)
 	payload, checksum, err := releasebundles.Canonicalize(*bundle)
 	if err != nil {
 		return fmt.Errorf("could not canonicalize ReleaseBundle: %w", err)

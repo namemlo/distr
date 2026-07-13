@@ -42,6 +42,7 @@ type DeploymentPlan struct {
 	EnvironmentID      uuid.UUID                `db:"environment_id" json:"environmentId"`
 	ProcessSnapshotID  *uuid.UUID               `db:"process_snapshot_id" json:"processSnapshotId,omitempty"`
 	VariableSnapshotID *uuid.UUID               `db:"variable_snapshot_id" json:"variableSnapshotId,omitempty"`
+	ReleaseContract    *ReleaseContract         `db:"release_contract" json:"releaseContract,omitempty"`
 	Status             DeploymentPlanStatus     `db:"status" json:"status"`
 	CanonicalChecksum  string                   `db:"canonical_checksum" json:"canonicalChecksum"`
 	CanonicalPayload   []byte                   `db:"canonical_payload" json:"-"`

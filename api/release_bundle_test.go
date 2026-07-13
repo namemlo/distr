@@ -192,6 +192,49 @@ func TestCreateUpdateReleaseBundleRequestValidateRejectsUnsafeSourceMetadata(t *
 	}
 }
 
+func TestCreateUpdateReleaseBundleRequestValidateReleaseContract(t *testing.T) {
+	g := NewWithT(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	checksum := "sha256:" + strings.Repeat("b", 64)
+	request := CreateUpdateReleaseBundleRequest{
+		ApplicationID: uuid.New(),
+		ChannelID:     uuid.New(),
+		ReleaseNumber: "choice-tp-loyalty-42",
+		ReleaseContract: &types.ReleaseContract{
+			Schema: types.ReleaseContractSchemaV1,
+			Source: types.ReleaseContractSource{
+				Repository:   "remittance-b2c-backend",
+				Branch:       "customization/emlo-remittance/dev",
+				SourceCommit: "1111111111111111111111111111111111111111",
+				BuiltCommit:  "1111111111111111111111111111111111111111",
+			},
+			Build: types.ReleaseContractBuild{ExternalID: "42", ExternalURL: "https://ci.example/job/42"},
+			Components: []types.ReleaseContractComponent{{
+				Name: "loyalty-api", Image: "registry.example/loyalty-api@" + digest, Platform: "linux/amd64",
+			}},
+			Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"loyalty-api"}},
+			Config: types.ReleaseContractConfig{
+				RepositoryCommit:      "2222222222222222222222222222222222222222",
+				ComposePath:           "choice-tp_dev/1/docker-compose.yaml",
+				ServiceConfigPath:     "choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+				ComposeChecksum:       checksum,
+				ServiceConfigChecksum: checksum,
+			},
+			Changes: types.ReleaseContractChanges{Summary: "Deploy loyalty API"},
+		},
+		Components: []ReleaseBundleComponentRequest{{
+			Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage,
+			Version: "42", PackageRef: "registry.example/loyalty-api", Digest: digest,
+		}},
+	}
+
+	g.Expect(request.Validate()).To(Succeed())
+	g.Expect(request.ReleaseContract.Components[0].Platform).To(Equal("linux/amd64"))
+
+	request.ReleaseContract.Components[0].Image = "registry.example/loyalty-api:latest"
+	g.Expect(request.Validate()).To(MatchError(ContainSubstring("immutable image digest")))
+}
+
 func TestCreateUpdateReleaseBundleRequestValidateRejectsInvalidPayloads(t *testing.T) {
 	applicationID := uuid.New()
 	channelID := uuid.New()

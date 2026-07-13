@@ -15,6 +15,7 @@ func DeploymentPlanToAPI(plan types.DeploymentPlan) api.DeploymentPlan {
 		EnvironmentID:      plan.EnvironmentID,
 		ProcessSnapshotID:  plan.ProcessSnapshotID,
 		VariableSnapshotID: plan.VariableSnapshotID,
+		ReleaseContract:    plan.ReleaseContract,
 		Status:             plan.Status,
 		CanonicalChecksum:  plan.CanonicalChecksum,
 		Targets:            List(plan.Targets, DeploymentPlanTargetToAPI),

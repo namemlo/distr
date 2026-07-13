@@ -439,6 +439,7 @@ func releaseBundleFromCreateUpdateRequest(
 		ReleaseNumber:               strings.TrimSpace(request.ReleaseNumber),
 		ReleaseNotes:                request.ReleaseNotes,
 		SourceRevision:              strings.TrimSpace(request.SourceRevision),
+		ReleaseContract:             request.ReleaseContract,
 		Status:                      types.ReleaseBundleStatusDraft,
 		Components:                  components,
 	}

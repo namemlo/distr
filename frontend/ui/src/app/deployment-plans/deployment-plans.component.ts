@@ -286,6 +286,21 @@ export class DeploymentPlansComponent {
       `Application: ${this.applicationName(plan.applicationId)}`,
       `Channel: ${this.channelName(plan.channelId)}`,
       `Environment: ${this.environmentName(plan.environmentId)}`,
+      ...(plan.releaseContract
+        ? [
+            '',
+            '## Frozen Release Contract',
+            `- Schema: ${plan.releaseContract.schema}`,
+            `- Build: ${plan.releaseContract.build.externalId}`,
+            `- Source: ${plan.releaseContract.source.repository}@${plan.releaseContract.source.builtCommit}`,
+            ...plan.releaseContract.components.map(
+              (component) => `- ${component.name}: ${component.image} (${component.platform})`
+            ),
+            `- Compose: ${plan.releaseContract.config.composePath} (${plan.releaseContract.config.composeChecksum})`,
+            `- Config: ${plan.releaseContract.config.serviceConfigPath} (${plan.releaseContract.config.serviceConfigChecksum})`,
+            `- Changes: ${plan.releaseContract.changes.summary}`,
+          ]
+        : []),
       '',
       '## Blockers',
       ...this.issueLines(plan, 'blocker'),

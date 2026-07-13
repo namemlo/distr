@@ -47,6 +47,7 @@ type DeploymentPlan struct {
 	EnvironmentID      uuid.UUID                  `json:"environmentId"`
 	ProcessSnapshotID  *uuid.UUID                 `json:"processSnapshotId,omitempty"`
 	VariableSnapshotID *uuid.UUID                 `json:"variableSnapshotId,omitempty"`
+	ReleaseContract    *types.ReleaseContract     `json:"releaseContract,omitempty"`
 	Status             types.DeploymentPlanStatus `json:"status"`
 	CanonicalChecksum  string                     `json:"canonicalChecksum"`
 	Targets            []DeploymentPlanTarget     `json:"targets"`

@@ -18,6 +18,7 @@ type canonicalBundle struct {
 	ReleaseNotes       string                   `json:"releaseNotes"`
 	SourceRevision     string                   `json:"sourceRevision"`
 	SourceMetadata     *canonicalSourceMetadata `json:"sourceMetadata,omitempty"`
+	ReleaseContract    *types.ReleaseContract   `json:"releaseContract,omitempty"`
 	Components         []canonicalComponent     `json:"components"`
 }
 
@@ -55,12 +56,13 @@ func Canonicalize(bundle types.ReleaseBundle) ([]byte, string, error) {
 	})
 
 	canonical := canonicalBundle{
-		ApplicationID:  bundle.ApplicationID.String(),
-		ChannelID:      bundle.ChannelID.String(),
-		ReleaseNumber:  bundle.ReleaseNumber,
-		ReleaseNotes:   bundle.ReleaseNotes,
-		SourceRevision: bundle.SourceRevision,
-		Components:     make([]canonicalComponent, 0, len(components)),
+		ApplicationID:   bundle.ApplicationID.String(),
+		ChannelID:       bundle.ChannelID.String(),
+		ReleaseNumber:   bundle.ReleaseNumber,
+		ReleaseNotes:    bundle.ReleaseNotes,
+		SourceRevision:  bundle.SourceRevision,
+		ReleaseContract: NormalizedReleaseContract(bundle.ReleaseContract),
+		Components:      make([]canonicalComponent, 0, len(components)),
 	}
 	if bundle.ProcessSnapshotID != nil {
 		canonical.ProcessSnapshotID = bundle.ProcessSnapshotID.String()
