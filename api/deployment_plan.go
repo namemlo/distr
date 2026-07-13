@@ -39,30 +39,48 @@ func (r CreateDeploymentPlanRequest) Validate() error {
 }
 
 type DeploymentPlan struct {
-	ID                 uuid.UUID                  `json:"id"`
-	CreatedAt          time.Time                  `json:"createdAt"`
-	ApplicationID      uuid.UUID                  `json:"applicationId"`
-	ReleaseBundleID    uuid.UUID                  `json:"releaseBundleId"`
-	ChannelID          uuid.UUID                  `json:"channelId"`
-	EnvironmentID      uuid.UUID                  `json:"environmentId"`
-	ProcessSnapshotID  *uuid.UUID                 `json:"processSnapshotId,omitempty"`
-	VariableSnapshotID *uuid.UUID                 `json:"variableSnapshotId,omitempty"`
-	ReleaseContract    *types.ReleaseContract     `json:"releaseContract,omitempty"`
-	Status             types.DeploymentPlanStatus `json:"status"`
-	CanonicalChecksum  string                     `json:"canonicalChecksum"`
-	Targets            []DeploymentPlanTarget     `json:"targets"`
-	Steps              []DeploymentPlanStep       `json:"steps"`
-	Variables          []DeploymentPlanVariable   `json:"variables"`
-	Issues             []DeploymentPlanIssue      `json:"issues"`
+	ID                 uuid.UUID                       `json:"id"`
+	CreatedAt          time.Time                       `json:"createdAt"`
+	ApplicationID      uuid.UUID                       `json:"applicationId"`
+	ReleaseBundleID    uuid.UUID                       `json:"releaseBundleId"`
+	ChannelID          uuid.UUID                       `json:"channelId"`
+	EnvironmentID      uuid.UUID                       `json:"environmentId"`
+	ProcessSnapshotID  *uuid.UUID                      `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID *uuid.UUID                      `json:"variableSnapshotId,omitempty"`
+	ReleaseContract    *types.ReleaseContract          `json:"releaseContract,omitempty"`
+	Status             types.DeploymentPlanStatus      `json:"status"`
+	CanonicalChecksum  string                          `json:"canonicalChecksum"`
+	Targets            []DeploymentPlanTarget          `json:"targets"`
+	TargetComponents   []DeploymentPlanTargetComponent `json:"targetComponents"`
+	Steps              []DeploymentPlanStep            `json:"steps"`
+	Variables          []DeploymentPlanVariable        `json:"variables"`
+	Issues             []DeploymentPlanIssue           `json:"issues"`
 }
 
 type DeploymentPlanTarget struct {
-	ID                     uuid.UUID            `json:"id"`
-	DeploymentTargetID     uuid.UUID            `json:"deploymentTargetId"`
-	Name                   string               `json:"name"`
-	Type                   types.DeploymentType `json:"type"`
-	CustomerOrganizationID *uuid.UUID           `json:"customerOrganizationId,omitempty"`
-	SortOrder              int                  `json:"sortOrder"`
+	ID                     uuid.UUID                      `json:"id"`
+	DeploymentTargetID     uuid.UUID                      `json:"deploymentTargetId"`
+	Name                   string                         `json:"name"`
+	Type                   types.DeploymentType           `json:"type"`
+	Platform               types.DeploymentTargetPlatform `json:"platform"`
+	CustomerOrganizationID *uuid.UUID                     `json:"customerOrganizationId,omitempty"`
+	SortOrder              int                            `json:"sortOrder"`
+}
+
+type DeploymentPlanTargetComponent struct {
+	ID                      uuid.UUID                      `json:"id"`
+	DeploymentPlanTargetID  uuid.UUID                      `json:"deploymentPlanTargetId"`
+	DeploymentTargetID      uuid.UUID                      `json:"deploymentTargetId"`
+	Component               string                         `json:"component"`
+	Version                 string                         `json:"version"`
+	Image                   string                         `json:"image"`
+	Platform                types.DeploymentTargetPlatform `json:"platform"`
+	Contracts               []string                       `json:"contracts"`
+	ConfigChecksum          string                         `json:"configChecksum"`
+	ExpectedStateVersion    int64                          `json:"expectedStateVersion"`
+	ExpectedStateChecksum   string                         `json:"expectedStateChecksum"`
+	ExpectedReleaseBundleID *uuid.UUID                     `json:"expectedReleaseBundleId,omitempty"`
+	SortOrder               int                            `json:"sortOrder"`
 }
 
 type DeploymentPlanStep struct {

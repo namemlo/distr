@@ -19,6 +19,7 @@ func DeploymentPlanToAPI(plan types.DeploymentPlan) api.DeploymentPlan {
 		Status:             plan.Status,
 		CanonicalChecksum:  plan.CanonicalChecksum,
 		Targets:            List(plan.Targets, DeploymentPlanTargetToAPI),
+		TargetComponents:   List(plan.TargetComponents, DeploymentPlanTargetComponentToAPI),
 		Steps:              List(plan.Steps, DeploymentPlanStepToAPI),
 		Variables:          List(plan.Variables, DeploymentPlanVariableToAPI),
 		Issues:             List(plan.Issues, DeploymentPlanIssueToAPI),
@@ -31,8 +32,27 @@ func DeploymentPlanTargetToAPI(target types.DeploymentPlanTarget) api.Deployment
 		DeploymentTargetID:     target.DeploymentTargetID,
 		Name:                   target.Name,
 		Type:                   target.Type,
+		Platform:               target.Platform,
 		CustomerOrganizationID: target.CustomerOrganizationID,
 		SortOrder:              target.SortOrder,
+	}
+}
+
+func DeploymentPlanTargetComponentToAPI(component types.DeploymentPlanTargetComponent) api.DeploymentPlanTargetComponent {
+	return api.DeploymentPlanTargetComponent{
+		ID:                      component.ID,
+		DeploymentPlanTargetID:  component.DeploymentPlanTargetID,
+		DeploymentTargetID:      component.DeploymentTargetID,
+		Component:               component.Component,
+		Version:                 component.Version,
+		Image:                   component.Image,
+		Platform:                component.Platform,
+		Contracts:               component.Contracts,
+		ConfigChecksum:          component.ConfigChecksum,
+		ExpectedStateVersion:    component.ExpectedStateVersion,
+		ExpectedStateChecksum:   component.ExpectedStateChecksum,
+		ExpectedReleaseBundleID: component.ExpectedReleaseBundleID,
+		SortOrder:               component.SortOrder,
 	}
 }
 

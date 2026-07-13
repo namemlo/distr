@@ -101,9 +101,11 @@ describe('DeploymentPlansComponent', () => {
           deploymentTargetId: 'target-1',
           name: 'Cluster A',
           type: 'docker',
+          platform: 'linux/amd64',
           sortOrder: 0,
         },
       ],
+      targetComponents: [],
       steps: [
         {
           id: 'step-1',

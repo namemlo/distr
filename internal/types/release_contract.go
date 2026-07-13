@@ -26,9 +26,11 @@ type ReleaseContractBuild struct {
 }
 
 type ReleaseContractComponent struct {
-	Name     string `json:"name"`
-	Image    string `json:"image"`
-	Platform string `json:"platform"`
+	Name      string   `json:"name"`
+	Version   string   `json:"version"`
+	Image     string   `json:"image"`
+	Platform  string   `json:"platform"`
+	Contracts []string `json:"contracts"`
 }
 
 type ReleaseContractCompatibility struct {

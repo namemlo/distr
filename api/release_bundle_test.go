@@ -210,7 +210,8 @@ func TestCreateUpdateReleaseBundleRequestValidateReleaseContract(t *testing.T) {
 			},
 			Build: types.ReleaseContractBuild{ExternalID: "42", ExternalURL: "https://ci.example/job/42"},
 			Components: []types.ReleaseContractComponent{{
-				Name: "loyalty-api", Image: "registry.example/loyalty-api@" + digest, Platform: "linux/amd64",
+				Name: "loyalty-api", Version: "1.2.3",
+				Image: "registry.example/loyalty-api@" + digest, Platform: "linux/amd64",
 			}},
 			Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"loyalty-api"}},
 			Config: types.ReleaseContractConfig{
@@ -224,7 +225,7 @@ func TestCreateUpdateReleaseBundleRequestValidateReleaseContract(t *testing.T) {
 		},
 		Components: []ReleaseBundleComponentRequest{{
 			Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage,
-			Version: "42", PackageRef: "registry.example/loyalty-api", Digest: digest,
+			Version: "1.2.3", PackageRef: "registry.example/loyalty-api", Digest: digest,
 		}},
 	}
 

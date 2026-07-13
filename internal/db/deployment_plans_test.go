@@ -9,9 +9,11 @@ import (
 	"testing"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/gomega"
 )
 
@@ -232,6 +234,102 @@ func TestDeploymentPlanRepositoryBlocksHubWebhookWithoutReleaseContract(t *testi
 	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusBlocked))
 	g.Expect(deploymentPlanIssueCodes(plan.Issues, types.DeploymentPlanIssueSeverityBlocker)).
 		To(ContainElement("missing_release_contract"))
+}
+
+func TestDeploymentPlanRepositorySnapshotsTargetComponents(t *testing.T) {
+	ctx := deploymentPlanDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
+	revision.Steps[0].ActionType = "distr.webhook"
+	revision.Steps[0].ExecutionLocation = "hub"
+	revision.Steps[0].InputBindings = map[string]any{"url": "https://jenkins.example/deploy"}
+	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
+	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	bundle.ReleaseContract = releaseContractFixture(bundle.Components[0].Digest)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID: deps.orgID, ReleaseBundleID: published.ID,
+		EnvironmentID: deps.devEnvironmentID, TargetIDs: []uuid.UUID{targetID},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(plan.Targets).To(HaveLen(1))
+	g.Expect(plan.Targets[0].Platform).To(Equal(types.DeploymentTargetPlatformLinuxAMD64))
+	g.Expect(plan.TargetComponents).To(HaveLen(1))
+	g.Expect(plan.TargetComponents[0].DeploymentPlanTargetID).To(Equal(plan.Targets[0].ID))
+	g.Expect(plan.TargetComponents[0].DeploymentTargetID).To(Equal(targetID))
+	g.Expect(plan.TargetComponents[0].Component).To(Equal("api-image"))
+	g.Expect(plan.TargetComponents[0].Platform).To(Equal(types.DeploymentTargetPlatformLinuxAMD64))
+	g.Expect(plan.TargetComponents[0].Image).To(Equal(bundle.ReleaseContract.Components[0].Image))
+	g.Expect(plan.TargetComponents[0].ExpectedStateVersion).To(Equal(int64(0)))
+	g.Expect(plan.TargetComponents[0].ExpectedStateChecksum).To(BeEmpty())
+
+	fetched, err := db.GetDeploymentPlan(ctx, plan.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fetched.TargetComponents).To(Equal(plan.TargetComponents))
+}
+
+func TestDeploymentPlanRepositoryBlocksTargetPlatformMismatch(t *testing.T) {
+	ctx := deploymentPlanDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
+	revision.Steps[0].ActionType = "distr.webhook"
+	revision.Steps[0].ExecutionLocation = "hub"
+	revision.Steps[0].InputBindings = map[string]any{"url": "https://jenkins.example/deploy"}
+	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
+	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-arm-dev")
+	_, err := internalctx.GetDb(ctx).Exec(ctx,
+		`UPDATE DeploymentTarget SET platform = @platform WHERE id = @id`,
+		pgx.NamedArgs{"platform": types.DeploymentTargetPlatformLinuxARM64, "id": targetID},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	bundle.ReleaseContract = releaseContractFixture(bundle.Components[0].Digest)
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, publishResult, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishResult.Valid).To(BeTrue())
+
+	plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID: deps.orgID, ReleaseBundleID: published.ID,
+		EnvironmentID: deps.devEnvironmentID, TargetIDs: []uuid.UUID{targetID},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(plan.Status).To(Equal(types.DeploymentPlanStatusBlocked))
+	g.Expect(deploymentPlanIssueCodes(plan.Issues, types.DeploymentPlanIssueSeverityBlocker)).
+		To(ContainElement("target_platform_mismatch"))
+}
+
+func TestTargetComponentStateMigrationDefinesImmutablePlanSnapshotAndObservedState(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "134_target_component_state.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	upSQL := string(up)
+	g.Expect(upSQL).To(ContainSubstring("ADD COLUMN platform TEXT"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE DeploymentPlanTargetComponent"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE TargetComponentState"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE TargetComponentObservation"))
+	g.Expect(upSQL).To(ContainSubstring("expected_state_version"))
+	g.Expect(upSQL).To(ContainSubstring("release_bundle_id"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "134_target_component_state.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("DROP TABLE IF EXISTS DeploymentPlanTargetComponent"))
 }
 
 func TestDeploymentPlanRepositoryBlocksInvalidStepCondition(t *testing.T) {

@@ -16,7 +16,7 @@ func TestValidateReleaseContractRejectsDigestMismatchAndUnsafeConfigPath(t *test
 	contract.Config.ServiceConfigPath = "../secrets/appsettings.json"
 	bundleComponents := []types.ReleaseBundleComponent{{
 		Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage,
-		PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "42",
+		PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
 	}}
 
 	result := ValidateReleaseContract(contract, bundleComponents)
@@ -39,14 +39,15 @@ func TestValidateReleaseContractAcceptsAMD64AndARM64Components(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	contract := validReleaseContractForTest(digest)
 	contract.Components = append(contract.Components, types.ReleaseContractComponent{
-		Name: "loyalty-api-arm64", Image: "registry.example/loyalty-api@" + digest, Platform: "linux/arm64",
+		Name: "loyalty-api-arm64", Version: "1.2.3",
+		Image: "registry.example/loyalty-api@" + digest, Platform: "linux/arm64",
 	})
 	contract.Compatibility.AffectedComponents = append(
 		contract.Compatibility.AffectedComponents, "loyalty-api-arm64",
 	)
 	bundleComponents := []types.ReleaseBundleComponent{
-		{Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage, PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "42"},
-		{Key: "loyalty-api-arm64", Type: types.ReleaseBundleComponentTypeOCIImage, PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "42"},
+		{Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage, PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3"},
+		{Key: "loyalty-api-arm64", Type: types.ReleaseBundleComponentTypeOCIImage, PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3"},
 	}
 
 	result := ValidateReleaseContract(contract, bundleComponents)
@@ -64,7 +65,9 @@ func validReleaseContractForTest(digest string) types.ReleaseContract {
 		},
 		Build: types.ReleaseContractBuild{ExternalID: "42", ExternalURL: "https://ci.example/job/42"},
 		Components: []types.ReleaseContractComponent{{
-			Name: "loyalty-api", Image: "registry.example/loyalty-api@" + digest, Platform: "linux/amd64",
+			Name: "loyalty-api", Version: "1.2.3",
+			Image: "registry.example/loyalty-api@" + digest, Platform: "linux/amd64",
+			Contracts: []string{"loyalty-api/v1"},
 		}},
 		Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"loyalty-api"}},
 		Config: types.ReleaseContractConfig{

@@ -32,6 +32,7 @@ export interface DeploymentPlan {
   status: DeploymentPlanStatus;
   canonicalChecksum: string;
   targets: DeploymentPlanTarget[];
+  targetComponents: DeploymentPlanTargetComponent[];
   steps: DeploymentPlanStep[];
   variables: DeploymentPlanVariable[];
   issues: DeploymentPlanIssue[];
@@ -42,7 +43,24 @@ export interface DeploymentPlanTarget {
   deploymentTargetId: string;
   name: string;
   type: DeploymentType;
+  platform: 'linux/amd64' | 'linux/arm64';
   customerOrganizationId?: string;
+  sortOrder: number;
+}
+
+export interface DeploymentPlanTargetComponent {
+  id: string;
+  deploymentPlanTargetId: string;
+  deploymentTargetId: string;
+  component: string;
+  version: string;
+  image: string;
+  platform: 'linux/amd64' | 'linux/arm64';
+  contracts: string[];
+  configChecksum: string;
+  expectedStateVersion: number;
+  expectedStateChecksum: string;
+  expectedReleaseBundleId?: string;
   sortOrder: number;
 }
 

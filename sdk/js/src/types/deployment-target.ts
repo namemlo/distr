@@ -6,6 +6,7 @@ import {DeploymentTargetScope, DeploymentType, DeploymentWithLatestRevision} fro
 export interface DeploymentTarget extends BaseModel, Named {
   name: string;
   type: DeploymentType;
+  platform?: 'linux/amd64' | 'linux/arm64';
   namespace?: string;
   scope?: DeploymentTargetScope;
   customerOrganization?: CustomerOrganization;

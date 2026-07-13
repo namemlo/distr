@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/distr-sh/distr/internal/validation"
@@ -9,11 +10,23 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
+type DeploymentTargetPlatform string
+
+const (
+	DeploymentTargetPlatformLinuxAMD64 DeploymentTargetPlatform = "linux/amd64"
+	DeploymentTargetPlatformLinuxARM64 DeploymentTargetPlatform = "linux/arm64"
+)
+
+func (p DeploymentTargetPlatform) IsValid() bool {
+	return p == DeploymentTargetPlatformLinuxAMD64 || p == DeploymentTargetPlatformLinuxARM64
+}
+
 type DeploymentTarget struct {
 	ID                     uuid.UUID                  `db:"id" json:"id"`
 	CreatedAt              time.Time                  `db:"created_at" json:"createdAt"`
 	Name                   string                     `db:"name" json:"name"`
 	Type                   DeploymentType             `db:"type" json:"type"`
+	Platform               DeploymentTargetPlatform   `db:"platform" json:"platform"`
 	AccessKeySalt          *[]byte                    `db:"access_key_salt" json:"-"`
 	AccessKeyHash          *[]byte                    `db:"access_key_hash" json:"-"`
 	Namespace              *string                    `db:"namespace" json:"namespace,omitempty"`
@@ -38,6 +51,13 @@ type DeploymentTargetResources struct {
 }
 
 func (dt *DeploymentTarget) Validate() error {
+	dt.Platform = DeploymentTargetPlatform(strings.ToLower(strings.TrimSpace(string(dt.Platform))))
+	if dt.Platform == "" {
+		dt.Platform = DeploymentTargetPlatformLinuxAMD64
+	}
+	if !dt.Platform.IsValid() {
+		return validation.NewValidationFailedError("platform must be linux/amd64 or linux/arm64")
+	}
 	switch dt.Type {
 	case DeploymentTypeKubernetes:
 		if dt.AutohealEnabled {

@@ -42,7 +42,13 @@ export interface ReleaseContract {
     builtCommit: string;
   };
   build: {externalId: string; externalUrl: string};
-  components: Array<{name: string; image: string; platform: 'linux/amd64' | 'linux/arm64'}>;
+  components: Array<{
+    name: string;
+    version: string;
+    image: string;
+    platform: 'linux/amd64' | 'linux/arm64';
+    contracts: string[];
+  }>;
   compatibility: {
     requires: Array<{component: string; contract?: string; minimumVersion?: string; reason?: string}>;
     affectedComponents: string[];

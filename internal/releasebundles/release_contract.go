@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/distr-sh/distr/internal/types"
 )
 
@@ -27,8 +28,10 @@ func NormalizeReleaseContract(contract *types.ReleaseContract) {
 	contract.Build.ExternalURL = strings.TrimSpace(contract.Build.ExternalURL)
 	for i := range contract.Components {
 		contract.Components[i].Name = strings.TrimSpace(contract.Components[i].Name)
+		contract.Components[i].Version = strings.TrimSpace(contract.Components[i].Version)
 		contract.Components[i].Image = strings.TrimSpace(contract.Components[i].Image)
 		contract.Components[i].Platform = strings.ToLower(strings.TrimSpace(contract.Components[i].Platform))
+		contract.Components[i].Contracts = normalizeStringSet(contract.Components[i].Contracts)
 	}
 	for i := range contract.Compatibility.Requires {
 		requirement := &contract.Compatibility.Requires[i]
@@ -53,7 +56,10 @@ func NormalizeReleaseContract(contract *types.ReleaseContract) {
 	contract.Changes.Commits = normalizeStringSet(contract.Changes.Commits)
 
 	slices.SortFunc(contract.Components, func(a, b types.ReleaseContractComponent) int {
-		return strings.Compare(a.Name+"\x00"+a.Platform+"\x00"+a.Image, b.Name+"\x00"+b.Platform+"\x00"+b.Image)
+		return strings.Compare(
+			a.Name+"\x00"+a.Version+"\x00"+a.Platform+"\x00"+a.Image,
+			b.Name+"\x00"+b.Version+"\x00"+b.Platform+"\x00"+b.Image,
+		)
 	})
 	slices.SortFunc(contract.Compatibility.Requires, func(a, b types.ReleaseContractRequirement) int {
 		return strings.Compare(
@@ -72,6 +78,9 @@ func NormalizedReleaseContract(contract *types.ReleaseContract) *types.ReleaseCo
 	}
 	normalized := *contract
 	normalized.Components = slices.Clone(contract.Components)
+	for i := range normalized.Components {
+		normalized.Components[i].Contracts = slices.Clone(contract.Components[i].Contracts)
+	}
 	normalized.Compatibility.Requires = slices.Clone(contract.Compatibility.Requires)
 	normalized.Compatibility.AffectedComponents = slices.Clone(contract.Compatibility.AffectedComponents)
 	normalized.Config.ImmutableObjects = slices.Clone(contract.Config.ImmutableObjects)
@@ -133,12 +142,22 @@ func validateReleaseContractComponents(
 	for _, component := range contract.Components {
 		field := "releaseContract.components." + component.Name
 		validateRequiredContractString(result, "components.name", component.Name, 256)
+		validateRequiredContractString(result, "components.version", component.Version, 128)
+		if _, err := semver.StrictNewVersion(component.Version); err != nil {
+			result.AddError(field+".version", "semver", "component version must be strict semantic version")
+		}
 		if _, ok := seen[component.Name]; ok {
 			result.AddError(field+".name", "unique", "component names must be unique")
 		}
 		seen[component.Name] = struct{}{}
 		if component.Platform != "linux/amd64" && component.Platform != "linux/arm64" {
 			result.AddError(field+".platform", "supported", "platform must be linux/amd64 or linux/arm64")
+		}
+		if len(component.Contracts) > maxReleaseContractItems {
+			result.AddError(field+".contracts", "limit", "too many provided contracts")
+		}
+		for _, providedContract := range component.Contracts {
+			validateRequiredContractString(result, "components.contracts", providedContract, 512)
 		}
 		packageRef, digest, ok := splitImmutableImage(component.Image)
 		if !ok {
@@ -151,6 +170,9 @@ func validateReleaseContractComponents(
 			strings.TrimSpace(bundleComponent.PackageRef) != packageRef ||
 			!strings.EqualFold(strings.TrimSpace(bundleComponent.Digest), digest) {
 			result.AddError(field+".image", "matchesBundle", "component image must match the release bundle OCI component")
+		}
+		if ok && strings.TrimSpace(bundleComponent.Version) != component.Version {
+			result.AddError(field+".version", "matchesBundle", "component version must match the release bundle component")
 		}
 	}
 }
@@ -167,6 +189,11 @@ func validateReleaseContractCompatibility(result *ValidationResult, contract typ
 		}
 		validateOptionalContractString(result, "compatibility.requires.contract", requirement.Contract, 512)
 		validateOptionalContractString(result, "compatibility.requires.minimumVersion", requirement.MinimumVersion, 128)
+		if requirement.MinimumVersion != "" {
+			if _, err := semver.StrictNewVersion(requirement.MinimumVersion); err != nil {
+				result.AddError(field+".minimumVersion", "semver", "minimumVersion must be strict semantic version")
+			}
+		}
 		validateOptionalContractString(result, "compatibility.requires.reason", requirement.Reason, 2048)
 	}
 	if len(contract.Compatibility.AffectedComponents) == 0 {

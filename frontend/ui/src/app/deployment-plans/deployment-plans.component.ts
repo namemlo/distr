@@ -294,7 +294,7 @@ export class DeploymentPlansComponent {
             `- Build: ${plan.releaseContract.build.externalId}`,
             `- Source: ${plan.releaseContract.source.repository}@${plan.releaseContract.source.builtCommit}`,
             ...plan.releaseContract.components.map(
-              (component) => `- ${component.name}: ${component.image} (${component.platform})`
+              (component) => `- ${component.name} ${component.version}: ${component.image} (${component.platform})`
             ),
             `- Compose: ${plan.releaseContract.config.composePath} (${plan.releaseContract.config.composeChecksum})`,
             `- Config: ${plan.releaseContract.config.serviceConfigPath} (${plan.releaseContract.config.serviceConfigChecksum})`,
@@ -310,6 +310,14 @@ export class DeploymentPlansComponent {
       '',
       '## Targets',
       ...this.targetLines(plan),
+      '',
+      '## Target Component Preflight',
+      ...(plan.targetComponents.length === 0
+        ? ['- None']
+        : plan.targetComponents.map(
+            (component) =>
+              `- ${component.component} ${component.version} on ${component.deploymentTargetId}: expected state v${component.expectedStateVersion}, ${component.platform}, ${component.image}`
+          )),
       '',
       '## Steps',
       ...this.stepLines(plan),
@@ -341,7 +349,13 @@ export class DeploymentPlansComponent {
     if (plan.targets.length === 0) {
       return ['- None'];
     }
-    return plan.targets.map((target) => `- ${target.name} (${target.type}, ${target.deploymentTargetId})`);
+    return plan.targets.map(
+      (target) => `- ${target.name} (${target.type}, ${target.platform}, ${target.deploymentTargetId})`
+    );
+  }
+
+  protected planTargetName(plan: DeploymentPlan, deploymentTargetId: string): string {
+    return plan.targets.find((target) => target.deploymentTargetId === deploymentTargetId)?.name ?? deploymentTargetId;
   }
 
   private stepLines(plan: DeploymentPlan): string[] {

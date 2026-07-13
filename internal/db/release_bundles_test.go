@@ -1339,7 +1339,8 @@ func releaseContractFixture(digest string) *types.ReleaseContract {
 		},
 		Build: types.ReleaseContractBuild{ExternalID: "jenkins-42", ExternalURL: "https://ci.example/job/42"},
 		Components: []types.ReleaseContractComponent{{
-			Name: "api-image", Image: "registry.example.invalid/org/api@" + digest, Platform: "linux/amd64",
+			Name: "api-image", Version: "1.2.3", Image: "registry.example.invalid/org/api@" + digest,
+			Platform: "linux/amd64", Contracts: []string{"loyalty-api/v1"},
 		}},
 		Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"api-image"}},
 		Config: types.ReleaseContractConfig{

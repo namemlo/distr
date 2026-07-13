@@ -205,6 +205,10 @@ func updateDeploymentTarget(w http.ResponseWriter, r *http.Request) {
 	if dt.AgentVersion.ID != uuid.Nil {
 		dt.AgentVersionID = &dt.AgentVersion.ID
 	}
+	if err := dt.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	existing := internalctx.GetDeploymentTarget(ctx)
 	if dt.ID == uuid.Nil {

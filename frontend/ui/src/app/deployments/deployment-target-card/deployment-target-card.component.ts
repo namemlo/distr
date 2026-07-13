@@ -149,6 +149,7 @@ export class DeploymentTargetCardComponent {
     id: new FormControl<string | undefined>(undefined),
     name: new FormControl('', Validators.required),
     type: new FormControl<DeploymentType | undefined>({value: undefined, disabled: true}, Validators.required),
+    platform: new FormControl<'linux/amd64' | 'linux/arm64'>('linux/amd64', {nonNullable: true}),
     namespace: new FormControl<string | undefined>({value: undefined, disabled: true}),
     scope: new FormControl<DeploymentTargetScope>({value: 'namespace', disabled: true}),
     metricsEnabled: new FormControl<boolean>(true),
@@ -271,6 +272,7 @@ export class DeploymentTargetCardComponent {
         id: val.id!,
         name: val.name!,
         type: val.type!,
+        platform: this.editForm.controls.platform.value,
         deployments: [],
         metricsEnabled: val.metricsEnabled ?? false,
         imageCleanupEnabled: this.editForm.controls.imageCleanupEnabled.value,
@@ -596,7 +598,7 @@ export class DeploymentTargetCardComponent {
 
   private resetEditForm() {
     this.editForm.reset();
-    this.editForm.patchValue({type: 'docker'});
+    this.editForm.patchValue({type: 'docker', platform: 'linux/amd64'});
   }
 
   private isAgentVersionAtLeast(version: string, allowSnapshot = true) {

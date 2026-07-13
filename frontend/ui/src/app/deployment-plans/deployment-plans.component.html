@@ -322,6 +322,7 @@
                 <thead class="distr-table-head">
                   <tr>
                     <th scope="col" class="p-4">Component</th>
+                    <th scope="col" class="p-4">Version</th>
                     <th scope="col" class="p-4">Platform</th>
                     <th scope="col" class="p-4">Candidate Image</th>
                     <th scope="col" class="p-4">Migration</th>
@@ -332,6 +333,7 @@
                   @for (component of contract.components; track component.name + component.platform) {
                     <tr class="distr-table-row">
                       <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ component.name }}</td>
+                      <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ component.version }}</td>
                       <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ component.platform }}</td>
                       <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
                         {{ component.image }}
@@ -353,6 +355,58 @@
             </div>
           </section>
         }
+
+        <section class="border-t border-gray-200 pt-5 dark:border-gray-700 space-y-3">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Execution Preflight Snapshot</h3>
+          <div class="overflow-x-auto">
+            <table class="distr-table">
+              <thead class="distr-table-head">
+                <tr>
+                  <th scope="col" class="p-4">Target</th>
+                  <th scope="col" class="p-4">Component</th>
+                  <th scope="col" class="p-4">Candidate</th>
+                  <th scope="col" class="p-4">Platform</th>
+                  <th scope="col" class="p-4">Expected State</th>
+                  <th scope="col" class="p-4">Config Identity</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (component of plan.targetComponents; track component.id) {
+                  <tr class="distr-table-row">
+                    <td class="px-4 py-3 text-gray-900 dark:text-white">
+                      {{ planTargetName(plan, component.deploymentTargetId) }}
+                    </td>
+                    <td class="px-4 py-3 text-gray-900 dark:text-white">
+                      <div class="font-medium">{{ component.component }}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">{{ component.version }}</div>
+                    </td>
+                    <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                      {{ component.image }}
+                    </td>
+                    <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ component.platform }}</td>
+                    <td class="px-4 py-3 text-gray-700 dark:text-gray-300">
+                      @if (component.expectedStateVersion > 0) {
+                        <div>Version {{ component.expectedStateVersion }}</div>
+                        <div class="font-mono text-xs break-all">{{ component.expectedStateChecksum }}</div>
+                      } @else {
+                        Not yet observed
+                      }
+                    </td>
+                    <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
+                      {{ component.configChecksum }}
+                    </td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="6" class="px-4 py-6 text-center text-gray-500 dark:text-gray-400">
+                      No target components were resolved.
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <section class="space-y-2">
@@ -396,7 +450,9 @@
                   @for (target of plan.targets; track target.id) {
                     <tr class="distr-table-row">
                       <td class="px-4 py-3 text-gray-900 dark:text-white">{{ target.name }}</td>
-                      <td class="px-4 py-3 text-gray-600 dark:text-gray-300">{{ target.type }}</td>
+                      <td class="px-4 py-3 text-gray-600 dark:text-gray-300">
+                        {{ target.type }} / {{ target.platform }}
+                      </td>
                     </tr>
                   } @empty {
                     <tr>

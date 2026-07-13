@@ -178,8 +178,8 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 			},
 			Build: types.ReleaseContractBuild{ExternalID: "jenkins-42", ExternalURL: "https://ci.example/build/42"},
 			Components: []types.ReleaseContractComponent{
-				{Name: "transaction-api", Image: "registry.example/transaction-api@" + digest, Platform: "linux/amd64"},
-				{Name: "loyalty-api", Image: "registry.example/loyalty-api@" + digest, Platform: "linux/arm64"},
+				{Name: "transaction-api", Version: "0.0.7", Image: "registry.example/transaction-api@" + digest, Platform: "linux/amd64"},
+				{Name: "loyalty-api", Version: "1.2.3", Image: "registry.example/loyalty-api@" + digest, Platform: "linux/arm64"},
 			},
 			Compatibility: types.ReleaseContractCompatibility{
 				Requires: []types.ReleaseContractRequirement{

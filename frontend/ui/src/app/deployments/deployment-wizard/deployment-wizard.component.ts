@@ -100,6 +100,7 @@ export class DeploymentWizardComponent implements OnInit {
   // Step 3: Deployment Target Configuration
   readonly deploymentTargetForm = new FormGroup({
     name: new FormControl<string>('', Validators.required),
+    platform: new FormControl<'linux/amd64' | 'linux/arm64'>('linux/amd64', {nonNullable: true}),
     namespace: new FormControl<string>('', [
       Validators.required,
       Validators.maxLength(KUBERNETES_RESOURCE_MAX_LENGTH),
@@ -405,6 +406,7 @@ export class DeploymentWizardComponent implements OnInit {
           this.deploymentTargets.create({
             name: this.deploymentTargetForm.value.name!,
             type: app.type,
+            platform: this.deploymentTargetForm.controls.platform.value,
             namespace: this.deploymentTargetForm.value.namespace || undefined,
             scope: this.deploymentTargetForm.value.scope,
             deployments: [],

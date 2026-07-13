@@ -242,6 +242,17 @@
                   }
                 </div>
 
+                <div>
+                  <label for="target-platform" class="distr-label mb-2"> Server Platform </label>
+                  <select
+                    id="target-platform"
+                    [formControl]="deploymentTargetForm.controls.platform"
+                    class="distr-input">
+                    <option value="linux/amd64">Linux AMD64</option>
+                    <option value="linux/arm64">Linux ARM64</option>
+                  </select>
+                </div>
+
                 <!-- Docker-specific Settings -->
                 @if (selectedDeploymentType() === 'docker') {
                   <div>

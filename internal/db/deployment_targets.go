@@ -18,6 +18,7 @@ const (
 		dt.created_at,
 		dt.name,
 		dt.type,
+		dt.platform,
 		dt.access_key_salt,
 		dt.access_key_hash,
 		dt.namespace,
@@ -208,11 +209,13 @@ func CreateDeploymentTarget(
 	customerOrgID *uuid.UUID,
 ) error {
 	dt.OrganizationID = orgID
+	normalizeDeploymentTargetPlatform(&dt.DeploymentTarget)
 
 	db := internalctx.GetDb(ctx)
 	args := pgx.NamedArgs{
 		"name":                  dt.Name,
 		"type":                  dt.Type,
+		"platform":              dt.Platform,
 		"orgId":                 dt.OrganizationID,
 		"namespace":             dt.Namespace,
 		"scope":                 dt.Scope,
@@ -236,10 +239,10 @@ func CreateDeploymentTarget(
 		ctx,
 		`WITH inserted AS (
 			INSERT INTO DeploymentTarget
-			(name, type, organization_id, namespace, scope, agent_version_id, metrics_enabled, image_cleanup_enabled,
+			(name, type, platform, organization_id, namespace, scope, agent_version_id, metrics_enabled, image_cleanup_enabled,
 				deployment_logs_enabled, deployment_logs_after, autoheal_enabled, customer_organization_id,
 				resources_cpu_request, resources_memory_request, resources_cpu_limit, resources_memory_limit)
-			VALUES (@name, @type, @orgId, @namespace, @scope, @agentVersionId, @metricsEnabled, @imageCleanupEnabled,
+			VALUES (@name, @type, @platform, @orgId, @namespace, @scope, @agentVersionId, @metricsEnabled, @imageCleanupEnabled,
 				@deploymentLogsEnabled, @deploymentLogsAfter, @autohealEnabled, @customerOrgId,
 				@resourcesCpuRequest, @resourcesMemoryRequest, @resourcesCpuLimit, @resourcesMemoryLimit)
 			RETURNING *
@@ -261,10 +264,12 @@ func CreateDeploymentTarget(
 
 func UpdateDeploymentTarget(ctx context.Context, dt *types.DeploymentTargetFull, orgID uuid.UUID) error {
 	agentUpdateStr := ""
+	normalizeDeploymentTargetPlatform(&dt.DeploymentTarget)
 	db := internalctx.GetDb(ctx)
 	args := pgx.NamedArgs{
 		"id":                    dt.ID,
 		"name":                  dt.Name,
+		"platform":              dt.Platform,
 		"orgId":                 orgID,
 		"metricsEnabled":        dt.MetricsEnabled,
 		"imageCleanupEnabled":   dt.ImageCleanupEnabled,
@@ -285,6 +290,7 @@ func UpdateDeploymentTarget(ctx context.Context, dt *types.DeploymentTargetFull,
 		`WITH updated AS (
 			UPDATE DeploymentTarget AS dt SET
 				name = @name,
+				platform = @platform,
 				metrics_enabled = @metricsEnabled,
 				image_cleanup_enabled = @imageCleanupEnabled,
 				deployment_logs_enabled = @deploymentLogsEnabled,
@@ -306,6 +312,12 @@ func UpdateDeploymentTarget(ctx context.Context, dt *types.DeploymentTargetFull,
 	} else {
 		*dt = updated
 		return addDeploymentsToTarget(ctx, dt)
+	}
+}
+
+func normalizeDeploymentTargetPlatform(target *types.DeploymentTarget) {
+	if target.Platform == "" {
+		target.Platform = types.DeploymentTargetPlatformLinuxAMD64
 	}
 }
 

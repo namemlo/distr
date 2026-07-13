@@ -40,33 +40,51 @@ const deploymentPlanOutputExpr = `
 `
 
 type deploymentPlanTargetSource struct {
-	ID                     uuid.UUID            `db:"id"`
-	Name                   string               `db:"name"`
-	Type                   types.DeploymentType `db:"type"`
-	CustomerOrganizationID *uuid.UUID           `db:"customer_organization_id"`
+	ID                     uuid.UUID                      `db:"id"`
+	Name                   string                         `db:"name"`
+	Type                   types.DeploymentType           `db:"type"`
+	Platform               types.DeploymentTargetPlatform `db:"platform"`
+	CustomerOrganizationID *uuid.UUID                     `db:"customer_organization_id"`
 }
 
 type canonicalDeploymentPlan struct {
-	ReleaseBundleID    string                            `json:"releaseBundleId"`
-	ApplicationID      string                            `json:"applicationId"`
-	ChannelID          string                            `json:"channelId"`
-	EnvironmentID      string                            `json:"environmentId"`
-	ProcessSnapshotID  string                            `json:"processSnapshotId,omitempty"`
-	VariableSnapshotID string                            `json:"variableSnapshotId,omitempty"`
-	ReleaseContract    *types.ReleaseContract            `json:"releaseContract,omitempty"`
-	Status             string                            `json:"status"`
-	Targets            []canonicalDeploymentPlanTarget   `json:"targets"`
-	Steps              []canonicalDeploymentPlanStep     `json:"steps"`
-	Variables          []canonicalDeploymentPlanVariable `json:"variables"`
-	Issues             []canonicalDeploymentPlanIssue    `json:"issues"`
+	ReleaseBundleID    string                                   `json:"releaseBundleId"`
+	ApplicationID      string                                   `json:"applicationId"`
+	ChannelID          string                                   `json:"channelId"`
+	EnvironmentID      string                                   `json:"environmentId"`
+	ProcessSnapshotID  string                                   `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID string                                   `json:"variableSnapshotId,omitempty"`
+	ReleaseContract    *types.ReleaseContract                   `json:"releaseContract,omitempty"`
+	Status             string                                   `json:"status"`
+	Targets            []canonicalDeploymentPlanTarget          `json:"targets"`
+	TargetComponents   []canonicalDeploymentPlanTargetComponent `json:"targetComponents"`
+	Steps              []canonicalDeploymentPlanStep            `json:"steps"`
+	Variables          []canonicalDeploymentPlanVariable        `json:"variables"`
+	Issues             []canonicalDeploymentPlanIssue           `json:"issues"`
 }
 
 type canonicalDeploymentPlanTarget struct {
 	DeploymentTargetID     string `json:"deploymentTargetId"`
 	Name                   string `json:"name"`
 	Type                   string `json:"type"`
+	Platform               string `json:"platform"`
 	CustomerOrganizationID string `json:"customerOrganizationId,omitempty"`
 	SortOrder              int    `json:"sortOrder"`
+}
+
+type canonicalDeploymentPlanTargetComponent struct {
+	DeploymentPlanTargetID  string   `json:"deploymentPlanTargetId"`
+	DeploymentTargetID      string   `json:"deploymentTargetId"`
+	Component               string   `json:"component"`
+	Version                 string   `json:"version"`
+	Image                   string   `json:"image"`
+	Platform                string   `json:"platform"`
+	Contracts               []string `json:"contracts"`
+	ConfigChecksum          string   `json:"configChecksum"`
+	ExpectedStateVersion    int64    `json:"expectedStateVersion"`
+	ExpectedStateChecksum   string   `json:"expectedStateChecksum"`
+	ExpectedReleaseBundleID string   `json:"expectedReleaseBundleId,omitempty"`
+	SortOrder               int      `json:"sortOrder"`
 }
 
 type canonicalDeploymentPlanStep struct {
@@ -132,6 +150,9 @@ func CreateDeploymentPlan(
 			return err
 		}
 		if err := insertDeploymentPlanTargets(ctx, *plan); err != nil {
+			return err
+		}
+		if err := insertDeploymentPlanTargetComponents(ctx, *plan); err != nil {
 			return err
 		}
 		if err := insertDeploymentPlanSteps(ctx, *plan); err != nil {
@@ -209,6 +230,10 @@ func hydrateDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) erro
 	if err != nil {
 		return err
 	}
+	plan.TargetComponents, err = getDeploymentPlanTargetComponents(ctx, plan.ID, plan.OrganizationID)
+	if err != nil {
+		return err
+	}
 	plan.Steps, err = getDeploymentPlanSteps(ctx, plan.ID, plan.OrganizationID)
 	if err != nil {
 		return err
@@ -274,9 +299,13 @@ func resolveDeploymentPlan(
 		ReleaseContract:    releasebundles.NormalizedReleaseContract(bundle.ReleaseContract),
 		Targets:            targets,
 	}
+	if err := resolveDeploymentPlanTargetComponents(ctx, plan); err != nil {
+		return nil, err
+	}
 	addDeploymentPlanEligibilityBlockers(ctx, plan)
 	addDeploymentPlanSnapshotData(ctx, plan)
 	addDeploymentPlanReleaseContractIssues(plan, *bundle)
+	addDeploymentPlanTargetPlatformIssues(plan)
 	addDeploymentPlanAgentCapabilityIssues(ctx, plan)
 	addDeploymentPlanIssue(
 		plan,
@@ -321,6 +350,7 @@ func resolveDeploymentPlanTargets(
 			dt.id,
 			dt.name,
 			dt.type,
+			dt.platform,
 			dt.customer_organization_id
 		FROM DeploymentTarget dt
 		JOIN Organization o ON o.id = dt.organization_id AND o.deleted_at IS NULL
@@ -342,15 +372,84 @@ func resolveDeploymentPlanTargets(
 	targets := make([]types.DeploymentPlanTarget, 0, len(sources))
 	for i, target := range sources {
 		targets = append(targets, types.DeploymentPlanTarget{
+			ID:                     uuid.New(),
 			OrganizationID:         orgID,
 			DeploymentTargetID:     target.ID,
 			Name:                   target.Name,
 			Type:                   target.Type,
+			Platform:               target.Platform,
 			CustomerOrganizationID: target.CustomerOrganizationID,
 			SortOrder:              (i + 1) * 10,
 		})
 	}
 	return targets, nil
+}
+
+func resolveDeploymentPlanTargetComponents(ctx context.Context, plan *types.DeploymentPlan) error {
+	if plan.ReleaseContract == nil {
+		return nil
+	}
+	components := make(map[string]types.ReleaseContractComponent, len(plan.ReleaseContract.Components))
+	for _, component := range plan.ReleaseContract.Components {
+		components[component.Name] = component
+	}
+	for _, target := range plan.Targets {
+		for index, componentName := range plan.ReleaseContract.Compatibility.AffectedComponents {
+			component, ok := components[componentName]
+			if !ok {
+				continue
+			}
+			snapshot := types.DeploymentPlanTargetComponent{
+				ID:                     uuid.New(),
+				DeploymentPlanID:       plan.ID,
+				DeploymentPlanTargetID: target.ID,
+				OrganizationID:         plan.OrganizationID,
+				DeploymentTargetID:     target.DeploymentTargetID,
+				Component:              component.Name,
+				Version:                component.Version,
+				Image:                  component.Image,
+				Platform:               types.DeploymentTargetPlatform(component.Platform),
+				Contracts:              slices.Clone(component.Contracts),
+				ConfigChecksum:         plan.ReleaseContract.Config.ServiceConfigChecksum,
+				SortOrder:              (index + 1) * 10,
+			}
+			state, err := GetTargetComponentState(
+				ctx, plan.OrganizationID, target.DeploymentTargetID, plan.ApplicationID, component.Name,
+			)
+			if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
+				return err
+			}
+			if state != nil {
+				snapshot.ExpectedStateVersion = state.StateVersion
+				snapshot.ExpectedStateChecksum = state.StateChecksum
+				snapshot.ExpectedReleaseBundleID = &state.ReleaseBundleID
+			}
+			plan.TargetComponents = append(plan.TargetComponents, snapshot)
+		}
+	}
+	return nil
+}
+
+func addDeploymentPlanTargetPlatformIssues(plan *types.DeploymentPlan) {
+	targets := make(map[uuid.UUID]types.DeploymentPlanTarget, len(plan.Targets))
+	for _, target := range plan.Targets {
+		targets[target.ID] = target
+	}
+	for _, component := range plan.TargetComponents {
+		target := targets[component.DeploymentPlanTargetID]
+		if target.Platform != component.Platform {
+			addDeploymentPlanIssue(
+				plan,
+				types.DeploymentPlanIssueSeverityBlocker,
+				"target_platform_mismatch",
+				"targets."+target.Name+".platform",
+				fmt.Sprintf(
+					"target %q is %s but component %q requires %s",
+					target.Name, target.Platform, component.Component, component.Platform,
+				),
+			)
+		}
+	}
 }
 
 func addDeploymentPlanEligibilityBlockers(ctx context.Context, plan *types.DeploymentPlan) {
@@ -684,8 +783,30 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 			DeploymentTargetID:     target.DeploymentTargetID.String(),
 			Name:                   target.Name,
 			Type:                   string(target.Type),
+			Platform:               string(target.Platform),
 			CustomerOrganizationID: customerOrganizationID,
 			SortOrder:              target.SortOrder,
+		})
+	}
+	targetComponents := make([]canonicalDeploymentPlanTargetComponent, 0, len(plan.TargetComponents))
+	for _, component := range plan.TargetComponents {
+		expectedReleaseBundleID := ""
+		if component.ExpectedReleaseBundleID != nil {
+			expectedReleaseBundleID = component.ExpectedReleaseBundleID.String()
+		}
+		targetComponents = append(targetComponents, canonicalDeploymentPlanTargetComponent{
+			DeploymentPlanTargetID:  component.DeploymentPlanTargetID.String(),
+			DeploymentTargetID:      component.DeploymentTargetID.String(),
+			Component:               component.Component,
+			Version:                 component.Version,
+			Image:                   component.Image,
+			Platform:                string(component.Platform),
+			Contracts:               slices.Clone(component.Contracts),
+			ConfigChecksum:          component.ConfigChecksum,
+			ExpectedStateVersion:    component.ExpectedStateVersion,
+			ExpectedStateChecksum:   component.ExpectedStateChecksum,
+			ExpectedReleaseBundleID: expectedReleaseBundleID,
+			SortOrder:               component.SortOrder,
 		})
 	}
 	steps := make([]canonicalDeploymentPlanStep, 0, len(plan.Steps))
@@ -759,6 +880,7 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 		ReleaseContract:    releasebundles.NormalizedReleaseContract(plan.ReleaseContract),
 		Status:             string(plan.Status),
 		Targets:            targets,
+		TargetComponents:   targetComponents,
 		Steps:              steps,
 		Variables:          variables,
 		Issues:             issues,
@@ -832,22 +954,26 @@ func insertDeploymentPlanTargets(ctx context.Context, plan types.DeploymentPlan)
 		ctx,
 		pgx.Identifier{"deploymentplantarget"},
 		[]string{
+			"id",
 			"deployment_plan_id",
 			"organization_id",
 			"deployment_target_id",
 			"name",
 			"type",
+			"platform",
 			"customer_organization_id",
 			"sort_order",
 		},
 		pgx.CopyFromSlice(len(plan.Targets), func(i int) ([]any, error) {
 			target := plan.Targets[i]
 			return []any{
+				target.ID,
 				plan.ID,
 				plan.OrganizationID,
 				target.DeploymentTargetID,
 				target.Name,
 				target.Type,
+				target.Platform,
 				target.CustomerOrganizationID,
 				target.SortOrder,
 			}, nil
@@ -855,6 +981,37 @@ func insertDeploymentPlanTargets(ctx context.Context, plan types.DeploymentPlan)
 	)
 	if err != nil {
 		return mapDeploymentPlanWriteError("insert targets", err)
+	}
+	return nil
+}
+
+func insertDeploymentPlanTargetComponents(ctx context.Context, plan types.DeploymentPlan) error {
+	if len(plan.TargetComponents) == 0 {
+		return nil
+	}
+	database := internalctx.GetDb(ctx)
+	_, err := database.CopyFrom(
+		ctx,
+		pgx.Identifier{"deploymentplantargetcomponent"},
+		[]string{
+			"id", "deployment_plan_id", "deployment_plan_target_id", "organization_id",
+			"deployment_target_id", "component", "version", "image", "platform", "contracts",
+			"config_checksum", "expected_state_version", "expected_state_checksum",
+			"expected_release_bundle_id", "sort_order",
+		},
+		pgx.CopyFromSlice(len(plan.TargetComponents), func(i int) ([]any, error) {
+			component := plan.TargetComponents[i]
+			return []any{
+				component.ID, plan.ID, component.DeploymentPlanTargetID, plan.OrganizationID,
+				component.DeploymentTargetID, component.Component, component.Version, component.Image,
+				component.Platform, component.Contracts, component.ConfigChecksum,
+				component.ExpectedStateVersion, component.ExpectedStateChecksum,
+				component.ExpectedReleaseBundleID, component.SortOrder,
+			}, nil
+		}),
+	)
+	if err != nil {
+		return mapDeploymentPlanWriteError("insert target components", err)
 	}
 	return nil
 }
@@ -1034,6 +1191,7 @@ func getDeploymentPlanTargets(
 			deployment_target_id,
 			name,
 			type,
+			platform,
 			customer_organization_id,
 			sort_order
 		FROM DeploymentPlanTarget
@@ -1049,6 +1207,33 @@ func getDeploymentPlanTargets(
 		return nil, fmt.Errorf("could not collect DeploymentPlanTarget: %w", err)
 	}
 	return targets, nil
+}
+
+func getDeploymentPlanTargetComponents(
+	ctx context.Context,
+	planID uuid.UUID,
+	orgID uuid.UUID,
+) ([]types.DeploymentPlanTargetComponent, error) {
+	database := internalctx.GetDb(ctx)
+	rows, err := database.Query(ctx,
+		`SELECT
+			id, deployment_plan_id, deployment_plan_target_id, organization_id,
+			deployment_target_id, component, version, image, platform, contracts,
+			config_checksum, expected_state_version, expected_state_checksum,
+			expected_release_bundle_id, sort_order
+		FROM DeploymentPlanTargetComponent
+		WHERE deployment_plan_id = @deploymentPlanId AND organization_id = @organizationId
+		ORDER BY deployment_plan_target_id, sort_order, component`,
+		pgx.NamedArgs{"deploymentPlanId": planID, "organizationId": orgID},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query DeploymentPlanTargetComponent: %w", err)
+	}
+	components, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.DeploymentPlanTargetComponent])
+	if err != nil {
+		return nil, fmt.Errorf("could not collect DeploymentPlanTargetComponent: %w", err)
+	}
+	return components, nil
 }
 
 func getDeploymentPlanSteps(

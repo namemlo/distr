@@ -532,7 +532,9 @@
                 <thead class="distr-table-head">
                   <tr>
                     <th scope="col" class="p-4">Component</th>
+                    <th scope="col" class="p-4">Version</th>
                     <th scope="col" class="p-4">Platform</th>
+                    <th scope="col" class="p-4">Provides</th>
                     <th scope="col" class="p-4">Immutable Image</th>
                   </tr>
                 </thead>
@@ -540,7 +542,11 @@
                   @for (component of contract.components; track component.name + component.platform) {
                     <tr class="distr-table-row">
                       <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ component.name }}</td>
+                      <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ component.version }}</td>
                       <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ component.platform }}</td>
+                      <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                        {{ component.contracts.join(', ') || 'None' }}
+                      </td>
                       <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300 break-all">
                         {{ component.image }}
                       </td>
