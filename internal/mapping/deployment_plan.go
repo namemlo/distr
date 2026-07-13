@@ -70,7 +70,9 @@ func DeploymentPlanTargetToAPI(target types.DeploymentPlanTarget) api.Deployment
 	}
 }
 
-func DeploymentPlanTargetComponentToAPI(component types.DeploymentPlanTargetComponent) api.DeploymentPlanTargetComponent {
+func DeploymentPlanTargetComponentToAPI(
+	component types.DeploymentPlanTargetComponent,
+) api.DeploymentPlanTargetComponent {
 	return api.DeploymentPlanTargetComponent{
 		ID:                      component.ID,
 		DeploymentPlanTargetID:  component.DeploymentPlanTargetID,

@@ -197,7 +197,11 @@ func validateReleaseContractCompatibility(result *ValidationResult, contract typ
 		validateOptionalContractString(result, "compatibility.requires.reason", requirement.Reason, 2048)
 	}
 	if len(contract.Compatibility.AffectedComponents) == 0 {
-		result.AddError("releaseContract.compatibility.affectedComponents", "required", "at least one affected component is required")
+		result.AddError(
+			"releaseContract.compatibility.affectedComponents",
+			"required",
+			"at least one affected component is required",
+		)
 	}
 	componentNames := map[string]struct{}{}
 	for _, component := range contract.Components {

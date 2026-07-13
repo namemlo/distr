@@ -11,6 +11,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const releaseContractTestCommit = "1111111111111111111111111111111111111111"
+
 func TestCanonicalizeIsStableForComponentOrder(t *testing.T) {
 	g := NewWithT(t)
 	applicationID := uuid.New()
@@ -173,13 +175,19 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 			Source: types.ReleaseContractSource{
 				Repository:   "remittance-b2c-backend",
 				Branch:       "customization/emlo-remittance/dev",
-				SourceCommit: "1111111111111111111111111111111111111111",
-				BuiltCommit:  "1111111111111111111111111111111111111111",
+				SourceCommit: releaseContractTestCommit,
+				BuiltCommit:  releaseContractTestCommit,
 			},
 			Build: types.ReleaseContractBuild{ExternalID: "jenkins-42", ExternalURL: "https://ci.example/build/42"},
 			Components: []types.ReleaseContractComponent{
-				{Name: "transaction-api", Version: "0.0.7", Image: "registry.example/transaction-api@" + digest, Platform: "linux/amd64"},
-				{Name: "loyalty-api", Version: "1.2.3", Image: "registry.example/loyalty-api@" + digest, Platform: "linux/arm64"},
+				{
+					Name: "transaction-api", Version: "0.0.7",
+					Image: "registry.example/transaction-api@" + digest, Platform: "linux/amd64",
+				},
+				{
+					Name: "loyalty-api", Version: "1.2.3",
+					Image: "registry.example/loyalty-api@" + digest, Platform: "linux/arm64",
+				},
 			},
 			Compatibility: types.ReleaseContractCompatibility{
 				Requires: []types.ReleaseContractRequirement{
@@ -199,7 +207,9 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 					{URI: "s3://config/compose", VersionID: "v1", Checksum: checksum},
 				},
 			},
-			Changes: types.ReleaseContractChanges{Summary: "Choice TP loyalty pilot", Commits: []string{"repo-b@222", "repo-a@111"}},
+			Changes: types.ReleaseContractChanges{
+				Summary: "Choice TP loyalty pilot", Commits: []string{"repo-b@222", "repo-a@111"},
+			},
 		},
 		Components: []types.ReleaseBundleComponent{{
 			Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage,
@@ -209,10 +219,10 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 
 	_, firstChecksum, err := Canonicalize(bundle)
 	g.Expect(err).NotTo(HaveOccurred())
-	bundle.ReleaseContract.Components[0], bundle.ReleaseContract.Components[1] =
-		bundle.ReleaseContract.Components[1], bundle.ReleaseContract.Components[0]
-	bundle.ReleaseContract.Compatibility.Requires[0], bundle.ReleaseContract.Compatibility.Requires[1] =
-		bundle.ReleaseContract.Compatibility.Requires[1], bundle.ReleaseContract.Compatibility.Requires[0]
+	components := bundle.ReleaseContract.Components
+	components[0], components[1] = components[1], components[0]
+	requirements := bundle.ReleaseContract.Compatibility.Requires
+	requirements[0], requirements[1] = requirements[1], requirements[0]
 	slices.Reverse(bundle.ReleaseContract.Compatibility.AffectedComponents)
 	slices.Reverse(bundle.ReleaseContract.Config.ImmutableObjects)
 	slices.Reverse(bundle.ReleaseContract.Changes.Commits)

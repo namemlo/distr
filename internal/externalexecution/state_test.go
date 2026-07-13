@@ -9,12 +9,30 @@ import (
 
 func TestCallbackStateTransitions(t *testing.T) {
 	g := NewWithT(t)
-	g.Expect(CanCallbackTransition(types.ExternalExecutionStatusQueued, types.ExternalExecutionStatusRunning)).To(BeTrue())
-	g.Expect(CanCallbackTransition(types.ExternalExecutionStatusRunning, types.ExternalExecutionStatusSucceeded)).To(BeTrue())
-	g.Expect(CanCallbackTransition(types.ExternalExecutionStatusRunning, types.ExternalExecutionStatusFailed)).To(BeTrue())
-	g.Expect(CanCallbackTransition(types.ExternalExecutionStatusRunning, types.ExternalExecutionStatusCanceled)).To(BeTrue())
-	g.Expect(CanCallbackTransition(types.ExternalExecutionStatusSucceeded, types.ExternalExecutionStatusRunning)).To(BeFalse())
-	g.Expect(CanCallbackTransition(types.ExternalExecutionStatusTimedOut, types.ExternalExecutionStatusSucceeded)).To(BeFalse())
+	g.Expect(CanCallbackTransition(
+		types.ExternalExecutionStatusQueued,
+		types.ExternalExecutionStatusRunning,
+	)).To(BeTrue())
+	g.Expect(CanCallbackTransition(
+		types.ExternalExecutionStatusRunning,
+		types.ExternalExecutionStatusSucceeded,
+	)).To(BeTrue())
+	g.Expect(CanCallbackTransition(
+		types.ExternalExecutionStatusRunning,
+		types.ExternalExecutionStatusFailed,
+	)).To(BeTrue())
+	g.Expect(CanCallbackTransition(
+		types.ExternalExecutionStatusRunning,
+		types.ExternalExecutionStatusCanceled,
+	)).To(BeTrue())
+	g.Expect(CanCallbackTransition(
+		types.ExternalExecutionStatusSucceeded,
+		types.ExternalExecutionStatusRunning,
+	)).To(BeFalse())
+	g.Expect(CanCallbackTransition(
+		types.ExternalExecutionStatusTimedOut,
+		types.ExternalExecutionStatusSucceeded,
+	)).To(BeFalse())
 }
 
 func TestObservedStateChecksumIsCanonical(t *testing.T) {

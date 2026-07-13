@@ -80,10 +80,10 @@ type ExternalExecution struct {
 	ActualImage              string                    `db:"actual_image" json:"actualImage,omitempty"`
 	ActualPlatform           *DeploymentTargetPlatform `db:"actual_platform" json:"actualPlatform,omitempty"`
 	ActualContracts          []string                  `db:"actual_contracts" json:"actualContracts"`
-	ActualConfigReference    string                    `db:"actual_config_reference" json:"actualConfigReference,omitempty"`
+	ActualConfigReference    string                    `db:"actual_config_reference" json:"actualConfigReference,omitempty"` //nolint:lll
 	ActualConfigChecksum     string                    `db:"actual_config_checksum" json:"actualConfigChecksum,omitempty"`
 	ActualHealth             *TargetComponentHealth    `db:"actual_health" json:"actualHealth,omitempty"`
-	ObservedStateChecksum    string                    `db:"observed_state_checksum" json:"observedStateChecksum,omitempty"`
+	ObservedStateChecksum    string                    `db:"observed_state_checksum" json:"observedStateChecksum,omitempty"` //nolint:lll
 }
 
 type ExternalExecutionExpectedState struct {

@@ -42,7 +42,10 @@ type taskStore interface {
 	Heartbeat(context.Context, types.HeartbeatHubTaskLeaseRequest) (*types.TaskLease, error)
 	Record(context.Context, types.RecordHubStepRunEventRequest) (*types.StepRunEvent, error)
 	PrepareExternalExecution(context.Context, types.PrepareExternalExecutionRequest) (*types.ExternalExecution, error)
-	MarkExternalExecutionTriggered(context.Context, types.MarkExternalExecutionTriggeredRequest) (*types.ExternalExecution, error)
+	MarkExternalExecutionTriggered(
+		context.Context,
+		types.MarkExternalExecutionTriggeredRequest,
+	) (*types.ExternalExecution, error)
 	GetExternalExecution(context.Context, uuid.UUID, uuid.UUID) (*types.ExternalExecution, error)
 	TimeoutExternalExecution(context.Context, types.TimeoutExternalExecutionRequest) (*types.ExternalExecution, error)
 	FailExternalExecution(context.Context, types.FailExternalExecutionRequest) (*types.ExternalExecution, error)
@@ -175,6 +178,7 @@ func (w *Worker) executeLease(ctx context.Context, lease types.TaskLease) error 
 	return nil
 }
 
+//nolint:gocyclo // Execution is an explicit state machine whose branches must share one durable event sequence.
 func (w *Worker) executeStep(
 	ctx context.Context,
 	lease types.TaskLease,
@@ -245,9 +249,12 @@ func (w *Worker) executeStep(
 	var runErr error
 	webhookInvoked := external == nil
 	if external != nil && external.Status == types.ExternalExecutionStatusQueued {
-		triggered, triggerErr := w.store.MarkExternalExecutionTriggered(actionCtx, types.MarkExternalExecutionTriggeredRequest{
-			OrganizationID: lease.OrganizationID, ExternalExecutionID: external.ID, TriggerAttempts: 1,
-		})
+		triggered, triggerErr := w.store.MarkExternalExecutionTriggered(
+			actionCtx,
+			types.MarkExternalExecutionTriggeredRequest{
+				OrganizationID: lease.OrganizationID, ExternalExecutionID: external.ID, TriggerAttempts: 1,
+			},
+		)
 		if triggerErr == nil {
 			external = triggered
 			webhookInvoked = true

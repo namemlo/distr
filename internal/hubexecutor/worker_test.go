@@ -41,7 +41,6 @@ func TestWorkerExecutesHubWebhookAndRecordsDurableEvents(t *testing.T) {
 	})
 
 	err = worker.executeLease(context.Background(), lease)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +80,9 @@ func TestWorkerRecordsUnsupportedHubActionAsFailed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unsupported action error")
 	}
-	if len(store.events) != 2 || store.events[0].Type != types.StepRunEventTypeStarted || store.events[1].Type != types.StepRunEventTypeFailed {
+	if len(store.events) != 2 ||
+		store.events[0].Type != types.StepRunEventTypeStarted ||
+		store.events[1].Type != types.StepRunEventTypeFailed {
 		t.Fatalf("unexpected failure events: %#v", store.events)
 	}
 }
@@ -128,7 +129,6 @@ func TestWorkerWaitsForExternalCallbackBeforeSucceeding(t *testing.T) {
 	})
 
 	err = worker.executeLease(context.Background(), lease)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,14 +180,18 @@ func TestWorkerResumesRunningExternalExecutionWithoutRetriggeringWebhook(t *test
 	})
 
 	err = worker.executeLease(context.Background(), lease)
-
 	if err != nil {
 		t.Fatal(err)
 	}
 	if webhookCalls.Load() != 0 || store.triggerCalls.Load() != 0 {
-		t.Fatalf("running external execution was retriggered: webhook=%d trigger=%d", webhookCalls.Load(), store.triggerCalls.Load())
+		t.Fatalf(
+			"running external execution was retriggered: webhook=%d trigger=%d",
+			webhookCalls.Load(),
+			store.triggerCalls.Load(),
+		)
 	}
-	if store.externalReads.Load() < 2 || store.events[len(store.events)-1].Type != types.StepRunEventTypeSucceeded {
+	if store.externalReads.Load() < 2 ||
+		store.events[len(store.events)-1].Type != types.StepRunEventTypeSucceeded {
 		t.Fatalf("running execution was not resumed to completion: %#v", store.events)
 	}
 }
@@ -220,7 +224,6 @@ func TestWorkerDoesNotDispatchExecutionClaimedByAnotherWorker(t *testing.T) {
 	})
 
 	err = worker.executeLease(context.Background(), lease)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +250,6 @@ func TestWorkerHonorsSuccessfulCallbackWhenTriggerResponseIsLost(t *testing.T) {
 	})
 
 	err := worker.executeLease(context.Background(), lease)
-
 	if err != nil {
 		t.Fatalf("successful callback was overwritten by transport error: %v", err)
 	}
@@ -283,7 +285,6 @@ func TestWorkerFinalizesSucceededExternalExecutionWithoutRetriggeringWebhook(t *
 	})
 
 	err = worker.executeLease(context.Background(), lease)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,14 +330,18 @@ func TestWorkerFailsFromRecoveredTerminalExternalExecutionWithoutRetriggeringWeb
 		t.Fatalf("expected recovered terminal error, got %v", err)
 	}
 	if webhookCalls.Load() != 0 || store.triggerCalls.Load() != 0 {
-		t.Fatalf("failed external execution was retriggered: webhook=%d trigger=%d", webhookCalls.Load(), store.triggerCalls.Load())
+		t.Fatalf(
+			"failed external execution was retriggered: webhook=%d trigger=%d",
+			webhookCalls.Load(),
+			store.triggerCalls.Load(),
+		)
 	}
 	if store.events[len(store.events)-1].Type != types.StepRunEventTypeFailed {
 		t.Fatalf("expected failed step event: %#v", store.events)
 	}
 }
 
-func TestWorkerAcceptsCallbackThatCompletesBeforeTriggerStateIsPersisted(t *testing.T) {
+func TestWorkerHandlesCallbackBeforeTriggerPersistence(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
@@ -364,19 +369,22 @@ func TestWorkerAcceptsCallbackThatCompletesBeforeTriggerStateIsPersisted(t *test
 	})
 
 	err = worker.executeLease(context.Background(), lease)
-
 	if err != nil {
 		t.Fatal(err)
 	}
 	if store.triggerCalls.Load() != 1 || store.externalReads.Load() != 1 {
-		t.Fatalf("callback race was not reconciled: trigger=%d reads=%d", store.triggerCalls.Load(), store.externalReads.Load())
+		t.Fatalf(
+			"callback race was not reconciled: trigger=%d reads=%d",
+			store.triggerCalls.Load(),
+			store.externalReads.Load(),
+		)
 	}
 	if store.events[len(store.events)-1].Type != types.StepRunEventTypeSucceeded {
 		t.Fatalf("callback race did not finish the step: %#v", store.events)
 	}
 }
 
-func TestWorkerStartsPollerAndShutsDownCleanly(t *testing.T) {
+func TestWorkerPollerShutsDownCleanly(t *testing.T) {
 	store := &recordingStore{}
 	worker := newWorker(zaptest.NewLogger(t), store, Options{
 		PollInterval:      5 * time.Millisecond,

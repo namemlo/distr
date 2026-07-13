@@ -116,7 +116,9 @@ func (s *ExternalExecutionObservedState) validate() error {
 	return nil
 }
 
-func (r ExternalExecutionCallbackRequest) ToTypes(orgID, executionID uuid.UUID) types.RecordExternalExecutionCallbackRequest {
+func (r ExternalExecutionCallbackRequest) ToTypes(
+	orgID, executionID uuid.UUID,
+) types.RecordExternalExecutionCallbackRequest {
 	request := types.RecordExternalExecutionCallbackRequest{
 		OrganizationID: orgID, ExternalExecutionID: executionID, Sequence: r.Sequence, Status: r.Status,
 		ProviderReference: r.ProviderReference, ProviderURL: r.ProviderURL, Message: r.Message,

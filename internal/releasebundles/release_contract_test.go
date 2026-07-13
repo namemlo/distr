@@ -46,8 +46,14 @@ func TestValidateReleaseContractAcceptsAMD64AndARM64Components(t *testing.T) {
 		contract.Compatibility.AffectedComponents, "loyalty-api-arm64",
 	)
 	bundleComponents := []types.ReleaseBundleComponent{
-		{Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage, PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3"},
-		{Key: "loyalty-api-arm64", Type: types.ReleaseBundleComponentTypeOCIImage, PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3"},
+		{
+			Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage,
+			PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
+		},
+		{
+			Key: "loyalty-api-arm64", Type: types.ReleaseBundleComponentTypeOCIImage,
+			PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
+		},
 	}
 
 	result := ValidateReleaseContract(contract, bundleComponents)
@@ -103,7 +109,7 @@ func validReleaseContractForTest(digest string) types.ReleaseContract {
 		Schema: types.ReleaseContractSchemaV1,
 		Source: types.ReleaseContractSource{
 			Repository: "remittance-b2c-backend", Branch: "customization/emlo-remittance/dev",
-			SourceCommit: "1111111111111111111111111111111111111111", BuiltCommit: "1111111111111111111111111111111111111111",
+			SourceCommit: releaseContractTestCommit, BuiltCommit: releaseContractTestCommit,
 		},
 		Build: types.ReleaseContractBuild{ExternalID: "42", ExternalURL: "https://ci.example/job/42"},
 		Components: []types.ReleaseContractComponent{{
@@ -114,7 +120,9 @@ func validReleaseContractForTest(digest string) types.ReleaseContract {
 		Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"loyalty-api"}},
 		Config: types.ReleaseContractConfig{
 			RepositoryCommit: "2222222222222222222222222222222222222222",
-			ComposePath:      "choice-tp_dev/1/docker-compose.yaml", ServiceConfigPath: "choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+			ComposePath:      "choice-tp_dev/1/docker-compose.yaml",
+			ServiceConfigPath: "choice-tp_dev/1/rmt-loyalty-api/" +
+				"appsettings.Production.json",
 			ComposeChecksum: checksum, ServiceConfigChecksum: checksum,
 		},
 		Changes: types.ReleaseContractChanges{Summary: "Deploy loyalty API"},

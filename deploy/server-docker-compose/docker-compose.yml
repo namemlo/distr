@@ -11,7 +11,7 @@ services:
       - postgres:/var/lib/postgresql
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -26,7 +26,7 @@ services:
       - rustfs:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -fsS http://127.0.0.1:9000/health >/dev/null"]
+      test: ['CMD', 'sh', '-c', 'curl -fsS http://127.0.0.1:9000/health >/dev/null']
       interval: 30s
       timeout: 10s
       retries: 5
@@ -34,7 +34,7 @@ services:
 
   migrate:
     image: ${DISTR_IMAGE_REF:?set DISTR_IMAGE_REF in .env}
-    command: ["migrate"]
+    command: ['migrate']
     env_file:
       - .env
     depends_on:
@@ -47,7 +47,7 @@ services:
 
   hub:
     image: ${DISTR_IMAGE_REF:?set DISTR_IMAGE_REF in .env}
-    command: ["serve", "--migrate=false"]
+    command: ['serve', '--migrate=false']
     env_file:
       - .env
     depends_on:
@@ -56,8 +56,8 @@ services:
       storage:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${DISTR_HTTP_PORT:-8080}:8080"
-      - "127.0.0.1:${DISTR_REGISTRY_PORT:-8585}:8585"
+      - '127.0.0.1:${DISTR_HTTP_PORT:-8080}:8080'
+      - '127.0.0.1:${DISTR_REGISTRY_PORT:-8585}:8585'
     networks:
       default:
       nginx-ui:
@@ -68,7 +68,7 @@ services:
 
   artifact-blob-cleanup:
     image: ${DISTR_IMAGE_REF:?set DISTR_IMAGE_REF in .env}
-    command: ["cleanup", "ArtifactBlob", "--timeout", "10m"]
+    command: ['cleanup', 'ArtifactBlob', '--timeout', '10m']
     env_file:
       - .env
     depends_on:

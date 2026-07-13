@@ -1042,6 +1042,7 @@ func webhookAuditExportFromShared(audit webhookaction.AuditExport) webhookAuditE
 	return result
 }
 
+//nolint:unused // Retained during the shared-runtime compatibility window for parity comparison.
 func runWebhookActionLegacy(
 	ctx context.Context,
 	input webhookActionInput,

@@ -26,6 +26,7 @@ type Input struct {
 	CurrentStates             map[StateKey]types.TargetComponentState
 }
 
+//nolint:gocyclo // The evaluator deliberately emits all independent preflight checks in one deterministic pass.
 func Evaluate(input Input) []types.DeploymentPreflightCheck {
 	checks := make([]types.DeploymentPreflightCheck, 0, 1+len(input.Plan.TargetComponents)*2)
 	add := func(check types.DeploymentPreflightCheck) {

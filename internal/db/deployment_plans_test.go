@@ -17,6 +17,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const deploymentPlanWebhookURL = "https://jenkins.example/deploy"
+
 func TestDeploymentPlanRepositoryCreatesReadyPlanFromPublishedRelease(t *testing.T) {
 	ctx := deploymentPlanDBTestContext(t)
 	g := NewWithT(t)
@@ -213,7 +215,7 @@ func TestDeploymentPlanRepositoryBlocksHubWebhookWithoutReleaseContract(t *testi
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
 	revision.Steps[0].ActionType = "distr.webhook"
 	revision.Steps[0].ExecutionLocation = "hub"
-	revision.Steps[0].InputBindings = map[string]any{"url": "https://jenkins.example/deploy"}
+	revision.Steps[0].InputBindings = map[string]any{"url": deploymentPlanWebhookURL}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
@@ -243,7 +245,7 @@ func TestDeploymentPlanRepositorySnapshotsTargetComponents(t *testing.T) {
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
 	revision.Steps[0].ActionType = "distr.webhook"
 	revision.Steps[0].ExecutionLocation = "hub"
-	revision.Steps[0].InputBindings = map[string]any{"url": "https://jenkins.example/deploy"}
+	revision.Steps[0].InputBindings = map[string]any{"url": deploymentPlanWebhookURL}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
@@ -286,7 +288,7 @@ func TestDeploymentPlanRepositoryBlocksTargetPlatformMismatch(t *testing.T) {
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
 	revision.Steps[0].ActionType = "distr.webhook"
 	revision.Steps[0].ExecutionLocation = "hub"
-	revision.Steps[0].InputBindings = map[string]any{"url": "https://jenkins.example/deploy"}
+	revision.Steps[0].InputBindings = map[string]any{"url": deploymentPlanWebhookURL}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-arm-dev")
@@ -315,6 +317,7 @@ func TestDeploymentPlanRepositoryBlocksTargetPlatformMismatch(t *testing.T) {
 		To(ContainElement("target_platform_mismatch"))
 }
 
+//nolint:dupl // Migration tests intentionally assert the reversible schema shape independently.
 func TestTargetComponentStateMigrationDefinesImmutablePlanSnapshotAndObservedState(t *testing.T) {
 	g := NewWithT(t)
 	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "134_target_component_state.up.sql"))

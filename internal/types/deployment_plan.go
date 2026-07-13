@@ -48,7 +48,7 @@ type DeploymentPlan struct {
 	CanonicalPayload   []byte                          `db:"canonical_payload" json:"-"`
 	Targets            []DeploymentPlanTarget          `db:"-" json:"targets"`
 	TargetComponents   []DeploymentPlanTargetComponent `db:"-" json:"targetComponents"`
-	PreflightRuns      []DeploymentPreflightRun         `db:"-" json:"preflightRuns"`
+	PreflightRuns      []DeploymentPreflightRun        `db:"-" json:"preflightRuns"`
 	Steps              []DeploymentPlanStep            `db:"-" json:"steps"`
 	Variables          []DeploymentPlanVariable        `db:"-" json:"variables"`
 	Issues             []DeploymentPlanIssue           `db:"-" json:"issues"`
@@ -80,7 +80,7 @@ type DeploymentPlanTargetComponent struct {
 	ConfigChecksum          string                   `db:"config_checksum" json:"configChecksum"`
 	ExpectedStateVersion    int64                    `db:"expected_state_version" json:"expectedStateVersion"`
 	ExpectedStateChecksum   string                   `db:"expected_state_checksum" json:"expectedStateChecksum"`
-	ExpectedReleaseBundleID *uuid.UUID               `db:"expected_release_bundle_id" json:"expectedReleaseBundleId,omitempty"`
+	ExpectedReleaseBundleID *uuid.UUID               `db:"expected_release_bundle_id" json:"expectedReleaseBundleId,omitempty"` //nolint:lll
 	SortOrder               int                      `db:"sort_order" json:"sortOrder"`
 }
 

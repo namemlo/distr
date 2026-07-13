@@ -35,9 +35,9 @@ type DeploymentPreflightCheck struct {
 	ID                       uuid.UUID                      `db:"id" json:"id"`
 	CreatedAt                time.Time                      `db:"created_at" json:"createdAt"`
 	OrganizationID           uuid.UUID                      `db:"organization_id" json:"organizationId"`
-	DeploymentPreflightRunID uuid.UUID                      `db:"deployment_preflight_run_id" json:"deploymentPreflightRunId"`
+	DeploymentPreflightRunID uuid.UUID                      `db:"deployment_preflight_run_id" json:"deploymentPreflightRunId"` //nolint:lll
 	DeploymentPlanID         uuid.UUID                      `db:"deployment_plan_id" json:"deploymentPlanId"`
-	DeploymentPlanTargetID   *uuid.UUID                     `db:"deployment_plan_target_id" json:"deploymentPlanTargetId,omitempty"`
+	DeploymentPlanTargetID   *uuid.UUID                     `db:"deployment_plan_target_id" json:"deploymentPlanTargetId,omitempty"` //nolint:lll
 	DeploymentTargetID       *uuid.UUID                     `db:"deployment_target_id" json:"deploymentTargetId,omitempty"`
 	TaskID                   *uuid.UUID                     `db:"task_id" json:"taskId,omitempty"`
 	Component                string                         `db:"component" json:"component,omitempty"`

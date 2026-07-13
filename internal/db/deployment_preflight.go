@@ -104,8 +104,7 @@ func evaluateAndPersistDeploymentPreflightScope(
 	if err != nil {
 		return nil, false, err
 	}
-	releaseEligible, eligibilityMessage, contractValid, contractMessage, err :=
-		getDeploymentPreflightReleaseFacts(ctx, canonicalPlan)
+	releaseEligible, eligibilityMessage, contractValid, contractMessage, err := getDeploymentPreflightReleaseFacts(ctx, canonicalPlan) //nolint:lll
 	if err != nil {
 		return nil, false, err
 	}

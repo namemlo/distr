@@ -185,6 +185,7 @@ type AuditDNSSummary struct {
 	PrivateHostAllowed   bool   `json:"privateHostAllowed"`
 }
 
+//nolint:gocyclo // Input validation keeps every field error adjacent to its decoding rule.
 func DecodeInput(inputs map[string]any) (Input, error) {
 	var input Input
 	data, err := json.Marshal(inputs)
@@ -366,6 +367,7 @@ func AuditOutputRequests(audit AuditExport) []api.AgentStepRunOutputRequest {
 	}
 }
 
+//nolint:unused // Kept for parity while replay verification is migrated into the shared runtime.
 func webhookVerifyAuditTrail(audit AuditExport, rootHash, finalHash string, result Result) error {
 	if len(audit.Events) == 0 {
 		return fmt.Errorf("stored webhook audit trail is empty")
@@ -406,7 +408,9 @@ func webhookVerifyAuditTrail(audit AuditExport, rootHash, finalHash string, resu
 	if final.StatusCode != result.StatusCode || final.Attempt != result.Attempts {
 		return fmt.Errorf("stored webhook audit trail does not match success outputs")
 	}
-	if final.SigningKeyVersion != 0 && result.SigningKeyVersion != 0 && final.SigningKeyVersion != result.SigningKeyVersion {
+	if final.SigningKeyVersion != 0 &&
+		result.SigningKeyVersion != 0 &&
+		final.SigningKeyVersion != result.SigningKeyVersion {
 		return fmt.Errorf("stored webhook audit trail does not match signing key version")
 	}
 	return nil
@@ -455,6 +459,7 @@ func webhookUUIDString(id uuid.UUID) string {
 	return id.String()
 }
 
+//nolint:unused // Kept for parity while replay verification is migrated into the shared runtime.
 func webhookStrictReplayVerifyEnabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(webhookStrictReplayVerifyEnv)), "true")
 }
@@ -567,7 +572,13 @@ func Run(
 			return resultFor(lastStatus, attempt, nil), err
 		}
 		if _, ok := retryableStatuses[statusCode]; ok && attempt < maxAttempts {
-			auditTrail = webhookAppendAttemptAudit(auditTrail, input, attempt, statusCode, fmt.Sprintf("retryable status %d", statusCode))
+			auditTrail = webhookAppendAttemptAudit(
+				auditTrail,
+				input,
+				attempt,
+				statusCode,
+				fmt.Sprintf("retryable status %d", statusCode),
+			)
 			if err := sleepWebhookBackoff(runCtx, input.Retry.BackoffSeconds); err != nil {
 				return resultFor(statusCode, attempt, nil), err
 			}
@@ -612,6 +623,7 @@ func isRetryableWebhookAttemptError(statusCode int, err error) bool {
 		return false
 	}
 	var netErr net.Error
+	//nolint:staticcheck // Temporary remains part of the current agent retry compatibility contract.
 	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
 		return true
 	}
@@ -710,7 +722,9 @@ func validateWebhookTargetURL(rawURL string, policy webhookOutboundPolicy) (*url
 	if !policy.isHostAllowed(endpoint.Host, endpoint.Hostname()) {
 		return nil, fmt.Errorf("webhook host is not allowlisted")
 	}
-	if ip := net.ParseIP(endpoint.Hostname()); ip != nil && isUnsafeWebhookIP(ip) && !policy.isPrivateHostAllowed(endpoint.Host, endpoint.Hostname()) {
+	if ip := net.ParseIP(endpoint.Hostname()); ip != nil &&
+		isUnsafeWebhookIP(ip) &&
+		!policy.isPrivateHostAllowed(endpoint.Host, endpoint.Hostname()) {
 		return nil, fmt.Errorf("webhook host resolves to unsafe address")
 	}
 	return endpoint, nil
@@ -980,11 +994,17 @@ func webhookBodyDigest(body []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+//nolint:unused // Kept for signature compatibility with the agent-level webhook tests.
 func webhookCanonicalData(method string, endpoint *url.URL, timestamp, idempotencyKey, bodyDigest string) string {
 	return webhookCanonicalDataWithTenant(method, endpoint, timestamp, idempotencyKey, bodyDigest, uuid.Nil)
 }
 
-func webhookCanonicalDataWithTenant(method string, endpoint *url.URL, timestamp, idempotencyKey, bodyDigest string, tenantID uuid.UUID) string {
+func webhookCanonicalDataWithTenant(
+	method string,
+	endpoint *url.URL,
+	timestamp, idempotencyKey, bodyDigest string,
+	tenantID uuid.UUID,
+) string {
 	path := endpoint.EscapedPath()
 	if path == "" {
 		path = "/"
@@ -1055,6 +1075,7 @@ func webhookSigningConfigFromSecrets(secrets []string) (webhookSigningConfig, er
 	}, nil
 }
 
+//nolint:unused // Kept for signature compatibility with the agent-level webhook tests.
 func webhookVerifySignature(secrets []string, keyVersion string, canonicalData string, signature string) (int, bool) {
 	signingConfig, err := webhookSigningConfigFromSecrets(secrets)
 	if err != nil {
@@ -1082,6 +1103,7 @@ func webhookVerifySignature(secrets []string, keyVersion string, canonicalData s
 	return 0, false
 }
 
+//nolint:unused // Kept for signature compatibility with the agent-level webhook tests.
 func webhookSignatureMatches(secret string, canonicalData string, signature string) bool {
 	expected := webhookSignature(secret, canonicalData)
 	return hmac.Equal([]byte(expected), []byte(signature))
@@ -1251,7 +1273,8 @@ func validateWebhookOutputs(outputs []OutputDeclaration, completionMode Completi
 
 func isReservedWebhookOutputName(name string, callback bool) bool {
 	switch name {
-	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied", "auditChainRoot", "auditEventHash", "auditTrail":
+	case "statusCode", "attempts", "signingKeyVersion", "keyRotationApplied",
+		"auditChainRoot", "auditEventHash", "auditTrail":
 		return true
 	}
 	if !callback {
@@ -1327,7 +1350,8 @@ func isWebhookSensitiveHeaderName(name string) bool {
 
 func isWebhookReservedHeaderName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest", "x-distr-signature", "x-distr-key-version", "x-distr-tenant-id":
+	case "idempotency-key", "x-distr-timestamp", "x-distr-body-digest",
+		"x-distr-signature", "x-distr-key-version", "x-distr-tenant-id":
 		return true
 	default:
 		return false

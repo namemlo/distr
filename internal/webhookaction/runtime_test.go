@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const callbackWebhookURL = "https://hooks.example.com/deploy"
+
 func TestDecodeInputRejectsNonAllowlistedHost(t *testing.T) {
 	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
 
@@ -88,7 +90,6 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 		progress = append(progress, message)
 		return nil
 	}, RuntimeOptions{Now: func() time.Time { return fixedNow }, HTTPClient: server.Client()})
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,18 +110,20 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 func TestDecodeInputValidatesCallbackCompletionMode(t *testing.T) {
 	t.Setenv(webhookAllowedHostsEnv, "hooks.example.com")
 	input, err := DecodeInput(map[string]any{
-		"url": "https://hooks.example.com/deploy", "completionMode": "callback",
+		"url": callbackWebhookURL, "completionMode": "callback",
 		"component": "loyalty-api", "callbackTimeoutSeconds": 600, "signingSecret": "test-secret",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if input.CompletionMode != CompletionModeCallback || input.Component != "loyalty-api" || input.CallbackTimeoutSeconds != 600 {
+	if input.CompletionMode != CompletionModeCallback ||
+		input.Component != "loyalty-api" ||
+		input.CallbackTimeoutSeconds != 600 {
 		t.Fatalf("unexpected callback input: %#v", input)
 	}
 
 	_, err = DecodeInput(map[string]any{
-		"url": "https://hooks.example.com/deploy", "completionMode": "callback", "signingSecret": "test-secret",
+		"url": callbackWebhookURL, "completionMode": "callback", "signingSecret": "test-secret",
 	})
 	if err == nil || err.Error() != "component is required for callback completion mode" {
 		t.Fatalf("expected callback component error, got %v", err)
@@ -140,14 +143,14 @@ func TestDecodeInputUsesCompletionModeOutputBudget(t *testing.T) {
 	}
 
 	_, err := DecodeInput(map[string]any{
-		"url": "https://hooks.example.com/deploy", "signingSecret": "test-secret",
+		"url": callbackWebhookURL, "signingSecret": "test-secret",
 		"completionMode": "response", "outputs": outputs(25),
 	})
 	if err != nil {
 		t.Fatalf("response mode lost its output budget: %v", err)
 	}
 	_, err = DecodeInput(map[string]any{
-		"url": "https://hooks.example.com/deploy", "signingSecret": "test-secret",
+		"url": callbackWebhookURL, "signingSecret": "test-secret",
 		"completionMode": "callback", "component": "loyalty-api", "outputs": outputs(1),
 	})
 	if err == nil || !strings.Contains(err.Error(), "callback completion mode") {

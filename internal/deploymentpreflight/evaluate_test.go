@@ -128,6 +128,12 @@ func preflightInputFixture() Input {
 			ExpectedStateVersion: 4, ExpectedStateChecksum: stateChecksum,
 		}},
 	}
+	loyaltyStateKey := StateKey{
+		DeploymentTargetID: targetID, ApplicationID: applicationID, Component: "loyalty-api",
+	}
+	mcStateKey := StateKey{
+		DeploymentTargetID: targetID, ApplicationID: applicationID, Component: "mc-api",
+	}
 	return Input{
 		Plan:                     plan,
 		PlanPayloadChecksumValid: true,
@@ -140,11 +146,11 @@ func preflightInputFixture() Input {
 			},
 		},
 		CurrentStates: map[StateKey]types.TargetComponentState{
-			{DeploymentTargetID: targetID, ApplicationID: applicationID, Component: "loyalty-api"}: {
+			loyaltyStateKey: {
 				DeploymentTargetID: targetID, ApplicationID: applicationID, Component: "loyalty-api",
 				StateVersion: 4, StateChecksum: stateChecksum, Version: "1.2.2",
 			},
-			{DeploymentTargetID: targetID, ApplicationID: applicationID, Component: "mc-api"}: targetState("mc-api", "0.0.5", "mc-api.http@5"),
+			mcStateKey: targetState("mc-api", "0.0.5", "mc-api.http@5"),
 		},
 	}
 }

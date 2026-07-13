@@ -605,7 +605,9 @@ func validateWebhookRegistryInput(input map[string]any) error {
 	}
 	outputs, _ := input["outputs"].([]any)
 	if completionMode == "callback" && len(outputs) > 0 {
-		return apierrors.NewBadRequest("webhook outputs are not supported in callback completion mode; report durable values in the callback")
+		return apierrors.NewBadRequest(
+			"webhook outputs are not supported in callback completion mode; report durable values in the callback",
+		)
 	}
 	builtInOutputCount := webhookResponseBuiltInOutputCount
 	if completionMode == "callback" {
