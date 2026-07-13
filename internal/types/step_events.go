@@ -98,6 +98,21 @@ type RecordAgentStepRunEventRequest struct {
 	Outputs         []RecordStepRunOutputRequest
 }
 
+type RecordHubStepRunEventRequest struct {
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	StepRunID          uuid.UUID
+	LeaseToken         string
+	Sequence           int64
+	Type               StepRunEventType
+	OccurredAt         *time.Time
+	Message            string
+	ProgressPercent    *int
+	Details            map[string]any
+	Logs               []RecordStepRunLogChunkRequest
+	Outputs            []RecordStepRunOutputRequest
+}
+
 type RecordStepRunLogChunkRequest struct {
 	OccurredAt *time.Time
 	Stream     StepRunLogStream

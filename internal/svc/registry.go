@@ -14,6 +14,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/featureflags"
+	"github.com/distr-sh/distr/internal/hubexecutor"
 	"github.com/distr-sh/distr/internal/jobs"
 	"github.com/distr-sh/distr/internal/migrations"
 	obsermetrics "github.com/distr-sh/distr/internal/observability/metrics"
@@ -40,6 +41,7 @@ type Registry struct {
 	artifactsRegistry           http.Handler
 	tracers                     *tracers.Tracers
 	jobsScheduler               *jobs.Scheduler
+	hubExecutor                 *hubexecutor.Worker
 	oidcer                      *oidc.OIDCer
 	promRegistry                *prometheus.Registry
 	promCollector               *distrprometheus.DistrCollector
@@ -111,6 +113,7 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 	} else {
 		reg.dbPool = db
 	}
+	reg.hubExecutor = hubexecutor.New(reg.logger, reg.dbPool, hubexecutor.Options{})
 
 	if env.RegistryEnabled() {
 		reg.s3Client = newS3Client(ctx)
@@ -138,6 +141,9 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 }
 
 func (r *Registry) Shutdown(ctx context.Context) error {
+	if err := r.hubExecutor.Shutdown(ctx); err != nil {
+		r.logger.Warn("Hub task executor shutdown failed", zap.Error(err))
+	}
 	if err := r.jobsScheduler.Shutdown(); err != nil {
 		r.logger.Warn("job scheduler shutdown failed", zap.Error(err))
 	}

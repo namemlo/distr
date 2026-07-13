@@ -1,4 +1,4 @@
-package main
+package webhookaction
 
 import (
 	"bytes"
@@ -17,13 +17,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/distr-sh/distr/api"
-	"github.com/distr-sh/distr/internal/policy"
-	"github.com/distr-sh/distr/internal/types"
-	"github.com/distr-sh/distr/internal/webhookaction"
 	"github.com/google/uuid"
 )
 
@@ -52,48 +48,60 @@ const (
 	webhookMaxSigningSecrets       = 8
 )
 
-var webhookNow = time.Now
-var webhookHTTPClientForTest *http.Client
-var webhookLookupIPAddr = net.DefaultResolver.LookupIPAddr
-var webhookDialContext = (&net.Dialer{}).DialContext
-var webhookAttemptMetricSink chan<- webhookAttemptMetric
-var webhookPolicyEngineForTest policy.WebhookPolicyEvaluator
-var webhookPolicyEngineOnce sync.Once
-var webhookPolicyEngineDefault policy.WebhookPolicyEvaluator
-var webhookPolicyEngineDefaultErr error
 var webhookUnsafeIPPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
 }
 
-type webhookActionInput struct {
-	URL                 string                     `json:"url"`
-	Method              string                     `json:"method"`
-	Headers             map[string]string          `json:"headers"`
-	SecretHeaders       map[string]string          `json:"secretHeaders"`
-	Body                any                        `json:"body"`
-	SensitiveBody       bool                       `json:"sensitiveBody"`
-	SigningSecret       string                     `json:"signingSecret"`
-	SigningSecrets      []string                   `json:"signingSecrets"`
-	TimeoutSeconds      int                        `json:"timeoutSeconds"`
-	Retry               webhookRetryPolicy         `json:"retry"`
-	ExpectedStatusCodes []int                      `json:"expectedStatusCodes"`
-	IdempotencyKey      string                     `json:"idempotencyKey"`
-	Corridor            string                     `json:"corridor"`
-	Priority            string                     `json:"priority"`
-	Outputs             []webhookOutputDeclaration `json:"outputs"`
-	TenantID            uuid.UUID                  `json:"-"`
-	LeaseID             uuid.UUID                  `json:"-"`
-	TaskID              uuid.UUID                  `json:"-"`
-	StepRunID           uuid.UUID                  `json:"-"`
+type RuntimeOptions struct {
+	Now               func() time.Time
+	HTTPClient        *http.Client
+	LookupIPAddr      func(context.Context, string) ([]net.IPAddr, error)
+	DialContext       func(context.Context, string, string) (net.Conn, error)
+	AttemptMetricSink chan<- AttemptMetric
 }
 
-type webhookRetryPolicy struct {
+func (o RuntimeOptions) withDefaults() RuntimeOptions {
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.LookupIPAddr == nil {
+		o.LookupIPAddr = net.DefaultResolver.LookupIPAddr
+	}
+	if o.DialContext == nil {
+		o.DialContext = (&net.Dialer{}).DialContext
+	}
+	return o
+}
+
+type Input struct {
+	URL                 string              `json:"url"`
+	Method              string              `json:"method"`
+	Headers             map[string]string   `json:"headers"`
+	SecretHeaders       map[string]string   `json:"secretHeaders"`
+	Body                any                 `json:"body"`
+	SensitiveBody       bool                `json:"sensitiveBody"`
+	SigningSecret       string              `json:"signingSecret"`
+	SigningSecrets      []string            `json:"signingSecrets"`
+	TimeoutSeconds      int                 `json:"timeoutSeconds"`
+	Retry               RetryPolicy         `json:"retry"`
+	ExpectedStatusCodes []int               `json:"expectedStatusCodes"`
+	IdempotencyKey      string              `json:"idempotencyKey"`
+	Corridor            string              `json:"corridor"`
+	Priority            string              `json:"priority"`
+	Outputs             []OutputDeclaration `json:"outputs"`
+	TenantID            uuid.UUID           `json:"-"`
+	LeaseID             uuid.UUID           `json:"-"`
+	TaskID              uuid.UUID           `json:"-"`
+	StepRunID           uuid.UUID           `json:"-"`
+}
+
+type RetryPolicy struct {
 	MaxAttempts          int   `json:"maxAttempts"`
 	BackoffSeconds       int   `json:"backoffSeconds"`
 	RetryableStatusCodes []int `json:"retryableStatusCodes"`
 }
 
-type webhookOutputDeclaration struct {
+type OutputDeclaration struct {
 	Name      string `json:"name"`
 	Pointer   string `json:"pointer"`
 	Type      string `json:"type"`
@@ -112,14 +120,14 @@ type webhookResolvedTarget struct {
 	ips  []net.IPAddr
 }
 
-type webhookRunResult struct {
+type Result struct {
 	StatusCode         int
 	Attempts           int
 	SigningKeyVersion  int
 	KeyRotationApplied bool
 	Outputs            []api.AgentStepRunOutputRequest
 	RedactionValues    []string
-	AuditTrail         webhookAuditExport
+	AuditTrail         AuditExport
 }
 
 type webhookSigningConfig struct {
@@ -129,123 +137,43 @@ type webhookSigningConfig struct {
 	KeyRotationApplied bool
 }
 
-type webhookAttemptMetric = webhookaction.AttemptMetric
-
-type localTaskTimelineClient interface {
-	LocalTaskTimeline(context.Context, uuid.UUID, uuid.UUID) (*api.TaskTimeline, error)
+type AttemptMetric struct {
+	Attempt    int
+	StatusCode int
+	Duration   time.Duration
+	Failed     bool
 }
 
-type selfContainedLeasedTaskClient struct {
-	delegate leasedTaskClient
-	lease    api.AgentTaskLease
-	events   []api.StepRunEvent
+type AuditExport struct {
+	Events []AuditEvent `json:"events"`
 }
 
-func newSelfContainedLeasedTaskClient(delegate leasedTaskClient, lease api.AgentTaskLease) leasedTaskClient {
-	return &selfContainedLeasedTaskClient{
-		delegate: delegate,
-		lease:    lease,
-	}
+type AuditEvent struct {
+	AuditEventID       string           `json:"auditEventId"`
+	ParentAuditEventID string           `json:"parentAuditEventId,omitempty"`
+	EventHash          string           `json:"eventHash"`
+	EventType          string           `json:"eventType"`
+	TenantID           string           `json:"tenantId,omitempty"`
+	LeaseID            string           `json:"leaseId,omitempty"`
+	TaskID             string           `json:"taskId,omitempty"`
+	StepRunID          string           `json:"stepRunId,omitempty"`
+	Attempt            int              `json:"attempt,omitempty"`
+	StatusCode         int              `json:"statusCode,omitempty"`
+	RetryReason        string           `json:"retryReason,omitempty"`
+	DNS                *AuditDNSSummary `json:"dns,omitempty"`
+	SigningKeyVersion  int              `json:"signingKeyVersion,omitempty"`
+	KeyRotationApplied *bool            `json:"keyRotationApplied,omitempty"`
 }
 
-func (c *selfContainedLeasedTaskClient) HeartbeatTaskLease(ctx context.Context, taskID uuid.UUID, leaseToken string) (*api.AgentTaskLease, error) {
-	return c.delegate.HeartbeatTaskLease(ctx, taskID, leaseToken)
-}
-
-func (c *selfContainedLeasedTaskClient) RecordStepRunEvent(
-	ctx context.Context,
-	stepRunID uuid.UUID,
-	request api.AgentStepRunEventRequest,
-) (*api.StepRunEvent, error) {
-	event, err := c.delegate.RecordStepRunEvent(ctx, stepRunID, request)
-	if err != nil {
-		return nil, err
-	}
-	occurredAt := time.Now().UTC()
-	if request.OccurredAt != nil {
-		occurredAt = request.OccurredAt.UTC()
-	}
-	c.events = append(c.events, api.StepRunEvent{
-		ID:              uuid.New(),
-		OccurredAt:      occurredAt,
-		OrganizationID:  c.lease.OrganizationID,
-		TaskID:          c.lease.TaskID,
-		StepRunID:       stepRunID,
-		TaskLeaseID:     c.lease.ID,
-		AgentID:         c.lease.AgentID,
-		Sequence:        request.Sequence,
-		Type:            request.Type,
-		Message:         request.Message,
-		ProgressPercent: request.ProgressPercent,
-		Details:         request.Details,
-		Outputs:         webhookStepRunOutputsFromRequests(request.Outputs),
-	})
-	return event, nil
-}
-
-func (c *selfContainedLeasedTaskClient) LocalTaskTimeline(_ context.Context, taskID uuid.UUID, leaseID uuid.UUID) (*api.TaskTimeline, error) {
-	timeline := &api.TaskTimeline{
-		OrganizationID: c.lease.OrganizationID,
-		TaskID:         taskID,
-	}
-	if taskID != c.lease.TaskID || (leaseID != uuid.Nil && c.lease.ID != uuid.Nil && leaseID != c.lease.ID) {
-		return timeline, nil
-	}
-	timeline.Events = append(timeline.Events, c.events...)
-	return timeline, nil
-}
-
-func webhookStepRunOutputsFromRequests(outputs []api.AgentStepRunOutputRequest) []api.StepRunOutput {
-	if len(outputs) == 0 {
-		return nil
-	}
-	values := make([]api.StepRunOutput, 0, len(outputs))
-	for _, output := range outputs {
-		data, err := json.Marshal(output.Value)
-		if err != nil {
-			data = []byte("null")
-		}
-		values = append(values, api.StepRunOutput{
-			ID:        uuid.New(),
-			Name:      output.Name,
-			Value:     data,
-			Sensitive: output.Sensitive,
-			Redacted:  output.Sensitive,
-		})
-	}
-	return values
-}
-
-type webhookAuditExport struct {
-	Events []webhookAuditEvent `json:"events"`
-}
-
-type webhookAuditEvent struct {
-	AuditEventID       string                  `json:"auditEventId"`
-	ParentAuditEventID string                  `json:"parentAuditEventId,omitempty"`
-	EventHash          string                  `json:"eventHash"`
-	EventType          string                  `json:"eventType"`
-	TenantID           string                  `json:"tenantId,omitempty"`
-	LeaseID            string                  `json:"leaseId,omitempty"`
-	TaskID             string                  `json:"taskId,omitempty"`
-	StepRunID          string                  `json:"stepRunId,omitempty"`
-	Attempt            int                     `json:"attempt,omitempty"`
-	StatusCode         int                     `json:"statusCode,omitempty"`
-	RetryReason        string                  `json:"retryReason,omitempty"`
-	DNS                *webhookAuditDNSSummary `json:"dns,omitempty"`
-	SigningKeyVersion  int                     `json:"signingKeyVersion,omitempty"`
-	KeyRotationApplied *bool                   `json:"keyRotationApplied,omitempty"`
-}
-
-type webhookAuditDNSSummary struct {
+type AuditDNSSummary struct {
 	Host                 string `json:"host"`
 	Port                 string `json:"port"`
 	ResolvedAddressCount int    `json:"resolvedAddressCount"`
 	PrivateHostAllowed   bool   `json:"privateHostAllowed"`
 }
 
-func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error) {
-	var input webhookActionInput
+func DecodeInput(inputs map[string]any) (Input, error) {
+	var input Input
 	data, err := json.Marshal(inputs)
 	if err != nil {
 		return input, fmt.Errorf("encode webhook inputs: %w", err)
@@ -333,472 +261,18 @@ func decodeWebhookActionInput(inputs map[string]any) (webhookActionInput, error)
 	return input, nil
 }
 
-func executeWebhookStep(
-	ctx context.Context,
-	lease api.AgentTaskLease,
-	step api.AgentTaskLeaseStep,
-	client leasedTaskClient,
-) error {
-	if step.ActionType == webhookActionType && step.ActionVersion == types.AgentActionVersionV1 {
-		if replayResult, replayed, err := webhookReplayResult(ctx, lease, step.StepRunID, client); err != nil {
-			return err
-		} else if replayed {
-			input, err := decodeWebhookActionInput(step.Inputs)
-			if err != nil {
-				return err
-			}
-			releasePolicy, err := evaluateWebhookPolicy(ctx, lease, input, true)
-			if err != nil {
-				return err
-			}
-			releasePolicy(policy.WebhookPolicyResult{
-				StatusCode: replayResult.StatusCode,
-				Replay:     true,
-			})
-			return nil
-		}
-	}
-	sequence := int64(1)
-	if err := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeStarted, "starting webhook", nil, nil); err != nil {
-		return err
-	}
-	var secretValues []string
-	recordFailure := func(err error) error {
-		sequence++
-		redactedErr := redactErrorWithSecretValues(err, secretValues)
-		if recordErr := recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeFailed, redactedErr.Error(), nil, nil, secretValues...); recordErr != nil {
-			return redactErrorWithSecretValues(recordErr, secretValues)
-		}
-		return redactedErr
-	}
-	if step.ActionType != webhookActionType {
-		return recordFailure(fmt.Errorf("unsupported actionType %q", step.ActionType))
-	}
-	if step.ActionVersion != types.AgentActionVersionV1 {
-		return recordFailure(fmt.Errorf("unsupported actionVersion %q", step.ActionVersion))
-	}
-	input, err := decodeWebhookActionInput(step.Inputs)
-	if err != nil {
-		return recordFailure(err)
-	}
-	input.TenantID = lease.OrganizationID
-	input.LeaseID = lease.ID
-	input.TaskID = lease.TaskID
-	input.StepRunID = step.StepRunID
-	if input.IdempotencyKey == "" {
-		input.IdempotencyKey = strings.TrimSpace(step.IdempotencyKey)
-	}
-	if input.IdempotencyKey == "" {
-		return recordFailure(fmt.Errorf("idempotencyKey is required"))
-	}
-	releasePolicy, err := evaluateWebhookPolicy(ctx, lease, input, false)
-	if err != nil {
-		return recordFailure(err)
-	}
-	secretValues = webhookSecretValues(input)
-	runCtx, runCancel := context.WithTimeout(ctx, time.Duration(input.TimeoutSeconds)*time.Second)
-	defer runCancel()
-	heartbeatErrCh, stopHeartbeat := startTaskLeaseHeartbeat(runCtx, lease, client, runCancel)
-	emitProgress := func(message string) error {
-		sequence++
-		return recordStepEvent(runCtx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeProgress, message, nil, nil, secretValues...)
-	}
-	result, err := runWebhookAction(runCtx, input, emitProgress)
-	releasePolicy(policy.WebhookPolicyResult{
-		StatusCode: result.StatusCode,
-		Err:        err,
-	})
-	secretValues = append(secretValues, result.RedactionValues...)
-	stopHeartbeat()
-	if heartbeatErr := taskLeaseHeartbeatError(heartbeatErrCh); heartbeatErr != nil {
-		return recordFailure(heartbeatErr)
-	}
-	if err != nil {
-		return recordFailure(err)
-	}
-	outputs := []api.AgentStepRunOutputRequest{
-		{Name: "statusCode", Value: result.StatusCode},
-		{Name: "attempts", Value: result.Attempts},
-		{Name: "signingKeyVersion", Value: result.SigningKeyVersion},
-		{Name: "keyRotationApplied", Value: result.KeyRotationApplied},
-	}
-	outputs = append(outputs, webhookAuditOutputRequests(result.AuditTrail)...)
-	outputs = append(outputs, result.Outputs...)
-	sequence++
-	return recordStepEvent(ctx, client, step.StepRunID, lease.LeaseToken, sequence, types.StepRunEventTypeSucceeded, "Webhook succeeded", nil, outputs, secretValues...)
-}
-
-func webhookReplayResult(
-	ctx context.Context,
-	lease api.AgentTaskLease,
-	stepRunID uuid.UUID,
-	client leasedTaskClient,
-) (webhookRunResult, bool, error) {
-	if webhookSelfContainedModeEnabled() {
-		localTimelineClient, ok := client.(localTaskTimelineClient)
-		if !ok {
-			return webhookRunResult{}, false, nil
-		}
-		timeline, err := localTimelineClient.LocalTaskTimeline(ctx, lease.TaskID, lease.ID)
-		if err != nil {
-			return webhookRunResult{}, false, err
-		}
-		return webhookReplayResultFromTimelineForLease(timeline, lease.OrganizationID, lease.AgentID, lease.TaskID, stepRunID, lease.ID)
-	}
-	timelineClient, ok := client.(taskTimelineClient)
-	if !ok {
-		return webhookRunResult{}, false, nil
-	}
-	timeline, err := timelineClient.GetTaskTimeline(ctx, lease.TaskID, lease.ID)
-	if err != nil {
-		return webhookRunResult{}, false, err
-	}
-	return webhookReplayResultFromTimelineForLease(timeline, lease.OrganizationID, lease.AgentID, lease.TaskID, stepRunID, lease.ID)
-}
-
-func evaluateWebhookPolicy(
-	ctx context.Context,
-	lease api.AgentTaskLease,
-	input webhookActionInput,
-	replay bool,
-) (policy.WebhookPolicyRelease, error) {
-	engine, err := currentWebhookPolicyEngine()
-	if err != nil {
-		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), err
-	}
-	if engine == nil {
-		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), nil
-	}
-	endpoint, err := url.Parse(input.URL)
-	if err != nil {
-		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), fmt.Errorf("url is invalid: %w", err)
-	}
-	decision, release, err := engine.EvaluateWebhookPolicy(ctx, policy.WebhookPolicyInput{
-		TenantID: lease.OrganizationID,
-		AgentID:  lease.AgentID,
-		Corridor: input.Corridor,
-		Host:     normalizeWebhookHost(endpoint.Hostname()),
-		RetryMax: input.Retry.MaxAttempts,
-		Replay:   replay,
-		Priority: input.Priority,
-	})
-	if err != nil {
-		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), fmt.Errorf("webhook policy evaluation failed: %w", err)
-	}
-	if !decision.Allowed {
-		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), policy.FormatWebhookPolicyDenial(decision.Reason)
-	}
-	if release == nil {
-		return policy.WebhookPolicyRelease(func(policy.WebhookPolicyResult) {}), nil
-	}
-	return release, nil
-}
-
-func currentWebhookPolicyEngine() (policy.WebhookPolicyEvaluator, error) {
-	if webhookPolicyEngineForTest != nil {
-		return webhookPolicyEngineForTest, nil
-	}
-	webhookPolicyEngineOnce.Do(func() {
-		config, err := loadWebhookPolicyConfigFromEnv()
-		if err != nil {
-			webhookPolicyEngineDefaultErr = err
-			return
-		}
-		webhookPolicyEngineDefault = policy.NewWebhookPolicyEngine(config)
-	})
-	return webhookPolicyEngineDefault, webhookPolicyEngineDefaultErr
-}
-
-func loadWebhookPolicyConfigFromEnv() (policy.WebhookPolicyConfig, error) {
-	tenantRPS, err := webhookOptionalPositiveIntEnv(webhookTenantRPSEnv)
-	if err != nil {
-		return policy.WebhookPolicyConfig{}, err
-	}
-	agentRPS, err := webhookOptionalPositiveIntEnv(webhookAgentRPSEnv)
-	if err != nil {
-		return policy.WebhookPolicyConfig{}, err
-	}
-	agentConcurrency, err := webhookOptionalPositiveIntEnv(webhookAgentConcurrencyEnv)
-	if err != nil {
-		return policy.WebhookPolicyConfig{}, err
-	}
-	corridorRPS, err := webhookCorridorPolicyEnv(webhookCorridorRPSEnv)
-	if err != nil {
-		return policy.WebhookPolicyConfig{}, err
-	}
-	maxRetryAttempts, err := webhookOptionalPositiveIntEnv(webhookMaxRetryAttemptsEnv)
-	if err != nil {
-		return policy.WebhookPolicyConfig{}, err
-	}
-	endpointFailureLimit, err := webhookOptionalPositiveIntEnv(webhookEndpointFailureLimitEnv)
-	if err != nil {
-		return policy.WebhookPolicyConfig{}, err
-	}
-	return policy.WebhookPolicyConfig{
-		TenantRequestsPerSecond:   tenantRPS,
-		AgentRequestsPerSecond:    agentRPS,
-		AgentConcurrentExecutions: agentConcurrency,
-		CorridorRequestsPerSecond: corridorRPS,
-		OpenCircuitHosts:          webhookPolicyListEnv(webhookOpenCircuitHostsEnv),
-		MaxRetryAttempts:          maxRetryAttempts,
-		EndpointFailureLimit:      endpointFailureLimit,
-	}, nil
-}
-
-func webhookOptionalPositiveIntEnv(name string) (int, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value < 1 {
-		return 0, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return value, nil
-}
-
-func webhookCorridorPolicyEnv(name string) (map[string]int, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return nil, nil
-	}
-	values := map[string]int{}
-	for _, entry := range strings.FieldsFunc(raw, isWebhookResolvedIPCacheEntrySeparator) {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
-			return nil, fmt.Errorf("%s contains invalid entry", name)
-		}
-		key = strings.TrimSpace(key)
-		if key == "" || !isWebhookTokenValue(key) {
-			return nil, fmt.Errorf("%s contains invalid corridor", name)
-		}
-		limit, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil || limit < 1 {
-			return nil, fmt.Errorf("%s contains invalid corridor limit", name)
-		}
-		values[key] = limit
-	}
-	return values, nil
-}
-
-func webhookPolicyListEnv(name string) []string {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return nil
-	}
-	var values []string
-	for _, item := range strings.FieldsFunc(raw, isWebhookResolvedIPCacheEntrySeparator) {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			values = append(values, item)
-		}
-	}
-	return values
-}
-
-func webhookReplayResultFromTimeline(
-	timeline *api.TaskTimeline,
-	stepRunID uuid.UUID,
-) (webhookRunResult, bool, error) {
-	return webhookReplayResultFromTimelineForLease(timeline, uuid.Nil, uuid.Nil, uuid.Nil, stepRunID, uuid.Nil)
-}
-
-func webhookReplayResultFromTimelineForLease(
-	timeline *api.TaskTimeline,
-	organizationID uuid.UUID,
-	agentID uuid.UUID,
-	taskID uuid.UUID,
-	stepRunID uuid.UUID,
-	leaseID uuid.UUID,
-) (webhookRunResult, bool, error) {
-	if timeline == nil {
-		return webhookRunResult{}, false, nil
-	}
-	if organizationID != uuid.Nil && timeline.OrganizationID != uuid.Nil && timeline.OrganizationID != organizationID {
-		return webhookRunResult{}, false, fmt.Errorf("stored webhook replay organization does not match active lease")
-	}
-	var success *api.StepRunEvent
-	var incomplete bool
-	var failed bool
-	for i := range timeline.Events {
-		event := &timeline.Events[i]
-		if event.StepRunID != stepRunID {
-			continue
-		}
-		if organizationID != uuid.Nil && event.OrganizationID != uuid.Nil && event.OrganizationID != organizationID {
-			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay organization does not match active lease")
-		}
-		if agentID != uuid.Nil && event.AgentID != uuid.Nil && event.AgentID != agentID {
-			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay agent does not match active lease")
-		}
-		if taskID != uuid.Nil && event.TaskID != uuid.Nil && event.TaskID != taskID {
-			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay task does not match active lease")
-		}
-		if leaseID != uuid.Nil && event.TaskLeaseID != uuid.Nil && event.TaskLeaseID != leaseID {
-			return webhookRunResult{}, false, fmt.Errorf("stored webhook replay lease does not match active lease")
-		}
-		switch event.Type {
-		case types.StepRunEventTypeSucceeded:
-			success = event
-		case types.StepRunEventTypeFailed:
-			failed = true
-		case types.StepRunEventTypeStarted,
-			types.StepRunEventTypeProgress,
-			types.StepRunEventTypeLog,
-			types.StepRunEventTypeOutput:
-			incomplete = true
-		}
-	}
-	if success == nil {
-		if failed {
-			return webhookRunResult{}, false, fmt.Errorf("webhook replay is already failed; refusing to re-execute external request")
-		}
-		if incomplete {
-			return webhookRunResult{}, false, fmt.Errorf("webhook replay is incomplete; refusing to re-execute external request")
-		}
-		return webhookRunResult{}, false, nil
-	}
-	result := webhookRunResult{}
-	hasStatusCode := false
-	hasAttempts := false
-	var auditChainRoot string
-	var auditEventHash string
-	hasAuditTrail := false
-	for _, output := range success.Outputs {
-		value, err := webhookStoredOutputValue(output.Value)
-		if err != nil {
-			return webhookRunResult{}, false, err
-		}
-		var ok bool
-		switch output.Name {
-		case "statusCode":
-			statusCode, ok := webhookStoredIntOutput(value)
-			if !ok {
-				return webhookRunResult{}, false, fmt.Errorf("stored webhook statusCode output is invalid")
-			}
-			result.StatusCode = statusCode
-			hasStatusCode = true
-		case "attempts":
-			attempts, ok := webhookStoredIntOutput(value)
-			if !ok {
-				return webhookRunResult{}, false, fmt.Errorf("stored webhook attempts output is invalid")
-			}
-			result.Attempts = attempts
-			hasAttempts = true
-		case "signingKeyVersion":
-			signingKeyVersion, ok := webhookStoredIntOutput(value)
-			if !ok {
-				return webhookRunResult{}, false, fmt.Errorf("stored webhook signingKeyVersion output is invalid")
-			}
-			result.SigningKeyVersion = signingKeyVersion
-		case "keyRotationApplied":
-			keyRotationApplied, ok := webhookStoredBoolOutput(value)
-			if !ok {
-				return webhookRunResult{}, false, fmt.Errorf("stored webhook keyRotationApplied output is invalid")
-			}
-			result.KeyRotationApplied = keyRotationApplied
-		case "auditChainRoot":
-			auditChainRoot, ok = webhookStoredStringOutput(value)
-			if !ok {
-				return webhookRunResult{}, false, fmt.Errorf("stored webhook auditChainRoot output is invalid")
-			}
-		case "auditEventHash":
-			auditEventHash, ok = webhookStoredStringOutput(value)
-			if !ok {
-				return webhookRunResult{}, false, fmt.Errorf("stored webhook auditEventHash output is invalid")
-			}
-		case "auditTrail":
-			if err := webhookDecodeStoredOutput(output.Value, &result.AuditTrail); err != nil {
-				return webhookRunResult{}, false, fmt.Errorf("stored webhook auditTrail output is invalid: %w", err)
-			}
-			hasAuditTrail = true
-		default:
-			result.Outputs = append(result.Outputs, api.AgentStepRunOutputRequest{
-				Name:      output.Name,
-				Value:     value,
-				Sensitive: output.Sensitive,
-			})
-		}
-	}
-	if !hasStatusCode || !hasAttempts {
-		return webhookRunResult{}, false, fmt.Errorf("stored webhook success is missing built-in outputs")
-	}
-	if hasAuditTrail {
-		if err := webhookVerifyAuditTrail(result.AuditTrail, auditChainRoot, auditEventHash, result); err != nil {
-			return webhookRunResult{}, false, err
-		}
-	} else if webhookStrictReplayVerifyEnabled() {
-		return webhookRunResult{}, false, fmt.Errorf("stored webhook audit trail is missing")
-	}
-	return result, true, nil
-}
-
-func webhookStoredOutputValue(raw json.RawMessage) (any, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("decode stored webhook output: %w", err)
-	}
-	return value, nil
-}
-
-func webhookStoredIntOutput(value any) (int, bool) {
-	switch typed := value.(type) {
-	case json.Number:
-		number, err := typed.Int64()
-		if err != nil {
-			return 0, false
-		}
-		return int(number), true
-	case float64:
-		number := int(typed)
-		return number, typed == float64(number)
-	case int:
-		return typed, true
-	default:
-		return 0, false
-	}
-}
-
-func webhookStoredBoolOutput(value any) (bool, bool) {
-	typed, ok := value.(bool)
-	return typed, ok
-}
-
-func webhookStoredStringOutput(value any) (string, bool) {
-	typed, ok := value.(string)
-	return typed, ok
-}
-
-func webhookDecodeStoredOutput(raw json.RawMessage, target any) error {
-	if len(raw) == 0 {
-		return fmt.Errorf("empty output")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	return decoder.Decode(target)
-}
-
-func webhookNewAuditTrail(input webhookActionInput, first webhookAuditEvent) (webhookAuditExport, error) {
-	return webhookAppendAuditEvent(webhookAuditExport{}, input, first)
+func webhookNewAuditTrail(input Input, first AuditEvent) (AuditExport, error) {
+	return webhookAppendAuditEvent(AuditExport{}, input, first)
 }
 
 func webhookAppendAttemptAudit(
-	audit webhookAuditExport,
-	input webhookActionInput,
+	audit AuditExport,
+	input Input,
 	attempt int,
 	statusCode int,
 	retryReason string,
-) webhookAuditExport {
-	next, err := webhookAppendAuditEvent(audit, input, webhookAuditEvent{
+) AuditExport {
+	next, err := webhookAppendAuditEvent(audit, input, AuditEvent{
 		EventType:   "attempt",
 		Attempt:     attempt,
 		StatusCode:  statusCode,
@@ -811,14 +285,14 @@ func webhookAppendAttemptAudit(
 }
 
 func webhookAppendCompletedAudit(
-	audit webhookAuditExport,
-	input webhookActionInput,
+	audit AuditExport,
+	input Input,
 	statusCode int,
 	attempts int,
 	signingConfig webhookSigningConfig,
-) webhookAuditExport {
+) AuditExport {
 	keyRotationApplied := signingConfig.KeyRotationApplied
-	next, err := webhookAppendAuditEvent(audit, input, webhookAuditEvent{
+	next, err := webhookAppendAuditEvent(audit, input, AuditEvent{
 		EventType:          "completed",
 		Attempt:            attempts,
 		StatusCode:         statusCode,
@@ -831,7 +305,7 @@ func webhookAppendCompletedAudit(
 	return next
 }
 
-func webhookAppendAuditEvent(audit webhookAuditExport, input webhookActionInput, event webhookAuditEvent) (webhookAuditExport, error) {
+func webhookAppendAuditEvent(audit AuditExport, input Input, event AuditEvent) (AuditExport, error) {
 	event.TenantID = webhookUUIDString(input.TenantID)
 	event.LeaseID = webhookUUIDString(input.LeaseID)
 	event.TaskID = webhookUUIDString(input.TaskID)
@@ -839,7 +313,7 @@ func webhookAppendAuditEvent(audit webhookAuditExport, input webhookActionInput,
 	if len(audit.Events) > 0 {
 		event.ParentAuditEventID = audit.Events[len(audit.Events)-1].EventHash
 	}
-	hash, err := webhookAuditEventHash(event)
+	hash, err := AuditEventHash(event)
 	if err != nil {
 		return audit, err
 	}
@@ -849,7 +323,7 @@ func webhookAppendAuditEvent(audit webhookAuditExport, input webhookActionInput,
 	return audit, nil
 }
 
-func webhookAuditOutputRequests(audit webhookAuditExport) []api.AgentStepRunOutputRequest {
+func AuditOutputRequests(audit AuditExport) []api.AgentStepRunOutputRequest {
 	if len(audit.Events) == 0 {
 		return nil
 	}
@@ -860,7 +334,7 @@ func webhookAuditOutputRequests(audit webhookAuditExport) []api.AgentStepRunOutp
 	}
 }
 
-func webhookVerifyAuditTrail(audit webhookAuditExport, rootHash, finalHash string, result webhookRunResult) error {
+func webhookVerifyAuditTrail(audit AuditExport, rootHash, finalHash string, result Result) error {
 	if len(audit.Events) == 0 {
 		return fmt.Errorf("stored webhook audit trail is empty")
 	}
@@ -879,7 +353,7 @@ func webhookVerifyAuditTrail(audit webhookAuditExport, rootHash, finalHash strin
 		} else if event.ParentAuditEventID != audit.Events[i-1].EventHash {
 			return fmt.Errorf("stored webhook audit trail parent mismatch")
 		}
-		expectedHash, err := webhookAuditEventHash(event)
+		expectedHash, err := AuditEventHash(event)
 		if err != nil {
 			return err
 		}
@@ -906,20 +380,20 @@ func webhookVerifyAuditTrail(audit webhookAuditExport, rootHash, finalHash strin
 	return nil
 }
 
-func webhookAuditEventHash(event webhookAuditEvent) (string, error) {
+func AuditEventHash(event AuditEvent) (string, error) {
 	payload := struct {
-		ParentAuditEventID string                  `json:"parentAuditEventId,omitempty"`
-		EventType          string                  `json:"eventType"`
-		TenantID           string                  `json:"tenantId,omitempty"`
-		LeaseID            string                  `json:"leaseId,omitempty"`
-		TaskID             string                  `json:"taskId,omitempty"`
-		StepRunID          string                  `json:"stepRunId,omitempty"`
-		Attempt            int                     `json:"attempt,omitempty"`
-		StatusCode         int                     `json:"statusCode,omitempty"`
-		RetryReason        string                  `json:"retryReason,omitempty"`
-		DNS                *webhookAuditDNSSummary `json:"dns,omitempty"`
-		SigningKeyVersion  int                     `json:"signingKeyVersion,omitempty"`
-		KeyRotationApplied *bool                   `json:"keyRotationApplied,omitempty"`
+		ParentAuditEventID string           `json:"parentAuditEventId,omitempty"`
+		EventType          string           `json:"eventType"`
+		TenantID           string           `json:"tenantId,omitempty"`
+		LeaseID            string           `json:"leaseId,omitempty"`
+		TaskID             string           `json:"taskId,omitempty"`
+		StepRunID          string           `json:"stepRunId,omitempty"`
+		Attempt            int              `json:"attempt,omitempty"`
+		StatusCode         int              `json:"statusCode,omitempty"`
+		RetryReason        string           `json:"retryReason,omitempty"`
+		DNS                *AuditDNSSummary `json:"dns,omitempty"`
+		SigningKeyVersion  int              `json:"signingKeyVersion,omitempty"`
+		KeyRotationApplied *bool            `json:"keyRotationApplied,omitempty"`
 	}{
 		ParentAuditEventID: event.ParentAuditEventID,
 		EventType:          event.EventType,
@@ -957,96 +431,13 @@ func webhookSelfContainedModeEnabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(webhookSelfContainedModeEnv)), "true")
 }
 
-func runWebhookAction(
+func Run(
 	ctx context.Context,
-	input webhookActionInput,
+	input Input,
 	emitProgress func(string) error,
-) (webhookRunResult, error) {
-	outputs := make([]webhookaction.OutputDeclaration, 0, len(input.Outputs))
-	for _, output := range input.Outputs {
-		outputs = append(outputs, webhookaction.OutputDeclaration{
-			Name:      output.Name,
-			Pointer:   output.Pointer,
-			Type:      output.Type,
-			Required:  output.Required,
-			Sensitive: output.Sensitive,
-		})
-	}
-	result, err := webhookaction.Run(ctx, webhookaction.Input{
-		URL:                 input.URL,
-		Method:              input.Method,
-		Headers:             input.Headers,
-		SecretHeaders:       input.SecretHeaders,
-		Body:                input.Body,
-		SensitiveBody:       input.SensitiveBody,
-		SigningSecret:       input.SigningSecret,
-		SigningSecrets:      input.SigningSecrets,
-		TimeoutSeconds:      input.TimeoutSeconds,
-		Retry:               webhookaction.RetryPolicy(input.Retry),
-		ExpectedStatusCodes: input.ExpectedStatusCodes,
-		IdempotencyKey:      input.IdempotencyKey,
-		Corridor:            input.Corridor,
-		Priority:            input.Priority,
-		Outputs:             outputs,
-		TenantID:            input.TenantID,
-		LeaseID:             input.LeaseID,
-		TaskID:              input.TaskID,
-		StepRunID:           input.StepRunID,
-	}, emitProgress, webhookaction.RuntimeOptions{
-		Now:               webhookNow,
-		HTTPClient:        webhookHTTPClientForTest,
-		LookupIPAddr:      webhookLookupIPAddr,
-		DialContext:       webhookDialContext,
-		AttemptMetricSink: webhookAttemptMetricSink,
-	})
-	return webhookRunResult{
-		StatusCode:         result.StatusCode,
-		Attempts:           result.Attempts,
-		SigningKeyVersion:  result.SigningKeyVersion,
-		KeyRotationApplied: result.KeyRotationApplied,
-		Outputs:            result.Outputs,
-		RedactionValues:    result.RedactionValues,
-		AuditTrail:         webhookAuditExportFromShared(result.AuditTrail),
-	}, err
-}
-
-func webhookAuditExportFromShared(audit webhookaction.AuditExport) webhookAuditExport {
-	result := webhookAuditExport{Events: make([]webhookAuditEvent, 0, len(audit.Events))}
-	for _, event := range audit.Events {
-		var dns *webhookAuditDNSSummary
-		if event.DNS != nil {
-			dns = &webhookAuditDNSSummary{
-				Host:                 event.DNS.Host,
-				Port:                 event.DNS.Port,
-				ResolvedAddressCount: event.DNS.ResolvedAddressCount,
-				PrivateHostAllowed:   event.DNS.PrivateHostAllowed,
-			}
-		}
-		result.Events = append(result.Events, webhookAuditEvent{
-			AuditEventID:       event.AuditEventID,
-			ParentAuditEventID: event.ParentAuditEventID,
-			EventHash:          event.EventHash,
-			EventType:          event.EventType,
-			TenantID:           event.TenantID,
-			LeaseID:            event.LeaseID,
-			TaskID:             event.TaskID,
-			StepRunID:          event.StepRunID,
-			Attempt:            event.Attempt,
-			StatusCode:         event.StatusCode,
-			RetryReason:        event.RetryReason,
-			DNS:                dns,
-			SigningKeyVersion:  event.SigningKeyVersion,
-			KeyRotationApplied: event.KeyRotationApplied,
-		})
-	}
-	return result
-}
-
-func runWebhookActionLegacy(
-	ctx context.Context,
-	input webhookActionInput,
-	emitProgress func(string) error,
-) (webhookRunResult, error) {
+	runtimeOptions RuntimeOptions,
+) (Result, error) {
+	runtimeOptions = runtimeOptions.withDefaults()
 	runCtx := ctx
 	if input.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
@@ -1055,19 +446,19 @@ func runWebhookActionLegacy(
 	}
 	policy, err := loadWebhookOutboundPolicy()
 	if err != nil {
-		return webhookRunResult{}, err
+		return Result{}, err
 	}
 	endpoint, err := validateWebhookTargetURL(input.URL, policy)
 	if err != nil {
-		return webhookRunResult{}, err
+		return Result{}, err
 	}
-	resolvedTarget, err := resolveWebhookTarget(runCtx, endpoint, policy)
+	resolvedTarget, err := resolveWebhookTarget(runCtx, endpoint, policy, runtimeOptions)
 	if err != nil {
-		return webhookRunResult{}, err
+		return Result{}, err
 	}
-	auditTrail, err := webhookNewAuditTrail(input, webhookAuditEvent{
+	auditTrail, err := webhookNewAuditTrail(input, AuditEvent{
 		EventType: "resolvedTarget",
-		DNS: &webhookAuditDNSSummary{
+		DNS: &AuditDNSSummary{
 			Host:                 normalizeWebhookHost(endpoint.Hostname()),
 			Port:                 resolvedTarget.port,
 			ResolvedAddressCount: len(resolvedTarget.ips),
@@ -1075,24 +466,24 @@ func runWebhookActionLegacy(
 		},
 	})
 	if err != nil {
-		return webhookRunResult{}, err
+		return Result{}, err
 	}
 	body, err := webhookRequestBodyBytes(input.Body)
 	if err != nil {
-		return webhookRunResult{}, err
+		return Result{}, err
 	}
 	bodyDigest := webhookBodyDigest(body)
-	timestamp := webhookNow().UTC().Format(time.RFC3339)
+	timestamp := runtimeOptions.Now().UTC().Format(time.RFC3339)
 	signingConfig, err := webhookSigningConfigForInput(input)
 	if err != nil {
-		return webhookRunResult{}, err
+		return Result{}, err
 	}
 	signature := webhookSignature(
 		signingConfig.ActiveSecret,
 		webhookCanonicalDataWithTenant(input.Method, endpoint, timestamp, input.IdempotencyKey, bodyDigest, input.TenantID),
 	)
-	resultFor := func(statusCode, attempts int, outputs []api.AgentStepRunOutputRequest) webhookRunResult {
-		return webhookRunResult{
+	resultFor := func(statusCode, attempts int, outputs []api.AgentStepRunOutputRequest) Result {
+		return Result{
 			StatusCode:         statusCode,
 			Attempts:           attempts,
 			SigningKeyVersion:  signingConfig.ActiveVersion,
@@ -1102,7 +493,7 @@ func runWebhookActionLegacy(
 			AuditTrail:         auditTrail,
 		}
 	}
-	client := newWebhookHTTPClient(policy, resolvedTarget)
+	client := newWebhookHTTPClient(policy, resolvedTarget, runtimeOptions)
 	expectedStatuses := intSet(input.ExpectedStatusCodes)
 	retryableStatuses := intSet(input.Retry.RetryableStatusCodes)
 	maxAttempts := input.Retry.MaxAttempts
@@ -1121,7 +512,7 @@ func runWebhookActionLegacy(
 		responseBody, statusCode, err := sendWebhookAttempt(
 			runCtx, client, input, endpoint, body, bodyDigest, timestamp, signature, signingConfig.ActiveVersion,
 		)
-		emitWebhookAttemptMetric(webhookAttemptMetric{
+		emitWebhookAttemptMetric(runtimeOptions, AttemptMetric{
 			Attempt:    attempt,
 			StatusCode: statusCode,
 			Duration:   time.Since(attemptStarted),
@@ -1164,12 +555,12 @@ func runWebhookActionLegacy(
 	return resultFor(lastStatus, maxAttempts, nil), fmt.Errorf("webhook did not complete")
 }
 
-func emitWebhookAttemptMetric(metric webhookAttemptMetric) {
-	if webhookAttemptMetricSink == nil {
+func emitWebhookAttemptMetric(runtimeOptions RuntimeOptions, metric AttemptMetric) {
+	if runtimeOptions.AttemptMetricSink == nil {
 		return
 	}
 	select {
-	case webhookAttemptMetricSink <- metric:
+	case runtimeOptions.AttemptMetricSink <- metric:
 	default:
 	}
 }
@@ -1201,7 +592,7 @@ func isRetryableWebhookAttemptError(statusCode int, err error) bool {
 func sendWebhookAttempt(
 	ctx context.Context,
 	client *http.Client,
-	input webhookActionInput,
+	input Input,
 	endpoint *url.URL,
 	body []byte,
 	bodyDigest string,
@@ -1290,12 +681,17 @@ func validateWebhookTargetURL(rawURL string, policy webhookOutboundPolicy) (*url
 	return endpoint, nil
 }
 
-func resolveWebhookTarget(ctx context.Context, endpoint *url.URL, policy webhookOutboundPolicy) (webhookResolvedTarget, error) {
+func resolveWebhookTarget(
+	ctx context.Context,
+	endpoint *url.URL,
+	policy webhookOutboundPolicy,
+	runtimeOptions RuntimeOptions,
+) (webhookResolvedTarget, error) {
 	port := endpoint.Port()
 	if port == "" {
 		port = defaultWebhookPort(endpoint.Scheme)
 	}
-	ips, err := lookupWebhookTargetIPs(ctx, endpoint.Host, endpoint.Hostname(), policy)
+	ips, err := lookupWebhookTargetIPs(ctx, endpoint.Host, endpoint.Hostname(), policy, runtimeOptions)
 	if err != nil {
 		return webhookResolvedTarget{}, err
 	}
@@ -1313,7 +709,12 @@ func defaultWebhookPort(scheme string) string {
 	return ""
 }
 
-func lookupWebhookTargetIPs(ctx context.Context, hostPort, host string, policy webhookOutboundPolicy) ([]net.IPAddr, error) {
+func lookupWebhookTargetIPs(
+	ctx context.Context,
+	hostPort, host string,
+	policy webhookOutboundPolicy,
+	runtimeOptions RuntimeOptions,
+) ([]net.IPAddr, error) {
 	privateAllowed := policy.isPrivateHostAllowed(hostPort, host)
 	if ip := net.ParseIP(host); ip != nil {
 		if isUnsafeWebhookIP(ip) && !privateAllowed {
@@ -1331,7 +732,7 @@ func lookupWebhookTargetIPs(ctx context.Context, hostPort, host string, policy w
 		}
 		return ips, nil
 	}
-	ips, err := webhookLookupIPAddr(ctx, host)
+	ips, err := runtimeOptions.LookupIPAddr(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("webhook host did not resolve: %w", err)
 	}
@@ -1417,10 +818,14 @@ func isWebhookResolvedIPCacheIPSeparator(r rune) bool {
 	}
 }
 
-func newWebhookHTTPClient(policy webhookOutboundPolicy, resolvedTarget webhookResolvedTarget) *http.Client {
-	if webhookHTTPClientForTest != nil {
-		clone := *webhookHTTPClientForTest
-		clone.CheckRedirect = webhookCheckRedirect(policy)
+func newWebhookHTTPClient(
+	policy webhookOutboundPolicy,
+	resolvedTarget webhookResolvedTarget,
+	runtimeOptions RuntimeOptions,
+) *http.Client {
+	if runtimeOptions.HTTPClient != nil {
+		clone := *runtimeOptions.HTTPClient
+		clone.CheckRedirect = webhookCheckRedirect(policy, runtimeOptions)
 		return &clone
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -1438,28 +843,31 @@ func newWebhookHTTPClient(policy webhookOutboundPolicy, resolvedTarget webhookRe
 		}
 		ips := resolvedTarget.ips
 		if normalizeWebhookHost(host) != resolvedTarget.host || port != resolvedTarget.port {
-			ips, err = lookupWebhookTargetIPs(ctx, address, host, policy)
+			ips, err = lookupWebhookTargetIPs(ctx, address, host, policy, runtimeOptions)
 			if err != nil {
 				return nil, err
 			}
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, webhookConnectTimeout)
 		defer cancel()
-		return webhookDialContext(dialCtx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		return runtimeOptions.DialContext(dialCtx, network, net.JoinHostPort(ips[0].IP.String(), port))
 	}
 	return &http.Client{
 		Transport:     transport,
-		CheckRedirect: webhookCheckRedirect(policy),
+		CheckRedirect: webhookCheckRedirect(policy, runtimeOptions),
 	}
 }
 
-func webhookCheckRedirect(policy webhookOutboundPolicy) func(*http.Request, []*http.Request) error {
+func webhookCheckRedirect(
+	policy webhookOutboundPolicy,
+	runtimeOptions RuntimeOptions,
+) func(*http.Request, []*http.Request) error {
 	return func(request *http.Request, _ []*http.Request) error {
 		endpoint, err := validateWebhookTargetURL(request.URL.String(), policy)
 		if err != nil {
 			return err
 		}
-		if _, err := resolveWebhookTarget(request.Context(), endpoint, policy); err != nil {
+		if _, err := resolveWebhookTarget(request.Context(), endpoint, policy, runtimeOptions); err != nil {
 			return err
 		}
 		return http.ErrUseLastResponse
@@ -1568,7 +976,7 @@ func webhookSignature(secret string, canonical string) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func webhookSigningConfigForInput(input webhookActionInput) (webhookSigningConfig, error) {
+func webhookSigningConfigForInput(input Input) (webhookSigningConfig, error) {
 	if len(input.SigningSecrets) > 0 {
 		if strings.TrimSpace(input.SigningSecret) != "" {
 			return webhookSigningConfig{}, fmt.Errorf("signingSecret and signingSecrets cannot both be set")
@@ -1646,7 +1054,7 @@ func webhookSignatureMatches(secret string, canonicalData string, signature stri
 
 func extractWebhookDeclaredOutputs(
 	responseBody []byte,
-	declarations []webhookOutputDeclaration,
+	declarations []OutputDeclaration,
 ) ([]api.AgentStepRunOutputRequest, error) {
 	if len(declarations) == 0 {
 		return nil, nil
@@ -1770,7 +1178,7 @@ func validateWebhookHeaders(publicHeaders, secretHeaders map[string]string) erro
 	return nil
 }
 
-func validateWebhookOutputs(outputs []webhookOutputDeclaration) error {
+func validateWebhookOutputs(outputs []OutputDeclaration) error {
 	if len(outputs) > api.MaxStepRunEventOutputItemCount-webhookBuiltInOutputCount {
 		return fmt.Errorf("outputs contains too many entries")
 	}
@@ -1899,7 +1307,7 @@ func intSet(values []int) map[int]struct{} {
 	return set
 }
 
-func webhookSecretValues(input webhookActionInput) []string {
+func SecretValues(input Input) []string {
 	values := make([]string, 0, len(input.SecretHeaders)+1+len(input.SigningSecrets))
 	for _, secret := range input.SigningSecrets {
 		if secret != "" {

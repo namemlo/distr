@@ -60,6 +60,76 @@ func TestTaskLeaseRepositoryClaimsQueuedTaskForAgent(t *testing.T) {
 	g.Expect(fetched.Status).To(Equal(types.TaskStatusRunning))
 }
 
+func TestTaskLeaseRepositoryClaimsQueuedHubStepWithoutAgent(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	hubStep := taskLeaseWebhookStep("trigger", "Trigger Jenkins", 10)
+	hubStep.ExecutionLocation = "hub"
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{hubStep})
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	agentLease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(agentLease).To(BeNil())
+
+	hubLease, err := db.LeaseHubTask(ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(hubLease).NotTo(BeNil())
+	g.Expect(hubLease.ExecutorType).To(Equal(types.TaskExecutorTypeHub))
+	g.Expect(hubLease.AgentID).To(Equal(tasks[0].DeploymentTargetID))
+	g.Expect(hubLease.Steps).To(HaveLen(1))
+	g.Expect(hubLease.Steps[0].StepKey).To(Equal("trigger"))
+}
+
+func TestTaskLeaseRepositoryHandsHubTaskToAgentAfterHubBatchCompletes(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	hubStep := taskLeaseWebhookStep("trigger", "Trigger Jenkins", 10)
+	hubStep.ExecutionLocation = "hub"
+	targetStep := taskLeaseHTTPCheckStep("verify", "Verify deployment", 20)
+	targetStep.Dependencies = []string{"trigger"}
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(
+		t, ctx, []types.DeploymentProcessStep{hubStep, targetStep},
+	)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	hubLease, err := db.LeaseHubTask(ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(hubLease).NotTo(BeNil())
+	recordTaskLeaseHubStepEventForTest(
+		t, ctx, deps.orgID, tasks[0].DeploymentTargetID, hubLease.Steps[0].StepRunID,
+		hubLease.LeaseToken, 1, types.StepRunEventTypeStarted,
+	)
+	recordTaskLeaseHubStepEventForTest(
+		t, ctx, deps.orgID, tasks[0].DeploymentTargetID, hubLease.Steps[0].StepRunID,
+		hubLease.LeaseToken, 2, types.StepRunEventTypeSucceeded,
+	)
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, tasks[0].ID)).To(Equal(0))
+
+	agentLease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
+		OrganizationID: deps.orgID,
+		AgentID:        tasks[0].DeploymentTargetID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(agentLease).NotTo(BeNil())
+	g.Expect(agentLease.ExecutorType).To(Equal(types.TaskExecutorTypeAgent))
+	g.Expect(agentLease.Steps).To(HaveLen(1))
+	g.Expect(agentLease.Steps[0].StepKey).To(Equal("verify"))
+}
+
 func TestTaskLeaseRepositoryResolvesComposeRegistryAuthSecretOnlyForAgentLease(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -944,6 +1014,18 @@ func TestTaskLeaseMigrationDefinesLeaseTables(t *testing.T) {
 	g.Expect(downSQL).To(ContainSubstring("DROP TABLE IF EXISTS TaskLease"))
 }
 
+func TestHubTaskExecutorMigrationDefinesExecutorType(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "132_hub_task_executor.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(up)).To(ContainSubstring("executor_type"))
+	g.Expect(string(up)).To(ContainSubstring("'AGENT', 'HUB'"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "132_hub_task_executor.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN executor_type"))
+}
+
 func taskLeaseDBTestContext(t *testing.T) context.Context {
 	t.Helper()
 	return taskQueueDBTestContext(t)
@@ -1150,6 +1232,30 @@ func recordTaskLeaseStepEventForTest(
 		Sequence:       sequence,
 		Type:           eventType,
 		Message:        string(eventType),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func recordTaskLeaseHubStepEventForTest(
+	t *testing.T,
+	ctx context.Context,
+	orgID uuid.UUID,
+	deploymentTargetID uuid.UUID,
+	stepRunID uuid.UUID,
+	leaseToken string,
+	sequence int64,
+	eventType types.StepRunEventType,
+) {
+	t.Helper()
+	g := NewWithT(t)
+	_, err := db.RecordHubStepRunEvent(ctx, types.RecordHubStepRunEventRequest{
+		OrganizationID:     orgID,
+		DeploymentTargetID: deploymentTargetID,
+		StepRunID:          stepRunID,
+		LeaseToken:         leaseToken,
+		Sequence:           sequence,
+		Type:               eventType,
+		Message:            string(eventType),
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 }

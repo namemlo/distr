@@ -93,6 +93,7 @@ func runServe(ctx context.Context, opts ServeOptions) {
 	go func() { util.Must(server.Start(":8080")) }()
 	go func() { util.Must(artifactsServer.Start(":8585")) }()
 	go func() { util.Must(metricsServer.Start(env.MetricsAddr())) }()
+	registry.GetHubExecutor().Start(sigCtx)
 	registry.GetJobsScheduler().Start()
 	server.WaitForShutdown()
 	artifactsServer.WaitForShutdown()

@@ -57,8 +57,39 @@ func RecordAgentStepRunEvent(
 	ctx context.Context,
 	request types.RecordAgentStepRunEventRequest,
 ) (*types.StepRunEvent, error) {
+	return recordStepRunEvent(ctx, request, types.TaskExecutorTypeAgent)
+}
+
+func RecordHubStepRunEvent(
+	ctx context.Context,
+	request types.RecordHubStepRunEventRequest,
+) (*types.StepRunEvent, error) {
+	return recordStepRunEvent(ctx, types.RecordAgentStepRunEventRequest{
+		OrganizationID:  request.OrganizationID,
+		AgentID:         request.DeploymentTargetID,
+		StepRunID:       request.StepRunID,
+		LeaseToken:      request.LeaseToken,
+		Sequence:        request.Sequence,
+		Type:            request.Type,
+		OccurredAt:      request.OccurredAt,
+		Message:         request.Message,
+		ProgressPercent: request.ProgressPercent,
+		Details:         request.Details,
+		Logs:            request.Logs,
+		Outputs:         request.Outputs,
+	}, types.TaskExecutorTypeHub)
+}
+
+func recordStepRunEvent(
+	ctx context.Context,
+	request types.RecordAgentStepRunEventRequest,
+	executorType types.TaskExecutorType,
+) (*types.StepRunEvent, error) {
 	if err := validateRecordAgentStepRunEventRequest(&request); err != nil {
 		return nil, err
+	}
+	if !executorType.IsValid() {
+		return nil, apierrors.NewBadRequest("executorType is invalid")
 	}
 	var event *types.StepRunEvent
 	err := RunTx(ctx, func(ctx context.Context) error {
@@ -69,7 +100,7 @@ func RecordAgentStepRunEvent(
 		if target.AgentID != request.AgentID {
 			return apierrors.ErrNotFound
 		}
-		lease, err := getTaskLeaseForStepRunEvent(ctx, request, target.TaskID)
+		lease, err := getTaskLeaseForStepRunEvent(ctx, request, target.TaskID, executorType)
 		if err != nil {
 			return err
 		}
@@ -124,6 +155,17 @@ func RecordAgentStepRunEvent(
 		}
 		if err := insertStepRunOutputs(ctx, eventID, target.TaskID, lease.ID, prepared); err != nil {
 			return err
+		}
+		if prepared.Type == types.StepRunEventTypeSucceeded {
+			if err := releaseTaskLeaseIfExecutorBatchComplete(
+				ctx,
+				target.TaskID,
+				prepared.OrganizationID,
+				lease.ID,
+				executorType.ExecutionLocation(),
+			); err != nil {
+				return err
+			}
 		}
 		event, err = getStepRunEvent(ctx, eventID, prepared.OrganizationID)
 		return err
@@ -708,6 +750,7 @@ func getTaskLeaseForStepRunEvent(
 	ctx context.Context,
 	request types.RecordAgentStepRunEventRequest,
 	taskID uuid.UUID,
+	executorType types.TaskExecutorType,
 ) (stepRunEventLease, error) {
 	db := internalctx.GetDb(ctx)
 	var lease stepRunEventLease
@@ -720,12 +763,14 @@ func getTaskLeaseForStepRunEvent(
 		WHERE organization_id = @organizationId
 			AND agent_id = @agentId
 			AND task_id = @taskId
+			AND executor_type = @executorType
 			AND lease_token_hash = @leaseTokenHash
 		FOR UPDATE`,
 		pgx.NamedArgs{
 			"organizationId": request.OrganizationID,
 			"agentId":        request.AgentID,
 			"taskId":         taskID,
+			"executorType":   executorType,
 			"leaseTokenHash": hashTaskLeaseToken(request.LeaseToken),
 		},
 	).Scan(&lease.ID, &lease.Expired, &lease.Released)
