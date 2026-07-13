@@ -52,7 +52,49 @@ func TestValidateReleaseContractAcceptsAMD64AndARM64Components(t *testing.T) {
 
 	result := ValidateReleaseContract(contract, bundleComponents)
 
-	g.Expect(result.Valid).To(BeTrue(), result.Errors)
+	g.Expect(result.Valid).To(BeTrue())
+}
+
+func TestValidateReleaseContractAcceptsContentAddressedImmutableConfig(t *testing.T) {
+	g := NewWithT(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	checksum := "sha256:" + strings.Repeat("c", 64)
+	contract := validReleaseContractForTest(digest)
+	contract.Config.ImmutableObjects = []types.ReleaseContractConfigObject{{
+		URI: "s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
+			"/choice-tp_dev/1/docker-compose.yaml",
+		Checksum: checksum,
+	}}
+	bundleComponents := []types.ReleaseBundleComponent{{
+		Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage,
+		PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
+	}}
+
+	result := ValidateReleaseContract(contract, bundleComponents)
+
+	g.Expect(result.Valid).To(BeTrue())
+}
+
+func TestValidateReleaseContractRejectsContentAddressChecksumMismatch(t *testing.T) {
+	g := NewWithT(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	contract := validReleaseContractForTest(digest)
+	contract.Config.ImmutableObjects = []types.ReleaseContractConfigObject{{
+		URI: "s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("d", 64) +
+			"/choice-tp_dev/1/docker-compose.yaml",
+		Checksum: "sha256:" + strings.Repeat("c", 64),
+	}}
+	bundleComponents := []types.ReleaseBundleComponent{{
+		Key: "loyalty-api", Type: types.ReleaseBundleComponentTypeOCIImage,
+		PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
+	}}
+
+	result := ValidateReleaseContract(contract, bundleComponents)
+
+	g.Expect(result.Valid).To(BeFalse())
+	g.Expect(issueKeys(result.Errors)).To(ContainElement(
+		"releaseContract.config.immutableObjects:immutable",
+	))
 }
 
 func validReleaseContractForTest(digest string) types.ReleaseContract {

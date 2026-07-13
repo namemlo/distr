@@ -43,6 +43,12 @@ func TestExternalExecutionRepositoryRecordsIdempotentCallbacksAndObservedState(t
 	g.Expect(execution.Status).To(Equal(types.ExternalExecutionStatusQueued))
 	g.Expect(execution.ExpectedImage).To(ContainSubstring("@sha256:"))
 	g.Expect(execution.ExpectedConfigReference).To(ContainSubstring("s3://emlo-backend-configs/"))
+	g.Expect(execution.ExpectedConfigReference).To(ContainSubstring("versionId=v42"))
+	g.Expect(execution.ExpectedComposeReference).To(Equal(
+		"s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
+			"/choice-tp_dev/1/docker-compose.yaml",
+	))
+	g.Expect(execution.ExpectedComposeChecksum).To(Equal("sha256:" + strings.Repeat("c", 64)))
 
 	replayedPrepare, err := db.PrepareExternalExecution(ctx, types.PrepareExternalExecutionRequest{
 		OrganizationID: deps.orgID, StepRunID: tasks[0].StepRuns[0].ID,
@@ -275,6 +281,21 @@ func TestExternalExecutionMigrationDefinesDurableCallbackState(t *testing.T) {
 	g.Expect(downSQL).To(ContainSubstring("SET external_execution_id = NULL"))
 }
 
+func TestExternalExecutionConfigInputsMigrationFreezesComposeState(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "137_external_execution_config_inputs.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(up)).To(ContainSubstring("expected_compose_reference"))
+	g.Expect(string(up)).To(ContainSubstring("expected_compose_checksum"))
+	g.Expect(string(up)).To(ContainSubstring("externalexecution_compose_identity_complete"))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "137_external_execution_config_inputs.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN IF EXISTS expected_compose_reference"))
+	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN IF EXISTS expected_compose_checksum"))
+	g.Expect(string(down)).To(ContainSubstring("DROP CONSTRAINT IF EXISTS externalexecution_compose_identity_complete"))
+}
+
 func createExternalExecutionPlan(t *testing.T, ctx context.Context) taskQueuePlanDeps {
 	t.Helper()
 	g := NewWithT(t)
@@ -314,10 +335,18 @@ func createExternalExecutionPlan(t *testing.T, ctx context.Context) taskQueuePla
 	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
 	bundle.DeploymentProcessRevisionID = &revision.ID
 	bundle.ReleaseContract = releaseContractFixture(bundle.Components[0].Digest)
-	bundle.ReleaseContract.Config.ImmutableObjects = []types.ReleaseContractConfigObject{{
-		URI:       "s3://emlo-backend-configs/choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
-		VersionID: "v42", Checksum: "sha256:" + strings.Repeat("b", 64),
-	}}
+	bundle.ReleaseContract.Config.ComposeChecksum = "sha256:" + strings.Repeat("c", 64)
+	bundle.ReleaseContract.Config.ImmutableObjects = []types.ReleaseContractConfigObject{
+		{
+			URI: "s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
+				"/choice-tp_dev/1/docker-compose.yaml",
+			Checksum: "sha256:" + strings.Repeat("c", 64),
+		},
+		{
+			URI:       "s3://emlo-backend-configs/choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+			VersionID: "v42", Checksum: "sha256:" + strings.Repeat("b", 64),
+		},
+	}
 	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
 	published, result, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
 	g.Expect(err).NotTo(HaveOccurred())

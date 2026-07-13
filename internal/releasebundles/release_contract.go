@@ -225,9 +225,35 @@ func validateReleaseContractConfig(result *ValidationResult, config types.Releas
 	}
 	for _, object := range config.ImmutableObjects {
 		validateRequiredContractString(result, "config.immutableObjects.uri", object.URI, 2048)
-		validateRequiredContractString(result, "config.immutableObjects.versionId", object.VersionID, 1024)
 		validateDigest(result, "config.immutableObjects.checksum", object.Checksum)
+		if object.VersionID != "" {
+			validateRequiredContractString(result, "config.immutableObjects.versionId", object.VersionID, 1024)
+		} else if !IsContentAddressedConfigObject(object) {
+			result.AddError(
+				"releaseContract.config.immutableObjects",
+				"immutable",
+				"config objects require a versionId or matching content-addressed S3 URI",
+			)
+		}
 	}
+}
+
+func IsContentAddressedConfigObject(object types.ReleaseContractConfigObject) bool {
+	if strings.TrimSpace(object.VersionID) != "" || !IsSHA256Digest(strings.TrimSpace(object.Checksum)) {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(object.URI))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "s3") || parsed.Host == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" ||
+		strings.Contains(parsed.Path, "\\") || path.Clean(parsed.Path) != parsed.Path {
+		return false
+	}
+	segments := strings.Split(strings.TrimPrefix(parsed.Path, "/"), "/")
+	if len(segments) < 4 || segments[0] != "_immutable" || segments[1] != "sha256" ||
+		segments[len(segments)-1] == "" || !IsSHA256Digest("sha256:"+segments[2]) {
+		return false
+	}
+	return strings.EqualFold("sha256:"+segments[2], strings.TrimSpace(object.Checksum))
 }
 
 func validateRequiredContractString(result *ValidationResult, field, value string, limit int) {

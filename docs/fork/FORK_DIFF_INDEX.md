@@ -914,3 +914,18 @@ Use one entry per pull request:
 - Tests: Added Angular service/component coverage and PostgreSQL 18 repository and authenticated handler verification.
 - Upstream contribution notes: Community-neutral operator workflow; no adopter or external-executor names, schema, or labels.
 - Compatibility notes: Successful task history remains eligible; previous release creates a new immutable plan and does not reverse migrations or external side effects.
+
+### PR-054 - Immutable config execution inputs
+
+- Status: Implemented locally; focused release-contract, mapping, migration, and live PostgreSQL repository verification completed.
+- Upstream base: `ba93237f`.
+- Feature flag: Uses the existing release-contract and callback external-execution feature surfaces.
+- User-facing behavior: External executors receive frozen immutable references and checksums for both service configuration and compose inputs.
+- Database changes: Migration 137 adds expected compose reference/checksum fields to external executions.
+- API changes: External-execution `expectedState` adds `composeReference` and `composeChecksum`.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-054 notes and ADR-0054.
+- Tests: Added content-address validation, external-execution persistence, API mapping, and migration coverage.
+- Upstream contribution notes: Provider-neutral immutable execution inputs; no adopter or CI-provider names, credentials, or labels.
+- Compatibility notes: Versioned object references remain valid. Content-addressed S3 objects are accepted only when their path digest matches the declared checksum.

@@ -20,8 +20,10 @@ func ExternalExecutionToAPI(execution types.ExternalExecution) api.ExternalExecu
 		ExpectedState: api.ExternalExecutionExpectedState{
 			Version: execution.ExpectedVersion, Image: execution.ExpectedImage,
 			Platform: execution.ExpectedPlatform, Contracts: execution.ExpectedContracts,
-			ConfigReference: execution.ExpectedConfigReference,
-			ConfigChecksum:  execution.ExpectedConfigChecksum,
+			ConfigReference:  execution.ExpectedConfigReference,
+			ConfigChecksum:   execution.ExpectedConfigChecksum,
+			ComposeReference: execution.ExpectedComposeReference,
+			ComposeChecksum:  execution.ExpectedComposeChecksum,
 		},
 		Status: execution.Status, ProviderReference: execution.ProviderReference,
 		ProviderURL: execution.ProviderURL, TriggerAttempts: execution.TriggerAttempts,

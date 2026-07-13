@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestExternalExecutionConfigReferenceReplacesExistingVersionID(t *testing.T) {
+func TestExternalExecutionObjectReferenceReplacesExistingVersionID(t *testing.T) {
 	g := NewWithT(t)
 	checksum := "sha256:" + strings.Repeat("a", 64)
 	contract := &types.ReleaseContract{Config: types.ReleaseContractConfig{
@@ -19,7 +19,7 @@ func TestExternalExecutionConfigReferenceReplacesExistingVersionID(t *testing.T)
 		}},
 	}}
 
-	reference, err := externalExecutionConfigReference(contract, checksum)
+	reference, err := externalExecutionObjectReference(contract, checksum)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	parsed, err := url.Parse(reference)
@@ -27,4 +27,18 @@ func TestExternalExecutionConfigReferenceReplacesExistingVersionID(t *testing.T)
 	g.Expect(parsed.Query()["versionId"]).To(Equal([]string{"v 42"}))
 	g.Expect(parsed.Query().Get("region")).To(Equal("ap-southeast-1"))
 	g.Expect(parsed.Fragment).To(Equal("config"))
+}
+
+func TestExternalExecutionObjectReferenceAcceptsContentAddressedObject(t *testing.T) {
+	g := NewWithT(t)
+	checksum := "sha256:" + strings.Repeat("a", 64)
+	uri := "s3://config-bucket/_immutable/sha256/" + strings.Repeat("a", 64) + "/service.json"
+	contract := &types.ReleaseContract{Config: types.ReleaseContractConfig{
+		ImmutableObjects: []types.ReleaseContractConfigObject{{URI: uri, Checksum: checksum}},
+	}}
+
+	reference, err := externalExecutionObjectReference(contract, checksum)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(reference).To(Equal(uri))
 }

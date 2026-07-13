@@ -50,6 +50,8 @@ const externalExecutionOutputExpr = `
 	ee.expected_contracts,
 	ee.expected_config_reference,
 	ee.expected_config_checksum,
+	ee.expected_compose_reference,
+	ee.expected_compose_checksum,
 	ee.status,
 	ee.provider_reference,
 	ee.provider_url,
@@ -154,7 +156,12 @@ func PrepareExternalExecution(
 			failedPreflight = preflight
 			return nil
 		}
-		configReference, err := externalExecutionConfigReference(plan.ReleaseContract, source.ExpectedConfigChecksum)
+		configReference, err := externalExecutionObjectReference(plan.ReleaseContract, source.ExpectedConfigChecksum)
+		if err != nil {
+			return err
+		}
+		composeChecksum := strings.TrimSpace(plan.ReleaseContract.Config.ComposeChecksum)
+		composeReference, err := externalExecutionObjectReference(plan.ReleaseContract, composeChecksum)
 		if err != nil {
 			return err
 		}
@@ -169,6 +176,7 @@ func PrepareExternalExecution(
 			ExpectedVersion: source.ExpectedVersion, ExpectedImage: source.ExpectedImage,
 			ExpectedPlatform: source.ExpectedPlatform, ExpectedContracts: slices.Clone(source.ExpectedContracts),
 			ExpectedConfigReference: configReference, ExpectedConfigChecksum: source.ExpectedConfigChecksum,
+			ExpectedComposeReference: composeReference, ExpectedComposeChecksum: composeChecksum,
 			Status:             types.ExternalExecutionStatusQueued,
 			CallbackDeadlineAt: time.Now().UTC().Add(time.Duration(request.CallbackTimeoutSeconds) * time.Second),
 		}
@@ -898,13 +906,15 @@ func insertExternalExecution(ctx context.Context, execution *types.ExternalExecu
 			deployment_plan_target_id, deployment_target_id, application_id, release_bundle_id,
 			component, plan_checksum, idempotency_key, expected_state_version, expected_state_checksum,
 			expected_version, expected_image, expected_platform, expected_contracts,
-			expected_config_reference, expected_config_checksum, status
+			expected_config_reference, expected_config_checksum,
+			expected_compose_reference, expected_compose_checksum, status
 		) VALUES (
 			@id, @callbackDeadlineAt, @organizationId, @stepRunId, @taskId, @deploymentPlanId,
 			@deploymentPlanTargetId, @deploymentTargetId, @applicationId, @releaseBundleId,
 			@component, @planChecksum, @idempotencyKey, @expectedStateVersion, @expectedStateChecksum,
 			@expectedVersion, @expectedImage, @expectedPlatform, @expectedContracts,
-			@expectedConfigReference, @expectedConfigChecksum, @status
+			@expectedConfigReference, @expectedConfigChecksum,
+			@expectedComposeReference, @expectedComposeChecksum, @status
 		)
 		RETURNING `+externalExecutionOutputExpr,
 		pgx.NamedArgs{
@@ -919,8 +929,10 @@ func insertExternalExecution(ctx context.Context, execution *types.ExternalExecu
 			"expectedStateChecksum": execution.ExpectedStateChecksum,
 			"expectedVersion":       execution.ExpectedVersion, "expectedImage": execution.ExpectedImage,
 			"expectedPlatform": execution.ExpectedPlatform, "expectedContracts": execution.ExpectedContracts,
-			"expectedConfigReference": execution.ExpectedConfigReference,
-			"expectedConfigChecksum":  execution.ExpectedConfigChecksum, "status": execution.Status,
+			"expectedConfigReference":  execution.ExpectedConfigReference,
+			"expectedConfigChecksum":   execution.ExpectedConfigChecksum,
+			"expectedComposeReference": execution.ExpectedComposeReference,
+			"expectedComposeChecksum":  execution.ExpectedComposeChecksum, "status": execution.Status,
 		},
 	)
 	if err != nil {
@@ -954,7 +966,7 @@ func externalExecutionIdempotencyKey(source externalExecutionSource) string {
 	return "ext:" + hex.EncodeToString(sum[:])
 }
 
-func externalExecutionConfigReference(
+func externalExecutionObjectReference(
 	contract *types.ReleaseContract,
 	configChecksum string,
 ) (string, error) {
@@ -963,7 +975,13 @@ func externalExecutionConfigReference(
 		return "", apierrors.NewConflict("external execution requires a frozen release contract")
 	}
 	for _, object := range normalized.Config.ImmutableObjects {
-		if object.Checksum != configChecksum || object.URI == "" || object.VersionID == "" {
+		if !strings.EqualFold(object.Checksum, configChecksum) || object.URI == "" {
+			continue
+		}
+		if object.VersionID == "" {
+			if releasebundles.IsContentAddressedConfigObject(object) {
+				return object.URI, nil
+			}
 			continue
 		}
 		parsed, err := url.Parse(object.URI)
@@ -975,7 +993,7 @@ func externalExecutionConfigReference(
 		parsed.RawQuery = query.Encode()
 		return parsed.String(), nil
 	}
-	return "", apierrors.NewConflict("release contract does not contain a versioned immutable service config object")
+	return "", apierrors.NewConflict("release contract does not contain the required immutable config object")
 }
 
 func requireExternalExecutionComponentLock(ctx context.Context, source externalExecutionSource) error {

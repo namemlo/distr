@@ -22,9 +22,11 @@ func TestExternalExecutionToAPIHidesOrganizationAndMapsObservedState(t *testing.
 		PlanChecksum: "sha256:" + strings.Repeat("a", 64), IdempotencyKey: "ext:test",
 		ExpectedVersion: "1.4.2", ExpectedImage: "repo/loyalty-api@sha256:" + strings.Repeat("b", 64),
 		ExpectedPlatform: platform, ExpectedContracts: []string{"loyalty.v1"},
-		ExpectedConfigReference: "s3://bucket/config?versionId=v42",
-		ExpectedConfigChecksum: "sha256:" + strings.Repeat("c", 64),
-		Status: types.ExternalExecutionStatusSucceeded, ActualVersion: "1.4.2",
+		ExpectedConfigReference:  "s3://bucket/config?versionId=v42",
+		ExpectedConfigChecksum:   "sha256:" + strings.Repeat("c", 64),
+		ExpectedComposeReference: "s3://bucket/compose?versionId=v17",
+		ExpectedComposeChecksum:  "sha256:" + strings.Repeat("d", 64),
+		Status:                   types.ExternalExecutionStatusSucceeded, ActualVersion: "1.4.2",
 		ActualImage: "repo/loyalty-api@sha256:" + strings.Repeat("b", 64), ActualPlatform: &platform,
 		ActualContracts: []string{"loyalty.v1"}, ActualConfigReference: "s3://bucket/config?versionId=v42",
 		ActualConfigChecksum: "sha256:" + strings.Repeat("c", 64), ActualHealth: &health,
@@ -34,6 +36,8 @@ func TestExternalExecutionToAPIHidesOrganizationAndMapsObservedState(t *testing.
 
 	g.Expect(mapped.ID).To(Equal(execution.ID))
 	g.Expect(mapped.ExpectedState.Image).To(Equal(execution.ExpectedImage))
+	g.Expect(mapped.ExpectedState.ComposeReference).To(Equal(execution.ExpectedComposeReference))
+	g.Expect(mapped.ExpectedState.ComposeChecksum).To(Equal(execution.ExpectedComposeChecksum))
 	g.Expect(mapped.ObservedState).NotTo(BeNil())
 	g.Expect(mapped.ObservedState.Health).To(Equal(types.TargetComponentHealthHealthy))
 }

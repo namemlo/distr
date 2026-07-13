@@ -164,12 +164,14 @@ type ExternalExecution struct {
 }
 
 type ExternalExecutionExpectedState struct {
-	Version         string                         `json:"version"`
-	Image           string                         `json:"image"`
-	Platform        types.DeploymentTargetPlatform `json:"platform"`
-	Contracts       []string                       `json:"contracts"`
-	ConfigReference string                         `json:"configReference"`
-	ConfigChecksum  string                         `json:"configChecksum"`
+	Version          string                         `json:"version"`
+	Image            string                         `json:"image"`
+	Platform         types.DeploymentTargetPlatform `json:"platform"`
+	Contracts        []string                       `json:"contracts"`
+	ConfigReference  string                         `json:"configReference"`
+	ConfigChecksum   string                         `json:"configChecksum"`
+	ComposeReference string                         `json:"composeReference"`
+	ComposeChecksum  string                         `json:"composeChecksum"`
 }
 
 type ExternalExecutionEvent struct {

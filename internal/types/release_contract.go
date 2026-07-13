@@ -61,7 +61,7 @@ type ReleaseContractConfig struct {
 
 type ReleaseContractConfigObject struct {
 	URI       string `json:"uri"`
-	VersionID string `json:"versionId"`
+	VersionID string `json:"versionId,omitempty"`
 	Checksum  string `json:"checksum"`
 }
 
