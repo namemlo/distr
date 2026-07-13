@@ -1,7 +1,15 @@
 import {DatePipe, DecimalPipe} from '@angular/common';
-import {ChangeDetectionStrategy, Component, inject, signal, TemplateRef, viewChild} from '@angular/core';
+import {
+  afterNextRender,
+  ChangeDetectionStrategy,
+  Component,
+  inject,
+  signal,
+  TemplateRef,
+  viewChild,
+} from '@angular/core';
 import {FormBuilder, ReactiveFormsModule, Validators} from '@angular/forms';
-import {Router} from '@angular/router';
+import {ActivatedRoute, Router} from '@angular/router';
 import {Application, DeploymentTarget} from '@distr-sh/distr-sdk';
 import {FontAwesomeModule} from '@fortawesome/angular-fontawesome';
 import {
@@ -61,7 +69,9 @@ export class DeploymentPlansComponent {
   private readonly toast = inject(ToastService);
   private readonly overlay = inject(OverlayService);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute, {optional: true});
   private readonly fb = inject(FormBuilder).nonNullable;
+  private readonly requestedPlanId = this.route?.snapshot.queryParamMap.get('planId') ?? undefined;
 
   protected readonly deploymentPlans = signal<DeploymentPlan[]>([]);
   protected readonly releaseBundles = signal<ReleaseBundle[]>([]);
@@ -87,8 +97,9 @@ export class DeploymentPlansComponent {
   });
 
   private readonly createPlanDialog = viewChild.required<TemplateRef<unknown>>('createPlanDialog');
-  private readonly detailDialog = viewChild.required<TemplateRef<unknown>>('detailDialog');
+  private readonly detailDialog = viewChild<TemplateRef<unknown>>('detailDialog');
   private modalRef?: DialogRef;
+  private requestedPlanOpened = false;
 
   constructor() {
     this.filterForm.controls.search.valueChanges.pipe(startWith('')).subscribe((search) => {
@@ -98,6 +109,7 @@ export class DeploymentPlansComponent {
       this.ensureTargetsForRelease(releaseBundleId);
     });
     this.load();
+    afterNextRender(() => this.openRequestedPlan());
   }
 
   protected load() {
@@ -120,6 +132,7 @@ export class DeploymentPlansComponent {
         this.deploymentTargets.set(deploymentTargets);
         this.applyFilter(this.filterForm.controls.search.value);
         this.loading.set(false);
+        this.openRequestedPlan();
       },
       error: (e) => {
         this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load deployment plans.');
@@ -142,9 +155,13 @@ export class DeploymentPlansComponent {
   }
 
   protected showDetailDialog(plan: DeploymentPlan) {
+    const template = this.detailDialog();
+    if (!template) {
+      return;
+    }
     this.closeDialog(false);
     this.selectedDeploymentPlan.set(plan);
-    this.modalRef = this.overlay.showModal(this.detailDialog());
+    this.modalRef = this.overlay.showModal(template);
   }
 
   protected closeDialog(reset = true) {
@@ -216,7 +233,7 @@ export class DeploymentPlansComponent {
       const taskCount = tasks.length;
       this.toast.success(`Deployment started for ${taskCount} ${taskCount === 1 ? 'target' : 'targets'}`);
       this.closeDialog();
-      await this.router.navigate(['/deployment-timeline']);
+      await this.router.navigate(['/deployment-timeline'], {queryParams: {taskId: tasks[0]?.id}});
     } catch (e) {
       this.toast.error(getFormDisplayedError(e) ?? 'Failed to execute deployment plan.');
       try {
@@ -455,6 +472,18 @@ export class DeploymentPlansComponent {
     if (selectedTargetIds.length !== this.planForm.controls.targetIds.value.length) {
       this.planForm.controls.targetIds.setValue(selectedTargetIds);
     }
+  }
+
+  private openRequestedPlan() {
+    if (this.requestedPlanOpened || !this.requestedPlanId || !this.detailDialog()) {
+      return;
+    }
+    const plan = this.deploymentPlans().find((candidate) => candidate.id === this.requestedPlanId);
+    if (!plan) {
+      return;
+    }
+    this.requestedPlanOpened = true;
+    this.showDetailDialog(plan);
   }
 
   private applyFilter(search: string) {

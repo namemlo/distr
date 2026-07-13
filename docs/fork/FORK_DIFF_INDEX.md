@@ -4,9 +4,8 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-050 are implemented locally. PR-050 adds the community release-hardening package, security
-review checklist, release documentation, live demo wrapper, neutral demo verifier, upstream contribution breakdown, and
-deterministic validation script.
+PR-000 through PR-053 are implemented locally. PR-053 adds structured operator execution detail, guarded
+previous-release planning, current-versus-historical comparison, and exact task and plan deep links.
 
 ## Tracking Template
 
@@ -900,3 +899,18 @@ Use one entry per pull request:
 - Tests: Added callback validation/state tests, registry and security tests, Hub trigger/restart/race tests, mapping/handler tests, migration checks, and live PostgreSQL repository coverage.
 - Upstream contribution notes: Provider-neutral external execution contract; no Jenkins or adopter-specific schema, API, labels, or behavior.
 - Compatibility notes: Existing webhooks default to synchronous response completion. Callback steps require a component and versioned immutable release configuration.
+
+### PR-053 - Operator execution detail and previous release
+
+- Status: Implemented locally; focused Angular and live PostgreSQL 18 verification completed.
+- Upstream base: `dc8fd69b`.
+- Feature flag: Uses the existing `deployment_timeline`, `deployment_plans`, `task_queue`, and `step_events` feature surfaces.
+- User-facing behavior: Operators can inspect structured task progress in Deployment Timeline and create a reviewed new plan from a successful historical deployment.
+- Database changes: None.
+- API changes: No endpoint or response additions. Previous-release creation returns conflict for non-successful source tasks, and timeline availability reflects that rule.
+- UI changes: Reused the existing Timeline side panel for Execution and Comparison tabs, added active-task polling, current-versus-historical review, and exact task/plan deep links.
+- Agent protocol changes: None.
+- Documentation: Added PR-053 notes and ADR-0053.
+- Tests: Added Angular service/component coverage and PostgreSQL 18 repository and authenticated handler verification.
+- Upstream contribution notes: Community-neutral operator workflow; no adopter or external-executor names, schema, or labels.
+- Compatibility notes: Successful task history remains eligible; previous release creates a new immutable plan and does not reverse migrations or external side effects.

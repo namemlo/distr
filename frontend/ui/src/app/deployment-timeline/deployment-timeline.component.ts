@@ -1,6 +1,8 @@
 import {DatePipe} from '@angular/common';
-import {ChangeDetectionStrategy, Component, inject, signal} from '@angular/core';
+import {ChangeDetectionStrategy, Component, DestroyRef, inject, signal} from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {FormBuilder, ReactiveFormsModule} from '@angular/forms';
+import {ActivatedRoute, Router} from '@angular/router';
 import {FontAwesomeModule} from '@fortawesome/angular-fontawesome';
 import {
   faCheck,
@@ -12,14 +14,20 @@ import {
   faShuffle,
   faTriangleExclamation,
 } from '@fortawesome/free-solid-svg-icons';
-import {firstValueFrom, startWith} from 'rxjs';
+import {firstValueFrom, forkJoin, startWith, Subscription, switchMap, timer} from 'rxjs';
 import {getFormDisplayedError} from '../../util/errors';
 import {AutotrimDirective} from '../directives/autotrim.directive';
 import {DeploymentTimelineService} from '../services/deployment-timeline.service';
 import {OverlayService} from '../services/overlay.service';
 import {ToastService} from '../services/toast.service';
 import {
+  DeploymentStepRun,
+  DeploymentStepRunEvent,
+  DeploymentStepRunOutput,
+  DeploymentStepRunStatus,
+  DeploymentTask,
   DeploymentTaskStatus,
+  DeploymentTaskTimeline,
   DeploymentTimelineChangeKind,
   DeploymentTimelineCompareRef,
   DeploymentTimelineComparison,
@@ -50,18 +58,29 @@ export class DeploymentTimelineComponent {
   private readonly deploymentTimelineService = inject(DeploymentTimelineService);
   private readonly overlay = inject(OverlayService);
   private readonly toast = inject(ToastService);
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute, {optional: true});
+  private readonly destroyRef = inject(DestroyRef);
   private readonly fb = inject(FormBuilder).nonNullable;
+  private readonly requestedTaskId = this.route?.snapshot.queryParamMap.get('taskId') ?? undefined;
 
   protected readonly timelineItems = signal<DeploymentTimelineItem[]>([]);
   protected readonly filteredTimelineItems = signal<DeploymentTimelineItem[]>([]);
   protected readonly comparison = signal<DeploymentTimelineComparison | undefined>(undefined);
+  protected readonly activePanel = signal<'execution' | 'comparison'>('execution');
+  protected readonly selectedTaskId = signal<string | undefined>(undefined);
+  protected readonly selectedTask = signal<DeploymentTask | undefined>(undefined);
+  protected readonly selectedTaskTimeline = signal<DeploymentTaskTimeline | undefined>(undefined);
   protected readonly selectedBaseTaskId = signal<string | undefined>(undefined);
   protected readonly selectedCompareTaskId = signal<string | undefined>(undefined);
   protected readonly loading = signal(true);
   protected readonly compareLoading = signal(false);
   protected readonly loadError = signal<string | undefined>(undefined);
   protected readonly compareError = signal<string | undefined>(undefined);
+  protected readonly taskDetailLoading = signal(false);
+  protected readonly taskDetailError = signal<string | undefined>(undefined);
   protected readonly redeployLoadingTaskId = signal<string | undefined>(undefined);
+  private taskPollSubscription?: Subscription;
 
   protected readonly statuses: Array<DeploymentTaskStatus | ''> = [
     '',
@@ -99,6 +118,9 @@ export class DeploymentTimelineComponent {
           this.applyFilter();
           this.dropMissingSelections();
           this.loading.set(false);
+          if (this.requestedTaskId && !this.selectedTaskId()) {
+            void this.viewTask(this.requestedTaskId);
+          }
         },
         error: (e) => {
           this.loadError.set(getFormDisplayedError(e) ?? 'Failed to load deployment timeline.');
@@ -128,6 +150,7 @@ export class DeploymentTimelineComponent {
 
     this.compareLoading.set(true);
     this.compareError.set(undefined);
+    this.activePanel.set('comparison');
     try {
       this.comparison.set(
         await firstValueFrom(this.deploymentTimelineService.compare(this.compareRef(base), this.compareRef(compare)))
@@ -143,27 +166,41 @@ export class DeploymentTimelineComponent {
     if (!this.canRedeploy(item) || !item.taskId) {
       return;
     }
-    const confirmed = await firstValueFrom(
-      this.overlay.confirm({
-        message: {
-          message: 'Deploy previous release?',
-          alert: {
-            type: 'warning',
-            message: deployPreviousReleaseWarning,
-          },
-        },
-        confirmLabel: 'Deploy previous release',
-      })
-    );
-    if (!confirmed) {
+    const current = this.latestTimelineItem(item);
+    if (!current) {
       return;
     }
 
     this.redeployLoadingTaskId.set(item.taskId);
     try {
+      const comparison = await firstValueFrom(
+        this.deploymentTimelineService.compare(this.compareRef(current), this.compareRef(item))
+      );
+      this.selectedBaseTaskId.set(this.timelineItemKey(current));
+      this.selectedCompareTaskId.set(this.timelineItemKey(item));
+      this.comparison.set(comparison);
+      this.activePanel.set('comparison');
+
+      const componentChanges = this.changedCount(comparison.components);
+      const confirmed = await firstValueFrom(
+        this.overlay.confirm({
+          message: {
+            message: `${current.releaseNumber} to ${item.releaseNumber}?`,
+            alert: {
+              type: 'warning',
+              message: `${deployPreviousReleaseWarning} ${componentChanges} component changes detected.`,
+            },
+          },
+          confirmLabel: 'Deploy previous release',
+        })
+      );
+      if (!confirmed) {
+        return;
+      }
+
       const result = await firstValueFrom(this.deploymentTimelineService.redeploy(item.taskId));
       this.toast.success(`Deployment plan ${this.shortId(result.plan.id)} created`);
-      this.load();
+      await this.router.navigate(['/deployment-plans'], {queryParams: {planId: result.plan.id}});
     } catch (e) {
       const msg = getFormDisplayedError(e);
       this.toast.error(msg ?? 'Failed to deploy previous release.');
@@ -180,7 +217,75 @@ export class DeploymentTimelineComponent {
   }
 
   protected canRedeploy(item: DeploymentTimelineItem): boolean {
-    return item.source !== 'legacy_deployment' && Boolean(item.taskId) && item.redeployAvailable;
+    const latest = this.latestTimelineItem(item);
+    return (
+      item.source !== 'legacy_deployment' &&
+      Boolean(item.taskId) &&
+      item.status === 'SUCCEEDED' &&
+      item.redeployAvailable &&
+      Boolean(latest) &&
+      this.timelineItemKey(latest!) !== this.timelineItemKey(item)
+    );
+  }
+
+  protected canViewTask(item: DeploymentTimelineItem): boolean {
+    return item.source !== 'legacy_deployment' && Boolean(item.taskId);
+  }
+
+  protected async viewTask(item: DeploymentTimelineItem | string) {
+    const taskId = typeof item === 'string' ? item : item.taskId;
+    if (!taskId) {
+      return;
+    }
+    this.stopTaskPolling();
+    this.selectedTaskId.set(taskId);
+    this.selectedTask.set(undefined);
+    this.selectedTaskTimeline.set(undefined);
+    this.taskDetailError.set(undefined);
+    this.activePanel.set('execution');
+
+    const task = await this.refreshTaskDetails(taskId, true);
+    if (task && !this.isTaskTerminal(task.status)) {
+      this.startTaskPolling(taskId);
+    }
+  }
+
+  protected refreshSelectedTask() {
+    const taskId = this.selectedTaskId();
+    if (taskId) {
+      void this.refreshTaskDetails(taskId, true);
+    }
+  }
+
+  protected eventsForStep(stepRunId: string): DeploymentStepRunEvent[] {
+    return this.selectedTaskTimeline()?.events.filter((event) => event.stepRunId === stepRunId) ?? [];
+  }
+
+  protected latestEventForStep(stepRunId: string): DeploymentStepRunEvent | undefined {
+    return this.eventsForStep(stepRunId).at(-1);
+  }
+
+  protected stepProgress(step: DeploymentStepRun): number {
+    const eventProgress = this.latestEventForStep(step.id)?.progressPercent;
+    if (eventProgress !== undefined) {
+      return eventProgress;
+    }
+    return step.status === 'SUCCEEDED' ? 100 : 0;
+  }
+
+  protected outputValue(output: DeploymentStepRunOutput): string {
+    if (output.redacted || output.sensitive) {
+      return 'redacted';
+    }
+    if (output.value === undefined || output.value === null) {
+      return '-';
+    }
+    return typeof output.value === 'string' ? output.value : JSON.stringify(output.value);
+  }
+
+  protected selectedTaskLogUrl(): string | undefined {
+    const taskId = this.selectedTaskId();
+    return taskId ? `/api/v1/tasks/${taskId}/logs` : undefined;
   }
 
   protected comparisonDimensionAvailable(
@@ -213,14 +318,7 @@ export class DeploymentTimelineComponent {
     return this.shortId(item.actorUserAccountId);
   }
 
-  protected logUrl(item: DeploymentTimelineItem): string | undefined {
-    if (!item.taskId || item.availability?.taskLogs === false) {
-      return undefined;
-    }
-    return `/api/v1/tasks/${item.taskId}/logs`;
-  }
-
-  protected statusClass(status: DeploymentTaskStatus | undefined): string {
+  protected statusClass(status: DeploymentTaskStatus | DeploymentStepRunStatus | undefined): string {
     switch (status) {
       case 'SUCCEEDED':
         return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
@@ -291,6 +389,99 @@ export class DeploymentTimelineComponent {
       return {legacyDeploymentRevisionId: item.legacyDeploymentRevisionId};
     }
     return {taskId: item.taskId};
+  }
+
+  private latestTimelineItem(item: DeploymentTimelineItem): DeploymentTimelineItem | undefined {
+    return this.timelineItems()
+      .filter(
+        (candidate) =>
+          candidate.applicationId === item.applicationId && candidate.deploymentTargetId === item.deploymentTargetId
+      )
+      .reduce<DeploymentTimelineItem | undefined>((latest, candidate) => {
+        if (!latest) {
+          return candidate;
+        }
+        return Date.parse(this.eventTime(candidate)) > Date.parse(this.eventTime(latest)) ? candidate : latest;
+      }, undefined);
+  }
+
+  private async refreshTaskDetails(taskId: string, showLoading: boolean): Promise<DeploymentTask | undefined> {
+    if (showLoading) {
+      this.taskDetailLoading.set(true);
+    }
+    this.taskDetailError.set(undefined);
+    try {
+      const result = await firstValueFrom(
+        forkJoin({
+          task: this.deploymentTimelineService.getTask(taskId),
+          timeline: this.deploymentTimelineService.getTaskTimeline(taskId),
+        })
+      );
+      if (this.selectedTaskId() !== taskId) {
+        return undefined;
+      }
+      const task = {
+        ...result.task,
+        stepRuns: [...result.task.stepRuns].sort((a, b) => a.sortOrder - b.sortOrder),
+      };
+      this.selectedTask.set(task);
+      this.selectedTaskTimeline.set(result.timeline);
+      if (this.isTaskTerminal(task.status)) {
+        this.stopTaskPolling();
+      }
+      return task;
+    } catch (e) {
+      if (this.selectedTaskId() === taskId) {
+        this.taskDetailError.set(getFormDisplayedError(e) ?? 'Failed to load execution details.');
+      }
+      return undefined;
+    } finally {
+      if (this.selectedTaskId() === taskId) {
+        this.taskDetailLoading.set(false);
+      }
+    }
+  }
+
+  private startTaskPolling(taskId: string) {
+    this.stopTaskPolling();
+    this.taskPollSubscription = timer(3000, 3000)
+      .pipe(
+        switchMap(() =>
+          forkJoin({
+            task: this.deploymentTimelineService.getTask(taskId),
+            timeline: this.deploymentTimelineService.getTaskTimeline(taskId),
+          })
+        ),
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe({
+        next: ({task, timeline}) => {
+          if (this.selectedTaskId() !== taskId) {
+            return;
+          }
+          this.selectedTask.set({...task, stepRuns: [...task.stepRuns].sort((a, b) => a.sortOrder - b.sortOrder)});
+          this.selectedTaskTimeline.set(timeline);
+          if (this.isTaskTerminal(task.status)) {
+            this.stopTaskPolling();
+            this.load();
+          }
+        },
+        error: (e) => {
+          if (this.selectedTaskId() === taskId) {
+            this.taskDetailError.set(getFormDisplayedError(e) ?? 'Failed to refresh execution details.');
+          }
+          this.stopTaskPolling();
+        },
+      });
+  }
+
+  private stopTaskPolling() {
+    this.taskPollSubscription?.unsubscribe();
+    this.taskPollSubscription = undefined;
+  }
+
+  private isTaskTerminal(status: DeploymentTaskStatus): boolean {
+    return status === 'SUCCEEDED' || status === 'FAILED' || status === 'CANCELED';
   }
 
   private applyFilter() {

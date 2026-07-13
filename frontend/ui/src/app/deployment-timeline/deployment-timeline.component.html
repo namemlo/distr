@@ -142,15 +142,14 @@
                       </td>
                       <td class="px-4 py-3">
                         <div class="flex justify-end gap-2">
-                          @if (logUrl(item); as url) {
-                            <a
-                              [href]="url"
-                              target="_blank"
-                              rel="noopener noreferrer"
+                          @if (canViewTask(item)) {
+                            <button
+                              type="button"
                               class="distr-button-secondary px-3 py-2"
-                              title="Task logs">
+                              (click)="viewTask(item)"
+                              title="Execution details">
                               <fa-icon [icon]="faEye" />
-                            </a>
+                            </button>
                           }
                           @if (canRedeploy(item)) {
                             <button
@@ -174,167 +173,315 @@
       </section>
 
       <section class="min-w-0 border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Comparison</h2>
-            @if (comparison(); as result) {
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ result.base.releaseNumber }} to {{ result.compare.releaseNumber }}
-              </p>
-            }
-          </div>
-          @if (compareLoading()) {
-            <span class="text-sm text-gray-500 dark:text-gray-400">Loading...</span>
-          }
+        <div class="mb-4 flex border-b border-gray-200 dark:border-gray-700" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            class="border-b-2 px-4 py-2 text-sm font-medium"
+            [class.border-blue-600]="activePanel() === 'execution'"
+            [class.text-blue-600]="activePanel() === 'execution'"
+            [class.border-transparent]="activePanel() !== 'execution'"
+            [class.text-gray-500]="activePanel() !== 'execution'"
+            [attr.aria-selected]="activePanel() === 'execution'"
+            (click)="activePanel.set('execution')">
+            Execution
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="border-b-2 px-4 py-2 text-sm font-medium"
+            [class.border-blue-600]="activePanel() === 'comparison'"
+            [class.text-blue-600]="activePanel() === 'comparison'"
+            [class.border-transparent]="activePanel() !== 'comparison'"
+            [class.text-gray-500]="activePanel() !== 'comparison'"
+            [attr.aria-selected]="activePanel() === 'comparison'"
+            (click)="activePanel.set('comparison')">
+            Comparison
+          </button>
         </div>
 
-        @if (compareError()) {
-          <div
-            class="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-            {{ compareError() }}
+        @if (activePanel() === 'execution') {
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Execution</h2>
+              @if (selectedTask(); as task) {
+                <p class="truncate font-mono text-xs text-gray-500 dark:text-gray-400">{{ task.id }}</p>
+              }
+            </div>
+            <button
+              type="button"
+              class="distr-button-secondary px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+              [disabled]="!selectedTaskId() || taskDetailLoading()"
+              (click)="refreshSelectedTask()"
+              title="Refresh execution">
+              <fa-icon [icon]="faRotateRight" />
+            </button>
           </div>
-        }
 
-        @if (comparison(); as result) {
-          <div class="mt-4 space-y-5 text-sm">
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Base</div>
-                <div class="font-medium text-gray-900 dark:text-white">{{ result.base.releaseNumber }}</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">{{ result.base.environmentName }}</div>
-              </div>
-              <div>
-                <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Compare</div>
-                <div class="font-medium text-gray-900 dark:text-white">{{ result.compare.releaseNumber }}</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">{{ result.compare.environmentName }}</div>
-              </div>
+          @if (taskDetailError()) {
+            <div
+              class="mt-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+              {{ taskDetailError() }}
+            </div>
+          }
+
+          @if (taskDetailLoading() && !selectedTask()) {
+            <div class="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">Loading execution...</div>
+          } @else if (selectedTask(); as task) {
+            <div
+              class="mt-4 flex items-center justify-between gap-3 border-b border-gray-200 pb-3 dark:border-gray-700">
+              <div class="text-xs text-gray-500 dark:text-gray-400">Queued {{ task.queuedAt | date: 'medium' }}</div>
+              <span class="rounded px-2 py-1 text-xs font-semibold" [class]="statusClass(task.status)">
+                {{ task.status }}
+              </span>
             </div>
 
-            <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
-              <div class="mb-2 flex items-center justify-between">
-                <h3 class="font-medium text-gray-900 dark:text-white">Process</h3>
-                <span
-                  class="rounded px-2 py-1 text-xs font-semibold"
-                  [class]="
-                    comparisonDimensionAvailable(result, 'process')
-                      ? result.process.changed
-                        ? changeClass('changed')
-                        : changeClass('unchanged')
-                      : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
-                  ">
-                  {{
-                    comparisonDimensionAvailable(result, 'process')
-                      ? result.process.changed
-                        ? 'changed'
-                        : 'unchanged'
-                      : 'unavailable'
-                  }}
-                </span>
-              </div>
-              @if (!comparisonDimensionAvailable(result, 'process')) {
-                <div class="py-3 text-sm text-gray-500 dark:text-gray-400">Process unavailable</div>
-              } @else {
-                <div class="grid grid-cols-2 gap-3 text-xs text-gray-600 dark:text-gray-300">
-                  <div>
-                    <div>Revision {{ result.process.baseRevisionNumber || '-' }}</div>
-                    <div class="truncate font-mono">{{ result.process.baseCanonicalChecksum || '-' }}</div>
+            <div class="divide-y divide-gray-200 dark:divide-gray-700">
+              @for (step of task.stepRuns; track step.id) {
+                <div class="py-4">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="font-medium text-gray-900 dark:text-white">{{ step.name }}</div>
+                      <div class="truncate text-xs text-gray-500 dark:text-gray-400">{{ step.actionType }}</div>
+                    </div>
+                    <span class="rounded px-2 py-1 text-xs font-semibold" [class]="statusClass(step.status)">
+                      {{ step.status }}
+                    </span>
                   </div>
-                  <div>
-                    <div>Revision {{ result.process.compareRevisionNumber || '-' }}</div>
-                    <div class="truncate font-mono">{{ result.process.compareCanonicalChecksum || '-' }}</div>
+
+                  <div class="mt-3 flex items-center gap-3">
+                    <div
+                      class="h-2 flex-1 overflow-hidden bg-gray-200 dark:bg-gray-700"
+                      role="progressbar"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      [attr.aria-valuenow]="stepProgress(step)">
+                      <div class="h-full bg-blue-600" [style.width.%]="stepProgress(step)"></div>
+                    </div>
+                    <span class="w-10 text-right text-xs text-gray-600 dark:text-gray-300"
+                      >{{ stepProgress(step) }}%</span
+                    >
                   </div>
+
+                  @if (latestEventForStep(step.id); as latestEvent) {
+                    @if (latestEvent.message) {
+                      <div class="mt-2 text-sm text-gray-700 dark:text-gray-200">{{ latestEvent.message }}</div>
+                    }
+                  }
+
+                  @if (eventsForStep(step.id); as events) {
+                    @if (events.length > 0) {
+                      <div class="mt-3 max-h-64 divide-y divide-gray-100 overflow-y-auto dark:divide-gray-800">
+                        @for (event of events; track event.id) {
+                          <div class="py-2 text-xs">
+                            <div class="flex items-center justify-between gap-3 text-gray-500 dark:text-gray-400">
+                              <span class="font-medium">{{ event.type }}</span>
+                              <span>{{ event.occurredAt | date: 'mediumTime' }}</span>
+                            </div>
+                            @if (event.message) {
+                              <div class="mt-1 text-gray-700 dark:text-gray-200">{{ event.message }}</div>
+                            }
+                            @for (log of event.logs; track log.id || $index) {
+                              <pre class="mt-2 overflow-x-auto bg-gray-950 p-2 text-gray-100">{{ log.body }}</pre>
+                            }
+                            @for (output of event.outputs; track output.id || output.name) {
+                              <div class="mt-2 grid grid-cols-[minmax(0,120px)_minmax(0,1fr)] gap-2">
+                                <span class="font-medium text-gray-600 dark:text-gray-300">{{ output.name }}</span>
+                                <span class="break-all font-mono text-gray-700 dark:text-gray-200">
+                                  {{ outputValue(output) }}
+                                </span>
+                              </div>
+                            }
+                          </div>
+                        }
+                      </div>
+                    }
+                  }
+                  @if (step.skippedReason) {
+                    <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ step.skippedReason }}</div>
+                  }
                 </div>
+              } @empty {
+                <div class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">No execution steps.</div>
               }
             </div>
 
-            <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
-              <div class="mb-2 flex items-center justify-between">
-                <h3 class="font-medium text-gray-900 dark:text-white">Components</h3>
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ changedCount(result.components) }} / {{ result.components.length }}
-                </span>
+            @if (selectedTaskLogUrl(); as url) {
+              <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
+                <a [href]="url" target="_blank" rel="noopener noreferrer" class="distr-button-secondary">
+                  <fa-icon [icon]="faListCheck" />
+                  <span>Raw logs</span>
+                </a>
               </div>
-              <div class="divide-y divide-gray-200 dark:divide-gray-700">
-                @for (change of visibleComponentChanges(result); track change.key) {
-                  <div class="grid grid-cols-[1fr_auto] gap-3 py-2">
-                    <div class="min-w-0">
-                      <div class="font-medium text-gray-900 dark:text-white">{{ change.name || change.key }}</div>
-                      <div class="truncate text-xs text-gray-500 dark:text-gray-400">
-                        {{ change.baseVersion || '-' }} -> {{ change.compareVersion || '-' }}
-                      </div>
+            }
+          } @else {
+            <div class="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">No execution selected.</div>
+          }
+        } @else {
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Comparison</h2>
+              @if (comparison(); as result) {
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ result.base.releaseNumber }} to {{ result.compare.releaseNumber }}
+                </p>
+              }
+            </div>
+            @if (compareLoading()) {
+              <span class="text-sm text-gray-500 dark:text-gray-400">Loading...</span>
+            }
+          </div>
+
+          @if (compareError()) {
+            <div
+              class="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+              {{ compareError() }}
+            </div>
+          }
+
+          @if (comparison(); as result) {
+            <div class="mt-4 space-y-5 text-sm">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Base</div>
+                  <div class="font-medium text-gray-900 dark:text-white">{{ result.base.releaseNumber }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">{{ result.base.environmentName }}</div>
+                </div>
+                <div>
+                  <div class="text-xs uppercase text-gray-500 dark:text-gray-400">Compare</div>
+                  <div class="font-medium text-gray-900 dark:text-white">{{ result.compare.releaseNumber }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">{{ result.compare.environmentName }}</div>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
+                <div class="mb-2 flex items-center justify-between">
+                  <h3 class="font-medium text-gray-900 dark:text-white">Process</h3>
+                  <span
+                    class="rounded px-2 py-1 text-xs font-semibold"
+                    [class]="
+                      comparisonDimensionAvailable(result, 'process')
+                        ? result.process.changed
+                          ? changeClass('changed')
+                          : changeClass('unchanged')
+                        : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+                    ">
+                    {{
+                      comparisonDimensionAvailable(result, 'process')
+                        ? result.process.changed
+                          ? 'changed'
+                          : 'unchanged'
+                        : 'unavailable'
+                    }}
+                  </span>
+                </div>
+                @if (!comparisonDimensionAvailable(result, 'process')) {
+                  <div class="py-3 text-sm text-gray-500 dark:text-gray-400">Process unavailable</div>
+                } @else {
+                  <div class="grid grid-cols-2 gap-3 text-xs text-gray-600 dark:text-gray-300">
+                    <div>
+                      <div>Revision {{ result.process.baseRevisionNumber || '-' }}</div>
+                      <div class="truncate font-mono">{{ result.process.baseCanonicalChecksum || '-' }}</div>
                     </div>
-                    <span class="h-fit rounded px-2 py-1 text-xs font-semibold" [class]="changeClass(change.kind)">
-                      {{ change.kind }}
-                    </span>
+                    <div>
+                      <div>Revision {{ result.process.compareRevisionNumber || '-' }}</div>
+                      <div class="truncate font-mono">{{ result.process.compareCanonicalChecksum || '-' }}</div>
+                    </div>
                   </div>
-                } @empty {
-                  <div class="py-3 text-sm text-gray-500 dark:text-gray-400">No component changes.</div>
+                }
+              </div>
+
+              <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
+                <div class="mb-2 flex items-center justify-between">
+                  <h3 class="font-medium text-gray-900 dark:text-white">Components</h3>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ changedCount(result.components) }} / {{ result.components.length }}
+                  </span>
+                </div>
+                <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                  @for (change of visibleComponentChanges(result); track change.key) {
+                    <div class="grid grid-cols-[1fr_auto] gap-3 py-2">
+                      <div class="min-w-0">
+                        <div class="font-medium text-gray-900 dark:text-white">{{ change.name || change.key }}</div>
+                        <div class="truncate text-xs text-gray-500 dark:text-gray-400">
+                          {{ change.baseVersion || '-' }} -> {{ change.compareVersion || '-' }}
+                        </div>
+                      </div>
+                      <span class="h-fit rounded px-2 py-1 text-xs font-semibold" [class]="changeClass(change.kind)">
+                        {{ change.kind }}
+                      </span>
+                    </div>
+                  } @empty {
+                    <div class="py-3 text-sm text-gray-500 dark:text-gray-400">No component changes.</div>
+                  }
+                </div>
+              </div>
+
+              <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
+                <div class="mb-2 flex items-center justify-between">
+                  <h3 class="font-medium text-gray-900 dark:text-white">Variables</h3>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ changedCount(result.variables) }} / {{ result.variables.length }}
+                  </span>
+                </div>
+                @if (!comparisonDimensionAvailable(result, 'variables')) {
+                  <div class="py-3 text-sm text-gray-500 dark:text-gray-400">Variables unavailable</div>
+                } @else {
+                  <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                    @for (change of visibleVariableChanges(result); track change.key) {
+                      <div class="grid grid-cols-[1fr_auto] gap-3 py-2">
+                        <div class="min-w-0">
+                          <div class="font-medium text-gray-900 dark:text-white">{{ change.key }}</div>
+                          <div class="truncate text-xs text-gray-500 dark:text-gray-400">
+                            {{ variableDisplay(change, 'base') }} -> {{ variableDisplay(change, 'compare') }}
+                          </div>
+                        </div>
+                        <span class="h-fit rounded px-2 py-1 text-xs font-semibold" [class]="changeClass(change.kind)">
+                          {{ change.kind }}
+                        </span>
+                      </div>
+                    } @empty {
+                      <div class="py-3 text-sm text-gray-500 dark:text-gray-400">No variable changes.</div>
+                    }
+                  </div>
+                }
+              </div>
+
+              <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
+                <div class="mb-2 flex items-center justify-between">
+                  <h3 class="font-medium text-gray-900 dark:text-white">Steps</h3>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ changedCount(result.steps) }} / {{ result.steps.length }}
+                  </span>
+                </div>
+                @if (!comparisonDimensionAvailable(result, 'steps')) {
+                  <div class="py-3 text-sm text-gray-500 dark:text-gray-400">Steps unavailable</div>
+                } @else {
+                  <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                    @for (change of visibleStepChanges(result); track change.stepKey) {
+                      <div class="grid grid-cols-[1fr_auto] gap-3 py-2">
+                        <div class="min-w-0">
+                          <div class="font-medium text-gray-900 dark:text-white">
+                            {{ change.name || change.stepKey }}
+                          </div>
+                          <div class="truncate text-xs text-gray-500 dark:text-gray-400">
+                            {{ change.baseActionType || '-' }} -> {{ change.compareActionType || '-' }}
+                          </div>
+                        </div>
+                        <span class="h-fit rounded px-2 py-1 text-xs font-semibold" [class]="changeClass(change.kind)">
+                          {{ change.kind }}
+                        </span>
+                      </div>
+                    } @empty {
+                      <div class="py-3 text-sm text-gray-500 dark:text-gray-400">No step changes.</div>
+                    }
+                  </div>
                 }
               </div>
             </div>
-
-            <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
-              <div class="mb-2 flex items-center justify-between">
-                <h3 class="font-medium text-gray-900 dark:text-white">Variables</h3>
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ changedCount(result.variables) }} / {{ result.variables.length }}
-                </span>
-              </div>
-              @if (!comparisonDimensionAvailable(result, 'variables')) {
-                <div class="py-3 text-sm text-gray-500 dark:text-gray-400">Variables unavailable</div>
-              } @else {
-                <div class="divide-y divide-gray-200 dark:divide-gray-700">
-                  @for (change of visibleVariableChanges(result); track change.key) {
-                    <div class="grid grid-cols-[1fr_auto] gap-3 py-2">
-                      <div class="min-w-0">
-                        <div class="font-medium text-gray-900 dark:text-white">{{ change.key }}</div>
-                        <div class="truncate text-xs text-gray-500 dark:text-gray-400">
-                          {{ variableDisplay(change, 'base') }} -> {{ variableDisplay(change, 'compare') }}
-                        </div>
-                      </div>
-                      <span class="h-fit rounded px-2 py-1 text-xs font-semibold" [class]="changeClass(change.kind)">
-                        {{ change.kind }}
-                      </span>
-                    </div>
-                  } @empty {
-                    <div class="py-3 text-sm text-gray-500 dark:text-gray-400">No variable changes.</div>
-                  }
-                </div>
-              }
-            </div>
-
-            <div class="border-t border-gray-200 pt-4 dark:border-gray-700">
-              <div class="mb-2 flex items-center justify-between">
-                <h3 class="font-medium text-gray-900 dark:text-white">Steps</h3>
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ changedCount(result.steps) }} / {{ result.steps.length }}
-                </span>
-              </div>
-              @if (!comparisonDimensionAvailable(result, 'steps')) {
-                <div class="py-3 text-sm text-gray-500 dark:text-gray-400">Steps unavailable</div>
-              } @else {
-                <div class="divide-y divide-gray-200 dark:divide-gray-700">
-                  @for (change of visibleStepChanges(result); track change.stepKey) {
-                    <div class="grid grid-cols-[1fr_auto] gap-3 py-2">
-                      <div class="min-w-0">
-                        <div class="font-medium text-gray-900 dark:text-white">{{ change.name || change.stepKey }}</div>
-                        <div class="truncate text-xs text-gray-500 dark:text-gray-400">
-                          {{ change.baseActionType || '-' }} -> {{ change.compareActionType || '-' }}
-                        </div>
-                      </div>
-                      <span class="h-fit rounded px-2 py-1 text-xs font-semibold" [class]="changeClass(change.kind)">
-                        {{ change.kind }}
-                      </span>
-                    </div>
-                  } @empty {
-                    <div class="py-3 text-sm text-gray-500 dark:text-gray-400">No step changes.</div>
-                  }
-                </div>
-              }
-            </div>
-          </div>
-        } @else {
-          <div class="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">No comparison loaded.</div>
+          } @else {
+            <div class="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">No comparison loaded.</div>
+          }
         }
       </section>
     </div>

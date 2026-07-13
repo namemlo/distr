@@ -19,7 +19,7 @@ describe('DeploymentTimelineService', () => {
     http.verify();
   });
 
-  it('performs timeline list, compare, and redeploy requests', () => {
+  it('performs timeline, task detail, compare, and redeploy requests', () => {
     const timeline = {items: []};
     const comparison = {
       base: {} as any,
@@ -50,6 +50,16 @@ describe('DeploymentTimelineService', () => {
     expect(listReq.request.params.get('includeNonTerminal')).toBe('false');
     expect(listReq.request.params.get('limit')).toBe('25');
     listReq.flush(timeline);
+
+    service.getTask('task-1').subscribe((result) => expect(result.id).toBe('task-1'));
+    const taskReq = http.expectOne('/api/v1/tasks/task-1');
+    expect(taskReq.request.method).toBe('GET');
+    taskReq.flush({id: 'task-1', status: 'RUNNING', stepRuns: []});
+
+    service.getTaskTimeline('task-1').subscribe((result) => expect(result.taskId).toBe('task-1'));
+    const taskTimelineReq = http.expectOne('/api/v1/tasks/task-1/timeline');
+    expect(taskTimelineReq.request.method).toBe('GET');
+    taskTimelineReq.flush({organizationId: 'org-1', taskId: 'task-1', events: []});
 
     service.compare('task-1', 'task-2').subscribe((result) => expect(result.process.changed).toBe(false));
     const compareReq = http.expectOne('/api/v1/deployment-timeline/compare?baseTaskId=task-1&compareTaskId=task-2');

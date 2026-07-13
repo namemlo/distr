@@ -1,6 +1,6 @@
 import {HttpErrorResponse} from '@angular/common/http';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-import {Router} from '@angular/router';
+import {ActivatedRoute, Router} from '@angular/router';
 import {Application, DeploymentTarget} from '@distr-sh/distr-sdk';
 import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
@@ -28,6 +28,7 @@ describe('DeploymentPlansComponent', () => {
   let overlay: any;
   let toast: any;
   let router: any;
+  let route: any;
 
   const applications = [{id: 'application-1', name: 'Payments', type: 'docker', versions: []}] as Application[];
   const channels: Channel[] = [
@@ -222,6 +223,7 @@ describe('DeploymentPlansComponent', () => {
     router = {
       navigate: vi.fn(),
     };
+    route = {snapshot: {queryParamMap: {get: vi.fn().mockReturnValue(null)}}};
 
     deploymentPlansService.list.mockReturnValue(of(plans));
     deploymentPlansService.get.mockReturnValue(of(plans[0]));
@@ -245,6 +247,7 @@ describe('DeploymentPlansComponent', () => {
         {provide: OverlayService, useValue: overlay},
         {provide: ToastService, useValue: toast},
         {provide: Router, useValue: router},
+        {provide: ActivatedRoute, useValue: route},
       ],
     });
   });
@@ -310,7 +313,18 @@ describe('DeploymentPlansComponent', () => {
     expect(overlay.confirm).toHaveBeenCalled();
     expect(deploymentPlansService.execute).toHaveBeenCalledWith('plan-1');
     expect(toast.success).toHaveBeenCalledWith('Deployment started for 1 target');
-    expect(router.navigate).toHaveBeenCalledWith(['/deployment-timeline']);
+    expect(router.navigate).toHaveBeenCalledWith(['/deployment-timeline'], {queryParams: {taskId: 'task-1'}});
+  });
+
+  it('opens the deployment plan requested by the previous-release deep link', async () => {
+    route.snapshot.queryParamMap.get.mockImplementation((name: string) => (name === 'planId' ? 'plan-1' : null));
+
+    const {fixture, component} = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect((component as any).selectedDeploymentPlan()).toEqual(plans[0]);
+    expect(overlay.showModal).toHaveBeenCalled();
   });
 
   it('does not execute blocked deployment plans', async () => {

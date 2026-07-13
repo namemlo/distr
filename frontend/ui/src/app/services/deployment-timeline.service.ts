@@ -2,6 +2,8 @@ import {HttpClient, HttpParams} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
 import {
+  DeploymentTask,
+  DeploymentTaskTimeline,
   DeploymentTimeline,
   DeploymentTimelineCompareRef,
   DeploymentTimelineComparison,
@@ -32,6 +34,14 @@ export class DeploymentTimelineService {
 
   redeploy(taskId: string): Observable<DeploymentTimelineRedeploy> {
     return this.httpClient.post<DeploymentTimelineRedeploy>(`${baseUrl}/${taskId}/redeploy`, null);
+  }
+
+  getTask(taskId: string): Observable<DeploymentTask> {
+    return this.httpClient.get<DeploymentTask>(`/api/v1/tasks/${taskId}`);
+  }
+
+  getTaskTimeline(taskId: string): Observable<DeploymentTaskTimeline> {
+    return this.httpClient.get<DeploymentTaskTimeline>(`/api/v1/tasks/${taskId}/timeline`);
   }
 
   private compareParams(

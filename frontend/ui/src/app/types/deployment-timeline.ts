@@ -2,6 +2,8 @@ import {DeploymentPlan} from './deployment-plan';
 import {ReleaseBundleComponentType} from './release-bundle';
 
 export type DeploymentTaskStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELED';
+export type DeploymentStepRunStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'SKIPPED';
+export type DeploymentStepRunEventType = 'STARTED' | 'PROGRESS' | 'LOG' | 'OUTPUT' | 'SUCCEEDED' | 'FAILED';
 export type DeploymentTimelineChangeKind = 'unchanged' | 'added' | 'removed' | 'changed';
 export type DeploymentTimelineItemSource = 'task' | 'legacy_deployment';
 
@@ -136,4 +138,86 @@ export interface DeploymentTimelineVariableChange {
 export interface DeploymentTimelineRedeploy {
   plan: DeploymentPlan;
   warning: string;
+}
+
+export interface DeploymentTask {
+  id: string;
+  createdAt?: string;
+  updatedAt?: string;
+  queuedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  taskType?: string;
+  deploymentPlanId?: string;
+  deploymentPlanTargetId?: string;
+  deploymentTargetId?: string;
+  applicationId?: string;
+  releaseBundleId?: string;
+  channelId?: string;
+  environmentId?: string;
+  actorUserAccountId?: string;
+  status: DeploymentTaskStatus;
+  queueOrder?: number;
+  stepRuns: DeploymentStepRun[];
+}
+
+export interface DeploymentStepRun {
+  id: string;
+  createdAt?: string;
+  updatedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  taskId: string;
+  deploymentPlanId?: string;
+  deploymentPlanStepId?: string;
+  stepKey: string;
+  name: string;
+  actionType: string;
+  status: DeploymentStepRunStatus;
+  sortOrder: number;
+  skippedReason?: string;
+}
+
+export interface DeploymentTaskTimeline {
+  organizationId: string;
+  taskId: string;
+  events: DeploymentStepRunEvent[];
+}
+
+export interface DeploymentStepRunEvent {
+  id: string;
+  createdAt: string;
+  occurredAt: string;
+  organizationId?: string;
+  taskId: string;
+  stepRunId: string;
+  taskLeaseId?: string;
+  agentId?: string;
+  sequence: number;
+  type: DeploymentStepRunEventType;
+  message?: string;
+  progressPercent?: number;
+  details?: Record<string, unknown>;
+  redacted: boolean;
+  logs: DeploymentStepRunLog[];
+  outputs: DeploymentStepRunOutput[];
+}
+
+export interface DeploymentStepRunLog {
+  id?: string;
+  createdAt?: string;
+  occurredAt?: string;
+  eventId?: string;
+  stream: 'stdout' | 'stderr' | 'system';
+  severity: 'debug' | 'info' | 'warn' | 'error';
+  body: string;
+  redacted: boolean;
+}
+
+export interface DeploymentStepRunOutput {
+  id?: string;
+  name: string;
+  value?: unknown;
+  sensitive: boolean;
+  redacted: boolean;
 }

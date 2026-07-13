@@ -1,4 +1,5 @@
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {ActivatedRoute, Router} from '@angular/router';
 import {of} from 'rxjs';
 import {vi} from 'vitest';
 import {DeploymentTimelineService} from '../services/deployment-timeline.service';
@@ -15,6 +16,8 @@ describe('DeploymentTimelineComponent', () => {
   let deploymentTimelineService: any;
   let overlay: any;
   let toast: any;
+  let router: any;
+  let route: any;
 
   const items: DeploymentTimelineItem[] = [
     {
@@ -181,6 +184,8 @@ describe('DeploymentTimelineComponent', () => {
       list: vi.fn(),
       compare: vi.fn(),
       redeploy: vi.fn(),
+      getTask: vi.fn(),
+      getTaskTimeline: vi.fn(),
     };
     overlay = {
       confirm: vi.fn(),
@@ -189,10 +194,52 @@ describe('DeploymentTimelineComponent', () => {
       error: vi.fn(),
       success: vi.fn(),
     };
+    router = {navigate: vi.fn()};
+    route = {snapshot: {queryParamMap: {get: vi.fn().mockReturnValue(null)}}};
 
     deploymentTimelineService.list.mockReturnValue(of({items}));
     deploymentTimelineService.compare.mockReturnValue(of(comparison));
     deploymentTimelineService.redeploy.mockReturnValue(of(redeploy));
+    deploymentTimelineService.getTask.mockReturnValue(
+      of({
+        id: 'task-2',
+        status: 'RUNNING',
+        queuedAt: '2026-06-22T10:00:00Z',
+        stepRuns: [
+          {
+            id: 'step-run-1',
+            taskId: 'task-2',
+            stepKey: 'deploy',
+            name: 'Deploy loyalty-api',
+            actionType: 'distr.webhook',
+            status: 'RUNNING',
+            sortOrder: 10,
+          },
+        ],
+      })
+    );
+    deploymentTimelineService.getTaskTimeline.mockReturnValue(
+      of({
+        organizationId: 'org-1',
+        taskId: 'task-2',
+        events: [
+          {
+            id: 'event-1',
+            taskId: 'task-2',
+            stepRunId: 'step-run-1',
+            sequence: 2,
+            type: 'PROGRESS',
+            occurredAt: '2026-06-22T10:01:30Z',
+            createdAt: '2026-06-22T10:01:30Z',
+            message: 'deploying loyalty-api',
+            progressPercent: 60,
+            redacted: false,
+            logs: [],
+            outputs: [],
+          },
+        ],
+      })
+    );
     overlay.confirm.mockReturnValue(of(true));
 
     TestBed.configureTestingModule({
@@ -201,6 +248,8 @@ describe('DeploymentTimelineComponent', () => {
         {provide: DeploymentTimelineService, useValue: deploymentTimelineService},
         {provide: OverlayService, useValue: overlay},
         {provide: ToastService, useValue: toast},
+        {provide: Router, useValue: router},
+        {provide: ActivatedRoute, useValue: route},
       ],
     });
   });
@@ -248,12 +297,11 @@ describe('DeploymentTimelineComponent', () => {
     deploymentTimelineService.list.mockReturnValue(of({items: [legacyItems[0], items[0]]}));
     const {fixture, component} = createComponent();
 
-    expect((component as any).logUrl(legacyItems[0])).toBeUndefined();
     expect((component as any).canRedeploy(legacyItems[0])).toBe(false);
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelectorAll('a[title="Task logs"]').length).toBe(1);
-    expect(fixture.nativeElement.querySelectorAll('button[title="Deploy previous release"]').length).toBe(1);
+    expect(fixture.nativeElement.querySelectorAll('button[title="Execution details"]').length).toBe(1);
+    expect(fixture.nativeElement.querySelectorAll('button[title="Deploy previous release"]').length).toBe(0);
   });
 
   it('renders unavailable comparison dimensions for legacy entries', async () => {
@@ -286,8 +334,158 @@ describe('DeploymentTimelineComponent', () => {
 
     expect(overlay.confirm).toHaveBeenCalled();
     expect(overlay.confirm.mock.calls[0][0].confirmLabel).toBe('Deploy previous release');
+    expect(deploymentTimelineService.compare).toHaveBeenCalledWith({taskId: 'task-2'}, {taskId: 'task-1'});
     expect(deploymentTimelineService.redeploy).toHaveBeenCalledWith('task-1');
     expect(toast.success).toHaveBeenCalledWith('Deployment plan plan-3 created');
+    expect(router.navigate).toHaveBeenCalledWith(['/deployment-plans'], {queryParams: {planId: 'plan-3'}});
+  });
+
+  it('loads and renders structured execution progress in the existing side panel', async () => {
+    const {fixture, component} = createComponent();
+
+    await (component as any).viewTask(items[1]);
+    fixture.detectChanges();
+
+    expect(deploymentTimelineService.getTask).toHaveBeenCalledWith('task-2');
+    expect(deploymentTimelineService.getTaskTimeline).toHaveBeenCalledWith('task-2');
+    expect(fixture.nativeElement.textContent).toContain('Deploy loyalty-api');
+    expect(fixture.nativeElement.textContent).toContain('deploying loyalty-api');
+    expect(fixture.nativeElement.textContent).toContain('60%');
+  });
+
+  it('preserves API event order across task lease attempts', async () => {
+    deploymentTimelineService.getTaskTimeline.mockReturnValue(
+      of({
+        organizationId: 'org-1',
+        taskId: 'task-2',
+        events: [
+          {
+            id: 'attempt-1-started',
+            taskId: 'task-2',
+            stepRunId: 'step-run-1',
+            sequence: 1,
+            type: 'STARTED',
+            occurredAt: '2026-06-22T10:01:00Z',
+            createdAt: '2026-06-22T10:01:00Z',
+            message: 'attempt 1 started',
+            redacted: false,
+            logs: [],
+            outputs: [],
+          },
+          {
+            id: 'attempt-1-progress',
+            taskId: 'task-2',
+            stepRunId: 'step-run-1',
+            sequence: 2,
+            type: 'PROGRESS',
+            occurredAt: '2026-06-22T10:01:30Z',
+            createdAt: '2026-06-22T10:01:30Z',
+            message: 'attempt 1 progressed',
+            redacted: false,
+            logs: [],
+            outputs: [],
+          },
+          {
+            id: 'attempt-2-started',
+            taskId: 'task-2',
+            stepRunId: 'step-run-1',
+            sequence: 1,
+            type: 'STARTED',
+            occurredAt: '2026-06-22T10:02:00Z',
+            createdAt: '2026-06-22T10:02:00Z',
+            message: 'attempt 2 started',
+            redacted: false,
+            logs: [],
+            outputs: [],
+          },
+        ],
+      })
+    );
+    const {component} = createComponent();
+
+    await (component as any).viewTask(items[1]);
+
+    expect((component as any).eventsForStep('step-run-1').map((event: any) => event.message)).toEqual([
+      'attempt 1 started',
+      'attempt 1 progressed',
+      'attempt 2 started',
+    ]);
+  });
+
+  it('stops polling after the selected task becomes terminal', async () => {
+    vi.useFakeTimers();
+    try {
+      deploymentTimelineService.getTask.mockReset();
+      deploymentTimelineService.getTask
+        .mockReturnValueOnce(
+          of({
+            id: 'task-2',
+            status: 'RUNNING',
+            queuedAt: '2026-06-22T10:00:00Z',
+            stepRuns: [],
+          })
+        )
+        .mockReturnValueOnce(
+          of({
+            id: 'task-2',
+            status: 'SUCCEEDED',
+            queuedAt: '2026-06-22T10:00:00Z',
+            completedAt: '2026-06-22T10:03:00Z',
+            stepRuns: [],
+          })
+        );
+      const {fixture, component} = createComponent();
+
+      await (component as any).viewTask(items[1]);
+      expect(deploymentTimelineService.getTask).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(deploymentTimelineService.getTask).toHaveBeenCalledTimes(2);
+      expect((component as any).selectedTask().status).toBe('SUCCEEDED');
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(deploymentTimelineService.getTask).toHaveBeenCalledTimes(2);
+      fixture.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops polling when the component is destroyed', async () => {
+    vi.useFakeTimers();
+    try {
+      const {fixture, component} = createComponent();
+      await (component as any).viewTask(items[1]);
+      expect(deploymentTimelineService.getTask).toHaveBeenCalledTimes(1);
+
+      fixture.destroy();
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(deploymentTimelineService.getTask).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails closed when displaying sensitive or redacted outputs', () => {
+    const {component} = createComponent();
+
+    expect(
+      (component as any).outputValue({name: 'token', value: 'must-not-render', sensitive: true, redacted: false})
+    ).toBe('redacted');
+    expect(
+      (component as any).outputValue({name: 'token', value: 'must-not-render', sensitive: false, redacted: true})
+    ).toBe('redacted');
+  });
+
+  it('opens the requested task from the execution deep link', async () => {
+    route.snapshot.queryParamMap.get.mockImplementation((name: string) => (name === 'taskId' ? 'task-2' : null));
+
+    const {fixture} = createComponent();
+    await vi.waitFor(() => expect(deploymentTimelineService.getTask).toHaveBeenCalledWith('task-2'));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Deploy loyalty-api');
   });
 
   function createComponent(): {

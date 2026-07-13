@@ -24,6 +24,18 @@ func TestDeploymentTimelineHandlersListCompareAndRedeploy(t *testing.T) {
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(tasks).To(HaveLen(1))
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         tasks[0].ID,
+		Status:         types.TaskStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID,
+		TaskID:         tasks[0].ID,
+		Status:         types.TaskStatusSucceeded,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
 
 	listRecorder := httptest.NewRecorder()
 	listRequest := httptest.NewRequest(

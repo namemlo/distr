@@ -164,6 +164,9 @@ func CreateDeploymentPlanFromTimelineTask(
 	if task.TaskType != types.TaskTypeDeployment {
 		return nil, apierrors.ErrNotFound
 	}
+	if task.Status != types.TaskStatusSucceeded {
+		return nil, apierrors.NewConflict("only successful deployment tasks can be used to deploy a previous release")
+	}
 	plan, err := CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
 		OrganizationID:  request.OrganizationID,
 		ReleaseBundleID: task.ReleaseBundleID,
@@ -325,9 +328,11 @@ func queryDeploymentTimelineItems(
 			Channel:          true,
 			Environment:      true,
 			TaskLogs:         true,
-			RedeployPlan:     query.IncludeRedeployInfo && item.ReleaseBundleID != uuid.Nil,
+			RedeployPlan: query.IncludeRedeployInfo &&
+				item.ReleaseBundleID != uuid.Nil &&
+				item.Status == types.TaskStatusSucceeded,
 		}
-		item.RedeployAvailable = query.IncludeRedeployInfo && item.ReleaseBundleID != uuid.Nil
+		item.RedeployAvailable = item.Availability.RedeployPlan
 		items = append(items, item)
 	}
 	if rows.Err() != nil {

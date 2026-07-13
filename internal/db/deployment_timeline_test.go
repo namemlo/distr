@@ -129,7 +129,7 @@ func TestDeploymentTimelineRepositoryAllowsHistoricalTasksWithoutActor(t *testin
 	g.Expect(timeline.Items).To(HaveLen(1))
 	g.Expect(timeline.Items[0].TaskID).To(Equal(tasks[0].ID))
 	g.Expect(timeline.Items[0].ActorUserAccountID).To(BeNil())
-	g.Expect(timeline.Items[0].RedeployAvailable).To(BeTrue())
+	g.Expect(timeline.Items[0].RedeployAvailable).To(BeFalse())
 }
 
 func TestDeploymentTimelineRepositoryIncludesLegacyCompatibilityEntries(t *testing.T) {
@@ -396,6 +396,7 @@ func TestDeploymentTimelineRepositoryCreatesRedeployPlanFromTask(t *testing.T) {
 		ActorUserAccountID: deps.actorID,
 	})
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(markTaskSucceeded(ctx, deps.orgID, task[0].ID)).To(Succeed())
 
 	redeploy, err := db.CreateDeploymentPlanFromTimelineTask(ctx, types.CreateDeploymentTimelineRedeployRequest{
 		OrganizationID:     deps.orgID,
@@ -410,6 +411,26 @@ func TestDeploymentTimelineRepositoryCreatesRedeployPlanFromTask(t *testing.T) {
 	g.Expect(redeploy.Plan.EnvironmentID).To(Equal(deps.plan.EnvironmentID))
 	g.Expect(redeploy.Plan.Targets).To(HaveLen(1))
 	g.Expect(redeploy.Plan.Targets[0].DeploymentTargetID).To(Equal(deps.plan.Targets[0].DeploymentTargetID))
+}
+
+func TestDeploymentTimelineRepositoryRejectsRedeployFromUnsuccessfulTask(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.CreateDeploymentPlanFromTimelineTask(ctx, types.CreateDeploymentTimelineRedeployRequest{
+		OrganizationID:     deps.orgID,
+		TaskID:             tasks[0].ID,
+		ActorUserAccountID: deps.actorID,
+	})
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
 }
 
 func markTaskSucceeded(ctx context.Context, orgID, taskID uuid.UUID) error {
