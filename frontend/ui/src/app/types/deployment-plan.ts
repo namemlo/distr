@@ -11,6 +11,13 @@ export interface CreateDeploymentPlanRequest {
   targetIds: string[];
 }
 
+export interface DeploymentPlanTask {
+  id: string;
+  deploymentPlanId: string;
+  deploymentTargetId: string;
+  status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELED';
+}
+
 export interface DeploymentPlan {
   id: string;
   createdAt: string;

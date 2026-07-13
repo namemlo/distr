@@ -1,6 +1,7 @@
 import {DatePipe, DecimalPipe} from '@angular/common';
 import {ChangeDetectionStrategy, Component, inject, signal, TemplateRef, viewChild} from '@angular/core';
 import {FormBuilder, ReactiveFormsModule, Validators} from '@angular/forms';
+import {Router} from '@angular/router';
 import {Application, DeploymentTarget} from '@distr-sh/distr-sdk';
 import {FontAwesomeModule} from '@fortawesome/angular-fontawesome';
 import {
@@ -8,6 +9,7 @@ import {
   faEye,
   faListCheck,
   faMagnifyingGlass,
+  faPlay,
   faPlus,
   faRotateRight,
   faTriangleExclamation,
@@ -36,6 +38,7 @@ import {ReleaseBundle} from '../types/release-bundle';
 })
 export class DeploymentPlansComponent {
   protected readonly faMagnifyingGlass = faMagnifyingGlass;
+  protected readonly faPlay = faPlay;
   protected readonly faPlus = faPlus;
   protected readonly faListCheck = faListCheck;
   protected readonly faEye = faEye;
@@ -52,6 +55,7 @@ export class DeploymentPlansComponent {
   private readonly deploymentTargetsService = inject(DeploymentTargetsService);
   private readonly toast = inject(ToastService);
   private readonly overlay = inject(OverlayService);
+  private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder).nonNullable;
 
   protected readonly deploymentPlans = signal<DeploymentPlan[]>([]);
@@ -65,6 +69,7 @@ export class DeploymentPlansComponent {
   protected readonly formLoading = signal(false);
   protected readonly filteredDeploymentPlans = signal<DeploymentPlan[]>([]);
   protected readonly selectedDeploymentPlan = signal<DeploymentPlan | undefined>(undefined);
+  protected readonly executionLoadingPlanId = signal<string | undefined>(undefined);
 
   protected readonly filterForm = this.fb.group({
     search: this.fb.control(''),
@@ -171,6 +176,46 @@ export class DeploymentPlansComponent {
       }
     } finally {
       this.formLoading.set(false);
+    }
+  }
+
+  protected canExecute(plan: DeploymentPlan): boolean {
+    return plan.status === 'READY' && this.issueCount(plan, 'blocker') === 0;
+  }
+
+  protected async executePlan(plan: DeploymentPlan) {
+    if (!this.canExecute(plan) || this.executionLoadingPlanId()) {
+      return;
+    }
+
+    const targetCount = plan.targets.length;
+    const confirmed = await firstValueFrom(
+      this.overlay.confirm({
+        message: {
+          message: `Execute this deployment plan for ${targetCount} ${targetCount === 1 ? 'target' : 'targets'}?`,
+          alert: {
+            type: 'warning',
+            message: 'This queues immutable deployment tasks using the resolved release, process, and variables.',
+          },
+        },
+        confirmLabel: 'Execute plan',
+      })
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    this.executionLoadingPlanId.set(plan.id);
+    try {
+      const tasks = await firstValueFrom(this.deploymentPlansService.execute(plan.id));
+      const taskCount = tasks.length;
+      this.toast.success(`Deployment started for ${taskCount} ${taskCount === 1 ? 'target' : 'targets'}`);
+      this.closeDialog();
+      await this.router.navigate(['/deployment-timeline']);
+    } catch (e) {
+      this.toast.error(getFormDisplayedError(e) ?? 'Failed to execute deployment plan.');
+    } finally {
+      this.executionLoadingPlanId.set(undefined);
     }
   }
 

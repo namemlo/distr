@@ -1,7 +1,7 @@
 import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
-import {CreateDeploymentPlanRequest, DeploymentPlan} from '../types/deployment-plan';
+import {CreateDeploymentPlanRequest, DeploymentPlan, DeploymentPlanTask} from '../types/deployment-plan';
 
 const baseUrl = '/api/v1/deployment-plans';
 
@@ -21,5 +21,9 @@ export class DeploymentPlansService {
 
   create(request: CreateDeploymentPlanRequest): Observable<DeploymentPlan> {
     return this.httpClient.post<DeploymentPlan>(baseUrl, request);
+  }
+
+  execute(id: string): Observable<DeploymentPlanTask[]> {
+    return this.httpClient.post<DeploymentPlanTask[]>(`${baseUrl}/${id}/tasks`, {});
   }
 }

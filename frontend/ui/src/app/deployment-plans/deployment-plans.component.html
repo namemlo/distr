@@ -262,6 +262,17 @@
         </div>
 
         <div class="flex flex-wrap gap-2">
+          @if (canExecute(plan)) {
+            <button
+              type="button"
+              (click)="executePlan(plan)"
+              [disabled]="executionLoadingPlanId() === plan.id"
+              [attr.aria-busy]="executionLoadingPlanId() === plan.id"
+              class="distr-btn-primary min-w-36 px-3 py-2 text-sm">
+              <fa-icon [icon]="faPlay" class="mr-2" />
+              {{ executionLoadingPlanId() === plan.id ? 'Executing...' : 'Execute Plan' }}
+            </button>
+          }
           <button type="button" (click)="downloadJson(plan)" class="distr-btn-secondary px-3 py-2 text-sm">
             <fa-icon [icon]="faDownload" class="mr-2" />
             JSON

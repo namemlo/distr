@@ -1,5 +1,6 @@
 import {HttpErrorResponse} from '@angular/common/http';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {Router} from '@angular/router';
 import {Application, DeploymentTarget} from '@distr-sh/distr-sdk';
 import {of, throwError} from 'rxjs';
 import {vi} from 'vitest';
@@ -26,6 +27,7 @@ describe('DeploymentPlansComponent', () => {
   let deploymentTargetsService: any;
   let overlay: any;
   let toast: any;
+  let router: any;
 
   const applications = [{id: 'application-1', name: 'Payments', type: 'docker', versions: []}] as Application[];
   const channels: Channel[] = [
@@ -163,6 +165,7 @@ describe('DeploymentPlansComponent', () => {
     deploymentPlansService = {
       list: vi.fn(),
       create: vi.fn(),
+      execute: vi.fn(),
     };
     releaseBundlesService = {
       list: vi.fn(),
@@ -181,10 +184,14 @@ describe('DeploymentPlansComponent', () => {
     };
     overlay = {
       showModal: vi.fn(),
+      confirm: vi.fn(),
     };
     toast = {
       error: vi.fn(),
       success: vi.fn(),
+    };
+    router = {
+      navigate: vi.fn(),
     };
 
     deploymentPlansService.list.mockReturnValue(of(plans));
@@ -207,6 +214,7 @@ describe('DeploymentPlansComponent', () => {
         {provide: DeploymentTargetsService, useValue: deploymentTargetsService},
         {provide: OverlayService, useValue: overlay},
         {provide: ToastService, useValue: toast},
+        {provide: Router, useValue: router},
       ],
     });
   });
@@ -249,6 +257,40 @@ describe('DeploymentPlansComponent', () => {
       targetIds: ['target-1'],
     });
     expect(toast.success).toHaveBeenCalledWith('Deployment plan created');
+  });
+
+  it('confirms and executes a ready deployment plan, then opens the deployment timeline', async () => {
+    const readyPlan: DeploymentPlan = {...plans[0], status: 'READY', issues: []};
+    deploymentPlansService.list.mockReturnValue(of([readyPlan]));
+    deploymentPlansService.execute.mockReturnValue(
+      of([
+        {
+          id: 'task-1',
+          deploymentPlanId: readyPlan.id,
+          deploymentTargetId: 'target-1',
+          status: 'QUEUED',
+        },
+      ])
+    );
+    overlay.confirm.mockReturnValue(of(true));
+    const {component} = createComponent();
+
+    await (component as any).executePlan(readyPlan);
+
+    expect(overlay.confirm).toHaveBeenCalled();
+    expect(deploymentPlansService.execute).toHaveBeenCalledWith('plan-1');
+    expect(toast.success).toHaveBeenCalledWith('Deployment started for 1 target');
+    expect(router.navigate).toHaveBeenCalledWith(['/deployment-timeline']);
+  });
+
+  it('does not execute blocked deployment plans', async () => {
+    const {component} = createComponent();
+
+    await (component as any).executePlan(plans[0]);
+
+    expect(overlay.confirm).not.toHaveBeenCalled();
+    expect(deploymentPlansService.execute).not.toHaveBeenCalled();
+    expect(router.navigate).not.toHaveBeenCalled();
   });
 
   it('renders JSON and Markdown exports without exposing redacted values', () => {

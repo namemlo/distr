@@ -19,7 +19,7 @@ describe('DeploymentPlansService', () => {
     http.verify();
   });
 
-  it('performs deployment plan list, get, and create requests', () => {
+  it('performs deployment plan list, get, create, and execute requests', () => {
     const plan = {
       id: 'plan-1',
       createdAt: '2026-06-21T07:00:00Z',
@@ -55,5 +55,18 @@ describe('DeploymentPlansService', () => {
     expect(createReq.request.method).toBe('POST');
     expect(createReq.request.body).toEqual(request);
     createReq.flush(plan);
+
+    service.execute('plan-1').subscribe((tasks) => expect(tasks[0].id).toBe('task-1'));
+    const executeReq = http.expectOne('/api/v1/deployment-plans/plan-1/tasks');
+    expect(executeReq.request.method).toBe('POST');
+    expect(executeReq.request.body).toEqual({});
+    executeReq.flush([
+      {
+        id: 'task-1',
+        deploymentPlanId: 'plan-1',
+        deploymentTargetId: 'target-1',
+        status: 'QUEUED',
+      },
+    ]);
   });
 });
