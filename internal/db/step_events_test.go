@@ -796,6 +796,10 @@ func TestStepEventRepositoryCompletesStepRunAndTaskOnSucceededEvent(t *testing.T
 	g.Expect(task.CompletedAt).NotTo(BeNil())
 	g.Expect(task.StepRuns[0].Status).To(Equal(types.StepRunStatusSucceeded))
 	g.Expect(countActiveTaskLeasesForTest(t, ctx, fixture.taskID)).To(Equal(0))
+	g.Expect(task.Locks).NotTo(BeEmpty())
+	for _, lock := range task.Locks {
+		g.Expect(lock.ReleasedAt).NotTo(BeNil())
+	}
 }
 
 func TestStepEventRepositoryFailsTaskAndStopsLeasingAfterStartedFailedEvents(t *testing.T) {
@@ -830,6 +834,10 @@ func TestStepEventRepositoryFailsTaskAndStopsLeasingAfterStartedFailedEvents(t *
 	g.Expect(task.CompletedAt).NotTo(BeNil())
 	g.Expect(task.StepRuns[0].Status).To(Equal(types.StepRunStatusFailed))
 	g.Expect(countActiveTaskLeasesForTest(t, ctx, fixture.taskID)).To(Equal(0))
+	g.Expect(task.Locks).NotTo(BeEmpty())
+	for _, lock := range task.Locks {
+		g.Expect(lock.ReleasedAt).NotTo(BeNil())
+	}
 	nextLease, err := db.LeaseAgentTask(ctx, types.LeaseAgentTaskRequest{
 		OrganizationID: fixture.orgID,
 		AgentID:        fixture.agentID,

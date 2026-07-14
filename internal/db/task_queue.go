@@ -226,11 +226,6 @@ func TransitionTaskState(ctx context.Context, request types.TransitionTaskStateR
 		if err := updateTaskStatus(ctx, request.TaskID, request.OrganizationID, request.Status); err != nil {
 			return err
 		}
-		if request.Status.IsTerminal() {
-			if err := releaseTaskResourceLocks(ctx, request.TaskID, request.OrganizationID); err != nil {
-				return err
-			}
-		}
 		task, err = getTask(ctx, request.TaskID, request.OrganizationID)
 		return err
 	})
@@ -1157,6 +1152,9 @@ func updateTaskStatus(ctx context.Context, id, orgID uuid.UUID, status types.Tas
 	}
 	if status.IsTerminal() {
 		if err := releaseActiveTaskLeasesForTask(ctx, id, orgID); err != nil {
+			return err
+		}
+		if err := releaseTaskResourceLocks(ctx, id, orgID); err != nil {
 			return err
 		}
 	}
