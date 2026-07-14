@@ -33,16 +33,17 @@ Environment:
 const startLocal = args.has('--start-local');
 const cleanup = args.has('--cleanup');
 const requireRunningHub = args.has('--require-running-hub') || !startLocal;
-const host = (startLocal
-  ? (process.env.DISTR_DEMO_HOST ?? 'http://127.0.0.1:8080')
-  : (process.env.DISTR_HOST ?? 'http://localhost:8080')
+const host = (
+  startLocal
+    ? (process.env.DISTR_DEMO_HOST ?? 'http://127.0.0.1:8080')
+    : (process.env.DISTR_HOST ?? 'http://localhost:8080')
 ).replace(/\/$/, '');
 const databaseURL = startLocal ? (process.env.DISTR_DEMO_DATABASE_URL ?? demoDatabaseURL) : process.env.DATABASE_URL;
 const disposableHub = startLocal || process.env.DISTR_DEMO_DISPOSABLE_HUB === 'true';
 const sharedHubAllowed = process.env.DISTR_DEMO_ALLOW_SHARED_HUB === 'true';
 if (requireRunningHub && !disposableHub && !sharedHubAllowed) {
   throw new Error(
-    '--require-running-hub creates and soft-deletes demo data. Use --start-local, set DISTR_DEMO_DISPOSABLE_HUB=true for a disposable Hub, or set DISTR_DEMO_ALLOW_SHARED_HUB=true to acknowledge shared-Hub mutation.',
+    '--require-running-hub creates and soft-deletes demo data. Use --start-local, set DISTR_DEMO_DISPOSABLE_HUB=true for a disposable Hub, or set DISTR_DEMO_ALLOW_SHARED_HUB=true to acknowledge shared-Hub mutation.'
   );
 }
 const featureFlags = [
@@ -453,16 +454,17 @@ async function runLiveReleaseToTaskJourney() {
 
     const logs = await apiRequest('GET', `/api/v1/tasks/${tasks[0].id}/logs`, {token});
     assert(logs.length === 2, 'task logs must include both action log chunks');
-    assert(logs.some((log) => log.body.includes('status=200')), 'task logs must include HTTP status proof');
-
-    const deploymentTimeline = await apiRequest(
-      'GET',
-      `/api/v1/deployment-timeline?applicationId=${topology.app.id}`,
-      {token},
+    assert(
+      logs.some((log) => log.body.includes('status=200')),
+      'task logs must include HTTP status proof'
     );
+
+    const deploymentTimeline = await apiRequest('GET', `/api/v1/deployment-timeline?applicationId=${topology.app.id}`, {
+      token,
+    });
     assert(
       deploymentTimeline.items?.some((item) => item.taskId === tasks[0].id),
-      'deployment timeline must include the created task',
+      'deployment timeline must include the created task'
     );
 
     console.log(`Live release-to-task journey passed for task ${tasks[0].id}`);
@@ -471,7 +473,6 @@ async function runLiveReleaseToTaskJourney() {
       await cleanupDemoOrganization(token);
     }
   }
-
 }
 let hubProcess;
 

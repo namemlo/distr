@@ -4,18 +4,18 @@ Use this breakdown to propose upstream-sized slices instead of one large fork du
 
 ## Contribution Order
 
-| Slice | Depends on | Scope | Compatibility notes |
-| --- | --- | --- | --- |
-| Fork records and feature flags | None | ADR pattern, roadmap records, experimental flags | No runtime behavior change. |
-| Environments, lifecycles, channels | Feature flags | Generic promotion metadata and rule validation | Existing deployments unchanged. |
-| Release bundles and CI API | Channels | Immutable release records, checksums, publication, CLI examples | Existing direct deployment remains valid. |
-| Deployment processes and variables | Release bundles | Process revisions, scoped variables, snapshots, drift | No execution change until planning. |
-| Planning and durable tasks | Processes and variables | Plan checksums, locks, task queue, leases, events | Agents require capability-aware rollout. |
-| Built-in safe actions | Task engine | Compose adapter, OCI job, file render, HTTP check, wait, webhook | Typed actions only; no script console. |
-| Governance and rollout | Task engine | Approvals, tags, waves, guided failure, freezes, subscriptions | Requires RBAC review. |
-| Reusable operations | Governance | Step templates, output variables, runbooks, schedules | Keep template sources signed or built in. |
-| Progressive delivery | Rollout | Rolling, traffic provider, blue-green, timeline, retention | Provider-specific adapters stay optional. |
-| Operational maturity | Prior slices | Observability, Config as Code validation, compatibility backfill, release docs | Config sync/apply remains future work. |
+| Slice                              | Depends on              | Scope                                                                          | Compatibility notes                       |
+| ---------------------------------- | ----------------------- | ------------------------------------------------------------------------------ | ----------------------------------------- |
+| Fork records and feature flags     | None                    | ADR pattern, roadmap records, experimental flags                               | No runtime behavior change.               |
+| Environments, lifecycles, channels | Feature flags           | Generic promotion metadata and rule validation                                 | Existing deployments unchanged.           |
+| Release bundles and CI API         | Channels                | Immutable release records, checksums, publication, CLI examples                | Existing direct deployment remains valid. |
+| Deployment processes and variables | Release bundles         | Process revisions, scoped variables, snapshots, drift                          | No execution change until planning.       |
+| Planning and durable tasks         | Processes and variables | Plan checksums, locks, task queue, leases, events                              | Agents require capability-aware rollout.  |
+| Built-in safe actions              | Task engine             | Compose adapter, OCI job, file render, HTTP check, wait, webhook               | Typed actions only; no script console.    |
+| Governance and rollout             | Task engine             | Approvals, tags, waves, guided failure, freezes, subscriptions                 | Requires RBAC review.                     |
+| Reusable operations                | Governance              | Step templates, output variables, runbooks, schedules                          | Keep template sources signed or built in. |
+| Progressive delivery               | Rollout                 | Rolling, traffic provider, blue-green, timeline, retention                     | Provider-specific adapters stay optional. |
+| Operational maturity               | Prior slices            | Observability, Config as Code validation, compatibility backfill, release docs | Config sync/apply remains future work.    |
 
 ## Upstream Review Notes
 

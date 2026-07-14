@@ -76,7 +76,9 @@ if (!index.includes('### PR-050 - Community release hardening')) {
 
 const workflow = readRel('.github/workflows/community-release-hardening.yaml');
 if (/^\s+paths:\s*$/m.test(workflow)) {
-  fail('release workflow must not path-filter pull_request or push runs; release gates need to run for runtime, migration, and dependency-manifest changes');
+  fail(
+    'release workflow must not path-filter pull_request or push runs; release gates need to run for runtime, migration, and dependency-manifest changes'
+  );
 }
 
 for (const requiredWorkflowText of [
@@ -177,10 +179,7 @@ for (const requiredDemoText of [
 }
 
 const smokeTest = readRel('hack/e2e-smoke-test.mjs');
-for (const forbiddenSmokeText of [
-  'E2eSmoke123!',
-  'Math.random().toString(16)',
-]) {
+for (const forbiddenSmokeText of ['E2eSmoke123!', 'Math.random().toString(16)']) {
   if (smokeTest.includes(forbiddenSmokeText)) {
     fail(`smoke test still contains fixed or weak credential text: ${forbiddenSmokeText}`);
   }
@@ -191,7 +190,7 @@ for (const requiredSmokeText of [
   'cleanupDemoOrganization',
   '/api/v1/organization',
   "method: 'DELETE'",
-  "organizationName: `E2E Smoke ${RUN_ID}`",
+  'organizationName: `E2E Smoke ${RUN_ID}`',
 ]) {
   if (!smokeTest.includes(requiredSmokeText)) {
     fail(`smoke test missing random credential or cleanup text: ${requiredSmokeText}`);
@@ -229,10 +228,9 @@ function markdownFiles(relDir) {
   return out;
 }
 
-const mdFiles = [
-  ...markdownFiles('docs'),
-  ...markdownFiles('examples/community-e2e'),
-].filter((file) => /PR-050|release|community-e2e|operator|upstream|security|upgrade|architecture|api/.test(file));
+const mdFiles = [...markdownFiles('docs'), ...markdownFiles('examples/community-e2e')].filter((file) =>
+  /PR-050|release|community-e2e|operator|upstream|security|upgrade|architecture|api/.test(file)
+);
 
 for (const file of mdFiles) {
   const text = readRel(file);

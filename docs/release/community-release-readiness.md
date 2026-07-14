@@ -19,39 +19,39 @@ Existing direct application-version deployments remain supported.
 
 Keep experimental flags enabled only for the surfaces being evaluated.
 
-| Flag | Area | Release note |
-| --- | --- | --- |
-| `environments` | Environments | Required by lifecycle and release workflows. |
-| `lifecycles` | Lifecycles | Requires environments for phase selection. |
-| `channels` | Channels | Used by release rules and Config as Code examples. |
-| `release_bundles` | Release bundles | Required by CI release API and release UI. |
-| `deployment_processes` | Deployment processes | Required by process revisions and planning. |
-| `scoped_variables_v2` | Variable sets and resolver | Required by snapshots, drift, and planning. |
-| `deployment_plans` | Deployment plans | Required by plan preview and task creation. |
-| `task_queue` | Durable tasks | Required by task execution. |
-| `agent_capabilities` | Agent capabilities | Required when advanced plans validate target action support. |
-| `agent_task_leases` | Agent task leases | Required when agents claim queued tasks. |
-| `step_events` | Step events | Required for task timeline, logs, and bounded outputs. |
-| `deployment_timeline` | Timeline and compare | Requires advanced task and compatibility data. |
-| `retention_policies` | Retention | Preview and dry-run only until destructive apply is separately reviewed. |
-| `observability_metrics` | Metrics | Requires `METRICS_ENABLED=true` for metrics exposure. |
-| `observability_tracing` | Tracing | Emits spans only when enabled. |
-| `observability_dashboards` | Dashboard catalog | Static dashboard catalog API. |
-| `observability_correlation` | Correlation links | Adds link and query templates where supported. |
-| `config_as_code` | Config as Code | Validation and authority guards only; no sync/apply workflow. |
+| Flag                        | Area                       | Release note                                                             |
+| --------------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `environments`              | Environments               | Required by lifecycle and release workflows.                             |
+| `lifecycles`                | Lifecycles                 | Requires environments for phase selection.                               |
+| `channels`                  | Channels                   | Used by release rules and Config as Code examples.                       |
+| `release_bundles`           | Release bundles            | Required by CI release API and release UI.                               |
+| `deployment_processes`      | Deployment processes       | Required by process revisions and planning.                              |
+| `scoped_variables_v2`       | Variable sets and resolver | Required by snapshots, drift, and planning.                              |
+| `deployment_plans`          | Deployment plans           | Required by plan preview and task creation.                              |
+| `task_queue`                | Durable tasks              | Required by task execution.                                              |
+| `agent_capabilities`        | Agent capabilities         | Required when advanced plans validate target action support.             |
+| `agent_task_leases`         | Agent task leases          | Required when agents claim queued tasks.                                 |
+| `step_events`               | Step events                | Required for task timeline, logs, and bounded outputs.                   |
+| `deployment_timeline`       | Timeline and compare       | Requires advanced task and compatibility data.                           |
+| `retention_policies`        | Retention                  | Preview and dry-run only until destructive apply is separately reviewed. |
+| `observability_metrics`     | Metrics                    | Requires `METRICS_ENABLED=true` for metrics exposure.                    |
+| `observability_tracing`     | Tracing                    | Emits spans only when enabled.                                           |
+| `observability_dashboards`  | Dashboard catalog          | Static dashboard catalog API.                                            |
+| `observability_correlation` | Correlation links          | Adds link and query templates where supported.                           |
+| `config_as_code`            | Config as Code             | Validation and authority guards only; no sync/apply workflow.            |
 
 ## Compatibility Matrix
 
-| Area | Supported | Notes |
-| --- | --- | --- |
-| Existing direct deployments | Yes | Existing deployment API and agent behavior remain supported. |
-| Legacy timeline visibility | Yes | PR-049 projects legacy deployments as `legacy_deployment` timeline entries. |
-| Advanced release flows | Experimental | Use the feature flags listed above. |
-| Previous agents | Supported for existing deployment behavior | New advanced task actions require advertised capabilities. |
-| PostgreSQL migrations | Forward | Validate migrations and back up before upgrade. |
-| Downgrade after data backfill | Limited | Schema rollback and data rollback are different operations; do not promise automatic reverse migration. |
-| Provider-neutral demo | Yes | See `examples/community-e2e/`; live mode uses isolated Compose dependencies and an API-only release-to-task journey through Hub and agent endpoints. |
-| Provider-specific integrations | Out of scope | Keep cloud, CI, and traffic-provider examples outside core unless generic. |
+| Area                           | Supported                                  | Notes                                                                                                                                                |
+| ------------------------------ | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Existing direct deployments    | Yes                                        | Existing deployment API and agent behavior remain supported.                                                                                         |
+| Legacy timeline visibility     | Yes                                        | PR-049 projects legacy deployments as `legacy_deployment` timeline entries.                                                                          |
+| Advanced release flows         | Experimental                               | Use the feature flags listed above.                                                                                                                  |
+| Previous agents                | Supported for existing deployment behavior | New advanced task actions require advertised capabilities.                                                                                           |
+| PostgreSQL migrations          | Forward                                    | Validate migrations and back up before upgrade.                                                                                                      |
+| Downgrade after data backfill  | Limited                                    | Schema rollback and data rollback are different operations; do not promise automatic reverse migration.                                              |
+| Provider-neutral demo          | Yes                                        | See `examples/community-e2e/`; live mode uses isolated Compose dependencies and an API-only release-to-task journey through Hub and agent endpoints. |
+| Provider-specific integrations | Out of scope                               | Keep cloud, CI, and traffic-provider examples outside core unless generic.                                                                           |
 
 ## Release Gate Checklist
 
