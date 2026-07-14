@@ -291,8 +291,7 @@ func DeleteSecret(
 		},
 	)
 	if err != nil {
-		var pgerr *pgconn.PgError
-		if errors.As(err, &pgerr) && pgerr.Code == pgerrcode.ForeignKeyViolation {
+		if isProtectedReferenceViolation(err) {
 			return fmt.Errorf("failed to delete Secret: %w", apierrors.ErrConflict)
 		}
 		return fmt.Errorf("failed to delete Secret: %w", err)

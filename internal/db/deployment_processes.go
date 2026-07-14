@@ -1038,13 +1038,14 @@ func getDeploymentProcessStepEnvironmentIDs(ctx context.Context, stepID uuid.UUI
 }
 
 func mapDeploymentProcessWriteError(action string, err error) error {
+	if isProtectedReferenceViolation(err) {
+		return fmt.Errorf("could not %s DeploymentProcess: %w", action, apierrors.ErrConflict)
+	}
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("could not %s DeploymentProcess: %w", action, apierrors.ErrAlreadyExists)
-		case pgerrcode.ForeignKeyViolation:
-			return fmt.Errorf("could not %s DeploymentProcess: %w", action, apierrors.ErrConflict)
 		case pgerrcode.CheckViolation:
 			return fmt.Errorf("could not %s DeploymentProcess: %w", action, apierrors.ErrBadRequest)
 		}

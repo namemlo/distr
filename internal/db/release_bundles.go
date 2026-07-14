@@ -1283,13 +1283,14 @@ func ensureReleaseBundleChildReference(
 }
 
 func mapReleaseBundleWriteError(action string, err error) error {
+	if isProtectedReferenceViolation(err) {
+		return fmt.Errorf("could not %s ReleaseBundle: %w", action, apierrors.ErrConflict)
+	}
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("could not %s ReleaseBundle: %w", action, apierrors.ErrAlreadyExists)
-		case pgerrcode.ForeignKeyViolation:
-			return fmt.Errorf("could not %s ReleaseBundle: %w", action, apierrors.ErrConflict)
 		}
 	}
 	return fmt.Errorf("could not %s ReleaseBundle: %w", action, err)
