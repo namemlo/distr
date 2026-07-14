@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -719,6 +721,60 @@ func TestTaskLeaseRepositoryReclaimDoesNotResetRunningHubStepRun(t *testing.T) {
 	)
 }
 
+func TestTaskLeaseRepositoryHubReclaimDoesNotResetRunningTargetStepRun(t *testing.T) {
+	ctx := taskLeaseDBTestContext(t)
+	g := NewWithT(t)
+	hubStep := taskLeaseHTTPCheckStep("hub-prepare", "Hub prepare", 10)
+	hubStep.ExecutionLocation = "hub"
+	deps := createReadyDeploymentPlanForTaskLeaseWithSteps(t, ctx, []types.DeploymentProcessStep{
+		hubStep,
+		taskLeaseComposeDeployStep("compose", "Compose deploy", 20),
+	})
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID:     deps.orgID,
+		DeploymentPlanID:   deps.plan.ID,
+		ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	hubRun := taskLeaseStepRunByKeyForTest(t, tasks[0], "hub-prepare")
+	composeRun := taskLeaseStepRunByKeyForTest(t, tasks[0], "compose")
+	first, err := db.LeaseHubTask(ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first).NotTo(BeNil())
+	g.Expect(first.ExecutorType).To(Equal(types.TaskExecutorTypeHub))
+	g.Expect(first.Steps).To(HaveLen(1))
+	g.Expect(first.Steps[0].StepRunID).To(Equal(hubRun.ID))
+	_, err = db.TransitionStepRunState(ctx, types.TransitionStepRunStateRequest{
+		OrganizationID: deps.orgID,
+		StepRunID:      composeRun.ID,
+		Status:         types.StepRunStatusRunning,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	recordTaskLeaseHubStepEventForTest(
+		t,
+		ctx,
+		deps.orgID,
+		tasks[0].DeploymentTargetID,
+		hubRun.ID,
+		first.LeaseToken,
+		1,
+		types.StepRunEventTypeStarted,
+	)
+	expireTaskLeaseForTest(t, ctx, first.ID)
+
+	second, err := db.LeaseHubTask(ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second).NotTo(BeNil())
+	g.Expect(second.ExecutorType).To(Equal(types.TaskExecutorTypeHub))
+	g.Expect(second.Attempt).To(Equal(2))
+	g.Expect(second.Steps).To(HaveLen(1))
+	g.Expect(second.Steps[0].StepRunID).To(Equal(hubRun.ID))
+	fetched, err := db.GetTask(ctx, tasks[0].ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(taskLeaseStepRunByKeyForTest(t, *fetched, "hub-prepare").Status).To(Equal(types.StepRunStatusPending))
+	g.Expect(taskLeaseStepRunByKeyForTest(t, *fetched, "compose").Status).To(Equal(types.StepRunStatusRunning))
+}
+
 func TestTaskLeaseRepositoryOrdersTargetStepsByDependencies(t *testing.T) {
 	ctx := taskLeaseDBTestContext(t)
 	g := NewWithT(t)
@@ -1062,7 +1118,36 @@ func createReadyDeploymentPlanForTaskLeaseWithSteps(
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "cluster-a")
 	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
-	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	requiresReleaseContract := slices.ContainsFunc(steps, func(step types.DeploymentProcessStep) bool {
+		included := (len(step.ChannelIDs) == 0 || slices.Contains(step.ChannelIDs, deps.channelID)) &&
+			(len(step.EnvironmentIDs) == 0 || slices.Contains(step.EnvironmentIDs, deps.devEnvironmentID))
+		return included &&
+			strings.EqualFold(strings.TrimSpace(step.ExecutionLocation), "hub") &&
+			step.ActionType == "distr.webhook"
+	})
+	var bundle types.ReleaseBundle
+	if requiresReleaseContract {
+		bundle = ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
+		bundle.ReleaseContract = releaseContractFixture(bundle.Components[0].Digest)
+		_, err := internalctx.GetDb(ctx).Exec(
+			ctx,
+			`INSERT INTO Secret (organization_id, key, value, updated_by_useraccount_id)
+			VALUES
+				(@organizationId, @authKey, @authValue, @updatedBy),
+				(@organizationId, @signingKey, @signingValue, @updatedBy)`,
+			pgx.NamedArgs{
+				"organizationId": deps.orgID,
+				"authKey":        "webhook_auth_token",
+				"authValue":      "task-lease-auth-token",
+				"signingKey":     "webhook_signing_key",
+				"signingValue":   "task-lease-signing-key",
+				"updatedBy":      actorID,
+			},
+		)
+		g.Expect(err).NotTo(HaveOccurred())
+	} else {
+		bundle = releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	}
 	bundle.DeploymentProcessRevisionID = &revision.ID
 	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
 	published, result, err := db.PublishReleaseBundle(ctx, bundle.ID, deps.orgID, actorID)
