@@ -27,4 +27,3 @@ Self-contained mode can run webhook execution without remote timeline reads or l
 Replay within a single lease execution can reconstruct prior webhook success from locally mirrored StepRun events. Replay across agent restarts still requires a future persistent local store; this PR intentionally does not introduce a Docker-agent database.
 
 Existing agents and manifests are unchanged unless `WEBHOOK_SELF_CONTAINED_MODE=true` is set. Normal mode keeps the PR-031 remote timeline replay behavior and live DNS resolution.
-

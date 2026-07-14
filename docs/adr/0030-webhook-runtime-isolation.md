@@ -27,4 +27,3 @@ Webhook execution has a single bounded runtime envelope across DNS, connect, TLS
 The webhook schema remains compatible with PR-028 and PR-029. Operators still use `timeoutSeconds`, `retry.maxAttempts`, and `retry.backoffSeconds`; this ADR only tightens how those values are enforced.
 
 Attempt metrics are best-effort. A full sink may drop metrics, which is intentional because webhook execution must not depend on metrics ingestion availability.
-

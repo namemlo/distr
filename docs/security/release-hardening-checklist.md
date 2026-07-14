@@ -4,17 +4,17 @@ Use this checklist before tagging or proposing upstream contribution slices.
 
 ## Boundary Review
 
-| Boundary | Expected control | Evidence surface |
-| --- | --- | --- |
-| Organization isolation | Cross-organization resources are rejected. | `internal/db/*_test.go`, `internal/handlers/*_test.go` |
-| RBAC | Mutations require scoped permissions or admin compatibility. | `internal/middleware/permissions_test.go`, `internal/types/permissions_test.go` |
-| Agent authentication | Agent clients send bearer tokens and agent endpoints verify token scope. | `internal/agentclient/*_test.go`, agent handler tests |
-| Leases and replay | Task leases are explicit, expiring, and heartbeat-controlled. | `internal/db/*lease*_test.go`, `internal/agentclient/task_leases_test.go` |
-| Secret redaction | Secret values are redacted from events, logs, errors, metadata, and demo output. | `internal/stepredaction`, action adapter tests |
-| File-system safety | File-render and OCI job actions reject traversal and symlink escapes. | `cmd/agent/docker/*_action_test.go` |
-| Webhooks | Signed requests, replay protection, and network hardening remain covered. | `internal/actionregistry`, webhook policy tests |
-| Config as Code | Unknown fields, wrong reference shapes, drive-relative paths, and plaintext secrets are rejected. | `internal/configascode/validation_test.go` |
-| Compatibility metadata | Legacy projections omit secrets and do not rewrite source rows. | `internal/deploymentcompat`, `internal/db/deployment_compatibility_test.go` |
+| Boundary               | Expected control                                                                                  | Evidence surface                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Organization isolation | Cross-organization resources are rejected.                                                        | `internal/db/*_test.go`, `internal/handlers/*_test.go`                          |
+| RBAC                   | Mutations require scoped permissions or admin compatibility.                                      | `internal/middleware/permissions_test.go`, `internal/types/permissions_test.go` |
+| Agent authentication   | Agent clients send bearer tokens and agent endpoints verify token scope.                          | `internal/agentclient/*_test.go`, agent handler tests                           |
+| Leases and replay      | Task leases are explicit, expiring, and heartbeat-controlled.                                     | `internal/db/*lease*_test.go`, `internal/agentclient/task_leases_test.go`       |
+| Secret redaction       | Secret values are redacted from events, logs, errors, metadata, and demo output.                  | `internal/stepredaction`, action adapter tests                                  |
+| File-system safety     | File-render and OCI job actions reject traversal and symlink escapes.                             | `cmd/agent/docker/*_action_test.go`                                             |
+| Webhooks               | Signed requests, replay protection, and network hardening remain covered.                         | `internal/actionregistry`, webhook policy tests                                 |
+| Config as Code         | Unknown fields, wrong reference shapes, drive-relative paths, and plaintext secrets are rejected. | `internal/configascode/validation_test.go`                                      |
+| Compatibility metadata | Legacy projections omit secrets and do not rewrite source rows.                                   | `internal/deploymentcompat`, `internal/db/deployment_compatibility_test.go`     |
 
 ## Required Scans
 
