@@ -44,7 +44,7 @@ var (
 			return zapcore.NewTee(c, platformLoggingCore)
 		}),
 	))
-	client         = util.Require(agentclient.NewFromEnv(logger))
+	client         *agentclient.Client
 	dockerCli      = util.Require(dockercommand.NewDockerCli())
 	composeService composeapi.Compose
 	health         = agentcheck.NewServer(time.Hour)
@@ -52,15 +52,24 @@ var (
 )
 
 func init() {
-	platformLoggingCore.Collector = &deploymenttargetlogs.BufferedCollector{Delegate: client}
-	if agentenv.AgentVersionID == "" {
-		logger.Warn("AgentVersionID is not set. self updates will be disabled")
-	}
 	util.Must(dockerCli.Initialize(flags.NewClientOptions()))
 	composeService = util.Require(compose.NewComposeService(dockerCli))
 }
 
+func initializeAgentClient() error {
+	initializedClient, err := agentclient.NewFromEnv(logger)
+	if err != nil {
+		return err
+	}
+
+	client = initializedClient
+	platformLoggingCore.Collector = &deploymenttargetlogs.BufferedCollector{Delegate: client}
+	return nil
+}
+
 func main() {
+	util.Must(initializeAgentClient())
+
 	defer func() {
 		if err := logger.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
 			fmt.Println(err)
@@ -72,6 +81,9 @@ func main() {
 			logger.Panic("agent panic", zap.Any("reason", reason))
 		}
 	}()
+	if agentenv.AgentVersionID == "" {
+		logger.Warn("AgentVersionID is not set. self updates will be disabled")
+	}
 
 	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 
