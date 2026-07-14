@@ -116,6 +116,12 @@ try {
 
   console.log(`\nAll ${stepNum} smoke test steps passed.`);
 } finally {
+  if (deploymentTargetId) {
+    await request('DELETE', `/api/v1/deployment-targets/${deploymentTargetId}`, {token});
+  }
+  if (applicationId) {
+    await request('DELETE', `/api/v1/applications/${applicationId}`, {token});
+  }
   if (token) {
     await cleanupDemoOrganization(token);
   }

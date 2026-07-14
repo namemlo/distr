@@ -197,6 +197,45 @@ for (const requiredSmokeText of [
   }
 }
 
+for (const requiredSmokeCleanupCapture of [
+  'deploymentTargetId = tutorialEvent.value.deploymentTargetId;',
+  'applicationId = helloApp.id;',
+]) {
+  if (!smokeTest.includes(requiredSmokeCleanupCapture)) {
+    fail(`smoke test cleanup must use an ID captured during the same smoke run: ${requiredSmokeCleanupCapture}`);
+  }
+}
+
+const smokeCleanupStart = smokeTest.lastIndexOf('} finally {');
+if (smokeCleanupStart === -1) {
+  fail('smoke test missing deterministic finally cleanup');
+}
+const smokeCleanup = smokeTest.slice(smokeCleanupStart);
+const targetCleanup = "await request('DELETE', `/api/v1/deployment-targets/${deploymentTargetId}`, {token});";
+const applicationCleanup = "await request('DELETE', `/api/v1/applications/${applicationId}`, {token});";
+const organizationCleanup = 'await cleanupDemoOrganization(token);';
+for (const requiredCleanup of [targetCleanup, applicationCleanup, organizationCleanup]) {
+  if (!smokeCleanup.includes(requiredCleanup)) {
+    fail(`smoke test cleanup missing exact-ID teardown step: ${requiredCleanup}`);
+  }
+}
+if (
+  !(
+    smokeCleanup.indexOf(targetCleanup) < smokeCleanup.indexOf(applicationCleanup) &&
+    smokeCleanup.indexOf(applicationCleanup) < smokeCleanup.indexOf(organizationCleanup)
+  )
+) {
+  fail('smoke test teardown must run sequentially: deployment target, application, then organization');
+}
+for (const broadCleanup of [
+  "request('DELETE', '/api/v1/deployment-targets'",
+  "request('DELETE', '/api/v1/applications'",
+]) {
+  if (smokeCleanup.includes(broadCleanup)) {
+    fail(`smoke test teardown must not use a collection-wide delete: ${broadCleanup}`);
+  }
+}
+
 const compose = readRel('examples/community-e2e/compose.yaml');
 for (const requiredComposeText of [
   '127.0.0.1:15432:5432',
