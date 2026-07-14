@@ -115,8 +115,8 @@ func TestExternalExecutionRepositoryRecordsIdempotentCallbacksAndObservedState(t
 	g.Expect(events[1].Sequence).To(Equal(int64(2)))
 	g.Expect(events[1].Status).To(Equal(types.ExternalExecutionStatusSucceeded))
 	_, err = internalctx.GetDb(ctx).Exec(ctx,
-		`UPDATE ExternalExecution SET callback_deadline_at = now() - interval '1 second' WHERE id = @id`,
-		pgx.NamedArgs{"id": execution.ID})
+		`UPDATE ExternalExecution SET callback_deadline_at = @deadline WHERE id = @id`,
+		pgx.NamedArgs{"deadline": time.Now().UTC().Add(-time.Minute), "id": execution.ID})
 	g.Expect(err).NotTo(HaveOccurred())
 	_, err = db.RecordExternalExecutionCallback(ctx, types.RecordExternalExecutionCallbackRequest{
 		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, Sequence: 3,
@@ -185,8 +185,8 @@ func TestExternalExecutionRejectsLateSuccessAndPersistsTimeout(t *testing.T) {
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	_, err = internalctx.GetDb(ctx).Exec(ctx,
-		`UPDATE ExternalExecution SET callback_deadline_at = now() - interval '1 second' WHERE id = @id`,
-		pgx.NamedArgs{"id": execution.ID})
+		`UPDATE ExternalExecution SET callback_deadline_at = @deadline WHERE id = @id`,
+		pgx.NamedArgs{"deadline": time.Now().UTC().Add(-time.Minute), "id": execution.ID})
 	g.Expect(err).NotTo(HaveOccurred())
 	observed := types.ExternalExecutionObservedState{
 		Version: execution.ExpectedVersion, Image: execution.ExpectedImage, Platform: execution.ExpectedPlatform,
