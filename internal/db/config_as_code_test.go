@@ -9,7 +9,6 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/types"
-	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
 
@@ -35,7 +34,7 @@ func TestConfigAsCodeAuthorityRepositoryDefaultsAndUpserts(t *testing.T) {
 	g.Expect(defaultAuthority.Authority).To(Equal(types.ConfigAsCodeAuthorityDatabaseManaged))
 	g.Expect(defaultAuthority.RepositoryPath).To(BeEmpty())
 
-	actorID := uuid.New()
+	actorID := createReleaseBundleTestUser(t, ctx, orgID)
 	expected := types.ConfigAsCodeAuthority{
 		OrganizationID:   orgID,
 		ResourceKind:     types.ConfigAsCodeResourceKindChannel,
