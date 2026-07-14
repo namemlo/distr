@@ -227,8 +227,7 @@ func DeleteLifecycleWithID(ctx context.Context, id, organizationID uuid.UUID) er
 			pgx.NamedArgs{"id": id, "organizationId": organizationID},
 		)
 		if err != nil {
-			var pgError *pgconn.PgError
-			if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+			if isProtectedReferenceViolation(err) {
 				return fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 			}
 			return fmt.Errorf("could not delete Lifecycle: %w", err)
