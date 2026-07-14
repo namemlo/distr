@@ -17,7 +17,10 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-const deploymentPlanWebhookURL = "https://jenkins.example/deploy"
+const (
+	deploymentPlanWebhookURL           = "https://jenkins.example/deploy"
+	deploymentPlanWebhookSigningSecret = "api_token"
+)
 
 func TestDeploymentPlanRepositoryCreatesReadyPlanFromPublishedRelease(t *testing.T) {
 	ctx := deploymentPlanDBTestContext(t)
@@ -307,7 +310,10 @@ func TestDeploymentPlanRepositoryBlocksHubWebhookWithoutReleaseContract(t *testi
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
 	revision.Steps[0].ActionType = "distr.webhook"
 	revision.Steps[0].ExecutionLocation = "hub"
-	revision.Steps[0].InputBindings = map[string]any{"url": deploymentPlanWebhookURL}
+	revision.Steps[0].InputBindings = map[string]any{
+		"url":           deploymentPlanWebhookURL,
+		"signingSecret": deploymentPlanWebhookSigningSecret,
+	}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
@@ -337,7 +343,10 @@ func TestDeploymentPlanRepositorySnapshotsTargetComponents(t *testing.T) {
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
 	revision.Steps[0].ActionType = "distr.webhook"
 	revision.Steps[0].ExecutionLocation = "hub"
-	revision.Steps[0].InputBindings = map[string]any{"url": deploymentPlanWebhookURL}
+	revision.Steps[0].InputBindings = map[string]any{
+		"url":           deploymentPlanWebhookURL,
+		"signingSecret": deploymentPlanWebhookSigningSecret,
+	}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
@@ -380,7 +389,10 @@ func TestDeploymentPlanRepositoryBlocksTargetPlatformMismatch(t *testing.T) {
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Jenkins deploy")
 	revision.Steps[0].ActionType = "distr.webhook"
 	revision.Steps[0].ExecutionLocation = "hub"
-	revision.Steps[0].InputBindings = map[string]any{"url": deploymentPlanWebhookURL}
+	revision.Steps[0].InputBindings = map[string]any{
+		"url":           deploymentPlanWebhookURL,
+		"signingSecret": deploymentPlanWebhookSigningSecret,
+	}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
 	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-arm-dev")

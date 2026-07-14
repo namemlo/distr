@@ -336,10 +336,11 @@ func TestExecuteFileRenderStepRejectsSymlinkEscape(t *testing.T) {
 
 	err := executeFileRenderStep(context.Background(), lease, step, recorder)
 
-	g.Expect(err).To(MatchError(ContainSubstring("destinationPath escapes allowlisted root")))
+	g.Expect(err).To(MatchError(ContainSubstring("destinationPath cannot be a symlink")))
 	g.Expect(string(mustReadFile(t, outsideFile))).To(Equal("outside=true\n"))
 	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
 		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeProgress,
 		types.StepRunEventTypeFailed,
 	}))
 }
@@ -529,6 +530,7 @@ func TestExecuteFileRenderStepRejectsParentSymlinkEscapeBeforeCreatingOutsideDir
 	g.Expect(filepath.Join(outside, "created-outside")).NotTo(BeADirectory())
 	g.Expect(eventTypes(recorder.events)).To(Equal([]types.StepRunEventType{
 		types.StepRunEventTypeStarted,
+		types.StepRunEventTypeProgress,
 		types.StepRunEventTypeFailed,
 	}))
 }
