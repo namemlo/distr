@@ -1,8 +1,8 @@
-# Observability Feature Flags
+# Feature Flags
 
-Observability features are enabled with `DISTR_EXPERIMENTAL_FEATURE_FLAGS`. Multiple flags can be separated by commas, spaces, semicolons, tabs, or newlines.
+Experimental features are enabled with `DISTR_EXPERIMENTAL_FEATURE_FLAGS`. Multiple flags can be separated by commas, spaces, semicolons, tabs, or newlines. Registered flags are off by default, and unknown keys fail Hub startup validation.
 
-## Matrix
+## Observability Matrix
 
 | Flag                        | Enables                                                                                  | Still inactive when disabled                                                                 |
 | --------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -53,6 +53,25 @@ Start with metrics first, then tracing, then dashboards, then correlation metada
 
 This order keeps each layer observable on its own before adding links between layers.
 
+## Operator Control-Plane Isolation
+
+| Flag                        | Effective when                                               | Boundary                                                                                             |
+| --------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `operator_control_plane_v2` | Its key is configured.                                       | Umbrella for new control-plane v2 writes; historical reads and v1 behavior stay available.           |
+| `executor_protocol_v2`      | Both its key and `operator_control_plane_v2` are configured. | Admission kill switch for the fenced executor protocol v2; configuring it alone remains ineffective. |
+
+Both flags are process-wide until PR-066 adds organization/environment enrollment. They must remain disabled in
+shared and production environments until PR-083 completes hardening. In an isolated developer environment only,
+the layered state can be evaluated with:
+
+```text
+DISTR_EXPERIMENTAL_FEATURE_FLAGS=operator_control_plane_v2,executor_protocol_v2
+```
+
+Do not use `all` in a shared or production environment during this program because it includes both registered
+control-plane flags. Removing the umbrella key immediately makes executor protocol v2 ineffective without
+removing its configured key.
+
 ## Boundaries
 
-These flags do not enable Grafana provisioning, dashboard UI, alerting, log correlation, analytics storage, RBAC changes, or task execution changes.
+The observability flags do not enable Grafana provisioning, dashboard UI, alerting, log correlation, analytics storage, RBAC changes, or task execution changes. PR-055 only establishes the control-plane isolation boundary; it does not add v2 routes, persistence, execution, retry, or migration behavior.

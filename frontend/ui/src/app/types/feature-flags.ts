@@ -15,7 +15,9 @@ export type ExperimentalFeatureFlagKey =
   | 'observability_tracing'
   | 'observability_dashboards'
   | 'observability_correlation'
-  | 'config_as_code';
+  | 'config_as_code'
+  | 'operator_control_plane_v2'
+  | 'executor_protocol_v2';
 
 export interface ExperimentalFeatureFlag {
   key: ExperimentalFeatureFlagKey;

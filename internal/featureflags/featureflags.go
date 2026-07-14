@@ -29,6 +29,8 @@ const (
 	KeyObservabilityDashboards  Key = "observability_dashboards"
 	KeyObservabilityCorrelation Key = "observability_correlation"
 	KeyConfigAsCode             Key = "config_as_code"
+	KeyOperatorControlPlaneV2   Key = "operator_control_plane_v2"
+	KeyExecutorProtocolV2       Key = "executor_protocol_v2"
 )
 
 type Flag struct {
@@ -166,6 +168,18 @@ var definitions = []definition{
 		Milestone:   "Milestone G",
 	},
 	{Key: KeyConfigAsCode, Label: "Config as Code", Description: "Validates declarative configuration documents and governs Git-managed resource authority.", Milestone: "Milestone H"},
+	{
+		Key:         KeyOperatorControlPlaneV2,
+		Label:       "Operator Control Plane v2",
+		Description: "Gates new operator control-plane v2 writes while preserving historical reads and v1 behavior.",
+		Milestone:   "Operator Control Plane",
+	},
+	{
+		Key:         KeyExecutorProtocolV2,
+		Label:       "Executor Protocol v2",
+		Description: "Gates new fenced executor protocol v2 admission and requires Operator Control Plane v2.",
+		Milestone:   "Operator Control Plane",
+	},
 }
 
 func AllKeys() []Key {
@@ -211,6 +225,9 @@ func NewRegistry(enabled []Key) Registry {
 }
 
 func (r Registry) IsEnabled(key Key) bool {
+	if key == KeyExecutorProtocolV2 && !slices.Contains(r.enabled, KeyOperatorControlPlaneV2) {
+		return false
+	}
 	return slices.Contains(r.enabled, key)
 }
 
