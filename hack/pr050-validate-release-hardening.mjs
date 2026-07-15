@@ -11,6 +11,8 @@ const localJwtSecret = 'bG9jYWwtand0LXNlY3JldC1wbGFjZWhvbGRlci0zMi1ieXRlcw==';
 const requiredFiles = [
   '.github/workflows/community-release-hardening.yaml',
   '.golangci.release.yml',
+  'Dockerfile.docker-agent',
+  'Dockerfile.kubernetes-agent',
   'docs/adr/0050-community-release-hardening.md',
   'docs/fork/PR-050_COMMUNITY_RELEASE_HARDENING.md',
   'docs/fork/FORK_DIFF_INDEX.md',
@@ -29,6 +31,8 @@ const requiredFiles = [
   'hack/e2e-smoke-test.mjs',
   'hack/pr050-license-scan.mjs',
   'internal/handlers/pr050_community_live_demo_test.go',
+  'go.mod',
+  'mise.toml',
 ];
 
 const secretScanFiles = requiredFiles.filter(
@@ -51,6 +55,34 @@ function assertFile(relPath) {
 
 for (const file of requiredFiles) {
   assertFile(file);
+}
+
+const goVersionSources = new Map([
+  ['go.mod', /^go\s+(\d+\.\d+\.\d+)$/m],
+  ['mise.toml', /^go\s*=\s*"(\d+\.\d+\.\d+)"$/m],
+  ['Dockerfile.docker-agent', /^FROM\s+golang:(\d+\.\d+\.\d+)-/m],
+  ['Dockerfile.kubernetes-agent', /^FROM\s+golang:(\d+\.\d+\.\d+)-/m],
+]);
+const goVersions = new Map(
+  [...goVersionSources].map(([file, pattern]) => {
+    const match = readRel(file).match(pattern);
+    if (!match) {
+      fail(`could not read pinned Go version from ${file}`);
+    }
+    return [file, match[1]];
+  })
+);
+if (new Set(goVersions.values()).size !== 1) {
+  fail(`Go version pins must match: ${[...goVersions].map(([file, version]) => `${file}=${version}`).join(', ')}`);
+}
+const requiredGoVersion = '1.26.5';
+if ([...goVersions.values()].some((version) => version !== requiredGoVersion)) {
+  fail(`Go version pins must remain at the patched baseline ${requiredGoVersion}`);
+}
+
+const requiredContainerdVersion = 'v2.2.5';
+if (!readRel('go.mod').includes(`github.com/containerd/containerd/v2 ${requiredContainerdVersion}`)) {
+  fail(`containerd/v2 must remain at the patched baseline ${requiredContainerdVersion}`);
 }
 
 const prDoc = readRel('docs/fork/PR-050_COMMUNITY_RELEASE_HARDENING.md');
@@ -85,6 +117,8 @@ for (const requiredWorkflowText of [
   'DISTR_TARGET_ID',
   'agent_capabilities,agent_task_leases,step_events',
   'go vet ./...',
+  'go install golang.org/x/vuln/cmd/govulncheck@v1.6.0',
+  'govulncheck ./...',
   'golangci/golangci-lint-action',
   "version: 'v2.12.2'",
   'args: --config=.golangci.release.yml ./...',
