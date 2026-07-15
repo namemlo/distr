@@ -323,13 +323,18 @@ func normalizeDeploymentTargetPlatform(target *types.DeploymentTarget) {
 
 func DeleteDeploymentTargetWithID(ctx context.Context, id uuid.UUID) error {
 	db := internalctx.GetDb(ctx)
-	if cmd, err := db.Exec(ctx, `DELETE FROM DeploymentTarget WHERE id = @id`, pgx.NamedArgs{"id": id}); err != nil {
-		return err
+	cmd, err := db.Exec(ctx, `DELETE FROM DeploymentTarget WHERE id = @id`, pgx.NamedArgs{"id": id})
+	if err != nil {
+		if isProtectedReferenceViolation(err) {
+			err = fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
+		}
 	} else if cmd.RowsAffected() == 0 {
-		return apierrors.ErrNotFound
-	} else {
-		return nil
+		err = apierrors.ErrNotFound
 	}
+	if err != nil {
+		return fmt.Errorf("could not delete DeploymentTarget: %w", err)
+	}
+	return nil
 }
 
 func UpdateDeploymentTargetAccess(ctx context.Context, dt *types.DeploymentTarget, orgID uuid.UUID) error {

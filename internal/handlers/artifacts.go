@@ -246,6 +246,10 @@ func deleteArtifactHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if errors.Is(err, apierrors.ErrConflict) {
+			http.Error(w, "artifact is in use", http.StatusConflict)
+			return
+		}
 		log.Error("error deleting artifact", zap.Error(err))
 		sentry.GetHubFromContext(ctx).CaptureException(err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
