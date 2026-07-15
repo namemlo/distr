@@ -468,7 +468,10 @@ func createProtectedDeleteTarget(
 ) types.DeploymentTargetFull {
 	t.Helper()
 	var agentVersionID uuid.UUID
-	if err := internalctx.GetDb(ctx).QueryRow(ctx, `SELECT id FROM AgentVersion LIMIT 1`).Scan(&agentVersionID); err != nil {
+	if err := internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		`SELECT id FROM AgentVersion LIMIT 1`,
+	).Scan(&agentVersionID); err != nil {
 		t.Fatalf("get agent version: %v", err)
 	}
 	target := types.DeploymentTargetFull{DeploymentTarget: types.DeploymentTarget{
@@ -503,10 +506,12 @@ func createProtectedDeleteTarget(
 
 func createProtectedDeleteArtifact(t *testing.T, ctx context.Context, orgID uuid.UUID) types.ArtifactWithTaggedVersion {
 	t.Helper()
-	artifact := types.ArtifactWithTaggedVersion{ArtifactWithDownloads: types.ArtifactWithDownloads{Artifact: types.Artifact{
-		OrganizationID: orgID,
-		Name:           "Artifact " + uuid.NewString(),
-	}}}
+	artifact := types.ArtifactWithTaggedVersion{
+		ArtifactWithDownloads: types.ArtifactWithDownloads{Artifact: types.Artifact{
+			OrganizationID: orgID,
+			Name:           "Artifact " + uuid.NewString(),
+		}},
+	}
 	if err := internalctx.GetDb(ctx).QueryRow(
 		ctx,
 		`INSERT INTO Artifact (organization_id, name)
