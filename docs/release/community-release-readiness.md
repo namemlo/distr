@@ -17,8 +17,8 @@ Existing direct application-version deployments remain supported.
 
 ### Protected-delete API compatibility
 
-Protected resources now use `409 Conflict` consistently instead of returning a client error or reporting an
-expected database restriction as a server fault.
+The four protected-reference cases below now use `409 Conflict` instead of the previous generic `400`/`500`
+responses.
 
 | Delete operation                                             | Previous protected-reference response | New response                                                             |
 | ------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------ |
