@@ -15,6 +15,33 @@ The community fork adds release-management primitives on top of existing Distr d
 
 Existing direct application-version deployments remain supported.
 
+### Protected-delete API compatibility
+
+Protected resources now use `409 Conflict` consistently instead of returning a client error or reporting an
+expected database restriction as a server fault.
+
+| Delete operation                                             | Previous protected-reference response | New response                                                             |
+| ------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------ |
+| `DELETE /api/v1/applications/{applicationId}`                | `400 Bad Request`                     | `409`, `text/plain; charset=utf-8`, body `application is in use\n`       |
+| `DELETE /api/v1/deployment-targets/{deploymentTargetId}`     | `500 Internal Server Error`           | `409`, `text/plain; charset=utf-8`, body `deployment target is in use\n` |
+| `DELETE /api/v1/artifacts/{artifactId}`                      | `500 Internal Server Error`           | `409`, `text/plain; charset=utf-8`, body `artifact is in use\n`          |
+| `DELETE /api/v1/secrets/{secretId}` for a database reference | `500 Internal Server Error`           | `409`, `text/plain; charset=utf-8`, body `secret is in use\n`            |
+
+Artifact entitlement protection is unchanged: it remains `400 Bad Request` with
+`text/plain; charset=utf-8` and body
+`bad request: Cannot delete artifact: it is referenced in one or more entitlements.\n`.
+
+Secret deletion has two intentional `409` response media types:
+
+| Protection source           | Content type                | Response body                   |
+| --------------------------- | --------------------------- | ------------------------------- |
+| Affected deployed workloads | `application/json`          | `{"affectedDeployments":[...]}` |
+| Another database resource   | `text/plain; charset=utf-8` | `secret is in use\n`            |
+
+Secret API clients must branch on the response `Content-Type` before decoding a `409`; they must not assume every
+Secret conflict is JSON. Unexpected Application delete failures remain `500 Internal Server Error` but now return
+the generic body `Internal Server Error\n` instead of exposing database details.
+
 ## Feature-Flag Inventory
 
 Keep experimental flags enabled only for the surfaces being evaluated.
