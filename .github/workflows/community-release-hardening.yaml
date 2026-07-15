@@ -112,7 +112,7 @@ jobs:
           node examples/community-e2e/live-demo.mjs --require-running-hub
       - name: Run Go vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
       - name: Run production dependency audit
         run: pnpm audit --prod
