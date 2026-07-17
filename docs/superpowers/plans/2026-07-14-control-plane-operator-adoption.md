@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - PR-055 through PR-078 and both subsystem exit gates must be accepted first.
-- Migration 160 is reserved for operator read-model indexes/projections; 161 is reserved for sample retirement/tombstones.
+- Migration 161 is reserved for operator read-model indexes/projections; 162 is reserved for sample retirement/tombstones.
 - All list APIs are server-paginated with default 50/maximum 100 and deterministic cursor/order.
 - UI drawers cannot hide a blocking approval/preflight fact; every fact is also available on a detail route and API.
 - Existing `/deployments` and `/deployments/:deploymentTargetId` links remain compatible. Static child routes must be matched before the legacy ID redirect.
@@ -27,8 +27,8 @@
 
 **Files:**
 
-- Create: `internal/migrations/sql/160_operator_control_plane_read_models.up.sql`
-- Create: `internal/migrations/sql/160_operator_control_plane_read_models.down.sql`
+- Create: `internal/migrations/sql/161_operator_control_plane_read_models.up.sql`
+- Create: `internal/migrations/sql/161_operator_control_plane_read_models.down.sql`
 - Create: `internal/types/operator_read_model.go`
 - Create: `internal/operatorqueries/fleet.go`
 - Create: `internal/operatorqueries/fleet_test.go`
@@ -48,10 +48,10 @@
 - Modify: `internal/routing/routing.go`
 - Create: `hack/control-plane-read-model-benchmark.mjs`
 - Create: `hack/control-plane-scale-fixture.mjs`
-- Create: `docs/adr/0066-operator-read-models-and-route-compatibility.md`
+- Create: `docs/adr/0067-operator-read-models-and-route-compatibility.md`
 - Create: `docs/fork/PR-079_OPERATOR_CONTROL_PLANE_READ_MODELS.md`
 
-Migration 160 adds covering/partial indexes and explicitly maintained projection tables only where measured query plans require them. It must not duplicate ownership identities or become a write source of truth.
+Migration 161 adds covering/partial indexes and explicitly maintained projection tables only where measured query plans require them. It must not duplicate ownership identities or become a write source of truth.
 
 ```go
 type PageRequest struct { Cursor string; Limit int }
@@ -80,7 +80,7 @@ go test ./internal/operatorqueries ./internal/db ./api ./internal/mapping ./inte
 node hack/control-plane-scale-fixture.mjs --targets 1000 --placements 649 --agents 100 --components 100 --steps 500 --out work/control-plane-scale.json
 node hack/control-plane-read-model-benchmark.mjs --fixture work/control-plane-scale.json --runs 20
 mise run lint:migrations
-git add internal/migrations/sql/160_* internal/types/operator_read_model.go internal/operatorqueries internal/db/operator_queries* api/operator_control_plane* internal/mapping/operator_control_plane.go internal/handlers/operator_control_plane* internal/routing/routing.go docs hack/control-plane-read-model-benchmark.mjs hack/control-plane-scale-fixture.mjs
+git add internal/migrations/sql/161_* internal/types/operator_read_model.go internal/operatorqueries internal/db/operator_queries* api/operator_control_plane* internal/mapping/operator_control_plane.go internal/handlers/operator_control_plane* internal/routing/routing.go docs hack/control-plane-read-model-benchmark.mjs hack/control-plane-scale-fixture.mjs
 git commit -m "feat: add paginated operator read models"
 ```
 
@@ -227,8 +227,8 @@ git commit -m "test: prove neutral control plane execution"
 
 **Files:**
 
-- Create: `internal/migrations/sql/161_sample_domain_retirement.up.sql`
-- Create: `internal/migrations/sql/161_sample_domain_retirement.down.sql`
+- Create: `internal/migrations/sql/162_sample_domain_retirement.up.sql`
+- Create: `internal/migrations/sql/162_sample_domain_retirement.down.sql`
 - Create: `internal/types/sample_retirement.go`
 - Create: `internal/retirement/preview.go`
 - Create: `internal/retirement/preview_test.go`
@@ -242,11 +242,11 @@ git commit -m "test: prove neutral control plane execution"
 - Create: `cmd/hub/cmd/retire_sample_domain.go`
 - Create: `cmd/hub/cmd/retire_sample_domain_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0067-sample-retirement-and-audit-tombstones.md`
+- Create: `docs/adr/0068-sample-retirement-and-audit-tombstones.md`
 - Create: `docs/operations/sample-domain-retirement.md`
 - Create: `docs/fork/PR-082_SAMPLE_DOMAIN_RETIREMENT.md`
 
-Migration 161 creates `SampleRetirementJob`, `SampleRetirementItem`, `SampleRetirementCheckpoint`, and `AuditSubjectTombstone`. Jobs require immutable backup/restore-proof references/checksums, an exact ID allowlist, ownership markers, preview checksum, approval ID, and applied counts. Audit events are never deleted.
+Migration 162 creates `SampleRetirementJob`, `SampleRetirementItem`, `SampleRetirementCheckpoint`, and `AuditSubjectTombstone`. Jobs require immutable backup/restore-proof references/checksums, an exact ID allowlist, ownership markers, preview checksum, approval ID, and applied counts. Audit events are never deleted.
 
 ```go
 func PreviewSampleRetirement(context.Context, types.SampleRetirementRequest) (*types.SampleRetirementPreview, error)
@@ -265,7 +265,7 @@ Routes: `POST /api/v1/sample-retirements/preview`, `GET /{id}`, `POST /{id}/appl
 ```powershell
 go test ./internal/retirement ./internal/db ./api ./internal/handlers ./cmd/hub/cmd -run 'SampleRetirement|AuditTombstone|Cleanup' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/161_* internal/types/sample_retirement.go internal/retirement internal/db/sample_retirement* api/sample_retirement.go internal/handlers/sample_retirement* cmd/hub/cmd/retire_sample_domain* internal/routing/routing.go docs
+git add internal/migrations/sql/162_* internal/types/sample_retirement.go internal/retirement internal/db/sample_retirement* api/sample_retirement.go internal/handlers/sample_retirement* cmd/hub/cmd/retire_sample_domain* internal/routing/routing.go docs
 git commit -m "feat: retire allowlisted sample domains safely"
 ```
 
@@ -291,7 +291,7 @@ git commit -m "feat: retire allowlisted sample domains safely"
 - Modify: `docs/security/release-hardening-checklist.md`
 
 - [ ] Generate the AC-01..AC-80 ledger with owning PR/task, automated test, manual/fixture evidence, status, and artifact checksum. Fail on a missing/duplicate primary evidence owner or absent community evidence; mark only AC-01, AC-02, AC-48, AC-49, AC-52, AC-54, AC-55, AC-64, and adopter AC-79 `pending-adopter` with exact ADOPTER task owners.
-- [ ] Run migration-137 → 161 upgrade, clean install, safe down/refusal, checkpoint restart, v1-only flags-off, mixed v1/v2, v2 flag-off history, and current upstream compatibility tests.
+- [ ] Run migration-138 → 162 upgrade, clean install, safe down/refusal, checkpoint restart, v1-only flags-off, mixed v1/v2, v2 flag-off history, and current upstream compatibility tests.
 - [ ] Run full Go, Angular, Playwright, Hub/agent builds, Compose E2E, failure matrix, scale/load, migration validation, lint/format, dependency/license, vulnerability, secret, and adopter-term scans.
 - [ ] Document the exact standard client workflow, CI publish-only boundary, version/changelog semantics, dependency/provider resolution, approval/campaign/execution/observation/reconciliation, previous-state plan, backup/recovery, incident controls, and rollback flags.
 - [ ] Produce immutable community image digest, SBOM/provenance references, database migration report, and release-readiness sign-off. Do not deploy to an adopter yet.
@@ -300,7 +300,7 @@ git commit -m "feat: retire allowlisted sample domains safely"
 ```powershell
 mise run lint:migrations
 if ([string]::IsNullOrWhiteSpace($env:DISTR_CONTROL_PLANE_TEST_DATABASE_URL)) { throw 'DISTR_CONTROL_PLANE_TEST_DATABASE_URL is required for the migration matrix' }
-pwsh -File hack/control-plane-migration-matrix.ps1 -FromMigration 137 -ToMigration 161 -DatabaseUrl $env:DISTR_CONTROL_PLANE_TEST_DATABASE_URL
+pwsh -File hack/control-plane-migration-matrix.ps1 -FromMigration 138 -ToMigration 162 -DatabaseUrl $env:DISTR_CONTROL_PLANE_TEST_DATABASE_URL
 node hack/control-plane-acceptance-check.mjs docs/release/enterprise-control-plane-acceptance.md
 go test -p=1 ./... -count=1
 mise run lint:go

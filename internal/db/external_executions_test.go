@@ -114,10 +114,7 @@ func TestExternalExecutionRepositoryRecordsIdempotentCallbacksAndObservedState(t
 	g.Expect(events).To(HaveLen(2))
 	g.Expect(events[1].Sequence).To(Equal(int64(2)))
 	g.Expect(events[1].Status).To(Equal(types.ExternalExecutionStatusSucceeded))
-	_, err = internalctx.GetDb(ctx).Exec(ctx,
-		`UPDATE ExternalExecution SET callback_deadline_at = @deadline WHERE id = @id`,
-		pgx.NamedArgs{"deadline": time.Now().UTC().Add(-time.Minute), "id": execution.ID})
-	g.Expect(err).NotTo(HaveOccurred())
+	setExternalExecutionDeadline(t, ctx, execution.ID, time.Now().UTC().Add(-time.Minute))
 	_, err = db.RecordExternalExecutionCallback(ctx, types.RecordExternalExecutionCallbackRequest{
 		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, Sequence: 3,
 		Status: types.ExternalExecutionStatusRunning, Message: "late callback",
@@ -184,10 +181,7 @@ func TestExternalExecutionRejectsLateSuccessAndPersistsTimeout(t *testing.T) {
 		Component: "api-image", CallbackTimeoutSeconds: 600,
 	})
 	g.Expect(err).NotTo(HaveOccurred())
-	_, err = internalctx.GetDb(ctx).Exec(ctx,
-		`UPDATE ExternalExecution SET callback_deadline_at = @deadline WHERE id = @id`,
-		pgx.NamedArgs{"deadline": time.Now().UTC().Add(-time.Minute), "id": execution.ID})
-	g.Expect(err).NotTo(HaveOccurred())
+	setExternalExecutionDeadline(t, ctx, execution.ID, time.Now().UTC().Add(-time.Minute))
 	observed := types.ExternalExecutionObservedState{
 		Version: execution.ExpectedVersion, Image: execution.ExpectedImage, Platform: execution.ExpectedPlatform,
 		Contracts: execution.ExpectedContracts, ConfigReference: execution.ExpectedConfigReference,
@@ -361,4 +355,24 @@ func createExternalExecutionPlan(t *testing.T, ctx context.Context) taskQueuePla
 		orgID: deps.orgID, applicationID: deps.applicationID, channelID: deps.channelID,
 		devEnvironmentID: deps.devEnvironmentID, actorID: actorID, plan: plan,
 	}
+}
+
+func setExternalExecutionDeadline(
+	t *testing.T,
+	ctx context.Context,
+	executionID uuid.UUID,
+	deadline time.Time,
+) {
+	t.Helper()
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+UPDATE ExternalExecution
+SET callback_deadline_at =
+      CAST(@deadline AS timestamptz) AT TIME ZONE 'UTC',
+    callback_deadline_at_instant =
+      CAST(@deadline AS timestamptz)
+WHERE id = @id`,
+		pgx.NamedArgs{
+			"deadline": deadline.UTC(), "id": executionID,
+		})
+	NewWithT(t).Expect(err).NotTo(HaveOccurred())
 }

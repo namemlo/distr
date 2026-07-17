@@ -2,6 +2,29 @@
 
 Use this checklist for an operator-controlled upgrade to the PR-050 release package.
 
+## Migration 138 Decision Path
+
+This section overrides the generic migration order only when crossing from schema 137 to migration 138.
+
+1. Run `distr migrate --check` while the current Hub is still running.
+2. For proven zero history, stop/fence writers, verify they are stopped, back up PostgreSQL and object storage,
+   verify both backups through isolated restore, run the explicit migration, and start only the expand-compatible
+   Hub with `serve --migrate=false`.
+3. For a non-empty schema 137 database, run `timestamp-expand-capture`. Keep the Hub stopped while an independent
+   reviewer classifies every cell and seals the complete manifest.
+4. Run `timestamp-expand-apply`; it revalidates the fence and evidence, performs a dry run, migrates to 138, applies
+   and verifies provenance, checks startup compatibility, starts the digest-pinned Hub, and clears the fence only
+   after health and history checks pass.
+5. Retain the evidence directory and previous-known-good image until release acceptance.
+
+Before migration 138 starts, `timestamp-expand-cancel` may resume the previous image only when schema 137 and the
+captured database identity remain unchanged. After an `APPLIED` or `VERIFIED` manifest exists,
+`migrate --to 137` is intentionally refused. Recovery then completes the expand release or restores the verified
+database and object-store backups before the previous image resumes.
+
+Unresolved cells remain fail-closed and do not block the additive expand schema. They do block the separately
+planned contract release.
+
 ## Before Upgrade
 
 - Back up PostgreSQL.

@@ -12,7 +12,7 @@
 
 - The approved behavior is fixed by `docs/superpowers/specs/2026-07-14-enterprise-operator-control-plane-design.md` at commit `cd1e6cf7`.
 - Implement exactly one core PR at a time. Merge or explicitly approve its evidence before starting its dependent PR.
-- Rebase and inspect `internal/migrations/sql` before each schema PR. The migration numbers below are reserved from the current latest migration, 137; if upstream lands a migration first, renumber the unopened pair without changing order or meaning.
+- Rebase and inspect `internal/migrations/sql` before each schema PR. Migration 138 and ADR-0055 are allocated to PR-054A; the unopened control-plane migrations start at 139. If upstream lands a migration first, renumber the unopened pair without changing order or meaning.
 - Add an `.up.sql` and `.down.sql` pair for every numbered migration. Down migrations may refuse destructive rollback after live v2 data exists, but must document and test that refusal.
 - Use additive schema, dual-read comparison, checkpointed backfills, and feature flags. Never rewrite v1 release JSON, canonical bytes, IDs, checksums, callback evidence, or target history.
 - `ExternalExecution` remains protocol v1 with ADR-0052 at-most-once semantics. Protocol v2 uses separate records, routes, fencing, and an explicit superseding ADR; no in-flight v1 conversion is allowed.
@@ -70,40 +70,42 @@ For later PRs, replace the number/slug and branch from the just-accepted program
 
 ## 2. Sequential PR, Migration, and ADR Ledger
 
-| PR     | Migration |  ADR | Deliverable                                                                                                           | Primary acceptance                             |
-| ------ | --------: | ---: | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| PR-055 |      None | None | Reconcile PR-054 index; register `operator_control_plane_v2` and `executor_protocol_v2`; document production-off rule | prerequisite                                   |
-| PR-056 |       138 | 0055 | Canonical deployment registry identity and scoped validation                                                          | Generic mechanics; primary AC-03–AC-07         |
-| PR-057 |       139 |    — | Registry preview/apply imports, classification, coverage report, setup UI                                             | Generic import support for AC-01–AC-04         |
-| PR-058 |       140 | 0056 | Immutable Target Config Snapshots and verification                                                                    | AC-08, AC-11, AC-12, AC-59                     |
-| PR-059 |       141 |    — | Restartable v1 config extraction/lineage with dry-run and rollback flag                                               | AC-14, AC-68 config                            |
-| PR-060 |       142 | 0057 | Component Release Contract v2, artifact variants, target-neutral validation                                           | AC-09, AC-10, AC-13                            |
-| PR-061 |      None |    — | Provenance verification, v1-derived backfill, CLI/UI compatibility                                                    | AC-65, AC-68; generic support for AC-55        |
-| PR-062 |       143 | 0058 | Product Release capability graph and publication                                                                      | AC-15, AC-16, AC-18, AC-78                     |
-| PR-063 |       144 | 0059 | Target-plan drafts, requirement resolver, immutable plan publication                                                  | AC-17, AC-19, AC-20, AC-27                     |
-| PR-064 |       145 |    — | Exact verified baseline, accumulated change set, risk classification, previous-release plan                           | AC-25, AC-26, AC-56                            |
-| PR-065 |       146 |    — | Typed backup/migration/validation/recovery graph                                                                      | AC-21–AC-24, AC-60, AC-61, AC-77               |
-| PR-066 |       147 | 0060 | Scoped authorization, role bindings, organization/environment feature enrollment                                      | AC-30, AC-67 scope                             |
-| PR-067 |       148 |    — | Versioned deployment policies and strict shared-scope composition                                                     | AC-28, AC-67 policy                            |
-| PR-068 |       149 |    — | Approval requests, requirements, decisions, invalidation, four-eyes                                                   | AC-29, AC-75                                   |
-| PR-069 |       150 | 0061 | Versioned maintenance calendars and deployment freezes                                                                | AC-31, AC-74                                   |
-| PR-070 |       151 |    — | Admission evaluation and checksum-bound emergency override                                                            | AC-32, AC-71 admission                         |
-| PR-071 |       152 | 0062 | Campaign drafts, immutable revisions, waves, membership, prerequisites                                                | AC-42, AC-62, AC-80                            |
-| PR-072 |       153 |    — | Campaign scheduler, persisted state machine, thresholds, bake policy                                                  | AC-36–AC-38, AC-66                             |
-| PR-073 |       154 |    — | Pause/resume/retry/exclude/cancel controls                                                                            | AC-39–AC-41, AC-71 controls                    |
-| PR-074 |       155 |    — | Versioned adapter capabilities, assignments, and plan-time resolution                                                 | AC-76                                          |
-| PR-075 |       156 | 0063 | Signed and fenced executor protocol v2; explicit v1 boundary                                                          | AC-33–AC-35, AC-58, AC-69                      |
-| PR-076 |       157 |    — | Cancel, status query, callback-loss reconciliation                                                                    | AC-40, AC-41, AC-70                            |
-| PR-077 |       158 | 0064 | Pending/active desired state, independent observations, drift/reconciliation                                          | AC-43–AC-45, AC-57, AC-72, AC-73               |
-| PR-078 |       159 | 0065 | Correlated audit events, evidence bundles, external export checkpoint                                                 | AC-46, AC-47                                   |
-| PR-079 |       160 | 0066 | Fleet/release/plan/campaign/execution/reconciliation read models                                                      | AC-50 API                                      |
-| PR-080 |      None |    — | Operator control-room routes, role-aware UI, legacy redirects, Playwright E2E                                         | AC-63                                          |
-| PR-081 |      None |    — | Two neutral adapters/targets and roadmap-scale performance/failure proof                                              | AC-50, AC-51, AC-53                            |
-| PR-082 |       161 | 0067 | Allowlisted sample retirement, audit tombstones, interruption-safe cleanup                                            | AC-48, AC-49, AC-64, AC-79                     |
-| PR-083 |      None |    — | Full regression, mixed v1/v2 rollback proof, release/operator docs, adopter evidence assignments                      | Community matrix; AC-54 assigned to ADOPTER-05 |
+| PR      | Migration |  ADR | Deliverable                                                                                                           | Primary acceptance                             |
+| ------- | --------: | ---: | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| PR-054A |       138 | 0055 | Additive external-execution timestamp expand and durable provenance foundation                                        | prerequisite                                   |
+| PR-055  |      None | None | Reconcile PR-054 index; register `operator_control_plane_v2` and `executor_protocol_v2`; document production-off rule | prerequisite                                   |
+| PR-056  |       139 | 0056 | Canonical deployment registry identity and scoped validation                                                          | Generic mechanics; primary AC-03–AC-07         |
+| PR-057  |       140 |    — | Registry preview/apply imports, classification, coverage report, setup UI                                             | Generic import support for AC-01–AC-04         |
+| PR-058  |       141 | 0057 | Immutable Target Config Snapshots and verification                                                                    | AC-08, AC-11, AC-12, AC-59                     |
+| PR-059  |       142 |    — | Restartable v1 config extraction/lineage with dry-run and rollback flag                                               | AC-14, AC-68 config                            |
+| PR-060  |       143 | 0058 | Component Release Contract v2, artifact variants, target-neutral validation                                           | AC-09, AC-10, AC-13                            |
+| PR-061  |      None |    — | Provenance verification, v1-derived backfill, CLI/UI compatibility                                                    | AC-65, AC-68; generic support for AC-55        |
+| PR-062  |       144 | 0059 | Product Release capability graph and publication                                                                      | AC-15, AC-16, AC-18, AC-78                     |
+| PR-063  |       145 | 0060 | Target-plan drafts, requirement resolver, immutable plan publication                                                  | AC-17, AC-19, AC-20, AC-27                     |
+| PR-064  |       146 |    — | Exact verified baseline, accumulated change set, risk classification, previous-release plan                           | AC-25, AC-26, AC-56                            |
+| PR-065  |       147 |    — | Typed backup/migration/validation/recovery graph                                                                      | AC-21–AC-24, AC-60, AC-61, AC-77               |
+| PR-066  |       148 | 0061 | Scoped authorization, role bindings, organization/environment feature enrollment                                      | AC-30, AC-67 scope                             |
+| PR-067  |       149 |    — | Versioned deployment policies and strict shared-scope composition                                                     | AC-28, AC-67 policy                            |
+| PR-068  |       150 |    — | Approval requests, requirements, decisions, invalidation, four-eyes                                                   | AC-29, AC-75                                   |
+| PR-069  |       151 | 0062 | Versioned maintenance calendars and deployment freezes                                                                | AC-31, AC-74                                   |
+| PR-070  |       152 |    — | Admission evaluation and checksum-bound emergency override                                                            | AC-32, AC-71 admission                         |
+| PR-071  |       153 | 0063 | Campaign drafts, immutable revisions, waves, membership, prerequisites                                                | AC-42, AC-62, AC-80                            |
+| PR-072  |       154 |    — | Campaign scheduler, persisted state machine, thresholds, bake policy                                                  | AC-36–AC-38, AC-66                             |
+| PR-073  |       155 |    — | Pause/resume/retry/exclude/cancel controls                                                                            | AC-39–AC-41, AC-71 controls                    |
+| PR-074  |       156 |    — | Versioned adapter capabilities, assignments, and plan-time resolution                                                 | AC-76                                          |
+| PR-075  |       157 | 0064 | Signed and fenced executor protocol v2; explicit v1 boundary                                                          | AC-33–AC-35, AC-58, AC-69                      |
+| PR-076  |       158 |    — | Cancel, status query, callback-loss reconciliation                                                                    | AC-40, AC-41, AC-70                            |
+| PR-077  |       159 | 0065 | Pending/active desired state, independent observations, drift/reconciliation                                          | AC-43–AC-45, AC-57, AC-72, AC-73               |
+| PR-078  |       160 | 0066 | Correlated audit events, evidence bundles, external export checkpoint                                                 | AC-46, AC-47                                   |
+| PR-079  |       161 | 0067 | Fleet/release/plan/campaign/execution/reconciliation read models                                                      | AC-50 API                                      |
+| PR-080  |      None |    — | Operator control-room routes, role-aware UI, legacy redirects, Playwright E2E                                         | AC-63                                          |
+| PR-081  |      None |    — | Two neutral adapters/targets and roadmap-scale performance/failure proof                                              | AC-50, AC-51, AC-53                            |
+| PR-082  |       162 | 0068 | Allowlisted sample retirement, audit tombstones, interruption-safe cleanup                                            | AC-48, AC-49, AC-64, AC-79                     |
+| PR-083  |      None |    — | Full regression, mixed v1/v2 rollback proof, release/operator docs, adopter evidence assignments                      | Community matrix; AC-54 assigned to ADOPTER-05 |
 
 The detailed tasks are split by subsystem:
 
+- `docs/superpowers/plans/2026-07-15-external-execution-timestamp-expand.md` — PR-054A prerequisite.
 - `docs/superpowers/plans/2026-07-14-control-plane-foundations.md` — PR-055 through PR-065.
 - `docs/superpowers/plans/2026-07-14-control-plane-governance-execution.md` — PR-066 through PR-078.
 - `docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md` — PR-079 through PR-083 and Choice TP adoption.

@@ -4,8 +4,8 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-053 are implemented locally. PR-053 adds structured operator execution detail, guarded
-previous-release planning, current-versus-historical comparison, and exact task and plan deep links.
+PR-000 through PR-054 are implemented locally. PR-054A is allocated as a documentation-only prerequisite for the
+external-execution timestamp expand; its runtime and migration implementation remains pending.
 
 ## Tracking Template
 
@@ -929,3 +929,24 @@ Use one entry per pull request:
 - Tests: Added content-address validation, external-execution persistence, API mapping, and migration coverage.
 - Upstream contribution notes: Provider-neutral immutable execution inputs; no adopter or CI-provider names, credentials, or labels.
 - Compatibility notes: Versioned object references remain valid. Content-addressed S3 objects are accepted only when their path digest matches the declared checksum.
+
+### PR-054A - External-execution timestamp expand
+
+- Status: Implemented locally; CI matrix configured; independent review and real PostgreSQL 16.14/18.4
+  service-container legs remain pending Task 11.
+- Feature flag: None.
+- User-facing behavior: None. Existing external-execution API fields and null behavior remain unchanged.
+- Database changes: Migration 138 adds nullable instant shadows, paired future defaults, future indexes, immutable
+  timestamp manifest/provenance metadata, contract-gate foundation, and durable zero-history proof.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0055, the approved hybrid design, fenced Compose procedure, release/upgrade/smoke/security
+  guidance, and PostgreSQL 16.14/18.4 gates.
+- Tests: Local non-database validators, migration-pair validation, and the Compose orchestration harness passed. The
+  focused CI matrix is configured for pinned PostgreSQL 16.14 and 18.4; both real service-container legs remain
+  pending Task 11.
+- Upstream contribution notes: Community-neutral control-plane migration; no adopter repository, application
+  database, credentials, host names, or cleanup behavior.
+- Compatibility notes: Expand continues reading legacy timestamps and writes paired legacy/instant values. Contract
+  eligibility and canonical instant reads are separate later work.

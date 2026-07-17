@@ -12,7 +12,7 @@
 
 - Read `docs/superpowers/plans/2026-07-14-enterprise-operator-control-plane-program.md` and the approved spec before each PR.
 - Complete, review, and merge only one PR task below at a time.
-- Migration numbers 138–146 are reserved from current HEAD; re-check before opening each PR.
+- Migration numbers 139–147 are reserved after PR-054A migration 138; re-check before opening each PR.
 - All create/update requests trim and validate at API boundaries and validate organization ownership again in DB/service code.
 - Canonicalization is deterministic across map iteration and database row order; array order is either semantic and preserved or explicitly sorted.
 - New v2 writes require `operator_control_plane_v2`; historical v1 reads do not.
@@ -72,8 +72,8 @@ git commit -m "feat: isolate operator control plane v2"
 
 **Files:**
 
-- Create: `internal/migrations/sql/138_deployment_registry.up.sql`
-- Create: `internal/migrations/sql/138_deployment_registry.down.sql`
+- Create: `internal/migrations/sql/139_deployment_registry.up.sql`
+- Create: `internal/migrations/sql/139_deployment_registry.down.sql`
 - Create: `internal/types/deployment_registry.go`
 - Create: `internal/deploymentregistry/validation.go`
 - Create: `internal/deploymentregistry/validation_test.go`
@@ -87,12 +87,12 @@ git commit -m "feat: isolate operator control plane v2"
 - Create: `internal/handlers/deployment_registry_test.go`
 - Create: `internal/handlers/deployment_registry_integration_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0055-canonical-deployment-registry-identity.md`
+- Create: `docs/adr/0056-canonical-deployment-registry-identity.md`
 - Create: `docs/fork/PR-056_CANONICAL_DEPLOYMENT_REGISTRY.md`
 - Modify: `docs/adr/README.md`
 - Modify: `docs/fork/FORK_DIFF_INDEX.md`
 
-Migration 138 creates organization-owned `DeploymentScope`, `TargetEnvironmentAssignment`, `DeploymentUnit`, `DeploymentUnitSubscriber`, `ComponentDefinition`, `ComponentAlias`, and `ComponentInstance`. It reuses `CustomerOrganization`, `DeploymentTarget`, and `Environment` foreign keys. Constraints enforce one physical unit per target/scope identity, explicit active environment intervals, unique subscriber/unit pairs, canonical component keys, alias uniqueness, active instance uniqueness, organization-consistent relations, and deterministic pagination indexes.
+Migration 139 creates organization-owned `DeploymentScope`, `TargetEnvironmentAssignment`, `DeploymentUnit`, `DeploymentUnitSubscriber`, `ComponentDefinition`, `ComponentAlias`, and `ComponentInstance`. It reuses `CustomerOrganization`, `DeploymentTarget`, and `Environment` foreign keys. Constraints enforce one physical unit per target/scope identity, explicit active environment intervals, unique subscriber/unit pairs, canonical component keys, alias uniqueness, active instance uniqueness, organization-consistent relations, and deterministic pagination indexes.
 
 ```go
 type DeliveryModel string // dedicated, shared, external, observe_only
@@ -121,7 +121,7 @@ func ListDeploymentRegistryPlacements(context.Context, types.RegistryListFilter)
 API root: `/api/v1/deployment-registry`. Add scoped CRUD/list endpoints for scopes, assignments, units, subscribers, definitions, aliases, instances, and placements. Lists accept `cursor` and `limit` (default 50, maximum 100).
 
 - [ ] Write validation tests for dedicated/shared topology, ambiguous active environment, duplicate physical identity, missing subscriber, orphan instance, alias-required rename, and cross-organization substitution; run them red, then implement pure types/validation green.
-- [ ] Write migration/repository tests that apply migration 138, create a complete placement, reject foreign IDs, prove pagination order, and allow down migration only when no registry data exists.
+- [ ] Write migration/repository tests that apply migration 139, create a complete placement, reject foreign IDs, prove pagination order, and allow down migration only when no registry data exists.
 - [ ] Implement schema/repositories in transactions and translate uniqueness/FK failures into non-leaking domain errors.
 - [ ] Add API validation, mapping, handlers, feature middleware, and routing. Test admin success, read-only list, unauthorized mutation, foreign ID 404, flag disabled, and bounded pagination.
 - [ ] Verify, document, and commit.
@@ -132,13 +132,13 @@ if ([string]::IsNullOrWhiteSpace($env:DISTR_CONTROL_PLANE_TEST_DATABASE_URL)) { 
 $previousTestDatabaseUrl=$env:DISTR_TEST_DATABASE_URL
 try {
   $env:DISTR_TEST_DATABASE_URL=$env:DISTR_CONTROL_PLANE_TEST_DATABASE_URL
-  go test ./internal/db -run 'DeploymentRegistry|Migration138' -count=1
+  go test ./internal/db -run 'DeploymentRegistry|Migration139' -count=1
   if ($LASTEXITCODE -ne 0) { throw 'live PostgreSQL registry tests failed' }
 } finally {
   if ([string]::IsNullOrEmpty($previousTestDatabaseUrl)) { Remove-Item Env:DISTR_TEST_DATABASE_URL -ErrorAction SilentlyContinue } else { $env:DISTR_TEST_DATABASE_URL=$previousTestDatabaseUrl }
 }
 mise run lint:migrations
-git add internal/migrations/sql/138_* internal/types/deployment_registry.go internal/deploymentregistry internal/db/deployment_registry* api/deployment_registry* internal/mapping/deployment_registry* internal/handlers/deployment_registry* internal/routing/routing.go docs
+git add internal/migrations/sql/139_* internal/types/deployment_registry.go internal/deploymentregistry internal/db/deployment_registry* api/deployment_registry* internal/mapping/deployment_registry* internal/handlers/deployment_registry* internal/routing/routing.go docs
 git commit -m "feat: add canonical deployment registry"
 ```
 
@@ -146,8 +146,8 @@ git commit -m "feat: add canonical deployment registry"
 
 **Files:**
 
-- Create: `internal/migrations/sql/139_deployment_registry_imports.up.sql`
-- Create: `internal/migrations/sql/139_deployment_registry_imports.down.sql`
+- Create: `internal/migrations/sql/140_deployment_registry_imports.up.sql`
+- Create: `internal/migrations/sql/140_deployment_registry_imports.down.sql`
 - Modify: `internal/types/deployment_registry.go`
 - Create: `internal/deploymentregistry/import.go`
 - Create: `internal/deploymentregistry/import_test.go`
@@ -168,7 +168,7 @@ git commit -m "feat: add canonical deployment registry"
 - Create: `docs/fork/PR-057_DEPLOYMENT_REGISTRY_IMPORT.md`
 - Modify: `docs/fork/FORK_DIFF_INDEX.md`
 
-Migration 139 creates `RegistryImport`, `RegistryImportRoot`, `RegistryImportPlacement`, and `RegistryImportDecision`. Store source kind, tool/version, source commit, canonical parameters, raw report object reference/checksum, preview checksum, counts, state, creator, and checkpoints; reject raw secret-bearing content.
+Migration 140 creates `RegistryImport`, `RegistryImportRoot`, `RegistryImportPlacement`, and `RegistryImportDecision`. Store source kind, tool/version, source commit, canonical parameters, raw report object reference/checksum, preview checksum, counts, state, creator, and checkpoints; reject raw secret-bearing content.
 
 ```go
 type ImportMode string // preview, apply
@@ -195,7 +195,7 @@ go test ./internal/deploymentregistry ./internal/db ./api ./internal/mapping ./i
 pnpm exec ng test --watch=false --include frontend/ui/src/app/setup/registry/deployment-registry.component.spec.ts --include frontend/ui/src/app/services/deployment-registry.service.spec.ts
 pnpm run build:community
 mise run lint:migrations
-git add internal/migrations/sql/139_* internal/types/deployment_registry.go internal/deploymentregistry internal/db/deployment_registry* api/deployment_registry* internal/mapping/deployment_registry* internal/handlers/deployment_registry* frontend/ui/src/app docs
+git add internal/migrations/sql/140_* internal/types/deployment_registry.go internal/deploymentregistry internal/db/deployment_registry* api/deployment_registry* internal/mapping/deployment_registry* internal/handlers/deployment_registry* frontend/ui/src/app docs
 git commit -m "feat: import and classify deployment registry"
 ```
 
@@ -203,8 +203,8 @@ git commit -m "feat: import and classify deployment registry"
 
 **Files:**
 
-- Create: `internal/migrations/sql/140_target_config_snapshots.up.sql`
-- Create: `internal/migrations/sql/140_target_config_snapshots.down.sql`
+- Create: `internal/migrations/sql/141_target_config_snapshots.up.sql`
+- Create: `internal/migrations/sql/141_target_config_snapshots.down.sql`
 - Create: `internal/types/target_config_snapshot.go`
 - Create: `internal/targetconfig/canonical.go`
 - Create: `internal/targetconfig/canonical_test.go`
@@ -224,10 +224,10 @@ git commit -m "feat: import and classify deployment registry"
 - Create: `frontend/ui/src/app/setup/config-snapshots/target-config-snapshots.component.ts`
 - Create: `frontend/ui/src/app/setup/config-snapshots/target-config-snapshots.component.html`
 - Create: `frontend/ui/src/app/setup/config-snapshots/target-config-snapshots.component.spec.ts`
-- Create: `docs/adr/0056-immutable-target-config-snapshots.md`
+- Create: `docs/adr/0057-immutable-target-config-snapshots.md`
 - Create: `docs/fork/PR-058_TARGET_CONFIG_SNAPSHOTS.md`
 
-Migration 140 creates `TargetConfigSnapshot`, `TargetConfigSnapshotObject`, `TargetConfigSnapshotComponent`, `TargetConfigSnapshotSecretReference`, and `TargetConfigSnapshotFeatureFlag`. The immutable parent is scoped to one organization, deployment unit, assignment/environment, source commit, and adapter version. Object bodies remain in immutable object storage; the DB stores media type, size, reference, and digest. Secrets retain only provider/reference/version fingerprint.
+Migration 141 creates `TargetConfigSnapshot`, `TargetConfigSnapshotObject`, `TargetConfigSnapshotComponent`, `TargetConfigSnapshotSecretReference`, and `TargetConfigSnapshotFeatureFlag`. The immutable parent is scoped to one organization, deployment unit, assignment/environment, source commit, and adapter version. Object bodies remain in immutable object storage; the DB stores media type, size, reference, and digest. Secrets retain only provider/reference/version fingerprint.
 
 ```go
 func Canonicalize(types.TargetConfigSnapshotDraft) ([]byte, string, error)
@@ -250,7 +250,7 @@ API root: `/api/v1/target-config-snapshots`; operations are create, list, get, v
 go test ./internal/targetconfig ./internal/db ./api ./internal/mapping ./internal/handlers -run 'TargetConfig|ConfigSnapshot' -count=1
 pnpm exec ng test --watch=false --include frontend/ui/src/app/setup/config-snapshots/target-config-snapshots.component.spec.ts
 mise run lint:migrations
-git add internal/migrations/sql/140_* internal/types/target_config_snapshot.go internal/targetconfig internal/db/target_config_snapshots* api/target_config_snapshot* internal/mapping/target_config_snapshot* internal/handlers/target_config_snapshots* internal/routing/routing.go frontend/ui/src/app docs
+git add internal/migrations/sql/141_* internal/types/target_config_snapshot.go internal/targetconfig internal/db/target_config_snapshots* api/target_config_snapshot* internal/mapping/target_config_snapshot* internal/handlers/target_config_snapshots* internal/routing/routing.go frontend/ui/src/app docs
 git commit -m "feat: add immutable target config snapshots"
 ```
 
@@ -258,8 +258,8 @@ git commit -m "feat: add immutable target config snapshots"
 
 **Files:**
 
-- Create: `internal/migrations/sql/141_release_contract_v1_extraction.up.sql`
-- Create: `internal/migrations/sql/141_release_contract_v1_extraction.down.sql`
+- Create: `internal/migrations/sql/142_release_contract_v1_extraction.up.sql`
+- Create: `internal/migrations/sql/142_release_contract_v1_extraction.down.sql`
 - Modify: `internal/types/target_config_snapshot.go`
 - Create: `internal/targetconfig/v1_extraction.go`
 - Create: `internal/targetconfig/v1_extraction_test.go`
@@ -270,7 +270,7 @@ git commit -m "feat: add immutable target config snapshots"
 - Create: `docs/fork/PR-059_V1_CONFIG_EXTRACTION.md`
 - Modify: `docs/fork/UPGRADE_GUIDE.md`
 
-Migration 141 creates `ReleaseContractV1ExtractionLineage` and `BackfillCheckpoint`. Each row stores original release/plan ID/checksum, derived snapshot ID/checksum, extractor version, status, blocked reason, and timestamps; originals are never updated.
+Migration 142 creates `ReleaseContractV1ExtractionLineage` and `BackfillCheckpoint`. Each row stores original release/plan ID/checksum, derived snapshot ID/checksum, extractor version, status, blocked reason, and timestamps; originals are never updated.
 
 ```text
 hub backfill-target-config-snapshots --dry-run --batch-size 100
@@ -287,7 +287,7 @@ hub backfill-target-config-snapshots --report <checkpoint-id>
 go test ./internal/targetconfig ./internal/db ./cmd/hub/cmd -run 'V1Extraction|BackfillTargetConfig' -count=1
 mise run lint:migrations
 mise run test:go
-git add internal/migrations/sql/141_* internal/types/target_config_snapshot.go internal/targetconfig internal/db/target_config_snapshots* cmd/hub/cmd/backfill_target_config_snapshots* docs
+git add internal/migrations/sql/142_* internal/types/target_config_snapshot.go internal/targetconfig internal/db/target_config_snapshots* cmd/hub/cmd/backfill_target_config_snapshots* docs
 git commit -m "feat: derive target config from v1 history"
 ```
 
@@ -295,8 +295,8 @@ git commit -m "feat: derive target config from v1 history"
 
 **Files:**
 
-- Create: `internal/migrations/sql/142_component_release_contract_v2.up.sql`
-- Create: `internal/migrations/sql/142_component_release_contract_v2.down.sql`
+- Create: `internal/migrations/sql/143_component_release_contract_v2.up.sql`
+- Create: `internal/migrations/sql/143_component_release_contract_v2.down.sql`
 - Modify: `internal/types/release_contract.go`
 - Modify: `internal/types/release_bundle.go`
 - Create: `internal/releasebundles/release_contract_v2_test.go`
@@ -313,10 +313,10 @@ git commit -m "feat: derive target config from v1 history"
 - Modify: `internal/handlers/release_bundles.go`
 - Modify: `internal/handlers/release_bundles_test.go`
 - Modify: `frontend/ui/src/app/types/release-bundle.ts`
-- Create: `docs/adr/0057-component-release-contract-v2.md`
+- Create: `docs/adr/0058-component-release-contract-v2.md`
 - Create: `docs/fork/PR-060_COMPONENT_RELEASE_CONTRACT_V2.md`
 
-Migration 142 adds `ReleaseBundle.kind` (`legacy`, `component`, `product`) and `release_contract_schema`, plus `ComponentReleaseArtifact`, `ComponentReleaseEvidence`, `ComponentReleaseCapability`, and `ComponentReleaseMigrationDeclaration`. Existing rows become `legacy`/v1 without changing payload/checksum.
+Migration 143 adds `ReleaseBundle.kind` (`legacy`, `component`, `product`) and `release_contract_schema`, plus `ComponentReleaseArtifact`, `ComponentReleaseEvidence`, `ComponentReleaseCapability`, and `ComponentReleaseMigrationDeclaration`. Existing rows become `legacy`/v1 without changing payload/checksum.
 
 ```go
 const (
@@ -346,7 +346,7 @@ func ValidateTargetNeutralContract(ComponentReleaseContractV2) []ValidationIssue
 func ValidateArtifactIdentity(ComponentReleaseContractV2) []ValidationIssue
 ```
 
-ADR-0057 fixes exact representations: `requestedRef` and actual commit are distinct required source fields; manifest/index and platform digests use `sha256:<64 lowercase hex>`; migration declarations are typed symbolic contracts with no target credential/path.
+ADR-0058 fixes exact representations: `requestedRef` and actual commit are distinct required source fields; manifest/index and platform digests use `sha256:<64 lowercase hex>`; migration declarations are typed symbolic contracts with no target credential/path.
 
 - [ ] Add parser tests: unknown/missing schema, unchanged v1, unknown v2 fields, target path/URL/secret, duplicate platform, invalid digest, missing commit, and version/platform digest conflict.
 - [ ] Add canonical/publication tests: immutable component/version/platform identity, audit conflict, deterministic checksum, and no target Variable Snapshot requirement for component publication.
@@ -359,7 +359,7 @@ ADR-0057 fixes exact representations: `requestedRef` and actual commit are disti
 go test ./internal/releasebundles ./internal/db ./api ./internal/mapping ./internal/handlers -run 'ReleaseContractV2|ComponentRelease|ReleaseBundle' -count=1
 pnpm exec ng test --watch=false --include frontend/ui/src/app/release-bundles/release-bundles.component.spec.ts
 mise run lint:migrations
-git add internal/migrations/sql/142_* internal/types/release_* internal/releasebundles internal/db/release_bundles* api/release_bundle* internal/mapping/release_bundle* internal/handlers/release_bundles* frontend/ui/src/app/types/release-bundle.ts docs
+git add internal/migrations/sql/143_* internal/types/release_* internal/releasebundles internal/db/release_bundles* api/release_bundle* internal/mapping/release_bundle* internal/handlers/release_bundles* frontend/ui/src/app/types/release-bundle.ts docs
 git commit -m "feat: add component release contract v2"
 ```
 
@@ -414,8 +414,8 @@ git commit -m "feat: verify component release provenance"
 
 **Files:**
 
-- Create: `internal/migrations/sql/143_product_release_capability_graph.up.sql`
-- Create: `internal/migrations/sql/143_product_release_capability_graph.down.sql`
+- Create: `internal/migrations/sql/144_product_release_capability_graph.up.sql`
+- Create: `internal/migrations/sql/144_product_release_capability_graph.down.sql`
 - Create: `internal/types/product_release.go`
 - Create: `internal/productrelease/graph.go`
 - Create: `internal/productrelease/graph_test.go`
@@ -429,10 +429,10 @@ git commit -m "feat: verify component release provenance"
 - Create: `internal/handlers/product_releases.go`
 - Create: `internal/handlers/product_releases_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0058-product-release-capability-graph.md`
+- Create: `docs/adr/0059-product-release-capability-graph.md`
 - Create: `docs/fork/PR-062_PRODUCT_RELEASE_CAPABILITY_GRAPH.md`
 
-Migration 143 creates `ProductReleaseComponent` and `ProductReleaseCapabilityEdge`; the parent remains `ReleaseBundle(kind=product)`. Child rows pin published Component Release IDs/checksums. Edges distinguish `product` and `target` resolution stages and allowed modes.
+Migration 144 creates `ProductReleaseComponent` and `ProductReleaseCapabilityEdge`; the parent remains `ReleaseBundle(kind=product)`. Child rows pin published Component Release IDs/checksums. Edges distinguish `product` and `target` resolution stages and allowed modes.
 
 ```go
 type CapabilityResolutionStage string // product, target
@@ -458,7 +458,7 @@ Routes: `POST /api/v1/product-releases`, `GET /{id}`, `POST /{id}/validate`, `PO
 ```powershell
 go test ./internal/productrelease ./internal/db ./api ./internal/mapping ./internal/handlers -run 'ProductRelease|CapabilityGraph' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/143_* internal/types/product_release.go internal/productrelease internal/db/product_releases* api/product_release* internal/mapping/product_release* internal/handlers/product_releases* internal/routing/routing.go docs
+git add internal/migrations/sql/144_* internal/types/product_release.go internal/productrelease internal/db/product_releases* api/product_release* internal/mapping/product_release* internal/handlers/product_releases* internal/routing/routing.go docs
 git commit -m "feat: publish product release capability graphs"
 ```
 
@@ -466,8 +466,8 @@ git commit -m "feat: publish product release capability graphs"
 
 **Files:**
 
-- Create: `internal/migrations/sql/144_target_deployment_plan_v2.up.sql`
-- Create: `internal/migrations/sql/144_target_deployment_plan_v2.down.sql`
+- Create: `internal/migrations/sql/145_target_deployment_plan_v2.up.sql`
+- Create: `internal/migrations/sql/145_target_deployment_plan_v2.down.sql`
 - Create: `internal/types/plan_v2.go`
 - Create: `internal/planning/resolver.go`
 - Create: `internal/planning/resolver_test.go`
@@ -484,10 +484,10 @@ git commit -m "feat: publish product release capability graphs"
 - Modify: `api/deployment_plan.go`
 - Modify: `internal/mapping/deployment_plan.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0059-target-deployment-plan-v2.md`
+- Create: `docs/adr/0060-target-deployment-plan-v2.md`
 - Create: `docs/fork/PR-063_TARGET_DEPLOYMENT_PLAN_V2.md`
 
-Migration 144 creates `DeploymentPlanDraft`, `DeploymentPlanResolvedRequirement`, and `DeploymentPlanStepEdge`; extends `DeploymentPlan` with `plan_schema`, `draft_id`, `deployment_unit_id`, `target_config_snapshot_id`, `protocol_version`, `supersedes_deployment_plan_id`, and `supersede_reason`. Current `POST /api/v1/deployment-plans` remains v1.
+Migration 145 creates `DeploymentPlanDraft`, `DeploymentPlanResolvedRequirement`, and `DeploymentPlanStepEdge`; extends `DeploymentPlan` with `plan_schema`, `draft_id`, `deployment_unit_id`, `target_config_snapshot_id`, `protocol_version`, `supersedes_deployment_plan_id`, and `supersede_reason`. Current `POST /api/v1/deployment-plans` remains v1.
 
 ```go
 type PlanDraft struct { ProductReleaseID, DeploymentUnitID, EnvironmentAssignmentID, TargetConfigSnapshotID uuid.UUID; ProtocolVersion string }
@@ -509,7 +509,7 @@ Routes: `POST/PATCH /api/v1/deployment-plan-drafts`, `GET /{id}`, `POST /{id}/va
 ```powershell
 go test ./internal/planning ./internal/db ./api ./internal/mapping ./internal/handlers -run 'PlanDraft|ResolveTarget|TargetPlanGraph' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/144_* internal/types/plan_v2.go internal/types/deployment_plan.go internal/planning internal/db/deployment_plan* api/deployment_plan* internal/handlers/deployment_plan* internal/mapping/deployment_plan.go internal/routing/routing.go docs
+git add internal/migrations/sql/145_* internal/types/plan_v2.go internal/types/deployment_plan.go internal/planning internal/db/deployment_plan* api/deployment_plan* internal/handlers/deployment_plan* internal/mapping/deployment_plan.go internal/routing/routing.go docs
 git commit -m "feat: resolve immutable target deployment plans"
 ```
 
@@ -517,8 +517,8 @@ git commit -m "feat: resolve immutable target deployment plans"
 
 **Files:**
 
-- Create: `internal/migrations/sql/145_deployment_plan_baseline_changes.up.sql`
-- Create: `internal/migrations/sql/145_deployment_plan_baseline_changes.down.sql`
+- Create: `internal/migrations/sql/146_deployment_plan_baseline_changes.up.sql`
+- Create: `internal/migrations/sql/146_deployment_plan_baseline_changes.down.sql`
 - Create: `internal/planning/baseline.go`
 - Create: `internal/planning/baseline_test.go`
 - Create: `internal/planning/changeset.go`
@@ -533,7 +533,7 @@ git commit -m "feat: resolve immutable target deployment plans"
 - Modify: `frontend/ui/src/app/types/deployment-plan.ts`
 - Create: `docs/fork/PR-064_EXACT_PLAN_CHANGESET.md`
 
-Migration 145 creates `DeploymentPlanBaseline`, `DeploymentPlanChangeEntry`, and `DeploymentPlanRiskEntry`. A baseline pins the last trusted healthy active desired revision plus observation ID/checksum; legacy executor projection is labeled and cannot authorize v2 execution.
+Migration 146 creates `DeploymentPlanBaseline`, `DeploymentPlanChangeEntry`, and `DeploymentPlanRiskEntry`. A baseline pins the last trusted healthy active desired revision plus observation ID/checksum; legacy executor projection is labeled and cannot authorize v2 execution.
 
 ```go
 func SelectVerifiedBaseline(context.Context, types.BaselineQuery) (*types.DeploymentPlanBaseline, error)
@@ -549,7 +549,7 @@ func CreatePreviousStatePlan(context.Context, currentPlanID, successfulPlanID uu
 ```powershell
 go test ./internal/planning ./internal/db ./api ./internal/mapping ./internal/handlers -run 'Baseline|ChangeSet|PreviousState|Risk' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/145_* internal/planning internal/db/deployment_plan_changes* api/deployment_plan.go internal/mapping/deployment_plan.go internal/handlers/deployment_plans.go frontend/ui/src/app/types/deployment-plan.ts docs
+git add internal/migrations/sql/146_* internal/planning internal/db/deployment_plan_changes* api/deployment_plan.go internal/mapping/deployment_plan.go internal/handlers/deployment_plans.go frontend/ui/src/app/types/deployment-plan.ts docs
 git commit -m "feat: calculate exact target deployment changes"
 ```
 
@@ -557,8 +557,8 @@ git commit -m "feat: calculate exact target deployment changes"
 
 **Files:**
 
-- Create: `internal/migrations/sql/146_structured_migration_plans.up.sql`
-- Create: `internal/migrations/sql/146_structured_migration_plans.down.sql`
+- Create: `internal/migrations/sql/147_structured_migration_plans.up.sql`
+- Create: `internal/migrations/sql/147_structured_migration_plans.down.sql`
 - Create: `internal/types/migration_contract.go`
 - Create: `internal/migrationplanning/validation.go`
 - Create: `internal/migrationplanning/validation_test.go`
@@ -574,7 +574,7 @@ git commit -m "feat: calculate exact target deployment changes"
 - Modify: `internal/deploymentpreflight/evaluate_test.go`
 - Create: `docs/fork/PR-065_STRUCTURED_MIGRATION_PLANS.md`
 
-Migration 146 creates `DeploymentPlanMigration` and adds `step_input_checksum`, `retry_class`, `cancellation_behavior`, `observation_requirement`, `target_lock_key`, and `database_lock_key` to `DeploymentPlanStep`.
+Migration 147 creates `DeploymentPlanMigration` and adds `step_input_checksum`, `retry_class`, `cancellation_behavior`, `observation_requirement`, `target_lock_key`, and `database_lock_key` to `DeploymentPlanStep`.
 
 Exact action types:
 
@@ -605,14 +605,14 @@ func BuildRecoveryPlan(types.FailedPlan, types.RecoveryRequest) (*types.PlanDraf
 go test ./internal/migrationplanning ./internal/actionregistry ./internal/deploymentpreflight ./internal/planning ./internal/db -run 'Migration|Backup|Recovery|Restore' -count=1
 mise run lint:migrations
 mise run test:go
-git add internal/migrations/sql/146_* internal/types/migration_contract.go internal/types/deployment_plan.go internal/migrationplanning internal/actionregistry/database_actions* internal/db/deployment_plans.go internal/deploymentpreflight docs
+git add internal/migrations/sql/147_* internal/types/migration_contract.go internal/types/deployment_plan.go internal/migrationplanning internal/actionregistry/database_actions* internal/db/deployment_plans.go internal/deploymentpreflight docs
 git commit -m "feat: add structured migration deployment plans"
 ```
 
 ## Foundations Exit Gate
 
 - [ ] PR-055 through PR-065 are individually reviewed and accepted.
-- [ ] Migrations 138–146 apply to a clean DB and upgrade a migration-137 fixture.
+- [ ] Migrations 139–147 apply to a clean DB and upgrade a migration-138 fixture.
 - [ ] A v1 fixture retains byte-identical release/plan JSON and checksums with both flags disabled.
 - [ ] A neutral v2 fixture publishes one AMD64/ARM64 component, freezes two configs, publishes a provider/consumer Product Release, and creates deterministic plans using identical artifact digests.
 - [ ] Exact change view covers image, config, provider, migration, and skipped-release notes.

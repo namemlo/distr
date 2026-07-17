@@ -80,6 +80,45 @@ Keep experimental flags enabled only for the surfaces being evaluated.
 | Provider-neutral demo          | Yes                                        | See `examples/community-e2e/`; live mode uses isolated Compose dependencies and an API-only release-to-task journey through Hub and agent endpoints. |
 | Provider-specific integrations | Out of scope                               | Keep cloud, CI, and traffic-provider examples outside core unless generic.                                                                           |
 
+## External-Execution Timestamp Expand Gate
+
+Migration 138 is a Distr control-plane expand release. It retains every legacy external-execution timestamp, adds
+nullable instant shadows and immutable provenance, and leaves public API fields and agent behavior unchanged.
+PostgreSQL compatibility is gated on the exact images `postgres:16.14-alpine3.23` and
+`postgres:18.4-alpine3.23`.
+
+Before deployment, retain one release record containing:
+
+- source commit and reviewed change range;
+- immutable Hub image digest;
+- schema version before and after deployment;
+- manifest ID, raw-cell checksum, decision-content checksum, and database-identity checksum;
+- database and object-store backup checksums;
+- isolated-restore verification checksums;
+- component release identity, dependency manifest identity, operator, reviewer, and timestamps; and
+- previous-known-good image digest and recovery evidence.
+
+A component release never implicitly deploys another component. Each component has its own immutable release and
+change log. A coordinated rollout uses an explicit dependency DAG or product manifest whose reviewed entries name
+the exact component releases; dependency relationships never trigger hidden deployments.
+
+The migration decision path is fixed:
+
+1. Run the read-only `distr migrate --check`.
+2. If the result proves zero external-execution history, the ordinary release may stop writers, back up, run the
+   explicit migration, and start the Hub with `serve --migrate=false`.
+3. If the database is non-empty at exact schema 137, use `timestamp-expand-capture`, retain the backup and isolated
+   restore evidence, independently review and seal the complete manifest, then use `timestamp-expand-apply`.
+4. Require schema 138, a clean migration state, a `VERIFIED` manifest or durable zero-history proof, and a matching
+   image digest. `timestamp-expand-apply` runs its embedded isolated-acceptance and final-Hub readiness, integrity,
+   audit, count, lock, sequence, and image gates while the writer fence remains held; it clears the fence only after
+   every embedded gate passes.
+5. The dedicated operator smoke test runs after apply returns and the fence has been safely cleared. It provides
+   post-apply release-acceptance evidence and does not replace or weaken the embedded pre-clear gates.
+
+`UNRESOLVED` cells remain visible with null shadows and fail closed. Expand acceptance does not claim contract
+eligibility and does not authorize a contract migration.
+
 ## Release Gate Checklist
 
 - `DISTR_DEMO_DISPOSABLE_HUB=true node examples/community-e2e/live-demo.mjs --require-running-hub`

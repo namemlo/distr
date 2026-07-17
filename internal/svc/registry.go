@@ -103,7 +103,7 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 	}
 
 	if reg.execDbMigrations {
-		if err := migrations.Up(reg.logger); err != nil {
+		if err := migrations.Up(ctx, reg.logger); err != nil {
 			return nil, err
 		}
 	}

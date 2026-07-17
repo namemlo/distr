@@ -1,5 +1,12 @@
 # Fork Upgrade Guide
 
+## Current Timestamp Procedure
+
+Migration 138 uses the current
+[Community Release Upgrade Checklist](../upgrade/community-release-upgrade-checklist.md#migration-138-decision-path).
+The remainder of this file is the historical PR-049/schema-131 compatibility guide and does not override the
+migration-138 fence, manifest, backup, restore, or downgrade rules.
+
 ## PR-049 Compatibility Metadata
 
 Supported source range: any fork build before PR-049 that has direct `Deployment` and `DeploymentRevision`

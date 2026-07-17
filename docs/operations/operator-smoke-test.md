@@ -50,6 +50,48 @@ Then manually verify:
 - logs and events do not reveal secret values;
 - cleanup removes demo-created state.
 
+## Timestamp Expand Smoke
+
+After `timestamp-expand-apply`, run:
+
+```bash
+: "${DISTR_TIMESTAMP_EVIDENCE_DIR:?export the retained timestamp evidence directory}"
+export DISTR_TIMESTAMP_APPROVED_MANIFEST="${DISTR_TIMESTAMP_APPROVED_MANIFEST:-$DISTR_TIMESTAMP_EVIDENCE_DIR/approved-manifest.json}"
+if ! DISTR_TIMESTAMP_MANIFEST_ID="$(
+  jq -er \
+    '.id | strings | select(test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))' \
+    "$DISTR_TIMESTAMP_APPROVED_MANIFEST" 2>/dev/null
+)"; then
+  printf '%s\n' "approved timestamp manifest is missing a valid top-level id" >&2
+  exit 1
+fi
+export DISTR_TIMESTAMP_MANIFEST_ID
+./deploy/server-docker-compose/deploy.sh health
+./deploy/server-docker-compose/deploy.sh ps
+export DISTR_COMPOSE_ENV_FILE="$(realpath deploy/server-docker-compose/.env)"
+docker compose \
+  --env-file "$DISTR_COMPOSE_ENV_FILE" \
+  -f deploy/server-docker-compose/docker-compose.yml \
+  --profile timestamp-operator \
+  run --rm --user "$(id -u):$(id -g)" timestamp-operator \
+  external-execution-timestamps verify \
+  --manifest-id "$DISTR_TIMESTAMP_MANIFEST_ID"
+```
+
+Confirm all of the following before accepting the release:
+
+- `/ready` succeeds and the running Hub uses the reviewed immutable image digest;
+- `schema_migrations` reports clean schema 138;
+- the manifest state is `VERIFIED`, or the durable state proves zero history;
+- execution and event counts, IDs, statuses, sequences, messages, hashes, and references match pre-release evidence;
+- every converted shadow reproduces from its raw value and explicit offset;
+- unresolved cells remain null and visible as `UNRESOLVED`;
+- no duplicate callback sequence or unexpected task lock exists;
+- login, execution-history reads, task progress, and audit views remain available; and
+- the evidence directory, backup checksums, restore checksums, fence record, and previous image digest are retained.
+
+This smoke test does not authorize deleting execution history, provenance, audit records, or timestamp evidence.
+
 ## Upgrade and Rollback Notes
 
 Schema rollback, application binary rollback, and data backfill recovery are separate decisions.
