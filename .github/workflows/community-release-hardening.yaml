@@ -20,13 +20,133 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: 'package.json'
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+          cache-dependency-path: |
+            go.sum
       - name: Run deterministic advanced-flow verifier
         run: node examples/community-e2e/run-demo.mjs
       - name: Validate PR-050 release hardening package
         run: node hack/pr050-validate-release-hardening.mjs
+      - name: Validate PR-054A timestamp expand package
+        run: node hack/pr054a-validate-timestamp-expand.mjs
+      - name: Run PR-054A security regression suite
+        run: node hack/pr054a-validate-timestamp-expand.test.mjs
+      - name: Validate timestamp expand Compose orchestration
+        run: bash hack/test-server-compose-timestamp-expand.sh
+      - name: Validate timestamp dirty recovery Compose orchestration
+        shell: bash
+        run: DISTR_TIMESTAMP_TEST_GROUP=dirty-recovery bash hack/test-server-compose-timestamp-expand.sh
+      - name: Validate timestamp expand Compose rendering
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          evidence_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$evidence_dir"' EXIT
+          chmod 0700 "$evidence_dir"
+          export DISTR_COMPOSE_ENV_FILE="$PWD/deploy/server-docker-compose/.env.example"
+          export DISTR_TIMESTAMP_EVIDENCE_DIR="$evidence_dir"
+          [[ "$DISTR_COMPOSE_ENV_FILE" = /* ]]
+          [[ "$DISTR_TIMESTAMP_EVIDENCE_DIR" = /* ]]
+          docker compose --env-file "$DISTR_COMPOSE_ENV_FILE" -f deploy/server-docker-compose/docker-compose.yml --profile timestamp-operator config --quiet
+
+  timestamp-expand-postgresql:
+    name: Timestamp expand / PostgreSQL ${{ matrix.postgres_version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - postgres_version: '16.14'
+            postgres_image: postgres:16.14-alpine3.23
+          - postgres_version: '18.4'
+            postgres_image: postgres:18.4-alpine3.23
+    services:
+      postgres:
+        image: ${{ matrix.postgres_image }}
+        env:
+          POSTGRES_USER: local
+          POSTGRES_PASSWORD: local
+          POSTGRES_DB: distr
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgres://local:local@localhost:5432/distr?sslmode=disable
+      DISTR_TEST_DATABASE_URL: postgres://local:local@localhost:5432/distr?sslmode=disable
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+          cache-dependency-path: |
+            go.sum
+      - name: Capture PostgreSQL runtime and image evidence
+        shell: bash
+        env:
+          EXPECTED_POSTGRES_VERSION: ${{ matrix.postgres_version }}
+          EXPECTED_POSTGRES_IMAGE: ${{ matrix.postgres_image }}
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -Eeuo pipefail
+          evidence_dir="$RUNNER_TEMP/timestamp-expand-postgresql-evidence"
+          evidence_file="$evidence_dir/postgresql-${EXPECTED_POSTGRES_VERSION}.txt"
+          [[ "$evidence_dir" = /* ]]
+          install -d -m 0700 "$evidence_dir"
+          runtime_version="$(docker exec "$POSTGRES_CONTAINER_ID" psql -U local -d distr -Atqc 'SHOW server_version')"
+          configured_image="$(docker inspect --format '{{.Config.Image}}' "$POSTGRES_CONTAINER_ID")"
+          image_id="$(docker inspect --format '{{.Image}}' "$POSTGRES_CONTAINER_ID")"
+          repo_digest=''
+          repo_digest_count=0
+          while IFS= read -r candidate; do
+            if [[ "$candidate" =~ ^postgres@sha256:[0-9a-f]{64}$ ]]; then
+              repo_digest="$candidate"
+              repo_digest_count=$((repo_digest_count + 1))
+            fi
+          done < <(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image_id")
+          [[ "$runtime_version" == "$EXPECTED_POSTGRES_VERSION" ]]
+          [[ "$configured_image" == "$EXPECTED_POSTGRES_IMAGE" ]]
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$repo_digest_count" -eq 1 ]]
+          [[ "$repo_digest" =~ ^postgres@sha256:[0-9a-f]{64}$ ]]
+          umask 077
+          printf '%s\n' \
+            "expected_server_version=$EXPECTED_POSTGRES_VERSION" \
+            "runtime_server_version=$runtime_version" \
+            "expected_image=$EXPECTED_POSTGRES_IMAGE" \
+            "configured_image=$configured_image" \
+            "image_id=$image_id" \
+            "repo_digest=$repo_digest" >"$evidence_file"
+          chmod 0600 "$evidence_file"
+          [[ -s "$evidence_file" ]]
+      - name: Validate migration sequence
+        run: bash hack/validate-migrations.sh
+      - name: Run timestamp expand migration and compatibility tests
+        run: go test -p=1 ./internal/externalexecutiontimestamp ./internal/migrations ./internal/db ./internal/hubexecutor ./internal/mapping ./cmd/hub/cmd -count=1 -timeout 30m
+      - name: Retain PostgreSQL runtime evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: timestamp-expand-postgresql-${{ matrix.postgres_version }}
+          path: ${{ runner.temp }}/timestamp-expand-postgresql-evidence
+          if-no-files-found: error
+          retention-days: 14
 
   release-gates:
     name: Full release gates and live demo
+    needs: [fast-release-package, timestamp-expand-postgresql]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -63,7 +183,153 @@ jobs:
       DISTR_REGISTRY_HOST: localhost:8585
       DISTR_DEMO_DISPOSABLE_HUB: 'true'
     steps:
+      - name: Assert prerequisite jobs succeeded
+        env:
+          FAST_RELEASE_RESULT: ${{ needs.fast-release-package.result }}
+          TIMESTAMP_POSTGRES_RESULT: ${{ needs.timestamp-expand-postgresql.result }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$FAST_RELEASE_RESULT" == success ]]
+          [[ "$TIMESTAMP_POSTGRES_RESULT" == success ]]
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - name: Check committed patch whitespace
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -Eeuo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PULL_REQUEST_BASE_SHA"
+              ;;
+            push)
+              if [[ "$PUSH_BEFORE_SHA" =~ ^0{40}$ ]]; then
+                empty_tree="$(git hash-object -t tree /dev/null)"
+                [[ "$empty_tree" =~ ^[0-9a-f]{40}$ ]]
+                git diff --check "$empty_tree" HEAD
+                exit 0
+              else
+                base="$PUSH_BEFORE_SHA"
+              fi
+              ;;
+            *)
+              printf 'unsupported event for release diff check\n' >&2
+              exit 1
+              ;;
+          esac
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]]
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --no-recurse-submodules --depth=1 origin "$base"
+          fi
+          git cat-file -e "${base}^{commit}"
+          git diff --check "$base" HEAD
+      - name: Scan committed secrets and privacy
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          EXECUTION_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          scan_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$scan_dir"' EXIT
+          chmod 0700 "$scan_dir"
+          head_commit="$(git rev-parse --verify 'HEAD^{commit}')"
+          [[ "$head_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXECUTION_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$head_commit" == "$EXECUTION_SHA" ]]
+
+          case "$EVENT_NAME" in
+            pull_request)
+              base_object="$PULL_REQUEST_BASE_SHA"
+              [[ "$PULL_REQUEST_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+              git cat-file -e "${PULL_REQUEST_HEAD_SHA}^{commit}"
+              git merge-base --is-ancestor "$PULL_REQUEST_HEAD_SHA" "$head_commit"
+              gitleaks_log_opts="--full-history --root --diff-merges=separate --no-ext-diff --no-textconv $base_object..$head_commit"
+              ;;
+            push)
+              if [[ "$PUSH_BEFORE_SHA" =~ ^0{40}$ ]]; then
+                base_object="$(git hash-object -t tree /dev/null)"
+                gitleaks_log_opts="--full-history --root --diff-merges=separate --no-ext-diff --no-textconv $head_commit"
+              else
+                base_object="$PUSH_BEFORE_SHA"
+                gitleaks_log_opts="--full-history --root --diff-merges=separate --no-ext-diff --no-textconv $base_object..$head_commit"
+              fi
+              ;;
+            *)
+              printf 'unsupported event for privacy scan\n' >&2
+              exit 1
+              ;;
+          esac
+          [[ "$base_object" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$head_commit" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${base_object}^{object}"
+          git cat-file -e "${head_commit}^{commit}"
+
+          GITLEAKS_VERSION='8.30.1'
+          GITLEAKS_SHA256='551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
+          [[ "$(uname -s)" == Linux ]]
+          [[ "$(uname -m)" == x86_64 ]]
+          gitleaks_archive="$scan_dir/gitleaks.tar.gz"
+          gitleaks_url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error "$gitleaks_url" --output "$gitleaks_archive"
+          printf '%s  %s\n' "$GITLEAKS_SHA256" "$gitleaks_archive" | sha256sum --check --status
+          tar -xzf "$gitleaks_archive" -C "$scan_dir" gitleaks
+          chmod 0700 "$scan_dir/gitleaks"
+          [[ "$("$scan_dir/gitleaks" version)" == "$GITLEAKS_VERSION" ]]
+
+          unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
+          gitleaks_config="$scan_dir/default-gitleaks.toml"
+          gitleaks_ignore="$scan_dir/empty-gitleaks-ignore"
+          gitleaks_stdout="$scan_dir/gitleaks.stdout"
+          gitleaks_stderr="$scan_dir/gitleaks.stderr"
+          printf '[extend]\nuseDefault = true\n' >"$gitleaks_config"
+          : >"$gitleaks_ignore"
+          : >"$gitleaks_stdout"
+          : >"$gitleaks_stderr"
+          chmod 0600 "$gitleaks_config" "$gitleaks_ignore"
+          chmod 0600 "$gitleaks_stdout" "$gitleaks_stderr"
+
+          set +e
+          "$scan_dir/gitleaks" git \
+            --no-banner \
+            --redact=100 \
+            --config "$gitleaks_config" \
+            --gitleaks-ignore-path "$gitleaks_ignore" \
+            --ignore-gitleaks-allow \
+            --log-opts="$gitleaks_log_opts" \
+            "$GITHUB_WORKSPACE" >"$gitleaks_stdout" 2>"$gitleaks_stderr"
+          gitleaks_status=$?
+          set -e
+          case "$gitleaks_status" in
+            0) ;;
+            1)
+              printf 'default secret scan detected findings\n' >&2
+              exit 1
+              ;;
+            *)
+              printf 'default secret scan failed closed\n' >&2
+              exit 1
+              ;;
+          esac
+
+          set +e
+          node hack/pr054a-validate-timestamp-expand.mjs --scan-privacy-diff "$base_object" "$head_commit"
+          privacy_status=$?
+          set -e
+          case "$privacy_status" in
+            0) ;;
+            *)
+              printf 'semantic privacy scan failed closed\n' >&2
+              exit 1
+              ;;
+          esac
       - name: Setup Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -87,7 +353,7 @@ jobs:
       - name: Run Go tests
         env:
           DISTR_TEST_DATABASE_URL: postgres://local:local@localhost:5432/distr?sslmode=disable
-        run: go test -p=1 ./...
+        run: go test -p=1 ./... -count=1 -timeout 60m
       - name: Run Go static analysis
         run: go vet ./...
       - name: Run golangci-lint
@@ -112,8 +378,8 @@ jobs:
           node examples/community-e2e/live-demo.mjs --require-running-hub
       - name: Run Go vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          node hack/pr050-govulncheck.mjs
       - name: Run production dependency audit
         run: pnpm audit --prod
       - name: Run dependency license scan

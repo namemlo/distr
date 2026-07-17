@@ -36,7 +36,7 @@ services:
     image: ${DISTR_IMAGE_REF:?set DISTR_IMAGE_REF in .env}
     command: ['migrate']
     env_file:
-      - .env
+      - ${DISTR_COMPOSE_ENV_FILE:?deploy.sh supplies the absolute env file}
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,11 +45,30 @@ services:
     profiles:
       - migrate
 
+  timestamp-operator:
+    image: ${DISTR_IMAGE_REF:?set DISTR_IMAGE_REF in .env}
+    command: ['external-execution-timestamps', '--help']
+    env_file:
+      - ${DISTR_COMPOSE_ENV_FILE:?deploy.sh supplies the absolute env file}
+    environment:
+      PGAPPNAME: distr-timestamp-operator
+    volumes:
+      - ${DISTR_TIMESTAMP_EVIDENCE_DIR:-./timestamp-evidence}:/evidence
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    profiles:
+      - timestamp-operator
+
   hub:
     image: ${DISTR_IMAGE_REF:?set DISTR_IMAGE_REF in .env}
     command: ['serve', '--migrate=false']
     env_file:
-      - .env
+      - ${DISTR_COMPOSE_ENV_FILE:?deploy.sh supplies the absolute env file}
+    environment:
+      PGAPPNAME: distr-hub
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,7 +89,7 @@ services:
     image: ${DISTR_IMAGE_REF:?set DISTR_IMAGE_REF in .env}
     command: ['cleanup', 'ArtifactBlob', '--timeout', '10m']
     env_file:
-      - .env
+      - ${DISTR_COMPOSE_ENV_FILE:?deploy.sh supplies the absolute env file}
     depends_on:
       postgres:
         condition: service_healthy

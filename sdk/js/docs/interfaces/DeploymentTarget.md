@@ -96,6 +96,12 @@
 
 ---
 
+### platform?
+
+> `optional` **platform?**: `"linux/amd64"` \| `"linux/arm64"`
+
+---
+
 ### reportedAgentVersionId?
 
 > `optional` **reportedAgentVersionId?**: `string`

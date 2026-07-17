@@ -31,4 +31,3 @@ Webhook execution has a stronger trust boundary: the destination is allowlisted,
 Operators who need private webhook destinations must explicitly allow those hostnames or host:port values in `DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS`.
 
 Self-signed webhook endpoints are rejected by default. If support for private trust roots is needed later, it should be introduced as an explicit configuration and documented separately.
-

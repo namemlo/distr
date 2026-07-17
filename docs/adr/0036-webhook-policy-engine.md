@@ -27,4 +27,3 @@ Webhook executions can be blocked before network or signing work when tenant, ag
 Replay remains safe from external side effects but is no longer a governance bypass.
 
 Rate and circuit state is local to the Docker-agent process in this PR. It is deterministic and testable, but it is not a cluster-wide distributed limiter until a later backend is introduced.
-

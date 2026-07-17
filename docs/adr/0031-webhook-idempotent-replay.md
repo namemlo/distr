@@ -25,4 +25,3 @@ Webhook replay after stored success is deterministic and side-effect free.
 Interrupted webhook replay may require operator intervention because the agent refuses to guess whether the remote endpoint already applied the request.
 
 The behavior is webhook-specific. Other target-executed actions can adopt the same timeline preflight later if they need action-specific replay semantics.
-

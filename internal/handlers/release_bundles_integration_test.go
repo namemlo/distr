@@ -592,8 +592,11 @@ func createReleaseBundleHandlerUser(t *testing.T, ctx context.Context, orgID uui
 	var userID uuid.UUID
 	if err := internalctx.GetDb(ctx).QueryRow(
 		ctx,
-		`INSERT INTO UserAccount (email) VALUES (@email) RETURNING id`,
-		pgx.NamedArgs{"email": "release-bundle-" + uuid.NewString() + "@example.com"},
+		`INSERT INTO UserAccount (email, name) VALUES (@email, @name) RETURNING id`,
+		pgx.NamedArgs{
+			"email": "release-bundle-" + uuid.NewString() + "@example.com",
+			"name":  "Release Bundle Test User",
+		},
 	).Scan(&userID); err != nil {
 		t.Fatalf("create user account: %v", err)
 	}

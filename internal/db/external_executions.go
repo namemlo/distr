@@ -226,11 +226,17 @@ func MarkExternalExecutionTriggered(
 		}
 		database := internalctx.GetDb(ctx)
 		rows, err := database.Query(ctx,
-			`UPDATE ExternalExecution AS ee
+			`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
+			UPDATE ExternalExecution AS ee
 			SET status = @status,
-				started_at = COALESCE(started_at, now()),
-				trigger_attempts = GREATEST(trigger_attempts, @triggerAttempts),
-				updated_at = now()
+				started_at = COALESCE(
+					ee.started_at, write_clock.instant AT TIME ZONE 'UTC'),
+				started_at_instant = CASE WHEN ee.started_at IS NULL
+					THEN write_clock.instant ELSE ee.started_at_instant END,
+				trigger_attempts = GREATEST(ee.trigger_attempts, @triggerAttempts),
+				updated_at = write_clock.instant AT TIME ZONE 'UTC',
+				updated_at_instant = write_clock.instant
+			FROM write_clock
 			WHERE ee.id = @id AND ee.organization_id = @organizationId
 			RETURNING `+externalExecutionOutputExpr,
 			pgx.NamedArgs{
@@ -390,13 +396,19 @@ func timeoutExternalExecutionLocked(
 	}
 	database := internalctx.GetDb(ctx)
 	rows, err := database.Query(ctx,
-		`UPDATE ExternalExecution AS ee
+		`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
+		UPDATE ExternalExecution AS ee
 		SET status = @status,
-			completed_at = COALESCE(completed_at, now()),
+			completed_at = COALESCE(
+				ee.completed_at, write_clock.instant AT TIME ZONE 'UTC'),
+			completed_at_instant = CASE WHEN ee.completed_at IS NULL
+				THEN write_clock.instant ELSE ee.completed_at_instant END,
 			last_callback_sequence = @sequence,
 			last_message = @message,
 			error_summary = @message,
-			updated_at = now()
+			updated_at = write_clock.instant AT TIME ZONE 'UTC',
+			updated_at_instant = write_clock.instant
+		FROM write_clock
 		WHERE ee.id = @id AND ee.organization_id = @organizationId
 		RETURNING `+externalExecutionOutputExpr,
 		pgx.NamedArgs{
@@ -450,13 +462,19 @@ func FailExternalExecution(
 		}
 		database := internalctx.GetDb(ctx)
 		rows, err := database.Query(ctx,
-			`UPDATE ExternalExecution AS ee
+			`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
+			UPDATE ExternalExecution AS ee
 			SET status = @status,
-				completed_at = COALESCE(completed_at, now()),
+				completed_at = COALESCE(
+					ee.completed_at, write_clock.instant AT TIME ZONE 'UTC'),
+				completed_at_instant = CASE WHEN ee.completed_at IS NULL
+					THEN write_clock.instant ELSE ee.completed_at_instant END,
 				last_callback_sequence = @sequence,
 				last_message = @message,
 				error_summary = @message,
-				updated_at = now()
+				updated_at = write_clock.instant AT TIME ZONE 'UTC',
+				updated_at_instant = write_clock.instant
+			FROM write_clock
 			WHERE ee.id = @id AND ee.organization_id = @organizationId
 			RETURNING `+externalExecutionOutputExpr,
 			pgx.NamedArgs{
@@ -569,13 +587,18 @@ func insertExternalExecutionEvent(
 		observedState = observedStateJSON
 	}
 	_, err := database.Exec(ctx,
-		`INSERT INTO ExternalExecutionEvent (
-			organization_id, external_execution_id, sequence, status, provider_reference,
+		`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
+		INSERT INTO ExternalExecutionEvent (
+			created_at, created_at_instant, organization_id,
+			external_execution_id, sequence, status, provider_reference,
 			provider_url, message, observed_state, payload_hash
-		) VALUES (
-			@organizationId, @externalExecutionId, @sequence, @status, @providerReference,
-			@providerUrl, @message, @observedState, @payloadHash
-		)`,
+		)
+		SELECT
+			write_clock.instant AT TIME ZONE 'UTC', write_clock.instant,
+			@organizationId, @externalExecutionId, @sequence, @status,
+			@providerReference, @providerUrl, @message, @observedState,
+			@payloadHash
+		FROM write_clock`,
 		pgx.NamedArgs{
 			"organizationId": request.OrganizationID, "externalExecutionId": request.ExternalExecutionID,
 			"sequence": request.Sequence, "status": request.Status,
@@ -622,10 +645,20 @@ func updateExternalExecutionFromCallback(
 	}
 	database := internalctx.GetDb(ctx)
 	rows, err := database.Query(ctx,
-		`UPDATE ExternalExecution AS ee
+		`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
+		UPDATE ExternalExecution AS ee
 		SET status = @status,
-			started_at = COALESCE(started_at, now()),
-			completed_at = CASE WHEN @terminal THEN COALESCE(completed_at, now()) ELSE completed_at END,
+			started_at = COALESCE(
+				ee.started_at, write_clock.instant AT TIME ZONE 'UTC'),
+			started_at_instant = CASE WHEN ee.started_at IS NULL
+				THEN write_clock.instant ELSE ee.started_at_instant END,
+			completed_at = CASE WHEN @terminal THEN COALESCE(
+				ee.completed_at, write_clock.instant AT TIME ZONE 'UTC')
+				ELSE ee.completed_at END,
+			completed_at_instant = CASE
+				WHEN NOT @terminal THEN ee.completed_at_instant
+				WHEN ee.completed_at IS NULL THEN write_clock.instant
+				ELSE ee.completed_at_instant END,
 			provider_reference = @providerReference,
 			provider_url = @providerUrl,
 			last_callback_sequence = @sequence,
@@ -639,7 +672,9 @@ func updateExternalExecutionFromCallback(
 			actual_config_checksum = @actualConfigChecksum,
 			actual_health = @actualHealth,
 			observed_state_checksum = @observedStateChecksum,
-			updated_at = now()
+			updated_at = write_clock.instant AT TIME ZONE 'UTC',
+			updated_at_instant = write_clock.instant
+		FROM write_clock
 		WHERE ee.id = @id AND ee.organization_id = @organizationId
 		RETURNING `+externalExecutionOutputExpr,
 		pgx.NamedArgs{
@@ -901,24 +936,33 @@ func getExternalExecutionForUpdate(
 func insertExternalExecution(ctx context.Context, execution *types.ExternalExecution) error {
 	database := internalctx.GetDb(ctx)
 	rows, err := database.Query(ctx,
-		`INSERT INTO ExternalExecution AS ee (
-			id, callback_deadline_at, organization_id, step_run_id, task_id, deployment_plan_id,
+		`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
+		INSERT INTO ExternalExecution AS ee (
+			id, callback_deadline_at, callback_deadline_at_instant,
+			organization_id, step_run_id, task_id, deployment_plan_id,
 			deployment_plan_target_id, deployment_target_id, application_id, release_bundle_id,
 			component, plan_checksum, idempotency_key, expected_state_version, expected_state_checksum,
 			expected_version, expected_image, expected_platform, expected_contracts,
 			expected_config_reference, expected_config_checksum,
-			expected_compose_reference, expected_compose_checksum, status
-		) VALUES (
-			@id, @callbackDeadlineAt, @organizationId, @stepRunId, @taskId, @deploymentPlanId,
+			expected_compose_reference, expected_compose_checksum, status,
+			created_at, created_at_instant, updated_at, updated_at_instant
+		)
+		SELECT
+			@id,
+			CAST(@callbackDeadlineAt AS timestamptz) AT TIME ZONE 'UTC',
+			CAST(@callbackDeadlineAt AS timestamptz),
+			@organizationId, @stepRunId, @taskId, @deploymentPlanId,
 			@deploymentPlanTargetId, @deploymentTargetId, @applicationId, @releaseBundleId,
 			@component, @planChecksum, @idempotencyKey, @expectedStateVersion, @expectedStateChecksum,
 			@expectedVersion, @expectedImage, @expectedPlatform, @expectedContracts,
 			@expectedConfigReference, @expectedConfigChecksum,
-			@expectedComposeReference, @expectedComposeChecksum, @status
-		)
+			@expectedComposeReference, @expectedComposeChecksum, @status,
+			write_clock.instant AT TIME ZONE 'UTC', write_clock.instant,
+			write_clock.instant AT TIME ZONE 'UTC', write_clock.instant
+		FROM write_clock
 		RETURNING `+externalExecutionOutputExpr,
 		pgx.NamedArgs{
-			"id": execution.ID, "callbackDeadlineAt": execution.CallbackDeadlineAt,
+			"id": execution.ID, "callbackDeadlineAt": execution.CallbackDeadlineAt.UTC(),
 			"organizationId": execution.OrganizationID, "stepRunId": execution.StepRunID,
 			"taskId": execution.TaskID, "deploymentPlanId": execution.DeploymentPlanID,
 			"deploymentPlanTargetId": execution.DeploymentPlanTargetID,

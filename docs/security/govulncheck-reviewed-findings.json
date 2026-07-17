@@ -1,0 +1,475 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-07-17",
+  "expiresAt": "2026-08-17T00:00:00Z",
+  "owner": "EMLO Platform",
+  "reviewer": "EMLO Platform Owner",
+  "scanner": {
+    "protocolVersion": "v1.0.0",
+    "name": "govulncheck",
+    "version": "v1.6.0",
+    "database": "https://vuln.go.dev",
+    "scanLevel": "symbol",
+    "scanMode": "source"
+  },
+  "module": {
+    "path": "github.com/docker/docker",
+    "version": "v28.5.2+incompatible"
+  },
+  "findings": [
+    {
+      "id": "GO-2026-4883",
+      "rationale": "The reported plugin privilege-validation daemon path is not compiled into a shipped Distr binary; the source scanner reaches only the reviewed versions and namesgenerator initialization chains.",
+      "goAdvisory": "https://pkg.go.dev/vuln/GO-2026-4883",
+      "feedback": "https://github.com/golang/vulndb/issues/4922#issuecomment-4976353536",
+      "affected": [
+        {
+          "package": {"name": "github.com/docker/docker", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby/v2", "ecosystem": "Go"},
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [{"introduced": "0"}, {"fixed": "2.0.0-beta.8"}]
+            }
+          ],
+          "ecosystem_specific": {}
+        }
+      ],
+      "traces": [
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/api/types/versions",
+            "function": "init",
+            "position": {"filename": "api/types/versions/compare.go"}
+          },
+          {
+            "module": "github.com/containers/image/v5",
+            "version": "v5.36.2",
+            "package": "github.com/containers/image/v5/manifest",
+            "function": "init",
+            "position": {"filename": "manifest/docker_schema1.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/internal/registry/upstream",
+            "function": "init",
+            "position": {"filename": "internal/registry/upstream/upstream.go"}
+          }
+        ],
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/pkg/namesgenerator",
+            "function": "init",
+            "position": {"filename": "pkg/namesgenerator/names-generator.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store",
+            "function": "init",
+            "position": {"filename": "store/util.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store/storeutil",
+            "function": "init",
+            "position": {"filename": "store/storeutil/storeutil.go"}
+          },
+          {
+            "module": "github.com/docker/compose/v5",
+            "version": "v5.1.4",
+            "package": "github.com/docker/compose/v5/pkg/compose",
+            "function": "init",
+            "position": {"filename": "pkg/compose/compose.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/cmd/agent/docker",
+            "function": "init",
+            "position": {"filename": "cmd/agent/docker/compose_service.go"}
+          }
+        ]
+      ]
+    },
+    {
+      "id": "GO-2026-4887",
+      "rationale": "The reported authorization-plugin daemon path is not compiled into a shipped Distr binary; the source scanner reaches only the reviewed versions and namesgenerator initialization chains.",
+      "goAdvisory": "https://pkg.go.dev/vuln/GO-2026-4887",
+      "feedback": "https://github.com/golang/vulndb/issues/4921#issuecomment-4976353689",
+      "affected": [
+        {
+          "package": {"name": "github.com/docker/docker", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby/v2", "ecosystem": "Go"},
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [{"introduced": "0"}, {"fixed": "2.0.0-beta.8"}]
+            }
+          ],
+          "ecosystem_specific": {}
+        }
+      ],
+      "traces": [
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/api/types/versions",
+            "function": "init",
+            "position": {"filename": "api/types/versions/compare.go"}
+          },
+          {
+            "module": "github.com/containers/image/v5",
+            "version": "v5.36.2",
+            "package": "github.com/containers/image/v5/manifest",
+            "function": "init",
+            "position": {"filename": "manifest/docker_schema1.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/internal/registry/upstream",
+            "function": "init",
+            "position": {"filename": "internal/registry/upstream/upstream.go"}
+          }
+        ],
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/pkg/namesgenerator",
+            "function": "init",
+            "position": {"filename": "pkg/namesgenerator/names-generator.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store",
+            "function": "init",
+            "position": {"filename": "store/util.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store/storeutil",
+            "function": "init",
+            "position": {"filename": "store/storeutil/storeutil.go"}
+          },
+          {
+            "module": "github.com/docker/compose/v5",
+            "version": "v5.1.4",
+            "package": "github.com/docker/compose/v5/pkg/compose",
+            "function": "init",
+            "position": {"filename": "pkg/compose/compose.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/cmd/agent/docker",
+            "function": "init",
+            "position": {"filename": "cmd/agent/docker/compose_service.go"}
+          }
+        ]
+      ]
+    },
+    {
+      "id": "GO-2026-5617",
+      "rationale": "The reported docker cp bind-mount race is in daemon container-filesystem code that is not compiled into a shipped Distr binary; only the two reviewed initialization traces are reachable.",
+      "goAdvisory": "https://pkg.go.dev/vuln/GO-2026-5617",
+      "feedback": "https://github.com/golang/vulndb/issues/5993",
+      "affected": [
+        {
+          "package": {"name": "github.com/docker/docker", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby/v2", "ecosystem": "Go"},
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [{"introduced": "0"}, {"fixed": "2.0.0-beta.14"}]
+            }
+          ],
+          "ecosystem_specific": {}
+        }
+      ],
+      "traces": [
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/api/types/versions",
+            "function": "init",
+            "position": {"filename": "api/types/versions/compare.go"}
+          },
+          {
+            "module": "github.com/containers/image/v5",
+            "version": "v5.36.2",
+            "package": "github.com/containers/image/v5/manifest",
+            "function": "init",
+            "position": {"filename": "manifest/docker_schema1.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/internal/registry/upstream",
+            "function": "init",
+            "position": {"filename": "internal/registry/upstream/upstream.go"}
+          }
+        ],
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/pkg/namesgenerator",
+            "function": "init",
+            "position": {"filename": "pkg/namesgenerator/names-generator.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store",
+            "function": "init",
+            "position": {"filename": "store/util.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store/storeutil",
+            "function": "init",
+            "position": {"filename": "store/storeutil/storeutil.go"}
+          },
+          {
+            "module": "github.com/docker/compose/v5",
+            "version": "v5.1.4",
+            "package": "github.com/docker/compose/v5/pkg/compose",
+            "function": "init",
+            "position": {"filename": "pkg/compose/compose.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/cmd/agent/docker",
+            "function": "init",
+            "position": {"filename": "cmd/agent/docker/compose_service.go"}
+          }
+        ]
+      ]
+    },
+    {
+      "id": "GO-2026-5668",
+      "rationale": "The reported docker cp symlink-swap race is in daemon container-filesystem code that is not compiled into a shipped Distr binary; only the two reviewed initialization traces are reachable.",
+      "goAdvisory": "https://pkg.go.dev/vuln/GO-2026-5668",
+      "feedback": "https://github.com/golang/vulndb/issues/5994",
+      "affected": [
+        {
+          "package": {"name": "github.com/docker/docker", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby/v2", "ecosystem": "Go"},
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [{"introduced": "0"}, {"fixed": "2.0.0-beta.14"}]
+            }
+          ],
+          "ecosystem_specific": {}
+        }
+      ],
+      "traces": [
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/api/types/versions",
+            "function": "init",
+            "position": {"filename": "api/types/versions/compare.go"}
+          },
+          {
+            "module": "github.com/containers/image/v5",
+            "version": "v5.36.2",
+            "package": "github.com/containers/image/v5/manifest",
+            "function": "init",
+            "position": {"filename": "manifest/docker_schema1.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/internal/registry/upstream",
+            "function": "init",
+            "position": {"filename": "internal/registry/upstream/upstream.go"}
+          }
+        ],
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/pkg/namesgenerator",
+            "function": "init",
+            "position": {"filename": "pkg/namesgenerator/names-generator.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store",
+            "function": "init",
+            "position": {"filename": "store/util.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store/storeutil",
+            "function": "init",
+            "position": {"filename": "store/storeutil/storeutil.go"}
+          },
+          {
+            "module": "github.com/docker/compose/v5",
+            "version": "v5.1.4",
+            "package": "github.com/docker/compose/v5/pkg/compose",
+            "function": "init",
+            "position": {"filename": "pkg/compose/compose.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/cmd/agent/docker",
+            "function": "init",
+            "position": {"filename": "cmd/agent/docker/compose_service.go"}
+          }
+        ]
+      ]
+    },
+    {
+      "id": "GO-2026-5746",
+      "rationale": "The reported archive-upload host execution path is Docker daemon archive code that is not compiled into a shipped Distr binary; only the two reviewed initialization traces are reachable.",
+      "goAdvisory": "https://pkg.go.dev/vuln/GO-2026-5746",
+      "feedback": "https://github.com/golang/vulndb/issues/5995",
+      "affected": [
+        {
+          "package": {"name": "github.com/docker/docker", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby", "ecosystem": "Go"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+          "ecosystem_specific": {}
+        },
+        {
+          "package": {"name": "github.com/moby/moby/v2", "ecosystem": "Go"},
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [{"introduced": "0"}, {"fixed": "2.0.0-beta.14"}]
+            }
+          ],
+          "ecosystem_specific": {}
+        }
+      ],
+      "traces": [
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/api/types/versions",
+            "function": "init",
+            "position": {"filename": "api/types/versions/compare.go"}
+          },
+          {
+            "module": "github.com/containers/image/v5",
+            "version": "v5.36.2",
+            "package": "github.com/containers/image/v5/manifest",
+            "function": "init",
+            "position": {"filename": "manifest/docker_schema1.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/internal/registry/upstream",
+            "function": "init",
+            "position": {"filename": "internal/registry/upstream/upstream.go"}
+          }
+        ],
+        [
+          {
+            "module": "github.com/docker/docker",
+            "version": "v28.5.2+incompatible",
+            "package": "github.com/docker/docker/pkg/namesgenerator",
+            "function": "init",
+            "position": {"filename": "pkg/namesgenerator/names-generator.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store",
+            "function": "init",
+            "position": {"filename": "store/util.go"}
+          },
+          {
+            "module": "github.com/docker/buildx",
+            "version": "v0.33.0",
+            "package": "github.com/docker/buildx/store/storeutil",
+            "function": "init",
+            "position": {"filename": "store/storeutil/storeutil.go"}
+          },
+          {
+            "module": "github.com/docker/compose/v5",
+            "version": "v5.1.4",
+            "package": "github.com/docker/compose/v5/pkg/compose",
+            "function": "init",
+            "position": {"filename": "pkg/compose/compose.go"}
+          },
+          {
+            "module": "github.com/distr-sh/distr",
+            "package": "github.com/distr-sh/distr/cmd/agent/docker",
+            "function": "init",
+            "position": {"filename": "cmd/agent/docker/compose_service.go"}
+          }
+        ]
+      ]
+    }
+  ],
+  "dependencyDefense": {
+    "targets": ["./cmd/hub", "./cmd/agent/docker", "./cmd/agent/kubernetes"],
+    "rejectedPackagePrefixes": [
+      "github.com/docker/docker/plugin",
+      "github.com/docker/docker/api/server/router/plugin",
+      "github.com/docker/docker/pkg/authorization",
+      "github.com/docker/docker/api/server/middleware",
+      "github.com/docker/docker/container",
+      "github.com/docker/docker/api/server/router/container",
+      "github.com/docker/docker/daemon/archive",
+      "github.com/docker/docker/pkg/archive",
+      "github.com/docker/docker/pkg/chrootarchive"
+    ]
+  }
+}

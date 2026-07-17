@@ -64,4 +64,3 @@ Focused Docker-agent tests cover:
 - untrusted TLS certificate rejection
 - nil body and empty object digest equivalence
 - retry classification
-
