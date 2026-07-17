@@ -2078,10 +2078,24 @@ run_timestamp_migration_138() {
     /evidence/approved-manifest.json || return
 }
 
+wait_for_restored_postgres() {
+  local container="${1:-}" attempt
+  [[ -n "$container" ]] || return 1
+  for ((attempt=1; attempt<=60; attempt++)); do
+    if docker exec "$container" sh -ceu '
+      test "$(cat /proc/1/comm)" = postgres
+      exec pg_isready -U distr_restore -d distr_restore
+    ' >/dev/null 2>&1; then return 0; fi
+    sleep 1 || return
+  done
+  die "restored PostgreSQL final server did not become ready"
+  return 1
+}
+
 backup_and_restore_timestamp_evidence() (
   set -Eeuo pipefail
   local evidence_dir="${1:-}" evidence_id="${2:-}"
-  local project source_object_volume host_uid host_gid ready attempt nonce
+  local project source_object_volume host_uid host_gid nonce
   local database_backup object_backup database_restore_container
   local database_restore_volume object_restore_volume restore_password
   local source_object_checksum restored_object_checksum object_json
@@ -2237,24 +2251,7 @@ backup_and_restore_timestamp_evidence() (
     -e POSTGRES_DB=distr_restore \
     postgres:18.4-alpine3.23 >/dev/null || return
   container_created=1
-  ready=0
-  for ((attempt=1; attempt<=60; attempt++)); do
-    if docker exec "$database_restore_container" \
-      pg_isready -U distr_restore -d distr_restore >/dev/null 2>&1; then
-      ready=1
-      break
-    fi
-    sleep 1 || return
-  done
-  ((ready == 1)) || {
-    die "restored PostgreSQL did not become ready"
-    return 1
-  }
-  docker exec "$database_restore_container" \
-    pg_isready -U distr_restore -d distr_restore >/dev/null || {
-    die "restored PostgreSQL did not remain ready"
-    return 1
-  }
+  wait_for_restored_postgres "$database_restore_container" || return
   docker exec -e "PGPASSWORD=$restore_password" \
     "$database_restore_container" \
     pg_restore --exit-on-error --no-owner --no-privileges \

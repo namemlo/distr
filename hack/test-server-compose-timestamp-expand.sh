@@ -589,6 +589,20 @@ SH
     "$TMP/docker-log"
 )
 
+test_restore_postgres_readiness_requires_final_server() (
+  local attempts=0
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  docker(){
+    [[ "$*" == *'/proc/1/comm'* && "$*" == *'pg_isready'* ]] || return 1
+    attempts=$((attempts + 1))
+    ((attempts >= 3))
+  }
+  sleep(){ :; }
+
+  wait_for_restored_postgres distr-timestamp-pg-test
+  [[ "$attempts" == 3 ]]
+)
+
 test_pre_expand_rollback_refused_after_fence_clear() {
   reset_stubs
   rm -f "$TIMESTAMP_FENCE_FILE"
@@ -3131,6 +3145,7 @@ test_cancel_refuses_schema_138
 test_fence_file_is_atomic_restricted_and_directory_bound
 test_operator_uses_deployment_identity_and_env_override
 test_restore_failure_runs_cleanup_trap
+test_restore_postgres_readiness_requires_final_server
 test_pre_expand_rollback_refused_after_fence_clear
 test_real_compatibility_record_is_restricted_idempotent_and_positive
 test_schema_139_rollback_fails_closed_before_mutation
