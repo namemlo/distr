@@ -2101,7 +2101,7 @@ backup_and_restore_timestamp_evidence() (
   object_backup="$BACKUP_DIR/rustfs-$evidence_id.tar.gz"
   nonce="$(openssl rand -hex 8)" || return
   restore_owner="${evidence_id}_$nonce"
-  database_restore_container="${project}-timestamp-pg-$evidence_id-$nonce"
+  database_restore_container="distr-timestamp-pg-$nonce"
   database_restore_volume="${project}_timestamp_pg_${evidence_id}_$nonce"
   object_restore_volume="${project}_timestamp_object_${evidence_id}_$nonce"
   restore_password="$(openssl rand -hex 24)" || return

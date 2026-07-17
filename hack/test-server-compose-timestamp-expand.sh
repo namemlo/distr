@@ -528,6 +528,9 @@ SH
 test_restore_failure_runs_cleanup_trap() (
   reset_stubs
   local fakebin="$TMP/fakebin"
+  local fence_id='0123456789abcdef0123456789abcdef'
+  local restore_container
+  export RESTORE_TEST_FENCE="$fence_id"
   mkdir -p "$fakebin"
   cat >"$fakebin/docker" <<'SH'
 #!/usr/bin/env bash
@@ -539,15 +542,15 @@ case "$*" in
     archive="${archive%% *}"
     : >"$BACKUP_DIR/$archive"
     ;;
-  *'inspect --format'*'timestamp-pg-fence42-'*)
+  *'inspect --format'*'distr-timestamp-pg-'*)
     name="${*: -1}"
     nonce="${name##*-}"
-    printf 'fence42_%s\n' "$nonce"
+    printf '%s_%s\n' "$RESTORE_TEST_FENCE" "$nonce"
     ;;
-  *'volume inspect --format'*'_fence42_'*)
+  *'volume inspect --format'*"_${RESTORE_TEST_FENCE}_"*)
     name="${*: -1}"
     nonce="${name##*_}"
-    printf 'fence42_%s\n' "$nonce"
+    printf '%s_%s\n' "$RESTORE_TEST_FENCE" "$nonce"
     ;;
 esac
 exit 0
@@ -558,7 +561,7 @@ SH
   : >"$TMP/docker-log"
   unset -f backup_and_restore_timestamp_evidence
   source "$ROOT/deploy/server-docker-compose/deploy.sh"
-  fence_value(){ printf '%s' fence42; }
+  fence_value(){ printf '%s' "$RESTORE_TEST_FENCE"; }
   compose(){ printf 'database-backup'; }
   prepare_timestamp_evidence_dir(){ mkdir -p "$1"; chmod 0700 "$1"; }
   aggregate_volume_checksum(){
@@ -569,16 +572,20 @@ SH
     printf 'restore unexpectedly succeeded\n' >&2
     return 1
   fi
-  grep -q 'docker rm -f .*timestamp-pg-fence42' "$TMP/docker-log"
-  grep -q 'docker volume rm -f .*timestamp_pg_fence42' \
+  restore_container="$(sed -n \
+    's/^docker run -d --name \([^ ]*\).*/\1/p' "$TMP/docker-log")"
+  [[ "$restore_container" =~ ^distr-timestamp-pg-[0-9a-f]{16}$ ]]
+  ((${#restore_container} <= 63))
+  grep -q 'docker rm -f distr-timestamp-pg-' "$TMP/docker-log"
+  grep -q "docker volume rm -f .*timestamp_pg_$fence_id" \
     "$TMP/docker-log"
-  grep -q 'docker volume rm -f .*timestamp_object_fence42' \
+  grep -q "docker volume rm -f .*timestamp_object_$fence_id" \
     "$TMP/docker-log"
-  grep -q 'docker ps -aq --filter name=^/.*timestamp-pg-fence42' \
+  grep -q 'docker ps -aq --filter name=^/distr-timestamp-pg-' \
     "$TMP/docker-log"
-  grep -q 'docker volume ls -q --filter name=^.*timestamp_pg_fence42' \
+  grep -q "docker volume ls -q --filter name=^.*timestamp_pg_$fence_id" \
     "$TMP/docker-log"
-  grep -q 'docker volume ls -q --filter name=^.*timestamp_object_fence42' \
+  grep -q "docker volume ls -q --filter name=^.*timestamp_object_$fence_id" \
     "$TMP/docker-log"
 )
 
@@ -1264,6 +1271,9 @@ test_restore_uses_pg18_layout_labels_and_complete_object_digest() {
   ! grep -Fq ':/var/lib/postgresql/data"' <<<"$body"
   grep -Fq "restore_label='distr.sh/timestamp-restore'" <<<"$body"
   grep -Fq -- '--label "$restore_label=$restore_owner"' <<<"$body"
+  grep -Fq 'database_restore_container="distr-timestamp-pg-$nonce"' <<<"$body"
+  ! grep -Fq 'database_restore_container="${project}-timestamp-pg-$evidence_id-$nonce"' \
+    <<<"$body"
   body="$(sed -n '/^aggregate_volume_checksum()/,/^}/p' "$deploy")"
   grep -Fq 'reject' <<<"$body"
   grep -Fq 'type' <<<"$body"
