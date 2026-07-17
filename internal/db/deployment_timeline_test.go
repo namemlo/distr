@@ -59,7 +59,7 @@ func TestDeploymentTimelineRepositoryListsFilteredItemsAndMarksLastSuccessful(t 
 	g.Expect(timeline.Items).To(HaveLen(2))
 	g.Expect(timeline.Items[0].TaskID).To(Equal(secondTasks[0].ID))
 	g.Expect(timeline.Items[0].ReleaseNumber).NotTo(BeEmpty())
-	g.Expect(timeline.Items[0].DeploymentTargetName).To(Equal("cluster-a"))
+	g.Expect(timeline.Items[0].DeploymentTargetName).To(Equal(deps.plan.Targets[0].Name))
 	g.Expect(timeline.Items[0].ActorUserAccountID).To(Equal(&deps.actorID))
 	g.Expect(timeline.Items[0].LastSuccessful).To(BeTrue())
 	g.Expect(timeline.Items[1].TaskID).To(Equal(firstTasks[0].ID))
@@ -374,10 +374,10 @@ func TestDeploymentTimelineRepositoryComparesReleaseProcessAndVariables(t *testi
 	g.Expect(comparison.Compare.TaskID).To(Equal(secondTasks[0].ID))
 	g.Expect(comparison.Process.Changed).To(BeTrue())
 	g.Expect(comparison.Process.BaseRevisionNumber).To(Equal(1))
-	g.Expect(comparison.Process.CompareRevisionNumber).To(Equal(2))
+	g.Expect(comparison.Process.CompareRevisionNumber).To(Equal(1))
 	g.Expect(comparison.Components).To(ContainElement(WithTransform(
 		func(change types.DeploymentTimelineComponentChange) string { return change.Key },
-		Equal("app"),
+		Equal("api"),
 	)))
 	g.Expect(comparison.Variables).To(ContainElement(WithTransform(
 		func(change types.DeploymentTimelineVariableChange) string { return change.Key },

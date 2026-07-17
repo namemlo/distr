@@ -27,22 +27,40 @@ func RunTxRR(ctx context.Context, f func(ctx context.Context) error) (finalErr e
 
 // RunTxIso runs a transaction with the specified isolation level.
 func RunTxIso(ctx context.Context, isoLevel pgx.TxIsoLevel, f func(ctx context.Context) error) error {
-	db := internalctx.GetDb(ctx)
-	if conn, ok := db.(queryable.Conn); ok {
-		if tx, err := conn.BeginEx(ctx, &pgx.TxOptions{IsoLevel: isoLevel}); err != nil {
+	return RunTxOptions(ctx, pgx.TxOptions{IsoLevel: isoLevel}, f)
+}
+
+// RunTxOptions runs a transaction with the specified PostgreSQL transaction options.
+func RunTxOptions(
+	ctx context.Context,
+	options pgx.TxOptions,
+	f func(context.Context) error,
+) error {
+	database := internalctx.GetDb(ctx)
+	switch connection := database.(type) {
+	case queryable.Conn:
+		tx, err := connection.BeginEx(ctx, &options)
+		if err != nil {
 			return err
-		} else {
-			return runTxFunc(ctx, tx, f)
 		}
-	} else if conn, ok := db.(queryable.PoolConn); ok {
-		if tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: isoLevel}); err != nil {
+		return runTxFunc(ctx, tx, f)
+	case queryable.PoolConn:
+		tx, err := connection.BeginTx(ctx, options)
+		if err != nil {
 			return err
-		} else {
-			return runTxFunc(ctx, tx, f)
 		}
-	} else {
-		return errors.New("RunTxIso can not be called from within an existing transaction")
+		return runTxFunc(ctx, tx, f)
+	default:
+		return errors.New("RunTxOptions can not be called from within an existing transaction")
 	}
+}
+
+// RunReadOnlyTxRR runs a read-only transaction with RepeatableRead isolation.
+func RunReadOnlyTxRR(ctx context.Context, f func(context.Context) error) error {
+	return RunTxOptions(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	}, f)
 }
 
 func runTxFunc(ctx context.Context, tx pgx.Tx, f func(ctx context.Context) error) (finalErr error) {

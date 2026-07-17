@@ -3147,6 +3147,24 @@ Codex must not combine these into one large change.
 - Neutral end-to-end demo.
 - Upstream contribution breakdown.
 
+### Accepted post-PR-050 extension ledger
+
+The detailed per-PR sequence is maintained in the
+[enterprise operator control-plane program](../superpowers/plans/2026-07-14-enterprise-operator-control-plane-program.md).
+The timestamp prerequisite and its evidence are maintained in
+[PR-054A](../fork/PR-054A_EXTERNAL_EXECUTION_TIMESTAMP_EXPAND.md).
+
+| Extension slice       | Migration allocation | ADR allocation    |
+| --------------------- | -------------------- | ----------------- |
+| PR-054A               | 138                  | 0055              |
+| PR-055                | None                 | None              |
+| PR-056 through PR-065 | 139 through 147      | 0056 through 0060 |
+| PR-066 through PR-078 | 148 through 160      | 0061 through 0066 |
+| PR-079                | 161                  | 0067              |
+| PR-080 through PR-081 | None                 | None              |
+| PR-082                | 162                  | 0068              |
+| PR-083                | None                 | None              |
+
 ---
 
 ## 41. Codex implementation rules

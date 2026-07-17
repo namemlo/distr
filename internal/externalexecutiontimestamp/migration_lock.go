@@ -1,0 +1,3 @@
+package externalexecutiontimestamp
+
+const MigrationAdvisoryLockKey int64 = 4303907527027985411

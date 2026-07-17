@@ -271,8 +271,7 @@ func DeleteVariableSetWithID(ctx context.Context, id, orgID uuid.UUID) error {
 			pgx.NamedArgs{"id": id, "organizationId": orgID},
 		)
 		if err != nil {
-			var pgError *pgconn.PgError
-			if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+			if isProtectedReferenceViolation(err) {
 				return fmt.Errorf("could not delete VariableSet: %w", apierrors.ErrConflict)
 			}
 			return fmt.Errorf("could not delete VariableSet: %w", err)

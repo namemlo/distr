@@ -263,6 +263,8 @@ func deleteSecretHandler() http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, apierrors.ErrNotFound) {
 				http.Error(w, "secret not found", http.StatusNotFound)
+			} else if errors.Is(err, apierrors.ErrConflict) {
+				http.Error(w, "secret is in use", http.StatusConflict)
 			} else {
 				internalctx.GetLogger(ctx).Error("failed to delete secret", zap.Error(err))
 				sentry.GetHubFromContext(ctx).CaptureException(err)

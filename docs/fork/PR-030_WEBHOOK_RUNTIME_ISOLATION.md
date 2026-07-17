@@ -47,4 +47,3 @@ Focused Docker-agent tests cover:
 - cancellation during retry backoff
 - streaming response cutoff at the body-size limit
 - the expanded `TestWebhookActionSecurityContractSuite`
-

@@ -497,7 +497,7 @@ func releaseExpiredTaskLeasesAndNextAttempt(ctx context.Context, taskID, orgID u
 			nextAttempt = attempt + 1
 		}
 	}
-	tag, err := db.Exec(ctx,
+	rows, err = db.Query(ctx,
 		`UPDATE TaskLease
 		SET
 			released_at = COALESCE(released_at, now()),
@@ -505,35 +505,53 @@ func releaseExpiredTaskLeasesAndNextAttempt(ctx context.Context, taskID, orgID u
 		WHERE task_id = @taskId
 			AND organization_id = @organizationId
 			AND released_at IS NULL
-			AND expires_at <= now()`,
+			AND expires_at <= now()
+		RETURNING executor_type`,
 		pgx.NamedArgs{"taskId": taskID, "organizationId": orgID},
 	)
 	if err != nil {
 		return 0, fmt.Errorf("could not release expired TaskLease: %w", err)
 	}
-	if tag.RowsAffected() > 0 {
-		if err := resetInterruptedStepRunsForTask(ctx, taskID, orgID); err != nil {
+	executorTypes, err := pgx.CollectRows(rows, pgx.RowTo[types.TaskExecutorType])
+	if err != nil {
+		return 0, fmt.Errorf("could not collect released TaskLease executor types: %w", err)
+	}
+	for _, executorType := range executorTypes {
+		if !executorType.IsValid() {
+			return 0, fmt.Errorf("could not reset interrupted StepRuns: invalid TaskLease executor type %q", executorType)
+		}
+		if err := resetInterruptedStepRunsForTaskExecutor(ctx, taskID, orgID, executorType); err != nil {
 			return 0, err
 		}
 	}
 	return nextAttempt, nil
 }
 
-func resetInterruptedStepRunsForTask(ctx context.Context, taskID, orgID uuid.UUID) error {
+func resetInterruptedStepRunsForTaskExecutor(
+	ctx context.Context,
+	taskID, orgID uuid.UUID,
+	executorType types.TaskExecutorType,
+) error {
 	db := internalctx.GetDb(ctx)
 	_, err := db.Exec(ctx,
-		`UPDATE StepRun
+		`UPDATE StepRun sr
 		SET
 			status = @pendingStatus,
 			updated_at = now()
-		WHERE task_id = @taskId
-			AND organization_id = @organizationId
-			AND status = @runningStatus`,
+		FROM DeploymentPlanStep dps
+		WHERE sr.task_id = @taskId
+			AND sr.organization_id = @organizationId
+			AND sr.status = @runningStatus
+			AND dps.id = sr.deployment_plan_step_id
+			AND dps.deployment_plan_id = sr.deployment_plan_id
+			AND dps.organization_id = sr.organization_id
+			AND lower(trim(dps.execution_location)) = @executionLocation`,
 		pgx.NamedArgs{
-			"taskId":         taskID,
-			"organizationId": orgID,
-			"pendingStatus":  types.StepRunStatusPending,
-			"runningStatus":  types.StepRunStatusRunning,
+			"taskId":            taskID,
+			"organizationId":    orgID,
+			"executionLocation": executorType.ExecutionLocation(),
+			"pendingStatus":     types.StepRunStatusPending,
+			"runningStatus":     types.StepRunStatusRunning,
 		},
 	)
 	if err != nil {

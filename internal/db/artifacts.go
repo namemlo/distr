@@ -1221,7 +1221,7 @@ func DeleteArtifactWithID(ctx context.Context, id uuid.UUID) error {
 	db := internalctx.GetDb(ctx)
 	cmd, err := db.Exec(ctx, `DELETE FROM Artifact WHERE id = @id`, pgx.NamedArgs{"id": id})
 	if err != nil {
-		if pgerr := (*pgconn.PgError)(nil); errors.As(err, &pgerr) && pgerr.Code == pgerrcode.ForeignKeyViolation {
+		if isProtectedReferenceViolation(err) {
 			err = fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 		}
 	} else if cmd.RowsAffected() == 0 {
@@ -1272,7 +1272,7 @@ func DeleteArtifactVersion(ctx context.Context, artifactID uuid.UUID, tagName st
 			"tagName":    tagName,
 		})
 	if err != nil {
-		if pgerr := (*pgconn.PgError)(nil); errors.As(err, &pgerr) && pgerr.Code == pgerrcode.ForeignKeyViolation {
+		if isProtectedReferenceViolation(err) {
 			err = fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 		}
 	} else if cmd.RowsAffected() == 0 {

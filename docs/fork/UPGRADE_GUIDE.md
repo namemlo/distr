@@ -1,5 +1,21 @@
 # Fork Upgrade Guide
 
+## Current Timestamp Procedure
+
+Migration 138 uses the current
+[Community Release Upgrade Checklist](../upgrade/community-release-upgrade-checklist.md#migration-138-decision-path).
+The remainder of this file is the historical PR-049/schema-131 compatibility guide and does not override the
+migration-138 fence, manifest, backup, restore, or downgrade rules.
+
+If migration 138 is dirty at marker 137 or 138, follow the checklist's
+[dirty migration branch](../upgrade/community-release-upgrade-checklist.md#dirty-migration-137138-branch) and the
+[audited recovery decision tree](../operations/server-docker-compose-deploy.md#audited-dirty-marker-recovery).
+`timestamp-expand-recover-dirty` repairs only the catalog-proven marker. It does not start Hub, persist timestamp
+compatibility, or clear the fence. Resume the applicable normal timestamp-expand flow afterward; a repaired
+`EXPAND_138`/`ZERO_HISTORY` state remains stopped and fenced and must be escalated because no current no-manifest
+finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
+migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
+
 ## PR-049 Compatibility Metadata
 
 Supported source range: any fork build before PR-049 that has direct `Deployment` and `DeploymentRevision`
