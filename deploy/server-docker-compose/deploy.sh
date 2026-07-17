@@ -1196,13 +1196,13 @@ aggregate_volume_checksum() {
             "$path" "$mode" "$uid" "$gid"
         else
           size="$(stat -c %s "$path")"
-          digest="$(sha256sum "$path" | awk "{print \\$1}")"
+          digest="$(sha256sum "$path" | cut -d " " -f 1)"
           printf "type=F\\0path=%s\\0mode=%s\\0uid=%s\\0gid=%s\\0size=%s\\0sha256=%s\\0" \
             "$path" "$mode" "$uid" "$gid" "$size" "$digest"
         fi
       done |
       sha256sum |
-      awk "{print \\$1}"
+      cut -d " " -f 1
   ' || return
 }
 

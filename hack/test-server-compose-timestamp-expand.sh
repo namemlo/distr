@@ -1269,6 +1269,8 @@ test_restore_uses_pg18_layout_labels_and_complete_object_digest() {
   grep -Fq 'type' <<<"$body"
   grep -Fq 'mode' <<<"$body"
   grep -Fq 'set -o pipefail' <<<"$body"
+  [[ "$(grep -Fc 'cut -d " " -f 1' <<<"$body")" == 2 ]]
+  ! grep -Fq 'awk "{print \\$1}"' <<<"$body"
 }
 
 test_guard_review_safety_contracts_are_present() {
