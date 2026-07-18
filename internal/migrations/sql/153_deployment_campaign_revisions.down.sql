@@ -1,0 +1,38 @@
+LOCK TABLE
+  DeploymentCampaignPrerequisite,
+  DeploymentCampaignMember,
+  DeploymentCampaignWave,
+  DeploymentCampaignRevision,
+  DeploymentCampaignDraft
+IN ACCESS EXCLUSIVE MODE;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM DeploymentCampaignDraft)
+     OR EXISTS (SELECT 1 FROM DeploymentCampaignRevision)
+     OR EXISTS (SELECT 1 FROM DeploymentCampaignWave)
+     OR EXISTS (SELECT 1 FROM DeploymentCampaignMember)
+     OR EXISTS (SELECT 1 FROM DeploymentCampaignPrerequisite) THEN
+    RAISE EXCEPTION
+      'downgrade crossing 153 is forbidden while deployment campaign rows exist';
+  END IF;
+END;
+$$;
+
+DROP TRIGGER DeploymentCampaignPrerequisite_immutable
+  ON DeploymentCampaignPrerequisite;
+DROP TRIGGER DeploymentCampaignMember_immutable
+  ON DeploymentCampaignMember;
+DROP TRIGGER DeploymentCampaignWave_immutable
+  ON DeploymentCampaignWave;
+DROP TRIGGER DeploymentCampaignRevision_immutable
+  ON DeploymentCampaignRevision;
+
+ALTER TABLE DeploymentCampaignDraft
+  DROP CONSTRAINT deploymentcampaigndraft_last_published_fk;
+DROP TABLE DeploymentCampaignPrerequisite;
+DROP TABLE DeploymentCampaignMember;
+DROP TABLE DeploymentCampaignWave;
+DROP TABLE DeploymentCampaignRevision;
+DROP TABLE DeploymentCampaignDraft;
+DROP FUNCTION deploymentcampaign_published_immutable();

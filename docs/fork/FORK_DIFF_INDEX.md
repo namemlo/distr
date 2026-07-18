@@ -1380,3 +1380,26 @@ Use one entry per pull request:
   infrastructure provider, hostname, credential, or application-database behavior.
 - Compatibility notes: Authorization and effective enrollment fail closed until PR-066 is integrated. PR-063
   supplies the immutable v2 plan identity consumed by the wrapper. No permissive fallback or v1 gate is added.
+
+### PR-071 - Immutable deployment campaign revisions
+
+- Status: Implemented on the speculative PR-069 stack; missing predecessor migrations 141 through 148 and 152 plus
+  live sequential PostgreSQL verification remain integration dependencies.
+- Upstream base: `43a57716`.
+- Feature flag: `operator_control_plane_v2` gates mutations; authenticated tenant-scoped draft reads remain
+  available. Mutations additionally fail closed until the PR-066 scoped authorization adapter is wired.
+- User-facing behavior: Operators can author, validate, and publish deterministic campaign membership, waves,
+  bake/threshold policy, and cross-plan shared-provider prerequisites.
+- Database changes: Migration 153 adds a mutable campaign draft root and immutable normalized revision, wave,
+  member, and prerequisite evidence with guarded retention and downgrade.
+- API changes: Adds create/get/edit/validate/publish routes below `/api/v1/deployment-campaign-drafts`.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0063 and PR-071 fork notes.
+- Tests: Added pure membership/canonical/validation, migration/repository contract, API, mapping, and fail-closed
+  authorization coverage.
+- Upstream contribution notes: Community-neutral campaign primitives with no adopter, provider, host, credential,
+  or client-database behavior.
+- Compatibility notes: Existing v1 plans, tasks, agents, and execution remain unchanged. PR-072 consumes the
+  immutable revision; the proper planning/provider-placement stack replaces the synthetic evidence adapter after
+  transplant.
