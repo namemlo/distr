@@ -32,7 +32,7 @@ BEFORE INSERT OR UPDATE OF name ON DeploymentPolicy
 FOR EACH ROW EXECUTE FUNCTION deployment_policy_normalize_text();
 
 CREATE INDEX DeploymentPolicy_organization_order
-  ON DeploymentPolicy (organization_id, key, id);
+  ON DeploymentPolicy (organization_id, created_at DESC, id DESC);
 
 CREATE TABLE DeploymentPolicyVersion (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -90,8 +90,8 @@ CREATE INDEX DeploymentPolicyVersion_organization_policy_order
   ON DeploymentPolicyVersion (
     organization_id,
     deployment_policy_id,
-    version_number DESC,
-    id
+    created_at DESC,
+    id DESC
   );
 
 CREATE FUNCTION deployment_policy_version_published_immutable()
@@ -99,6 +99,17 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.state = 'DRAFT'
+       AND NEW.published_by_useraccount_id IS NULL
+       AND NEW.published_at IS NULL THEN
+      RETURN NEW;
+    END IF;
+    RAISE EXCEPTION
+      'deployment policy versions must be inserted as drafts'
+      USING ERRCODE = '23514';
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
     IF current_setting(
       'distr.deployment_policy_deletion_reason',
@@ -129,14 +140,23 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
-  IF NEW.state = 'PUBLISHED'
-     AND (
-       NEW.document IS DISTINCT FROM OLD.document
-       OR NEW.canonical_checksum IS DISTINCT FROM OLD.canonical_checksum
-       OR NEW.canonical_payload IS DISTINCT FROM OLD.canonical_payload
-     ) THEN
+  IF NEW.state IS DISTINCT FROM OLD.state THEN
+    IF OLD.state = 'DRAFT'
+       AND NEW.state = 'PUBLISHED'
+       AND OLD.published_by_useraccount_id IS NULL
+       AND OLD.published_at IS NULL
+       AND NEW.published_by_useraccount_id IS NOT NULL
+       AND NEW.published_at IS NOT NULL
+       AND NEW.document IS NOT DISTINCT FROM OLD.document
+       AND NEW.canonical_checksum IS NOT DISTINCT FROM
+         OLD.canonical_checksum
+       AND NEW.canonical_payload IS NOT DISTINCT FROM
+         OLD.canonical_payload THEN
+      RETURN NEW;
+    END IF;
     RAISE EXCEPTION
-      'publishing cannot mutate deployment policy version content'
+      'invalid deployment policy version lifecycle transition from % to %',
+      OLD.state, NEW.state
       USING ERRCODE = '23514';
   END IF;
 
@@ -145,7 +165,7 @@ END;
 $$;
 
 CREATE TRIGGER DeploymentPolicyVersion_published_immutable
-BEFORE UPDATE OR DELETE ON DeploymentPolicyVersion
+BEFORE INSERT OR UPDATE OR DELETE ON DeploymentPolicyVersion
 FOR EACH ROW EXECUTE FUNCTION deployment_policy_version_published_immutable();
 
 CREATE TABLE DeploymentPolicyBinding (
@@ -202,6 +222,13 @@ CREATE INDEX DeploymentPolicyBinding_scope_resolution
     deployment_policy_version_id
   )
   WHERE retired_at IS NULL;
+
+CREATE INDEX DeploymentPolicyBinding_organization_order
+  ON DeploymentPolicyBinding (
+    organization_id,
+    created_at DESC,
+    id DESC
+  );
 
 CREATE FUNCTION deployment_policy_binding_guard()
 RETURNS trigger

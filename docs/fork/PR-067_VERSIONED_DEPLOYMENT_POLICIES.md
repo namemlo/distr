@@ -12,6 +12,9 @@ subscriber so that a deployment plan records the exact governance contract that 
   published version cannot be changed or deleted.
 - `DeploymentPolicyBinding` points only to a published version. Active bindings may be retired, never rewritten.
 - CRUD, version, validate, publish, and binding routes live below `/api/v1/deployment-policies`.
+- Policy, version, and binding collections use opaque `(createdAt,id)` cursor pages with a default of 50 and a
+  hard maximum of 100. Version collection items are bounded summaries; only the item route returns the policy
+  document.
 - Authenticated reads remain available when operator control plane v2 is disabled. Every mutation is hidden unless
   `operator_control_plane_v2` is effective and also requires read-write/admin while excluding super-admin.
 - Policy documents use the exact `distr.deployment-policy/v1` typed schema. Unknown request fields, trailing JSON,
@@ -56,9 +59,11 @@ the existing v1 plan behavior and canonical shape.
 ## Database and Downgrade
 
 Migration 149 adds the three policy resources and optional plan snapshot columns. Composite organization foreign
-keys enforce tenant ownership, published versions are guarded at the schema boundary, active binding identity is
-unique, and the plan constraint requires all snapshot fields together with matching checksums. Down migration
-takes exclusive locks and refuses while any policy or plan-policy evidence exists.
+keys enforce tenant ownership. Policy versions must be inserted as drafts and can only make an audited,
+content-preserving transition from draft to published; published versions are then immutable. Active binding
+identity is unique, list indexes support stable keyset pages, and the plan constraint requires all snapshot fields
+together with matching checksums. Down migration takes exclusive locks and refuses while any policy or
+plan-policy evidence exists.
 
 Scoped principal-group validation is activated automatically when the PR-066 `PrincipalGroup` relation is
 present. Campaign bindings remain rejected until the campaign resource exists. Owner/subscriber resolution uses
@@ -76,7 +81,8 @@ system configuration.
 Focused tests cover exact validation, restricted expressions, bootstrap rules, deterministic checksums,
 owner/subscriber authority separation, mode/window conflicts, strict thresholds, subscriber invalidation,
 migration immutability and downgrade guards, API validation, mapping, strict JSON parsing, mutation kill-switch
-behavior, and deployment-plan snapshot canonicalization.
+behavior, cursor bounds/resource scoping, page metadata, summary-only version lists, OpenAPI page contracts, and
+deployment-plan snapshot canonicalization.
 
 Live PostgreSQL 16/18 migration and repository tests, the full repository suite, containers, and browser
 verification remain final stacked-branch gates because migrations 141-148 are supplied by the prerequisite PRs.

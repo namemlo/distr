@@ -32,6 +32,23 @@ func DeploymentPolicyVersionToAPI(version types.DeploymentPolicyVersion) api.Dep
 	}
 }
 
+func DeploymentPolicyVersionSummaryToAPI(
+	version types.DeploymentPolicyVersionSummary,
+) api.DeploymentPolicyVersionSummary {
+	return api.DeploymentPolicyVersionSummary{
+		ID:                       version.ID,
+		CreatedAt:                version.CreatedAt,
+		UpdatedAt:                version.UpdatedAt,
+		PolicyID:                 version.PolicyID,
+		VersionNumber:            version.VersionNumber,
+		State:                    version.State,
+		CanonicalChecksum:        version.CanonicalChecksum,
+		CreatedByUserAccountID:   version.CreatedByUserAccountID,
+		PublishedByUserAccountID: version.PublishedByUserAccountID,
+		PublishedAt:              version.PublishedAt,
+	}
+}
+
 func DeploymentPolicyBindingToAPI(binding types.DeploymentPolicyBinding) api.DeploymentPolicyBinding {
 	return api.DeploymentPolicyBinding{
 		ID:                     binding.ID,
@@ -42,5 +59,32 @@ func DeploymentPolicyBindingToAPI(binding types.DeploymentPolicyBinding) api.Dep
 		Role:                   binding.Role,
 		CreatedByUserAccountID: binding.CreatedByUserAccountID,
 		RetiredAt:              binding.RetiredAt,
+	}
+}
+
+func DeploymentPolicyPageToAPI(
+	page types.Page[types.DeploymentPolicy],
+) api.DeploymentPolicyPage {
+	return api.DeploymentPolicyPage{
+		Items:      List(page.Items, DeploymentPolicyToAPI),
+		NextCursor: page.NextCursor,
+	}
+}
+
+func DeploymentPolicyVersionPageToAPI(
+	page types.Page[types.DeploymentPolicyVersionSummary],
+) api.DeploymentPolicyVersionPage {
+	return api.DeploymentPolicyVersionPage{
+		Items:      List(page.Items, DeploymentPolicyVersionSummaryToAPI),
+		NextCursor: page.NextCursor,
+	}
+}
+
+func DeploymentPolicyBindingPageToAPI(
+	page types.Page[types.DeploymentPolicyBinding],
+) api.DeploymentPolicyBindingPage {
+	return api.DeploymentPolicyBindingPage{
+		Items:      List(page.Items, DeploymentPolicyBindingToAPI),
+		NextCursor: page.NextCursor,
 	}
 }

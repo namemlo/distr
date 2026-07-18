@@ -108,3 +108,32 @@ func TestDeploymentPolicyJSONBodyRejectsUnknownFieldsAndTrailingValues(t *testin
 		g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
 	}
 }
+
+func TestDeploymentPolicyListRequestFromHTTP(t *testing.T) {
+	g := NewWithT(t)
+	request, ok := deploymentPolicyListRequestFromHTTP(
+		httptest.NewRecorder(),
+		httptest.NewRequest(
+			http.MethodGet,
+			"/api/v1/deployment-policies?limit=25&cursor=eyJ2IjoxfQ",
+			nil,
+		),
+	)
+	g.Expect(ok).To(BeTrue())
+	g.Expect(request.Limit).To(Equal(25))
+	g.Expect(request.Cursor).To(Equal("eyJ2IjoxfQ"))
+
+	for _, target := range []string{
+		"/api/v1/deployment-policies?limit=0",
+		"/api/v1/deployment-policies?limit=invalid",
+		"/api/v1/deployment-policies?cursor=not+a+cursor",
+	} {
+		recorder := httptest.NewRecorder()
+		_, ok := deploymentPolicyListRequestFromHTTP(
+			recorder,
+			httptest.NewRequest(http.MethodGet, target, nil),
+		)
+		g.Expect(ok).To(BeFalse())
+		g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+	}
+}

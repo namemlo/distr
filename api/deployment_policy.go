@@ -11,7 +11,37 @@ import (
 	"github.com/google/uuid"
 )
 
-var deploymentPolicyKeyPattern = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
+const (
+	deploymentPolicyMaximumPageLimit  = 100
+	deploymentPolicyMaximumCursorSize = 2048
+)
+
+var (
+	deploymentPolicyKeyPattern    = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
+	deploymentPolicyCursorPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+)
+
+type DeploymentPolicyListRequest struct {
+	Cursor string `query:"cursor"`
+	Limit  int    `query:"limit"`
+}
+
+func (request DeploymentPolicyListRequest) Validate() error {
+	if request.Limit < 0 || request.Limit > deploymentPolicyMaximumPageLimit {
+		return validation.NewValidationFailedError(
+			"limit must be between 1 and 100 when provided",
+		)
+	}
+	if len(request.Cursor) > deploymentPolicyMaximumCursorSize {
+		return validation.NewValidationFailedError("cursor is too large")
+	}
+	if request.Cursor != "" && !deploymentPolicyCursorPattern.MatchString(request.Cursor) {
+		return validation.NewValidationFailedError(
+			"cursor must be an opaque URL-safe token",
+		)
+	}
+	return nil
+}
 
 type CreateDeploymentPolicyRequest struct {
 	Key         string `json:"key"`
@@ -131,6 +161,19 @@ type DeploymentPolicyVersion struct {
 	PublishedAt              *time.Time                         `json:"publishedAt,omitempty"`
 }
 
+type DeploymentPolicyVersionSummary struct {
+	ID                       uuid.UUID                          `json:"id"`
+	CreatedAt                time.Time                          `json:"createdAt"`
+	UpdatedAt                time.Time                          `json:"updatedAt"`
+	PolicyID                 uuid.UUID                          `json:"policyId"`
+	VersionNumber            int                                `json:"versionNumber"`
+	State                    types.DeploymentPolicyVersionState `json:"state"`
+	CanonicalChecksum        string                             `json:"canonicalChecksum"`
+	CreatedByUserAccountID   uuid.UUID                          `json:"createdByUserAccountId"`
+	PublishedByUserAccountID *uuid.UUID                         `json:"publishedByUserAccountId,omitempty"`
+	PublishedAt              *time.Time                         `json:"publishedAt,omitempty"`
+}
+
 type DeploymentPolicyBinding struct {
 	ID                     uuid.UUID                              `json:"id"`
 	CreatedAt              time.Time                              `json:"createdAt"`
@@ -145,4 +188,19 @@ type DeploymentPolicyBinding struct {
 type DeploymentPolicyValidationResponse struct {
 	Valid  bool                    `json:"valid"`
 	Issues []types.ValidationIssue `json:"issues"`
+}
+
+type DeploymentPolicyPage struct {
+	Items      []DeploymentPolicy `json:"items"`
+	NextCursor string             `json:"nextCursor,omitempty"`
+}
+
+type DeploymentPolicyVersionPage struct {
+	Items      []DeploymentPolicyVersionSummary `json:"items"`
+	NextCursor string                           `json:"nextCursor,omitempty"`
+}
+
+type DeploymentPolicyBindingPage struct {
+	Items      []DeploymentPolicyBinding `json:"items"`
+	NextCursor string                    `json:"nextCursor,omitempty"`
 }

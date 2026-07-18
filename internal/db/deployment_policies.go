@@ -1,12 +1,16 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
@@ -21,6 +25,25 @@ import (
 var deploymentPolicyResourceKeyPattern = regexp.MustCompile(
 	`^[a-z0-9]+([._-][a-z0-9]+)*$`,
 )
+
+const (
+	deploymentPolicyDefaultPageLimit  = 50
+	deploymentPolicyMaximumPageLimit  = 100
+	deploymentPolicyMaximumCursorSize = 2048
+	deploymentPolicyCursorVersion     = 1
+
+	deploymentPolicyCursorResourcePolicies = "policies"
+	deploymentPolicyCursorResourceVersions = "versions"
+	deploymentPolicyCursorResourceBindings = "bindings"
+)
+
+type deploymentPolicyCursor struct {
+	Version   int       `json:"v"`
+	Resource  string    `json:"resource"`
+	ParentID  uuid.UUID `json:"parentId"`
+	CreatedAt time.Time `json:"createdAt"`
+	ID        uuid.UUID `json:"id"`
+}
 
 const deploymentPolicyOutputExpr = `
 	policy.id,
@@ -43,6 +66,20 @@ const deploymentPolicyVersionOutputExpr = `
 	version.document,
 	version.canonical_checksum,
 	version.canonical_payload,
+	version.created_by_useraccount_id,
+	version.published_by_useraccount_id,
+	version.published_at
+`
+
+const deploymentPolicyVersionSummaryOutputExpr = `
+	version.id,
+	version.created_at,
+	version.updated_at,
+	version.organization_id,
+	version.deployment_policy_id,
+	version.version_number,
+	version.state,
+	version.canonical_checksum,
 	version.created_by_useraccount_id,
 	version.published_by_useraccount_id,
 	version.published_at
@@ -106,27 +143,24 @@ func CreateDeploymentPolicy(
 	return nil
 }
 
-func GetDeploymentPoliciesByOrganizationID(
+func ListDeploymentPolicies(
 	ctx context.Context,
-	organizationID uuid.UUID,
-) ([]types.DeploymentPolicy, error) {
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT `+deploymentPolicyOutputExpr+`
-		FROM DeploymentPolicy policy
-		WHERE policy.organization_id = @organizationID
-		ORDER BY policy.key, policy.id
-	`, pgx.NamedArgs{"organizationID": organizationID})
-	if err != nil {
-		return nil, fmt.Errorf("list deployment policies: %w", err)
-	}
-	result, err := pgx.CollectRows(
-		rows,
-		pgx.RowToStructByName[types.DeploymentPolicy],
+	filter types.DeploymentPolicyListFilter,
+) (types.Page[types.DeploymentPolicy], error) {
+	return listDeploymentPolicyEntities(
+		ctx,
+		filter,
+		deploymentPolicyCursorResourcePolicies,
+		uuid.Nil,
+		"DeploymentPolicy",
+		"policy",
+		deploymentPolicyOutputExpr,
+		"",
+		nil,
+		func(policy types.DeploymentPolicy) (time.Time, uuid.UUID) {
+			return policy.CreatedAt, policy.ID
+		},
 	)
-	if err != nil {
-		return nil, fmt.Errorf("collect deployment policies: %w", err)
-	}
-	return result, nil
 }
 
 func GetDeploymentPolicy(
@@ -344,30 +378,31 @@ func CreateDeploymentPolicyVersion(
 	})
 }
 
-func GetDeploymentPolicyVersions(
+func ListDeploymentPolicyVersions(
 	ctx context.Context,
 	policyID uuid.UUID,
-	organizationID uuid.UUID,
-) ([]types.DeploymentPolicyVersion, error) {
-	if _, err := GetDeploymentPolicy(ctx, policyID, organizationID); err != nil {
-		return nil, err
+	filter types.DeploymentPolicyListFilter,
+) (types.Page[types.DeploymentPolicyVersionSummary], error) {
+	page := types.Page[types.DeploymentPolicyVersionSummary]{
+		Items: []types.DeploymentPolicyVersionSummary{},
 	}
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT `+deploymentPolicyVersionOutputExpr+`
-		FROM DeploymentPolicyVersion version
-		WHERE version.deployment_policy_id = @policyID
-		  AND version.organization_id = @organizationID
-		ORDER BY version.version_number DESC, version.id
-	`,
-		pgx.NamedArgs{
-			"policyID":       policyID,
-			"organizationID": organizationID,
+	if _, err := GetDeploymentPolicy(ctx, policyID, filter.OrganizationID); err != nil {
+		return page, err
+	}
+	return listDeploymentPolicyEntities(
+		ctx,
+		filter,
+		deploymentPolicyCursorResourceVersions,
+		policyID,
+		"DeploymentPolicyVersion",
+		"version",
+		deploymentPolicyVersionSummaryOutputExpr,
+		" AND version.deployment_policy_id = @policyID",
+		pgx.NamedArgs{"policyID": policyID},
+		func(version types.DeploymentPolicyVersionSummary) (time.Time, uuid.UUID) {
+			return version.CreatedAt, version.ID
 		},
 	)
-	if err != nil {
-		return nil, fmt.Errorf("list deployment policy versions: %w", err)
-	}
-	return collectDeploymentPolicyVersions(rows)
 }
 
 func GetDeploymentPolicyVersion(
@@ -644,32 +679,24 @@ func BindDeploymentPolicy(
 	})
 }
 
-func GetDeploymentPolicyBindings(
+func ListDeploymentPolicyBindings(
 	ctx context.Context,
-	organizationID uuid.UUID,
-) ([]types.DeploymentPolicyBinding, error) {
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT `+deploymentPolicyBindingOutputExpr+`
-		FROM DeploymentPolicyBinding binding
-		WHERE binding.organization_id = @organizationID
-		ORDER BY
-		  binding.retired_at NULLS FIRST,
-		  binding.scope_kind,
-		  binding.scope_id,
-		  binding.created_at,
-		  binding.id
-	`, pgx.NamedArgs{"organizationID": organizationID})
-	if err != nil {
-		return nil, fmt.Errorf("list deployment policy bindings: %w", err)
-	}
-	result, err := pgx.CollectRows(
-		rows,
-		pgx.RowToStructByName[types.DeploymentPolicyBinding],
+	filter types.DeploymentPolicyListFilter,
+) (types.Page[types.DeploymentPolicyBinding], error) {
+	return listDeploymentPolicyEntities(
+		ctx,
+		filter,
+		deploymentPolicyCursorResourceBindings,
+		uuid.Nil,
+		"DeploymentPolicyBinding",
+		"binding",
+		deploymentPolicyBindingOutputExpr,
+		"",
+		nil,
+		func(binding types.DeploymentPolicyBinding) (time.Time, uuid.UUID) {
+			return binding.CreatedAt, binding.ID
+		},
 	)
-	if err != nil {
-		return nil, fmt.Errorf("collect deployment policy bindings: %w", err)
-	}
-	return result, nil
 }
 
 func RetireDeploymentPolicyBinding(
@@ -1045,6 +1072,169 @@ func collectDeploymentPolicyVersions(
 		return nil, err
 	}
 	return result, nil
+}
+
+func listDeploymentPolicyEntities[T any](
+	ctx context.Context,
+	filter types.DeploymentPolicyListFilter,
+	resource string,
+	parentID uuid.UUID,
+	table string,
+	alias string,
+	outputExpression string,
+	extraWhere string,
+	extraArgs pgx.NamedArgs,
+	key func(T) (time.Time, uuid.UUID),
+) (types.Page[T], error) {
+	page := types.Page[T]{Items: []T{}}
+	limit, cursor, err := normalizeDeploymentPolicyListFilter(
+		filter,
+		resource,
+		parentID,
+	)
+	if err != nil {
+		return page, err
+	}
+	cursorCreatedAt, cursorID := deploymentPolicyCursorValues(cursor)
+	args := pgx.NamedArgs{
+		"organizationID":  filter.OrganizationID,
+		"cursorCreatedAt": cursorCreatedAt,
+		"cursorID":        cursorID,
+		"fetchLimit":      limit + 1,
+	}
+	for name, value := range extraArgs {
+		args[name] = value
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx,
+		"SELECT "+outputExpression+
+			" FROM "+table+" "+alias+
+			" WHERE "+alias+".organization_id = @organizationID"+
+			extraWhere+
+			" AND ("+
+			" @cursorCreatedAt::timestamptz IS NULL"+
+			" OR ("+alias+".created_at, "+alias+".id) <"+
+			" (@cursorCreatedAt::timestamptz, @cursorID::uuid)"+
+			" )"+
+			" ORDER BY "+alias+".created_at DESC, "+alias+".id DESC"+
+			" LIMIT @fetchLimit",
+		args,
+	)
+	if err != nil {
+		return page, fmt.Errorf("list deployment policy %s: %w", resource, err)
+	}
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[T])
+	if err != nil {
+		return page, fmt.Errorf("collect deployment policy %s: %w", resource, err)
+	}
+	return finishDeploymentPolicyPage(items, limit, resource, parentID, key)
+}
+
+func finishDeploymentPolicyPage[T any](
+	items []T,
+	limit int,
+	resource string,
+	parentID uuid.UUID,
+	key func(T) (time.Time, uuid.UUID),
+) (types.Page[T], error) {
+	page := types.Page[T]{Items: items}
+	hasMore := len(items) > limit
+	if hasMore {
+		page.Items = items[:limit]
+	}
+	if !hasMore || len(page.Items) == 0 {
+		return page, nil
+	}
+	createdAt, id := key(page.Items[len(page.Items)-1])
+	cursor, err := encodeDeploymentPolicyCursor(deploymentPolicyCursor{
+		Version:   deploymentPolicyCursorVersion,
+		Resource:  resource,
+		ParentID:  parentID,
+		CreatedAt: createdAt,
+		ID:        id,
+	})
+	if err != nil {
+		return page, err
+	}
+	page.NextCursor = cursor
+	return page, nil
+}
+
+func normalizeDeploymentPolicyListFilter(
+	filter types.DeploymentPolicyListFilter,
+	resource string,
+	parentID uuid.UUID,
+) (int, *deploymentPolicyCursor, error) {
+	if filter.OrganizationID == uuid.Nil {
+		return 0, nil, apierrors.NewBadRequest("organizationId is required")
+	}
+	limit := filter.Limit
+	if limit == 0 {
+		limit = deploymentPolicyDefaultPageLimit
+	}
+	if limit < 1 || limit > deploymentPolicyMaximumPageLimit {
+		return 0, nil, apierrors.NewBadRequest("limit must be between 1 and 100")
+	}
+	cursor, err := decodeDeploymentPolicyCursor(filter.Cursor, resource, parentID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return limit, cursor, nil
+}
+
+func deploymentPolicyCursorValues(cursor *deploymentPolicyCursor) (any, any) {
+	if cursor == nil {
+		return nil, nil
+	}
+	return cursor.CreatedAt, cursor.ID
+}
+
+func encodeDeploymentPolicyCursor(cursor deploymentPolicyCursor) (string, error) {
+	if cursor.Version != deploymentPolicyCursorVersion ||
+		cursor.Resource == "" ||
+		cursor.CreatedAt.IsZero() ||
+		cursor.ID == uuid.Nil {
+		return "", fmt.Errorf("encode deployment policy cursor: invalid cursor")
+	}
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode deployment policy cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeDeploymentPolicyCursor(
+	value string,
+	resource string,
+	parentID uuid.UUID,
+) (*deploymentPolicyCursor, error) {
+	if value == "" {
+		return nil, nil
+	}
+	if len(value) > deploymentPolicyMaximumCursorSize {
+		return nil, apierrors.NewBadRequest("cursor is invalid")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return nil, apierrors.NewBadRequest("cursor is invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var cursor deploymentPolicyCursor
+	if err := decoder.Decode(&cursor); err != nil {
+		return nil, apierrors.NewBadRequest("cursor is invalid")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, apierrors.NewBadRequest("cursor is invalid")
+	}
+	if cursor.Version != deploymentPolicyCursorVersion ||
+		cursor.Resource != resource ||
+		cursor.ParentID != parentID ||
+		cursor.CreatedAt.IsZero() ||
+		cursor.ID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("cursor is invalid")
+	}
+	return &cursor, nil
 }
 
 func setDeploymentPolicyVersionCanonicalFields(

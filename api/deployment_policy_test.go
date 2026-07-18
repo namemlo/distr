@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/types"
@@ -49,6 +51,42 @@ func TestCreateDeploymentPolicyRequestValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeploymentPolicyListRequestValidate(t *testing.T) {
+	g := NewWithT(t)
+	g.Expect((DeploymentPolicyListRequest{}).Validate()).To(Succeed())
+	g.Expect((DeploymentPolicyListRequest{
+		Limit:  100,
+		Cursor: "eyJ2IjoxfQ",
+	}).Validate()).To(Succeed())
+	g.Expect((DeploymentPolicyListRequest{Limit: 101}).Validate()).To(
+		MatchError(ContainSubstring("limit must be between 1 and 100")),
+	)
+	g.Expect((DeploymentPolicyListRequest{Cursor: "not a cursor!"}).Validate()).To(
+		MatchError(ContainSubstring("opaque URL-safe token")),
+	)
+	g.Expect((DeploymentPolicyListRequest{
+		Cursor: strings.Repeat("a", 2049),
+	}).Validate()).To(MatchError(ContainSubstring("cursor is too large")))
+}
+
+func TestDeploymentPolicyVersionPageOmitsDocumentPayload(t *testing.T) {
+	g := NewWithT(t)
+	payload, err := json.Marshal(DeploymentPolicyVersionPage{
+		Items: []DeploymentPolicyVersionSummary{{
+			ID:                uuid.New(),
+			PolicyID:          uuid.New(),
+			VersionNumber:     1,
+			State:             types.DeploymentPolicyVersionStateDraft,
+			CanonicalChecksum: "sha256:test",
+		}},
+		NextCursor: "opaque",
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).To(ContainSubstring(`"nextCursor":"opaque"`))
+	g.Expect(string(payload)).NotTo(ContainSubstring(`"document"`))
+	g.Expect(string(payload)).NotTo(ContainSubstring(`"canonicalPayload"`))
 }
 
 func TestCreateDeploymentPolicyVersionRequestValidateUsesExactPolicySchema(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -49,7 +50,12 @@ func deploymentPoliciesRouterWithFlags(
 	r.With(middleware.RequireVendor, middleware.RequireOrgAndRole).Group(func(r chiopenapi.Router) {
 		r.Get("/", getDeploymentPoliciesHandler()).
 			With(option.Description("List versioned deployment policies")).
-			With(option.Response(http.StatusOK, []api.DeploymentPolicy{}))
+			With(option.Request(api.DeploymentPolicyListRequest{})).
+			With(option.Response(http.StatusOK, api.DeploymentPolicyPage{})).
+			With(deploymentPolicyPlainTextResponses(
+				http.StatusBadRequest,
+				http.StatusForbidden,
+			)...)
 		r.With(mutationAccess).Post("/", createDeploymentPolicyHandler()).
 			With(option.Description("Create a deployment policy resource")).
 			With(option.Request(api.CreateDeploymentPolicyRequest{})).
@@ -57,7 +63,12 @@ func deploymentPoliciesRouterWithFlags(
 
 		r.Get("/bindings", getDeploymentPolicyBindingsHandler()).
 			With(option.Description("List deployment policy bindings")).
-			With(option.Response(http.StatusOK, []api.DeploymentPolicyBinding{}))
+			With(option.Request(api.DeploymentPolicyListRequest{})).
+			With(option.Response(http.StatusOK, api.DeploymentPolicyBindingPage{})).
+			With(deploymentPolicyPlainTextResponses(
+				http.StatusBadRequest,
+				http.StatusForbidden,
+			)...)
 		r.With(mutationAccess).Post("/bindings", createDeploymentPolicyBindingHandler()).
 			With(option.Description("Bind a published policy version to a governance scope")).
 			With(option.Request(api.CreateDeploymentPolicyBindingRequest{}))
@@ -85,8 +96,16 @@ func deploymentPoliciesRouterWithFlags(
 
 			r.Get("/versions", getDeploymentPolicyVersionsHandler()).
 				With(option.Description("List immutable policy versions")).
-				With(option.Request(deploymentPolicyIDRequest{})).
-				With(option.Response(http.StatusOK, []api.DeploymentPolicyVersion{}))
+				With(option.Request(struct {
+					deploymentPolicyIDRequest
+					api.DeploymentPolicyListRequest
+				}{})).
+				With(option.Response(http.StatusOK, api.DeploymentPolicyVersionPage{})).
+				With(deploymentPolicyPlainTextResponses(
+					http.StatusBadRequest,
+					http.StatusForbidden,
+					http.StatusNotFound,
+				)...)
 			r.With(mutationAccess).Post("/versions", createDeploymentPolicyVersionHandler()).
 				With(option.Description("Create a validated draft policy version")).
 				With(option.Request(struct {
@@ -119,6 +138,17 @@ func deploymentPoliciesRouterWithFlags(
 			})
 		})
 	})
+}
+
+func deploymentPolicyPlainTextResponses(statuses ...int) []option.OperationOption {
+	responses := make([]option.OperationOption, 0, len(statuses))
+	for _, status := range statuses {
+		responses = append(
+			responses,
+			option.Response(status, "", option.ContentType("text/plain")),
+		)
+	}
+	return responses
 }
 
 func deploymentPolicyMutationAccessMiddlewareWithFlags(
@@ -168,16 +198,24 @@ func deploymentPolicyJSONBody[T any](
 
 func getDeploymentPoliciesHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		request, ok := deploymentPolicyListRequestFromHTTP(w, r)
+		if !ok {
+			return
+		}
 		authInfo := auth.Authentication.Require(r.Context())
-		policies, err := db.GetDeploymentPoliciesByOrganizationID(
+		page, err := db.ListDeploymentPolicies(
 			r.Context(),
-			*authInfo.CurrentOrgID(),
+			types.DeploymentPolicyListFilter{
+				OrganizationID: *authInfo.CurrentOrgID(),
+				Cursor:         request.Cursor,
+				Limit:          request.Limit,
+			},
 		)
 		if err != nil {
 			handleDeploymentPolicyError(w, r, "list deployment policies", "", err)
 			return
 		}
-		RespondJSON(w, mapping.List(policies, mapping.DeploymentPolicyToAPI))
+		RespondJSON(w, mapping.DeploymentPolicyPageToAPI(page))
 	}
 }
 
@@ -274,17 +312,25 @@ func getDeploymentPolicyVersionsHandler() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		request, ok := deploymentPolicyListRequestFromHTTP(w, r)
+		if !ok {
+			return
+		}
 		authInfo := auth.Authentication.Require(r.Context())
-		versions, err := db.GetDeploymentPolicyVersions(
+		page, err := db.ListDeploymentPolicyVersions(
 			r.Context(),
 			policyID,
-			*authInfo.CurrentOrgID(),
+			types.DeploymentPolicyListFilter{
+				OrganizationID: *authInfo.CurrentOrgID(),
+				Cursor:         request.Cursor,
+				Limit:          request.Limit,
+			},
 		)
 		if err != nil {
 			handleDeploymentPolicyError(w, r, "list deployment policy versions", "", err)
 			return
 		}
-		RespondJSON(w, mapping.List(versions, mapping.DeploymentPolicyVersionToAPI))
+		RespondJSON(w, mapping.DeploymentPolicyVersionPageToAPI(page))
 	}
 }
 
@@ -453,13 +499,24 @@ func publishDeploymentPolicyVersionHandler() http.HandlerFunc {
 
 func getDeploymentPolicyBindingsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		request, ok := deploymentPolicyListRequestFromHTTP(w, r)
+		if !ok {
+			return
+		}
 		authInfo := auth.Authentication.Require(r.Context())
-		bindings, err := db.GetDeploymentPolicyBindings(r.Context(), *authInfo.CurrentOrgID())
+		page, err := db.ListDeploymentPolicyBindings(
+			r.Context(),
+			types.DeploymentPolicyListFilter{
+				OrganizationID: *authInfo.CurrentOrgID(),
+				Cursor:         request.Cursor,
+				Limit:          request.Limit,
+			},
+		)
 		if err != nil {
 			handleDeploymentPolicyError(w, r, "list deployment policy bindings", "", err)
 			return
 		}
-		RespondJSON(w, mapping.List(bindings, mapping.DeploymentPolicyBindingToAPI))
+		RespondJSON(w, mapping.DeploymentPolicyBindingPageToAPI(page))
 	}
 }
 
@@ -508,6 +565,35 @@ func retireDeploymentPolicyBindingHandler() http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func deploymentPolicyListRequestFromHTTP(
+	w http.ResponseWriter,
+	r *http.Request,
+) (api.DeploymentPolicyListRequest, bool) {
+	query := r.URL.Query()
+	request := api.DeploymentPolicyListRequest{Cursor: query.Get("cursor")}
+	if _, provided := query["limit"]; provided {
+		limit, err := strconv.Atoi(query.Get("limit"))
+		if err != nil {
+			http.Error(w, "limit is invalid", http.StatusBadRequest)
+			return request, false
+		}
+		if limit < 1 {
+			http.Error(
+				w,
+				"limit must be between 1 and 100 when provided",
+				http.StatusBadRequest,
+			)
+			return request, false
+		}
+		request.Limit = limit
+	}
+	if err := request.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return request, false
+	}
+	return request, true
 }
 
 func deploymentPolicyPathID(

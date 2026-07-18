@@ -193,6 +193,27 @@ type DeploymentPolicyVersion struct {
 	PublishedAt              *time.Time                   `db:"published_at" json:"publishedAt,omitempty"`
 }
 
+type DeploymentPolicyVersionSummary struct {
+	ID                     uuid.UUID                    `db:"id" json:"id"`
+	CreatedAt              time.Time                    `db:"created_at" json:"createdAt"`
+	UpdatedAt              time.Time                    `db:"updated_at" json:"updatedAt"`
+	OrganizationID         uuid.UUID                    `db:"organization_id" json:"organizationId"`
+	PolicyID               uuid.UUID                    `db:"deployment_policy_id" json:"policyId"`
+	VersionNumber          int                          `db:"version_number" json:"versionNumber"`
+	State                  DeploymentPolicyVersionState `db:"state" json:"state"`
+	CanonicalChecksum      string                       `db:"canonical_checksum" json:"canonicalChecksum"`
+	CreatedByUserAccountID uuid.UUID                    `db:"created_by_useraccount_id" json:"createdByUserAccountId"`
+	//nolint:lll // The field and wire names intentionally match the full version contract.
+	PublishedByUserAccountID *uuid.UUID `db:"published_by_useraccount_id" json:"publishedByUserAccountId,omitempty"`
+	PublishedAt              *time.Time `db:"published_at" json:"publishedAt,omitempty"`
+}
+
+type DeploymentPolicyListFilter struct {
+	OrganizationID uuid.UUID
+	Cursor         string
+	Limit          int
+}
+
 type DeploymentPolicyBindingScopeKind string
 
 const (

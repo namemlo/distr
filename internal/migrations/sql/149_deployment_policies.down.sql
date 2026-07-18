@@ -39,6 +39,7 @@ ALTER TABLE DeploymentPlan
 
 DROP TRIGGER DeploymentPolicyBinding_guard ON DeploymentPolicyBinding;
 DROP FUNCTION deployment_policy_binding_guard();
+DROP INDEX DeploymentPolicyBinding_organization_order;
 DROP TABLE DeploymentPolicyBinding;
 
 DROP TRIGGER DeploymentPolicyVersion_published_immutable

@@ -14,6 +14,7 @@ import (
 
 func TestDeploymentPolicyRoutesArePublishedInOpenAPI(t *testing.T) {
 	g := NewWithT(t)
+	const policyVersionsPath = "/api/v1/deployment-policies/{policyId}/versions"
 	tracer := obsertracing.NoopTracer{}
 	router := NewRouter(
 		zap.NewNop(),
@@ -43,6 +44,9 @@ func TestDeploymentPolicyRoutesArePublishedInOpenAPI(t *testing.T) {
 		"/api/v1/deployment-policies/{policyId}/versions/{versionId}/publish": {
 			http.MethodPost,
 		},
+		policyVersionsPath: {
+			http.MethodGet,
+		},
 		"/api/v1/deployment-policies/bindings": {
 			http.MethodGet,
 			http.MethodPost,
@@ -52,5 +56,33 @@ func TestDeploymentPolicyRoutesArePublishedInOpenAPI(t *testing.T) {
 		for _, method := range methods {
 			g.Expect(document.Paths[path]).To(HaveKey(strings.ToLower(method)))
 		}
+	}
+
+	for path, responseSchema := range map[string]string{
+		"/api/v1/deployment-policies":          "#/components/schemas/ApiDeploymentPolicyPage",
+		policyVersionsPath:                     "#/components/schemas/ApiDeploymentPolicyVersionPage",
+		"/api/v1/deployment-policies/bindings": "#/components/schemas/ApiDeploymentPolicyBindingPage",
+	} {
+		operation := readDeploymentRegistryOpenAPIOperation(
+			t,
+			document.Paths,
+			path,
+			strings.ToLower(http.MethodGet),
+		)
+		g.Expect(operation.Parameters).To(ContainElements(
+			HaveField("Name", "cursor"),
+			HaveField("Name", "limit"),
+		))
+		errorStatuses := []string{"400", "403"}
+		if path == policyVersionsPath {
+			errorStatuses = append(errorStatuses, "404")
+		}
+		expectDeploymentRegistryResponseStatuses(
+			t,
+			operation,
+			append([]string{"200"}, errorStatuses...)...,
+		)
+		expectDeploymentRegistryJSONResponse(t, operation, responseSchema)
+		expectDeploymentRegistryPlainTextResponses(t, operation, errorStatuses...)
 	}
 }
