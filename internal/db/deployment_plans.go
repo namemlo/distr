@@ -36,6 +36,13 @@ const deploymentPlanOutputExpr = `
 	dp.process_snapshot_id,
 	dp.variable_snapshot_id,
 	dp.release_contract,
+	dp.plan_schema,
+	dp.draft_id,
+	dp.deployment_unit_id,
+	dp.target_config_snapshot_id,
+	dp.protocol_version,
+	dp.supersedes_deployment_plan_id,
+	dp.supersede_reason,
 	dp.status,
 	dp.canonical_checksum,
 	dp.canonical_payload
@@ -248,6 +255,24 @@ func hydrateDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) erro
 		return err
 	}
 	plan.Issues, err = getDeploymentPlanIssues(ctx, plan.ID, plan.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if plan.PlanSchema == types.TargetDeploymentPlanSchemaV2 {
+		plan.ResolvedRequirements, err = getDeploymentPlanResolvedRequirements(
+			ctx,
+			plan.ID,
+			plan.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		plan.StepEdges, err = getDeploymentPlanStepEdges(
+			ctx,
+			plan.ID,
+			plan.OrganizationID,
+		)
+	}
 	return err
 }
 

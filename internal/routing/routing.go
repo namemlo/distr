@@ -214,6 +214,7 @@ func ApiRouter(
 					r.Route("/deployment-targets", handlers.DeploymentTargetsRouter)
 					r.Route("/deployment-timeline", handlers.DeploymentTimelineRouter)
 					r.Route("/deployment-plans", handlers.DeploymentPlansRouter)
+					r.Route("/deployment-plan-drafts", handlers.DeploymentPlanDraftsRouter)
 					r.Route("/deployment-processes", handlers.DeploymentProcessesRouter)
 					r.Route("/deployment-registry", handlers.DeploymentRegistryRouter)
 					r.Route("/deployments", handlers.DeploymentsRouter)

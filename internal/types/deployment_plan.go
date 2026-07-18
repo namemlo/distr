@@ -33,25 +33,34 @@ type CreateDeploymentPlanRequest struct {
 }
 
 type DeploymentPlan struct {
-	ID                 uuid.UUID                       `db:"id" json:"id"`
-	CreatedAt          time.Time                       `db:"created_at" json:"createdAt"`
-	OrganizationID     uuid.UUID                       `db:"organization_id" json:"organizationId"`
-	ApplicationID      uuid.UUID                       `db:"application_id" json:"applicationId"`
-	ReleaseBundleID    uuid.UUID                       `db:"release_bundle_id" json:"releaseBundleId"`
-	ChannelID          uuid.UUID                       `db:"channel_id" json:"channelId"`
-	EnvironmentID      uuid.UUID                       `db:"environment_id" json:"environmentId"`
-	ProcessSnapshotID  *uuid.UUID                      `db:"process_snapshot_id" json:"processSnapshotId,omitempty"`
-	VariableSnapshotID *uuid.UUID                      `db:"variable_snapshot_id" json:"variableSnapshotId,omitempty"`
-	ReleaseContract    *ReleaseContract                `db:"release_contract" json:"releaseContract,omitempty"`
-	Status             DeploymentPlanStatus            `db:"status" json:"status"`
-	CanonicalChecksum  string                          `db:"canonical_checksum" json:"canonicalChecksum"`
-	CanonicalPayload   []byte                          `db:"canonical_payload" json:"-"`
-	Targets            []DeploymentPlanTarget          `db:"-" json:"targets"`
-	TargetComponents   []DeploymentPlanTargetComponent `db:"-" json:"targetComponents"`
-	PreflightRuns      []DeploymentPreflightRun        `db:"-" json:"preflightRuns"`
-	Steps              []DeploymentPlanStep            `db:"-" json:"steps"`
-	Variables          []DeploymentPlanVariable        `db:"-" json:"variables"`
-	Issues             []DeploymentPlanIssue           `db:"-" json:"issues"`
+	ID                         uuid.UUID                       `db:"id" json:"id"`
+	CreatedAt                  time.Time                       `db:"created_at" json:"createdAt"`
+	OrganizationID             uuid.UUID                       `db:"organization_id" json:"organizationId"`
+	ApplicationID              uuid.UUID                       `db:"application_id" json:"applicationId"`
+	ReleaseBundleID            uuid.UUID                       `db:"release_bundle_id" json:"releaseBundleId"`
+	ChannelID                  uuid.UUID                       `db:"channel_id" json:"channelId"`
+	EnvironmentID              uuid.UUID                       `db:"environment_id" json:"environmentId"`
+	ProcessSnapshotID          *uuid.UUID                      `db:"process_snapshot_id" json:"processSnapshotId,omitempty"`
+	VariableSnapshotID         *uuid.UUID                      `db:"variable_snapshot_id" json:"variableSnapshotId,omitempty"`
+	ReleaseContract            *ReleaseContract                `db:"release_contract" json:"releaseContract,omitempty"`
+	PlanSchema                 string                          `db:"plan_schema" json:"planSchema"`
+	DraftID                    *uuid.UUID                      `db:"draft_id" json:"draftId,omitempty"`
+	DeploymentUnitID           *uuid.UUID                      `db:"deployment_unit_id" json:"deploymentUnitId,omitempty"`
+	TargetConfigSnapshotID     *uuid.UUID                      `db:"target_config_snapshot_id" json:"targetConfigSnapshotId,omitempty"`
+	ProtocolVersion            string                          `db:"protocol_version" json:"protocolVersion"`
+	SupersedesDeploymentPlanID *uuid.UUID                      `db:"supersedes_deployment_plan_id" json:"supersedesDeploymentPlanId,omitempty"`
+	SupersedeReason            string                          `db:"supersede_reason" json:"supersedeReason,omitempty"`
+	Status                     DeploymentPlanStatus            `db:"status" json:"status"`
+	CanonicalChecksum          string                          `db:"canonical_checksum" json:"canonicalChecksum"`
+	CanonicalPayload           []byte                          `db:"canonical_payload" json:"-"`
+	Targets                    []DeploymentPlanTarget          `db:"-" json:"targets"`
+	TargetComponents           []DeploymentPlanTargetComponent `db:"-" json:"targetComponents"`
+	PreflightRuns              []DeploymentPreflightRun        `db:"-" json:"preflightRuns"`
+	Steps                      []DeploymentPlanStep            `db:"-" json:"steps"`
+	Variables                  []DeploymentPlanVariable        `db:"-" json:"variables"`
+	Issues                     []DeploymentPlanIssue           `db:"-" json:"issues"`
+	ResolvedRequirements       []RequirementResolution         `db:"-" json:"resolvedRequirements,omitempty"`
+	StepEdges                  []DeploymentPlanStepEdge        `db:"-" json:"stepEdges,omitempty"`
 }
 
 type DeploymentPlanTarget struct {

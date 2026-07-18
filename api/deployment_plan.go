@@ -39,23 +39,32 @@ func (r CreateDeploymentPlanRequest) Validate() error {
 }
 
 type DeploymentPlan struct {
-	ID                 uuid.UUID                       `json:"id"`
-	CreatedAt          time.Time                       `json:"createdAt"`
-	ApplicationID      uuid.UUID                       `json:"applicationId"`
-	ReleaseBundleID    uuid.UUID                       `json:"releaseBundleId"`
-	ChannelID          uuid.UUID                       `json:"channelId"`
-	EnvironmentID      uuid.UUID                       `json:"environmentId"`
-	ProcessSnapshotID  *uuid.UUID                      `json:"processSnapshotId,omitempty"`
-	VariableSnapshotID *uuid.UUID                      `json:"variableSnapshotId,omitempty"`
-	ReleaseContract    *types.ReleaseContract          `json:"releaseContract,omitempty"`
-	Status             types.DeploymentPlanStatus      `json:"status"`
-	CanonicalChecksum  string                          `json:"canonicalChecksum"`
-	Targets            []DeploymentPlanTarget          `json:"targets"`
-	TargetComponents   []DeploymentPlanTargetComponent `json:"targetComponents"`
-	PreflightRuns      []DeploymentPreflightRun        `json:"preflightRuns"`
-	Steps              []DeploymentPlanStep            `json:"steps"`
-	Variables          []DeploymentPlanVariable        `json:"variables"`
-	Issues             []DeploymentPlanIssue           `json:"issues"`
+	ID                         uuid.UUID                       `json:"id"`
+	CreatedAt                  time.Time                       `json:"createdAt"`
+	ApplicationID              uuid.UUID                       `json:"applicationId"`
+	ReleaseBundleID            uuid.UUID                       `json:"releaseBundleId"`
+	ChannelID                  uuid.UUID                       `json:"channelId"`
+	EnvironmentID              uuid.UUID                       `json:"environmentId"`
+	ProcessSnapshotID          *uuid.UUID                      `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID         *uuid.UUID                      `json:"variableSnapshotId,omitempty"`
+	ReleaseContract            *types.ReleaseContract          `json:"releaseContract,omitempty"`
+	PlanSchema                 string                          `json:"planSchema"`
+	DraftID                    *uuid.UUID                      `json:"draftId,omitempty"`
+	DeploymentUnitID           *uuid.UUID                      `json:"deploymentUnitId,omitempty"`
+	TargetConfigSnapshotID     *uuid.UUID                      `json:"targetConfigSnapshotId,omitempty"`
+	ProtocolVersion            string                          `json:"protocolVersion"`
+	SupersedesDeploymentPlanID *uuid.UUID                      `json:"supersedesDeploymentPlanId,omitempty"`
+	SupersedeReason            string                          `json:"supersedeReason,omitempty"`
+	Status                     types.DeploymentPlanStatus      `json:"status"`
+	CanonicalChecksum          string                          `json:"canonicalChecksum"`
+	Targets                    []DeploymentPlanTarget          `json:"targets"`
+	TargetComponents           []DeploymentPlanTargetComponent `json:"targetComponents"`
+	PreflightRuns              []DeploymentPreflightRun        `json:"preflightRuns"`
+	Steps                      []DeploymentPlanStep            `json:"steps"`
+	Variables                  []DeploymentPlanVariable        `json:"variables"`
+	Issues                     []DeploymentPlanIssue           `json:"issues"`
+	ResolvedRequirements       []types.RequirementResolution   `json:"resolvedRequirements,omitempty"`
+	StepEdges                  []types.DeploymentPlanStepEdge  `json:"stepEdges,omitempty"`
 }
 
 type DeploymentPreflightRun struct {
