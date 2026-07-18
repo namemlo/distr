@@ -27,8 +27,8 @@ func TestRegistryImportPreviewIsDeterministicAndNoOpOnCanonicalReimport(t *testi
 	g.Expect(err).NotTo(HaveOccurred())
 
 	request.Parameters = map[string]string{"revision": "7", "format": "compose"}
-	request.Roots[0].Placements[0], request.Roots[0].Placements[1] =
-		request.Roots[0].Placements[1], request.Roots[0].Placements[0]
+	rootPlacements := request.Roots[0].Placements
+	rootPlacements[0], rootPlacements[1] = rootPlacements[1], rootPlacements[0]
 	second, err := PreviewImport(context.Background(), request)
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -111,8 +111,14 @@ func TestRegistryImportClassificationMappingAndCoverageAreExact(t *testing.T) {
 			Classification: types.ImportClassificationObserveOnly, Placements: placements(4),
 			CustomerOrganizationID: &customerID, DeploymentTargetID: uuid.New(), EnvironmentID: uuid.New(),
 		},
-		{Key: "ignored", DeliveryModel: types.DeliveryModelDedicated, Classification: types.ImportClassificationIgnored, Placements: placements(5)},
-		{Key: "pending", DeliveryModel: types.DeliveryModelDedicated, Classification: types.ImportClassificationNeedsDecision, Placements: placements(6)},
+		{
+			Key: "ignored", DeliveryModel: types.DeliveryModelDedicated,
+			Classification: types.ImportClassificationIgnored, Placements: placements(5),
+		},
+		{
+			Key: "pending", DeliveryModel: types.DeliveryModelDedicated,
+			Classification: types.ImportClassificationNeedsDecision, Placements: placements(6),
+		},
 	}
 
 	coverage := RegistryCoverage(roots)

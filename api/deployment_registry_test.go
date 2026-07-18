@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -56,6 +57,7 @@ func TestRegistryImportPreviewRequestToDomainNormalizesFullPlacement(t *testing.
 		ComponentKey: "api", PhysicalName: "api", ConfigNamespace: "config",
 		DatabaseBoundary: "database", HealthAdapter: "health", RenamedFrom: "old-api",
 	}}))
+	g.Expect(request.Validate(context.Background())).To(Succeed())
 }
 
 func TestDeploymentRegistryListRequestValidate(t *testing.T) {

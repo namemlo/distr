@@ -221,6 +221,24 @@ func RegistryCoverageWithOmissions(
 }
 
 func validateImportRequest(request types.RegistryImportRequest) error {
+	if err := validateImportMetadata(request); err != nil {
+		return err
+	}
+	if err := validateImportParameters(request.Parameters); err != nil {
+		return err
+	}
+	sourcePlacements, err := validateImportSourcePlacements(request.SourcePlacements)
+	if err != nil {
+		return err
+	}
+	return validateImportRoots(
+		request.Roots,
+		sourcePlacements,
+		len(request.SourcePlacements) != 0,
+	)
+}
+
+func validateImportMetadata(request types.RegistryImportRequest) error {
 	if request.OrganizationID == [16]byte{} {
 		return fmt.Errorf("organizationId is required")
 	}
@@ -245,10 +263,14 @@ func validateImportRequest(request types.RegistryImportRequest) error {
 		match[1] != request.EvidenceChecksum {
 		return fmt.Errorf("evidenceReference must be evidence://sha256/<checksum> matching evidenceChecksum")
 	}
-	if len(request.Parameters) > 64 {
+	return nil
+}
+
+func validateImportParameters(parameters map[string]string) error {
+	if len(parameters) > 64 {
 		return fmt.Errorf("parameters exceed the maximum of 64")
 	}
-	for key, value := range request.Parameters {
+	for key, value := range parameters {
 		if len(key) == 0 || len(key) > 128 || len(value) > 1024 {
 			return fmt.Errorf("parameter %q contains an unsafe or unbounded value", key)
 		}
@@ -259,111 +281,149 @@ func validateImportRequest(request types.RegistryImportRequest) error {
 			return err
 		}
 	}
-	if len(request.SourcePlacements) > MaximumImportPlacements {
-		return fmt.Errorf("source placements exceed the maximum of %d", MaximumImportPlacements)
+	return nil
+}
+
+func validateImportSourcePlacements(
+	placements []types.RegistryImportSourcePlacement,
+) (map[string]struct{}, error) {
+	if len(placements) > MaximumImportPlacements {
+		return nil, fmt.Errorf(
+			"source placements exceed the maximum of %d",
+			MaximumImportPlacements,
+		)
 	}
-	seenSourcePlacements := make(map[string]struct{}, len(request.SourcePlacements))
-	for _, placement := range request.SourcePlacements {
+	seenSourcePlacements := make(map[string]struct{}, len(placements))
+	for _, placement := range placements {
 		if len(placement.RootKey) > 64 || !importKeyPattern.MatchString(placement.RootKey) ||
 			len(placement.PhysicalName) == 0 || len(placement.PhysicalName) > 512 {
-			return fmt.Errorf("source placement contains an unsafe or unbounded identity")
+			return nil, fmt.Errorf("source placement contains an unsafe or unbounded identity")
 		}
 		if err := validateSafeImportText("root key", placement.RootKey); err != nil {
-			return err
+			return nil, err
 		}
 		if err := validateSafeImportText("physical name", placement.PhysicalName); err != nil {
-			return err
+			return nil, err
 		}
 		identity := sourcePlacementIdentity(placement)
 		if _, exists := seenSourcePlacements[identity]; exists {
-			return fmt.Errorf("source placements contain duplicate identities")
+			return nil, fmt.Errorf("source placements contain duplicate identities")
 		}
 		seenSourcePlacements[identity] = struct{}{}
 	}
-	seenRoots := make(map[string]struct{}, len(request.Roots))
+	return seenSourcePlacements, nil
+}
+
+func validateImportRoots(
+	roots []types.RegistryImportCandidateRoot,
+	sourcePlacements map[string]struct{},
+	requireSourcePlacement bool,
+) error {
+	seenRoots := make(map[string]struct{}, len(roots))
 	totalPlacements := 0
-	for _, root := range request.Roots {
+	for _, root := range roots {
 		if _, exists := seenRoots[root.Key]; exists {
 			return fmt.Errorf("duplicate root %q", root.Key)
 		}
 		seenRoots[root.Key] = struct{}{}
-		if root.SourcePath != "" {
-			return fmt.Errorf("sourcePath is not accepted; use content-addressed evidence")
+		totalPlacements += len(root.Placements)
+		if totalPlacements > MaximumImportPlacements {
+			return fmt.Errorf("candidate placements exceed the maximum of %d", MaximumImportPlacements)
 		}
-		if len(root.Key) > 64 || !importKeyPattern.MatchString(root.Key) {
-			return fmt.Errorf("root key %q must be canonical lowercase text", root.Key)
+		if err := validateImportRoot(root, sourcePlacements, requireSourcePlacement); err != nil {
+			return err
 		}
-		if !root.DeliveryModel.IsValid() {
-			return fmt.Errorf("root %q deliveryModel is invalid", root.Key)
+	}
+	return nil
+}
+
+func validateImportRoot(
+	root types.RegistryImportCandidateRoot,
+	sourcePlacements map[string]struct{},
+	requireSourcePlacement bool,
+) error {
+	if root.SourcePath != "" {
+		return fmt.Errorf("sourcePath is not accepted; use content-addressed evidence")
+	}
+	if len(root.Key) > 64 || !importKeyPattern.MatchString(root.Key) {
+		return fmt.Errorf("root key %q must be canonical lowercase text", root.Key)
+	}
+	if !root.DeliveryModel.IsValid() {
+		return fmt.Errorf("root %q deliveryModel is invalid", root.Key)
+	}
+	if !root.Classification.IsValid() {
+		return fmt.Errorf("root %q classification is invalid", root.Key)
+	}
+	if len(root.Name) == 0 || len(root.Name) > 256 ||
+		len(root.PhysicalIdentity) == 0 || len(root.PhysicalIdentity) > 512 {
+		return fmt.Errorf("root %q contains unsafe or unbounded text", root.Key)
+	}
+	for field, value := range map[string]string{
+		"root key": root.Key, "root name": root.Name, "physical identity": root.PhysicalIdentity,
+	} {
+		if err := validateSafeImportText(field, value); err != nil {
+			return fmt.Errorf("root %q: %w", root.Key, err)
 		}
-		if !root.Classification.IsValid() {
-			return fmt.Errorf("root %q classification is invalid", root.Key)
+	}
+	for _, subscriberID := range root.SubscriberCustomerOrganizationIDs {
+		if subscriberID == [16]byte{} {
+			return fmt.Errorf("root %q contains an empty subscriber ID", root.Key)
 		}
-		if len(root.Name) == 0 || len(root.Name) > 256 ||
-			len(root.PhysicalIdentity) == 0 || len(root.PhysicalIdentity) > 512 {
-			return fmt.Errorf("root %q contains unsafe or unbounded text", root.Key)
+	}
+	return validateImportPlacements(root, sourcePlacements, requireSourcePlacement)
+}
+
+func validateImportPlacements(
+	root types.RegistryImportCandidateRoot,
+	sourcePlacements map[string]struct{},
+	requireSourcePlacement bool,
+) error {
+	seenPlacements := make(map[string]struct{}, len(root.Placements))
+	seenComponents := make(map[string]struct{}, len(root.Placements))
+	seenPhysicalNames := make(map[string]struct{}, len(root.Placements))
+	for _, placement := range root.Placements {
+		if len(placement.ComponentKey) > 64 ||
+			!importKeyPattern.MatchString(placement.ComponentKey) ||
+			len(placement.PhysicalName) == 0 || len(placement.PhysicalName) > 512 ||
+			len(placement.ConfigNamespace) > 512 || len(placement.DatabaseBoundary) > 512 ||
+			len(placement.HealthAdapter) > 256 || len(placement.RenamedFrom) > 512 {
+			return fmt.Errorf("root %q contains an unsafe or unbounded placement", root.Key)
 		}
 		for field, value := range map[string]string{
-			"root key": root.Key, "root name": root.Name, "physical identity": root.PhysicalIdentity,
+			"component key": placement.ComponentKey, "physical name": placement.PhysicalName,
+			"config namespace":  placement.ConfigNamespace,
+			"database boundary": placement.DatabaseBoundary,
+			"health adapter":    placement.HealthAdapter,
+			"renamed from":      placement.RenamedFrom,
 		} {
 			if err := validateSafeImportText(field, value); err != nil {
 				return fmt.Errorf("root %q: %w", root.Key, err)
 			}
 		}
-		for _, subscriberID := range root.SubscriberCustomerOrganizationIDs {
-			if subscriberID == [16]byte{} {
-				return fmt.Errorf("root %q contains an empty subscriber ID", root.Key)
+		if requireSourcePlacement {
+			sourceIdentity := sourcePlacementIdentity(types.RegistryImportSourcePlacement{
+				RootKey: root.Key, PhysicalName: placement.PhysicalName,
+			})
+			if _, exists := sourcePlacements[sourceIdentity]; !exists {
+				return fmt.Errorf(
+					"candidate placement is absent from the source placement baseline",
+				)
 			}
 		}
-		seenPlacements := make(map[string]struct{}, len(root.Placements))
-		totalPlacements += len(root.Placements)
-		if totalPlacements > MaximumImportPlacements {
-			return fmt.Errorf("candidate placements exceed the maximum of %d", MaximumImportPlacements)
+		key := placementIdentity(placement)
+		if _, exists := seenPlacements[key]; exists {
+			return fmt.Errorf("duplicate placement in root %q", root.Key)
 		}
-		seenComponents := make(map[string]struct{}, len(root.Placements))
-		seenPhysicalNames := make(map[string]struct{}, len(root.Placements))
-		for _, placement := range root.Placements {
-			if len(placement.ComponentKey) > 64 ||
-				!importKeyPattern.MatchString(placement.ComponentKey) ||
-				len(placement.PhysicalName) == 0 || len(placement.PhysicalName) > 512 ||
-				len(placement.ConfigNamespace) > 512 || len(placement.DatabaseBoundary) > 512 ||
-				len(placement.HealthAdapter) > 256 || len(placement.RenamedFrom) > 512 {
-				return fmt.Errorf("root %q contains an unsafe or unbounded placement", root.Key)
-			}
-			for field, value := range map[string]string{
-				"component key": placement.ComponentKey, "physical name": placement.PhysicalName,
-				"config namespace": placement.ConfigNamespace, "database boundary": placement.DatabaseBoundary,
-				"health adapter": placement.HealthAdapter, "renamed from": placement.RenamedFrom,
-			} {
-				if err := validateSafeImportText(field, value); err != nil {
-					return fmt.Errorf("root %q: %w", root.Key, err)
-				}
-			}
-			if len(request.SourcePlacements) != 0 {
-				sourceIdentity := sourcePlacementIdentity(types.RegistryImportSourcePlacement{
-					RootKey: root.Key, PhysicalName: placement.PhysicalName,
-				})
-				if _, exists := seenSourcePlacements[sourceIdentity]; !exists {
-					return fmt.Errorf(
-						"candidate placement is absent from the source placement baseline",
-					)
-				}
-			}
-			key := placementIdentity(placement)
-			if _, exists := seenPlacements[key]; exists {
-				return fmt.Errorf("duplicate placement in root %q", root.Key)
-			}
-			seenPlacements[key] = struct{}{}
-			if _, exists := seenComponents[placement.ComponentKey]; exists {
-				return fmt.Errorf("duplicate component placement in root %q", root.Key)
-			}
-			seenComponents[placement.ComponentKey] = struct{}{}
-			physicalIdentity := strings.ToLower(placement.PhysicalName)
-			if _, exists := seenPhysicalNames[physicalIdentity]; exists {
-				return fmt.Errorf("duplicate physical placement in root %q", root.Key)
-			}
-			seenPhysicalNames[physicalIdentity] = struct{}{}
+		seenPlacements[key] = struct{}{}
+		if _, exists := seenComponents[placement.ComponentKey]; exists {
+			return fmt.Errorf("duplicate component placement in root %q", root.Key)
 		}
+		seenComponents[placement.ComponentKey] = struct{}{}
+		physicalIdentity := strings.ToLower(placement.PhysicalName)
+		if _, exists := seenPhysicalNames[physicalIdentity]; exists {
+			return fmt.Errorf("duplicate physical placement in root %q", root.Key)
+		}
+		seenPhysicalNames[physicalIdentity] = struct{}{}
 	}
 	return nil
 }
@@ -460,7 +520,10 @@ func importDiff(existing, incoming []types.RegistryImportCandidateRoot) types.Re
 	}
 	for _, root := range existing {
 		if _, exists := newRoots[root.Key]; !exists {
-			diff.Retirements = append(diff.Retirements, change("retire_root", root.Key, "", "", "root absent from current discovery"))
+			diff.Retirements = append(
+				diff.Retirements,
+				change("retire_root", root.Key, "", "", "root absent from current discovery"),
+			)
 		}
 	}
 	sortChanges(&diff)
@@ -468,7 +531,7 @@ func importDiff(existing, incoming []types.RegistryImportCandidateRoot) types.Re
 }
 
 func importDiagnostics(roots []types.RegistryImportCandidateRoot) []types.ValidationIssue {
-	result := make([]types.ValidationIssue, 0)
+	result := make([]types.ValidationIssue, 0, len(roots))
 	for _, root := range roots {
 		result = append(result, registryImportTopologyIssues(root)...)
 	}
@@ -488,6 +551,7 @@ func placementCount(roots []types.RegistryImportCandidateRoot) int {
 	}
 	return total
 }
+
 func sourcePlacementOmissions(
 	source []types.RegistryImportSourcePlacement,
 	roots []types.RegistryImportCandidateRoot,
@@ -503,7 +567,7 @@ func sourcePlacementOmissions(
 			})] = struct{}{}
 		}
 	}
-	omissions := make([]string, 0)
+	omissions := make([]string, 0, len(source))
 	for _, placement := range source {
 		if _, exists := mapped[sourcePlacementIdentity(placement)]; exists {
 			continue
@@ -513,6 +577,7 @@ func sourcePlacementOmissions(
 	sort.Strings(omissions)
 	return omissions, len(source)
 }
+
 func sortedParameters(parameters map[string]string) [][2]string {
 	result := make([][2]string, 0, len(parameters))
 	for key, value := range parameters {
@@ -521,6 +586,7 @@ func sortedParameters(parameters map[string]string) [][2]string {
 	sort.Slice(result, func(i, j int) bool { return result[i][0] < result[j][0] })
 	return result
 }
+
 func rootMap(roots []types.RegistryImportCandidateRoot) map[string]types.RegistryImportCandidateRoot {
 	result := make(map[string]types.RegistryImportCandidateRoot, len(roots))
 	for _, root := range roots {
@@ -528,20 +594,30 @@ func rootMap(roots []types.RegistryImportCandidateRoot) map[string]types.Registr
 	}
 	return result
 }
+
 func placementIdentity(placement types.RegistryImportCandidatePlacement) string {
 	return placement.ComponentKey + "\x00" + strings.ToLower(strings.TrimSpace(placement.PhysicalName))
 }
+
 func sourcePlacementIdentity(placement types.RegistryImportSourcePlacement) string {
 	return placement.RootKey + "\x00" + strings.ToLower(strings.TrimSpace(placement.PhysicalName))
 }
+
 func change(kind, root, placement, physicalName, message string) types.RegistryImportChange {
 	return types.RegistryImportChange{
 		Kind: kind, RootKey: root, PlacementKey: placement,
 		PhysicalName: physicalName, Message: message,
 	}
 }
+
 func sortChanges(diff *types.RegistryImportDiff) {
-	for _, list := range []*[]types.RegistryImportChange{&diff.Creates, &diff.Updates, &diff.Retirements, &diff.Conflicts} {
+	lists := []*[]types.RegistryImportChange{
+		&diff.Creates,
+		&diff.Updates,
+		&diff.Retirements,
+		&diff.Conflicts,
+	}
+	for _, list := range lists {
 		sort.Slice(*list, func(i, j int) bool {
 			left, right := (*list)[i], (*list)[j]
 			return left.RootKey+"\x00"+left.PlacementKey+"\x00"+left.PhysicalName+"\x00"+left.Kind <

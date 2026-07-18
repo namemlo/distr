@@ -40,13 +40,14 @@ type RegistryImportCandidatePlacement struct {
 }
 
 type RegistryImportCandidateRoot struct {
-	Key                               string                             `json:"key"`
-	Name                              string                             `json:"name"`
-	DeliveryModel                     types.DeliveryModel                `json:"deliveryModel"`
-	Classification                    types.ImportClassification         `json:"classification"`
-	CustomerOrganizationID            *uuid.UUID                         `json:"customerOrganizationId,omitempty"`
-	DeploymentTargetID                uuid.UUID                          `json:"deploymentTargetId"`
-	EnvironmentID                     uuid.UUID                          `json:"environmentId"`
+	Key                    string                     `json:"key"`
+	Name                   string                     `json:"name"`
+	DeliveryModel          types.DeliveryModel        `json:"deliveryModel"`
+	Classification         types.ImportClassification `json:"classification"`
+	CustomerOrganizationID *uuid.UUID                 `json:"customerOrganizationId,omitempty"`
+	DeploymentTargetID     uuid.UUID                  `json:"deploymentTargetId"`
+	EnvironmentID          uuid.UUID                  `json:"environmentId"`
+	//nolint:lll // Keep the public contract field name explicit.
 	SubscriberCustomerOrganizationIDs []uuid.UUID                        `json:"subscriberCustomerOrganizationIds,omitempty"`
 	PhysicalIdentity                  string                             `json:"physicalIdentity"`
 	Placements                        []RegistryImportCandidatePlacement `json:"placements"`
@@ -119,9 +120,9 @@ func (r RegistryImportPreviewRequest) toDomain(
 	}
 }
 
-func (r RegistryImportPreviewRequest) Validate() error {
+func (r RegistryImportPreviewRequest) Validate(ctx context.Context) error {
 	request := r.toDomain(uuid.New(), uuid.New())
-	_, err := deploymentregistry.PreviewImport(context.Background(), request)
+	_, err := deploymentregistry.PreviewImport(ctx, request)
 	if err != nil {
 		return validation.NewValidationFailedError(err.Error())
 	}

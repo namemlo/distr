@@ -793,7 +793,7 @@ func previewRegistryImportHandler() http.HandlerFunc {
 		if err != nil {
 			return
 		}
-		if err = request.Validate(); err != nil {
+		if err = request.Validate(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

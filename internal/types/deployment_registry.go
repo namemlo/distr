@@ -237,13 +237,14 @@ type RegistryImportCandidatePlacement struct {
 }
 
 type RegistryImportCandidateRoot struct {
-	Key                               string                             `json:"key"`
-	Name                              string                             `json:"name"`
-	DeliveryModel                     DeliveryModel                      `json:"deliveryModel"`
-	Classification                    ImportClassification               `json:"classification"`
-	CustomerOrganizationID            *uuid.UUID                         `json:"customerOrganizationId,omitempty"`
-	DeploymentTargetID                uuid.UUID                          `json:"deploymentTargetId"`
-	EnvironmentID                     uuid.UUID                          `json:"environmentId"`
+	Key                    string               `json:"key"`
+	Name                   string               `json:"name"`
+	DeliveryModel          DeliveryModel        `json:"deliveryModel"`
+	Classification         ImportClassification `json:"classification"`
+	CustomerOrganizationID *uuid.UUID           `json:"customerOrganizationId,omitempty"`
+	DeploymentTargetID     uuid.UUID            `json:"deploymentTargetId"`
+	EnvironmentID          uuid.UUID            `json:"environmentId"`
+	//nolint:lll // Keep the canonical contract field name explicit.
 	SubscriberCustomerOrganizationIDs []uuid.UUID                        `json:"subscriberCustomerOrganizationIds,omitempty"`
 	PhysicalIdentity                  string                             `json:"physicalIdentity"`
 	SourcePath                        string                             `json:"sourcePath,omitempty"`
