@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -9,11 +10,13 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/authjwt"
 	"github.com/distr-sh/distr/internal/authkey"
 	"github.com/distr-sh/distr/internal/authn"
 	"github.com/distr-sh/distr/internal/authn/authinfo"
+	"github.com/distr-sh/distr/internal/authorization"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/featureflags"
@@ -162,6 +165,212 @@ func RequireAnyScopedPermission(scope types.PermissionScope, permissions ...type
 		}
 		return http.HandlerFunc(fn)
 	}
+}
+
+type ControlPlaneResourceResolver func(
+	*http.Request,
+	uuid.UUID,
+) (types.ResourceRef, error)
+
+func OrganizationResourceRef(
+	_ *http.Request,
+	organizationID uuid.UUID,
+) (types.ResourceRef, error) {
+	if organizationID == uuid.Nil {
+		return types.ResourceRef{}, apierrors.ErrNotFound
+	}
+	return types.ResourceRef{
+		OrganizationID: organizationID,
+		Kind:           types.PermissionScopeOrganization,
+		ID:             organizationID,
+	}, nil
+}
+
+func PathResourceRef(
+	scope types.PermissionScope,
+	pathParameter string,
+) ControlPlaneResourceResolver {
+	return func(
+		request *http.Request,
+		organizationID uuid.UUID,
+	) (types.ResourceRef, error) {
+		id, err := uuid.Parse(request.PathValue(pathParameter))
+		if err != nil || !scope.Supported() {
+			return types.ResourceRef{}, apierrors.ErrNotFound
+		}
+		return types.ResourceRef{
+			OrganizationID: organizationID,
+			Kind:           scope,
+			ID:             id,
+		}, nil
+	}
+}
+
+func RequireControlPlaneAction(
+	action types.Action,
+	resourceResolver ControlPlaneResourceResolver,
+) func(http.Handler) http.Handler {
+	return requireControlPlaneActionWith(
+		action,
+		resourceResolver,
+		false,
+		defaultControlPlaneActionDependencies(),
+	)
+}
+
+func RequireEffectiveControlPlaneAction(
+	action types.Action,
+	resourceResolver ControlPlaneResourceResolver,
+) func(http.Handler) http.Handler {
+	return requireControlPlaneActionWith(
+		action,
+		resourceResolver,
+		true,
+		defaultControlPlaneActionDependencies(),
+	)
+}
+
+type controlPlaneActionDependencies struct {
+	processEnabled func() bool
+	resolveScopes  func(context.Context, types.ResourceRef) ([]types.ScopeRef, error)
+	authorize      func(context.Context, types.AccessRequest) (types.AccessDecision, error)
+	isEffective    func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
+}
+
+func defaultControlPlaneActionDependencies() controlPlaneActionDependencies {
+	return controlPlaneActionDependencies{
+		processEnabled: func() bool {
+			return featureflags.NewRegistry(env.ExperimentalFeatureFlags()).
+				IsEnabled(featureflags.KeyOperatorControlPlaneV2)
+		},
+		resolveScopes: authorization.ResolveResourceScopes,
+		authorize:     authorization.Authorize,
+		isEffective:   authorization.IsControlPlaneV2Effective,
+	}
+}
+
+func requireControlPlaneActionWith(
+	action types.Action,
+	resourceResolver ControlPlaneResourceResolver,
+	requireEnrollment bool,
+	dependencies controlPlaneActionDependencies,
+) func(http.Handler) http.Handler {
+	return func(handler http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if dependencies.processEnabled == nil || !dependencies.processEnabled() {
+				http.NotFound(w, request)
+				return
+			}
+			if !action.Valid() ||
+				dependencies.resolveScopes == nil ||
+				resourceResolver == nil {
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+
+			authInfo, err := auth.Authentication.Get(request.Context())
+			if err != nil ||
+				authInfo.CurrentOrgID() == nil ||
+				*authInfo.CurrentOrgID() == uuid.Nil ||
+				authInfo.CurrentUserID() == uuid.Nil {
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+			organizationID := *authInfo.CurrentOrgID()
+			resource, err := resourceResolver(request, organizationID)
+			if err != nil {
+				writeControlPlaneAuthorizationError(w, request, err)
+				return
+			}
+			scopes, err := dependencies.resolveScopes(request.Context(), resource)
+			if err != nil {
+				writeControlPlaneAuthorizationError(w, request, err)
+				return
+			}
+
+			if dependencies.authorize == nil {
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+			decision, err := dependencies.authorize(
+				request.Context(),
+				types.AccessRequest{
+					OrganizationID: organizationID,
+					PrincipalID:    authInfo.CurrentUserID(),
+					Action:         action,
+					ResourceScopes: scopes,
+				},
+			)
+			if err != nil {
+				http.Error(
+					w,
+					http.StatusText(http.StatusInternalServerError),
+					http.StatusInternalServerError,
+				)
+				return
+			}
+			if !decision.Allowed {
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+
+			if requireEnrollment {
+				if dependencies.isEffective == nil {
+					http.NotFound(w, request)
+					return
+				}
+				environmentIDs := make([]uuid.UUID, 0, 1)
+				for _, scope := range scopes {
+					if scope.Kind == types.PermissionScopeEnvironment &&
+						!slices.Contains(environmentIDs, scope.ID) {
+						environmentIDs = append(environmentIDs, scope.ID)
+					}
+				}
+				if len(environmentIDs) == 0 {
+					http.NotFound(w, request)
+					return
+				}
+				for _, environmentID := range environmentIDs {
+					effective, err := dependencies.isEffective(
+						request.Context(),
+						organizationID,
+						environmentID,
+					)
+					if err != nil {
+						http.Error(
+							w,
+							http.StatusText(http.StatusInternalServerError),
+							http.StatusInternalServerError,
+						)
+						return
+					}
+					if !effective {
+						http.NotFound(w, request)
+						return
+					}
+				}
+			}
+
+			handler.ServeHTTP(w, request)
+		})
+	}
+}
+
+func writeControlPlaneAuthorizationError(
+	w http.ResponseWriter,
+	request *http.Request,
+	err error,
+) {
+	if errors.Is(err, apierrors.ErrNotFound) ||
+		errors.Is(err, authorization.ErrInvalidResourceRef) {
+		http.NotFound(w, request)
+		return
+	}
+	http.Error(
+		w,
+		http.StatusText(http.StatusInternalServerError),
+		http.StatusInternalServerError,
+	)
 }
 
 var (

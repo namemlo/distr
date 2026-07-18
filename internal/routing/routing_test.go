@@ -12,6 +12,42 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestScopedAuthorizationAdminRoutesArePublishedInOpenAPI(t *testing.T) {
+	g := NewWithT(t)
+	tracer := obsertracing.NoopTracer{}
+	router := NewRouter(
+		zap.NewNop(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		obsertracing.Tracers{Default: tracer, Agent: tracer},
+	)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/docs/openapi.json", nil),
+	)
+	g.Expect(recorder.Code).To(Equal(http.StatusOK))
+
+	var document struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &document)).To(Succeed())
+	for _, path := range []string{
+		"/api/v1/authorization/roles",
+		"/api/v1/authorization/bindings",
+		"/api/v1/authorization/groups",
+		"/api/v1/authorization/groups/{groupId}/members",
+		"/api/v1/authorization/control-plane-enrollments",
+	} {
+		g.Expect(document.Paths).To(HaveKey(path), path)
+		g.Expect(document.Paths[path]).To(HaveKey("get"), path)
+		g.Expect(document.Paths[path]).To(HaveKey("post"), path)
+	}
+}
+
 func TestDeploymentRegistryRoutesArePublishedInOpenAPI(t *testing.T) {
 	const subscriberCollectionPath = "/api/v1/deployment-registry/subscribers"
 	g := NewWithT(t)

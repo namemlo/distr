@@ -202,6 +202,7 @@ func ApiRouter(
 					r.Route("/artifact-entitlements", handlers.ArtifactEntitlementsRouter)
 					r.Route("/artifact-pulls", handlers.ArtifactPullsRouter)
 					r.Route("/artifacts", handlers.ArtifactsRouter)
+					r.Route("/authorization", handlers.AuthorizationRouter)
 					r.Route("/billing", handlers.BillingRouter)
 					r.Route("/channels", handlers.ChannelsRouter)
 					r.Route("/config-as-code", handlers.ConfigAsCodeRouter)

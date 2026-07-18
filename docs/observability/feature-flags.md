@@ -55,14 +55,15 @@ This order keeps each layer observable on its own before adding links between la
 
 ## Operator Control-Plane Isolation
 
-| Flag                        | Effective when                                               | Boundary                                                                                             |
-| --------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `operator_control_plane_v2` | Its key is configured.                                       | Umbrella for new control-plane v2 writes; historical reads and v1 behavior stay available.           |
-| `executor_protocol_v2`      | Both its key and `operator_control_plane_v2` are configured. | Admission kill switch for the fenced executor protocol v2; configuring it alone remains ineffective. |
+| Flag                        | Process state                                                | Resource boundary                                                                                                                     |
+| --------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `operator_control_plane_v2` | Its key is configured.                                       | New v2 operation also requires action authority plus active organization and selected-environment enrollment.                         |
+| `executor_protocol_v2`      | Both its key and `operator_control_plane_v2` are configured. | Fenced executor admission additionally requires the same PR-066 tenant enrollment; configuring either process flag grants no access. |
 
-Both flags are process-wide until PR-066 adds organization/environment enrollment. They must remain disabled in
-shared and production environments until PR-083 completes hardening. In an isolated developer environment only,
-the layered state can be evaluated with:
+PR-066 adds append-only organization and environment enrollment revisions under `/api/v1/authorization`.
+The process flag remains the emergency kill switch; both tenant enrollment levels must be effective for the
+selected environment. These controls must remain disabled in shared and production environments until PR-083
+completes hardening. In an isolated developer environment only, the process-layer state can be evaluated with:
 
 ```text
 DISTR_EXPERIMENTAL_FEATURE_FLAGS=operator_control_plane_v2,executor_protocol_v2
@@ -74,4 +75,7 @@ without removing its configured key.
 
 ## Boundaries
 
-The observability flags do not enable Grafana provisioning, dashboard UI, alerting, log correlation, analytics storage, RBAC changes, or task execution changes. PR-055 only establishes the control-plane isolation boundary; it does not add v2 routes, persistence, execution, retry, or migration behavior.
+The observability flags do not enable Grafana provisioning, dashboard UI, alerting, log correlation, analytics
+storage, authorization changes, or task execution changes. Control-plane process flags never grant tenant
+authority. PR-066 scoped roles and enrollment add the resource boundary but do not add executor-v2 dispatch,
+retry, or migration behavior.

@@ -32,6 +32,11 @@ func TestScopedPermissionSupport(t *testing.T) {
 	g := NewWithT(t)
 
 	g.Expect(PermissionScopeOrganization.Supported()).To(BeTrue())
+	g.Expect(PermissionScopeCustomer.Supported()).To(BeTrue())
+	g.Expect(PermissionScopeEnvironment.Supported()).To(BeTrue())
+	g.Expect(PermissionScopeDeploymentUnit.Supported()).To(BeTrue())
+	g.Expect(PermissionScopeComponent.Supported()).To(BeTrue())
+	g.Expect(PermissionScopeCampaign.Supported()).To(BeTrue())
 	g.Expect(PermissionScopeApplication.Supported()).To(BeFalse())
 	g.Expect(PermissionScopeApplication.Known()).To(BeTrue())
 
@@ -42,7 +47,14 @@ func TestScopedPermissionSupport(t *testing.T) {
 		Scope:      PermissionScopeApplication,
 	})).To(BeFalse())
 
-	g.Expect(SupportedPermissionScopes()).To(Equal([]PermissionScope{PermissionScopeOrganization}))
+	g.Expect(SupportedPermissionScopes()).To(Equal([]PermissionScope{
+		PermissionScopeOrganization,
+		PermissionScopeCustomer,
+		PermissionScopeEnvironment,
+		PermissionScopeDeploymentUnit,
+		PermissionScopeComponent,
+		PermissionScopeCampaign,
+	}))
 }
 
 func TestParsePermission(t *testing.T) {
@@ -68,4 +80,60 @@ func TestBuiltInRoleDefinitionsAreIsolatedCopies(t *testing.T) {
 
 	fresh := BuiltInRoleDefinitions()
 	g.Expect(fresh[0].Permissions[0]).NotTo(Equal(PermissionDeploymentExecute))
+}
+
+func TestControlPlaneActionsAreValidAndIsolated(t *testing.T) {
+	g := NewWithT(t)
+
+	actions := AllControlPlaneActions()
+	g.Expect(actions).To(ContainElements(
+		ActionReleaseCreate,
+		ActionReleasePublish,
+		ActionReleaseBlock,
+		ActionRegistryManage,
+		ActionConfigManage,
+		ActionPlanCreate,
+		ActionPlanPublish,
+		ActionPlanExecute,
+		ActionApprovalDecide,
+		ActionPolicyManage,
+		ActionCalendarManage,
+		ActionFreezeManage,
+		ActionEmergencyOverride,
+		ActionCampaignControl,
+		ActionObserverManage,
+		ActionReconciliationDecide,
+		ActionAuditView,
+		ActionAuditExport,
+		ActionSampleRetire,
+		ActionAuthorizationManage,
+	))
+	for _, action := range actions {
+		g.Expect(action.Valid()).To(BeTrue(), "invalid registered action %q", action)
+	}
+	g.Expect(Action("deployment.destroy-everything").Valid()).To(BeFalse())
+
+	actions[0] = Action("mutated")
+	g.Expect(AllControlPlaneActions()[0]).NotTo(Equal(Action("mutated")))
+}
+
+func TestLegacyControlPlaneActionsKeepDeveloperAndAdministratorDistinct(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(ActionsForLegacyRole(UserRoleReadOnly)).To(ConsistOf(
+		ActionAuditView,
+		ActionAuditExport,
+	))
+	g.Expect(ActionsForLegacyRole(UserRoleReadWrite)).To(ContainElements(
+		ActionReleaseCreate,
+		ActionRegistryManage,
+		ActionPlanExecute,
+		ActionAuditView,
+	))
+	g.Expect(ActionsForLegacyRole(UserRoleReadWrite)).NotTo(ContainElements(
+		ActionAuthorizationManage,
+		ActionApprovalDecide,
+		ActionEmergencyOverride,
+	))
+	g.Expect(ActionsForLegacyRole(UserRoleAdmin)).To(ConsistOf(AllControlPlaneActions()))
 }

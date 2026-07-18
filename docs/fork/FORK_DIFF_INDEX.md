@@ -1257,3 +1257,28 @@ Use one entry per pull request:
   contracts; no adopter, database vendor, client, credential, or infrastructure-specific behavior.
 - Compatibility notes: v1 payloads omit empty additive metadata. PR-064 must supply migration 146 and its exact
   planned-state/change facts before integration; the replay seams are documented in the PR notes.
+### PR-066 - Scoped authorization and feature enrollment
+
+- Status: Implemented on the speculative PR-057 checkpoint; integrated PostgreSQL 16/18 and full-regression
+  verification is deferred until prerequisite migrations 141 through 147 are present.
+- Upstream base: `8cdf1a72`.
+- Feature flag: `operator_control_plane_v2` remains the process kill switch; effective v2 operation additionally
+  requires active organization and selected-environment enrollment.
+- User-facing behavior: Administrators can create action-specific immutable roles, direct or group bindings, group
+  memberships, and append-only organization/environment enrollment revisions.
+- Database changes: Migration 148 adds role definitions/permissions, scoped bindings, principal groups/members,
+  control-plane enrollments, an idempotent built-in role-definition/permission backfill, and its durable
+  checkpoint. Down migration refuses while custom authorization or enrollment evidence exists.
+- API changes: Adds GET/POST admin collections below `/api/v1/authorization` for roles, bindings, groups, group
+  members, and control-plane enrollments.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0061 and PR-066 fork notes.
+- Tests: Added fast pure action/scope/enrollment tests, repository validation and migration-contract tests,
+  handler/middleware tests, and generated OpenAPI route coverage. Live PostgreSQL 16/18, repeated concurrent
+  backfill, and the full regression gate remain deferred until integration.
+- Upstream contribution notes: Community-neutral scoped RBAC and rollout enrollment; no adopter, infrastructure
+  provider, CI provider, host, credential, or client database behavior.
+- Compatibility notes: Existing v1 middleware and `Organization_UserAccount.user_role` remain unchanged.
+  Legacy roles are dual-read fallback and are backfilled without rewriting membership rows. Foreign scoped IDs
+  remain indistinguishable from missing IDs.

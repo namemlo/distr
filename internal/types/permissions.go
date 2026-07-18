@@ -80,22 +80,35 @@ type PermissionScope string
 
 const (
 	PermissionScopeOrganization   PermissionScope = "organization"
+	PermissionScopeCustomer       PermissionScope = "customer"
 	PermissionScopeApplication    PermissionScope = "application"
 	PermissionScopeEnvironment    PermissionScope = "environment"
+	PermissionScopeDeploymentUnit PermissionScope = "deployment_unit"
+	PermissionScopeComponent      PermissionScope = "component"
+	PermissionScopeCampaign       PermissionScope = "campaign"
 	PermissionScopeTenantCustomer PermissionScope = "tenant_customer"
 	PermissionScopeTagSet         PermissionScope = "tag_set"
 )
 
 var knownPermissionScopes = []PermissionScope{
 	PermissionScopeOrganization,
-	PermissionScopeApplication,
+	PermissionScopeCustomer,
 	PermissionScopeEnvironment,
+	PermissionScopeDeploymentUnit,
+	PermissionScopeComponent,
+	PermissionScopeCampaign,
+	PermissionScopeApplication,
 	PermissionScopeTenantCustomer,
 	PermissionScopeTagSet,
 }
 
 var supportedPermissionScopes = []PermissionScope{
 	PermissionScopeOrganization,
+	PermissionScopeCustomer,
+	PermissionScopeEnvironment,
+	PermissionScopeDeploymentUnit,
+	PermissionScopeComponent,
+	PermissionScopeCampaign,
 }
 
 type ScopedPermission struct {

@@ -62,12 +62,12 @@ func IsControlPlaneV2Effective(context.Context, organizationID, environmentID uu
 
 Action constants cover release create/publish/block, registry/config manage, plan create/publish/execute, approval decide, policy/calendar/freeze manage, emergency override, campaign control, observer manage, reconciliation decide, audit view/export, and sample retirement. Existing built-in roles backfill checkpointedly; legacy `Organization_UserAccount.user_role` remains dual-read fallback until a separately approved removal.
 
-- [ ] Add pure authorization tests for exact scope match, ancestor organization grant, wrong customer/environment/unit denial, group membership, expired binding, mutation versus view, and no information leakage.
-- [ ] Add enrollment tests for process flag off, organization off, environment off, effective interval, and both gates on.
-- [ ] Implement schema/repository and checkpointed built-in role backfill; test repeated backfill and flag rollback.
-- [ ] Add admin APIs under `/api/v1/authorization/roles`, `/bindings`, `/groups`, and `/control-plane-enrollments`; add action-specific middleware helpers.
-- [ ] Replace generic role checks only on new v2 routes; leave v1 authorization behavior unchanged.
-- [ ] Verify and commit.
+- [x] Add pure authorization tests for exact scope match, ancestor organization grant, wrong customer/environment/unit denial, group membership, expired binding, mutation versus view, and no information leakage.
+- [x] Add enrollment tests for process flag off, organization off, environment off, effective interval, and both gates on.
+- [x] Implement schema/repository and checkpointed built-in role backfill; test repeated backfill and flag rollback.
+- [x] Add admin APIs under `/api/v1/authorization/roles`, `/bindings`, `/groups`, and `/control-plane-enrollments`; add action-specific middleware helpers.
+- [x] Replace generic role checks only on new v2 routes; leave v1 authorization behavior unchanged.
+- [x] Verify and commit.
 
 ```powershell
 go test ./internal/authorization ./internal/types ./internal/db ./api ./internal/handlers ./internal/middleware -run 'Authorization|RoleBinding|Enrollment|Scope' -count=1
