@@ -46,6 +46,7 @@ type TargetComponentObservation struct {
 	TargetComponentStateID uuid.UUID                `db:"target_component_state_id" json:"targetComponentStateId"`
 	DeploymentTargetID     uuid.UUID                `db:"deployment_target_id" json:"deploymentTargetId"`
 	ApplicationID          uuid.UUID                `db:"application_id" json:"applicationId"`
+	ComponentInstanceID    *uuid.UUID               `db:"component_instance_id" json:"componentInstanceId,omitempty"`
 	Component              string                   `db:"component" json:"component"`
 	StateVersion           int64                    `db:"state_version" json:"stateVersion"`
 	StateChecksum          string                   `db:"state_checksum" json:"stateChecksum"`

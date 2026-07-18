@@ -136,3 +136,51 @@ checkpoint versions as authoritative:
 - Final integration must replay the nine overlap-file deltas after the final
   PR-063 and rerun migration lint, full frontend compilation, and live database
   tests.
+
+## Reviewer Follow-up
+
+The blocking correctness review was addressed in a follow-up local commit:
+
+- Bootstrap change sets now retain the bootstrap entry and emit exact
+  image/config/provider/schema/topology/source-note facts.
+- Bounded release-note selection keeps the baseline and target bounds, retains
+  the most recent 128 notes including the target, emits
+  `planning_limit_exceeded` when the range is larger, and fails closed if a
+  bounded result ever omits the target.
+- Release-note candidates are restricted to the same application and published
+  immutable `ProductReleaseComponent` lineage.
+- Migration 146 adds
+  `TargetComponentObservation.component_instance_id`; new external-execution
+  observations resolve and persist the plan's exact Component Instance.
+- Previous-state observation coverage is keyed by both Component Instance and
+  Component Release, preventing one observation from satisfying two physical
+  instances that share a release.
+- Executable non-live tests now cover duplicate-release/multi-instance
+  observation coverage, cross-tenant pair rejection, stale-CAS and forward-only
+  guard branches, idempotent existing-plan retry selection, and B-to-A immutable
+  evidence creation.
+- Live PostgreSQL remains required to prove SQL row locks, concurrent unique-key
+  retry fallback, migration application/rollback, and tenant filtering against
+  real constraints.
+
+### Follow-up RED-GREEN evidence
+
+- `TestBuildTargetChangeSetLabelsBootstrapAndIncludesExactTargetFacts` failed
+  with only `["bootstrap"]`, then passed with bootstrap plus exact
+  image/config/provider/schema/topology/source-note entries.
+- `TestBuildTargetChangeSetFailsClosedWhenBoundedNotesOmitTarget` failed without
+  `planning_limit_exceeded`, then passed after the bounded-input guard.
+- `TestBuildTargetChangeSetBoundsNotesAndRetainsTarget` failed because truncation
+  discarded the target note, then passed after retaining the most recent 128
+  entries.
+- `TestReleaseNoteQueryIsApplicationLineageScopedAndKeepsBounds` failed against
+  the organization-wide oldest-first query, then passed after application,
+  immutable-lineage, and baseline/target bound scoping.
+- `TestSuccessfulObservationCoverageRequiresEachComponentInstance` initially
+  failed to compile because per-instance coverage did not exist, then passed
+  with exact `(ComponentInstanceID, ReleaseBundleID)` keys.
+- Migration/observation persistence tests failed before the new observation
+  instance column and write projection, then passed after both were added.
+- Executable previous-state guard tests failed before cross-tenant, stale,
+  forward-only, idempotent-existing, and B-to-A helper paths were exposed and
+  used by the repository, then passed.

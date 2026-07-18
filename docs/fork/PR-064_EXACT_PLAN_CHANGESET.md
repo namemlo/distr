@@ -76,6 +76,13 @@ not global version pointers:
 | `topology`     | Deployment Unit, physical instance, subscriber set, graph                 |
 | `source_notes` | Published component notes after the baseline through the selected release |
 
+Bootstrap plans retain the bootstrap marker and also emit the exact target
+image, config, provider, schema, topology, and selected-release note facts.
+Release-note candidates are restricted to published immutable product-release
+lineage in the same application. The planner retains the target and baseline
+bounds deterministically and fails closed with `planning_limit_exceeded` when
+more than 128 component releases fall within the range.
+
 Risk classification calls out bootstrap approval, non-authoritative v2
 baselines, provider/topology blast radius, planning limits, and forward-only
 schema transitions. All baseline/change/risk rows carry the organization,
@@ -98,8 +105,10 @@ Content-Type: application/json
 
 The source must be an executed plan for the same organization, application,
 environment, and Deployment Unit, with independent healthy observations for
-every component release. The current plan must still be the latest placement
-plan and must not contain a forward-only schema transition.
+every physical Component Instance and component release pair. New observations
+persist that exact instance identity; a shared Component Release ID cannot
+collapse coverage for multiple instances. The current plan must still be the
+latest placement plan and must not contain a forward-only schema transition.
 
 The response is a new immutable target plan. It references current plan B in
 `supersedesDeploymentPlanId`, source plan A in
@@ -120,6 +129,8 @@ Migration 146 adds:
 - `DeploymentPlanRiskEntry`;
 - `DeploymentPlan.bootstrap`; and
 - `DeploymentPlan.previous_state_source_plan_id`.
+- `TargetComponentObservation.component_instance_id` for exact per-instance
+  execution evidence.
 
 Composite tenant foreign keys cover the plan, source plan, Component Instance,
 execution, observation, Component Release, Target Config Snapshot, and actor.

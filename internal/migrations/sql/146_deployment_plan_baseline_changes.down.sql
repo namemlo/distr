@@ -5,6 +5,11 @@ BEGIN
      OR EXISTS (SELECT 1 FROM DeploymentPlanRiskEntry)
      OR EXISTS (
        SELECT 1
+       FROM TargetComponentObservation
+       WHERE component_instance_id IS NOT NULL
+     )
+     OR EXISTS (
+       SELECT 1
        FROM DeploymentPlan
        WHERE plan_schema = 'distr.target-deployment-plan/v2'
          AND bootstrap
@@ -41,6 +46,11 @@ DROP INDEX IF EXISTS DeploymentPlanBaseline_plan_order;
 DROP TABLE IF EXISTS DeploymentPlanBaseline;
 
 DROP INDEX IF EXISTS DeploymentPlan_previous_state_unique;
+
+DROP INDEX IF EXISTS TargetComponentObservation_instance_history;
+ALTER TABLE TargetComponentObservation
+  DROP CONSTRAINT IF EXISTS targetcomponentobservation_instance_fk,
+  DROP COLUMN IF EXISTS component_instance_id;
 
 ALTER TABLE DeploymentPlan
   DROP CONSTRAINT IF EXISTS deploymentplan_previous_state_shape_check,

@@ -32,10 +32,10 @@ func BuildTargetChangeSet(
 
 	if baseline.Bootstrap {
 		add(types.DeploymentPlanChangeBootstrap, "", planned.Version, false)
-		finalizeChangeOrder(changes)
-		return changes
 	}
-	if baseline.Projection != "" && baseline.Projection != types.BaselineProjectionVerifiedV2 {
+	if !baseline.Bootstrap &&
+		baseline.Projection != "" &&
+		baseline.Projection != types.BaselineProjectionVerifiedV2 {
 		add(
 			types.DeploymentPlanChangeBaselineAuthority,
 			string(baseline.Projection),
@@ -137,7 +137,10 @@ func accumulatedReleaseNotes(
 			plannedIndex = index
 		}
 	}
-	if plannedIndex < 0 || plannedIndex <= baselineIndex {
+	if plannedIndex < 0 {
+		return nil, len(notes) > maxReleaseNotesPerChangeSet
+	}
+	if plannedIndex <= baselineIndex {
 		return nil, false
 	}
 	start := 0
@@ -147,7 +150,7 @@ func accumulatedReleaseNotes(
 	result := slices.Clone(notes[start : plannedIndex+1])
 	exceeded := len(result) > maxReleaseNotesPerChangeSet
 	if exceeded {
-		result = result[:maxReleaseNotesPerChangeSet]
+		result = result[len(result)-maxReleaseNotesPerChangeSet:]
 	}
 	for index := range result {
 		result[index].Version = boundedText(strings.TrimSpace(result[index].Version), 128)

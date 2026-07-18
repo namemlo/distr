@@ -761,7 +761,12 @@ func upsertExternalExecutionObservedState(
 	if err != nil {
 		return "", err
 	}
-	if err := insertTargetComponentObservation(ctx, *state, execution.ID); err != nil {
+	if err := insertTargetComponentObservation(
+		ctx,
+		*state,
+		execution.ID,
+		execution.DeploymentPlanID,
+	); err != nil {
 		return "", err
 	}
 	return checksum, nil
@@ -799,16 +804,32 @@ func insertTargetComponentObservation(
 	ctx context.Context,
 	state types.TargetComponentState,
 	externalExecutionID uuid.UUID,
+	deploymentPlanID uuid.UUID,
 ) error {
 	database := internalctx.GetDb(ctx)
 	_, err := database.Exec(ctx,
 		`INSERT INTO TargetComponentObservation (
 			organization_id, target_component_state_id, deployment_target_id, application_id,
-			component, state_version, state_checksum, release_bundle_id, version, image, platform,
+			component_instance_id, component, state_version, state_checksum,
+			release_bundle_id, version, image, platform,
 			contracts, config_reference, config_checksum, health, observed_at, external_execution_id
 		) VALUES (
 			@organizationId, @targetComponentStateId, @deploymentTargetId, @applicationId,
-			@component, @stateVersion, @stateChecksum, @releaseBundleId, @version, @image, @platform,
+			(
+			  SELECT baseline.component_instance_id
+			  FROM DeploymentPlanBaseline baseline
+			  JOIN ComponentInstance instance
+			    ON instance.id = baseline.component_instance_id
+			   AND instance.organization_id = baseline.organization_id
+			  WHERE baseline.organization_id = @organizationId
+			    AND baseline.deployment_plan_id = @deploymentPlanId
+			    AND (
+			      baseline.component_key = @component
+			      OR instance.physical_name = @component
+			    )
+			),
+			@component, @stateVersion, @stateChecksum,
+			@releaseBundleId, @version, @image, @platform,
 			@contracts, @configReference, @configChecksum, @health, @observedAt, @externalExecutionId
 		)`,
 		pgx.NamedArgs{
@@ -820,6 +841,7 @@ func insertTargetComponentObservation(
 			"contracts": state.Contracts, "configReference": state.ConfigReference,
 			"configChecksum": state.ConfigChecksum, "health": state.Health,
 			"observedAt": state.ObservedAt, "externalExecutionId": externalExecutionID,
+			"deploymentPlanId": deploymentPlanID,
 		},
 	)
 	if err != nil {

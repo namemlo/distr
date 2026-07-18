@@ -67,6 +67,7 @@ func resolveDeploymentPlanEvidence(
 		notes, err := loadReleaseNotes(
 			ctx,
 			draft.OrganizationID,
+			draft.ProductReleaseID,
 			planned.ComponentKey,
 			baselineState.ReleaseBundleID,
 			planned.ReleaseBundleID,
@@ -404,6 +405,22 @@ func findPlannedState(
 	componentInstanceID uuid.UUID,
 	componentKey string,
 ) (types.PlannedState, bool) {
+	states, err := plannedStatesFromCanonical(canonical)
+	if err != nil {
+		return types.PlannedState{}, false
+	}
+	for _, state := range states {
+		if state.ComponentInstanceID == componentInstanceID &&
+			state.ComponentKey == componentKey {
+			return state, true
+		}
+	}
+	return types.PlannedState{}, false
+}
+
+func plannedStatesFromCanonical(
+	canonical types.TargetDeploymentPlanCanonical,
+) ([]types.PlannedState, error) {
 	input := types.PlanResolutionInput{
 		Unit: types.DeploymentUnit{
 			ID:                    canonical.DeploymentUnitID,
@@ -417,64 +434,110 @@ func findPlannedState(
 		},
 		ReleasePins: canonical.ComponentReleasePins,
 	}
-	states, err := plannedStatesFromResolution(
+	return plannedStatesFromResolution(
 		input,
 		canonical.RequirementResolutions,
 		canonical.Graph,
 	)
-	if err != nil {
-		return types.PlannedState{}, false
-	}
-	for _, state := range states {
-		if state.ComponentInstanceID == componentInstanceID &&
-			state.ComponentKey == componentKey {
-			return state, true
-		}
-	}
-	return types.PlannedState{}, false
 }
 
 func loadReleaseNotes(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	productReleaseID uuid.UUID,
 	componentKey string,
 	baselineReleaseID uuid.UUID,
 	plannedReleaseID uuid.UUID,
 ) ([]types.ReleaseNote, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		WITH bounds AS (
-		  SELECT baseline.published_at AS baseline_at,
+		  SELECT product.application_id,
+		         baseline.id AS baseline_release_id,
+		         baseline.published_at AS baseline_at,
+		         planned.id AS planned_release_id,
 		         planned.published_at AS planned_at
-		  FROM ReleaseBundle planned
+		  FROM ReleaseBundle product
+		  JOIN ReleaseBundle planned
+		    ON planned.id = @plannedReleaseID
+		   AND planned.organization_id = product.organization_id
+		   AND planned.application_id = product.application_id
+		   AND planned.kind = 'component'
+		   AND planned.status = 'PUBLISHED'
 		  LEFT JOIN ReleaseBundle baseline
 		    ON baseline.id = @baselineReleaseID
-		   AND baseline.organization_id = planned.organization_id
-		  WHERE planned.id = @plannedReleaseID
-		    AND planned.organization_id = @organizationID
-		)
-		SELECT DISTINCT bundle.id,
-		       artifact.component_version,
+		   AND baseline.organization_id = product.organization_id
+		   AND baseline.application_id = product.application_id
+		   AND baseline.kind = 'component'
+		   AND baseline.status = 'PUBLISHED'
+		  WHERE product.id = @productReleaseID
+		    AND product.organization_id = @organizationID
+		    AND product.kind = 'product'
+		    AND product.status = 'PUBLISHED'
+		),
+		candidates AS (
+		  SELECT DISTINCT bundle.id,
+		         artifact.component_version,
+		         bundle.published_at,
+		         bundle.source_revision,
+		         bundle.release_notes,
+		         bounds.baseline_release_id
+		  FROM bounds
+		  JOIN ReleaseBundle bundle
+		    ON bundle.organization_id = @organizationID
+		   AND bundle.application_id = bounds.application_id
+		   AND bundle.kind = 'component'
+		   AND bundle.status = 'PUBLISHED'
+		   AND (
+		     bundle.published_at,
+		     bundle.id
+		   ) <= (
+		     bounds.planned_at,
+		     bounds.planned_release_id
+		   )
+		   AND (
+		     bounds.baseline_at IS NULL
+		     OR (
 		       bundle.published_at,
-		       bundle.source_revision,
-		       bundle.release_notes
-		FROM bounds
-		JOIN ReleaseBundle bundle
-		  ON bundle.organization_id = @organizationID
-		 AND bundle.kind = 'component'
-		 AND bundle.status = 'PUBLISHED'
-		 AND bundle.published_at <= bounds.planned_at
-		 AND (
-		   bounds.baseline_at IS NULL
-		   OR bundle.published_at >= bounds.baseline_at
-		 )
-		JOIN ComponentReleaseArtifact artifact
-		  ON artifact.release_bundle_id = bundle.id
-		 AND artifact.organization_id = bundle.organization_id
-		 AND artifact.component_key = @componentKey
-		ORDER BY bundle.published_at, bundle.id
-		LIMIT 129`,
+		       bundle.id
+		     ) >= (
+		       bounds.baseline_at,
+		       bounds.baseline_release_id
+		     )
+		   )
+		  JOIN ComponentReleaseArtifact artifact
+		    ON artifact.release_bundle_id = bundle.id
+		   AND artifact.organization_id = bundle.organization_id
+		   AND artifact.component_key = @componentKey
+		  WHERE EXISTS (
+		    SELECT 1
+		    FROM ProductReleaseComponent lineage
+		    JOIN ReleaseBundle lineage_product
+		      ON lineage_product.id = lineage.product_release_bundle_id
+		     AND lineage_product.organization_id = lineage.organization_id
+		     AND lineage_product.application_id = bounds.application_id
+		     AND lineage_product.kind = 'product'
+		     AND lineage_product.status = 'PUBLISHED'
+		    WHERE lineage.component_release_bundle_id = bundle.id
+		      AND lineage.organization_id = bundle.organization_id
+		      AND lineage.component_key = @componentKey
+		  )
+		),
+		ranked AS (
+		  SELECT candidates.*,
+		         row_number() OVER (
+		           ORDER BY published_at DESC, id DESC
+		         ) AS recent_rank
+		  FROM candidates
+		)
+		SELECT id, component_version, published_at, source_revision, release_notes
+		FROM ranked
+		WHERE recent_rank <= 129
+		   OR id = baseline_release_id
+		ORDER BY published_at, id
+		LIMIT 130`,
 		pgx.NamedArgs{
 			"organizationID":    organizationID,
+			"productReleaseID":  productReleaseID,
 			"componentKey":      componentKey,
 			"baselineReleaseID": uuidOrNil(baselineReleaseID),
 			"plannedReleaseID":  plannedReleaseID,
@@ -780,6 +843,15 @@ func CreatePreviousStatePlanForOrganization(
 		return createErr
 	})
 	if err != nil {
+		existing, existingErr := getPreviousStatePlan(
+			ctx,
+			organizationID,
+			currentPlanID,
+			successfulPlanID,
+		)
+		if existingErr == nil {
+			return existing, nil
+		}
 		return nil, err
 	}
 	return result, nil
@@ -799,11 +871,8 @@ func createPreviousStatePlanInTx(
 		currentPlanID,
 		successfulPlanID,
 	)
-	if err == nil {
-		return existing, nil
-	}
-	if !errors.Is(err, apierrors.ErrNotFound) {
-		return nil, err
+	if plan, found, resolveErr := resolveExistingPreviousStatePlan(existing, err); found || resolveErr != nil {
+		return plan, resolveErr
 	}
 
 	current, err := lockTargetDeploymentPlan(ctx, organizationID, currentPlanID)
@@ -891,6 +960,12 @@ func validatePreviousStatePlanPair(
 	if current.PlanSchema != types.TargetDeploymentPlanSchemaV2 ||
 		successful.PlanSchema != types.TargetDeploymentPlanSchemaV2 {
 		return apierrors.NewBadRequest("previous-state planning requires target deployment plan v2")
+	}
+	if current.OrganizationID == uuid.Nil ||
+		current.OrganizationID != successful.OrganizationID {
+		return apierrors.NewBadRequest(
+			"current and successful plans must belong to the same organization",
+		)
 	}
 	if current.DeploymentUnitID == nil || successful.DeploymentUnitID == nil ||
 		*current.DeploymentUnitID != *successful.DeploymentUnitID ||
@@ -1072,10 +1147,7 @@ func ensureCurrentPlanCAS(ctx context.Context, current types.DeploymentPlan) err
 	if err != nil {
 		return fmt.Errorf("check previous-state stale CAS: %w", err)
 	}
-	if newer {
-		return apierrors.NewConflict("current deployment plan is stale")
-	}
-	return nil
+	return rejectStaleCurrentPlan(newer)
 }
 
 func ensureSuccessfulPlanObserved(
@@ -1088,26 +1160,13 @@ func ensureSuccessfulPlanObserved(
 	if err := json.Unmarshal(canonicalPayload, &canonical); err != nil {
 		return apierrors.NewConflict("successful plan canonical payload is invalid")
 	}
-	required := make(map[uuid.UUID][]string, len(canonical.ComponentReleasePins))
-	for _, pin := range canonical.ComponentReleasePins {
-		digests := make([]string, 0)
-		for _, artifact := range pin.Artifacts {
-			if artifact.Platform == canonical.TargetPlatform {
-				digests = append(digests, artifact.PlatformDigest)
-			}
-		}
-		if len(digests) == 0 {
-			return apierrors.NewConflict(
-				"successful plan lacks an exact target-platform component digest",
-			)
-		}
-		required[pin.ComponentReleaseID] = digests
-	}
-	if len(required) == 0 {
+	planned, err := plannedStatesFromCanonical(canonical)
+	if err != nil || len(planned) == 0 {
 		return apierrors.NewConflict("successful plan contains no component release pins")
 	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT DISTINCT observation.release_bundle_id,
+		SELECT DISTINCT observation.component_instance_id,
+		       observation.release_bundle_id,
 		       observation.image,
 		       observation.platform,
 		       observation.config_checksum
@@ -1132,36 +1191,96 @@ func ensureSuccessfulPlanObserved(
 	}
 	defer rows.Close()
 	rowCount := 0
+	observed := make([]successfulComponentObservation, 0)
 	for rows.Next() {
 		rowCount++
 		if rowCount > maxPlanEvidenceRows {
 			return apierrors.NewConflict("successful plan observation limit exceeded")
 		}
+		var componentInstanceID *uuid.UUID
 		var releaseID uuid.UUID
 		var image, platform, configChecksum string
-		if err := rows.Scan(&releaseID, &image, &platform, &configChecksum); err != nil {
+		if err := rows.Scan(
+			&componentInstanceID,
+			&releaseID,
+			&image,
+			&platform,
+			&configChecksum,
+		); err != nil {
 			return fmt.Errorf("scan successful plan observation: %w", err)
 		}
-		digests, ok := required[releaseID]
-		if !ok || platform != canonical.TargetPlatform ||
-			configChecksum != canonical.TargetConfigSnapshotChecksum {
+		if componentInstanceID == nil {
 			continue
 		}
-		if slices.ContainsFunc(digests, func(digest string) bool {
-			return imageDigestMatches(image, digest)
-		}) {
-			delete(required, releaseID)
-		}
+		observed = append(observed, successfulComponentObservation{
+			ComponentInstanceID: *componentInstanceID,
+			ReleaseBundleID:     releaseID,
+			Image:               image,
+			Platform:            platform,
+			ConfigChecksum:      configChecksum,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("collect successful plan observations: %w", err)
 	}
-	if len(required) > 0 {
+	if len(missingSuccessfulObservationCoverage(planned, observed)) > 0 {
 		return apierrors.NewConflict(
 			"successful plan lacks independent healthy observations for every component",
 		)
 	}
 	return nil
+}
+
+type componentObservationKey struct {
+	ComponentInstanceID uuid.UUID
+	ReleaseBundleID     uuid.UUID
+}
+
+type successfulComponentObservation struct {
+	ComponentInstanceID uuid.UUID
+	ReleaseBundleID     uuid.UUID
+	Image               string
+	Platform            string
+	ConfigChecksum      string
+}
+
+func missingSuccessfulObservationCoverage(
+	planned []types.PlannedState,
+	observed []successfulComponentObservation,
+) []componentObservationKey {
+	missing := make(map[componentObservationKey]types.PlannedState, len(planned))
+	for _, state := range planned {
+		key := componentObservationKey{
+			ComponentInstanceID: state.ComponentInstanceID,
+			ReleaseBundleID:     state.ReleaseBundleID,
+		}
+		missing[key] = state
+	}
+	for _, observation := range observed {
+		key := componentObservationKey{
+			ComponentInstanceID: observation.ComponentInstanceID,
+			ReleaseBundleID:     observation.ReleaseBundleID,
+		}
+		state, ok := missing[key]
+		if !ok ||
+			observation.Platform != state.Platform ||
+			observation.ConfigChecksum != state.ConfigChecksum ||
+			!imageDigestMatches(observation.Image, state.Image) {
+			continue
+		}
+		delete(missing, key)
+	}
+	result := make([]componentObservationKey, 0, len(missing))
+	for key := range missing {
+		result = append(result, key)
+	}
+	slices.SortFunc(result, func(a, b componentObservationKey) int {
+		if cmp := strings.Compare(a.ComponentInstanceID.String(), b.ComponentInstanceID.String()); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.ReleaseBundleID.String(), b.ReleaseBundleID.String())
+	})
+	return result
 }
 
 func ensurePreviousStateIsReversible(
@@ -1187,12 +1306,36 @@ func ensurePreviousStateIsReversible(
 	if err != nil {
 		return fmt.Errorf("check previous-state forward-only block: %w", err)
 	}
+	return rejectForwardOnlyPreviousState(forwardOnly)
+}
+
+func rejectStaleCurrentPlan(newer bool) error {
+	if newer {
+		return apierrors.NewConflict("current deployment plan is stale")
+	}
+	return nil
+}
+
+func rejectForwardOnlyPreviousState(forwardOnly bool) error {
 	if forwardOnly {
 		return apierrors.NewConflict(
 			"current plan contains a forward-only schema transition; use a forward fix",
 		)
 	}
 	return nil
+}
+
+func resolveExistingPreviousStatePlan(
+	existing *types.DeploymentPlan,
+	err error,
+) (*types.DeploymentPlan, bool, error) {
+	if err == nil {
+		return existing, true, nil
+	}
+	if errors.Is(err, apierrors.ErrNotFound) {
+		return nil, false, nil
+	}
+	return nil, false, err
 }
 
 func providerBindingsChecksum(

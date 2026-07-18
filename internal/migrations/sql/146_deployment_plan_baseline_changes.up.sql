@@ -15,6 +15,23 @@ ALTER TABLE DeploymentPlan
     )
   );
 
+ALTER TABLE TargetComponentObservation
+  ADD COLUMN component_instance_id UUID,
+  ADD CONSTRAINT targetcomponentobservation_instance_fk
+    FOREIGN KEY (component_instance_id, organization_id)
+    REFERENCES ComponentInstance(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION;
+
+CREATE INDEX TargetComponentObservation_instance_history
+  ON TargetComponentObservation (
+    organization_id,
+    component_instance_id,
+    observed_at DESC,
+    state_version DESC
+  )
+  WHERE component_instance_id IS NOT NULL;
+
 CREATE UNIQUE INDEX DeploymentPlan_previous_state_unique
   ON DeploymentPlan (
     organization_id,
