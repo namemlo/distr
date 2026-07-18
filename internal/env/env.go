@@ -50,6 +50,7 @@ var (
 	registration                            RegistrationMode
 	registryEnabled                         bool
 	registryS3Config                        S3Config
+	targetConfigObjectStoreConfig           TargetConfigObjectStoreConfig
 	registryScratchDir                      *string
 	artifactTagsDefaultLimitPerOrg          int
 	registryUpstreamSyncCron                *string
@@ -174,6 +175,7 @@ func Initialize() {
 		)
 		registryScratchDir = envutil.GetEnvOrNil("REGISTRY_SCRATCH_DIR")
 	}
+	targetConfigObjectStoreConfig = loadTargetConfigObjectStoreConfig()
 	artifactTagsDefaultLimitPerOrg = envutil.GetEnvParsedOrDefault(
 		"ARTIFACT_TAGS_DEFAULT_LIMIT_PER_ORG", envparse.NonNegativeNumber, 0,
 	)
@@ -399,6 +401,52 @@ func RegistryEnabled() bool {
 
 func RegistryS3Config() S3Config {
 	return registryS3Config
+}
+
+func TargetConfigObjectStore() TargetConfigObjectStoreConfig {
+	return targetConfigObjectStoreConfig
+}
+
+func loadTargetConfigObjectStoreConfig() TargetConfigObjectStoreConfig {
+	config := TargetConfigObjectStoreConfig{
+		Enabled: envutil.GetEnvParsedOrDefault(
+			"TARGET_CONFIG_OBJECT_STORE_ENABLED",
+			strconv.ParseBool,
+			false,
+		),
+	}
+	if !config.Enabled {
+		return config
+	}
+	config.S3.Region = envutil.GetEnv("TARGET_CONFIG_S3_REGION")
+	config.S3.Endpoint = targetConfigOptionalEnv("TARGET_CONFIG_S3_ENDPOINT")
+	config.S3.Bucket = envutil.GetEnv("TARGET_CONFIG_S3_BUCKET")
+	config.S3.AccessKeyID = targetConfigOptionalEnv("TARGET_CONFIG_S3_ACCESS_KEY_ID")
+	config.S3.SecretAccessKey = targetConfigOptionalEnv("TARGET_CONFIG_S3_SECRET_ACCESS_KEY")
+	config.S3.UsePathStyle = envutil.GetEnvParsedOrDefault(
+		"TARGET_CONFIG_S3_USE_PATH_STYLE",
+		strconv.ParseBool,
+		false,
+	)
+	config.S3.RequestChecksumCalculationWhenRequired = envutil.GetEnvParsedOrDefault(
+		"TARGET_CONFIG_S3_REQUEST_CHECKSUM_CALCULATION",
+		strconv.ParseBool,
+		false,
+	)
+	config.S3.ResponseChecksumValidationWhenRequired = envutil.GetEnvParsedOrDefault(
+		"TARGET_CONFIG_S3_RESPONSE_CHECKSUM_VALIDATION",
+		strconv.ParseBool,
+		false,
+	)
+	return config
+}
+
+func targetConfigOptionalEnv(key string) *string {
+	value := envutil.GetEnvOrNil(key)
+	if value != nil && *value == "" {
+		return nil
+	}
+	return value
 }
 
 func RegistryScratchDir() *string {

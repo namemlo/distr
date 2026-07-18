@@ -37,6 +37,8 @@ jobs:
         run: node hack/pr054a-validate-timestamp-expand.test.mjs
       - name: Validate timestamp expand Compose orchestration
         run: bash hack/test-server-compose-timestamp-expand.sh
+      - name: Validate target configuration object-store environment
+        run: bash hack/test-target-config-object-store-env.sh
       - name: Validate timestamp dirty recovery Compose orchestration
         shell: bash
         run: DISTR_TIMESTAMP_TEST_GROUP=dirty-recovery bash hack/test-server-compose-timestamp-expand.sh

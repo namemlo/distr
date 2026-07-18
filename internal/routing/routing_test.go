@@ -24,6 +24,8 @@ func TestDeploymentRegistryRoutesArePublishedInOpenAPI(t *testing.T) {
 		nil,
 		nil,
 		obsertracing.Tracers{Default: tracer, Agent: tracer},
+		nil,
+		nil,
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/docs/openapi.json", nil)
@@ -262,6 +264,39 @@ func TestDeploymentRegistryRoutesArePublishedInOpenAPI(t *testing.T) {
 		}
 		g.Expect(operation.Description).To(ContainSubstring("409 Conflict"))
 	}
+}
+
+func TestTargetConfigSnapshotRoutesArePublishedWithoutMutators(t *testing.T) {
+	g := NewWithT(t)
+	tracer := obsertracing.NoopTracer{}
+	router := NewRouter(
+		zap.NewNop(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		obsertracing.Tracers{Default: tracer, Agent: tracer},
+		nil,
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/docs/openapi.json", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusOK))
+	var document struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &document)).To(Succeed())
+	collection := document.Paths["/api/v1/target-config-snapshots"]
+	item := document.Paths["/api/v1/target-config-snapshots/{snapshotId}"]
+	verify := document.Paths["/api/v1/target-config-snapshots/{snapshotId}/verify"]
+	g.Expect(collection).To(And(HaveKey("get"), HaveKey("post")))
+	g.Expect(item).To(HaveKey("get"))
+	g.Expect(item).NotTo(Or(HaveKey("put"), HaveKey("patch"), HaveKey("delete")))
+	g.Expect(verify).To(HaveKey("post"))
 }
 
 type deploymentRegistryOpenAPIOperation struct {

@@ -1,0 +1,446 @@
+<div class="space-y-6">
+  <header>
+    <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Target configuration snapshots</h1>
+    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+      Review immutable, target-specific configuration evidence. Object bodies and secret values are never stored or
+      displayed here.
+    </p>
+  </header>
+
+  @if (actionError()) {
+    <div
+      role="alert"
+      class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+      {{ actionError() }}
+    </div>
+  }
+
+  @if (created()) {
+    <div
+      role="status"
+      class="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+      Immutable target configuration snapshot created.
+    </div>
+  }
+
+  @if (canMutate()) {
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <div>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Create immutable snapshot</h2>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          References must identify immutable objects. Secret references accept provider metadata and fingerprints only.
+        </p>
+      </div>
+
+      <form class="mt-4 grid gap-4 lg:grid-cols-2" [formGroup]="createForm" (ngSubmit)="createSnapshot()">
+        <label class="distr-label">
+          Deployment unit ID
+          <input class="distr-input mt-1 w-full" formControlName="deploymentUnitId" />
+        </label>
+        <label class="distr-label">
+          Target environment assignment ID
+          <input class="distr-input mt-1 w-full" formControlName="targetEnvironmentAssignmentId" />
+        </label>
+        <label class="distr-label">
+          Environment ID
+          <input class="distr-input mt-1 w-full" formControlName="environmentId" />
+        </label>
+        <label class="distr-label">
+          Target platform
+          <input class="distr-input mt-1 w-full" formControlName="targetPlatform" placeholder="linux/amd64" />
+        </label>
+        <label class="distr-label">
+          Source repository
+          <input class="distr-input mt-1 w-full" formControlName="sourceRepository" />
+        </label>
+        <label class="distr-label">
+          Source commit
+          <input class="distr-input mt-1 w-full font-mono" formControlName="sourceCommit" />
+        </label>
+        <label class="distr-label">
+          Source adapter
+          <input class="distr-input mt-1 w-full" formControlName="sourceAdapter" />
+        </label>
+        <label class="distr-label">
+          Adapter version
+          <input class="distr-input mt-1 w-full" formControlName="adapterVersion" />
+        </label>
+        <label class="distr-label">
+          Runtime constraints (JSON object of strings)
+          <textarea
+            class="distr-input mt-1 min-h-28 w-full font-mono text-xs"
+            formControlName="runtimeConstraints"></textarea>
+        </label>
+        <label class="distr-label">
+          Immutable objects (JSON array)
+          <textarea class="distr-input mt-1 min-h-28 w-full font-mono text-xs" formControlName="objects"></textarea>
+        </label>
+        <label class="distr-label">
+          Component mappings (JSON array)
+          <textarea class="distr-input mt-1 min-h-28 w-full font-mono text-xs" formControlName="components"></textarea>
+        </label>
+        <label class="distr-label">
+          Secret reference metadata (JSON array; no values)
+          <textarea
+            class="distr-input mt-1 min-h-28 w-full font-mono text-xs"
+            formControlName="secretReferences"
+            autocomplete="off"></textarea>
+        </label>
+        <label class="distr-label">
+          Feature flags (JSON array)
+          <textarea
+            class="distr-input mt-1 min-h-28 w-full font-mono text-xs"
+            formControlName="featureFlags"></textarea>
+        </label>
+        <div class="flex items-end">
+          <button type="submit" class="distr-btn-primary" [disabled]="creating()">
+            {{ creating() ? 'Creating…' : 'Create snapshot' }}
+          </button>
+        </div>
+      </form>
+    </section>
+  }
+
+  <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Immutable history</h2>
+        <button
+          type="button"
+          class="distr-btn-secondary px-3 py-2 text-sm"
+          [disabled]="loading()"
+          (click)="loadSnapshots()">
+          Refresh
+        </button>
+      </div>
+
+      @if (loading()) {
+        <p class="mt-4 text-sm text-gray-600 dark:text-gray-300">Loading snapshots…</p>
+      } @else if (loadError()) {
+        <p class="mt-4 text-sm text-red-700 dark:text-red-300">{{ loadError() }}</p>
+      } @else {
+        <div class="mt-4 overflow-x-auto">
+          <table class="distr-table">
+            <thead class="distr-table-head">
+              <tr>
+                <th scope="col" class="p-4">Created</th>
+                <th scope="col" class="p-4">Deployment unit</th>
+                <th scope="col" class="p-4">Source</th>
+                <th scope="col" class="p-4"><span class="sr-only">Open</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (snapshot of snapshots(); track snapshotKey(snapshot)) {
+                <tr class="distr-table-row">
+                  <td class="px-4 py-3 text-gray-700 dark:text-gray-300">
+                    <div>{{ snapshot.createdAt | date: 'medium' }}</div>
+                    <div class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+                      By {{ snapshot.createdByUserAccountId }}
+                    </div>
+                  </td>
+                  <td class="px-4 py-3">
+                    <div class="font-mono text-xs text-gray-900 dark:text-white">{{ snapshot.deploymentUnitId }}</div>
+                    <div class="font-mono text-xs text-gray-500 dark:text-gray-400">
+                      {{ snapshot.targetEnvironmentAssignmentId }}
+                    </div>
+                  </td>
+                  <td class="px-4 py-3">
+                    <div class="text-gray-900 dark:text-white">{{ snapshot.sourceAdapter }}</div>
+                    <div class="max-w-64 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+                      {{ snapshot.sourceCommit }}
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      class="distr-btn-secondary px-3 py-2 text-sm"
+                      [disabled]="loadingDetail()"
+                      (click)="selectSnapshot(snapshot)">
+                      View
+                    </button>
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                    No target configuration snapshots have been created.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        @if (nextCursor()) {
+          <button
+            type="button"
+            class="distr-btn-secondary mt-3 px-3 py-2 text-sm"
+            [disabled]="loadingMore()"
+            (click)="loadMore()">
+            {{ loadingMore() ? 'Loading…' : 'Load more' }}
+          </button>
+        }
+      }
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      @if (loadingDetail()) {
+        <p class="text-sm text-gray-600 dark:text-gray-300">Loading snapshot details…</p>
+      } @else if (selectedSnapshot(); as snapshot) {
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Snapshot detail</h2>
+            <div class="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">{{ snapshot.id }}</div>
+          </div>
+          @if (canMutate()) {
+            <button type="button" class="distr-btn-primary" [disabled]="verifying()" (click)="verifySnapshot()">
+              {{ verifying() ? 'Verifying…' : 'Verify objects' }}
+            </button>
+          }
+        </div>
+
+        <dl class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+          <div>
+            <dt class="text-gray-500 dark:text-gray-400">Canonical checksum</dt>
+            <dd class="break-all font-mono text-xs text-gray-900 dark:text-white">{{ snapshot.canonicalChecksum }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500 dark:text-gray-400">Created by user</dt>
+            <dd class="break-all font-mono text-xs text-gray-900 dark:text-white">
+              {{ snapshot.createdByUserAccountId }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-gray-500 dark:text-gray-400">Target platform</dt>
+            <dd class="text-gray-900 dark:text-white">{{ snapshot.targetPlatform }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500 dark:text-gray-400">Environment</dt>
+            <dd class="break-all font-mono text-xs text-gray-900 dark:text-white">{{ snapshot.environmentId }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500 dark:text-gray-400">Assignment</dt>
+            <dd class="break-all font-mono text-xs text-gray-900 dark:text-white">
+              {{ snapshot.targetEnvironmentAssignmentId }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-gray-500 dark:text-gray-400">Source</dt>
+            <dd class="break-all text-gray-900 dark:text-white">{{ snapshot.sourceRepository }}</dd>
+            <dd class="break-all font-mono text-xs text-gray-600 dark:text-gray-300">{{ snapshot.sourceCommit }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500 dark:text-gray-400">Adapter</dt>
+            <dd class="text-gray-900 dark:text-white">{{ snapshot.sourceAdapter }} {{ snapshot.adapterVersion }}</dd>
+          </div>
+        </dl>
+
+        <section class="mt-6">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Runtime constraints</h3>
+          <dl class="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+            @for (constraint of snapshot.runtimeConstraints | keyvalue; track constraint.key) {
+              <div>
+                <dt class="text-gray-500 dark:text-gray-400">{{ constraint.key }}</dt>
+                <dd class="text-gray-900 dark:text-white">{{ constraint.value }}</dd>
+              </div>
+            } @empty {
+              <div class="text-gray-500 dark:text-gray-400">None</div>
+            }
+          </dl>
+        </section>
+
+        <section class="mt-6">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Immutable objects</h3>
+          <div class="mt-2 overflow-x-auto">
+            <table class="distr-table">
+              <thead class="distr-table-head">
+                <tr>
+                  <th scope="col" class="p-4">Key / kind</th>
+                  <th scope="col" class="p-4">Reference</th>
+                  <th scope="col" class="p-4">Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (object of snapshot.objects; track objectKey(object)) {
+                  <tr class="distr-table-row">
+                    <td class="px-4 py-3">
+                      <div class="text-gray-900 dark:text-white">{{ object.key }}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">{{ object.kind }}</div>
+                    </td>
+                    <td class="px-4 py-3">
+                      <div class="max-w-80 break-all font-mono text-xs text-gray-700 dark:text-gray-300">
+                        {{ object.reference }}
+                      </div>
+                      @if (object.versionId) {
+                        <div class="mt-1 break-all text-xs text-gray-500 dark:text-gray-400">
+                          Version {{ object.versionId }}
+                        </div>
+                      }
+                    </td>
+                    <td class="px-4 py-3">
+                      <div class="text-xs text-gray-700 dark:text-gray-300">
+                        {{ object.mediaType }} · {{ object.sizeBytes }} bytes
+                      </div>
+                      <div class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+                        {{ object.checksum }}
+                      </div>
+                    </td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="3" class="px-4 py-6 text-center text-gray-500 dark:text-gray-400">
+                      No immutable objects.
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="mt-6">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Component mappings</h3>
+          <div class="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+            @for (component of snapshot.components; track component.componentInstanceId) {
+              <div class="rounded border border-gray-200 p-3 dark:border-gray-700">
+                <div class="font-medium text-gray-900 dark:text-white">{{ component.physicalName }}</div>
+                <div class="break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+                  {{ component.componentInstanceId }}
+                </div>
+              </div>
+            } @empty {
+              <div class="text-gray-500 dark:text-gray-400">No component mappings.</div>
+            }
+          </div>
+        </section>
+
+        <section class="mt-6">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Secret reference metadata</h3>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Only provider, opaque reference, and version fingerprint are visible. Secret values are never returned.
+          </p>
+          <div class="mt-2 overflow-x-auto">
+            <table class="distr-table">
+              <thead class="distr-table-head">
+                <tr>
+                  <th scope="col" class="p-4">Key</th>
+                  <th scope="col" class="p-4">Provider / opaque reference</th>
+                  <th scope="col" class="p-4">Version fingerprint</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (secret of snapshot.secretReferences; track secret.key) {
+                  <tr class="distr-table-row">
+                    <td class="px-4 py-3 text-gray-900 dark:text-white">{{ secret.key }}</td>
+                    <td class="px-4 py-3">
+                      <div class="text-gray-900 dark:text-white">{{ secret.provider }}</div>
+                      <div class="break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+                        {{ secret.opaqueReference }}
+                      </div>
+                    </td>
+                    <td class="break-all px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
+                      {{ secret.versionFingerprint }}
+                    </td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="3" class="px-4 py-6 text-center text-gray-500 dark:text-gray-400">
+                      No secret references.
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="mt-6">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Feature flags</h3>
+          <div class="mt-2 flex flex-wrap gap-2">
+            @for (flag of snapshot.featureFlags; track flag.key) {
+              <span
+                class="rounded px-2 py-1 text-xs font-medium"
+                [class]="
+                  flag.enabled
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+                    : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                ">
+                {{ flag.key }}: {{ flag.enabled ? 'enabled' : 'disabled' }}
+              </span>
+            } @empty {
+              <span class="text-sm text-gray-500 dark:text-gray-400">No feature flags.</span>
+            }
+          </div>
+        </section>
+
+        @if (verification(); as result) {
+          <section class="mt-6 border-t border-gray-200 pt-5 dark:border-gray-700">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Object verification</h3>
+              <span
+                class="rounded px-2 py-1 text-xs font-semibold"
+                [class]="
+                  result.verified
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+                    : verificationUnavailable(result)
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300'
+                      : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
+                ">
+                {{ verificationStatusLabel(result) }}
+              </span>
+            </div>
+            <div class="mt-3 space-y-2">
+              @for (object of result.objects; track object.key) {
+                <div class="rounded border border-gray-200 p-3 text-sm dark:border-gray-700">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="font-medium text-gray-900 dark:text-white">{{ object.key }}</span>
+                    <span class="font-mono text-xs text-gray-600 dark:text-gray-300">{{ object.code }}</span>
+                  </div>
+                  <p class="mt-1 text-gray-700 dark:text-gray-300">{{ verificationMessage(object) }}</p>
+                  @if (
+                    object.observedVersionId ||
+                    object.observedMediaType ||
+                    object.observedSizeBytes !== undefined ||
+                    object.observedChecksum
+                  ) {
+                    <dl class="mt-2 grid gap-2 text-xs text-gray-500 dark:text-gray-400 sm:grid-cols-2">
+                      @if (object.observedVersionId) {
+                        <div>
+                          <dt>Observed version</dt>
+                          <dd class="break-all font-mono">{{ object.observedVersionId }}</dd>
+                        </div>
+                      }
+                      @if (object.observedMediaType) {
+                        <div>
+                          <dt>Observed media type</dt>
+                          <dd class="break-all font-mono">{{ object.observedMediaType }}</dd>
+                        </div>
+                      }
+                      @if (object.observedSizeBytes !== undefined) {
+                        <div>
+                          <dt>Observed size</dt>
+                          <dd class="font-mono">{{ object.observedSizeBytes }} bytes</dd>
+                        </div>
+                      }
+                      @if (object.observedChecksum) {
+                        <div>
+                          <dt>Observed checksum</dt>
+                          <dd class="break-all font-mono">{{ object.observedChecksum }}</dd>
+                        </div>
+                      }
+                    </dl>
+                  }
+                </div>
+              } @empty {
+                <p class="text-sm text-gray-500 dark:text-gray-400">No object verification facts were returned.</p>
+              }
+            </div>
+          </section>
+        }
+      } @else {
+        <div class="flex min-h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+          Select a snapshot to inspect its immutable evidence and verification state.
+        </div>
+      }
+    </section>
+  </div>
+</div>

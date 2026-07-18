@@ -44,3 +44,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 ## Current Control-Plane Program
 
 - [ADR-0056: Canonical Deployment Registry Identity](0056-canonical-deployment-registry-identity.md)
+- [ADR-0057: Immutable Target Config Snapshots](0057-immutable-target-config-snapshots.md)

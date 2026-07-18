@@ -80,6 +80,24 @@ random_b64() {
   openssl rand -base64 "$1" | tr -d '\n' || return
 }
 
+initialize_target_config_object_store_secret() {
+  local generated_secret="${1:-}" access_key configured_secret
+  [[ -n "$generated_secret" ]] || return 1
+  access_key="$(sed -n 's/^TARGET_CONFIG_S3_ACCESS_KEY_ID=//p' "$ENV_FILE")" || return
+  configured_secret="$(sed -n 's/^TARGET_CONFIG_S3_SECRET_ACCESS_KEY=//p' "$ENV_FILE")" || return
+
+  if [[ -z "$access_key" && -z "$configured_secret" ]]; then
+    return 0
+  fi
+  [[ -n "$access_key" && -n "$configured_secret" ]] || {
+    die "target-config static credentials must be configured as a complete pair"
+    return 1
+  }
+  if [[ "${configured_secret^^}" == *CHANGE_ME* ]]; then
+    set_env_var "TARGET_CONFIG_S3_SECRET_ACCESS_KEY" "$generated_secret" || return
+  fi
+}
+
 init_env() {
   [[ ! -e "${ENV_FILE}" && ! -L "${ENV_FILE}" ]] || {
     die "${ENV_FILE} already exists"
@@ -98,6 +116,7 @@ init_env() {
   set_env_var "POSTGRES_PASSWORD" "${postgres_password}" || return
   set_env_var "DATABASE_URL" "postgres://distr:${postgres_password}@postgres:5432/distr?sslmode=disable" || return
   set_env_var "REGISTRY_S3_SECRET_ACCESS_KEY" "${rustfs_secret}" || return
+  initialize_target_config_object_store_secret "${rustfs_secret}" || return
   set_env_var "RUSTFS_SECRET_KEY" "${rustfs_secret}" || return
   set_env_var "JWT_SECRET" "${jwt_secret}" || return
   set_env_var "DISTR_IMAGE_TAG" "${tag}" || return
@@ -108,6 +127,7 @@ init_env() {
 
 check_image_env() {
   load_env || return
+  check_target_config_object_store_env || return
   local required=(
     AWS_REGION DISTR_IMAGE DISTR_IMAGE_TAG
   )
@@ -123,6 +143,71 @@ check_image_env() {
   }
   [[ "${DISTR_IMAGE_TAG}" != "latest" ]] || {
     die "DISTR_IMAGE_TAG must be immutable; do not deploy latest"
+    return 1
+  }
+}
+
+check_target_config_object_store_env() {
+  local enabled="${TARGET_CONFIG_OBJECT_STORE_ENABLED:-false}" key value
+  local endpoint="${TARGET_CONFIG_S3_ENDPOINT:-}"
+  local access_key="${TARGET_CONFIG_S3_ACCESS_KEY_ID:-}"
+  local secret_key="${TARGET_CONFIG_S3_SECRET_ACCESS_KEY:-}"
+  case "$enabled" in
+    false) return 0 ;;
+    true) ;;
+    *)
+      die "TARGET_CONFIG_OBJECT_STORE_ENABLED must be true or false in ${ENV_FILE}"
+      return 1
+      ;;
+  esac
+
+  for key in \
+    TARGET_CONFIG_S3_REGION \
+    TARGET_CONFIG_S3_BUCKET; do
+    value="${!key:-}"
+    [[ -n "$value" ]] || { die "${key} is empty in ${ENV_FILE}"; return 1; }
+    [[ "${value^^}" != *CHANGE_ME* ]] || {
+      die "${key} still contains CHANGE_ME in ${ENV_FILE}"
+      return 1
+    }
+  done
+
+  [[ "$TARGET_CONFIG_S3_REGION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || {
+    die "TARGET_CONFIG_S3_REGION is invalid in ${ENV_FILE}"
+    return 1
+  }
+  [[ "$TARGET_CONFIG_S3_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ &&
+     "$TARGET_CONFIG_S3_BUCKET" != *..* ]] || {
+    die "TARGET_CONFIG_S3_BUCKET is invalid in ${ENV_FILE}"
+    return 1
+  }
+  if [[ -n "$endpoint" ]]; then
+    [[ "${endpoint^^}" != *CHANGE_ME* &&
+       "$endpoint" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^[:space:]@?#]*)?$ ]] || {
+      die "TARGET_CONFIG_S3_ENDPOINT must be a credential-free HTTP(S) endpoint in ${ENV_FILE}"
+      return 1
+    }
+  fi
+  if [[ (-n "$access_key" && -z "$secret_key") ||
+        (-z "$access_key" && -n "$secret_key") ]]; then
+    die "target-config static credentials must be configured as a complete pair in ${ENV_FILE}"
+    return 1
+  fi
+  if [[ -z "$access_key" ]]; then
+    return 0
+  fi
+  [[ "${access_key^^}" != *CHANGE_ME* &&
+     "$access_key" =~ ^[A-Za-z0-9._~+/=-]+$ &&
+     ${#access_key} -ge 3 &&
+     ${#access_key} -le 256 ]] || {
+    die "TARGET_CONFIG_S3_ACCESS_KEY_ID is invalid in ${ENV_FILE}"
+    return 1
+  }
+  [[ "${secret_key^^}" != *CHANGE_ME* &&
+     "$secret_key" =~ ^[A-Za-z0-9._~+/=-]+$ &&
+     ${#secret_key} -ge 8 &&
+     ${#secret_key} -le 512 ]] || {
+    die "TARGET_CONFIG_S3_SECRET_ACCESS_KEY is invalid in ${ENV_FILE}"
     return 1
   }
 }
@@ -206,6 +291,7 @@ check_timestamp_apply_env() {
 
 check_runtime_env() {
   load_env || return
+  check_target_config_object_store_env || return
   local required=(
     COMPOSE_PROJECT_NAME POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB DATABASE_URL
     DISTR_HOST REGISTRY_HOST JWT_SECRET RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY

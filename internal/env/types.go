@@ -3,6 +3,9 @@ package env
 import (
 	"fmt"
 	"net/mail"
+	"net/url"
+	"regexp"
+	"strings"
 )
 
 type RegistrationMode string
@@ -82,6 +85,85 @@ type S3Config struct {
 	RequestChecksumCalculationWhenRequired bool
 	ResponseChecksumValidationWhenRequired bool
 	ResignForGCP                           bool
+}
+
+type TargetConfigObjectStoreConfig struct {
+	Enabled bool
+	S3      S3Config
+}
+
+var (
+	targetConfigRegionPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	targetConfigBucketPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+	targetConfigCredentialPattern = regexp.MustCompile(`^[A-Za-z0-9._~+/=-]+$`)
+)
+
+func (config TargetConfigObjectStoreConfig) Configured() bool {
+	if !config.Enabled ||
+		!validTargetConfigRegion(config.S3.Region) ||
+		!validTargetConfigEndpoint(config.S3.Endpoint) ||
+		!validTargetConfigBucket(config.S3.Bucket) ||
+		!validTargetConfigCredentials(config.S3.AccessKeyID, config.S3.SecretAccessKey) {
+		return false
+	}
+	return true
+}
+
+func validTargetConfigRegion(value string) bool {
+	return value == strings.TrimSpace(value) &&
+		!targetConfigPlaceholder(value) &&
+		targetConfigRegionPattern.MatchString(value)
+}
+
+func validTargetConfigEndpoint(value *string) bool {
+	if value == nil || *value == "" {
+		return true
+	}
+	if *value != strings.TrimSpace(*value) || targetConfigPlaceholder(*value) {
+		return false
+	}
+	parsed, err := url.Parse(*value)
+	return err == nil &&
+		(parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		parsed.Host != "" &&
+		parsed.User == nil &&
+		parsed.RawQuery == "" &&
+		parsed.Fragment == ""
+}
+
+func validTargetConfigCredentials(accessKey, secretKey *string) bool {
+	accessConfigured := accessKey != nil && *accessKey != ""
+	secretConfigured := secretKey != nil && *secretKey != ""
+	if accessConfigured != secretConfigured {
+		return false
+	}
+	if !accessConfigured {
+		return true
+	}
+	return validTargetConfigCredential(accessKey, 3, 256) &&
+		validTargetConfigCredential(secretKey, 8, 512)
+}
+
+func validTargetConfigBucket(value string) bool {
+	return value == strings.TrimSpace(value) &&
+		!targetConfigPlaceholder(value) &&
+		!strings.Contains(value, "..") &&
+		targetConfigBucketPattern.MatchString(value)
+}
+
+func validTargetConfigCredential(value *string, minLength, maxLength int) bool {
+	if value == nil ||
+		*value != strings.TrimSpace(*value) ||
+		targetConfigPlaceholder(*value) ||
+		len(*value) < minLength ||
+		len(*value) > maxLength {
+		return false
+	}
+	return targetConfigCredentialPattern.MatchString(*value)
+}
+
+func targetConfigPlaceholder(value string) bool {
+	return strings.Contains(strings.ToUpper(value), "CHANGE_ME")
 }
 
 type SamplerType string

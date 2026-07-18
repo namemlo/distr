@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/authjwt"
 	"github.com/distr-sh/distr/internal/authkey"
@@ -41,6 +42,7 @@ func ContextInjectorMiddleware(
 	prometheusCollector *prometheus.DistrCollector,
 	metricsRecorder obsermetrics.Recorder,
 	tracingTracer obsertracing.Tracer,
+	s3Client *s3.Client,
 ) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +53,9 @@ func ContextInjectorMiddleware(
 			ctx = internalctx.WithObservabilityMetricsRecorder(ctx, metricsRecorder)
 			ctx = internalctx.WithObservabilityTracer(ctx, tracingTracer)
 			ctx = internalctx.WithOIDCer(ctx, oidcer)
+			if s3Client != nil {
+				ctx = internalctx.WithS3Client(ctx, s3Client)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
