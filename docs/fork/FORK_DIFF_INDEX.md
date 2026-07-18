@@ -1407,3 +1407,23 @@ Use one entry per pull request:
   or client-database behavior.
 - Compatibility notes: Existing v1 plans, tasks, agents, and execution remain unchanged. PR-072 consumes the
   immutable revision and its stable runtime expectation contract.
+### PR-072 - Campaign scheduler and thresholds
+
+- Status: Implemented on the synthetic PR-069 base; sequential migration and PR-071 replay verification are
+  deferred to the integration gate.
+- Upstream base: `43a57716`.
+- Feature flag: Runtime route registration remains a PR-071 replay seam behind `operator_control_plane_v2`.
+- User-facing behavior: Campaign runs advance through an optimistic persisted state machine and admit members in
+  deterministic wave/member/plan order.
+- Database changes: Migration 154 adds campaign, wave, and member runs, fenced scheduler leases, append-only
+  prerequisite evidence, and append-only threshold evaluations.
+- API changes: Adds a feature-local campaign-run representation and handler seam.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-072 fork notes, including the exact PR-077 trusted-observation seam.
+- Tests: Added state-transition, bake, threshold, deterministic scheduling, duplicate-tick, lease-loss,
+  fail-closed observation, repository contract, API, mapping, and handler coverage.
+- Upstream contribution notes: Community-neutral scheduling primitives with no adopter, provider, host, credential,
+  or client database behavior.
+- Compatibility notes: Existing v1 deployments and execution are unchanged. Trusted observation prerequisites
+  fail closed until PR-077 is wired.

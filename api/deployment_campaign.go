@@ -3,12 +3,11 @@ package api
 import (
 	"errors"
 	"fmt"
+	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/distr-sh/distr/internal/types"
-	"github.com/google/uuid"
 )
 
 type CampaignMembershipRequest struct {
@@ -248,4 +247,18 @@ type DeploymentCampaignRevision struct {
 type DeploymentCampaignValidationResponse struct {
 	Valid  bool                    `json:"valid"`
 	Issues []types.ValidationIssue `json:"issues"`
+}
+
+type DeploymentCampaignRun struct {
+	ID                 uuid.UUID              `json:"id"`
+	CreatedAt          time.Time              `json:"createdAt"`
+	UpdatedAt          time.Time              `json:"updatedAt"`
+	CampaignRevisionID uuid.UUID              `json:"campaignRevisionId"`
+	State              types.CampaignRunState `json:"state"`
+	Version            int64                  `json:"version"`
+	CurrentWaveOrder   int                    `json:"currentWaveOrder"`
+	CurrentMemberOrder int                    `json:"currentMemberOrder"`
+	AdmissionsBlocked  bool                   `json:"admissionsBlocked"`
+	FencingToken       int64                  `json:"fencingToken"`
+	LeaseExpiresAt     *time.Time             `json:"leaseExpiresAt,omitempty"`
 }

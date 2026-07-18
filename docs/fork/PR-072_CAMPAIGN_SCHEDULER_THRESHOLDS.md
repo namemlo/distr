@@ -1,0 +1,69 @@
+# PR-072: Campaign Scheduler and Thresholds
+
+## Scope
+
+PR-072 adds the persisted runtime for immutable deployment campaigns without
+changing v1 deployment execution. Migration 154 introduces campaign, wave, and
+member runs plus append-only prerequisite and threshold evaluations.
+
+The runtime is deterministic: pending members are admitted by
+`(wave_order, member_order, deployment_plan_id)`. Every mutation is protected
+by a monotonically increasing lease fencing token. A repeated tick is harmless
+because only a `PENDING` member can become `ADMITTED`.
+
+## State and safety
+
+The state machine accepts the validated path:
+
+`DRAFT -> VALIDATED -> AWAITING_APPROVAL -> SCHEDULED -> RUNNING -> COMPLETED`
+
+Running campaigns can pause, fail, or cancel. Paused campaigns can resume,
+fail, or cancel. State changes use an expected version and append evidence to
+the run. Paused or terminal runs block new admission.
+
+Wave bake durations must be positive and non-decreasing. Threshold evaluation
+is recorded before admission; a breached failure-rate threshold atomically
+blocks exposure and pauses the run.
+
+## Trusted observation seam
+
+`internal/campaigns.CampaignObservationVerifier` is the compile-safe PR-077
+integration point:
+
+```go
+type CampaignObservationVerifier interface {
+    VerifyCampaignObservation(context.Context, uuid.UUID, uuid.UUID, string) error
+}
+```
+
+The arguments are organization ID, observation ID, and checksum. The default
+`UnwiredCampaignObservationVerifier` returns
+`ErrCampaignObservationVerifierUnavailable`. The scheduler records an
+unmatched prerequisite evaluation with no trusted actual binding, pauses the
+campaign, and admits nothing. It never substitutes a newer observation or
+rebinds the frozen expected checksum.
+
+PR-077 must provide the organization-scoped implementation and populate the
+candidate's observation ID/checksum. Until then every prerequisite requiring a
+trusted observation fails closed.
+
+## Replay seams
+
+This change was built on the deliberately synthetic PR-069 base. During stack
+replay:
+
+- migration 154 must follow PR-070 migration 152 and PR-071 migration 153;
+- `DeploymentCampaignRevision` and `DeploymentCampaignWave` foreign-key column
+  names must be checked against the final PR-071 schema;
+- PR-071's campaign API and type files must be combined with the feature-local
+  runtime representations in this change;
+- PR-071 must create run, wave-run, and member-run rows from a published
+  revision and populate prerequisite candidates;
+- the authenticated campaign-run route must be registered behind
+  `operator_control_plane_v2`.
+
+## Compatibility
+
+No existing route, deployment task, agent protocol, or v1 execution behavior is
+changed. Campaign scheduling remains unavailable unless the earlier campaign
+revision stack is present and the experimental control-plane feature is wired.

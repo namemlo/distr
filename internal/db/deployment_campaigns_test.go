@@ -2,18 +2,17 @@ package db
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
-	"testing"
-
 	"github.com/distr-sh/distr/internal/campaigns"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	. "github.com/onsi/gomega"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
 )
 
 func TestCampaignRevisionMigrationFreezesMembershipAndPrerequisites(t *testing.T) {
@@ -379,4 +378,35 @@ func campaignTestHex(value string) string {
 		result += value
 	}
 	return result
+}
+
+func TestCampaignRunMigrationPersistsFencingAndExactPrerequisiteEvidence(t *testing.T) {
+	g := NewWithT(t)
+	sql, err := os.ReadFile("../migrations/sql/154_deployment_campaign_runs.up.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	contents := string(sql)
+
+	for _, required := range []string{
+		"DeploymentCampaignRun",
+		"DeploymentCampaignWaveRun",
+		"DeploymentCampaignMemberRun",
+		"CampaignPrerequisiteEvaluation",
+		"CampaignThresholdEvaluation",
+		"fencing_token",
+		"expected_checksum",
+		"actual_observation_id",
+		"actual_checksum",
+		"UNIQUE (campaign_run_id, wave_order, member_order, deployment_plan_id)",
+	} {
+		g.Expect(contents).To(ContainSubstring(required))
+	}
+	g.Expect(strings.Count(contents, "CREATE TABLE")).To(Equal(5))
+}
+
+func TestCampaignRepositoryUsesOptimisticTransitionsAndFencedAdmissions(t *testing.T) {
+	g := NewWithT(t)
+	g.Expect(transitionCampaignSQL).To(ContainSubstring("version = @expected_version"))
+	g.Expect(transitionCampaignSQL).To(ContainSubstring("transition_evidence"))
+	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("fencing_token = @fencing_token"))
+	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("status = 'PENDING'"))
 }

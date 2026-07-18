@@ -1,10 +1,11 @@
 package api
 
 import (
-	"testing"
-
+	"encoding/json"
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
+	"testing"
 )
 
 func TestCampaignRevisionDraftRequestValidatesBoundedFrozenInputs(t *testing.T) {
@@ -44,4 +45,18 @@ func validDeploymentCampaignDraftRequest() CreateDeploymentCampaignDraftRequest 
 			MinimumHealthyBasisPoints:   9500,
 		},
 	}
+}
+
+func TestCampaignRunResponseIncludesFencingAndAdmissionState(t *testing.T) {
+	g := NewWithT(t)
+	payload, err := json.Marshal(DeploymentCampaignRun{
+		ID:                uuid.New(),
+		State:             types.CampaignRunStatePaused,
+		Version:           4,
+		AdmissionsBlocked: true,
+		FencingToken:      12,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).To(ContainSubstring(`"admissionsBlocked":true`))
+	g.Expect(string(payload)).To(ContainSubstring(`"fencingToken":12`))
 }

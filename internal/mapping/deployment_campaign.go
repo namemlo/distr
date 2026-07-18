@@ -129,3 +129,19 @@ func campaignPrerequisiteToAPI(
 		ExpectedRuntimeStateChecksum: prerequisite.ExpectedRuntimeStateChecksum,
 	}
 }
+
+func DeploymentCampaignRunToAPI(run types.CampaignRun) api.DeploymentCampaignRun {
+	return api.DeploymentCampaignRun{
+		ID:                 run.ID,
+		CreatedAt:          run.CreatedAt,
+		UpdatedAt:          run.UpdatedAt,
+		CampaignRevisionID: run.CampaignRevisionID,
+		State:              run.State,
+		Version:            run.Version,
+		CurrentWaveOrder:   run.CurrentWaveOrder,
+		CurrentMemberOrder: run.CurrentMemberOrder,
+		AdmissionsBlocked:  run.AdmissionsBlocked,
+		FencingToken:       run.FencingToken,
+		LeaseExpiresAt:     run.LeaseExpiresAt,
+	}
+}

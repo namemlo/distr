@@ -1,11 +1,10 @@
 package mapping
 
 import (
-	"testing"
-
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
+	"testing"
 )
 
 func TestCampaignRevisionToAPIPreservesFrozenPrerequisite(t *testing.T) {
@@ -86,4 +85,20 @@ func mappingCampaignHex(value string) string {
 		result += value
 	}
 	return result
+}
+
+func TestCampaignRunToAPIMapsOperationalEvidence(t *testing.T) {
+	g := NewWithT(t)
+	run := types.CampaignRun{
+		ID:                uuid.New(),
+		State:             types.CampaignRunStateRunning,
+		Version:           5,
+		AdmissionsBlocked: true,
+		FencingToken:      17,
+	}
+	mapped := DeploymentCampaignRunToAPI(run)
+	g.Expect(mapped.ID).To(Equal(run.ID))
+	g.Expect(mapped.State).To(Equal(run.State))
+	g.Expect(mapped.AdmissionsBlocked).To(BeTrue())
+	g.Expect(mapped.FencingToken).To(Equal(int64(17)))
 }

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/campaigns"
 	internalctx "github.com/distr-sh/distr/internal/context"
@@ -15,6 +13,8 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"strings"
+	"time"
 )
 
 const campaignCandidateQuery = `
@@ -1127,4 +1127,469 @@ func campaignContainsUUID(values []uuid.UUID, value uuid.UUID) bool {
 		}
 	}
 	return false
+}
+
+const transitionCampaignSQL = `
+UPDATE DeploymentCampaignRun
+SET state = @to_state,
+    version = version + 1,
+    updated_at = @transitioned_at,
+    admissions_blocked = @admissions_blocked,
+    transition_evidence = transition_evidence || jsonb_build_array(
+      jsonb_build_object(
+        'from', state,
+        'to', @to_state,
+        'reason', @reason,
+        'actorId', @actor_id,
+        'at', @transitioned_at,
+        'expectedVersion', @expected_version
+      )
+    )
+WHERE id = @run_id
+  AND organization_id = @organization_id
+  AND version = @expected_version
+RETURNING
+  id,
+  created_at,
+  updated_at,
+  organization_id,
+  campaign_revision_id,
+  state,
+  version,
+  current_wave_order,
+  current_member_order,
+  admissions_blocked,
+  fencing_token,
+  COALESCE(lease_holder, ''),
+  lease_expires_at`
+
+const admitCampaignMemberSQL = `
+UPDATE DeploymentCampaignMemberRun AS member_run
+SET status = 'ADMITTED',
+    admitted_at = @admitted_at,
+    admitted_fencing_token = @fencing_token
+FROM DeploymentCampaignRun AS campaign_run
+WHERE member_run.id = @member_run_id
+  AND member_run.campaign_run_id = @run_id
+  AND member_run.status = 'PENDING'
+  AND campaign_run.id = member_run.campaign_run_id
+  AND campaign_run.state = 'RUNNING'
+  AND campaign_run.admissions_blocked = FALSE
+  AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.lease_expires_at > @admitted_at`
+
+type CampaignRepository struct{}
+
+func TransitionCampaign(
+	ctx context.Context,
+	transition types.CampaignTransition,
+) (*types.CampaignRun, error) {
+	var current types.CampaignRun
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT state, version
+FROM DeploymentCampaignRun
+WHERE id = @run_id AND organization_id = @organization_id`,
+		pgx.NamedArgs{
+			"run_id":          transition.RunID,
+			"organization_id": transition.OrganizationID,
+		},
+	).Scan(&current.State, &current.Version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := campaigns.NextCampaignRun(current, transition); err != nil {
+		return nil, apierrors.NewConflict(err.Error())
+	}
+
+	at := transition.At
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	blocked := transition.To == types.CampaignRunStatePaused ||
+		transition.To == types.CampaignRunStateFailed ||
+		transition.To == types.CampaignRunStateCompleted ||
+		transition.To == types.CampaignRunStateCanceled
+	run, err := scanCampaignRun(internalctx.GetDb(ctx).QueryRow(ctx, transitionCampaignSQL, pgx.NamedArgs{
+		"run_id":             transition.RunID,
+		"organization_id":    transition.OrganizationID,
+		"expected_version":   transition.ExpectedVersion,
+		"to_state":           transition.To,
+		"reason":             transition.Reason,
+		"actor_id":           transition.ActorID,
+		"transitioned_at":    at,
+		"admissions_blocked": blocked,
+	}))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.NewConflict("campaign run changed or does not exist")
+	}
+	return run, err
+}
+
+func EvaluateNextWaveAdmission(
+	ctx context.Context,
+	runID uuid.UUID,
+	now time.Time,
+) (types.WaveAdmission, error) {
+	row := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT
+  member_run.id,
+  member_run.wave_run_id,
+  member_run.wave_order,
+  member_run.member_order,
+  member_run.deployment_plan_id
+FROM DeploymentCampaignMemberRun AS member_run
+JOIN DeploymentCampaignRun AS campaign_run
+  ON campaign_run.id = member_run.campaign_run_id
+WHERE member_run.campaign_run_id = @run_id
+  AND member_run.status = 'PENDING'
+  AND campaign_run.state = 'RUNNING'
+  AND campaign_run.admissions_blocked = FALSE
+  AND (
+    campaign_run.lease_expires_at IS NULL
+    OR campaign_run.lease_expires_at > @evaluated_at
+  )
+ORDER BY
+  member_run.wave_order,
+  member_run.member_order,
+  member_run.deployment_plan_id
+LIMIT 1`, pgx.NamedArgs{"run_id": runID, "evaluated_at": now})
+	var candidate types.CampaignMemberCandidate
+	err := row.Scan(
+		&candidate.MemberRunID,
+		&candidate.WaveRunID,
+		&candidate.WaveOrder,
+		&candidate.MemberOrder,
+		&candidate.PlanID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return types.WaveAdmission{
+			CampaignRunID: runID,
+			Allowed:       false,
+			Reason:        "no admissible campaign member",
+		}, nil
+	}
+	if err != nil {
+		return types.WaveAdmission{}, err
+	}
+	return types.WaveAdmission{CampaignRunID: runID, Candidate: &candidate, Allowed: true}, nil
+}
+
+func RecordCampaignPrerequisiteEvaluation(
+	ctx context.Context,
+	evaluation types.CampaignPrerequisiteEvaluation,
+) error {
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+INSERT INTO CampaignPrerequisiteEvaluation (
+  id,
+  evaluated_at,
+  campaign_run_id,
+  member_run_id,
+  organization_id,
+  upstream_plan_id,
+  step_key,
+  expected_checksum,
+  actual_observation_id,
+  actual_checksum,
+  matched,
+  reason,
+  fencing_token
+)
+SELECT
+  @id,
+  @evaluated_at,
+  @campaign_run_id,
+  @member_run_id,
+  campaign_run.organization_id,
+  @upstream_plan_id,
+  @step_key,
+  @expected_checksum,
+  NULLIF(@actual_observation_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  NULLIF(@actual_checksum, ''),
+  @matched,
+  @reason,
+  @fencing_token
+FROM DeploymentCampaignRun AS campaign_run
+WHERE campaign_run.id = @campaign_run_id
+  AND campaign_run.fencing_token = @fencing_token`, prerequisiteEvaluationArgs(evaluation))
+	return err
+}
+
+func RecordThresholdEvaluation(
+	ctx context.Context,
+	evaluation types.CampaignThresholdEvaluation,
+) error {
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+INSERT INTO CampaignThresholdEvaluation (
+  id,
+  evaluated_at,
+  campaign_run_id,
+  organization_id,
+  samples,
+  successful,
+  failed,
+  failure_rate,
+  maximum_failure_rate,
+  breached,
+  fencing_token
+)
+SELECT
+  @id,
+  @evaluated_at,
+  @campaign_run_id,
+  campaign_run.organization_id,
+  @samples,
+  @successful,
+  @failed,
+  @failure_rate,
+  @maximum_failure_rate,
+  @breached,
+  @fencing_token
+FROM DeploymentCampaignRun AS campaign_run
+WHERE campaign_run.id = @campaign_run_id
+  AND campaign_run.fencing_token = @fencing_token`, thresholdEvaluationArgs(evaluation))
+	return err
+}
+
+func GetDeploymentCampaignRun(
+	ctx context.Context,
+	runID uuid.UUID,
+	organizationID uuid.UUID,
+) (*types.CampaignRun, error) {
+	run, err := scanCampaignRun(internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT
+  id,
+  created_at,
+  updated_at,
+  organization_id,
+  campaign_revision_id,
+  state,
+  version,
+  current_wave_order,
+  current_member_order,
+  admissions_blocked,
+  fencing_token,
+  COALESCE(lease_holder, ''),
+  lease_expires_at
+FROM DeploymentCampaignRun
+WHERE id = @run_id AND organization_id = @organization_id`,
+		pgx.NamedArgs{"run_id": runID, "organization_id": organizationID},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	return run, err
+}
+
+func (CampaignRepository) AcquireCampaignLease(
+	ctx context.Context,
+	runID uuid.UUID,
+	holder string,
+	now time.Time,
+	duration time.Duration,
+) (types.CampaignLease, bool, error) {
+	var lease types.CampaignLease
+	lease.RunID = runID
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+UPDATE DeploymentCampaignRun
+SET lease_holder = @holder,
+    lease_expires_at = @expires_at,
+    fencing_token = fencing_token + 1,
+    updated_at = @now
+WHERE id = @run_id
+  AND state IN ('SCHEDULED', 'RUNNING', 'PAUSED')
+  AND (
+    lease_expires_at IS NULL
+    OR lease_expires_at <= @now
+    OR lease_holder = @holder
+  )
+RETURNING lease_holder, fencing_token, lease_expires_at`, pgx.NamedArgs{
+		"run_id":     runID,
+		"holder":     holder,
+		"now":        now,
+		"expires_at": now.Add(duration),
+	}).Scan(&lease.Holder, &lease.FencingToken, &lease.LeaseExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return types.CampaignLease{}, false, nil
+	}
+	return lease, err == nil, err
+}
+
+func (CampaignRepository) LoadCampaignSchedule(
+	ctx context.Context,
+	runID uuid.UUID,
+	fencingToken int64,
+) (types.CampaignSchedule, error) {
+	run, err := scanCampaignRun(internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT
+  id, created_at, updated_at, organization_id, campaign_revision_id,
+  state, version, current_wave_order, current_member_order,
+  admissions_blocked, fencing_token, COALESCE(lease_holder, ''), lease_expires_at
+FROM DeploymentCampaignRun
+WHERE id = @run_id AND fencing_token = @fencing_token`,
+		pgx.NamedArgs{"run_id": runID, "fencing_token": fencingToken},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return types.CampaignSchedule{}, fmt.Errorf("campaign scheduler lease lost")
+	}
+	if err != nil {
+		return types.CampaignSchedule{}, err
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+SELECT id, wave_run_id, wave_order, member_order, deployment_plan_id
+FROM DeploymentCampaignMemberRun
+WHERE campaign_run_id = @run_id AND status = 'PENDING'
+ORDER BY wave_order, member_order, deployment_plan_id`,
+		pgx.NamedArgs{"run_id": runID},
+	)
+	if err != nil {
+		return types.CampaignSchedule{}, err
+	}
+	defer rows.Close()
+	schedule := types.CampaignSchedule{Run: *run}
+	for rows.Next() {
+		var candidate types.CampaignMemberCandidate
+		if err := rows.Scan(
+			&candidate.MemberRunID,
+			&candidate.WaveRunID,
+			&candidate.WaveOrder,
+			&candidate.MemberOrder,
+			&candidate.PlanID,
+		); err != nil {
+			return types.CampaignSchedule{}, err
+		}
+		schedule.Candidates = append(schedule.Candidates, candidate)
+	}
+	return schedule, rows.Err()
+}
+
+func (CampaignRepository) RecordCampaignPrerequisiteEvaluation(
+	ctx context.Context,
+	evaluation types.CampaignPrerequisiteEvaluation,
+	fencingToken int64,
+) error {
+	evaluation.FencingToken = fencingToken
+	return RecordCampaignPrerequisiteEvaluation(ctx, evaluation)
+}
+
+func (CampaignRepository) RecordCampaignThresholdEvaluation(
+	ctx context.Context,
+	evaluation types.CampaignThresholdEvaluation,
+	fencingToken int64,
+) error {
+	evaluation.FencingToken = fencingToken
+	return RecordThresholdEvaluation(ctx, evaluation)
+}
+
+func (CampaignRepository) AdmitCampaignMember(
+	ctx context.Context,
+	admission types.CampaignMemberAdmission,
+	fencingToken int64,
+) (bool, error) {
+	tag, err := internalctx.GetDb(ctx).Exec(ctx, admitCampaignMemberSQL, pgx.NamedArgs{
+		"member_run_id": admission.MemberRunID,
+		"run_id":        admission.RunID,
+		"admitted_at":   admission.AdmittedAt,
+		"fencing_token": fencingToken,
+	})
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		var currentToken int64
+		err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT fencing_token FROM DeploymentCampaignRun WHERE id = @run_id`,
+			pgx.NamedArgs{"run_id": admission.RunID},
+		).Scan(&currentToken)
+		if err == nil && currentToken != fencingToken {
+			return false, fmt.Errorf("campaign scheduler lease lost")
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (CampaignRepository) PauseCampaignAdmission(
+	ctx context.Context,
+	runID uuid.UUID,
+	reason string,
+	fencingToken int64,
+) error {
+	tag, err := internalctx.GetDb(ctx).Exec(ctx, `
+UPDATE DeploymentCampaignRun
+SET state = 'PAUSED',
+    admissions_blocked = TRUE,
+    version = version + 1,
+    updated_at = now(),
+    transition_evidence = transition_evidence || jsonb_build_array(
+      jsonb_build_object('to', 'PAUSED', 'reason', @reason, 'at', now())
+    )
+WHERE id = @run_id
+  AND fencing_token = @fencing_token
+  AND state IN ('SCHEDULED', 'RUNNING', 'PAUSED')`,
+		pgx.NamedArgs{"run_id": runID, "reason": reason, "fencing_token": fencingToken},
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("campaign scheduler lease lost")
+	}
+	return nil
+}
+
+func scanCampaignRun(row pgx.Row) (*types.CampaignRun, error) {
+	var run types.CampaignRun
+	err := row.Scan(
+		&run.ID,
+		&run.CreatedAt,
+		&run.UpdatedAt,
+		&run.OrganizationID,
+		&run.CampaignRevisionID,
+		&run.State,
+		&run.Version,
+		&run.CurrentWaveOrder,
+		&run.CurrentMemberOrder,
+		&run.AdmissionsBlocked,
+		&run.FencingToken,
+		&run.LeaseHolder,
+		&run.LeaseExpiresAt,
+	)
+	return &run, err
+}
+
+func prerequisiteEvaluationArgs(
+	evaluation types.CampaignPrerequisiteEvaluation,
+) pgx.NamedArgs {
+	return pgx.NamedArgs{
+		"id":                    evaluation.ID,
+		"evaluated_at":          evaluation.EvaluatedAt,
+		"campaign_run_id":       evaluation.CampaignRunID,
+		"member_run_id":         evaluation.MemberRunID,
+		"upstream_plan_id":      evaluation.UpstreamPlanID,
+		"step_key":              evaluation.StepKey,
+		"expected_checksum":     evaluation.ExpectedChecksum,
+		"actual_observation_id": evaluation.ActualObservationID,
+		"actual_checksum":       evaluation.ActualChecksum,
+		"matched":               evaluation.Matched,
+		"reason":                evaluation.Reason,
+		"fencing_token":         evaluation.FencingToken,
+	}
+}
+
+func thresholdEvaluationArgs(evaluation types.CampaignThresholdEvaluation) pgx.NamedArgs {
+	return pgx.NamedArgs{
+		"id":                   evaluation.ID,
+		"evaluated_at":         evaluation.EvaluatedAt,
+		"campaign_run_id":      evaluation.CampaignRunID,
+		"samples":              evaluation.Samples,
+		"successful":           evaluation.Successful,
+		"failed":               evaluation.Failed,
+		"failure_rate":         evaluation.FailureRate,
+		"maximum_failure_rate": evaluation.MaximumFailureRate,
+		"breached":             evaluation.Breached,
+		"fencing_token":        evaluation.FencingToken,
+	}
 }
