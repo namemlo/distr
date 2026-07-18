@@ -75,7 +75,7 @@ type AdapterKeyConfigurationRequest struct {
 type CreateAdapterAssignmentRequest struct {
 	AdapterImplementationID uuid.UUID                      `json:"adapterImplementationId"`
 	ScopeType               types.AdapterScopeType         `json:"scopeType"`
-	ScopeID                 uuid.UUID                      `json:"scopeId"`
+	ScopeReference          string                         `json:"scopeReference"`
 	ConfigSnapshotID        uuid.UUID                      `json:"configSnapshotId"`
 	ConfigChecksum          string                         `json:"configChecksum"`
 	KeyConfiguration        AdapterKeyConfigurationRequest `json:"keyConfiguration"`
@@ -89,8 +89,9 @@ func (r *CreateAdapterAssignmentRequest) Validate() error {
 	if !r.ScopeType.IsValid() {
 		return validation.NewValidationFailedError("scopeType is invalid")
 	}
-	if r.ScopeID == uuid.Nil {
-		return validation.NewValidationFailedError("scopeId is required")
+	r.ScopeReference = strings.TrimSpace(r.ScopeReference)
+	if !r.ScopeType.IsValidReference(r.ScopeReference) {
+		return validation.NewValidationFailedError("scopeReference is invalid for scopeType")
 	}
 	if r.ConfigSnapshotID == uuid.Nil {
 		return validation.NewValidationFailedError("configSnapshotId is required")
@@ -159,7 +160,7 @@ type AdapterAssignment struct {
 	UpdatedAt               time.Time               `json:"updatedAt"`
 	AdapterImplementationID uuid.UUID               `json:"adapterImplementationId"`
 	ScopeType               types.AdapterScopeType  `json:"scopeType"`
-	ScopeID                 uuid.UUID               `json:"scopeId"`
+	ScopeReference          string                  `json:"scopeReference"`
 	ConfigSnapshotID        uuid.UUID               `json:"configSnapshotId"`
 	ConfigChecksum          string                  `json:"configChecksum"`
 	KeyConfiguration        AdapterKeyConfiguration `json:"keyConfiguration"`
@@ -179,7 +180,7 @@ type DeploymentPlanStepAdapter struct {
 	Capability              string                  `json:"capability"`
 	CapabilityVersion       string                  `json:"capabilityVersion"`
 	ScopeType               types.AdapterScopeType  `json:"scopeType"`
-	ScopeID                 uuid.UUID               `json:"scopeId"`
+	ScopeReference          string                  `json:"scopeReference"`
 	ConfigSnapshotID        uuid.UUID               `json:"configSnapshotId"`
 	ConfigChecksum          string                  `json:"configChecksum"`
 	KeyConfiguration        AdapterKeyConfiguration `json:"keyConfiguration"`

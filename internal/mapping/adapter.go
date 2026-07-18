@@ -42,7 +42,7 @@ func AdapterAssignmentFromCreateRequest(
 		OrganizationID:          organizationID,
 		AdapterImplementationID: request.AdapterImplementationID,
 		ScopeType:               request.ScopeType,
-		ScopeID:                 request.ScopeID,
+		ScopeReference:          request.ScopeReference,
 		ConfigSnapshotID:        request.ConfigSnapshotID,
 		ConfigChecksum:          request.ConfigChecksum,
 		KeyConfiguration: types.AdapterKeyConfiguration{
@@ -60,7 +60,7 @@ func AdapterAssignmentToAPI(value types.AdapterAssignment) api.AdapterAssignment
 	return api.AdapterAssignment{
 		ID: value.ID, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
 		AdapterImplementationID: value.AdapterImplementationID,
-		ScopeType:               value.ScopeType, ScopeID: value.ScopeID,
+		ScopeType:               value.ScopeType, ScopeReference: value.ScopeReference,
 		ConfigSnapshotID: value.ConfigSnapshotID, ConfigChecksum: value.ConfigChecksum,
 		KeyConfiguration: api.AdapterKeyConfiguration{
 			KeyID:                        value.KeyConfiguration.KeyID,
@@ -81,7 +81,7 @@ func DeploymentPlanStepAdapterToAPI(
 		AdapterImplementationID: value.AdapterImplementationID,
 		ImplementationVersion:   value.ImplementationVersion,
 		Capability:              value.Capability, CapabilityVersion: value.CapabilityVersion,
-		ScopeType: value.ScopeType, ScopeID: value.ScopeID,
+		ScopeType: value.ScopeType, ScopeReference: value.ScopeReference,
 		ConfigSnapshotID: value.ConfigSnapshotID, ConfigChecksum: value.ConfigChecksum,
 		KeyConfiguration: api.AdapterKeyConfiguration{
 			KeyID:                        value.KeyConfiguration.KeyID,

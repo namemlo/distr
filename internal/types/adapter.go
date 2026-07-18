@@ -1,12 +1,16 @@
 package types
 
 import (
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type AdapterScopeType string
+
+var adapterDatabaseResourcePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
 
 const (
 	AdapterScopeDeploymentTarget     AdapterScopeType = "deployment_target"
@@ -27,6 +31,18 @@ func (s AdapterScopeType) IsValid() bool {
 	default:
 		return false
 	}
+}
+
+func (s AdapterScopeType) IsValidReference(reference string) bool {
+	reference = strings.TrimSpace(reference)
+	if s == AdapterScopeDatabaseResource {
+		return adapterDatabaseResourcePattern.MatchString(reference)
+	}
+	if !s.IsValid() {
+		return false
+	}
+	_, err := uuid.Parse(reference)
+	return err == nil
 }
 
 // AdapterKeyConfiguration is non-secret configuration for protocol signing.
@@ -65,7 +81,7 @@ type AdapterAssignment struct {
 	OrganizationID               uuid.UUID               `db:"organization_id" json:"organizationId"`
 	AdapterImplementationID      uuid.UUID               `db:"adapter_implementation_id" json:"adapterImplementationId"`
 	ScopeType                    AdapterScopeType        `db:"scope_type" json:"scopeType"`
-	ScopeID                      uuid.UUID               `db:"scope_id" json:"scopeId"`
+	ScopeReference               string                  `db:"scope_reference" json:"scopeReference"`
 	ConfigSnapshotID             uuid.UUID               `db:"config_snapshot_id" json:"configSnapshotId"`
 	ConfigChecksum               string                  `db:"config_checksum" json:"configChecksum"`
 	KeyConfiguration             AdapterKeyConfiguration `db:"-" json:"keyConfiguration"`
@@ -97,7 +113,7 @@ type AdapterResolutionRequest struct {
 	RequiredCapability        string                  `json:"requiredCapability"`
 	RequiredCapabilityVersion string                  `json:"requiredCapabilityVersion"`
 	ScopeType                 AdapterScopeType        `json:"scopeType"`
-	ScopeID                   uuid.UUID               `json:"scopeId"`
+	ScopeReference            string                  `json:"scopeReference"`
 	TargetConfigSnapshotID    uuid.UUID               `json:"targetConfigSnapshotId"`
 	TargetConfigChecksum      string                  `json:"targetConfigChecksum"`
 	Implementations           []AdapterImplementation `json:"implementations"`
@@ -109,13 +125,19 @@ type StepAdapterRequirement struct {
 	Capability        string           `json:"capability"`
 	CapabilityVersion string           `json:"capabilityVersion"`
 	ScopeType         AdapterScopeType `json:"scopeType"`
-	ScopeID           uuid.UUID        `json:"scopeId"`
+	ScopeReference    string           `json:"scopeReference"`
 }
 
 type AdapterRequirement struct {
 	StepKind   string `json:"stepKind"`
 	Capability string `json:"capability"`
 	Version    string `json:"version"`
+}
+
+type AdapterStepScopeBinding struct {
+	StepKey        string           `json:"stepKey"`
+	ScopeType      AdapterScopeType `json:"scopeType"`
+	ScopeReference string           `json:"scopeReference"`
 }
 
 type ResolvedStepAdapter struct {
@@ -125,7 +147,7 @@ type ResolvedStepAdapter struct {
 	Capability              string                  `json:"capability"`
 	CapabilityVersion       string                  `json:"capabilityVersion"`
 	ScopeType               AdapterScopeType        `json:"scopeType"`
-	ScopeID                 uuid.UUID               `json:"scopeId"`
+	ScopeReference          string                  `json:"scopeReference"`
 	ConfigSnapshotID        uuid.UUID               `json:"configSnapshotId"`
 	ConfigChecksum          string                  `json:"configChecksum"`
 	KeyConfiguration        AdapterKeyConfiguration `json:"keyConfiguration"`
@@ -148,7 +170,7 @@ type DeploymentPlanStepAdapter struct {
 	Capability                   string                  `db:"capability" json:"capability"`
 	CapabilityVersion            string                  `db:"capability_version" json:"capabilityVersion"`
 	ScopeType                    AdapterScopeType        `db:"scope_type" json:"scopeType"`
-	ScopeID                      uuid.UUID               `db:"scope_id" json:"scopeId"`
+	ScopeReference               string                  `db:"scope_reference" json:"scopeReference"`
 	ConfigSnapshotID             uuid.UUID               `db:"config_snapshot_id" json:"configSnapshotId"`
 	ConfigChecksum               string                  `db:"config_checksum" json:"configChecksum"`
 	KeyConfiguration             AdapterKeyConfiguration `db:"-" json:"keyConfiguration"`
@@ -175,15 +197,16 @@ func (a *DeploymentPlanStepAdapter) NormalizeKeyConfiguration() {
 }
 
 type AdapterRuntimeState struct {
-	AdapterAssignmentID     uuid.UUID
-	AdapterImplementationID uuid.UUID
-	ImplementationVersion   string
-	Capability              string
-	CapabilityVersion       string
-	ScopeType               AdapterScopeType
-	ScopeID                 uuid.UUID
-	ConfigSnapshotID        uuid.UUID
-	ConfigChecksum          string
-	KeyConfiguration        AdapterKeyConfiguration
-	Enabled                 bool
+	AdapterAssignmentID       uuid.UUID
+	AdapterImplementationID   uuid.UUID
+	ImplementationVersion     string
+	Capability                string
+	CapabilityVersion         string
+	ScopeType                 AdapterScopeType
+	ScopeReference            string
+	ConfigSnapshotID          uuid.UUID
+	AssignmentConfigChecksum  string
+	SnapshotCanonicalChecksum string
+	KeyConfiguration          AdapterKeyConfiguration
+	Enabled                   bool
 }

@@ -110,7 +110,7 @@ func TestEvaluateRejectsAdapterDriftAfterPlanApproval(t *testing.T) {
 		AdapterAssignmentID: uuid.New(), AdapterImplementationID: uuid.New(),
 		ImplementationVersion: "2.0.0", Capability: "deployment.compose",
 		CapabilityVersion: "1.0.0", ScopeType: types.AdapterScopeDeploymentTarget,
-		ScopeID:          input.Plan.Targets[0].DeploymentTargetID,
+		ScopeReference:   input.Plan.Targets[0].DeploymentTargetID.String(),
 		ConfigSnapshotID: uuid.New(), ConfigChecksum: "sha256:" + strings.Repeat("c", 64),
 		KeyConfiguration: types.AdapterKeyConfiguration{
 			KeyID:                        "signing-v1",
@@ -126,9 +126,12 @@ func TestEvaluateRejectsAdapterDriftAfterPlanApproval(t *testing.T) {
 			AdapterImplementationID: frozen.AdapterImplementationID,
 			ImplementationVersion:   "2.1.0", Capability: frozen.Capability,
 			CapabilityVersion: frozen.CapabilityVersion, ScopeType: frozen.ScopeType,
-			ScopeID: frozen.ScopeID, ConfigSnapshotID: frozen.ConfigSnapshotID,
-			ConfigChecksum: frozen.ConfigChecksum, KeyConfiguration: frozen.KeyConfiguration,
-			Enabled: true,
+			ScopeReference:            frozen.ScopeReference,
+			ConfigSnapshotID:          frozen.ConfigSnapshotID,
+			AssignmentConfigChecksum:  frozen.ConfigChecksum,
+			SnapshotCanonicalChecksum: frozen.ConfigChecksum,
+			KeyConfiguration:          frozen.KeyConfiguration,
+			Enabled:                   true,
 		},
 	}
 

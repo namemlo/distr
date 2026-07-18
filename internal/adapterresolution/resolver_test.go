@@ -67,7 +67,7 @@ func TestResolveStepAdapterRequiresExactTargetScopeAndConfigSnapshot(t *testing.
 	t.Run("scope", func(t *testing.T) {
 		g := NewWithT(t)
 		request, _, _ := adapterResolutionFixture()
-		request.Assignments[0].ScopeID = uuid.New()
+		request.Assignments[0].ScopeReference = uuid.NewString()
 
 		resolved, issues := ResolveStepAdapter(context.Background(), request)
 
@@ -133,23 +133,24 @@ func TestVerifyAdapterAtStartRejectsVersionAndFingerprintDrift(t *testing.T) {
 		Capability:              resolved.Capability,
 		CapabilityVersion:       resolved.CapabilityVersion,
 		ScopeType:               resolved.ScopeType,
-		ScopeID:                 resolved.ScopeID,
+		ScopeReference:          resolved.ScopeReference,
 		ConfigSnapshotID:        resolved.ConfigSnapshotID,
 		ConfigChecksum:          resolved.ConfigChecksum,
 		KeyConfiguration:        resolved.KeyConfiguration,
 	}
 	current := types.AdapterRuntimeState{
-		AdapterAssignmentID:     frozen.AdapterAssignmentID,
-		AdapterImplementationID: frozen.AdapterImplementationID,
-		ImplementationVersion:   "2.1.0",
-		Capability:              frozen.Capability,
-		CapabilityVersion:       frozen.CapabilityVersion,
-		ScopeType:               frozen.ScopeType,
-		ScopeID:                 frozen.ScopeID,
-		ConfigSnapshotID:        frozen.ConfigSnapshotID,
-		ConfigChecksum:          frozen.ConfigChecksum,
-		KeyConfiguration:        frozen.KeyConfiguration,
-		Enabled:                 true,
+		AdapterAssignmentID:       frozen.AdapterAssignmentID,
+		AdapterImplementationID:   frozen.AdapterImplementationID,
+		ImplementationVersion:     "2.1.0",
+		Capability:                frozen.Capability,
+		CapabilityVersion:         frozen.CapabilityVersion,
+		ScopeType:                 frozen.ScopeType,
+		ScopeReference:            frozen.ScopeReference,
+		ConfigSnapshotID:          frozen.ConfigSnapshotID,
+		AssignmentConfigChecksum:  frozen.ConfigChecksum,
+		SnapshotCanonicalChecksum: frozen.ConfigChecksum,
+		KeyConfiguration:          frozen.KeyConfiguration,
+		Enabled:                   true,
 	}
 	current.KeyConfiguration.PublicKeyFingerprint = "sha256:" + strings.Repeat("f", 64)
 
@@ -170,27 +171,77 @@ func TestVerifyAdapterAtStartAcceptsExactFrozenState(t *testing.T) {
 		Capability:              resolved.Capability,
 		CapabilityVersion:       resolved.CapabilityVersion,
 		ScopeType:               resolved.ScopeType,
-		ScopeID:                 resolved.ScopeID,
+		ScopeReference:          resolved.ScopeReference,
 		ConfigSnapshotID:        resolved.ConfigSnapshotID,
 		ConfigChecksum:          resolved.ConfigChecksum,
 		KeyConfiguration:        resolved.KeyConfiguration,
 	}
 	current := types.AdapterRuntimeState{
-		AdapterAssignmentID:     frozen.AdapterAssignmentID,
-		AdapterImplementationID: frozen.AdapterImplementationID,
-		ImplementationVersion:   frozen.ImplementationVersion,
-		Capability:              frozen.Capability,
-		CapabilityVersion:       frozen.CapabilityVersion,
-		ScopeType:               frozen.ScopeType,
-		ScopeID:                 frozen.ScopeID,
-		ConfigSnapshotID:        frozen.ConfigSnapshotID,
-		ConfigChecksum:          frozen.ConfigChecksum,
-		KeyConfiguration:        frozen.KeyConfiguration,
-		Enabled:                 true,
+		AdapterAssignmentID:       frozen.AdapterAssignmentID,
+		AdapterImplementationID:   frozen.AdapterImplementationID,
+		ImplementationVersion:     frozen.ImplementationVersion,
+		Capability:                frozen.Capability,
+		CapabilityVersion:         frozen.CapabilityVersion,
+		ScopeType:                 frozen.ScopeType,
+		ScopeReference:            frozen.ScopeReference,
+		ConfigSnapshotID:          frozen.ConfigSnapshotID,
+		AssignmentConfigChecksum:  frozen.ConfigChecksum,
+		SnapshotCanonicalChecksum: frozen.ConfigChecksum,
+		KeyConfiguration:          frozen.KeyConfiguration,
+		Enabled:                   true,
 	}
 
 	g.Expect(VerifyAdapterAtStart(WithRuntimeState(context.Background(), current), frozen)).
 		To(Succeed())
+}
+
+func TestVerifyAdapterAtStartSeparatelyRejectsAssignmentAndSnapshotChecksumDrift(t *testing.T) {
+	request, _, _ := adapterResolutionFixture()
+	resolved, issues := ResolveStepAdapter(context.Background(), request)
+	NewWithT(t).Expect(issues).To(BeEmpty())
+	frozen := types.DeploymentPlanStepAdapter{
+		AdapterAssignmentID:     resolved.AdapterAssignmentID,
+		AdapterImplementationID: resolved.AdapterImplementationID,
+		ImplementationVersion:   resolved.ImplementationVersion,
+		Capability:              resolved.Capability,
+		CapabilityVersion:       resolved.CapabilityVersion,
+		ScopeType:               resolved.ScopeType,
+		ScopeReference:          resolved.ScopeReference,
+		ConfigSnapshotID:        resolved.ConfigSnapshotID,
+		ConfigChecksum:          resolved.ConfigChecksum,
+		KeyConfiguration:        resolved.KeyConfiguration,
+	}
+	exact := types.AdapterRuntimeState{
+		AdapterAssignmentID:       frozen.AdapterAssignmentID,
+		AdapterImplementationID:   frozen.AdapterImplementationID,
+		ImplementationVersion:     frozen.ImplementationVersion,
+		Capability:                frozen.Capability,
+		CapabilityVersion:         frozen.CapabilityVersion,
+		ScopeType:                 frozen.ScopeType,
+		ScopeReference:            frozen.ScopeReference,
+		ConfigSnapshotID:          frozen.ConfigSnapshotID,
+		AssignmentConfigChecksum:  frozen.ConfigChecksum,
+		SnapshotCanonicalChecksum: frozen.ConfigChecksum,
+		KeyConfiguration:          frozen.KeyConfiguration,
+		Enabled:                   true,
+	}
+
+	t.Run("assignment checksum", func(t *testing.T) {
+		current := exact
+		current.AssignmentConfigChecksum = "sha256:" + strings.Repeat("e", 64)
+
+		err := VerifyAdapterAtStart(WithRuntimeState(context.Background(), current), frozen)
+
+		NewWithT(t).Expect(err).To(MatchError(ContainSubstring("assignment config checksum changed")))
+	})
+	t.Run("snapshot canonical checksum", func(t *testing.T) {
+		current := exact
+		current.SnapshotCanonicalChecksum = "sha256:" + strings.Repeat("f", 64)
+
+		err := VerifyAdapterAtStart(WithRuntimeState(context.Background(), current), frozen)
+
+		NewWithT(t).Expect(err).To(MatchError(ContainSubstring("snapshot canonical checksum changed")))
+	})
 }
 
 func adapterResolutionFixture() (
@@ -219,7 +270,7 @@ func adapterResolutionFixture() (
 		OrganizationID:          orgID,
 		AdapterImplementationID: implementation.ID,
 		ScopeType:               types.AdapterScopeDeploymentTarget,
-		ScopeID:                 targetID,
+		ScopeReference:          targetID.String(),
 		ConfigSnapshotID:        configSnapshotID,
 		ConfigChecksum:          configChecksum,
 		KeyConfiguration: types.AdapterKeyConfiguration{
@@ -236,7 +287,7 @@ func adapterResolutionFixture() (
 		RequiredCapability:        "deployment.compose",
 		RequiredCapabilityVersion: "1.0.0",
 		ScopeType:                 types.AdapterScopeDeploymentTarget,
-		ScopeID:                   targetID,
+		ScopeReference:            targetID.String(),
 		TargetConfigSnapshotID:    configSnapshotID,
 		TargetConfigChecksum:      configChecksum,
 		Implementations:           []types.AdapterImplementation{implementation},

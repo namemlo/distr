@@ -30,7 +30,7 @@ func ResolveStepAdapter(
 		assignment.NormalizeKeyConfiguration()
 		if assignment.OrganizationID == request.OrganizationID &&
 			assignment.ScopeType == request.ScopeType &&
-			assignment.ScopeID == request.ScopeID &&
+			assignment.ScopeReference == request.ScopeReference &&
 			assignment.ConfigSnapshotID == request.TargetConfigSnapshotID {
 			scoped = append(scoped, assignment)
 		}
@@ -113,7 +113,7 @@ func ResolveStepAdapter(
 		Capability:              request.RequiredCapability,
 		CapabilityVersion:       request.RequiredCapabilityVersion,
 		ScopeType:               request.ScopeType,
-		ScopeID:                 request.ScopeID,
+		ScopeReference:          request.ScopeReference,
 		ConfigSnapshotID:        request.TargetConfigSnapshotID,
 		ConfigChecksum:          selected.assignment.ConfigChecksum,
 		KeyConfiguration:        selected.assignment.KeyConfiguration,
@@ -127,7 +127,6 @@ func validateResolutionRequest(request types.AdapterResolutionRequest) []types.V
 		empty bool
 	}{
 		{"organizationId", request.OrganizationID.String() == "00000000-0000-0000-0000-000000000000"},
-		{"scopeId", request.ScopeID.String() == "00000000-0000-0000-0000-000000000000"},
 		{"targetConfigSnapshotId", request.TargetConfigSnapshotID.String() == "00000000-0000-0000-0000-000000000000"},
 	}
 	for _, required := range requiredIDs {
@@ -157,6 +156,12 @@ func validateResolutionRequest(request types.AdapterResolutionRequest) []types.V
 	if !request.ScopeType.IsValid() {
 		issues = append(issues, types.ValidationIssue{
 			Code: "invalid_adapter_scope", Field: "scopeType", Message: "adapter scope type is invalid",
+		})
+	}
+	if !request.ScopeType.IsValidReference(request.ScopeReference) {
+		issues = append(issues, types.ValidationIssue{
+			Code: "invalid_adapter_scope_reference", Field: "scopeReference",
+			Message: "adapter scope reference is invalid for the scope type",
 		})
 	}
 	if !adapterChecksumPattern.MatchString(request.TargetConfigChecksum) {
@@ -224,12 +229,18 @@ func VerifyAdapterAtStart(
 		current.CapabilityVersion != frozen.CapabilityVersion {
 		return fmt.Errorf("adapter capability changed after plan publication")
 	}
-	if current.ScopeType != frozen.ScopeType || current.ScopeID != frozen.ScopeID {
+	if current.ScopeType != frozen.ScopeType ||
+		current.ScopeReference != frozen.ScopeReference {
 		return fmt.Errorf("adapter target scope changed after plan publication")
 	}
-	if current.ConfigSnapshotID != frozen.ConfigSnapshotID ||
-		current.ConfigChecksum != frozen.ConfigChecksum {
-		return fmt.Errorf("adapter config snapshot changed after plan publication")
+	if current.ConfigSnapshotID != frozen.ConfigSnapshotID {
+		return fmt.Errorf("adapter config snapshot identity changed after plan publication")
+	}
+	if current.AssignmentConfigChecksum != frozen.ConfigChecksum {
+		return fmt.Errorf("adapter assignment config checksum changed after plan publication")
+	}
+	if current.SnapshotCanonicalChecksum != frozen.ConfigChecksum {
+		return fmt.Errorf("adapter snapshot canonical checksum changed after plan publication")
 	}
 	if current.KeyConfiguration != frozen.KeyConfiguration {
 		return fmt.Errorf("adapter signing-key fingerprint changed after plan publication")

@@ -209,6 +209,31 @@ func TestValidateComponentReleaseContractV2AcceptsVersionedAdapterRequirements(t
 	g.Expect(issues[0].Field).To(ContainSubstring("adapterRequirements"))
 }
 
+func TestValidateComponentReleaseContractV2RejectsUnresolvedBackupAdapterRequirement(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	contract.AdapterRequirements = []types.AdapterRequirement{{
+		StepKind: "backup", Capability: "database.backup", Version: "1.0.0",
+	}}
+
+	issues := ValidateComponentReleaseContractV2(contract)
+
+	g.Expect(issueKeys(issues)).To(ContainElement("adapterRequirements.backup.stepKind:supported"))
+}
+
+func TestValidateComponentReleaseContractV2AllowsOnlyOneAdapterPerStepKind(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	contract.AdapterRequirements = []types.AdapterRequirement{
+		{StepKind: "deploy", Capability: "deployment.compose", Version: "1.0.0"},
+		{StepKind: "deploy", Capability: "deployment.verify", Version: "1.0.0"},
+	}
+
+	issues := ValidateComponentReleaseContractV2(contract)
+
+	g.Expect(issueKeys(issues)).To(ContainElement("adapterRequirements.deploy:unique"))
+}
+
 func TestNormalizeReleaseContractV2SortsOnlySetLikeCollections(t *testing.T) {
 	g := NewWithT(t)
 	first := validComponentReleaseContract()

@@ -19,6 +19,8 @@ func TestAdapterAssignmentMigrationFreezesVersionConfigAndKeyFingerprints(t *tes
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE DeploymentPlanStepAdapter"))
 	g.Expect(sql).To(ContainSubstring("implementation_version"))
 	g.Expect(sql).To(ContainSubstring("config_checksum"))
+	g.Expect(sql).To(ContainSubstring("scope_reference TEXT NOT NULL"))
+	g.Expect(sql).NotTo(ContainSubstring("scope_id UUID NOT NULL"))
 	g.Expect(sql).To(ContainSubstring("public_key_fingerprint"))
 	g.Expect(sql).To(ContainSubstring("signing_key_version_fingerprint"))
 	g.Expect(sql).To(ContainSubstring("DeploymentPlanStepAdapter_append_only"))
@@ -37,5 +39,18 @@ func TestAdapterAssignmentRepositoryValidatesOrganizationScopedTargets(t *testin
 	g.Expect(text).To(ContainSubstring("FROM DeploymentTarget"))
 	g.Expect(text).To(ContainSubstring("FROM DeploymentUnit"))
 	g.Expect(text).To(ContainSubstring("FROM ComponentInstance"))
+	g.Expect(text).To(ContainSubstring("FROM ObserverRegistration"))
+	g.Expect(text).To(ContainSubstring("validateDatabaseResourceReference"))
 	g.Expect(text).To(ContainSubstring("organization_id = @organizationID"))
+}
+
+func TestAdapterImplementationListsBatchLoadCapabilities(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("adapters.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	g.Expect(text).To(ContainSubstring("getAdapterCapabilitiesByImplementation"))
+	g.Expect(text).To(ContainSubstring("adapter_implementation_id = ANY(@implementationIDs)"))
+	g.Expect(text).NotTo(ContainSubstring("func getAdapterCapabilities("))
 }

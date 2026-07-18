@@ -29,15 +29,37 @@ func ResolvePlanStepAdapters(
 	}
 	input := draft.ResolutionInput
 	requirements := slices.Clone(input.AdapterRequirements)
+	issues := make([]types.ValidationIssue, 0)
 	if len(requirements) == 0 {
-		requirements = adapterRequirementsFromReleasePins(*input)
+		var bindingIssues []types.ValidationIssue
+		requirements, bindingIssues = adapterRequirementsFromReleasePins(*input)
+		issues = append(issues, bindingIssues...)
 	}
 	slices.SortFunc(requirements, func(a, b types.StepAdapterRequirement) int {
 		return strings.Compare(a.StepKey, b.StepKey)
 	})
+	duplicateSteps := make(map[string]struct{})
+	for index := 1; index < len(requirements); index++ {
+		if requirements[index-1].StepKey == requirements[index].StepKey {
+			duplicateSteps[requirements[index].StepKey] = struct{}{}
+		}
+	}
+	for stepKey := range duplicateSteps {
+		issues = append(issues, types.ValidationIssue{
+			Code:    "adapter_step_requirement_ambiguous",
+			Field:   "steps." + stepKey + ".adapter",
+			Message: "plan step must have exactly one adapter requirement",
+		})
+	}
 	resolved := make([]types.ResolvedPlanStepAdapter, 0, len(requirements))
-	issues := make([]types.ValidationIssue, 0)
 	for _, requirement := range requirements {
+		if _, duplicate := duplicateSteps[requirement.StepKey]; duplicate {
+			continue
+		}
+		if issue := validateStepAdapterScope(requirement); issue != nil {
+			issues = append(issues, *issue)
+			continue
+		}
 		adapter, adapterIssues := adapterresolution.ResolveStepAdapter(
 			ctx,
 			types.AdapterResolutionRequest{
@@ -46,7 +68,7 @@ func ResolvePlanStepAdapters(
 				RequiredCapability:        requirement.Capability,
 				RequiredCapabilityVersion: requirement.CapabilityVersion,
 				ScopeType:                 requirement.ScopeType,
-				ScopeID:                   requirement.ScopeID,
+				ScopeReference:            requirement.ScopeReference,
 				TargetConfigSnapshotID:    draft.TargetConfigSnapshotID,
 				TargetConfigChecksum:      input.Config.CanonicalChecksum,
 				Implementations:           input.AdapterImplementations,
@@ -69,39 +91,64 @@ func ResolvePlanStepAdapters(
 
 func adapterRequirementsFromReleasePins(
 	input types.PlanResolutionInput,
-) []types.StepAdapterRequirement {
+) ([]types.StepAdapterRequirement, []types.ValidationIssue) {
 	result := make([]types.StepAdapterRequirement, 0)
+	issues := make([]types.ValidationIssue, 0)
 	bindingIDs := make(map[string]uuid.UUID, len(input.Config.ComponentBindings))
 	for _, binding := range input.Config.ComponentBindings {
 		bindingIDs[strings.TrimSpace(binding.ComponentKey)] = binding.ComponentInstanceID
 	}
 	for _, pin := range input.ReleasePins {
 		scopeType := types.AdapterScopeDeploymentUnit
-		scopeID := input.Unit.ID
+		scopeReference := input.Unit.ID.String()
 		if instanceID, ok := bindingIDs[strings.TrimSpace(pin.ComponentKey)]; ok {
 			scopeType = types.AdapterScopeComponentInstance
-			scopeID = instanceID
+			scopeReference = instanceID.String()
 		}
 		for _, requirement := range pin.AdapterRequirements {
 			stepKeys := []string{}
+			expectedScopeType := scopeType
+			expectedScopeReference := scopeReference
 			switch requirement.StepKind {
 			case "deploy":
 				stepKeys = append(stepKeys, "component:"+pin.ComponentKey+":deploy")
 			case "health":
 				stepKeys = append(stepKeys, "component:"+pin.ComponentKey+":health")
+				expectedScopeType = types.AdapterScopeObserverRegistration
 			case "migration":
+				expectedScopeType = types.AdapterScopeDatabaseResource
 				for _, migration := range pin.Migrations {
 					stepKeys = append(
 						stepKeys,
 						"component:"+pin.ComponentKey+":migration:"+migration.Key,
 					)
 				}
+			default:
+				issues = append(issues, types.ValidationIssue{
+					Code:    "adapter_step_kind_unsupported",
+					Field:   "adapterRequirements." + requirement.StepKind,
+					Message: "adapter requirement does not map to a supported plan step",
+				})
 			}
 			for _, stepKey := range stepKeys {
+				if expectedScopeType == types.AdapterScopeDatabaseResource ||
+					expectedScopeType == types.AdapterScopeObserverRegistration {
+					var bindingIssues []types.ValidationIssue
+					expectedScopeReference, bindingIssues = adapterScopeBinding(
+						input.AdapterScopeBindings,
+						stepKey,
+						expectedScopeType,
+					)
+					issues = append(issues, bindingIssues...)
+					if len(bindingIssues) > 0 {
+						continue
+					}
+				}
 				result = append(result, types.StepAdapterRequirement{
 					StepKey: stepKey, Capability: requirement.Capability,
 					CapabilityVersion: requirement.Version,
-					ScopeType:         scopeType, ScopeID: scopeID,
+					ScopeType:         expectedScopeType,
+					ScopeReference:    expectedScopeReference,
 				})
 			}
 		}
@@ -109,7 +156,69 @@ func adapterRequirementsFromReleasePins(
 	slices.SortFunc(result, func(a, b types.StepAdapterRequirement) int {
 		return strings.Compare(a.StepKey, b.StepKey)
 	})
-	return result
+	sortValidationIssues(issues)
+	return result, issues
+}
+
+func adapterScopeBinding(
+	bindings []types.AdapterStepScopeBinding,
+	stepKey string,
+	expectedType types.AdapterScopeType,
+) (string, []types.ValidationIssue) {
+	matches := make([]types.AdapterStepScopeBinding, 0, 1)
+	for _, binding := range bindings {
+		if binding.StepKey == stepKey {
+			matches = append(matches, binding)
+		}
+	}
+	field := "steps." + stepKey + ".scopeReference"
+	if len(matches) == 0 {
+		return "", []types.ValidationIssue{{
+			Code: "adapter_scope_binding_missing", Field: field,
+			Message: "typed adapter scope binding is required for this plan step",
+		}}
+	}
+	if len(matches) > 1 {
+		return "", []types.ValidationIssue{{
+			Code: "adapter_scope_binding_ambiguous", Field: field,
+			Message: "plan step has more than one adapter scope binding",
+		}}
+	}
+	binding := matches[0]
+	if binding.ScopeType != expectedType ||
+		!binding.ScopeType.IsValidReference(binding.ScopeReference) {
+		return "", []types.ValidationIssue{{
+			Code: "adapter_scope_binding_invalid", Field: field,
+			Message: "adapter scope binding type or reference is invalid for this plan step",
+		}}
+	}
+	return strings.TrimSpace(binding.ScopeReference), nil
+}
+
+func validateStepAdapterScope(
+	requirement types.StepAdapterRequirement,
+) *types.ValidationIssue {
+	valid := false
+	switch {
+	case strings.Contains(requirement.StepKey, ":migration:"):
+		valid = requirement.ScopeType == types.AdapterScopeDatabaseResource
+	case strings.HasSuffix(requirement.StepKey, ":health"):
+		valid = requirement.ScopeType == types.AdapterScopeObserverRegistration
+	case strings.HasSuffix(requirement.StepKey, ":deploy"):
+		valid = requirement.ScopeType == types.AdapterScopeDeploymentTarget ||
+			requirement.ScopeType == types.AdapterScopeDeploymentUnit ||
+			requirement.ScopeType == types.AdapterScopeComponentInstance
+	default:
+		valid = false
+	}
+	if valid {
+		return nil
+	}
+	return &types.ValidationIssue{
+		Code:    "adapter_scope_binding_invalid",
+		Field:   "steps." + requirement.StepKey + ".scopeType",
+		Message: "adapter scope type does not match the typed plan step",
+	}
 }
 
 var planChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)

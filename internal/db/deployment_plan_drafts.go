@@ -1837,7 +1837,7 @@ func projectResolvedPlanStepAdapters(
 			AdapterImplementationID: value.AdapterImplementationID,
 			ImplementationVersion:   value.ImplementationVersion,
 			Capability:              value.Capability, CapabilityVersion: value.CapabilityVersion,
-			ScopeType: value.ScopeType, ScopeID: value.ScopeID,
+			ScopeType: value.ScopeType, ScopeReference: value.ScopeReference,
 			ConfigSnapshotID: value.ConfigSnapshotID, ConfigChecksum: value.ConfigChecksum,
 			KeyConfiguration: value.KeyConfiguration, SortOrder: index,
 		})

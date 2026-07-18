@@ -64,7 +64,10 @@ CREATE TABLE AdapterAssignment (
       'observer_registration'
     )
   ),
-  scope_id UUID NOT NULL,
+  scope_reference TEXT NOT NULL CHECK (
+    length(btrim(scope_reference)) BETWEEN 1 AND 256
+    AND scope_reference !~ E'[\\r\\n]'
+  ),
   config_snapshot_id UUID NOT NULL,
   config_checksum TEXT NOT NULL CHECK (
     config_checksum ~ '^sha256:[0-9a-f]{64}$'
@@ -96,7 +99,7 @@ CREATE TABLE AdapterAssignment (
     UNIQUE (
       organization_id,
       scope_type,
-      scope_id,
+      scope_reference,
       adapter_implementation_id,
       config_snapshot_id
     )
@@ -106,7 +109,7 @@ CREATE INDEX AdapterAssignment_resolution
   ON AdapterAssignment (
     organization_id,
     scope_type,
-    scope_id,
+    scope_reference,
     config_snapshot_id,
     enabled,
     adapter_implementation_id,
@@ -145,7 +148,10 @@ CREATE TABLE DeploymentPlanStepAdapter (
       'observer_registration'
     )
   ),
-  scope_id UUID NOT NULL,
+  scope_reference TEXT NOT NULL CHECK (
+    length(btrim(scope_reference)) BETWEEN 1 AND 256
+    AND scope_reference !~ E'[\\r\\n]'
+  ),
   config_snapshot_id UUID NOT NULL,
   config_checksum TEXT NOT NULL CHECK (
     config_checksum ~ '^sha256:[0-9a-f]{64}$'

@@ -29,7 +29,7 @@ func TestCreateAdapterAssignmentRequestAllowsOnlyNonSecretKeyConfiguration(t *te
 	request := CreateAdapterAssignmentRequest{
 		AdapterImplementationID: uuid.New(),
 		ScopeType:               types.AdapterScopeDeploymentTarget,
-		ScopeID:                 uuid.New(),
+		ScopeReference:          uuid.NewString(),
 		ConfigSnapshotID:        uuid.New(),
 		ConfigChecksum:          "sha256:" + strings.Repeat("a", 64),
 		KeyConfiguration: AdapterKeyConfigurationRequest{
@@ -45,4 +45,30 @@ func TestCreateAdapterAssignmentRequestAllowsOnlyNonSecretKeyConfiguration(t *te
 
 	request.KeyConfiguration.SigningKeyReference = "inline-key-material"
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("opaque secret-provider reference")))
+}
+
+func TestCreateAdapterAssignmentRequestValidatesTypedScopeReferences(t *testing.T) {
+	base := func(scopeType types.AdapterScopeType, reference string) CreateAdapterAssignmentRequest {
+		return CreateAdapterAssignmentRequest{
+			AdapterImplementationID: uuid.New(),
+			ScopeType:               scopeType,
+			ScopeReference:          reference,
+			ConfigSnapshotID:        uuid.New(),
+			ConfigChecksum:          "sha256:" + strings.Repeat("a", 64),
+			KeyConfiguration: AdapterKeyConfigurationRequest{
+				KeyID: "signing-v3", PublicKeyFingerprint: "sha256:" + strings.Repeat("b", 64),
+				SigningKeyReference:          "secret-provider://adapter-signing",
+				SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("c", 64),
+			},
+		}
+	}
+	g := NewWithT(t)
+
+	database := base(types.AdapterScopeDatabaseResource, "postgres:ledger")
+	observer := base(types.AdapterScopeObserverRegistration, uuid.NewString())
+	invalidObserver := base(types.AdapterScopeObserverRegistration, "postgres:ledger")
+	g.Expect(database.Validate()).To(Succeed())
+	g.Expect(observer.Validate()).To(Succeed())
+	g.Expect(invalidObserver.Validate()).
+		To(MatchError(ContainSubstring("scopeReference")))
 }

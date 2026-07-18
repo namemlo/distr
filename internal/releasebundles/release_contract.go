@@ -417,11 +417,11 @@ func validateAdapterRequirements(contract types.ComponentReleaseContractV2) []Va
 	for _, requirement := range contract.AdapterRequirements {
 		field := "adapterRequirements." + requirement.StepKind
 		switch requirement.StepKind {
-		case "deploy", "migration", "backup", "health":
+		case "deploy", "migration", "health":
 		default:
 			issues = append(issues, ValidationIssue{
 				Field: field + ".stepKind", Rule: "supported",
-				Message: "adapter step kind must be deploy, migration, backup, or health",
+				Message: "adapter step kind must be deploy, migration, or health",
 			})
 		}
 		if !componentKeyPattern.MatchString(requirement.Capability) {
@@ -436,11 +436,11 @@ func validateAdapterRequirements(contract types.ComponentReleaseContractV2) []Va
 				Message: "adapter capability version must be strict semantic version",
 			})
 		}
-		key := requirement.StepKind + "\x00" + requirement.Capability
+		key := requirement.StepKind
 		if _, duplicate := seen[key]; duplicate {
 			issues = append(issues, ValidationIssue{
 				Field: field, Rule: "unique",
-				Message: "adapter step kind and capability pairs must be unique",
+				Message: "each adapter step kind may declare only one required capability",
 			})
 		}
 		seen[key] = struct{}{}

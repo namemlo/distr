@@ -87,15 +87,8 @@ func ListAdapterImplementations(
 	if err != nil {
 		return nil, fmt.Errorf("could not collect AdapterImplementation: %w", err)
 	}
-	for index := range values {
-		values[index].Capabilities, err = getAdapterCapabilities(
-			ctx,
-			organizationID,
-			values[index].ID,
-		)
-		if err != nil {
-			return nil, err
-		}
+	if err := populateAdapterCapabilities(ctx, organizationID, values); err != nil {
+		return nil, err
 	}
 	return values, nil
 }
@@ -148,42 +141,68 @@ func ListAdapterImplementationsPage(
 			return nil, err
 		}
 	}
-	for index := range page.Items {
-		page.Items[index].Capabilities, err = getAdapterCapabilities(
-			ctx,
-			filter.OrganizationID,
-			page.Items[index].ID,
-		)
-		if err != nil {
-			return nil, err
-		}
+	if err := populateAdapterCapabilities(ctx, filter.OrganizationID, page.Items); err != nil {
+		return nil, err
 	}
 	return page, nil
 }
 
-func getAdapterCapabilities(
+func populateAdapterCapabilities(
 	ctx context.Context,
 	organizationID uuid.UUID,
-	implementationID uuid.UUID,
-) ([]types.AdapterCapability, error) {
+	implementations []types.AdapterImplementation,
+) error {
+	implementationIDs := make([]uuid.UUID, len(implementations))
+	for index := range implementations {
+		implementationIDs[index] = implementations[index].ID
+	}
+	capabilities, err := getAdapterCapabilitiesByImplementation(
+		ctx,
+		organizationID,
+		implementationIDs,
+	)
+	if err != nil {
+		return err
+	}
+	for index := range implementations {
+		implementations[index].Capabilities = capabilities[implementations[index].ID]
+	}
+	return nil
+}
+
+func getAdapterCapabilitiesByImplementation(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	implementationIDs []uuid.UUID,
+) (map[uuid.UUID][]types.AdapterCapability, error) {
+	result := make(map[uuid.UUID][]types.AdapterCapability, len(implementationIDs))
+	if len(implementationIDs) == 0 {
+		return result, nil
+	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT id, adapter_implementation_id, organization_id, capability, version
 		FROM AdapterCapability
 		WHERE organization_id = @organizationID
-		  AND adapter_implementation_id = @implementationID
-		ORDER BY capability, version, id`,
+		  AND adapter_implementation_id = ANY(@implementationIDs)
+		ORDER BY adapter_implementation_id, capability, version, id`,
 		pgx.NamedArgs{
-			"organizationID": organizationID, "implementationID": implementationID,
+			"organizationID": organizationID, "implementationIDs": implementationIDs,
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query AdapterCapability: %w", err)
+		return nil, fmt.Errorf("could not batch query AdapterCapability: %w", err)
 	}
 	values, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.AdapterCapability])
 	if err != nil {
 		return nil, fmt.Errorf("could not collect AdapterCapability: %w", err)
 	}
-	return values, nil
+	for _, capability := range values {
+		result[capability.AdapterImplementationID] = append(
+			result[capability.AdapterImplementationID],
+			capability,
+		)
+	}
+	return result, nil
 }
 
 func CreateAdapterAssignment(
@@ -200,7 +219,7 @@ func CreateAdapterAssignment(
 			ctx,
 			assignment.OrganizationID,
 			assignment.ScopeType,
-			assignment.ScopeID,
+			assignment.ScopeReference,
 		); err != nil {
 			return err
 		}
@@ -215,20 +234,21 @@ func CreateAdapterAssignment(
 		err := internalctx.GetDb(ctx).QueryRow(ctx, `
 			INSERT INTO AdapterAssignment (
 				id, organization_id, adapter_implementation_id,
-				scope_type, scope_id, config_snapshot_id, config_checksum,
+				scope_type, scope_reference, config_snapshot_id, config_checksum,
 				key_id, public_key_fingerprint, signing_key_reference,
 				signing_key_version_fingerprint, enabled
 			) VALUES (
 				@id, @organizationID, @implementationID,
-				@scopeType, @scopeID, @configSnapshotID, @configChecksum,
+				@scopeType, @scopeReference, @configSnapshotID, @configChecksum,
 				@keyID, @publicKeyFingerprint, @signingKeyReference,
 				@signingKeyVersionFingerprint, @enabled
 			)
 			RETURNING created_at, updated_at`,
 			pgx.NamedArgs{
 				"id": assignment.ID, "organizationID": assignment.OrganizationID,
-				"implementationID": assignment.AdapterImplementationID,
-				"scopeType":        assignment.ScopeType, "scopeID": assignment.ScopeID,
+				"implementationID":             assignment.AdapterImplementationID,
+				"scopeType":                    assignment.ScopeType,
+				"scopeReference":               assignment.ScopeReference,
 				"configSnapshotID":             assignment.ConfigSnapshotID,
 				"configChecksum":               assignment.ConfigChecksum,
 				"keyID":                        assignment.KeyID,
@@ -250,30 +270,44 @@ func requireAdapterScope(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	scopeType types.AdapterScopeType,
-	scopeID uuid.UUID,
+	scopeReference string,
 ) error {
+	if !scopeType.IsValidReference(scopeReference) {
+		return apierrors.NewBadRequest("adapter scope reference is invalid for scope type")
+	}
 	var query string
+	var scopeID uuid.UUID
 	switch scopeType {
 	case types.AdapterScopeDeploymentTarget:
+		scopeID = uuid.MustParse(scopeReference)
 		query = `
 			SELECT EXISTS (
 				SELECT 1 FROM DeploymentTarget
 				WHERE id = @scopeID AND organization_id = @organizationID
 			)`
 	case types.AdapterScopeDeploymentUnit:
+		scopeID = uuid.MustParse(scopeReference)
 		query = `
 			SELECT EXISTS (
 				SELECT 1 FROM DeploymentUnit
 				WHERE id = @scopeID AND organization_id = @organizationID
 			)`
 	case types.AdapterScopeComponentInstance:
+		scopeID = uuid.MustParse(scopeReference)
 		query = `
 			SELECT EXISTS (
 				SELECT 1 FROM ComponentInstance
 				WHERE id = @scopeID AND organization_id = @organizationID
 			)`
-	case types.AdapterScopeDatabaseResource, types.AdapterScopeObserverRegistration:
-		return apierrors.NewBadRequest("adapter scope type requires its allocated predecessor schema")
+	case types.AdapterScopeDatabaseResource:
+		return validateDatabaseResourceReference(scopeReference)
+	case types.AdapterScopeObserverRegistration:
+		scopeID = uuid.MustParse(scopeReference)
+		query = `
+			SELECT EXISTS (
+				SELECT 1 FROM ObserverRegistration
+				WHERE id = @scopeID AND organization_id = @organizationID
+			)`
 	default:
 		return apierrors.NewBadRequest("adapter scope type is invalid")
 	}
@@ -287,6 +321,13 @@ func requireAdapterScope(
 	}
 	if !exists {
 		return apierrors.ErrNotFound
+	}
+	return nil
+}
+
+func validateDatabaseResourceReference(reference string) error {
+	if !types.AdapterScopeDatabaseResource.IsValidReference(reference) {
+		return apierrors.NewBadRequest("database resource scope reference is invalid")
 	}
 	return nil
 }
@@ -326,13 +367,13 @@ func ListAdapterAssignments(
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
 			id, created_at, updated_at, organization_id,
-			adapter_implementation_id, scope_type, scope_id,
+			adapter_implementation_id, scope_type, scope_reference,
 			config_snapshot_id, config_checksum, key_id,
 			public_key_fingerprint, signing_key_reference,
 			signing_key_version_fingerprint, enabled
 		FROM AdapterAssignment
 		WHERE organization_id = @organizationID
-		ORDER BY scope_type, scope_id, adapter_implementation_id, id`,
+		ORDER BY scope_type, scope_reference, adapter_implementation_id, id`,
 		pgx.NamedArgs{"organizationID": organizationID},
 	)
 	if err != nil {
@@ -364,7 +405,7 @@ func ListAdapterAssignmentsPage(
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
 			id, created_at, updated_at, organization_id,
-			adapter_implementation_id, scope_type, scope_id,
+			adapter_implementation_id, scope_type, scope_reference,
 			config_snapshot_id, config_checksum, key_id,
 			public_key_fingerprint, signing_key_reference,
 			signing_key_version_fingerprint, enabled
@@ -417,7 +458,7 @@ func GetDeploymentPlanStepAdapters(
 			id, deployment_plan_id, deployment_plan_step_id, organization_id,
 			step_key, adapter_assignment_id, adapter_implementation_id,
 			implementation_version, capability, capability_version,
-			scope_type, scope_id, config_snapshot_id, config_checksum,
+			scope_type, scope_reference, config_snapshot_id, config_checksum,
 			key_id, public_key_fingerprint, signing_key_reference,
 			signing_key_version_fingerprint, sort_order
 		FROM DeploymentPlanStepAdapter
@@ -457,8 +498,9 @@ func GetAdapterRuntimeState(
 			capability.capability,
 			capability.version,
 			assignment.scope_type,
-			assignment.scope_id,
+			assignment.scope_reference,
 			assignment.config_snapshot_id,
+			assignment.config_checksum,
 			config.canonical_checksum,
 			assignment.key_id,
 			assignment.public_key_fingerprint,
@@ -490,9 +532,10 @@ func GetAdapterRuntimeState(
 		&state.Capability,
 		&state.CapabilityVersion,
 		&state.ScopeType,
-		&state.ScopeID,
+		&state.ScopeReference,
 		&state.ConfigSnapshotID,
-		&state.ConfigChecksum,
+		&state.AssignmentConfigChecksum,
+		&state.SnapshotCanonicalChecksum,
 		&state.KeyConfiguration.KeyID,
 		&state.KeyConfiguration.PublicKeyFingerprint,
 		&state.KeyConfiguration.SigningKeyReference,
@@ -546,7 +589,7 @@ func insertDeploymentPlanStepAdapters(
 			"id", "deployment_plan_id", "deployment_plan_step_id", "organization_id",
 			"step_key", "adapter_assignment_id", "adapter_implementation_id",
 			"implementation_version", "capability", "capability_version",
-			"scope_type", "scope_id", "config_snapshot_id", "config_checksum",
+			"scope_type", "scope_reference", "config_snapshot_id", "config_checksum",
 			"key_id", "public_key_fingerprint", "signing_key_reference",
 			"signing_key_version_fingerprint", "sort_order",
 		},
@@ -561,7 +604,8 @@ func insertDeploymentPlanStepAdapters(
 				value.ID, plan.ID, stepID, plan.OrganizationID, value.StepKey,
 				value.AdapterAssignmentID, value.AdapterImplementationID,
 				value.ImplementationVersion, value.Capability, value.CapabilityVersion,
-				value.ScopeType, value.ScopeID, value.ConfigSnapshotID, value.ConfigChecksum,
+				value.ScopeType, value.ScopeReference,
+				value.ConfigSnapshotID, value.ConfigChecksum,
 				value.KeyID, value.PublicKeyFingerprint, value.SigningKeyReference,
 				value.SigningKeyVersionFingerprint, value.SortOrder,
 			}, nil

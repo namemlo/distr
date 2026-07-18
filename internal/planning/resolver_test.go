@@ -81,9 +81,10 @@ func TestResolvePlanStepAdaptersUsesReleaseDeclaredRequirements(t *testing.T) {
 	assignment := types.AdapterAssignment{
 		ID: uuid.New(), OrganizationID: draft.OrganizationID,
 		AdapterImplementationID: implementation.ID,
-		ScopeType:               types.AdapterScopeDeploymentUnit, ScopeID: draft.DeploymentUnitID,
-		ConfigSnapshotID: draft.TargetConfigSnapshotID,
-		ConfigChecksum:   draft.ResolutionInput.Config.CanonicalChecksum,
+		ScopeType:               types.AdapterScopeDeploymentUnit,
+		ScopeReference:          draft.DeploymentUnitID.String(),
+		ConfigSnapshotID:        draft.TargetConfigSnapshotID,
+		ConfigChecksum:          draft.ResolutionInput.Config.CanonicalChecksum,
 		KeyConfiguration: types.AdapterKeyConfiguration{
 			KeyID: "signing-v1", PublicKeyFingerprint: checksum("1"),
 			SigningKeyReference:          "secret-provider://signing",
@@ -94,7 +95,7 @@ func TestResolvePlanStepAdaptersUsesReleaseDeclaredRequirements(t *testing.T) {
 	draft.ResolutionInput.AdapterRequirements = []types.StepAdapterRequirement{{
 		StepKey: "component:consumer:deploy", Capability: "deployment.compose",
 		CapabilityVersion: "1.0.0", ScopeType: types.AdapterScopeDeploymentUnit,
-		ScopeID: draft.DeploymentUnitID,
+		ScopeReference: draft.DeploymentUnitID.String(),
 	}}
 	draft.ResolutionInput.AdapterImplementations = []types.AdapterImplementation{implementation}
 	draft.ResolutionInput.AdapterAssignments = []types.AdapterAssignment{assignment}
@@ -108,7 +109,8 @@ func TestResolvePlanStepAdaptersUsesReleaseDeclaredRequirements(t *testing.T) {
 			AdapterAssignmentID: assignment.ID, AdapterImplementationID: implementation.ID,
 			ImplementationVersion: "2.0.0", Capability: "deployment.compose",
 			CapabilityVersion: "1.0.0", ScopeType: types.AdapterScopeDeploymentUnit,
-			ScopeID: draft.DeploymentUnitID, ConfigSnapshotID: draft.TargetConfigSnapshotID,
+			ScopeReference:   draft.DeploymentUnitID.String(),
+			ConfigSnapshotID: draft.TargetConfigSnapshotID,
 			ConfigChecksum:   draft.ResolutionInput.Config.CanonicalChecksum,
 			KeyConfiguration: assignment.KeyConfiguration,
 		},
@@ -121,7 +123,7 @@ func TestResolvePlanStepAdaptersDoesNotAcceptAssignmentCapabilityOverride(t *tes
 	draft.ResolutionInput.AdapterRequirements = []types.StepAdapterRequirement{{
 		StepKey: "component:consumer:deploy", Capability: "database.migrate",
 		CapabilityVersion: "3.0.0", ScopeType: types.AdapterScopeDeploymentUnit,
-		ScopeID: draft.DeploymentUnitID,
+		ScopeReference: draft.DeploymentUnitID.String(),
 	}}
 	draft.ResolutionInput.AdapterImplementations = []types.AdapterImplementation{{
 		ID: uuid.New(), OrganizationID: draft.OrganizationID, Key: "compose",
@@ -133,9 +135,10 @@ func TestResolvePlanStepAdaptersDoesNotAcceptAssignmentCapabilityOverride(t *tes
 	draft.ResolutionInput.AdapterAssignments = []types.AdapterAssignment{{
 		ID: uuid.New(), OrganizationID: draft.OrganizationID,
 		AdapterImplementationID: draft.ResolutionInput.AdapterImplementations[0].ID,
-		ScopeType:               types.AdapterScopeDeploymentUnit, ScopeID: draft.DeploymentUnitID,
-		ConfigSnapshotID: draft.TargetConfigSnapshotID,
-		ConfigChecksum:   draft.ResolutionInput.Config.CanonicalChecksum,
+		ScopeType:               types.AdapterScopeDeploymentUnit,
+		ScopeReference:          draft.DeploymentUnitID.String(),
+		ConfigSnapshotID:        draft.TargetConfigSnapshotID,
+		ConfigChecksum:          draft.ResolutionInput.Config.CanonicalChecksum,
 		KeyConfiguration: types.AdapterKeyConfiguration{
 			KeyID: "signing-v1", PublicKeyFingerprint: checksum("1"),
 			SigningKeyReference:          "secret-provider://signing",
@@ -148,6 +151,106 @@ func TestResolvePlanStepAdaptersDoesNotAcceptAssignmentCapabilityOverride(t *tes
 
 	g.Expect(resolved).To(BeEmpty())
 	g.Expect(issueCodes(issues)).To(ContainElement("adapter_implementation_missing"))
+}
+
+func TestResolvePlanStepAdaptersRejectsMoreThanOneRequirementPerConcreteStep(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	implementation := types.AdapterImplementation{
+		ID: uuid.New(), OrganizationID: draft.OrganizationID, Key: "compose",
+		Name: "Compose", Version: "2.0.0", Enabled: true,
+		Capabilities: []types.AdapterCapability{{
+			Capability: "deployment.compose", Version: "1.0.0",
+		}},
+	}
+	assignment := types.AdapterAssignment{
+		ID: uuid.New(), OrganizationID: draft.OrganizationID,
+		AdapterImplementationID: implementation.ID,
+		ScopeType:               types.AdapterScopeDeploymentUnit,
+		ScopeReference:          draft.DeploymentUnitID.String(),
+		ConfigSnapshotID:        draft.TargetConfigSnapshotID,
+		ConfigChecksum:          draft.ResolutionInput.Config.CanonicalChecksum,
+		KeyConfiguration: types.AdapterKeyConfiguration{
+			KeyID: "signing-v1", PublicKeyFingerprint: checksum("1"),
+			SigningKeyReference:          "secret-provider://signing",
+			SigningKeyVersionFingerprint: checksum("2"),
+		},
+		Enabled: true,
+	}
+	requirement := types.StepAdapterRequirement{
+		StepKey: "component:consumer:deploy", Capability: "deployment.compose",
+		CapabilityVersion: "1.0.0", ScopeType: types.AdapterScopeDeploymentUnit,
+		ScopeReference: draft.DeploymentUnitID.String(),
+	}
+	draft.ResolutionInput.AdapterRequirements = []types.StepAdapterRequirement{
+		requirement,
+		requirement,
+	}
+	draft.ResolutionInput.AdapterImplementations = []types.AdapterImplementation{implementation}
+	draft.ResolutionInput.AdapterAssignments = []types.AdapterAssignment{assignment}
+
+	resolved, issues := ResolvePlanStepAdapters(context.Background(), draft)
+
+	g.Expect(resolved).To(BeEmpty())
+	g.Expect(issueCodes(issues)).To(ContainElement("adapter_step_requirement_ambiguous"))
+}
+
+func TestAdapterRequirementsFromReleasePinsUsesTypedMigrationAndHealthScopes(t *testing.T) {
+	g := NewWithT(t)
+	input := *resolverFixture().ResolutionInput
+	observerID := uuid.New()
+	input.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: "schema-v2", Type: "database", Order: 1,
+		Compatibility: "backward-compatible", FailurePolicy: "stop",
+		Description: "apply schema v2",
+	}}
+	input.ReleasePins[0].AdapterRequirements = []types.AdapterRequirement{
+		{StepKind: "migration", Capability: "database.migrate", Version: "1.0.0"},
+		{StepKind: "health", Capability: "health.observe", Version: "1.0.0"},
+	}
+	input.AdapterScopeBindings = []types.AdapterStepScopeBinding{
+		{
+			StepKey:        "component:consumer:migration:schema-v2",
+			ScopeType:      types.AdapterScopeDatabaseResource,
+			ScopeReference: "postgres:consumer",
+		},
+		{
+			StepKey:        "component:consumer:health",
+			ScopeType:      types.AdapterScopeObserverRegistration,
+			ScopeReference: observerID.String(),
+		},
+	}
+
+	requirements, issues := adapterRequirementsFromReleasePins(input)
+
+	g.Expect(issues).To(BeEmpty())
+	g.Expect(requirements).To(ConsistOf(
+		types.StepAdapterRequirement{
+			StepKey:    "component:consumer:migration:schema-v2",
+			Capability: "database.migrate", CapabilityVersion: "1.0.0",
+			ScopeType:      types.AdapterScopeDatabaseResource,
+			ScopeReference: "postgres:consumer",
+		},
+		types.StepAdapterRequirement{
+			StepKey:    "component:consumer:health",
+			Capability: "health.observe", CapabilityVersion: "1.0.0",
+			ScopeType:      types.AdapterScopeObserverRegistration,
+			ScopeReference: observerID.String(),
+		},
+	))
+}
+
+func TestAdapterRequirementsFromReleasePinsRejectsMissingTypedScopeBinding(t *testing.T) {
+	g := NewWithT(t)
+	input := *resolverFixture().ResolutionInput
+	input.ReleasePins[0].AdapterRequirements = []types.AdapterRequirement{{
+		StepKind: "health", Capability: "health.observe", Version: "1.0.0",
+	}}
+
+	requirements, issues := adapterRequirementsFromReleasePins(input)
+
+	g.Expect(requirements).To(BeEmpty())
+	g.Expect(issueCodes(issues)).To(ContainElement("adapter_scope_binding_missing"))
 }
 
 func TestValidatePlanDraftRequiresOneExactActivePlacement(t *testing.T) {

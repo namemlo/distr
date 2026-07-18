@@ -72,9 +72,10 @@ type PlanResolutionInput struct {
 	ReleasePins        []ComponentReleasePin          `json:"releasePins"`
 	ComponentInstances []ComponentInstance            `json:"componentInstances"`
 
-	AdapterRequirements    []StepAdapterRequirement `json:"adapterRequirements"`
-	AdapterImplementations []AdapterImplementation  `json:"adapterImplementations"`
-	AdapterAssignments     []AdapterAssignment      `json:"adapterAssignments"`
+	AdapterRequirements    []StepAdapterRequirement  `json:"adapterRequirements"`
+	AdapterScopeBindings   []AdapterStepScopeBinding `json:"adapterScopeBindings"`
+	AdapterImplementations []AdapterImplementation   `json:"adapterImplementations"`
+	AdapterAssignments     []AdapterAssignment       `json:"adapterAssignments"`
 }
 
 type TargetConfigBinding struct {

@@ -1460,9 +1460,9 @@ Use one entry per pull request:
 - Upstream base: `ea6567b6` (PR-063 checkpoint).
 - Feature flag: `operator_control_plane_v2` gates adapter implementation and assignment routes. Existing plan reads
   remain under their current Deployment Plan gates.
-- User-facing behavior: Operators register versioned adapter implementations/capabilities, bind them to exact target
-  scopes and immutable Target Config Snapshots, and inspect the adapter version/config/key fingerprints frozen per
-  plan step.
+- User-facing behavior: Operators register versioned adapter implementations/capabilities, bind them to exact typed
+  scope references and immutable Target Config Snapshots, and inspect the adapter version/config/key fingerprints
+  frozen per plan step. Unsupported backup requirements fail closed.
 - Database changes: Migration 156 adds `AdapterImplementation`, `AdapterCapability`, `AdapterAssignment`, and
   append-only `DeploymentPlanStepAdapter`. Rollback refuses while frozen plan adapter evidence exists.
 - API changes: Adds cursor-paginated `GET|POST /api/v1/adapter-implementations`,
@@ -1471,11 +1471,13 @@ Use one entry per pull request:
 - Agent protocol changes: None. PR-075 consumes the frozen non-secret key/fingerprint contract; private keys remain in
   the secret provider.
 - Documentation: Added PR-074 notes and extended ADR-0060 with the immutable adapter freeze decision.
-- Tests: Added exact/missing/ambiguous/disabled resolution, target scope, config checksum, release authority,
-  start-time drift, API validation, tenant-safe handler, preflight, migration-shape, and route coverage.
+- Tests: Added exact/missing/ambiguous/disabled resolution, typed migration/health scopes, separate assignment/snapshot
+  checksum drift, one-adapter-per-step cardinality, batched capability loading, release authority, API validation,
+  tenant-safe handler, preflight, migration-shape, and route coverage.
 - Upstream contribution notes: Community-neutral adapter vocabulary and scope model; no adopter, executor vendor,
   target name, credential, or private key material.
 - Compatibility notes: Existing Component Release v2 documents omit the additive adapter requirement field; v1
   plans and execution remain unchanged. This synthetic base lacks allocated migrations 140-142 and 146-155 and the
-  PR-071 through PR-073 campaign seams; integration must retain migration 156 ordering and consume frozen plan
-  adapter evidence at campaign admission.
+  PR-071 through PR-073 campaign seams; integration must retain migration 156 ordering, hydrate database-resource and
+  observer scope bindings from PR-065/PR-077, consume `scopeReference` plus both runtime checksums in PR-075, and
+  consume frozen plan adapter evidence at campaign admission.
