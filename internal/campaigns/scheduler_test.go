@@ -21,6 +21,16 @@ type schedulerStoreFake struct {
 	pausedReason       string
 	loseLeaseOnAdmit   bool
 	duplicateAdmission bool
+	finalizedPause     bool
+}
+
+func (s *schedulerStoreFake) FinalizePendingCampaignPause(
+	_ context.Context,
+	_ uuid.UUID,
+	_ int64,
+) (bool, error) {
+	s.finalizedPause = true
+	return true, nil
 }
 
 func (s *schedulerStoreFake) AcquireCampaignLease(
@@ -263,5 +273,30 @@ func TestSchedulerDoesNotExposeWhilePausedOrLeaseUnavailable(t *testing.T) {
 	result, err = scheduler.Tick(context.Background(), runID, time.Now())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(result.Admitted).To(gomega.BeFalse())
+	g.Expect(store.admitted).To(gomega.BeEmpty())
+}
+
+func TestPauseCampaignCompletesAtSafePointAfterRestart(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	store := &schedulerStoreFake{
+		acquired: true,
+		lease:    types.CampaignLease{RunID: runID, FencingToken: 21},
+		schedule: types.CampaignSchedule{
+			Run: types.CampaignRun{
+				ID:                runID,
+				State:             types.CampaignRunStateRunning,
+				AdmissionsBlocked: true,
+				PauseRequested:    true,
+			},
+			AtSafePoint: true,
+		},
+	}
+
+	result, err := NewScheduler(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute).
+		Tick(context.Background(), runID, time.Now())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Paused).To(gomega.BeTrue())
+	g.Expect(store.finalizedPause).To(gomega.BeTrue())
 	g.Expect(store.admitted).To(gomega.BeEmpty())
 }

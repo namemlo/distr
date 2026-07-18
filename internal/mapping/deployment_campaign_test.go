@@ -102,3 +102,20 @@ func TestCampaignRunToAPIMapsOperationalEvidence(t *testing.T) {
 	g.Expect(mapped.AdmissionsBlocked).To(BeTrue())
 	g.Expect(mapped.FencingToken).To(Equal(int64(17)))
 }
+
+func TestCampaignControlResultToAPIMapsReconciliationState(t *testing.T) {
+	g := gomega.NewWithT(t)
+	result := types.CampaignControlResult{
+		RequestID: uuid.New(),
+		Status:    types.CampaignControlStatusPendingReconciliation,
+		Run: types.CampaignRun{
+			ID:                uuid.New(),
+			State:             types.CampaignRunStateRunning,
+			AdmissionsBlocked: true,
+		},
+	}
+	mapped := DeploymentCampaignControlResultToAPI(result)
+	g.Expect(mapped.RequestID).To(gomega.Equal(result.RequestID))
+	g.Expect(mapped.Status).To(gomega.Equal(result.Status))
+	g.Expect(mapped.Run.AdmissionsBlocked).To(gomega.BeTrue())
+}

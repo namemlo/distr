@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1178,7 +1180,397 @@ WHERE member_run.id = @member_run_id
   AND campaign_run.fencing_token = @fencing_token
   AND campaign_run.lease_expires_at > @admitted_at`
 
+const lockCampaignRunForControlSQL = `
+SELECT
+  id,
+  created_at,
+  updated_at,
+  organization_id,
+  campaign_revision_id,
+  state,
+  version,
+  current_wave_order,
+  current_member_order,
+  admissions_blocked,
+  fencing_token,
+  COALESCE(lease_holder, ''),
+  lease_expires_at
+FROM DeploymentCampaignRun
+WHERE id = @run_id AND organization_id = @organization_id
+FOR UPDATE`
+
+const insertCampaignControlSQL = `
+INSERT INTO CampaignControlRequest (
+  id,
+  request_id,
+  requested_at,
+  organization_id,
+  campaign_run_id,
+  member_run_id,
+  actor_useraccount_id,
+  control_kind,
+  expected_run_version,
+  reason,
+  request_checksum,
+  status,
+  resulting_run_version,
+  response_snapshot
+) VALUES (
+  @id,
+  @request_id,
+  @requested_at,
+  @organization_id,
+  @campaign_run_id,
+  @member_run_id,
+  @actor_useraccount_id,
+  @control_kind,
+  @expected_run_version,
+  @reason,
+  @request_checksum,
+  @status,
+  @resulting_run_version,
+  @response_snapshot
+)
+ON CONFLICT (organization_id, request_id) DO NOTHING`
+
+const applyCampaignControlSQL = `
+UPDATE DeploymentCampaignRun
+SET state = @state,
+    version = @resulting_version,
+    updated_at = @updated_at,
+    admissions_blocked = @admissions_blocked,
+    pause_requested = @pause_requested,
+    reconciliation_required = @reconciliation_required,
+    transition_evidence = transition_evidence || jsonb_build_array(
+      jsonb_build_object(
+        'controlRequestId', @request_id,
+        'kind', @control_kind,
+        'reason', @reason,
+        'at', @updated_at
+      )
+    )
+WHERE id = @run_id
+  AND organization_id = @organization_id
+  AND version = @expected_version`
+
 type CampaignRepository struct{}
+
+func PauseCampaign(ctx context.Context, input types.CampaignControlInput) error {
+	input.Kind = types.CampaignControlKindPause
+	_, err := (CampaignRepository{}).ApplyCampaignControl(ctx, input)
+	return err
+}
+
+func ResumeCampaign(ctx context.Context, input types.CampaignControlInput) error {
+	input.Kind = types.CampaignControlKindResume
+	_, err := (CampaignRepository{}).ApplyCampaignControl(ctx, input)
+	return err
+}
+
+func CancelCampaign(ctx context.Context, input types.CampaignControlInput) error {
+	input.Kind = types.CampaignControlKindCancel
+	_, err := (CampaignRepository{}).ApplyCampaignControl(ctx, input)
+	return err
+}
+
+func ExcludeCampaignMember(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+) error {
+	input.Kind = types.CampaignControlKindExclude
+	_, err := (CampaignRepository{}).ExcludeCampaignMember(ctx, input)
+	return err
+}
+
+func RetryCampaignMember(
+	context.Context,
+	types.CampaignMemberControlInput,
+) (*types.DeploymentPlan, error) {
+	return nil, errors.New(
+		"campaign retry plan creation requires the final PR-063 superseding-plan repository seam",
+	)
+}
+
+func (CampaignRepository) RetryCampaignMember(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+) (*types.DeploymentPlan, error) {
+	return RetryCampaignMember(ctx, input)
+}
+
+func (CampaignRepository) ApplyCampaignControl(
+	ctx context.Context,
+	input types.CampaignControlInput,
+) (*types.CampaignControlResult, error) {
+	if input.RequestedAt.IsZero() {
+		input.RequestedAt = time.Now().UTC()
+	}
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txCtx := internalctx.WithDb(ctx, tx)
+
+	run, err := scanCampaignRun(tx.QueryRow(ctx, lockCampaignRunForControlSQL, pgx.NamedArgs{
+		"run_id":          input.RunID,
+		"organization_id": input.OrganizationID,
+	}))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.QueryRow(ctx, `
+SELECT pause_requested, reconciliation_required
+FROM DeploymentCampaignRun
+WHERE id = @run_id AND organization_id = @organization_id`,
+		pgx.NamedArgs{
+			"run_id":          input.RunID,
+			"organization_id": input.OrganizationID,
+		},
+	).Scan(&run.PauseRequested, &run.ReconciliationRequired); err != nil {
+		return nil, err
+	}
+
+	facts, err := campaignControlFacts(txCtx, input.RunID)
+	if err != nil {
+		return nil, err
+	}
+	decision, err := campaigns.DecideCampaignControl(*run, input, facts)
+	if err != nil {
+		return nil, apierrors.NewConflict(err.Error())
+	}
+	result := types.CampaignControlResult{
+		RequestID:              input.RequestID,
+		Status:                 decision.Status,
+		Run:                    decision.Run,
+		PausePending:           decision.PausePending,
+		ReconciliationRequired: decision.ReconciliationRequired,
+	}
+	response, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	checksum := campaignControlChecksum(input, uuid.Nil)
+	controlID := uuid.New()
+	tag, err := tx.Exec(ctx, insertCampaignControlSQL, campaignControlArgs(
+		controlID,
+		input,
+		uuid.Nil,
+		checksum,
+		result,
+		response,
+	))
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		existing, err := getDuplicateCampaignControl(ctx, tx, input, checksum)
+		if err != nil {
+			return nil, err
+		}
+		existing.Duplicate = true
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
+
+	tag, err = tx.Exec(ctx, applyCampaignControlSQL, pgx.NamedArgs{
+		"state":                   decision.Run.State,
+		"resulting_version":       decision.Run.Version,
+		"updated_at":              input.RequestedAt,
+		"admissions_blocked":      decision.Run.AdmissionsBlocked,
+		"pause_requested":         decision.PausePending,
+		"reconciliation_required": decision.ReconciliationRequired,
+		"request_id":              input.RequestID,
+		"control_kind":            input.Kind,
+		"reason":                  input.Reason,
+		"run_id":                  input.RunID,
+		"organization_id":         input.OrganizationID,
+		"expected_version":        input.ExpectedVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, apierrors.NewConflict("campaign control lost optimistic update")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (CampaignRepository) ExcludeCampaignMember(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+) (*types.CampaignExclusion, error) {
+	if input.RequestedAt.IsZero() {
+		input.RequestedAt = time.Now().UTC()
+	}
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	run, err := scanCampaignRun(tx.QueryRow(ctx, lockCampaignRunForControlSQL, pgx.NamedArgs{
+		"run_id":          input.RunID,
+		"organization_id": input.OrganizationID,
+	}))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if run.Version != input.ExpectedVersion {
+		return nil, apierrors.NewConflict("campaign version conflict")
+	}
+
+	var memberStatus string
+	err = tx.QueryRow(ctx, `
+SELECT status
+FROM DeploymentCampaignMemberRun
+WHERE id = @member_run_id
+  AND campaign_run_id = @run_id
+  AND organization_id = @organization_id
+FOR UPDATE`, pgx.NamedArgs{
+		"member_run_id":   input.MemberRunID,
+		"run_id":          input.RunID,
+		"organization_id": input.OrganizationID,
+	}).Scan(&memberStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	exclusion, err := campaigns.BuildCampaignExclusion(input, types.CampaignExclusionFacts{
+		Authorized:  true,
+		WasAdmitted: memberStatus != "PENDING",
+	})
+	if err != nil {
+		return nil, err
+	}
+	checksum := campaignControlChecksum(input.CampaignControlInput, input.MemberRunID)
+	result := types.CampaignControlResult{
+		RequestID: input.RequestID,
+		Status:    types.CampaignControlStatusApplied,
+		Run:       *run,
+	}
+	response, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	controlID := uuid.New()
+	tag, err := tx.Exec(ctx, insertCampaignControlSQL, campaignControlArgs(
+		controlID,
+		input.CampaignControlInput,
+		input.MemberRunID,
+		checksum,
+		result,
+		response,
+	))
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		var existingChecksum string
+		err = tx.QueryRow(ctx, `
+SELECT request_checksum
+FROM CampaignControlRequest
+WHERE organization_id = @organization_id AND request_id = @request_id`,
+			pgx.NamedArgs{
+				"organization_id": input.OrganizationID,
+				"request_id":      input.RequestID,
+			},
+		).Scan(&existingChecksum)
+		if err != nil {
+			return nil, err
+		}
+		if existingChecksum != checksum {
+			return nil, apierrors.NewConflict(
+				"campaign control request ID reused with different input",
+			)
+		}
+		var existing types.CampaignExclusion
+		err := tx.QueryRow(ctx, `
+SELECT
+  id, organization_id, campaign_run_id, member_run_id, control_request_id,
+  reason, visible_incomplete, drift_reason, excluded_at, excluded_by_useraccount_id
+FROM CampaignExclusion
+WHERE organization_id = @organization_id
+  AND control_request_id = (
+    SELECT id FROM CampaignControlRequest
+    WHERE organization_id = @organization_id AND request_id = @request_id
+  )`, pgx.NamedArgs{
+			"organization_id": input.OrganizationID,
+			"request_id":      input.RequestID,
+		}).Scan(
+			&existing.ID,
+			&existing.OrganizationID,
+			&existing.CampaignRunID,
+			&existing.MemberRunID,
+			&existing.ControlRequestID,
+			&existing.Reason,
+			&existing.VisibleIncomplete,
+			&existing.DriftReason,
+			&existing.ExcludedAt,
+			&existing.ExcludedByActorID,
+		)
+		if err != nil {
+			return nil, apierrors.NewConflict("campaign control request ID reused with different input")
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return &existing, nil
+	}
+	exclusion.ControlRequestID = controlID
+	_, err = tx.Exec(ctx, `
+INSERT INTO CampaignExclusion (
+  id, excluded_at, organization_id, campaign_run_id, member_run_id,
+  control_request_id, excluded_by_useraccount_id, reason,
+  visible_incomplete, drift_reason
+) VALUES (
+  @id, @excluded_at, @organization_id, @campaign_run_id, @member_run_id,
+  @control_request_id, @excluded_by_useraccount_id, @reason,
+  @visible_incomplete, @drift_reason
+)`, pgx.NamedArgs{
+		"id":                         exclusion.ID,
+		"excluded_at":                exclusion.ExcludedAt,
+		"organization_id":            exclusion.OrganizationID,
+		"campaign_run_id":            exclusion.CampaignRunID,
+		"member_run_id":              exclusion.MemberRunID,
+		"control_request_id":         exclusion.ControlRequestID,
+		"excluded_by_useraccount_id": exclusion.ExcludedByActorID,
+		"reason":                     exclusion.Reason,
+		"visible_incomplete":         exclusion.VisibleIncomplete,
+		"drift_reason":               exclusion.DriftReason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if memberStatus == "PENDING" {
+		_, err = tx.Exec(ctx, `
+UPDATE DeploymentCampaignMemberRun
+SET status = 'EXCLUDED'
+WHERE id = @member_run_id AND status = 'PENDING'`,
+			pgx.NamedArgs{"member_run_id": input.MemberRunID},
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &exclusion, nil
+}
 
 func TransitionCampaign(
 	ctx context.Context,
@@ -1380,6 +1772,14 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apierrors.ErrNotFound
 	}
+	if err == nil {
+		err = internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT pause_requested, reconciliation_required
+FROM DeploymentCampaignRun
+WHERE id = @run_id AND organization_id = @organization_id`,
+			pgx.NamedArgs{"run_id": runID, "organization_id": organizationID},
+		).Scan(&run.PauseRequested, &run.ReconciliationRequired)
+	}
 	return run, err
 }
 
@@ -1437,6 +1837,26 @@ WHERE id = @run_id AND fencing_token = @fencing_token`,
 	if err != nil {
 		return types.CampaignSchedule{}, err
 	}
+	var scheduleSafePoint bool
+	if err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT
+  pause_requested,
+  reconciliation_required,
+  NOT EXISTS (
+    SELECT 1
+    FROM DeploymentCampaignMemberRun
+    WHERE campaign_run_id = @run_id AND status IN ('ADMITTED', 'RUNNING')
+  )
+FROM DeploymentCampaignRun
+WHERE id = @run_id AND fencing_token = @fencing_token`,
+		pgx.NamedArgs{"run_id": runID, "fencing_token": fencingToken},
+	).Scan(
+		&run.PauseRequested,
+		&run.ReconciliationRequired,
+		&scheduleSafePoint,
+	); err != nil {
+		return types.CampaignSchedule{}, err
+	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 SELECT id, wave_run_id, wave_order, member_order, deployment_plan_id
 FROM DeploymentCampaignMemberRun
@@ -1448,7 +1868,7 @@ ORDER BY wave_order, member_order, deployment_plan_id`,
 		return types.CampaignSchedule{}, err
 	}
 	defer rows.Close()
-	schedule := types.CampaignSchedule{Run: *run}
+	schedule := types.CampaignSchedule{Run: *run, AtSafePoint: scheduleSafePoint}
 	for rows.Next() {
 		var candidate types.CampaignMemberCandidate
 		if err := rows.Scan(
@@ -1463,6 +1883,37 @@ ORDER BY wave_order, member_order, deployment_plan_id`,
 		schedule.Candidates = append(schedule.Candidates, candidate)
 	}
 	return schedule, rows.Err()
+}
+
+func (CampaignRepository) FinalizePendingCampaignPause(
+	ctx context.Context,
+	runID uuid.UUID,
+	fencingToken int64,
+) (bool, error) {
+	tag, err := internalctx.GetDb(ctx).Exec(ctx, `
+UPDATE DeploymentCampaignRun AS campaign_run
+SET state = 'PAUSED',
+    pause_requested = FALSE,
+    admissions_blocked = TRUE,
+    version = version + 1,
+    updated_at = now(),
+    transition_evidence = transition_evidence || jsonb_build_array(
+      jsonb_build_object('to', 'PAUSED', 'reason', 'pause safe point reached', 'at', now())
+    )
+WHERE campaign_run.id = @run_id
+  AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.pause_requested = TRUE
+  AND campaign_run.state = 'RUNNING'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM DeploymentCampaignMemberRun AS member_run
+    WHERE member_run.campaign_run_id = campaign_run.id
+      AND member_run.status IN ('ADMITTED', 'RUNNING')
+  )`, pgx.NamedArgs{"run_id": runID, "fencing_token": fencingToken})
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 func (CampaignRepository) RecordCampaignPrerequisiteEvaluation(
@@ -1592,4 +2043,110 @@ func thresholdEvaluationArgs(evaluation types.CampaignThresholdEvaluation) pgx.N
 		"breached":             evaluation.Breached,
 		"fencing_token":        evaluation.FencingToken,
 	}
+}
+
+func campaignControlFacts(
+	ctx context.Context,
+	runID uuid.UUID,
+) (types.CampaignControlFacts, error) {
+	var active int
+	var uncertain bool
+	var cancellable bool
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT
+  count(*) FILTER (WHERE status IN ('ADMITTED', 'RUNNING')),
+  COALESCE(bool_or(execution_uncertain) FILTER (
+    WHERE status IN ('ADMITTED', 'RUNNING')
+  ), FALSE),
+  COALESCE(bool_and(active_steps_cancellable) FILTER (
+    WHERE status IN ('ADMITTED', 'RUNNING')
+  ), TRUE)
+FROM DeploymentCampaignMemberRun
+WHERE campaign_run_id = @run_id`,
+		pgx.NamedArgs{"run_id": runID},
+	).Scan(&active, &uncertain, &cancellable)
+	return types.CampaignControlFacts{
+		AtSafePoint:               active == 0,
+		HasUncertainSteps:         uncertain,
+		AllActiveStepsCancellable: cancellable,
+	}, err
+}
+
+func campaignControlChecksum(
+	input types.CampaignControlInput,
+	memberRunID uuid.UUID,
+) string {
+	value := fmt.Sprintf(
+		"%s\x00%s\x00%s\x00%d\x00%s\x00%s",
+		input.RunID,
+		memberRunID,
+		input.Kind,
+		input.ExpectedVersion,
+		input.Reason,
+		input.ActorID,
+	)
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func campaignControlArgs(
+	controlID uuid.UUID,
+	input types.CampaignControlInput,
+	memberRunID uuid.UUID,
+	checksum string,
+	result types.CampaignControlResult,
+	response []byte,
+) pgx.NamedArgs {
+	var member any
+	if memberRunID != uuid.Nil {
+		member = memberRunID
+	}
+	return pgx.NamedArgs{
+		"id":                    controlID,
+		"request_id":            input.RequestID,
+		"requested_at":          input.RequestedAt,
+		"organization_id":       input.OrganizationID,
+		"campaign_run_id":       input.RunID,
+		"member_run_id":         member,
+		"actor_useraccount_id":  input.ActorID,
+		"control_kind":          input.Kind,
+		"expected_run_version":  input.ExpectedVersion,
+		"reason":                input.Reason,
+		"request_checksum":      checksum,
+		"status":                result.Status,
+		"resulting_run_version": result.Run.Version,
+		"response_snapshot":     response,
+	}
+}
+
+func getDuplicateCampaignControl(
+	ctx context.Context,
+	tx pgx.Tx,
+	input types.CampaignControlInput,
+	checksum string,
+) (*types.CampaignControlResult, error) {
+	var existingChecksum string
+	var response []byte
+	err := tx.QueryRow(ctx, `
+SELECT request_checksum, response_snapshot
+FROM CampaignControlRequest
+WHERE organization_id = @organization_id AND request_id = @request_id`,
+		pgx.NamedArgs{
+			"organization_id": input.OrganizationID,
+			"request_id":      input.RequestID,
+		},
+	).Scan(&existingChecksum, &response)
+	if err != nil {
+		return nil, err
+	}
+	if existingChecksum != checksum {
+		return nil, apierrors.NewConflict(
+			"campaign control request ID reused with different input",
+		)
+	}
+	var result types.CampaignControlResult
+	if err := json.Unmarshal(response, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

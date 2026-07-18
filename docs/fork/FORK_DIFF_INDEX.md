@@ -1427,3 +1427,26 @@ Use one entry per pull request:
   or client database behavior.
 - Compatibility notes: Existing v1 deployments and execution are unchanged. Trusted observation prerequisites
   fail closed until PR-077 is wired.
+
+### PR-073 - Campaign operational controls
+
+- Status: Implemented on PR-072's synthetic stack; final PR-063/PR-071 route and retry replay is deferred to the
+  integration gate.
+- Upstream base: `8b88db20`.
+- Feature flag: Route registration remains a PR-071 replay seam behind `operator_control_plane_v2`.
+- User-facing behavior: Operators can issue reasoned pause, resume, retry, exclude, and cancel requests with stable
+  idempotency keys and visible pending-safe-point or reconciliation states.
+- Database changes: Migration 155 adds append-only control requests and exclusions, persisted pause/reconciliation
+  flags, execution uncertainty/cancellability facts, and composite tenant/member constraints.
+- API changes: Adds the five campaign control routes plus request, response, and exclusion contracts.
+- UI changes: None.
+- Agent protocol changes: v1 retry retains the ADR-0052 superseding-plan boundary; v2 retry remains blocked until
+  PR-075.
+- Documentation: Added PR-073 fork notes with exact PR-063, PR-066, PR-071, PR-075, and PR-076 replay seams.
+- Tests: Added safe-point pause/restart, resume, cancellable/uncertain cancel, authorized exclusion,
+  incomplete/drift visibility, optimistic conflict, idempotency SQL, API validation, route, mapping, and retry-split
+  coverage.
+- Upstream contribution notes: Community-neutral operational controls with no adopter, provider, host, credential,
+  or client database behavior.
+- Compatibility notes: Existing v1 deployment APIs and callback state transitions remain unchanged; unresolved
+  campaign dependencies fail closed.

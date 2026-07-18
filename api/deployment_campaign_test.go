@@ -60,3 +60,36 @@ func TestCampaignRunResponseIncludesFencingAndAdmissionState(t *testing.T) {
 	g.Expect(string(payload)).To(ContainSubstring(`"admissionsBlocked":true`))
 	g.Expect(string(payload)).To(ContainSubstring(`"fencingToken":12`))
 }
+
+func TestCampaignControlRequestValidation(t *testing.T) {
+	g := gomega.NewWithT(t)
+	valid := CampaignControlRequest{
+		RequestID:       uuid.New(),
+		ExpectedVersion: 2,
+		Reason:          "operator incident response",
+	}
+	g.Expect(valid.Validate()).To(gomega.Succeed())
+
+	invalid := valid
+	invalid.RequestID = uuid.Nil
+	g.Expect(invalid.Validate()).To(gomega.MatchError(gomega.ContainSubstring("requestId")))
+	invalid = valid
+	invalid.Reason = " "
+	g.Expect(invalid.Validate()).To(gomega.MatchError(gomega.ContainSubstring("reason")))
+}
+
+func TestCampaignMemberControlRequiresMemberAndProtocolForRetry(t *testing.T) {
+	g := gomega.NewWithT(t)
+	request := CampaignMemberControlRequest{
+		CampaignControlRequest: CampaignControlRequest{
+			RequestID:       uuid.New(),
+			ExpectedVersion: 3,
+			Reason:          "retry",
+		},
+		MemberRunID: uuid.New(),
+	}
+	g.Expect(request.Validate(false)).To(gomega.Succeed())
+	g.Expect(request.Validate(true)).To(gomega.MatchError(gomega.ContainSubstring("protocolVersion")))
+	request.ProtocolVersion = "v1"
+	g.Expect(request.Validate(true)).To(gomega.Succeed())
+}

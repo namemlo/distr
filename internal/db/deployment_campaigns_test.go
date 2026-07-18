@@ -410,3 +410,31 @@ func TestCampaignRepositoryUsesOptimisticTransitionsAndFencedAdmissions(t *testi
 	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("fencing_token = @fencing_token"))
 	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("status = 'PENDING'"))
 }
+
+func TestCampaignControlsMigrationIsAppendOnlyIdempotentAndScoped(t *testing.T) {
+	g := gomega.NewWithT(t)
+	sql, err := os.ReadFile("../migrations/sql/155_campaign_controls.up.sql")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	contents := string(sql)
+	for _, required := range []string{
+		"CampaignControlRequest",
+		"CampaignExclusion",
+		"request_id",
+		"organization_id",
+		"expected_run_version",
+		"UNIQUE (organization_id, request_id)",
+		"campaign_control_append_only",
+		"visible_incomplete",
+		"drift_reason",
+	} {
+		g.Expect(contents).To(gomega.ContainSubstring(required))
+	}
+}
+
+func TestCampaignControlSQLDeduplicatesAndSerializesConflicts(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(insertCampaignControlSQL).To(gomega.ContainSubstring("ON CONFLICT (organization_id, request_id)"))
+	g.Expect(lockCampaignRunForControlSQL).To(gomega.ContainSubstring("FOR UPDATE"))
+	g.Expect(applyCampaignControlSQL).To(gomega.ContainSubstring("version = @expected_version"))
+	g.Expect(applyCampaignControlSQL).To(gomega.ContainSubstring("admissions_blocked"))
+}

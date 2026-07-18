@@ -21,19 +21,21 @@ const (
 )
 
 type CampaignRun struct {
-	ID                 uuid.UUID        `db:"id" json:"id"`
-	CreatedAt          time.Time        `db:"created_at" json:"createdAt"`
-	UpdatedAt          time.Time        `db:"updated_at" json:"updatedAt"`
-	OrganizationID     uuid.UUID        `db:"organization_id" json:"organizationId"`
-	CampaignRevisionID uuid.UUID        `db:"campaign_revision_id" json:"campaignRevisionId"`
-	State              CampaignRunState `db:"state" json:"state"`
-	Version            int64            `db:"version" json:"version"`
-	CurrentWaveOrder   int              `db:"current_wave_order" json:"currentWaveOrder"`
-	CurrentMemberOrder int              `db:"current_member_order" json:"currentMemberOrder"`
-	AdmissionsBlocked  bool             `db:"admissions_blocked" json:"admissionsBlocked"`
-	FencingToken       int64            `db:"fencing_token" json:"fencingToken"`
-	LeaseHolder        string           `db:"lease_holder" json:"leaseHolder,omitempty"`
-	LeaseExpiresAt     *time.Time       `db:"lease_expires_at" json:"leaseExpiresAt,omitempty"`
+	ID                     uuid.UUID        `db:"id" json:"id"`
+	CreatedAt              time.Time        `db:"created_at" json:"createdAt"`
+	UpdatedAt              time.Time        `db:"updated_at" json:"updatedAt"`
+	OrganizationID         uuid.UUID        `db:"organization_id" json:"organizationId"`
+	CampaignRevisionID     uuid.UUID        `db:"campaign_revision_id" json:"campaignRevisionId"`
+	State                  CampaignRunState `db:"state" json:"state"`
+	Version                int64            `db:"version" json:"version"`
+	CurrentWaveOrder       int              `db:"current_wave_order" json:"currentWaveOrder"`
+	CurrentMemberOrder     int              `db:"current_member_order" json:"currentMemberOrder"`
+	AdmissionsBlocked      bool             `db:"admissions_blocked" json:"admissionsBlocked"`
+	PauseRequested         bool             `db:"pause_requested" json:"pauseRequested"`
+	ReconciliationRequired bool             `db:"reconciliation_required" json:"reconciliationRequired"`
+	FencingToken           int64            `db:"fencing_token" json:"fencingToken"`
+	LeaseHolder            string           `db:"lease_holder" json:"leaseHolder,omitempty"`
+	LeaseExpiresAt         *time.Time       `db:"lease_expires_at" json:"leaseExpiresAt,omitempty"`
 }
 
 type CampaignTransition struct {
@@ -93,6 +95,7 @@ type CampaignSchedule struct {
 	Candidates        []CampaignMemberCandidate
 	ThresholdPolicy   CampaignThresholdPolicy
 	ThresholdSnapshot CampaignThresholdSnapshot
+	AtSafePoint       bool
 }
 
 type CampaignMemberAdmission struct {

@@ -250,15 +250,77 @@ type DeploymentCampaignValidationResponse struct {
 }
 
 type DeploymentCampaignRun struct {
-	ID                 uuid.UUID              `json:"id"`
-	CreatedAt          time.Time              `json:"createdAt"`
-	UpdatedAt          time.Time              `json:"updatedAt"`
-	CampaignRevisionID uuid.UUID              `json:"campaignRevisionId"`
-	State              types.CampaignRunState `json:"state"`
-	Version            int64                  `json:"version"`
-	CurrentWaveOrder   int                    `json:"currentWaveOrder"`
-	CurrentMemberOrder int                    `json:"currentMemberOrder"`
-	AdmissionsBlocked  bool                   `json:"admissionsBlocked"`
-	FencingToken       int64                  `json:"fencingToken"`
-	LeaseExpiresAt     *time.Time             `json:"leaseExpiresAt,omitempty"`
+	ID                     uuid.UUID              `json:"id"`
+	CreatedAt              time.Time              `json:"createdAt"`
+	UpdatedAt              time.Time              `json:"updatedAt"`
+	CampaignRevisionID     uuid.UUID              `json:"campaignRevisionId"`
+	State                  types.CampaignRunState `json:"state"`
+	Version                int64                  `json:"version"`
+	CurrentWaveOrder       int                    `json:"currentWaveOrder"`
+	CurrentMemberOrder     int                    `json:"currentMemberOrder"`
+	AdmissionsBlocked      bool                   `json:"admissionsBlocked"`
+	PauseRequested         bool                   `json:"pauseRequested"`
+	ReconciliationRequired bool                   `json:"reconciliationRequired"`
+	FencingToken           int64                  `json:"fencingToken"`
+	LeaseExpiresAt         *time.Time             `json:"leaseExpiresAt,omitempty"`
+}
+
+type CampaignControlRequest struct {
+	RequestID       uuid.UUID `json:"requestId"`
+	ExpectedVersion int64     `json:"expectedVersion"`
+	Reason          string    `json:"reason"`
+}
+
+func (request CampaignControlRequest) Validate() error {
+	if request.RequestID == uuid.Nil {
+		return errors.New("requestId is required")
+	}
+	if request.ExpectedVersion <= 0 {
+		return errors.New("expectedVersion must be positive")
+	}
+	if strings.TrimSpace(request.Reason) == "" {
+		return errors.New("reason is required")
+	}
+	if len(request.Reason) > 4000 {
+		return errors.New("reason must be at most 4000 characters")
+	}
+	return nil
+}
+
+type CampaignMemberControlRequest struct {
+	CampaignControlRequest
+	MemberRunID     uuid.UUID `json:"memberRunId"`
+	ProtocolVersion string    `json:"protocolVersion,omitempty"`
+}
+
+func (request CampaignMemberControlRequest) Validate(retry bool) error {
+	if err := request.CampaignControlRequest.Validate(); err != nil {
+		return err
+	}
+	if request.MemberRunID == uuid.Nil {
+		return errors.New("memberRunId is required")
+	}
+	if retry && request.ProtocolVersion != "v1" && request.ProtocolVersion != "v2" {
+		return errors.New("protocolVersion must be v1 or v2")
+	}
+	return nil
+}
+
+type DeploymentCampaignControlResult struct {
+	RequestID              uuid.UUID                   `json:"requestId"`
+	Status                 types.CampaignControlStatus `json:"status"`
+	Run                    DeploymentCampaignRun       `json:"run"`
+	PausePending           bool                        `json:"pausePending"`
+	ReconciliationRequired bool                        `json:"reconciliationRequired"`
+	Duplicate              bool                        `json:"duplicate"`
+}
+
+type DeploymentCampaignExclusion struct {
+	ID                uuid.UUID `json:"id"`
+	CampaignRunID     uuid.UUID `json:"campaignRunId"`
+	MemberRunID       uuid.UUID `json:"memberRunId"`
+	Reason            string    `json:"reason"`
+	VisibleIncomplete bool      `json:"visibleIncomplete"`
+	DriftReason       string    `json:"driftReason"`
+	ExcludedAt        time.Time `json:"excludedAt"`
 }

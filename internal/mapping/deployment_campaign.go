@@ -132,16 +132,45 @@ func campaignPrerequisiteToAPI(
 
 func DeploymentCampaignRunToAPI(run types.CampaignRun) api.DeploymentCampaignRun {
 	return api.DeploymentCampaignRun{
-		ID:                 run.ID,
-		CreatedAt:          run.CreatedAt,
-		UpdatedAt:          run.UpdatedAt,
-		CampaignRevisionID: run.CampaignRevisionID,
-		State:              run.State,
-		Version:            run.Version,
-		CurrentWaveOrder:   run.CurrentWaveOrder,
-		CurrentMemberOrder: run.CurrentMemberOrder,
-		AdmissionsBlocked:  run.AdmissionsBlocked,
-		FencingToken:       run.FencingToken,
-		LeaseExpiresAt:     run.LeaseExpiresAt,
+		ID:                     run.ID,
+		CreatedAt:              run.CreatedAt,
+		UpdatedAt:              run.UpdatedAt,
+		CampaignRevisionID:     run.CampaignRevisionID,
+		State:                  run.State,
+		Version:                run.Version,
+		CurrentWaveOrder:       run.CurrentWaveOrder,
+		CurrentMemberOrder:     run.CurrentMemberOrder,
+		AdmissionsBlocked:      run.AdmissionsBlocked,
+		PauseRequested:         run.PauseRequested,
+		ReconciliationRequired: run.ReconciliationRequired,
+		FencingToken:           run.FencingToken,
+		LeaseExpiresAt:         run.LeaseExpiresAt,
+	}
+}
+
+func DeploymentCampaignControlResultToAPI(
+	result types.CampaignControlResult,
+) api.DeploymentCampaignControlResult {
+	return api.DeploymentCampaignControlResult{
+		RequestID:              result.RequestID,
+		Status:                 result.Status,
+		Run:                    DeploymentCampaignRunToAPI(result.Run),
+		PausePending:           result.PausePending,
+		ReconciliationRequired: result.ReconciliationRequired,
+		Duplicate:              result.Duplicate,
+	}
+}
+
+func DeploymentCampaignExclusionToAPI(
+	exclusion types.CampaignExclusion,
+) api.DeploymentCampaignExclusion {
+	return api.DeploymentCampaignExclusion{
+		ID:                exclusion.ID,
+		CampaignRunID:     exclusion.CampaignRunID,
+		MemberRunID:       exclusion.MemberRunID,
+		Reason:            exclusion.Reason,
+		VisibleIncomplete: exclusion.VisibleIncomplete,
+		DriftReason:       exclusion.DriftReason,
+		ExcludedAt:        exclusion.ExcludedAt,
 	}
 }

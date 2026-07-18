@@ -62,6 +62,10 @@ type SchedulerStore interface {
 	PauseCampaignAdmission(context.Context, uuid.UUID, string, int64) error
 }
 
+type PendingCampaignPauseStore interface {
+	FinalizePendingCampaignPause(context.Context, uuid.UUID, int64) (bool, error)
+}
+
 type Scheduler struct {
 	store         SchedulerStore
 	observations  CampaignObservationVerifier
@@ -106,6 +110,20 @@ func (s *Scheduler) Tick(
 	schedule, err := s.store.LoadCampaignSchedule(ctx, runID, lease.FencingToken)
 	if err != nil {
 		return result, err
+	}
+	if schedule.Run.PauseRequested && schedule.AtSafePoint {
+		if store, ok := s.store.(PendingCampaignPauseStore); ok {
+			finalized, err := store.FinalizePendingCampaignPause(
+				ctx,
+				runID,
+				lease.FencingToken,
+			)
+			if err != nil {
+				return result, err
+			}
+			result.Paused = finalized
+		}
+		return result, nil
 	}
 	if schedule.Run.State != types.CampaignRunStateRunning || schedule.Run.AdmissionsBlocked {
 		return result, nil
