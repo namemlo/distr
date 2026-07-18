@@ -112,11 +112,19 @@ func campaignDraftFixture() types.CampaignDraft {
 				Admitted:          true,
 				Approved:          true,
 				Tags:              []string{"region=eu", "tier=production"},
-				ExpectedStepPlacementChecksums: map[types.CampaignStepPlacement]string{
+				ExpectedStepPlacementEvidence: map[types.CampaignStepPlacement]types.CampaignStepPlacementEvidence{
 					{
 						StepKey:     "database.migrate",
 						PlacementID: uuid.MustParse("60000000-0000-0000-0000-000000000001"),
-					}: "sha256:" + repeatHex("6"),
+					}: {
+						ExpectedObservedStateChecksum: "sha256:" + repeatHex("6"),
+						ProviderDeploymentUnitID: uuid.MustParse(
+							"40000000-0000-0000-0000-000000000001",
+						),
+						ProviderComponentInstanceID: uuid.MustParse(
+							"90000000-0000-0000-0000-000000000001",
+						),
+					},
 				},
 				SharedProviderPlacements: []uuid.UUID{
 					uuid.MustParse("60000000-0000-0000-0000-000000000001"),

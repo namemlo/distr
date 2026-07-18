@@ -124,6 +124,8 @@ func campaignPrerequisiteToAPI(
 		UpstreamPlanID:                prerequisite.UpstreamPlanID,
 		UpstreamStepKey:               prerequisite.UpstreamStepKey,
 		ProviderPlacementID:           prerequisite.ProviderPlacementID,
+		ProviderDeploymentUnitID:      prerequisite.ProviderDeploymentUnitID,
+		ProviderComponentInstanceID:   prerequisite.ProviderComponentInstanceID,
 		ExpectedObservedStateChecksum: prerequisite.ExpectedObservedStateChecksum,
 	}
 }

@@ -56,29 +56,35 @@ type CampaignDraft struct {
 }
 
 type CampaignPlanCandidate struct {
-	PlanID                         uuid.UUID
-	OrganizationID                 uuid.UUID
-	DeploymentUnitID               uuid.UUID
-	PlanChecksum                   string
-	CurrentPlanChecksum            string
-	EffectivePolicyChecksum        string
-	ApprovalRequestID              uuid.UUID
-	ApprovalRequestRevision        int64
-	ApprovalChecksum               string
-	Approved                       bool
-	CalendarVersionIDs             []uuid.UUID
-	CalendarChecksums              []string
-	AdmissionEvaluationID          uuid.UUID
-	AdmissionChecksum              string
-	Admitted                       bool
-	Tags                           []string
-	ExpectedStepPlacementChecksums map[CampaignStepPlacement]string
-	SharedProviderPlacements       []uuid.UUID
+	PlanID                        uuid.UUID
+	OrganizationID                uuid.UUID
+	DeploymentUnitID              uuid.UUID
+	PlanChecksum                  string
+	CurrentPlanChecksum           string
+	EffectivePolicyChecksum       string
+	ApprovalRequestID             uuid.UUID
+	ApprovalRequestRevision       int64
+	ApprovalChecksum              string
+	Approved                      bool
+	CalendarVersionIDs            []uuid.UUID
+	CalendarChecksums             []string
+	AdmissionEvaluationID         uuid.UUID
+	AdmissionChecksum             string
+	Admitted                      bool
+	Tags                          []string
+	ExpectedStepPlacementEvidence map[CampaignStepPlacement]CampaignStepPlacementEvidence
+	SharedProviderPlacements      []uuid.UUID
 }
 
 type CampaignStepPlacement struct {
 	StepKey     string
 	PlacementID uuid.UUID
+}
+
+type CampaignStepPlacementEvidence struct {
+	ExpectedObservedStateChecksum string
+	ProviderDeploymentUnitID      uuid.UUID
+	ProviderComponentInstanceID   uuid.UUID
 }
 
 type CampaignWave struct {
@@ -118,6 +124,8 @@ type CampaignPrerequisite struct {
 	UpstreamPlanID                uuid.UUID `db:"upstream_plan_id" json:"upstreamPlanId"`
 	UpstreamStepKey               string    `db:"upstream_step_key" json:"upstreamStepKey"`
 	ProviderPlacementID           uuid.UUID `db:"provider_placement_id" json:"providerPlacementId"`
+	ProviderDeploymentUnitID      uuid.UUID `db:"provider_deployment_unit_id" json:"providerDeploymentUnitId"`
+	ProviderComponentInstanceID   uuid.UUID `db:"provider_component_instance_id" json:"providerComponentInstanceId"`
 	ExpectedObservedStateChecksum string    `db:"expected_observed_state_checksum" json:"expectedObservedStateChecksum"`
 }
 

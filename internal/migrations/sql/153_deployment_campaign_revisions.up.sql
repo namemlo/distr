@@ -259,6 +259,8 @@ CREATE TABLE DeploymentCampaignPrerequisite (
     AND length(upstream_step_key) BETWEEN 1 AND 200
   ),
   provider_placement_id UUID NOT NULL,
+  provider_deployment_unit_id UUID NOT NULL,
+  provider_component_instance_id UUID NOT NULL,
   expected_observed_state_checksum TEXT NOT NULL CHECK (
     expected_observed_state_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
@@ -307,6 +309,22 @@ CREATE TABLE DeploymentCampaignPrerequisite (
   CONSTRAINT deploymentcampaignprerequisite_upstream_plan_fk
     FOREIGN KEY (upstream_plan_id, organization_id)
     REFERENCES DeploymentPlan(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT deploymentcampaignprerequisite_provider_unit_fk
+    FOREIGN KEY (provider_deployment_unit_id, organization_id)
+    REFERENCES DeploymentUnit(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT deploymentcampaignprerequisite_provider_instance_fk
+    FOREIGN KEY (
+      provider_component_instance_id,
+      provider_deployment_unit_id,
+      organization_id
+    )
+    REFERENCES ComponentInstance(id, deployment_unit_id, organization_id)
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,

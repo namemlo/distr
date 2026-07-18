@@ -40,6 +40,8 @@ func TestCampaignRevisionMigrationFreezesMembershipAndPrerequisites(t *testing.T
 	g.Expect(sql).To(ContainSubstring("calendar_checksums"))
 	g.Expect(sql).To(ContainSubstring("admission_evaluation_id"))
 	g.Expect(sql).To(ContainSubstring("admission_checksum"))
+	g.Expect(sql).To(ContainSubstring("provider_deployment_unit_id"))
+	g.Expect(sql).To(ContainSubstring("provider_component_instance_id"))
 	g.Expect(sql).To(ContainSubstring("deploymentcampaign_published_immutable"))
 	g.Expect(sql).To(ContainSubstring("UNIQUE (campaign_revision_id, deployment_unit_id)"))
 	g.Expect(sql).To(ContainSubstring("pg_trigger_depth() > 1"))
@@ -63,6 +65,34 @@ func TestCampaignRevisionMigrationFreezesMembershipAndPrerequisites(t *testing.T
 	))
 	g.Expect(sql).To(ContainSubstring(
 		"FOREIGN KEY (upstream_plan_id, organization_id)",
+	))
+}
+
+func TestCampaignPrerequisiteMigrationFreezesCanonicalObservationCoordinates(
+	t *testing.T,
+) {
+	g := NewWithT(t)
+	sql := campaignMigrationSQL(t)
+
+	g.Expect(sql).To(ContainSubstring(
+		"FOREIGN KEY (provider_deployment_unit_id, organization_id)",
+	))
+	g.Expect(sql).To(ContainSubstring(
+		"REFERENCES ComponentInstance(id, deployment_unit_id, organization_id)",
+	))
+}
+
+func TestCampaignPlacementHydrationUsesImmutableSnapshotBridge(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(campaignPrerequisiteEvidenceQuery).To(ContainSubstring(
+		"TargetConfigSnapshotComponent",
+	))
+	g.Expect(campaignPrerequisiteEvidenceQuery).To(ContainSubstring(
+		"provider_component_instance_id",
+	))
+	g.Expect(campaignPrerequisiteEvidenceQuery).To(ContainSubstring(
+		"provider_deployment_unit_id",
 	))
 }
 
@@ -170,6 +200,49 @@ func TestCampaignRevisionFromDraftIsDeterministic(t *testing.T) {
 
 	g.Expect(second.CanonicalPayload).To(Equal(first.CanonicalPayload))
 	g.Expect(second.CanonicalChecksum).To(Equal(first.CanonicalChecksum))
+}
+
+func TestCampaignRevisionFromDraftFreezesCanonicalProviderIdentity(t *testing.T) {
+	g := NewWithT(t)
+	upstreamPlanID := uuid.New()
+	placementID := uuid.New()
+	providerUnitID := uuid.New()
+	componentInstanceID := uuid.New()
+	draft := types.CampaignDraft{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		Name:           "provider campaign",
+		Revision:       1,
+		Prerequisites: []types.CampaignPrerequisiteDraft{{
+			DownstreamPlanID:              uuid.New(),
+			UpstreamPlanID:                upstreamPlanID,
+			UpstreamStepKey:               "database.migrate",
+			ProviderPlacementID:           placementID,
+			ExpectedObservedStateChecksum: "sha256:" + campaignTestHex("1"),
+		}},
+		CandidatePlans: []types.CampaignPlanCandidate{{
+			PlanID: upstreamPlanID,
+			ExpectedStepPlacementEvidence: map[types.CampaignStepPlacement]types.CampaignStepPlacementEvidence{
+				{
+					StepKey:     "database.migrate",
+					PlacementID: placementID,
+				}: {
+					ExpectedObservedStateChecksum: "sha256:" + campaignTestHex("1"),
+					ProviderDeploymentUnitID:      providerUnitID,
+					ProviderComponentInstanceID:   componentInstanceID,
+				},
+			},
+		}},
+	}
+
+	revision, err := campaignRevisionFromDraft(draft, 1, uuid.New(), nil)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(revision.Prerequisites).To(HaveLen(1))
+	g.Expect(revision.Prerequisites[0].ProviderDeploymentUnitID).
+		To(Equal(providerUnitID))
+	g.Expect(revision.Prerequisites[0].ProviderComponentInstanceID).
+		To(Equal(componentInstanceID))
 }
 
 func campaignMigrationSQL(t *testing.T) string {

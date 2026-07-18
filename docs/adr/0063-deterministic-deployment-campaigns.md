@@ -33,7 +33,11 @@ A cross-plan prerequisite freezes the downstream plan, upstream plan, upstream s
 expected observed-state checksum. It deliberately does not store a future observation ID. PR-072 admission must
 record the actual trusted observation used and compare its measured checksum to the frozen expectation. A mismatch
 pauses admission; it never rewrites or rebinds this revision. Publication asks the database only for the exact
-requested `(upstream plan, step key, provider placement)` tuples, avoiding a step-by-placement cross product.
+requested `(upstream plan, step key, provider placement)` tuples, avoiding a step-by-placement cross product. The
+draft's plan-local provider placement is resolved through the immutable plan target-config snapshot. Published
+evidence additionally freezes the provider deployment-unit ID and canonical component-instance ID. Later
+observation replay therefore uses `(organization, provider deployment unit, component instance)` and never treats
+`DeploymentPlanTargetComponent.id` as registry identity.
 
 Canonical JSON excludes generated revision/child IDs, publication time, and stored canonical fields. It includes
 the organization, draft identity, revision numbers, ordered members, all frozen member evidence checksums and

@@ -63,6 +63,21 @@ func TestCanonicalizeCampaignRevisionBindsAllMemberEvidenceChecksums(t *testing.
 	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
 }
 
+func TestCanonicalizeCampaignRevisionBindsCanonicalProviderIdentity(t *testing.T) {
+	g := NewWithT(t)
+	revision := campaignRevisionFixture()
+	_, firstChecksum, err := CanonicalizeCampaignRevision(revision)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	revision.Prerequisites[0].ProviderComponentInstanceID = uuid.MustParse(
+		"90000000-0000-0000-0000-000000000009",
+	)
+	_, secondChecksum, err := CanonicalizeCampaignRevision(revision)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
+}
+
 func campaignRevisionFixture() types.CampaignRevision {
 	organizationID := uuid.MustParse("10000000-0000-0000-0000-000000000001")
 	draftID := uuid.MustParse("20000000-0000-0000-0000-000000000001")
@@ -136,6 +151,8 @@ func campaignRevisionFixture() types.CampaignRevision {
 				UpstreamPlanID:                firstPlanID,
 				UpstreamStepKey:               "database.migrate",
 				ProviderPlacementID:           uuid.MustParse("60000000-0000-0000-0000-000000000001"),
+				ProviderDeploymentUnitID:      uuid.MustParse("40000000-0000-0000-0000-000000000001"),
+				ProviderComponentInstanceID:   uuid.MustParse("90000000-0000-0000-0000-000000000001"),
 				ExpectedObservedStateChecksum: "sha256:" + repeatHex("5"),
 			},
 			{
@@ -143,6 +160,8 @@ func campaignRevisionFixture() types.CampaignRevision {
 				UpstreamPlanID:                firstPlanID,
 				UpstreamStepKey:               "service.deploy",
 				ProviderPlacementID:           uuid.MustParse("60000000-0000-0000-0000-000000000002"),
+				ProviderDeploymentUnitID:      uuid.MustParse("40000000-0000-0000-0000-000000000001"),
+				ProviderComponentInstanceID:   uuid.MustParse("90000000-0000-0000-0000-000000000002"),
 				ExpectedObservedStateChecksum: "sha256:" + repeatHex("6"),
 			},
 		},

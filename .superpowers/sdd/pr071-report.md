@@ -93,3 +93,22 @@ Follow-up verification:
 - Direct `hack/validate-migrations.sh` again reached the validator and reported only the unchanged synthetic-stack
   gaps: migrations 141 through 148 and 152. Migration 153 remains paired.
 - No live database, push, merge, rebase, deployment, or external mutation was performed.
+
+## PR-077 Canonical Observation Identity Follow-up
+
+PR-077 resolves current trusted observations by registry identity rather than by a plan-local target-component
+row. PR-071 now keeps `providerPlacementId` only as the draft locator and resolves it during publication through
+the plan's immutable `TargetConfigSnapshotComponent` binding. Each published prerequisite additionally freezes:
+
+- `providerDeploymentUnitId`;
+- `providerComponentInstanceId`; and
+- the expected observed-state checksum.
+
+Migration 153 binds the deployment-unit/component-instance pair with tenant-composite foreign keys. The pair is
+included in canonical campaign bytes and returned by the published API. Publication fails validation when a
+plan-local placement cannot resolve to both canonical coordinates, so PR-072/PR-077 can fail closed without an
+unstable DPTC-to-observation lookup.
+
+Canonical-identity follow-up verification reran the focused campaign/API/database/handler/routing tests and
+focused `go vet`; both passed. Migration validation again reported only the unchanged missing synthetic
+predecessors 141 through 148 and 152.

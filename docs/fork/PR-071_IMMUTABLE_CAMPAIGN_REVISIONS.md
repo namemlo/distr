@@ -22,7 +22,9 @@ shared-provider expectations.
   admission evidence, tag query, waves, bake, thresholds, risk/concurrency policy, and shared-provider
   prerequisites are SHA-256 bound.
 - Prerequisites: downstream plan, upstream plan, step key, provider placement, and expected observed-state checksum
-  are frozen. A future observation ID is intentionally absent.
+  are frozen. Publication resolves the plan-local placement through the immutable target-config snapshot and also
+  freezes the provider deployment unit and canonical component instance used by trusted-observation replay. A
+  future observation ID is intentionally absent.
 
 ## Impact
 
@@ -44,6 +46,8 @@ publication, missing explicit plans, unapproved plans, plan-checksum mismatch, d
 valid shared-provider prerequisites, expected-observation mismatch, invalid/decreasing bake, API bounds, immutable
 migration structure, direct retention-marker forgery, exact step-placement pairs, pre-bound membership queries,
 mapping fidelity, and draft edits without scoped authority.
+Cross-PR coverage also proves canonical provider coordinates are persisted, canonicalized, mapped to the API, and
+rejected when the plan-local placement has no immutable snapshot bridge.
 
 Focused Go tests and `go vet` are the feature-local gates. Migrations 141 through 148 and migration 152 are absent
 from the assigned synthetic stack, so migration lint reports those exact predecessor gaps until the missing

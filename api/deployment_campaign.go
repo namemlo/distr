@@ -222,6 +222,8 @@ type CampaignPrerequisite struct {
 	UpstreamPlanID                uuid.UUID `json:"upstreamPlanId"`
 	UpstreamStepKey               string    `json:"upstreamStepKey"`
 	ProviderPlacementID           uuid.UUID `json:"providerPlacementId"`
+	ProviderDeploymentUnitID      uuid.UUID `json:"providerDeploymentUnitId"`
+	ProviderComponentInstanceID   uuid.UUID `json:"providerComponentInstanceId"`
 	ExpectedObservedStateChecksum string    `json:"expectedObservedStateChecksum"`
 }
 

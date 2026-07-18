@@ -138,14 +138,23 @@ func ValidateCampaignDraft(
 				"provider placement is not a frozen shared-provider placement",
 			))
 		}
-		expected := upstream.ExpectedStepPlacementChecksums[types.CampaignStepPlacement{
+		evidence := upstream.ExpectedStepPlacementEvidence[types.CampaignStepPlacement{
 			StepKey:     prerequisite.UpstreamStepKey,
 			PlacementID: prerequisite.ProviderPlacementID,
 		}]
+		if evidence.ProviderDeploymentUnitID == uuid.Nil ||
+			evidence.ProviderComponentInstanceID == uuid.Nil {
+			issues = append(issues, campaignIssue(
+				"campaign.prerequisite.provider_identity_missing",
+				field+".providerPlacementId",
+				"provider placement has no frozen canonical component identity",
+			))
+		}
 		if !campaignChecksumPattern.MatchString(
 			prerequisite.ExpectedObservedStateChecksum,
-		) || expected == "" ||
-			expected != prerequisite.ExpectedObservedStateChecksum {
+		) || evidence.ExpectedObservedStateChecksum == "" ||
+			evidence.ExpectedObservedStateChecksum !=
+				prerequisite.ExpectedObservedStateChecksum {
 			issues = append(issues, campaignIssue(
 				"campaign.prerequisite.observation_checksum_mismatch",
 				field+".expectedObservedStateChecksum",

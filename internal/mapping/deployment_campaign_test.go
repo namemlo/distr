@@ -15,6 +15,8 @@ func TestCampaignRevisionToAPIPreservesFrozenPrerequisite(t *testing.T) {
 		UpstreamPlanID:                uuid.New(),
 		UpstreamStepKey:               "database.migrate",
 		ProviderPlacementID:           uuid.New(),
+		ProviderDeploymentUnitID:      uuid.New(),
+		ProviderComponentInstanceID:   uuid.New(),
 		ExpectedObservedStateChecksum: "sha256:" + mappingCampaignHex("a"),
 	}
 	revision := types.CampaignRevision{
@@ -35,6 +37,10 @@ func TestCampaignRevisionToAPIPreservesFrozenPrerequisite(t *testing.T) {
 	g.Expect(result.Prerequisites[0].UpstreamStepKey).To(Equal("database.migrate"))
 	g.Expect(result.Prerequisites[0].ExpectedObservedStateChecksum).
 		To(Equal(prerequisite.ExpectedObservedStateChecksum))
+	g.Expect(result.Prerequisites[0].ProviderDeploymentUnitID).
+		To(Equal(prerequisite.ProviderDeploymentUnitID))
+	g.Expect(result.Prerequisites[0].ProviderComponentInstanceID).
+		To(Equal(prerequisite.ProviderComponentInstanceID))
 }
 
 func TestCampaignRevisionToAPIPreservesExactMemberEvidence(t *testing.T) {

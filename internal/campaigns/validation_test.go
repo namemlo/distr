@@ -57,15 +57,49 @@ func TestCampaignRevisionValidationAcceptsFrozenSharedProviderPrerequisite(t *te
 		UpstreamStepKey:     "database.migrate",
 		ProviderPlacementID: draft.CandidatePlans[0].SharedProviderPlacements[0],
 		ExpectedObservedStateChecksum: draft.CandidatePlans[0].
-			ExpectedStepPlacementChecksums[types.CampaignStepPlacement{
+			ExpectedStepPlacementEvidence[types.CampaignStepPlacement{
 			StepKey:     "database.migrate",
 			PlacementID: draft.CandidatePlans[0].SharedProviderPlacements[0],
-		}],
+		}].ExpectedObservedStateChecksum,
 	}}
 
 	issues := ValidateCampaignDraft(context.Background(), draft)
 
 	g.Expect(issues).To(BeEmpty())
+}
+
+func TestCampaignRevisionValidationRejectsPlacementWithoutCanonicalProviderIdentity(
+	t *testing.T,
+) {
+	g := NewWithT(t)
+	draft := campaignDraftFixture()
+	draft.Membership.PlanIDs = []uuid.UUID{
+		draft.CandidatePlans[0].PlanID,
+		draft.CandidatePlans[1].PlanID,
+	}
+	placementID := draft.CandidatePlans[0].SharedProviderPlacements[0]
+	evidence := draft.CandidatePlans[0].ExpectedStepPlacementEvidence[types.CampaignStepPlacement{
+		StepKey:     "database.migrate",
+		PlacementID: placementID,
+	}]
+	evidence.ProviderComponentInstanceID = uuid.Nil
+	draft.CandidatePlans[0].ExpectedStepPlacementEvidence[types.CampaignStepPlacement{
+		StepKey:     "database.migrate",
+		PlacementID: placementID,
+	}] = evidence
+	draft.Prerequisites = []types.CampaignPrerequisiteDraft{{
+		DownstreamPlanID:              draft.CandidatePlans[1].PlanID,
+		UpstreamPlanID:                draft.CandidatePlans[0].PlanID,
+		UpstreamStepKey:               "database.migrate",
+		ProviderPlacementID:           placementID,
+		ExpectedObservedStateChecksum: evidence.ExpectedObservedStateChecksum,
+	}}
+
+	issues := ValidateCampaignDraft(context.Background(), draft)
+
+	g.Expect(campaignIssueCodes(issues)).To(ContainElement(
+		"campaign.prerequisite.provider_identity_missing",
+	))
 }
 
 func TestCampaignRevisionValidationRejectsIndependentStepAndPlacementEvidence(t *testing.T) {

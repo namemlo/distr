@@ -75,6 +75,8 @@ func CanonicalizeCampaignRevision(
 		UpstreamPlanID                string `json:"upstreamPlanId"`
 		UpstreamStepKey               string `json:"upstreamStepKey"`
 		ProviderPlacementID           string `json:"providerPlacementId"`
+		ProviderDeploymentUnitID      string `json:"providerDeploymentUnitId"`
+		ProviderComponentInstanceID   string `json:"providerComponentInstanceId"`
 		ExpectedObservedStateChecksum string `json:"expectedObservedStateChecksum"`
 	}
 	document := struct {
@@ -144,6 +146,10 @@ func CanonicalizeCampaignRevision(
 				UpstreamPlanID:      prerequisite.UpstreamPlanID.String(),
 				UpstreamStepKey:     prerequisite.UpstreamStepKey,
 				ProviderPlacementID: prerequisite.ProviderPlacementID.String(),
+				ProviderDeploymentUnitID: prerequisite.
+					ProviderDeploymentUnitID.String(),
+				ProviderComponentInstanceID: prerequisite.
+					ProviderComponentInstanceID.String(),
 				ExpectedObservedStateChecksum: prerequisite.
 					ExpectedObservedStateChecksum,
 			},

@@ -136,6 +136,50 @@ const campaignCandidateQuery = `
 	) admission ON true
 	ORDER BY plan.id`
 
+const campaignPrerequisiteEvidenceQuery = `
+	SELECT
+		requested.plan_id,
+		requested.step_key,
+		requested.placement_id,
+		component.expected_state_checksum,
+		snapshot_component.deployment_unit_id AS provider_deployment_unit_id,
+		snapshot_component.component_instance_id AS provider_component_instance_id
+	FROM jsonb_to_recordset($2::jsonb) AS requested(
+		plan_id uuid,
+		step_key text,
+		placement_id uuid
+	)
+	JOIN DeploymentPlan plan
+	  ON plan.id = requested.plan_id
+	 AND plan.organization_id = $1
+	JOIN DeploymentPlanStep step
+	  ON step.deployment_plan_id = requested.plan_id
+	 AND step.step_key = requested.step_key
+	 AND step.organization_id = $1
+	JOIN DeploymentPlanTargetComponent component
+	  ON component.deployment_plan_id = requested.plan_id
+	 AND component.id = requested.placement_id
+	 AND component.organization_id = $1
+	JOIN ComponentDefinition definition
+	  ON definition.key = component.component
+	 AND definition.organization_id = $1
+	JOIN ComponentInstance instance
+	  ON instance.component_definition_id = definition.id
+	 AND instance.deployment_unit_id = plan.deployment_unit_id
+	 AND instance.organization_id = $1
+	JOIN TargetConfigSnapshotComponent snapshot_component
+	  ON snapshot_component.target_config_snapshot_id =
+			plan.target_config_snapshot_id
+	 AND snapshot_component.deployment_unit_id = plan.deployment_unit_id
+	 AND snapshot_component.component_instance_id = instance.id
+	 AND snapshot_component.organization_id = $1
+	WHERE requested.plan_id = ANY($3::uuid[])
+	  AND component.expected_state_checksum <> ''
+	ORDER BY
+		requested.plan_id,
+		requested.step_key,
+		requested.placement_id`
+
 const campaignDraftOutput = `
 	id,
 	created_at,
@@ -396,11 +440,14 @@ func campaignRevisionFromDraft(
 		}
 	}
 	for index, prerequisite := range draft.Prerequisites {
+		evidence := campaignDraftPrerequisiteEvidence(draft, prerequisite)
 		revision.Prerequisites[index] = types.CampaignPrerequisite{
 			DownstreamPlanID:              prerequisite.DownstreamPlanID,
 			UpstreamPlanID:                prerequisite.UpstreamPlanID,
 			UpstreamStepKey:               prerequisite.UpstreamStepKey,
 			ProviderPlacementID:           prerequisite.ProviderPlacementID,
+			ProviderDeploymentUnitID:      evidence.ProviderDeploymentUnitID,
+			ProviderComponentInstanceID:   evidence.ProviderComponentInstanceID,
 			ExpectedObservedStateChecksum: prerequisite.ExpectedObservedStateChecksum,
 		}
 	}
@@ -411,6 +458,22 @@ func campaignRevisionFromDraft(
 	revision.CanonicalPayload = payload
 	revision.CanonicalChecksum = checksum
 	return revision, nil
+}
+
+func campaignDraftPrerequisiteEvidence(
+	draft types.CampaignDraft,
+	prerequisite types.CampaignPrerequisiteDraft,
+) types.CampaignStepPlacementEvidence {
+	key := types.CampaignStepPlacement{
+		StepKey:     prerequisite.UpstreamStepKey,
+		PlacementID: prerequisite.ProviderPlacementID,
+	}
+	for _, candidate := range draft.CandidatePlans {
+		if candidate.PlanID == prerequisite.UpstreamPlanID {
+			return candidate.ExpectedStepPlacementEvidence[key]
+		}
+	}
+	return types.CampaignStepPlacementEvidence{}
 }
 
 func getDeploymentCampaignDraft(
@@ -541,8 +604,8 @@ func hydrateCampaignCandidates(
 			)
 			candidate.ApprovalChecksum = campaignStringValue(approvalChecksum)
 		}
-		candidate.ExpectedStepPlacementChecksums =
-			make(map[types.CampaignStepPlacement]string)
+		candidate.ExpectedStepPlacementEvidence =
+			make(map[types.CampaignStepPlacement]types.CampaignStepPlacementEvidence)
 		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {
@@ -596,30 +659,7 @@ func hydrateCampaignCandidateEvidence(
 	}
 	evidenceRows, err := internalctx.GetDb(ctx).Query(
 		ctx,
-		`SELECT
-			requested.plan_id,
-			requested.step_key,
-			requested.placement_id,
-			component.expected_state_checksum
-		FROM jsonb_to_recordset($2::jsonb) AS requested(
-			plan_id uuid,
-			step_key text,
-			placement_id uuid
-		)
-		JOIN DeploymentPlanStep step
-		  ON step.deployment_plan_id = requested.plan_id
-		 AND step.step_key = requested.step_key
-		 AND step.organization_id = $1
-		JOIN DeploymentPlanTargetComponent component
-		  ON component.deployment_plan_id = requested.plan_id
-		 AND component.id = requested.placement_id
-		 AND component.organization_id = $1
-		WHERE requested.plan_id = ANY($3::uuid[])
-		  AND component.expected_state_checksum <> ''
-		ORDER BY
-			requested.plan_id,
-			requested.step_key,
-			requested.placement_id`,
+		campaignPrerequisiteEvidenceQuery,
 		draft.OrganizationID,
 		payload,
 		planIDs,
@@ -629,22 +669,28 @@ func hydrateCampaignCandidateEvidence(
 	}
 	defer evidenceRows.Close()
 	for evidenceRows.Next() {
-		var planID, placementID uuid.UUID
+		var planID, placementID, providerUnitID, componentInstanceID uuid.UUID
 		var stepKey, checksum string
 		if err := evidenceRows.Scan(
 			&planID,
 			&stepKey,
 			&placementID,
 			&checksum,
+			&providerUnitID,
+			&componentInstanceID,
 		); err != nil {
 			return err
 		}
 		index := indexByPlan[planID]
 		candidate := &draft.CandidatePlans[index]
-		candidate.ExpectedStepPlacementChecksums[types.CampaignStepPlacement{
+		candidate.ExpectedStepPlacementEvidence[types.CampaignStepPlacement{
 			StepKey:     stepKey,
 			PlacementID: placementID,
-		}] = checksum
+		}] = types.CampaignStepPlacementEvidence{
+			ExpectedObservedStateChecksum: checksum,
+			ProviderDeploymentUnitID:      providerUnitID,
+			ProviderComponentInstanceID:   componentInstanceID,
+		}
 		if !campaignContainsUUID(candidate.SharedProviderPlacements, placementID) {
 			candidate.SharedProviderPlacements = append(
 				candidate.SharedProviderPlacements,
@@ -804,6 +850,8 @@ func insertCampaignRevisionChildren(
 			"upstream_plan_id",
 			"upstream_step_key",
 			"provider_placement_id",
+			"provider_deployment_unit_id",
+			"provider_component_instance_id",
 			"expected_observed_state_checksum",
 		},
 		pgx.CopyFromSlice(
@@ -818,6 +866,8 @@ func insertCampaignRevisionChildren(
 					prerequisite.UpstreamPlanID,
 					prerequisite.UpstreamStepKey,
 					prerequisite.ProviderPlacementID,
+					prerequisite.ProviderDeploymentUnitID,
+					prerequisite.ProviderComponentInstanceID,
 					prerequisite.ExpectedObservedStateChecksum,
 				}, nil
 			},
@@ -963,6 +1013,8 @@ func hydrateCampaignRevision(
 			upstream_plan_id,
 			upstream_step_key,
 			provider_placement_id,
+			provider_deployment_unit_id,
+			provider_component_instance_id,
 			expected_observed_state_checksum
 		FROM DeploymentCampaignPrerequisite
 		WHERE campaign_revision_id = $1 AND organization_id = $2
