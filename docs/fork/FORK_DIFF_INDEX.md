@@ -1031,3 +1031,25 @@ Use one entry per pull request:
 - Tests: Added commit, tag, checkout, collision, repository-immutability, OCI identity, platform, credential-redaction, handoff, checksum, and publish-only pipeline checks.
 - Upstream contribution notes: Generic release engineering only; no adopter, server, credential, deployment, or runtime assumptions are embedded in product behavior.
 - Compatibility notes: Reuses the existing `image-check`, `build`, and `push` helper commands. Publication never invokes `deploy` or `release`.
+
+### PR-057 - Deployment registry import and classification
+
+- Status: Implemented on the speculative PR-056 branch; live PostgreSQL integration is deferred to the final gate.
+- Upstream base: `2ca41ab8`.
+- Feature flag: `operator_control_plane_v2` gates preview, decision, and apply mutations.
+- User-facing behavior: Operators receive deterministic preview, explicit classification, checksum-bound apply,
+  bounded diagnostics, exact coverage, and visible adapter-declared source-placement omissions without conflating
+  explicit retirements.
+- Database changes: Migration 140 adds organization-scoped import, root, placement, and append-only decision
+  evidence with actor attribution, content-addressed report references, exact counts/omissions, state, and checkpoints.
+- API changes: Adds preview, decision, apply, import detail, and coverage routes under `/deployment-registry`;
+  preview accepts an optional bounded `sourcePlacements` identity baseline.
+- UI changes: Setup UI is implemented in the separate PR-057 frontend slice.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0057 and PR-057 fork notes.
+- Tests: Added fast pure import/checksum/classification/coverage/sanitization tests, static migration and assignment
+  reuse contract tests, and deferred live PostgreSQL omission persistence/apply coverage.
+- Upstream contribution notes: Community-neutral normalized adapter input; no adopter, provider, hostname, path,
+  credential, or raw report data.
+- Compatibility notes: Existing registry identities, v1 APIs, deployment execution, agents, and historical
+  checksums remain unchanged. Apply is blocked by unresolved decisions, conflicts, or omissions.

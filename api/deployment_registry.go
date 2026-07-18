@@ -1,15 +1,158 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/distr-sh/distr/internal/deploymentregistry"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/distr-sh/distr/internal/validation"
 	"github.com/google/uuid"
 )
+
+type RegistryImportPreviewRequest struct {
+	SourceKind        string                          `json:"sourceKind"`
+	ToolName          string                          `json:"toolName"`
+	ToolVersion       string                          `json:"toolVersion"`
+	SourceCommit      string                          `json:"sourceCommit,omitempty"`
+	Parameters        map[string]string               `json:"parameters"`
+	EvidenceReference string                          `json:"evidenceReference"`
+	EvidenceChecksum  string                          `json:"evidenceChecksum"`
+	SourcePlacements  []RegistryImportSourcePlacement `json:"sourcePlacements,omitempty"`
+	Roots             []RegistryImportCandidateRoot   `json:"roots"`
+}
+
+type RegistryImportSourcePlacement struct {
+	RootKey      string `json:"rootKey"`
+	PhysicalName string `json:"physicalName"`
+}
+
+type RegistryImportCandidatePlacement struct {
+	ComponentKey     string `json:"componentKey"`
+	PhysicalName     string `json:"physicalName"`
+	ConfigNamespace  string `json:"configNamespace,omitempty"`
+	DatabaseBoundary string `json:"databaseBoundary,omitempty"`
+	HealthAdapter    string `json:"healthAdapter,omitempty"`
+	RenamedFrom      string `json:"renamedFrom,omitempty"`
+}
+
+type RegistryImportCandidateRoot struct {
+	Key                               string                             `json:"key"`
+	Name                              string                             `json:"name"`
+	DeliveryModel                     types.DeliveryModel                `json:"deliveryModel"`
+	Classification                    types.ImportClassification         `json:"classification"`
+	CustomerOrganizationID            *uuid.UUID                         `json:"customerOrganizationId,omitempty"`
+	DeploymentTargetID                uuid.UUID                          `json:"deploymentTargetId"`
+	EnvironmentID                     uuid.UUID                          `json:"environmentId"`
+	SubscriberCustomerOrganizationIDs []uuid.UUID                        `json:"subscriberCustomerOrganizationIds,omitempty"`
+	PhysicalIdentity                  string                             `json:"physicalIdentity"`
+	Placements                        []RegistryImportCandidatePlacement `json:"placements"`
+}
+
+type RegistryImportChange struct {
+	Kind         string `json:"kind"`
+	RootKey      string `json:"rootKey"`
+	PlacementKey string `json:"placementKey,omitempty"`
+	PhysicalName string `json:"physicalName,omitempty"`
+	Message      string `json:"message"`
+}
+
+type RegistryImportDiff struct {
+	Creates     []RegistryImportChange `json:"creates"`
+	Updates     []RegistryImportChange `json:"updates"`
+	Retirements []RegistryImportChange `json:"retirements"`
+	Conflicts   []RegistryImportChange `json:"conflicts"`
+}
+
+type RegistryImportPreview struct {
+	ID                   uuid.UUID                     `json:"id"`
+	PreviewChecksum      string                        `json:"previewChecksum"`
+	Counts               types.RegistryImportCounts    `json:"counts"`
+	Diff                 RegistryImportDiff            `json:"diff"`
+	Omissions            []string                      `json:"omissions"`
+	Diagnostics          []types.ValidationIssue       `json:"diagnostics"`
+	DiagnosticsTruncated bool                          `json:"diagnosticsTruncated"`
+	Roots                []RegistryImportCandidateRoot `json:"roots"`
+}
+
+func (r RegistryImportPreviewRequest) ToDomain(
+	organizationID, actorID uuid.UUID,
+) types.RegistryImportRequest {
+	return deploymentregistry.NormalizeImportRequest(r.toDomain(organizationID, actorID))
+}
+
+func (r RegistryImportPreviewRequest) toDomain(
+	organizationID, actorID uuid.UUID,
+) types.RegistryImportRequest {
+	sourcePlacements := make([]types.RegistryImportSourcePlacement, len(r.SourcePlacements))
+	for index, placement := range r.SourcePlacements {
+		sourcePlacements[index] = types.RegistryImportSourcePlacement{
+			RootKey: placement.RootKey, PhysicalName: placement.PhysicalName,
+		}
+	}
+	roots := make([]types.RegistryImportCandidateRoot, len(r.Roots))
+	for index, root := range r.Roots {
+		placements := make([]types.RegistryImportCandidatePlacement, len(root.Placements))
+		for placementIndex, placement := range root.Placements {
+			placements[placementIndex] = types.RegistryImportCandidatePlacement{
+				ComponentKey: placement.ComponentKey, PhysicalName: placement.PhysicalName,
+				ConfigNamespace: placement.ConfigNamespace, DatabaseBoundary: placement.DatabaseBoundary,
+				HealthAdapter: placement.HealthAdapter, RenamedFrom: placement.RenamedFrom,
+			}
+		}
+		roots[index] = types.RegistryImportCandidateRoot{
+			Key: root.Key, Name: root.Name, DeliveryModel: root.DeliveryModel,
+			Classification: root.Classification, CustomerOrganizationID: root.CustomerOrganizationID,
+			DeploymentTargetID: root.DeploymentTargetID, EnvironmentID: root.EnvironmentID,
+			SubscriberCustomerOrganizationIDs: root.SubscriberCustomerOrganizationIDs,
+			PhysicalIdentity:                  root.PhysicalIdentity, Placements: placements,
+		}
+	}
+	return types.RegistryImportRequest{
+		OrganizationID: organizationID, SourceKind: r.SourceKind, ToolName: r.ToolName,
+		ToolVersion: r.ToolVersion, SourceCommit: r.SourceCommit, Parameters: r.Parameters,
+		EvidenceReference: r.EvidenceReference, EvidenceChecksum: r.EvidenceChecksum,
+		ActorID: actorID, SourcePlacements: sourcePlacements, Roots: roots,
+	}
+}
+
+func (r RegistryImportPreviewRequest) Validate() error {
+	request := r.toDomain(uuid.New(), uuid.New())
+	_, err := deploymentregistry.PreviewImport(context.Background(), request)
+	if err != nil {
+		return validation.NewValidationFailedError(err.Error())
+	}
+	return nil
+}
+
+type RegistryImportDecisionRequest struct {
+	RootKey        string                     `json:"rootKey"`
+	Classification types.ImportClassification `json:"classification"`
+}
+
+func (r RegistryImportDecisionRequest) Validate() error {
+	if strings.TrimSpace(r.RootKey) == "" {
+		return validation.NewValidationFailedError("rootKey is required")
+	}
+	if !r.Classification.IsValid() {
+		return validation.NewValidationFailedError("classification is invalid")
+	}
+	return nil
+}
+
+type RegistryImportApplyRequest struct {
+	PreviewChecksum string `json:"previewChecksum"`
+}
+
+func (r RegistryImportApplyRequest) Validate() error {
+	if !deploymentRegistryChecksumPattern.MatchString(r.PreviewChecksum) {
+		return validation.NewValidationFailedError("previewChecksum must be a sha256 checksum")
+	}
+	return nil
+}
 
 const (
 	deploymentRegistryMaximumPageLimit  = 100

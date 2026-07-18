@@ -194,3 +194,147 @@ type Page[T any] struct {
 	Items      []T    `json:"items"`
 	NextCursor string `json:"nextCursor,omitempty"`
 }
+
+type ImportMode string
+
+const (
+	ImportModePreview ImportMode = "preview"
+	ImportModeApply   ImportMode = "apply"
+)
+
+type ImportClassification string
+
+const (
+	ImportClassificationStandard      ImportClassification = "standard"
+	ImportClassificationShared        ImportClassification = "shared"
+	ImportClassificationExternal      ImportClassification = "external"
+	ImportClassificationObserveOnly   ImportClassification = "observe_only"
+	ImportClassificationIgnored       ImportClassification = "ignored"
+	ImportClassificationNeedsDecision ImportClassification = "needs_decision"
+)
+
+func (classification ImportClassification) IsValid() bool {
+	switch classification {
+	case ImportClassificationStandard,
+		ImportClassificationShared,
+		ImportClassificationExternal,
+		ImportClassificationObserveOnly,
+		ImportClassificationIgnored,
+		ImportClassificationNeedsDecision:
+		return true
+	default:
+		return false
+	}
+}
+
+type RegistryImportCandidatePlacement struct {
+	ComponentKey     string `json:"componentKey"`
+	PhysicalName     string `json:"physicalName"`
+	ConfigNamespace  string `json:"configNamespace,omitempty"`
+	DatabaseBoundary string `json:"databaseBoundary,omitempty"`
+	HealthAdapter    string `json:"healthAdapter,omitempty"`
+	RenamedFrom      string `json:"renamedFrom,omitempty"`
+}
+
+type RegistryImportCandidateRoot struct {
+	Key                               string                             `json:"key"`
+	Name                              string                             `json:"name"`
+	DeliveryModel                     DeliveryModel                      `json:"deliveryModel"`
+	Classification                    ImportClassification               `json:"classification"`
+	CustomerOrganizationID            *uuid.UUID                         `json:"customerOrganizationId,omitempty"`
+	DeploymentTargetID                uuid.UUID                          `json:"deploymentTargetId"`
+	EnvironmentID                     uuid.UUID                          `json:"environmentId"`
+	SubscriberCustomerOrganizationIDs []uuid.UUID                        `json:"subscriberCustomerOrganizationIds,omitempty"`
+	PhysicalIdentity                  string                             `json:"physicalIdentity"`
+	SourcePath                        string                             `json:"sourcePath,omitempty"`
+	Placements                        []RegistryImportCandidatePlacement `json:"placements"`
+}
+
+type RegistryImportSourcePlacement struct {
+	RootKey      string `json:"rootKey"`
+	PhysicalName string `json:"physicalName"`
+}
+
+type RegistryImportRequest struct {
+	OrganizationID    uuid.UUID                       `json:"-"`
+	SourceKind        string                          `json:"sourceKind"`
+	ToolName          string                          `json:"toolName"`
+	ToolVersion       string                          `json:"toolVersion"`
+	SourceCommit      string                          `json:"sourceCommit,omitempty"`
+	Parameters        map[string]string               `json:"parameters"`
+	EvidenceReference string                          `json:"evidenceReference"`
+	EvidenceChecksum  string                          `json:"evidenceChecksum"`
+	ActorID           uuid.UUID                       `json:"-"`
+	SourcePlacements  []RegistryImportSourcePlacement `json:"sourcePlacements,omitempty"`
+	Roots             []RegistryImportCandidateRoot   `json:"roots"`
+	ExistingRoots     []RegistryImportCandidateRoot   `json:"-"`
+}
+
+type RegistryImportChange struct {
+	Kind         string `json:"kind"`
+	RootKey      string `json:"rootKey"`
+	PlacementKey string `json:"placementKey,omitempty"`
+	PhysicalName string `json:"physicalName,omitempty"`
+	Message      string `json:"message"`
+}
+
+type RegistryImportDiff struct {
+	Creates     []RegistryImportChange `json:"creates"`
+	Updates     []RegistryImportChange `json:"updates"`
+	Retirements []RegistryImportChange `json:"retirements"`
+	Conflicts   []RegistryImportChange `json:"conflicts"`
+}
+
+type RegistryImportCounts struct {
+	DiscoveredRoots      int `json:"discoveredRoots"`
+	ClassifiedRoots      int `json:"classifiedRoots"`
+	DiscoveredPlacements int `json:"discoveredPlacements"`
+	OmittedPlacements    int `json:"omittedPlacements"`
+	Creates              int `json:"creates"`
+	Updates              int `json:"updates"`
+	Retirements          int `json:"retirements"`
+	Conflicts            int `json:"conflicts"`
+}
+
+type RegistryImportPreview struct {
+	ID                   uuid.UUID                     `json:"id"`
+	PreviewChecksum      string                        `json:"previewChecksum"`
+	Counts               RegistryImportCounts          `json:"counts"`
+	Diff                 RegistryImportDiff            `json:"diff"`
+	Omissions            []string                      `json:"omissions"`
+	Diagnostics          []ValidationIssue             `json:"diagnostics"`
+	DiagnosticsTruncated bool                          `json:"diagnosticsTruncated"`
+	Roots                []RegistryImportCandidateRoot `json:"roots"`
+}
+
+type RegistryImportDecision struct {
+	ImportID       uuid.UUID            `json:"-"`
+	RootKey        string               `json:"rootKey"`
+	Classification ImportClassification `json:"classification"`
+	ActorID        uuid.UUID            `json:"-"`
+}
+
+type RegistryImportResult struct {
+	ID              uuid.UUID            `json:"id"`
+	PreviewChecksum string               `json:"previewChecksum"`
+	State           string               `json:"state"`
+	Applied         bool                 `json:"applied"`
+	Counts          RegistryImportCounts `json:"counts"`
+	Checkpoint      int                  `json:"checkpoint"`
+}
+
+type RegistryCoverageReport struct {
+	ImportID               uuid.UUID `json:"importId"`
+	DiscoveredRoots        int       `json:"discoveredRoots"`
+	ClassifiedRoots        int       `json:"classifiedRoots"`
+	ActionableManagedRoots int       `json:"actionableManagedRoots"`
+	ObserveOnlyRoots       int       `json:"observeOnlyRoots"`
+	ExternalRoots          int       `json:"externalRoots"`
+	IgnoredRoots           int       `json:"ignoredRoots"`
+	UnresolvedRoots        int       `json:"unresolvedRoots"`
+	DiscoveredPlacements   int       `json:"discoveredPlacements"`
+	Services               int       `json:"services"`
+	OmittedPlacements      int       `json:"omittedPlacements"`
+	Omissions              []string  `json:"omissions"`
+	Complete               bool      `json:"complete"`
+}

@@ -11,6 +11,53 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+func TestRegistryImportPreviewRequestToDomainNormalizesFullPlacement(t *testing.T) {
+	g := NewWithT(t)
+	organizationID, actorID := uuid.New(), uuid.New()
+	firstSubscriber, secondSubscriber := uuid.New(), uuid.New()
+	checksum := strings.Repeat("a", 64)
+	request := RegistryImportPreviewRequest{
+		SourceKind: " compose ", ToolName: " scanner ", ToolVersion: " 1.0 ",
+		Parameters:        map[string]string{" format ": " compose "},
+		EvidenceReference: " evidence://sha256/" + checksum + " ",
+		EvidenceChecksum:  " " + checksum + " ",
+		SourcePlacements: []RegistryImportSourcePlacement{{
+			RootKey: " Choice-TP-DEV ", PhysicalName: " api ",
+		}},
+		Roots: []RegistryImportCandidateRoot{{
+			Key: " Choice-TP-DEV ", Name: " Choice TP DEV ",
+			DeliveryModel: types.DeliveryModelShared, Classification: types.ImportClassificationShared,
+			DeploymentTargetID: uuid.New(), EnvironmentID: uuid.New(),
+			SubscriberCustomerOrganizationIDs: []uuid.UUID{
+				secondSubscriber, firstSubscriber, secondSubscriber,
+			},
+			PhysicalIdentity: " compose:choice-tp-dev ",
+			Placements: []RegistryImportCandidatePlacement{{
+				ComponentKey: " API ", PhysicalName: " api ",
+				ConfigNamespace: " config ", DatabaseBoundary: " database ",
+				HealthAdapter: " health ", RenamedFrom: " old-api ",
+			}},
+		}},
+	}
+
+	domain := request.ToDomain(organizationID, actorID)
+
+	g.Expect(domain.OrganizationID).To(Equal(organizationID))
+	g.Expect(domain.ActorID).To(Equal(actorID))
+	g.Expect(domain.SourceKind).To(Equal("compose"))
+	g.Expect(domain.Parameters).To(Equal(map[string]string{"format": "compose"}))
+	g.Expect(domain.SourcePlacements).To(Equal([]types.RegistryImportSourcePlacement{{
+		RootKey: "choice-tp-dev", PhysicalName: "api",
+	}}))
+	g.Expect(domain.Roots).To(HaveLen(1))
+	g.Expect(domain.Roots[0].Key).To(Equal("choice-tp-dev"))
+	g.Expect(domain.Roots[0].SubscriberCustomerOrganizationIDs).To(HaveLen(2))
+	g.Expect(domain.Roots[0].Placements).To(Equal([]types.RegistryImportCandidatePlacement{{
+		ComponentKey: "api", PhysicalName: "api", ConfigNamespace: "config",
+		DatabaseBoundary: "database", HealthAdapter: "health", RenamedFrom: "old-api",
+	}}))
+}
+
 func TestDeploymentRegistryListRequestValidate(t *testing.T) {
 	tests := []struct {
 		name    string

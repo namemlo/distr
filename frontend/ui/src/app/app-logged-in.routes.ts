@@ -41,6 +41,8 @@ import {AuthService} from './services/auth.service';
 import {FeatureFlagService} from './services/feature-flag.service';
 import {OrganizationService} from './services/organization.service';
 import {ToastService} from './services/toast.service';
+import {deploymentRegistryMutationGuard} from './setup/registry/deployment-registry-access';
+import {DeploymentRegistryComponent} from './setup/registry/deployment-registry.component';
 import {SidebarLinksPageComponent} from './sidebar-links/sidebar-links-page.component';
 import {StepTemplatesComponent} from './step-templates/step-templates.component';
 import {SubscriptionCallbackComponent} from './subscription/subscription-callback.component';
@@ -306,6 +308,15 @@ export const routes: Routes = [
           requireVendor,
           requiredRoleGuard('admin'),
           experimentalFeatureEnabledGuard('scoped_variables_v2'),
+        ],
+      },
+      {
+        path: 'setup/registry',
+        component: DeploymentRegistryComponent,
+        canActivate: [
+          requireVendor,
+          deploymentRegistryMutationGuard,
+          experimentalFeatureEnabledGuard('operator_control_plane_v2'),
         ],
       },
       {

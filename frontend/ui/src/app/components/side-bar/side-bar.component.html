@@ -333,6 +333,17 @@
                   <span class="">Downloads</span>
                 </a>
               </li>
+              @if (isOperatorControlPlaneV2FeatureEnabled()) {
+                <li>
+                  <a
+                    (click)="sidebar.hide()"
+                    routerLinkActive="bg-gray-100 dark:bg-gray-700"
+                    routerLink="/setup/registry"
+                    class="flex items-center p-2 pl-4 ml-7 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
+                    <span>Registry setup</span>
+                  </a>
+                </li>
+              }
             </ul>
           }
         </li>
@@ -619,6 +630,17 @@
                   <span class="">Downloads</span>
                 </a>
               </li>
+              @if (isOperatorControlPlaneV2FeatureEnabled()) {
+                <li>
+                  <a
+                    (click)="sidebar.hide()"
+                    routerLinkActive="bg-gray-100 dark:bg-gray-700"
+                    routerLink="/setup/registry"
+                    class="flex items-center p-2 pl-4 ml-7 text-gray-900 rounded-lg dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 group">
+                    <span>Registry setup</span>
+                  </a>
+                </li>
+              }
             </ul>
           }
         </li>
