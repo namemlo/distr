@@ -97,6 +97,9 @@ Do not put production runtime secrets in Jenkins. Keep the full `.env` on the se
 Use this as the normal deployment path for our infrastructure: Jenkins builds the image and pushes it to ECR, while the
 server only pulls and runs it.
 
+For a production Pipeline-from-SCM job, use
+[`deploy/jenkins/Jenkinsfile.hub-image`](jenkins-hub-image-publication.md) and its immutable publication contract.
+
 The existing `examples/ci/jenkins/Jenkinsfile` demonstrates Distr release API publishing. This section is separate: it
 builds and publishes the Distr Hub deployment image itself.
 
