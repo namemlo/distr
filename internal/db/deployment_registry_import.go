@@ -75,17 +75,26 @@ func CreateRegistryImportPreview(
 		for _, root := range preview.Roots {
 			id := uuid.New()
 			rootIDs[root.Key] = id
+			candidateChecksum, err := importCandidateChecksum(root)
+			if err != nil {
+				return fmt.Errorf("checksum registry import root %q: %w", root.Key, err)
+			}
 			rootRows = append(rootRows, []any{
 				id, request.OrganizationID, preview.ID, root.Key, root.Name, root.DeliveryModel,
 				root.CustomerOrganizationID, nullableImportUUID(root.DeploymentTargetID),
 				nullableImportUUID(root.EnvironmentID), root.SubscriberCustomerOrganizationIDs,
-				root.PhysicalIdentity, importCandidateChecksum(root),
+				root.PhysicalIdentity, candidateChecksum,
 			})
 		}
 		if len(rootRows) > 0 {
 			_, err = internalctx.GetDb(txCtx).CopyFrom(
 				txCtx, pgx.Identifier{"registryimportroot"},
-				[]string{"id", "organization_id", "registry_import_id", "root_key", "name", "delivery_model", "customer_organization_id", "deployment_target_id", "environment_id", "subscriber_customer_organization_ids", "physical_identity", "candidate_checksum"},
+				[]string{
+					"id", "organization_id", "registry_import_id", "root_key", "name",
+					"delivery_model", "customer_organization_id", "deployment_target_id",
+					"environment_id", "subscriber_customer_organization_ids",
+					"physical_identity", "candidate_checksum",
+				},
 				pgx.CopyFromRows(rootRows),
 			)
 			if err != nil {
@@ -98,11 +107,18 @@ func CreateRegistryImportPreview(
 		for _, root := range preview.Roots {
 			rootID := rootIDs[root.Key]
 			for _, placement := range root.Placements {
+				candidateChecksum, err := importCandidateChecksum(placement)
+				if err != nil {
+					return fmt.Errorf(
+						"checksum registry import placement %q/%q: %w",
+						root.Key, placement.ComponentKey, err,
+					)
+				}
 				placementRows = append(placementRows, []any{
 					uuid.New(), request.OrganizationID, preview.ID, rootID,
 					placement.ComponentKey, placement.PhysicalName, placement.ConfigNamespace,
 					placement.DatabaseBoundary, placement.HealthAdapter,
-					nullableImportText(placement.RenamedFrom), importCandidateChecksum(placement),
+					nullableImportText(placement.RenamedFrom), candidateChecksum,
 				})
 			}
 			decisionRows = append(decisionRows, []any{
@@ -113,7 +129,11 @@ func CreateRegistryImportPreview(
 		if len(placementRows) > 0 {
 			_, err = internalctx.GetDb(txCtx).CopyFrom(
 				txCtx, pgx.Identifier{"registryimportplacement"},
-				[]string{"id", "organization_id", "registry_import_id", "registry_import_root_id", "component_key", "physical_name", "config_namespace", "database_boundary", "health_adapter", "renamed_from", "candidate_checksum"},
+				[]string{
+					"id", "organization_id", "registry_import_id", "registry_import_root_id",
+					"component_key", "physical_name", "config_namespace",
+					"database_boundary", "health_adapter", "renamed_from", "candidate_checksum",
+				},
 				pgx.CopyFromRows(placementRows),
 			)
 			if err != nil {
@@ -123,7 +143,10 @@ func CreateRegistryImportPreview(
 		if len(decisionRows) > 0 {
 			_, err = internalctx.GetDb(txCtx).CopyFrom(
 				txCtx, pgx.Identifier{"registryimportdecision"},
-				[]string{"id", "organization_id", "registry_import_id", "registry_import_root_id", "decision_ordinal", "classification", "actor_useraccount_id"},
+				[]string{
+					"id", "organization_id", "registry_import_id", "registry_import_root_id",
+					"decision_ordinal", "classification", "actor_useraccount_id",
+				},
 				pgx.CopyFromRows(decisionRows),
 			)
 			if err != nil {
@@ -1083,6 +1106,7 @@ func applyRegistryImportRootRetirement(
 	}
 	return nil
 }
+
 func registryImportClassification(model types.DeliveryModel) types.ImportClassification {
 	switch model {
 	case types.DeliveryModelShared:
@@ -1361,11 +1385,15 @@ func registryImportUUIDSet(values map[uuid.UUID]struct{}) []uuid.UUID {
 	return result
 }
 
-func importCandidateChecksum(candidate any) string {
-	payload, _ := json.Marshal(candidate)
+func importCandidateChecksum(candidate any) (string, error) {
+	payload, err := json.Marshal(candidate)
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
+
 func nullableImportText(value string) any {
 	if strings.TrimSpace(value) == "" {
 		return nil

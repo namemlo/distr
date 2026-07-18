@@ -17,6 +17,13 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+func TestImportCandidateChecksumReturnsMarshalError(t *testing.T) {
+	g := NewWithT(t)
+	checksum, err := importCandidateChecksum(make(chan int))
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(checksum).To(BeEmpty())
+}
+
 func TestMigration140DefinesRegistryImportEvidenceAndCheckpointContract(t *testing.T) {
 	g := NewWithT(t)
 	up, err := os.ReadFile("../migrations/sql/140_deployment_registry_imports.up.sql")
