@@ -31,6 +31,7 @@ func TestDatabaseMigrationActionRequiresFrozenRetryAndLockInputs(t *testing.T) {
 		"databaseResourceKey":"postgres:ledger",
 		"databaseLockKey":"database:postgres:ledger",
 		"expectedSourceVersion":"41",
+		"expectedSourceChecksum":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		"resultingVersion":"42",
 		"artifactDigest":"registry.example.com/migrations/ledger@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"idempotencyKey":"ledger.042",
@@ -43,6 +44,7 @@ func TestDatabaseMigrationActionRequiresFrozenRetryAndLockInputs(t *testing.T) {
 		"databaseResourceKey":"postgres:ledger",
 		"databaseLockKey":"database:postgres:ledger",
 		"expectedSourceVersion":"41",
+		"expectedSourceChecksum":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		"resultingVersion":"42",
 		"artifactDigest":"migration:latest",
 		"idempotencyKey":"ledger.042",
@@ -50,6 +52,52 @@ func TestDatabaseMigrationActionRequiresFrozenRetryAndLockInputs(t *testing.T) {
 	}`))
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("artifactDigest"))
+}
+
+func TestDatabaseMigrationActionsFreezeSourceSchemaChecksums(t *testing.T) {
+	g := NewWithT(t)
+	registry := DefaultRegistry()
+
+	missingApplyChecksum := registry.ValidateInput("database.migration.apply", jsonObject(t, `{
+		"migrationId":"ledger.042",
+		"migrationChecksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"databaseResourceKey":"postgres:ledger",
+		"databaseLockKey":"database:postgres:ledger",
+		"expectedSourceVersion":"41",
+		"resultingVersion":"42",
+		"artifactDigest":"registry.example.com/migrations/ledger@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"idempotencyKey":"ledger.042",
+		"timeoutSeconds":1800
+	}`))
+	g.Expect(missingApplyChecksum).To(HaveOccurred())
+	g.Expect(missingApplyChecksum.Error()).To(ContainSubstring("expectedSourceChecksum"))
+
+	g.Expect(registry.ValidateInput("database.migration.validate", jsonObject(t, `{
+		"migrationId":"ledger.042",
+		"migrationChecksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"databaseResourceKey":"postgres:ledger",
+		"databaseLockKey":"database:postgres:ledger",
+		"expectedSchemaVersion":"41",
+		"expectedSchemaChecksum":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		"probes":[{"name":"source","reference":"probe:ledger:source:v1","expectedChecksum":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+		"timeoutSeconds":1800
+	}`))).To(Succeed())
+
+	invalidValidationChecksum := registry.ValidateInput(
+		"database.migration.validate",
+		jsonObject(t, `{
+			"migrationId":"ledger.042",
+			"migrationChecksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"databaseResourceKey":"postgres:ledger",
+			"databaseLockKey":"database:postgres:ledger",
+			"expectedSchemaVersion":"41",
+			"expectedSchemaChecksum":"unknown",
+			"probes":[{"name":"source","reference":"probe:ledger:source:v1","expectedChecksum":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+			"timeoutSeconds":1800
+		}`),
+	)
+	g.Expect(invalidValidationChecksum).To(HaveOccurred())
+	g.Expect(invalidValidationChecksum.Error()).To(ContainSubstring("expectedSchemaChecksum"))
 }
 
 func TestDatabaseActionsRejectPlaintextSecretsAndUnboundedEvidence(t *testing.T) {

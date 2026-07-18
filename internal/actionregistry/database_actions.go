@@ -27,10 +27,11 @@ func databaseActions() []types.ActionDefinition {
 			Type: "database.migration.apply", Name: "Apply database migration",
 			Description: "Applies one checksum-bound migration with a stable retry key and exclusive database lock.",
 			InputSchema: objectSchema(mergeSchemaProperties(common, map[string]any{
-				"migrationId":           boundedKeySchema(128),
-				"migrationChecksum":     checksumSchema(),
-				"expectedSourceVersion": boundedStringSchema(128),
-				"resultingVersion":      boundedStringSchema(128),
+				"migrationId":            boundedKeySchema(128),
+				"migrationChecksum":      checksumSchema(),
+				"expectedSourceVersion":  boundedStringSchema(128),
+				"expectedSourceChecksum": checksumSchema(),
+				"resultingVersion":       boundedStringSchema(128),
 				"artifactDigest": map[string]any{
 					"type":      "string",
 					"pattern":   `^\S+@sha256:[A-Fa-f0-9]{64}$`,
@@ -38,7 +39,7 @@ func databaseActions() []types.ActionDefinition {
 				},
 			}), []any{
 				"migrationId", "migrationChecksum", "databaseResourceKey",
-				"databaseLockKey", "expectedSourceVersion", "resultingVersion",
+				"databaseLockKey", "expectedSourceVersion", "expectedSourceChecksum", "resultingVersion",
 				"artifactDigest", "idempotencyKey", "timeoutSeconds",
 			}),
 			OutputSchema: migrationOutputSchema(),
@@ -47,10 +48,11 @@ func databaseActions() []types.ActionDefinition {
 			Type: "database.migration.validate", Name: "Validate database migration",
 			Description: "Runs bounded precondition or postcondition probes and records an exact schema observation.",
 			InputSchema: objectSchema(mergeSchemaProperties(common, map[string]any{
-				"migrationId":           boundedKeySchema(128),
-				"migrationChecksum":     checksumSchema(),
-				"expectedSchemaVersion": boundedStringSchema(128),
-				"probes":                migrationProbeArraySchema(),
+				"migrationId":            boundedKeySchema(128),
+				"migrationChecksum":      checksumSchema(),
+				"expectedSchemaVersion":  boundedStringSchema(128),
+				"expectedSchemaChecksum": checksumSchema(),
+				"probes":                 migrationProbeArraySchema(),
 			}), []any{
 				"migrationId", "migrationChecksum", "databaseResourceKey",
 				"databaseLockKey", "expectedSchemaVersion", "probes", "timeoutSeconds",

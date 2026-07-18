@@ -117,6 +117,7 @@ func evaluateAndPersistDeploymentPreflightScope(
 		ReleaseContractMessage:    contractMessage,
 		CurrentTargets:            currentTargets,
 		CurrentStates:             currentStates,
+		Migrations:                deploymentPreflightMigrations(evaluationPlan.Migrations),
 	})
 	status := types.DeploymentPreflightStatusPassed
 	for _, check := range checks {
@@ -143,6 +144,18 @@ func evaluateAndPersistDeploymentPreflightScope(
 		return nil, false, err
 	}
 	return created, status == types.DeploymentPreflightStatusPassed, nil
+}
+
+func deploymentPreflightMigrations(
+	planned []types.DeploymentPlanMigration,
+) []types.MigrationPreflight {
+	result := make([]types.MigrationPreflight, 0, len(planned))
+	for _, migration := range planned {
+		result = append(result, types.MigrationPreflight{
+			Contract: migration.MigrationContract(),
+		})
+	}
+	return result
 }
 
 func getDeploymentPreflightTargets(

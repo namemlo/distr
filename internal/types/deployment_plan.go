@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -358,6 +359,36 @@ type DeploymentPlanMigration struct {
 	ApplyStepKey                     string                 `db:"apply_step_key" json:"applyStepKey"`
 	ValidateStepKey                  string                 `db:"validate_step_key" json:"validateStepKey"`
 	SortOrder                        int                    `db:"sort_order" json:"sortOrder"`
+}
+
+func (migration DeploymentPlanMigration) MigrationContract() MigrationContract {
+	return MigrationContract{
+		ID:                               migration.MigrationID,
+		Checksum:                         migration.ContractChecksum,
+		ComponentKey:                     migration.ComponentKey,
+		DatabaseResourceKey:              migration.DatabaseResourceKey,
+		ExpectedSourceVersion:            migration.ExpectedSourceVersion,
+		ExpectedSourceChecksum:           migration.ExpectedSourceChecksum,
+		ResultingVersion:                 migration.ResultingVersion,
+		Phase:                            migration.Phase,
+		DependsOn:                        slices.Clone(migration.DependsOn),
+		LockType:                         migration.LockType,
+		LockTimeoutSeconds:               migration.LockTimeoutSeconds,
+		OperationalImpact:                migration.OperationalImpact,
+		BackupRequired:                   migration.BackupRequired,
+		BackupVerifier:                   migration.BackupVerifier,
+		PreconditionProbes:               slices.Clone(migration.PreconditionProbes),
+		PostconditionProbes:              slices.Clone(migration.PostconditionProbes),
+		RetryClass:                       migration.RetryClass,
+		IdempotencyKey:                   migration.IdempotencyKey,
+		Reversibility:                    migration.Reversibility,
+		PreviousApplicationCompatibility: migration.PreviousApplicationCompatibility,
+		RecoveryProcedureReference:       migration.RecoveryProcedureReference,
+		RequiresForwardFix:               migration.RequiresForwardFix,
+		AdapterType:                      migration.AdapterType,
+		ArtifactDigest:                   migration.ArtifactDigest,
+		EvidenceRetentionDays:            migration.EvidenceRetentionDays,
+	}
 }
 
 type DeploymentPlanVariable struct {

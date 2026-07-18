@@ -132,8 +132,11 @@ func buildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
 				"expectedSourceVersion": contract.ResultingVersion,
 				"resultingVersion":      contract.ExpectedSourceVersion,
 				"procedureReference":    contract.RecoveryProcedureReference,
-				"idempotencyKey":        "reverse:" + contract.IdempotencyKey,
-				"timeoutSeconds":        contract.LockTimeoutSeconds,
+				"idempotencyKey": migrationOperationIdempotencyKey(
+					contract,
+					"reverse",
+				),
+				"timeoutSeconds": contract.LockTimeoutSeconds,
 			},
 			types.MigrationRetrySafe,
 			"cooperative",

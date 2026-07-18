@@ -57,7 +57,50 @@ func TestExpandMigrationGraphUsesStableRetryInputAndDatabaseLock(t *testing.T) {
 	var input map[string]any
 	g.Expect(json.Unmarshal(apply.InputBindings, &input)).To(Succeed())
 	g.Expect(input).To(HaveKeyWithValue("idempotencyKey", "ledger.042"))
+	g.Expect(input).To(HaveKeyWithValue("expectedSourceChecksum", contract.ExpectedSourceChecksum))
 	g.Expect(input).NotTo(HaveKey("credentials"))
+	precondition := stepByKey(first, "migration:ledger.042:precondition")
+	g.Expect(json.Unmarshal(precondition.InputBindings, &input)).To(Succeed())
+	g.Expect(input).To(HaveKeyWithValue("expectedSchemaChecksum", contract.ExpectedSourceChecksum))
+}
+
+func TestRetryNoneDerivesDeterministicUniqueOperationKeys(t *testing.T) {
+	g := NewWithT(t)
+	first := migrationContractFixture()
+	first.RetryClass = types.MigrationRetryNone
+	first.IdempotencyKey = ""
+	second := first
+	second.ID = "ledger.043"
+
+	firstGraph, err := ExpandMigrationGraph(first, types.TargetPlanGraph{})
+	g.Expect(err).NotTo(HaveOccurred())
+	repeatedGraph, err := ExpandMigrationGraph(first, types.TargetPlanGraph{})
+	g.Expect(err).NotTo(HaveOccurred())
+	secondGraph, err := ExpandMigrationGraph(second, types.TargetPlanGraph{})
+	g.Expect(err).NotTo(HaveOccurred())
+	reverseGraph, err := buildReverseGraph(types.FailedPlan{
+		Contracts:             []types.MigrationContract{first, second},
+		CompletedMigrationIDs: []string{first.ID, second.ID},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	firstApplyKey := stepInputString(t, firstGraph, "migration:ledger.042:apply", "idempotencyKey")
+	g.Expect(
+		stepInputString(t, repeatedGraph, "migration:ledger.042:apply", "idempotencyKey"),
+	).To(Equal(firstApplyKey))
+	keys := []string{
+		firstApplyKey,
+		stepInputString(t, firstGraph, "migration:ledger.042:backup:create", "idempotencyKey"),
+		stepInputString(t, secondGraph, "migration:ledger.043:apply", "idempotencyKey"),
+		stepInputString(t, secondGraph, "migration:ledger.043:backup:create", "idempotencyKey"),
+		stepInputString(t, reverseGraph, "recovery:ledger.042:reverse", "idempotencyKey"),
+		stepInputString(t, reverseGraph, "recovery:ledger.043:reverse", "idempotencyKey"),
+	}
+	g.Expect(keys).To(HaveLen(6))
+	g.Expect(keys).To(ConsistOf(uniqueStrings(keys)))
+	for _, key := range keys {
+		g.Expect(key).To(MatchRegexp(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`))
+	}
 }
 
 func TestExpandMigrationGraphProducesRegistryValidBoundedActions(t *testing.T) {
@@ -160,6 +203,31 @@ func cloneGraph(t *testing.T, graph types.TargetPlanGraph) types.TargetPlanGraph
 	NewWithT(t).Expect(err).NotTo(HaveOccurred())
 	var result types.TargetPlanGraph
 	NewWithT(t).Expect(json.Unmarshal(payload, &result)).To(Succeed())
+	return result
+}
+
+func stepInputString(
+	t *testing.T,
+	graph types.TargetPlanGraph,
+	stepKey, inputKey string,
+) string {
+	t.Helper()
+	step := stepByKey(graph, stepKey)
+	var input map[string]any
+	NewWithT(t).Expect(json.Unmarshal(step.InputBindings, &input)).To(Succeed())
+	value, _ := input[inputKey].(string)
+	return value
+}
+
+func uniqueStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		if _, exists := seen[value]; !exists {
+			seen[value] = struct{}{}
+			result = append(result, value)
+		}
+	}
 	return result
 }
 

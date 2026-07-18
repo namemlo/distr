@@ -2,6 +2,7 @@ package deploymentpreflight
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 
@@ -161,6 +162,19 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 			}, stateMessage))
 	}
 
+	if len(input.Plan.Migrations) > 0 || len(input.Migrations) > 0 {
+		coveragePassed, expectedIDs, actualIDs := migrationEvidenceCoverage(
+			input.Plan.Migrations,
+			input.Migrations,
+		)
+		add(types.DeploymentPreflightCheck{
+			CheckKey: "migration_evidence_coverage",
+			Status:   statusFor(coveragePassed),
+			Expected: map[string]any{"migrationIds": expectedIDs},
+			Actual:   map[string]any{"migrationIds": actualIDs},
+			Message:  "migration preflight evidence exactly covers the frozen migration contracts",
+		})
+	}
 	for _, migration := range input.Migrations {
 		contract := migration.Contract
 		backupPassed := !contract.BackupRequired ||
@@ -257,6 +271,38 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 		}
 	}
 	return checks
+}
+
+func migrationEvidenceCoverage(
+	planned []types.DeploymentPlanMigration,
+	supplied []types.MigrationPreflight,
+) (bool, []string, []string) {
+	expected := make(map[string][]types.MigrationContract, len(planned))
+	expectedIDs := make([]string, 0, len(planned))
+	for _, migration := range planned {
+		contract := migration.MigrationContract()
+		expected[contract.ID] = append(expected[contract.ID], contract)
+		expectedIDs = append(expectedIDs, contract.ID)
+	}
+	actual := make(map[string][]types.MigrationContract, len(supplied))
+	actualIDs := make([]string, 0, len(supplied))
+	for _, migration := range supplied {
+		actual[migration.Contract.ID] = append(actual[migration.Contract.ID], migration.Contract)
+		actualIDs = append(actualIDs, migration.Contract.ID)
+	}
+	slices.Sort(expectedIDs)
+	slices.Sort(actualIDs)
+	if len(expectedIDs) != len(actualIDs) {
+		return false, expectedIDs, actualIDs
+	}
+	for id, contracts := range expected {
+		if len(contracts) != 1 ||
+			len(actual[id]) != 1 ||
+			!reflect.DeepEqual(contracts[0], actual[id][0]) {
+			return false, expectedIDs, actualIDs
+		}
+	}
+	return true, expectedIDs, actualIDs
 }
 
 func migrationCheck(

@@ -78,8 +78,11 @@ func buildMigrationGraph(
 					"databaseLockKey":      databaseLock,
 					"destinationReference": "backup:" + contract.ID,
 					"credentialsSecretRef": "database:" + contract.DatabaseResourceKey,
-					"idempotencyKey":       "backup:" + contract.IdempotencyKey,
-					"timeoutSeconds":       contract.LockTimeoutSeconds,
+					"idempotencyKey": migrationOperationIdempotencyKey(
+						contract,
+						"backup",
+					),
+					"timeoutSeconds": contract.LockTimeoutSeconds,
 				}, types.MigrationRetrySafe, "cooperative",
 				"backup identity, checksum, and bounded creation evidence"),
 			migrationStep(contract, verifyKey, "Verify backup for "+contract.ID,
@@ -106,11 +109,12 @@ func buildMigrationGraph(
 			"migration_precondition", "database.migration.validate", targetLock, databaseLock,
 			map[string]any{
 				"migrationId": contract.ID, "migrationChecksum": contract.Checksum,
-				"databaseResourceKey":   contract.DatabaseResourceKey,
-				"databaseLockKey":       databaseLock,
-				"expectedSchemaVersion": contract.ExpectedSourceVersion,
-				"probes":                contract.PreconditionProbes,
-				"timeoutSeconds":        contract.LockTimeoutSeconds,
+				"databaseResourceKey":    contract.DatabaseResourceKey,
+				"databaseLockKey":        databaseLock,
+				"expectedSchemaVersion":  contract.ExpectedSourceVersion,
+				"expectedSchemaChecksum": contract.ExpectedSourceChecksum,
+				"probes":                 contract.PreconditionProbes,
+				"timeoutSeconds":         contract.LockTimeoutSeconds,
 			}, types.MigrationRetrySafe, "safe",
 			"source schema and precondition probe evidence"),
 		migrationStep(contract, applyKey, "Apply "+contract.ID,
@@ -210,17 +214,36 @@ func migrationApplyInput(
 ) map[string]any {
 	input := map[string]any{
 		"migrationId": contract.ID, "migrationChecksum": contract.Checksum,
-		"databaseResourceKey":   contract.DatabaseResourceKey,
-		"databaseLockKey":       databaseLock,
-		"expectedSourceVersion": contract.ExpectedSourceVersion,
-		"resultingVersion":      contract.ResultingVersion,
-		"idempotencyKey":        contract.IdempotencyKey,
-		"timeoutSeconds":        contract.LockTimeoutSeconds,
+		"databaseResourceKey":    contract.DatabaseResourceKey,
+		"databaseLockKey":        databaseLock,
+		"expectedSourceVersion":  contract.ExpectedSourceVersion,
+		"expectedSourceChecksum": contract.ExpectedSourceChecksum,
+		"resultingVersion":       contract.ResultingVersion,
+		"idempotencyKey": migrationOperationIdempotencyKey(
+			contract,
+			"apply",
+		),
+		"timeoutSeconds": contract.LockTimeoutSeconds,
 	}
 	if contract.ArtifactDigest != "" {
 		input["artifactDigest"] = contract.ArtifactDigest
 	}
 	return input
+}
+
+func migrationOperationIdempotencyKey(
+	contract types.MigrationContract,
+	operation string,
+) string {
+	candidate := contract.IdempotencyKey
+	if candidate != "" && operation != "apply" {
+		candidate = operation + ":" + candidate
+	}
+	if idempotencyPattern.MatchString(candidate) {
+		return candidate
+	}
+	sum := sha256.Sum256([]byte(operation + "\x00" + contract.ID + "\x00" + contract.Checksum))
+	return "migration." + operation + "." + hex.EncodeToString(sum[:])
 }
 
 func migrationStep(
