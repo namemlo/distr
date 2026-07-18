@@ -56,6 +56,9 @@ func (r *CreateProductReleaseRequest) Validate() error {
 	if r.Version == "" {
 		return validation.NewValidationFailedError("version is required")
 	}
+	if len(r.Version) > types.ProductReleaseMaxVersionBytes {
+		return validation.NewValidationFailedError("version is too long")
+	}
 	if r.DependencyPolicyVersion == uuid.Nil {
 		return validation.NewValidationFailedError("dependencyPolicyVersion is required")
 	}
@@ -64,6 +67,15 @@ func (r *CreateProductReleaseRequest) Validate() error {
 	}
 	if len(r.Components) == 0 {
 		return validation.NewValidationFailedError("at least one component release is required")
+	}
+	if len(r.Components) > types.ProductReleaseMaxComponents {
+		return validation.NewValidationFailedError("too many component releases")
+	}
+	if len(r.Requirements) > types.ProductReleaseMaxRequirements {
+		return validation.NewValidationFailedError("too many product requirements")
+	}
+	if len(r.RequiredPlatforms) > types.ProductReleaseMaxRequiredPlatforms {
+		return validation.NewValidationFailedError("too many required platforms")
 	}
 
 	seenComponentReleaseIDs := make(map[uuid.UUID]struct{}, len(r.Components))
@@ -101,6 +113,20 @@ func (r *CreateProductReleaseRequest) Validate() error {
 		r.Requirements[index].Name = strings.TrimSpace(r.Requirements[index].Name)
 		r.Requirements[index].Range = strings.TrimSpace(r.Requirements[index].Range)
 		r.Requirements[index].ResolutionStage = strings.TrimSpace(r.Requirements[index].ResolutionStage)
+		if !productReleaseKeyPattern.MatchString(r.Requirements[index].Name) {
+			return validation.NewValidationFailedError(
+				"requirement name must be a lowercase stable key",
+			)
+		}
+		if r.Requirements[index].Range == "" {
+			return validation.NewValidationFailedError("requirement range is required")
+		}
+		if len(r.Requirements[index].Range) > types.ProductReleaseMaxCapabilityRangeBytes {
+			return validation.NewValidationFailedError("requirement range is too long")
+		}
+		if len(r.Requirements[index].AllowedModes) > types.ProductReleaseMaxResolutionModes {
+			return validation.NewValidationFailedError("too many requirement resolution modes")
+		}
 		for modeIndex := range r.Requirements[index].AllowedModes {
 			r.Requirements[index].AllowedModes[modeIndex] = strings.TrimSpace(r.Requirements[index].AllowedModes[modeIndex])
 		}

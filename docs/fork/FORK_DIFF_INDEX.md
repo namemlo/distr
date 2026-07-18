@@ -1186,16 +1186,20 @@ Use one entry per pull request:
   publish also require vendor read-write/admin authority and block super-admin mutation.
 - User-facing behavior: Release managers pin exact published Component Releases, inspect capability validation and
   graph order, retain explicit target-deferred requirements, and publish an immutable Product Release.
-- Database changes: Migration 144 adds organization-scoped child pins with frozen v2 contract snapshots and
-  provider-to-consumer capability edges.
+- Database changes: Migration 144 adds organization-scoped child pins with frozen v2 contract snapshots,
+  provider-to-consumer capability edges, and byte bounds for product/component versions and indexed graph values.
 - API changes: Adds `/api/v1/product-releases` create, get, validate, publish, and graph routes with tenant-safe
   errors and canonical/graph checksum visibility.
 - UI changes: None.
 - Agent protocol changes: None.
 - Documentation: Added ADR-0059 and PR-062 fork notes.
 - Tests: Added exact cycle, missing/ambiguous/incompatible provider, unpublished/foreign/duplicate child,
-  product-stage gap, platform, symbolic target node, deterministic checksum, migration, API, and handler coverage.
+  all-field migration equality, bounded collections, deterministic batch locking, fail-closed provenance/policy
+  adapters, product-stage gap, platform, symbolic target node, deterministic checksum, migration, API, and handler
+  coverage.
 - Upstream contribution notes: Community-neutral product composition and dependency resolution; no adopter,
   infrastructure, customer, target, credential, or secret behavior.
 - Compatibility notes: The parent remains `ReleaseBundle(kind=product)`; v1 and Component Release v2 history is not
-  rewritten. Generic Release Bundle mutations cannot bypass the Product Release workflow.
+  rewritten. Generic Release Bundle mutations cannot bypass the Product Release workflow. Publication remains
+  unavailable until PR-061 and PR-067 register exact organization-scoped provenance and immutable published-policy
+  verifiers.

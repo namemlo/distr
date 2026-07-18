@@ -107,3 +107,60 @@ func TestCreateProductReleaseRequestRejectsDuplicateAndMutablePins(t *testing.T)
 		g.Expect(request.Validate()).To(MatchError(ContainSubstring("lowercase sha256")))
 	})
 }
+
+func TestCreateProductReleaseRequestRejectsBoundedCollectionsAndIndexedVersion(t *testing.T) {
+	valid := func() CreateProductReleaseRequest {
+		return CreateProductReleaseRequest{
+			ApplicationID:           uuid.New(),
+			ChannelID:               uuid.New(),
+			Product:                 "neutral-suite",
+			Version:                 "1.2.3",
+			DependencyPolicyVersion: uuid.New(),
+			Components: []ProductReleaseComponentRequest{{
+				ComponentReleaseID:       uuid.New(),
+				ComponentReleaseChecksum: "sha256:" + strings.Repeat("a", 64),
+			}},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*CreateProductReleaseRequest)
+		want   string
+	}{
+		{
+			name: "indexed version bytes",
+			mutate: func(request *CreateProductReleaseRequest) {
+				request.Version = strings.Repeat("v", types.ProductReleaseMaxVersionBytes+1)
+			},
+			want: "version is too long",
+		},
+		{
+			name: "components",
+			mutate: func(request *CreateProductReleaseRequest) {
+				request.Components = make(
+					[]ProductReleaseComponentRequest,
+					types.ProductReleaseMaxComponents+1,
+				)
+			},
+			want: "too many component releases",
+		},
+		{
+			name: "requirements",
+			mutate: func(request *CreateProductReleaseRequest) {
+				request.Requirements = make(
+					[]types.CapabilityRequirement,
+					types.ProductReleaseMaxRequirements+1,
+				)
+			},
+			want: "too many product requirements",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			request := valid()
+			tt.mutate(&request)
+			g.Expect(request.Validate()).To(MatchError(ContainSubstring(tt.want)))
+		})
+	}
+}

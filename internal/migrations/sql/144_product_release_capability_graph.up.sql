@@ -1,3 +1,10 @@
+ALTER TABLE ReleaseBundle
+  ADD CONSTRAINT releasebundle_product_version_length_check
+  CHECK (
+    kind <> 'product'
+    OR octet_length(release_number) BETWEEN 1 AND 128
+  );
+
 CREATE TABLE ProductReleaseComponent (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   product_release_bundle_id UUID NOT NULL,
@@ -25,6 +32,8 @@ CREATE TABLE ProductReleaseComponent (
     CHECK (component_release_checksum ~ '^sha256:[0-9a-f]{64}$'),
   CONSTRAINT productreleasecomponent_key_check
     CHECK (component_key ~ '^[a-z0-9][a-z0-9._-]{0,127}$'),
+  CONSTRAINT productreleasecomponent_version_length_check
+    CHECK (octet_length(component_version) BETWEEN 1 AND 128),
   CONSTRAINT productreleasecomponent_contract_object_check
     CHECK (jsonb_typeof(contract_snapshot) = 'object'),
   CONSTRAINT productreleasecomponent_contract_schema_check
@@ -58,6 +67,21 @@ CREATE TABLE ProductReleaseCapabilityEdge (
     ON DELETE CASCADE,
   CONSTRAINT productreleasecapabilityedge_product_edge_unique
     UNIQUE (product_release_bundle_id, edge_key),
+  CONSTRAINT productreleasecapabilityedge_indexed_values_check
+    CHECK (
+      octet_length(edge_key) BETWEEN 1 AND 512
+      AND octet_length(from_node_key) BETWEEN 1 AND 512
+      AND octet_length(to_node_key) BETWEEN 1 AND 512
+      AND octet_length(consumer_component_key) BETWEEN 1 AND 128
+      AND (
+        provider_component_key IS NULL
+        OR octet_length(provider_component_key) BETWEEN 1 AND 128
+      )
+      AND octet_length(capability_name) BETWEEN 1 AND 128
+      AND octet_length(version_range) BETWEEN 1 AND 256
+      AND octet_length(provider_version) <= 128
+      AND octet_length(ordering) <= 64
+    ),
   CONSTRAINT productreleasecapabilityedge_stage_check
     CHECK (resolution_stage IN ('product', 'target')),
   CONSTRAINT productreleasecapabilityedge_capability_check

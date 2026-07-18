@@ -151,13 +151,22 @@ func BuildProductReleaseGraph(manifest types.ProductReleaseManifest) types.Produ
 func ValidateProductReleaseGraph(manifest types.ProductReleaseManifest) []types.ProductReleaseValidationIssue {
 	collector := &productReleaseIssueCollector{}
 	validateProductReleaseIdentity(manifest, collector)
+	if productReleaseGraphExceedsBounds(manifest) {
+		sortProductReleaseIssues(collector.issues)
+		return collector.issues
+	}
 	components, providers := validateProductReleaseComponents(manifest, collector)
 	validateProductReleaseRequirements(manifest, components, providers, collector)
 	graph := BuildProductReleaseGraph(manifest)
 	if path := exactCyclePath(graph.Nodes, graph.Edges); len(path) > 0 {
 		collector.add("graph", "cycle", "capability graph contains a cycle: "+strings.Join(path, " -> "), path...)
 	}
-	slices.SortFunc(collector.issues, func(a, b types.ProductReleaseValidationIssue) int {
+	sortProductReleaseIssues(collector.issues)
+	return collector.issues
+}
+
+func sortProductReleaseIssues(issues []types.ProductReleaseValidationIssue) {
+	slices.SortFunc(issues, func(a, b types.ProductReleaseValidationIssue) int {
 		if cmp := strings.Compare(a.Field, b.Field); cmp != 0 {
 			return cmp
 		}
@@ -169,7 +178,6 @@ func ValidateProductReleaseGraph(manifest types.ProductReleaseManifest) []types.
 		}
 		return strings.Compare(strings.Join(a.Path, "\x00"), strings.Join(b.Path, "\x00"))
 	})
-	return collector.issues
 }
 
 type productReleaseIssueCollector struct {
@@ -194,6 +202,8 @@ func validateProductReleaseIdentity(
 	}
 	if strings.TrimSpace(manifest.Version) == "" {
 		collector.add("version", "required", "product release version is required")
+	} else if len(strings.TrimSpace(manifest.Version)) > types.ProductReleaseMaxVersionBytes {
+		collector.add("version", "maxLength", "product release version is too long")
 	}
 	if manifest.DependencyPolicyVersion == uuid.Nil {
 		collector.add("dependencyPolicyVersion", "required", "dependency policy version is required")
@@ -201,6 +211,36 @@ func validateProductReleaseIdentity(
 	if len(manifest.Components) == 0 {
 		collector.add("components", "required", "at least one component release is required")
 	}
+	if len(manifest.Components) > types.ProductReleaseMaxComponents {
+		collector.add("components", "maxItems", "too many component releases")
+	}
+	if len(manifest.Requirements) > types.ProductReleaseMaxRequirements {
+		collector.add("requirements", "maxItems", "too many product requirements")
+	}
+	if len(manifest.RequiredPlatforms) > types.ProductReleaseMaxRequiredPlatforms {
+		collector.add("requiredPlatforms", "maxItems", "too many required platforms")
+	}
+	if productReleaseGraphRequirementCount(manifest) > types.ProductReleaseMaxGraphRequirements {
+		collector.add("requirements", "maxGraphItems", "too many capability requirements in the product graph")
+	}
+}
+
+func productReleaseGraphExceedsBounds(manifest types.ProductReleaseManifest) bool {
+	return len(manifest.Components) > types.ProductReleaseMaxComponents ||
+		len(manifest.Requirements) > types.ProductReleaseMaxRequirements ||
+		len(manifest.RequiredPlatforms) > types.ProductReleaseMaxRequiredPlatforms ||
+		productReleaseGraphRequirementCount(manifest) > types.ProductReleaseMaxGraphRequirements
+}
+
+func productReleaseGraphRequirementCount(manifest types.ProductReleaseManifest) int {
+	count := len(manifest.Requirements)
+	for _, component := range manifest.Components {
+		if count > types.ProductReleaseMaxGraphRequirements-len(component.Requires) {
+			return types.ProductReleaseMaxGraphRequirements + 1
+		}
+		count += len(component.Requires)
+	}
+	return count
 }
 
 func validateProductReleaseComponents(
@@ -269,7 +309,9 @@ func validateProductReleaseComponentIdentity(
 			"component release checksum must be lowercase sha256",
 		)
 	}
-	if _, err := semver.StrictNewVersion(component.Version); err != nil {
+	if len(component.Version) > types.ProductReleaseMaxVersionBytes {
+		collector.add(field+".version", "maxLength", "component version is too long")
+	} else if _, err := semver.StrictNewVersion(component.Version); err != nil {
 		collector.add(field+".version", "semver", "component version must be strict semantic version")
 	}
 }
@@ -311,7 +353,9 @@ func validateProductReleaseComponentCapabilities(
 			collector.add(provideField+".name", "unique", "provided capability names must be unique per component")
 		}
 		providedNames[capability.Name] = struct{}{}
-		if _, err := semver.StrictNewVersion(capability.Version); err != nil {
+		if len(capability.Version) > types.ProductReleaseMaxVersionBytes {
+			collector.add(provideField+".version", "maxLength", "provided capability version is too long")
+		} else if _, err := semver.StrictNewVersion(capability.Version); err != nil {
 			collector.add(provideField+".version", "semver", "provided capability version must be strict semantic version")
 		}
 		providers[capability.Name] = append(providers[capability.Name], capabilityProvider{
@@ -329,10 +373,7 @@ func validateProductReleaseComponentMigrations(
 	for index, migration := range component.Migrations {
 		migrationField := fmt.Sprintf("%s.migrations.%d", field, index)
 		previous, exists := migrationContracts[migration.Key]
-		if exists &&
-			(previous.Type != migration.Type ||
-				previous.Compatibility != migration.Compatibility ||
-				previous.FailurePolicy != migration.FailurePolicy) {
+		if exists && !migrationDeclarationsEqual(previous, migration) {
 			collector.add(
 				migrationField,
 				"migrationConflict",
@@ -342,6 +383,15 @@ func validateProductReleaseComponentMigrations(
 			migrationContracts[migration.Key] = migration
 		}
 	}
+}
+
+func migrationDeclarationsEqual(left, right types.MigrationDeclaration) bool {
+	return left.Key == right.Key &&
+		left.Type == right.Type &&
+		left.Order == right.Order &&
+		left.Compatibility == right.Compatibility &&
+		left.FailurePolicy == right.FailurePolicy &&
+		left.Description == right.Description
 }
 
 func validateProductReleaseRequirements(
@@ -392,7 +442,9 @@ func validateProductReleaseRequirements(
 		if !productReleaseKeyPattern.MatchString(requirement.Name) {
 			collector.add(entry.field+".name", "key", "required capability name must be a lowercase stable key")
 		}
-		if _, err := semver.NewConstraint(requirement.Range); err != nil {
+		if len(requirement.Range) > types.ProductReleaseMaxCapabilityRangeBytes {
+			collector.add(entry.field+".range", "maxLength", "required capability range is too long")
+		} else if _, err := semver.NewConstraint(requirement.Range); err != nil {
 			collector.add(entry.field+".range", "semverRange", "required capability range must be valid")
 		}
 		stage := types.CapabilityResolutionStage(requirement.ResolutionStage)
@@ -446,6 +498,10 @@ func validateTargetModes(
 ) {
 	if len(modes) == 0 {
 		add(field+".allowedModes", "allowedModes", "target requirements must declare allowed resolution modes")
+		return
+	}
+	if len(modes) > types.ProductReleaseMaxResolutionModes {
+		add(field+".allowedModes", "maxItems", "too many target resolution modes")
 		return
 	}
 	seen := make(map[types.RequirementResolutionMode]struct{}, len(modes))

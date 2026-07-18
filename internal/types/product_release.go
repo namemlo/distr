@@ -6,7 +6,20 @@ import (
 	"github.com/google/uuid"
 )
 
-const ProductReleaseSchemaV1 = "distr.product-release/v1"
+const (
+	ProductReleaseSchemaV1 = "distr.product-release/v1"
+
+	// Product Release bounds keep graph construction and indexed database
+	// values predictable for every tenant. They are contract limits, not
+	// pagination defaults.
+	ProductReleaseMaxComponents           = 256
+	ProductReleaseMaxRequirements         = 256
+	ProductReleaseMaxGraphRequirements    = 4096
+	ProductReleaseMaxRequiredPlatforms    = 16
+	ProductReleaseMaxVersionBytes         = 128
+	ProductReleaseMaxCapabilityRangeBytes = 256
+	ProductReleaseMaxResolutionModes      = 5
+)
 
 type CapabilityResolutionStage string
 

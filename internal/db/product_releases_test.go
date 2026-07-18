@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -32,6 +33,10 @@ func TestProductReleaseMigrationIsTenantScopedAndImmutable(t *testing.T) {
 		"'approved_external'",
 		"'feature_disabled'",
 		"provider_deploy_and_health_before_consumer",
+		"releasebundle_product_version_length_check",
+		"productreleasecomponent_version_length_check",
+		"productreleasecapabilityedge_indexed_values_check",
+		"octet_length(edge_key) BETWEEN 1 AND 512",
 	} {
 		g.Expect(sql).To(ContainSubstring(fragment))
 	}
@@ -40,6 +45,9 @@ func TestProductReleaseMigrationIsTenantScopedAndImmutable(t *testing.T) {
 	down, err := os.ReadFile("../migrations/sql/144_product_release_capability_graph.down.sql")
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down)).To(ContainSubstring("downgrade crossing 144 is forbidden"))
+	g.Expect(string(down)).To(ContainSubstring(
+		"DROP CONSTRAINT releasebundle_product_version_length_check",
+	))
 }
 
 func TestProductReleaseContractRoundTripKeepsOnlyTargetNeutralPublicFacts(t *testing.T) {
@@ -87,4 +95,96 @@ func TestProductReleaseValidationErrorIsBadRequest(t *testing.T) {
 		Field: "graph", Rule: "cycle", Message: "cycle",
 	}}}
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+}
+
+func TestProductReleaseExternalEligibilityDefaultsFailClosed(t *testing.T) {
+	restoreProvenance := SetProductReleaseProvenanceEligibilityHook(nil)
+	defer restoreProvenance()
+	restorePolicy := SetProductReleaseDependencyPolicyEligibilityHook(nil)
+	defer restorePolicy()
+
+	g := NewWithT(t)
+	provenanceIssue, err := productReleaseProvenanceEligibility(
+		context.Background(),
+		uuid.New(),
+		uuid.New(),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(provenanceIssue).NotTo(BeNil())
+	g.Expect(provenanceIssue.Rule).To(Equal("provenanceVerifierUnavailable"))
+
+	policyIssue, err := productReleaseDependencyPolicyEligibility(
+		context.Background(),
+		uuid.New(),
+		uuid.New(),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(policyIssue).NotTo(BeNil())
+	g.Expect(policyIssue.Rule).To(Equal("publishedPolicyUnavailable"))
+}
+
+func TestProductReleaseExternalEligibilityAdaptersReceiveExactScopedPins(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	componentReleaseID := uuid.New()
+	policyVersionID := uuid.New()
+
+	restoreProvenance := SetProductReleaseProvenanceEligibilityHook(func(
+		_ context.Context,
+		gotOrganizationID uuid.UUID,
+		gotComponentReleaseID uuid.UUID,
+	) (*types.ProductReleaseValidationIssue, error) {
+		g.Expect(gotOrganizationID).To(Equal(organizationID))
+		g.Expect(gotComponentReleaseID).To(Equal(componentReleaseID))
+		return nil, nil
+	})
+	defer restoreProvenance()
+	restorePolicy := SetProductReleaseDependencyPolicyEligibilityHook(func(
+		_ context.Context,
+		gotOrganizationID uuid.UUID,
+		gotPolicyVersionID uuid.UUID,
+	) (*types.ProductReleaseValidationIssue, error) {
+		g.Expect(gotOrganizationID).To(Equal(organizationID))
+		g.Expect(gotPolicyVersionID).To(Equal(policyVersionID))
+		return nil, nil
+	})
+	defer restorePolicy()
+
+	issue, err := productReleaseProvenanceEligibility(
+		context.Background(),
+		organizationID,
+		componentReleaseID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(issue).To(BeNil())
+	issue, err = productReleaseDependencyPolicyEligibility(
+		context.Background(),
+		organizationID,
+		policyVersionID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(issue).To(BeNil())
+}
+
+func TestProductReleasePublicationLocksChildrenAndRunsEligibilityBeforeUpdate(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("product_releases.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+	g.Expect(text).To(ContainSubstring("rb.id = ANY(@componentReleaseIds)"))
+	g.Expect(text).To(ContainSubstring("ORDER BY rb.id`+lockClause"))
+	g.Expect(text).To(ContainSubstring(`lockClause = " FOR UPDATE OF rb"`))
+
+	start := strings.Index(text, "func PublishProductRelease(")
+	end := strings.Index(text[start:], "func currentOrganizationID(")
+	g.Expect(start).To(BeNumerically(">=", 0))
+	g.Expect(end).To(BeNumerically(">", 0))
+	publishBody := text[start : start+end]
+	eligibility := strings.Index(
+		publishBody,
+		"validateProductReleaseEligibility(ctx, *manifest, organizationID, true)",
+	)
+	update := strings.Index(publishBody, "publishProductReleaseRow(ctx")
+	g.Expect(eligibility).To(BeNumerically(">=", 0))
+	g.Expect(update).To(BeNumerically(">", eligibility))
 }

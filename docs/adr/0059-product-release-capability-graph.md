@@ -42,8 +42,11 @@ order, and graph checksum. Draft publication recomputes and validates this mater
 successful publish freezes the child snapshots, graph, checksum, actor, and time; an exact retry is idempotent and a
 different retry is a stable conflict.
 
-Product publication exposes a narrow provenance-eligibility hook. The provenance slice owns verification policy and
-evidence; this slice does not duplicate Sigstore or CI verification logic.
+Product publication exposes narrow, fail-closed integration hooks. PR-061 must register the provenance verifier for
+each exact organization/component pair, and PR-067 must register the resolver that proves the exact dependency policy
+version is organization-scoped, immutable, and published. Both run in the publication transaction after every pinned
+Component Release row has been batch-loaded and locked in deterministic UUID order. Publication is unavailable while
+either verifier is not registered; this slice does not duplicate Sigstore, CI, or policy persistence logic.
 
 The product routes are:
 
@@ -63,9 +66,11 @@ Release managers can inspect and publish a deterministic, reusable product compo
 customer, environment, deployment unit, host, configuration, or secret. A neutral provider/consumer fixture proves
 that provider deployment and health precede consumer deployment.
 
-Normalized child and edge rows duplicate immutable canonical facts for bounded queries. Their foreign keys and
-checksums preserve tenant and lineage safety, while the canonical Product Release remains the audit source. Future
-resolver changes must introduce another schema version instead of changing v1 graph meaning.
+Normalized child and edge rows duplicate immutable canonical facts for bounded queries. A Product Release is limited
+to 256 Component Releases, 256 product-level requirements, and 4,096 total graph requirements. Product and component
+versions and every indexed graph key are byte-bounded in both API validation and migration constraints. Their foreign
+keys and checksums preserve tenant and lineage safety, while the canonical Product Release remains the audit source.
+Future resolver changes must introduce another schema version instead of changing v1 graph meaning.
 
 ## Alternatives Considered
 
@@ -84,6 +89,7 @@ resolver changes must introduce another schema version instead of changing v1 gr
   target nodes.
 - Canonicalization tests prove stable bytes and checksums across input order.
 - API, mapping, handler, migration, and repository-focused tests cover strict child pins, tenant-safe errors,
-  feature/mutation guards, immutable projections, and the provenance hook boundary.
+  bounded collections, deterministic batch locking, feature/mutation guards, immutable projections, and the
+  fail-closed provenance/policy hook boundaries.
 - Live PostgreSQL 16/18, full-repository Go, container, and browser gates are intentionally deferred to the final
   integrated release gate.

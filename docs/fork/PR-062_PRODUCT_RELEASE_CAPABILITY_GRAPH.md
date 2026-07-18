@@ -12,7 +12,7 @@ that every later target plan uses the same compatible child releases and depende
 - Build and persist a deterministic provider-to-consumer capability DAG.
 - Block product-stage gaps and preserve valid target-stage requirements as unresolved symbolic nodes.
 - Publish with immutable checksums, idempotent exact retry, stable conflict, audit actor/time, and tenant-safe errors.
-- Leave provenance policy behind a narrow PR-061 integration hook.
+- Leave provenance and dependency policy behind narrow, fail-closed PR-061/PR-067 integration hooks.
 
 ## Resolution Contract
 
@@ -31,13 +31,20 @@ Target mode wire values are exactly `included`, `pinned_existing`, `shared_provi
 Migration 144 adds `ProductReleaseComponent` and `ProductReleaseCapabilityEdge`. Every row carries the owning
 organization. Composite foreign keys constrain both product and component release IDs to that organization. Child
 checksums are lowercase SHA-256, contract snapshots must be Component Release v2 JSON objects, and edge constraints
-enforce the product/target provider and mode invariants. Downgrade refuses while Product Release facts exist.
+enforce the product/target provider and mode invariants. Product/component versions and indexed edge values are
+byte-bounded. Downgrade refuses while Product Release facts exist.
 
 ### Public API impact
 
 Adds `/api/v1/product-releases` create, get, validate, publish, and graph routes. Requests pin child IDs and expected
 checksums; responses expose the canonical and graph checksums plus the frozen manifest. Cross-organization or
 wrong-kind reads return the same 404 and internal database details are never returned.
+
+Requests are bounded to 256 Component Releases, 256 product-level requirements, 4,096 total graph requirements, and
+byte-bounded version/range values. Creation and validation batch-load children instead of issuing per-component
+queries. Publication locks the complete child set in UUID order and repeats child identity, checksum,
+dependency-policy, and provenance eligibility checks in the same transaction. Missing PR-061 or PR-067 wiring blocks
+publication.
 
 ### Frontend/UI impact
 
@@ -80,6 +87,7 @@ than claiming it is already satisfied.
 
 ## Validation
 
-Focused Go tests cover graph resolution, cycle paths, stable canonical bytes, API boundaries, repository migration
-contracts, tenant-safe handler errors, and compile integration. Live PostgreSQL, full Go, container, production
+Focused Go tests cover graph resolution, cycle paths, migration equality, stable canonical bytes, bounded API
+collections/indexed values, repository migration contracts, deterministic child locking, fail-closed external
+eligibility, tenant-safe handler errors, and compile integration. Live PostgreSQL, full Go, container, production
 frontend, and browser checks are deferred until the numbered branches are integrated.

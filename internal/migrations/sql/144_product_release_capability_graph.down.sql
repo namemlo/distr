@@ -21,3 +21,5 @@ $$;
 
 DROP TABLE ProductReleaseCapabilityEdge;
 DROP TABLE ProductReleaseComponent;
+ALTER TABLE ReleaseBundle
+  DROP CONSTRAINT releasebundle_product_version_length_check;

@@ -159,6 +159,79 @@ func TestProductReleaseValidationFailures(t *testing.T) {
 	}
 }
 
+func TestProductReleaseDuplicateMigrationRequiresEveryFunctionalFieldToMatch(t *testing.T) {
+	baseline := types.MigrationDeclaration{
+		Key:           "ledger-schema-42",
+		Type:          "sql",
+		Order:         42,
+		Compatibility: "backward",
+		FailurePolicy: "stop",
+		Description:   "add immutable ledger index",
+	}
+	mutations := []struct {
+		name   string
+		mutate func(*types.MigrationDeclaration)
+	}{
+		{name: "type", mutate: func(value *types.MigrationDeclaration) { value.Type = "job" }},
+		{name: "order", mutate: func(value *types.MigrationDeclaration) { value.Order++ }},
+		{
+			name: "compatibility",
+			mutate: func(value *types.MigrationDeclaration) {
+				value.Compatibility = "breaking"
+			},
+		},
+		{
+			name: "failure policy",
+			mutate: func(value *types.MigrationDeclaration) {
+				value.FailurePolicy = "continue"
+			},
+		},
+		{
+			name: "description",
+			mutate: func(value *types.MigrationDeclaration) {
+				value.Description = "different operation"
+			},
+		},
+	}
+
+	t.Run("identical duplicate declaration", func(t *testing.T) {
+		g := NewWithT(t)
+		manifest := neutralProviderConsumerManifest()
+		manifest.Components[0].Migrations = []types.MigrationDeclaration{baseline}
+		manifest.Components[1].Migrations = []types.MigrationDeclaration{baseline}
+		g.Expect(ValidateProductReleaseGraph(manifest)).NotTo(
+			ContainElement(HaveField("Rule", "migrationConflict")),
+		)
+	})
+	for _, tt := range mutations {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			manifest := neutralProviderConsumerManifest()
+			other := baseline
+			tt.mutate(&other)
+			manifest.Components[0].Migrations = []types.MigrationDeclaration{baseline}
+			manifest.Components[1].Migrations = []types.MigrationDeclaration{other}
+			g.Expect(ValidateProductReleaseGraph(manifest)).To(
+				ContainElement(HaveField("Rule", "migrationConflict")),
+			)
+		})
+	}
+}
+
+func TestProductReleaseGraphRejectsUnboundedAggregateRequirements(t *testing.T) {
+	g := NewWithT(t)
+	manifest := neutralProviderConsumerManifest()
+	manifest.Requirements = make(
+		[]types.CapabilityRequirement,
+		types.ProductReleaseMaxRequirements+1,
+	)
+	issues := ValidateProductReleaseGraph(manifest)
+	g.Expect(issues).To(ContainElement(And(
+		HaveField("Field", "requirements"),
+		HaveField("Rule", "maxItems"),
+	)))
+}
+
 func neutralProviderConsumerManifest() types.ProductReleaseManifest {
 	orgID := uuid.New()
 	return types.ProductReleaseManifest{

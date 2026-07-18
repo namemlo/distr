@@ -35,15 +35,18 @@ type ProductReleaseProvenanceEligibilityHook func(
 	uuid.UUID,
 ) (*types.ProductReleaseValidationIssue, error)
 
+type ProductReleaseDependencyPolicyEligibilityHook func(
+	context.Context,
+	uuid.UUID,
+	uuid.UUID,
+) (*types.ProductReleaseValidationIssue, error)
+
 var (
 	productReleaseProvenanceHookMu sync.RWMutex
-	productReleaseProvenanceHook   ProductReleaseProvenanceEligibilityHook = func(
-		context.Context,
-		uuid.UUID,
-		uuid.UUID,
-	) (*types.ProductReleaseValidationIssue, error) {
-		return nil, nil
-	}
+	productReleaseProvenanceHook   ProductReleaseProvenanceEligibilityHook = unavailableProductReleaseProvenance
+
+	productReleaseDependencyPolicyHookMu sync.RWMutex
+	productReleaseDependencyPolicyHook   ProductReleaseDependencyPolicyEligibilityHook = unavailableProductReleaseDependencyPolicy //nolint:lll
 )
 
 type productReleaseOrganizationContextKey struct{}
@@ -52,16 +55,45 @@ func WithProductReleaseOrganizationID(ctx context.Context, organizationID uuid.U
 	return context.WithValue(ctx, productReleaseOrganizationContextKey{}, organizationID)
 }
 
-// SetProductReleaseProvenanceEligibilityHook is the narrow integration point
-// used by the provenance slice. The default permits publication so PR-062 does
-// not duplicate verification policy or evidence persistence.
-func SetProductReleaseProvenanceEligibilityHook(hook ProductReleaseProvenanceEligibilityHook) {
+// SetProductReleaseProvenanceEligibilityHook is PR-061's narrow integration
+// point. Its verifier must prove immutable provenance for the exact
+// organization/component pair using the caller's transaction. A nil hook
+// restores the fail-closed default. The returned function restores the prior
+// hook and is intended for focused tests.
+func SetProductReleaseProvenanceEligibilityHook(hook ProductReleaseProvenanceEligibilityHook) func() {
 	if hook == nil {
-		return
+		hook = unavailableProductReleaseProvenance
 	}
 	productReleaseProvenanceHookMu.Lock()
-	defer productReleaseProvenanceHookMu.Unlock()
+	previous := productReleaseProvenanceHook
 	productReleaseProvenanceHook = hook
+	productReleaseProvenanceHookMu.Unlock()
+	return func() {
+		productReleaseProvenanceHookMu.Lock()
+		productReleaseProvenanceHook = previous
+		productReleaseProvenanceHookMu.Unlock()
+	}
+}
+
+// SetProductReleaseDependencyPolicyEligibilityHook is PR-067's narrow
+// integration point. Its resolver must prove that the exact policy version is
+// immutable, published, and owned by the supplied organization using the
+// caller's transaction. A nil hook restores the fail-closed default.
+func SetProductReleaseDependencyPolicyEligibilityHook(
+	hook ProductReleaseDependencyPolicyEligibilityHook,
+) func() {
+	if hook == nil {
+		hook = unavailableProductReleaseDependencyPolicy
+	}
+	productReleaseDependencyPolicyHookMu.Lock()
+	previous := productReleaseDependencyPolicyHook
+	productReleaseDependencyPolicyHook = hook
+	productReleaseDependencyPolicyHookMu.Unlock()
+	return func() {
+		productReleaseDependencyPolicyHookMu.Lock()
+		productReleaseDependencyPolicyHook = previous
+		productReleaseDependencyPolicyHookMu.Unlock()
+	}
 }
 
 func CreateProductReleaseDraft(
@@ -179,7 +211,7 @@ func ValidateProductRelease(
 	if err != nil {
 		return nil, err
 	}
-	return validateProductReleaseEligibility(ctx, *manifest, organizationID)
+	return validateProductReleaseEligibility(ctx, *manifest, organizationID, false)
 }
 
 func GetProductReleaseGraph(
@@ -272,7 +304,9 @@ func PublishProductRelease(
 			return nil
 		}
 
-		issues, err := validateProductReleaseEligibility(ctx, *manifest, organizationID)
+		// Lock every child in deterministic UUID order, then re-evaluate its
+		// immutable identity and external evidence inside this transaction.
+		issues, err := validateProductReleaseEligibility(ctx, *manifest, organizationID, true)
 		if err != nil {
 			return err
 		}
@@ -330,8 +364,12 @@ func hydrateProductReleaseComponents(
 	ctx context.Context,
 	manifest types.ProductReleaseManifest,
 ) ([]types.ProductReleaseComponent, error) {
+	if len(manifest.Components) > types.ProductReleaseMaxComponents {
+		return nil, apierrors.NewBadRequest("too many component releases")
+	}
 	components := make([]types.ProductReleaseComponent, 0, len(manifest.Components))
 	seen := make(map[uuid.UUID]struct{}, len(manifest.Components))
+	componentReleaseIDs := make([]uuid.UUID, 0, len(manifest.Components))
 	for _, requested := range manifest.Components {
 		if requested.ComponentReleaseID == uuid.Nil {
 			return nil, apierrors.NewBadRequest("componentReleaseId is required")
@@ -343,9 +381,23 @@ func hydrateProductReleaseComponents(
 		if !productReleaseChecksumPatternDB(requested.ComponentReleaseChecksum) {
 			return nil, apierrors.NewBadRequest("componentReleaseChecksum must be lowercase sha256")
 		}
-		child, err := getReleaseBundle(ctx, requested.ComponentReleaseID, manifest.OrganizationID, false)
-		if err != nil {
-			return nil, err
+		componentReleaseIDs = append(componentReleaseIDs, requested.ComponentReleaseID)
+	}
+	children, err := loadProductReleaseChildBundles(
+		ctx,
+		manifest.OrganizationID,
+		componentReleaseIDs,
+		false,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for _, requested := range manifest.Components {
+		child, ok := children[requested.ComponentReleaseID]
+		if !ok {
+			return nil, apierrors.NewBadRequest(
+				"component release must be a published v2 Component Release",
+			)
 		}
 		if child.Kind != types.ReleaseBundleKindComponent ||
 			child.Status != types.ReleaseBundleStatusPublished ||
@@ -378,6 +430,52 @@ func hydrateProductReleaseComponents(
 		})
 	}
 	return components, nil
+}
+
+func loadProductReleaseChildBundles(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	componentReleaseIDs []uuid.UUID,
+	forUpdate bool,
+) (map[uuid.UUID]types.ReleaseBundle, error) {
+	if len(componentReleaseIDs) > types.ProductReleaseMaxComponents {
+		return nil, apierrors.NewBadRequest("too many component releases")
+	}
+	if len(componentReleaseIDs) == 0 {
+		return map[uuid.UUID]types.ReleaseBundle{}, nil
+	}
+	ids := slices.Clone(componentReleaseIDs)
+	slices.SortFunc(ids, func(left, right uuid.UUID) int {
+		return strings.Compare(left.String(), right.String())
+	})
+	lockClause := ""
+	if forUpdate {
+		lockClause = " FOR UPDATE OF rb"
+	}
+	database := internalctx.GetDb(ctx)
+	rows, err := database.Query(ctx, `
+		SELECT `+releaseBundleOutputExpr+`
+		FROM ReleaseBundle rb
+		WHERE rb.organization_id = @organizationId
+		  AND rb.id = ANY(@componentReleaseIds)
+		ORDER BY rb.id`+lockClause,
+		pgx.NamedArgs{
+			"organizationId":      organizationID,
+			"componentReleaseIds": ids,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query Product Release children: %w", err)
+	}
+	bundles, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.ReleaseBundle])
+	if err != nil {
+		return nil, fmt.Errorf("could not collect Product Release children: %w", err)
+	}
+	result := make(map[uuid.UUID]types.ReleaseBundle, len(bundles))
+	for _, bundle := range bundles {
+		result[bundle.ID] = bundle
+	}
+	return result, nil
 }
 
 func loadProductReleaseManifest(
@@ -748,11 +846,27 @@ func validateProductReleaseDraftBoundary(manifest types.ProductReleaseManifest) 
 		return apierrors.NewBadRequest("product is required")
 	case manifest.Version == "":
 		return apierrors.NewBadRequest("version is required")
+	case len(manifest.Version) > types.ProductReleaseMaxVersionBytes:
+		return apierrors.NewBadRequest("version is too long")
 	case manifest.DependencyPolicyVersion == uuid.Nil:
 		return apierrors.NewBadRequest("dependencyPolicyVersion is required")
 	case len(manifest.Components) == 0:
 		return apierrors.NewBadRequest("at least one component release is required")
+	case len(manifest.Components) > types.ProductReleaseMaxComponents:
+		return apierrors.NewBadRequest("too many component releases")
+	case len(manifest.Requirements) > types.ProductReleaseMaxRequirements:
+		return apierrors.NewBadRequest("too many product requirements")
+	case len(manifest.RequiredPlatforms) > types.ProductReleaseMaxRequiredPlatforms:
+		return apierrors.NewBadRequest("too many required platforms")
 	default:
+		for _, requirement := range manifest.Requirements {
+			if len(strings.TrimSpace(requirement.Range)) > types.ProductReleaseMaxCapabilityRangeBytes {
+				return apierrors.NewBadRequest("requirement range is too long")
+			}
+			if len(requirement.AllowedModes) > types.ProductReleaseMaxResolutionModes {
+				return apierrors.NewBadRequest("too many requirement resolution modes")
+			}
+		}
 		return nil
 	}
 }
@@ -768,23 +882,81 @@ func productReleaseProvenanceEligibility(
 	return hook(ctx, organizationID, componentReleaseID)
 }
 
+func unavailableProductReleaseProvenance(
+	context.Context,
+	uuid.UUID,
+	uuid.UUID,
+) (*types.ProductReleaseValidationIssue, error) {
+	return &types.ProductReleaseValidationIssue{
+		Field:   "components",
+		Rule:    "provenanceVerifierUnavailable",
+		Message: "component provenance verifier is unavailable",
+	}, nil
+}
+
+func productReleaseDependencyPolicyEligibility(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	dependencyPolicyVersionID uuid.UUID,
+) (*types.ProductReleaseValidationIssue, error) {
+	productReleaseDependencyPolicyHookMu.RLock()
+	hook := productReleaseDependencyPolicyHook
+	productReleaseDependencyPolicyHookMu.RUnlock()
+	return hook(ctx, organizationID, dependencyPolicyVersionID)
+}
+
+func unavailableProductReleaseDependencyPolicy(
+	context.Context,
+	uuid.UUID,
+	uuid.UUID,
+) (*types.ProductReleaseValidationIssue, error) {
+	return &types.ProductReleaseValidationIssue{
+		Field:   "dependencyPolicyVersion",
+		Rule:    "publishedPolicyUnavailable",
+		Message: "published organization-scoped dependency policy verifier is unavailable",
+	}, nil
+}
+
 func validateProductReleaseEligibility(
 	ctx context.Context,
 	manifest types.ProductReleaseManifest,
 	organizationID uuid.UUID,
+	lockChildren bool,
 ) ([]types.ProductReleaseValidationIssue, error) {
 	issues := productrelease.ValidateProductReleaseGraph(manifest)
+	componentReleaseIDs := make([]uuid.UUID, 0, len(manifest.Components))
 	for _, component := range manifest.Components {
-		child, err := getReleaseBundle(ctx, component.ComponentReleaseID, organizationID, false)
-		if errors.Is(err, apierrors.ErrNotFound) {
+		componentReleaseIDs = append(componentReleaseIDs, component.ComponentReleaseID)
+	}
+	children, err := loadProductReleaseChildBundles(
+		ctx,
+		organizationID,
+		componentReleaseIDs,
+		lockChildren,
+	)
+	if err != nil {
+		return nil, err
+	}
+	policyIssue, err := productReleaseDependencyPolicyEligibility(
+		ctx,
+		organizationID,
+		manifest.DependencyPolicyVersion,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if policyIssue != nil {
+		issues = append(issues, *policyIssue)
+	}
+	for _, component := range manifest.Components {
+		child, ok := children[component.ComponentReleaseID]
+		if !ok {
 			issues = append(issues, types.ProductReleaseValidationIssue{
 				Field:   "components." + component.ComponentKey,
 				Rule:    "publishedChild",
 				Message: "pinned component release is not available in this organization",
 			})
 			continue
-		} else if err != nil {
-			return nil, err
 		}
 		if child.Kind != types.ReleaseBundleKindComponent ||
 			child.Status != types.ReleaseBundleStatusPublished ||
@@ -814,9 +986,25 @@ func validateProductReleaseEligibility(
 		if cmp := strings.Compare(a.Rule, b.Rule); cmp != 0 {
 			return cmp
 		}
-		return strings.Compare(a.Message, b.Message)
+		if cmp := strings.Compare(a.Message, b.Message); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(strings.Join(a.Path, "\x00"), strings.Join(b.Path, "\x00"))
 	})
-	return issues, nil
+	compacted := issues[:0]
+	for _, issue := range issues {
+		if len(compacted) > 0 {
+			previous := compacted[len(compacted)-1]
+			if previous.Field == issue.Field &&
+				previous.Rule == issue.Rule &&
+				previous.Message == issue.Message &&
+				slices.Equal(previous.Path, issue.Path) {
+				continue
+			}
+		}
+		compacted = append(compacted, issue)
+	}
+	return compacted, nil
 }
 
 func componentContractPlatforms(contract types.ComponentReleaseContractV2) []string {
