@@ -14,6 +14,7 @@ import (
 var (
 	ErrCampaignLeaseLost                      = errors.New("campaign scheduler lease lost")
 	ErrCampaignObservationVerifierUnavailable = errors.New("campaign observation verifier unavailable")
+	ErrCampaignObservationResolverUnavailable = errors.New("campaign observation resolver unavailable")
 )
 
 // CampaignObservationVerifier is the PR-077 integration seam. Implementations
@@ -33,6 +34,26 @@ func (UnwiredCampaignObservationVerifier) VerifyCampaignObservation(
 	string,
 ) error {
 	return ErrCampaignObservationVerifierUnavailable
+}
+
+type CampaignObservationResolver interface {
+	ResolveCampaignObservation(
+		context.Context,
+		uuid.UUID,
+		uuid.UUID,
+		string,
+	) (uuid.UUID, string, error)
+}
+
+type UnwiredCampaignObservationResolver struct{}
+
+func (UnwiredCampaignObservationResolver) ResolveCampaignObservation(
+	context.Context,
+	uuid.UUID,
+	uuid.UUID,
+	string,
+) (uuid.UUID, string, error) {
+	return uuid.Nil, "", ErrCampaignObservationResolverUnavailable
 }
 
 type SchedulerStore interface {
@@ -68,6 +89,7 @@ type PendingCampaignPauseStore interface {
 
 type Scheduler struct {
 	store         SchedulerStore
+	resolver      CampaignObservationResolver
 	observations  CampaignObservationVerifier
 	workerID      string
 	leaseDuration time.Duration
@@ -79,11 +101,31 @@ func NewScheduler(
 	workerID string,
 	leaseDuration time.Duration,
 ) *Scheduler {
+	return NewSchedulerWithObservationResolver(
+		store,
+		UnwiredCampaignObservationResolver{},
+		observations,
+		workerID,
+		leaseDuration,
+	)
+}
+
+func NewSchedulerWithObservationResolver(
+	store SchedulerStore,
+	resolver CampaignObservationResolver,
+	observations CampaignObservationVerifier,
+	workerID string,
+	leaseDuration time.Duration,
+) *Scheduler {
+	if resolver == nil {
+		resolver = UnwiredCampaignObservationResolver{}
+	}
 	if observations == nil {
 		observations = UnwiredCampaignObservationVerifier{}
 	}
 	return &Scheduler{
 		store:         store,
+		resolver:      resolver,
 		observations:  observations,
 		workerID:      workerID,
 		leaseDuration: leaseDuration,
@@ -126,6 +168,9 @@ func (s *Scheduler) Tick(
 		return result, nil
 	}
 	if schedule.Run.State != types.CampaignRunStateRunning || schedule.Run.AdmissionsBlocked {
+		return result, nil
+	}
+	if campaignAdmissionBlocked(schedule, now) {
 		return result, nil
 	}
 
@@ -172,24 +217,39 @@ func (s *Scheduler) Tick(
 	candidate := candidates[0]
 
 	for _, requirement := range candidate.Prerequisites {
-		verifiedErr := s.observations.VerifyCampaignObservation(
-			ctx,
-			requirement.OrganizationID,
-			requirement.ObservationID,
-			requirement.ObservationChecksum,
-		)
-		matched := verifiedErr == nil &&
-			requirement.ObservationID != uuid.Nil &&
+		observationID := requirement.ObservationID
+		observationChecksum := requirement.ObservationChecksum
+		var resolvedErr error
+		if observationID == uuid.Nil || observationChecksum == "" {
+			observationID, observationChecksum, resolvedErr =
+				s.resolver.ResolveCampaignObservation(
+					ctx,
+					requirement.OrganizationID,
+					requirement.ProviderComponentInstanceID,
+					requirement.ExpectedChecksum,
+				)
+		}
+		verifiedErr := resolvedErr
+		if verifiedErr == nil {
+			verifiedErr = s.observations.VerifyCampaignObservation(
+				ctx,
+				requirement.OrganizationID,
+				observationID,
+				observationChecksum,
+			)
+		}
+		matched := resolvedErr == nil && verifiedErr == nil &&
+			observationID != uuid.Nil &&
 			requirement.ExpectedChecksum != "" &&
-			requirement.ObservationChecksum == requirement.ExpectedChecksum
+			observationChecksum == requirement.ExpectedChecksum
 		reason := ""
 		if verifiedErr != nil {
 			reason = verifiedErr.Error()
 		} else if !matched {
 			reason = "prerequisite observation checksum does not match frozen expectation"
 		}
-		actualObservationID := requirement.ObservationID
-		actualChecksum := requirement.ObservationChecksum
+		actualObservationID := observationID
+		actualChecksum := observationChecksum
 		if verifiedErr != nil {
 			actualObservationID = uuid.Nil
 			actualChecksum = ""
@@ -217,7 +277,8 @@ func (s *Scheduler) Tick(
 		}
 		if !matched {
 			pauseReason := "campaign prerequisite mismatch"
-			if errors.Is(verifiedErr, ErrCampaignObservationVerifierUnavailable) {
+			if errors.Is(verifiedErr, ErrCampaignObservationVerifierUnavailable) ||
+				errors.Is(verifiedErr, ErrCampaignObservationResolverUnavailable) {
 				pauseReason = "trusted observation unavailable"
 			}
 			if err := s.store.PauseCampaignAdmission(
@@ -252,6 +313,28 @@ func (s *Scheduler) Tick(
 		result.MemberRunID = candidate.MemberRunID
 	}
 	return result, nil
+}
+
+func campaignAdmissionBlocked(schedule types.CampaignSchedule, now time.Time) bool {
+	if schedule.BakeUntil != nil && now.Before(*schedule.BakeUntil) {
+		return true
+	}
+	if schedule.WaveMaximumConcurrency > 0 &&
+		schedule.WaveActive >= schedule.WaveMaximumConcurrency {
+		return true
+	}
+	if schedule.CampaignMaximumConcurrency > 0 &&
+		schedule.CampaignActive >= schedule.CampaignMaximumConcurrency {
+		return true
+	}
+	samples := schedule.ThresholdSnapshot.Successful + schedule.ThresholdSnapshot.Failed
+	if schedule.MinimumHealthyBasisPoints > 0 && samples > 0 {
+		healthyBasisPoints := schedule.ThresholdSnapshot.Successful * 10000 / samples
+		if healthyBasisPoints < schedule.MinimumHealthyBasisPoints {
+			return true
+		}
+	}
+	return false
 }
 
 func compareCampaignCandidates(a, b types.CampaignMemberCandidate) int {

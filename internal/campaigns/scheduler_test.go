@@ -95,15 +95,58 @@ func (s *schedulerStoreFake) PauseCampaignAdmission(
 }
 
 type observationVerifierFake struct {
-	err error
+	organizationID uuid.UUID
+	observationID  uuid.UUID
+	checksum       string
+	err            error
 }
 
-func (v observationVerifierFake) VerifyCampaignObservation(
+func (v *observationVerifierFake) VerifyCampaignObservation(
 	context.Context,
 	uuid.UUID,
 	uuid.UUID,
 	string,
 ) error {
+	return v.err
+}
+
+type observationResolverFake struct {
+	organizationID      uuid.UUID
+	componentInstanceID uuid.UUID
+	expected            string
+	observationID       uuid.UUID
+	actual              string
+	err                 error
+}
+
+func (r *observationResolverFake) ResolveCampaignObservation(
+	_ context.Context,
+	organizationID uuid.UUID,
+	componentInstanceID uuid.UUID,
+	expectedChecksum string,
+) (uuid.UUID, string, error) {
+	r.organizationID = organizationID
+	r.componentInstanceID = componentInstanceID
+	r.expected = expectedChecksum
+	return r.observationID, r.actual, r.err
+}
+
+type capturingObservationVerifier struct {
+	organizationID uuid.UUID
+	observationID  uuid.UUID
+	checksum       string
+	err            error
+}
+
+func (v *capturingObservationVerifier) VerifyCampaignObservation(
+	_ context.Context,
+	organizationID uuid.UUID,
+	observationID uuid.UUID,
+	checksum string,
+) error {
+	v.organizationID = organizationID
+	v.observationID = observationID
+	v.checksum = checksum
 	return v.err
 }
 
@@ -208,7 +251,7 @@ func TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch(t *testing.
 			}},
 		},
 	}
-	scheduler := NewScheduler(store, observationVerifierFake{}, "worker-a", time.Minute)
+	scheduler := NewScheduler(store, &observationVerifierFake{}, "worker-a", time.Minute)
 
 	result, err := scheduler.Tick(context.Background(), runID, time.Now())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -219,6 +262,117 @@ func TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch(t *testing.
 	g.Expect(store.prerequisites[0].ActualChecksum).To(gomega.Equal(actual))
 	g.Expect(store.prerequisites[0].Matched).To(gomega.BeFalse())
 	g.Expect(store.pausedReason).To(gomega.ContainSubstring("prerequisite mismatch"))
+}
+
+func TestSchedulerResolvesFrozenPrerequisiteByCanonicalProviderIdentity(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	organizationID := uuid.New()
+	placementID := uuid.New()
+	componentInstanceID := uuid.New()
+	observationID := uuid.New()
+	checksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	store := &schedulerStoreFake{
+		acquired: true,
+		lease:    types.CampaignLease{RunID: runID, FencingToken: 31},
+		schedule: types.CampaignSchedule{
+			Run: types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			Candidates: []types.CampaignMemberCandidate{{
+				MemberRunID: uuid.New(),
+				PlanID:      uuid.New(),
+				Prerequisites: []types.CampaignObservationRequirement{{
+					OrganizationID:              organizationID,
+					ProviderPlacementID:         placementID,
+					ProviderComponentInstanceID: componentInstanceID,
+					ExpectedChecksum:            checksum,
+				}},
+			}},
+		},
+	}
+	resolver := &observationResolverFake{
+		observationID: observationID,
+		actual:        checksum,
+	}
+	verifier := &capturingObservationVerifier{}
+
+	result, err := NewSchedulerWithObservationResolver(
+		store,
+		resolver,
+		verifier,
+		"worker-a",
+		time.Minute,
+	).Tick(context.Background(), runID, time.Now())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Admitted).To(gomega.BeTrue())
+	g.Expect(resolver.organizationID).To(gomega.Equal(organizationID))
+	g.Expect(resolver.componentInstanceID).To(gomega.Equal(componentInstanceID))
+	g.Expect(resolver.expected).To(gomega.Equal(checksum))
+	g.Expect(verifier.organizationID).To(gomega.Equal(organizationID))
+	g.Expect(verifier.observationID).To(gomega.Equal(observationID))
+	g.Expect(verifier.checksum).To(gomega.Equal(checksum))
+	g.Expect(store.prerequisites).To(gomega.HaveLen(1))
+	g.Expect(store.prerequisites[0].ActualObservationID).To(gomega.Equal(observationID))
+}
+
+func TestSchedulerBlocksForBakeConcurrencyRiskAndHealth(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	now := time.Now()
+	for _, tc := range []struct {
+		name     string
+		schedule types.CampaignSchedule
+	}{
+		{
+			name: "bake",
+			schedule: types.CampaignSchedule{
+				BakeUntil: new(now.Add(time.Minute)),
+			},
+		},
+		{
+			name: "wave concurrency",
+			schedule: types.CampaignSchedule{
+				WaveMaximumConcurrency: 1,
+				WaveActive:             1,
+			},
+		},
+		{
+			name: "campaign concurrency",
+			schedule: types.CampaignSchedule{
+				CampaignMaximumConcurrency: 1,
+				CampaignActive:             1,
+			},
+		},
+		{
+			name: "health",
+			schedule: types.CampaignSchedule{
+				MinimumHealthyBasisPoints: 9000,
+				ThresholdSnapshot: types.CampaignThresholdSnapshot{
+					Successful: 8,
+					Failed:     2,
+				},
+			},
+		},
+	} {
+		tc.schedule.Run = types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning}
+		tc.schedule.Candidates = []types.CampaignMemberCandidate{{
+			MemberRunID: uuid.New(),
+			PlanID:      uuid.New(),
+		}}
+		store := &schedulerStoreFake{
+			acquired: true,
+			lease:    types.CampaignLease{RunID: runID, FencingToken: 41},
+			schedule: tc.schedule,
+		}
+		result, err := NewScheduler(
+			store,
+			UnwiredCampaignObservationVerifier{},
+			"worker-a",
+			time.Minute,
+		).Tick(context.Background(), runID, now)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(result.Admitted).To(gomega.BeFalse(), tc.name)
+		g.Expect(store.admitted).To(gomega.BeEmpty())
+	}
 }
 
 func TestSchedulerStopsForThresholdPauseAndLeaseLoss(t *testing.T) {

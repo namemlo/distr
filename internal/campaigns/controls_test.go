@@ -122,6 +122,90 @@ func TestExcludeCampaignMemberIsAuthorizedAndVisibleAsIncompleteDrift(t *testing
 	g.Expect(exclusion.DriftReason).To(gomega.ContainSubstring("admitted member excluded"))
 }
 
+func TestCampaignMemberMutationRejectsTerminalRunAndAdvancesVersion(t *testing.T) {
+	g := gomega.NewWithT(t)
+	input := types.CampaignMemberControlInput{
+		CampaignControlInput: types.CampaignControlInput{
+			RequestID:       uuid.New(),
+			RunID:           uuid.New(),
+			ExpectedVersion: 7,
+			Reason:          "exclude",
+		},
+		MemberRunID: uuid.New(),
+	}
+	for _, state := range []types.CampaignRunState{
+		types.CampaignRunStateFailed,
+		types.CampaignRunStateCompleted,
+		types.CampaignRunStateCanceled,
+	} {
+		_, err := DecideCampaignMemberMutation(
+			types.CampaignRun{ID: input.RunID, State: state, Version: 7},
+			input,
+		)
+		g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("terminal")))
+	}
+	updated, err := DecideCampaignMemberMutation(
+		types.CampaignRun{
+			ID:      input.RunID,
+			State:   types.CampaignRunStateRunning,
+			Version: 7,
+		},
+		input,
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(updated.Version).To(gomega.Equal(int64(8)))
+}
+
+type campaignControlStoreFake struct {
+	result        *types.CampaignControlResult
+	exclusion     *types.CampaignExclusion
+	applied       int
+	excluded      int
+	retryPrepared int
+}
+
+func (s *campaignControlStoreFake) ApplyCampaignControl(
+	context.Context,
+	types.CampaignControlInput,
+) (*types.CampaignControlResult, error) {
+	s.applied++
+	return s.result, nil
+}
+
+func (s *campaignControlStoreFake) ExcludeCampaignMember(
+	context.Context,
+	types.CampaignMemberControlInput,
+) (*types.CampaignExclusion, error) {
+	s.excluded++
+	return s.exclusion, nil
+}
+
+func TestCompositeCampaignControlServiceIsRouteCompatible(t *testing.T) {
+	g := gomega.NewWithT(t)
+	store := &campaignControlStoreFake{
+		result:    &types.CampaignControlResult{RequestID: uuid.New()},
+		exclusion: &types.CampaignExclusion{ID: uuid.New()},
+	}
+	creator := supersedingPlanCreatorFake{plan: &types.DeploymentPlan{ID: uuid.New()}}
+	service := NewCampaignControlService(store, creator)
+	var routeService interface {
+		ApplyCampaignControl(context.Context, types.CampaignControlInput) (*types.CampaignControlResult, error)
+		ExcludeCampaignMember(context.Context, types.CampaignMemberControlInput) (*types.CampaignExclusion, error)
+		RetryCampaignMember(context.Context, types.CampaignMemberControlInput) (*types.DeploymentPlan, error)
+	} = service
+
+	_, err := routeService.ApplyCampaignControl(context.Background(), types.CampaignControlInput{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	_, err = routeService.ExcludeCampaignMember(context.Background(), types.CampaignMemberControlInput{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	_, err = routeService.RetryCampaignMember(context.Background(), types.CampaignMemberControlInput{
+		ProtocolVersion: "v1",
+	})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(store.applied).To(gomega.Equal(1))
+	g.Expect(store.excluded).To(gomega.Equal(1))
+}
+
 type supersedingPlanCreatorFake struct {
 	plan *types.DeploymentPlan
 }

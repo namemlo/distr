@@ -395,11 +395,15 @@ func TestCampaignRunMigrationPersistsFencingAndExactPrerequisiteEvidence(t *test
 		"fencing_token",
 		"expected_checksum",
 		"actual_observation_id",
+		"actual_observation_organization_id",
 		"actual_checksum",
 		"UNIQUE (campaign_run_id, wave_order, member_order, deployment_plan_id)",
+		"REFERENCES DeploymentCampaignWave(\n      campaign_revision_id,\n      wave_order,\n      organization_id",
+		"REFERENCES DeploymentCampaignMember(\n      campaign_revision_id,\n      deployment_plan_id,\n      organization_id",
 	} {
 		g.Expect(contents).To(ContainSubstring(required))
 	}
+	g.Expect(contents).To(ContainSubstring("bake_duration_seconds >= 0"))
 	g.Expect(strings.Count(contents, "CREATE TABLE")).To(Equal(5))
 }
 
@@ -409,6 +413,22 @@ func TestCampaignRepositoryUsesOptimisticTransitionsAndFencedAdmissions(t *testi
 	g.Expect(transitionCampaignSQL).To(ContainSubstring("transition_evidence"))
 	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("fencing_token = @fencing_token"))
 	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("status = 'PENDING'"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("fencing_token = @fencing_token"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("risk_policy"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("assessment_wave"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("assessment_counts"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("wave_run.campaign_wave_id = frozen_wave.id"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("frozen_wave.bake_seconds = wave_run.bake_duration_seconds"))
+	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring("DeploymentCampaignMember AS frozen_member"))
+	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring("maximum_concurrency"))
+	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring("frozen_member.wave_order = member_run.wave_order"))
+	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring("frozen_member.member_order = member_run.member_order"))
+	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring("frozen_member.deployment_unit_id = member_run.deployment_unit_id"))
+	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring("wave_run.campaign_wave_id = frozen_wave.id"))
+	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("provider_placement_id"))
+	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("provider_deployment_unit_id"))
+	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("provider_component_instance_id"))
+	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("expected_observed_state_checksum"))
 }
 
 func TestCampaignControlsMigrationIsAppendOnlyIdempotentAndScoped(t *testing.T) {
@@ -426,6 +446,9 @@ func TestCampaignControlsMigrationIsAppendOnlyIdempotentAndScoped(t *testing.T) 
 		"campaign_control_append_only",
 		"visible_incomplete",
 		"drift_reason",
+		"UNIQUE (id, organization_id, campaign_run_id)",
+		"FOREIGN KEY (control_request_id, organization_id, campaign_run_id)",
+		"REFERENCES CampaignControlRequest(id, organization_id, campaign_run_id)",
 	} {
 		g.Expect(contents).To(gomega.ContainSubstring(required))
 	}
@@ -434,7 +457,10 @@ func TestCampaignControlsMigrationIsAppendOnlyIdempotentAndScoped(t *testing.T) 
 func TestCampaignControlSQLDeduplicatesAndSerializesConflicts(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(insertCampaignControlSQL).To(gomega.ContainSubstring("ON CONFLICT (organization_id, request_id)"))
+	g.Expect(lookupCampaignControlReplaySQL).To(gomega.ContainSubstring("organization_id = @organization_id"))
+	g.Expect(lookupCampaignControlReplaySQL).To(gomega.ContainSubstring("request_id = @request_id"))
 	g.Expect(lockCampaignRunForControlSQL).To(gomega.ContainSubstring("FOR UPDATE"))
 	g.Expect(applyCampaignControlSQL).To(gomega.ContainSubstring("version = @expected_version"))
 	g.Expect(applyCampaignControlSQL).To(gomega.ContainSubstring("admissions_blocked"))
+	g.Expect(applyCampaignExclusionVersionSQL).To(gomega.ContainSubstring("version = version + 1"))
 }

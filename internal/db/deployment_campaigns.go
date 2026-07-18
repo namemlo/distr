@@ -1166,19 +1166,247 @@ RETURNING
   lease_expires_at`
 
 const admitCampaignMemberSQL = `
+WITH updated_run AS (
+  UPDATE DeploymentCampaignRun AS campaign_run
+  SET version = version + 1,
+      current_wave_order = @wave_order,
+      current_member_order = @member_order,
+      updated_at = @admitted_at
+  WHERE campaign_run.id = @run_id
+    AND campaign_run.state = 'RUNNING'
+    AND campaign_run.admissions_blocked = FALSE
+    AND campaign_run.fencing_token = @fencing_token
+    AND campaign_run.lease_expires_at > @admitted_at
+    AND EXISTS (
+      SELECT 1
+      FROM DeploymentCampaignMemberRun AS pending_member
+      WHERE pending_member.id = @member_run_id
+        AND pending_member.campaign_run_id = campaign_run.id
+        AND pending_member.status = 'PENDING'
+    )
+  RETURNING campaign_run.id
+),
+updated_wave AS (
+  UPDATE DeploymentCampaignWaveRun AS wave_run
+  SET status = 'RUNNING',
+      started_at = COALESCE(started_at, @admitted_at)
+  FROM updated_run
+  WHERE wave_run.id = @wave_run_id
+    AND wave_run.campaign_run_id = updated_run.id
+  RETURNING wave_run.id
+)
 UPDATE DeploymentCampaignMemberRun AS member_run
 SET status = 'ADMITTED',
     admitted_at = @admitted_at,
     admitted_fencing_token = @fencing_token
-FROM DeploymentCampaignRun AS campaign_run
+FROM updated_run, updated_wave
 WHERE member_run.id = @member_run_id
   AND member_run.campaign_run_id = @run_id
   AND member_run.status = 'PENDING'
-  AND campaign_run.id = member_run.campaign_run_id
-  AND campaign_run.state = 'RUNNING'
-  AND campaign_run.admissions_blocked = FALSE
+  AND updated_run.id = member_run.campaign_run_id
+  AND updated_wave.id = member_run.wave_run_id`
+
+const loadCampaignScheduleSQL = `
+WITH current_wave AS (
+  SELECT min(member_run.wave_order) AS wave_order
+  FROM DeploymentCampaignMemberRun AS member_run
+  WHERE member_run.campaign_run_id = @run_id
+    AND member_run.status IN ('PENDING', 'ADMITTED', 'RUNNING')
+),
+campaign_counts AS (
+  SELECT
+    count(*) FILTER (WHERE status IN ('ADMITTED', 'RUNNING'))::int AS active
+  FROM DeploymentCampaignMemberRun
+  WHERE campaign_run_id = @run_id
+),
+assessment_wave AS (
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1
+      FROM DeploymentCampaignMemberRun AS member_run
+      WHERE member_run.campaign_run_id = @run_id
+        AND member_run.wave_order = current_wave.wave_order
+        AND member_run.status IN ('SUCCEEDED', 'FAILED')
+    ) THEN current_wave.wave_order
+    ELSE (
+      SELECT max(member_run.wave_order)
+      FROM DeploymentCampaignMemberRun AS member_run
+      WHERE member_run.campaign_run_id = @run_id
+        AND member_run.wave_order < current_wave.wave_order
+        AND member_run.status IN ('SUCCEEDED', 'FAILED')
+    )
+  END AS wave_order
+  FROM current_wave
+),
+current_wave_counts AS (
+  SELECT
+    count(*) FILTER (WHERE member_run.status IN ('ADMITTED', 'RUNNING'))::int AS active
+  FROM DeploymentCampaignMemberRun AS member_run, current_wave
+  WHERE member_run.campaign_run_id = @run_id
+    AND member_run.wave_order = current_wave.wave_order
+),
+assessment_counts AS (
+  SELECT
+    count(*) FILTER (WHERE member_run.status = 'SUCCEEDED')::int AS successful,
+    count(*) FILTER (WHERE member_run.status = 'FAILED')::int AS failed
+  FROM DeploymentCampaignMemberRun AS member_run, assessment_wave
+  WHERE member_run.campaign_run_id = @run_id
+    AND member_run.wave_order = assessment_wave.wave_order
+),
+previous_bake AS (
+  SELECT
+    wave_run.completed_at + make_interval(secs => frozen_wave.bake_seconds)
+      AS bake_until
+  FROM DeploymentCampaignWaveRun AS wave_run
+  JOIN current_wave ON TRUE
+  JOIN DeploymentCampaignWave AS frozen_wave
+    ON frozen_wave.id = wave_run.campaign_wave_id
+   AND frozen_wave.campaign_revision_id = wave_run.campaign_revision_id
+   AND frozen_wave.organization_id = wave_run.organization_id
+   AND frozen_wave.wave_order = wave_run.wave_order
+   AND frozen_wave.bake_seconds = wave_run.bake_duration_seconds
+   AND frozen_wave.maximum_concurrency = wave_run.maximum_concurrency
+  WHERE wave_run.campaign_run_id = @run_id
+    AND wave_run.wave_order < current_wave.wave_order
+  ORDER BY wave_run.wave_order DESC
+  LIMIT 1
+),
+prior_wave AS (
+  SELECT EXISTS (
+    SELECT 1
+    FROM DeploymentCampaignWaveRun AS wave_run
+    JOIN current_wave ON TRUE
+    WHERE wave_run.campaign_run_id = @run_id
+      AND wave_run.wave_order < current_wave.wave_order
+  ) AS present
+)
+SELECT
+  campaign_run.id,
+  campaign_run.created_at,
+  campaign_run.updated_at,
+  campaign_run.organization_id,
+  campaign_run.campaign_revision_id,
+  campaign_run.state,
+  campaign_run.version,
+  campaign_run.current_wave_order,
+  campaign_run.current_member_order,
+  campaign_run.admissions_blocked,
+  campaign_run.fencing_token,
+  COALESCE(campaign_run.lease_holder, ''),
+  campaign_run.lease_expires_at,
+  campaign_run.pause_requested,
+  campaign_run.reconciliation_required,
+  NOT EXISTS (
+    SELECT 1 FROM DeploymentCampaignMemberRun AS active_member
+    WHERE active_member.campaign_run_id = campaign_run.id
+      AND active_member.status IN ('ADMITTED', 'RUNNING')
+  ) AS at_safe_point,
+  COALESCE(current_wave.wave_order, 0),
+  previous_bake.bake_until,
+  COALESCE(frozen_wave.maximum_concurrency, 0),
+  COALESCE(current_wave_counts.active, 0),
+  COALESCE((revision.risk_policy->>'maximumConcurrency')::int, 0),
+  COALESCE(campaign_counts.active, 0),
+  COALESCE((revision.risk_policy->>'minimumHealthyBasisPoints')::int, 0),
+  COALESCE((revision.risk_policy->>'failureToleranceBasisPoints')::int, 0),
+  COALESCE(assessment_counts.successful, 0),
+  COALESCE(assessment_counts.failed, 0),
+  COALESCE(
+    wave_run.campaign_wave_id = frozen_wave.id
+    AND wave_run.campaign_revision_id = frozen_wave.campaign_revision_id
+    AND wave_run.organization_id = frozen_wave.organization_id
+    AND wave_run.wave_order = frozen_wave.wave_order
+    AND wave_run.maximum_concurrency = frozen_wave.maximum_concurrency
+    AND wave_run.bake_duration_seconds = frozen_wave.bake_seconds,
+    FALSE
+  ) AS frozen_wave_matches,
+  prior_wave.present
+FROM DeploymentCampaignRun AS campaign_run
+JOIN DeploymentCampaignRevision AS revision
+  ON revision.id = campaign_run.campaign_revision_id
+ AND revision.organization_id = campaign_run.organization_id
+LEFT JOIN current_wave ON TRUE
+LEFT JOIN DeploymentCampaignWave AS frozen_wave
+  ON frozen_wave.campaign_revision_id = campaign_run.campaign_revision_id
+ AND frozen_wave.organization_id = campaign_run.organization_id
+ AND frozen_wave.wave_order = current_wave.wave_order
+LEFT JOIN DeploymentCampaignWaveRun AS wave_run
+  ON wave_run.campaign_run_id = campaign_run.id
+ AND wave_run.organization_id = campaign_run.organization_id
+ AND wave_run.wave_order = current_wave.wave_order
+LEFT JOIN current_wave_counts ON TRUE
+LEFT JOIN assessment_counts ON TRUE
+LEFT JOIN campaign_counts ON TRUE
+LEFT JOIN previous_bake ON TRUE
+JOIN prior_wave ON TRUE
+WHERE campaign_run.id = @run_id
   AND campaign_run.fencing_token = @fencing_token
-  AND campaign_run.lease_expires_at > @admitted_at`
+  AND campaign_run.lease_expires_at > now()`
+
+const loadCampaignCandidatesSQL = `
+SELECT
+  member_run.id,
+  member_run.wave_run_id,
+  member_run.wave_order,
+  member_run.member_order,
+  member_run.deployment_plan_id,
+  frozen_wave.maximum_concurrency
+FROM DeploymentCampaignMemberRun AS member_run
+JOIN DeploymentCampaignRun AS campaign_run
+  ON campaign_run.id = member_run.campaign_run_id
+ AND campaign_run.organization_id = member_run.organization_id
+JOIN DeploymentCampaignMember AS frozen_member
+  ON frozen_member.campaign_revision_id = campaign_run.campaign_revision_id
+ AND frozen_member.organization_id = campaign_run.organization_id
+ AND frozen_member.deployment_plan_id = member_run.deployment_plan_id
+ AND frozen_member.id = member_run.campaign_member_id
+ AND frozen_member.deployment_unit_id = member_run.deployment_unit_id
+ AND frozen_member.wave_order = member_run.wave_order
+ AND frozen_member.member_order = member_run.member_order
+JOIN DeploymentCampaignWave AS frozen_wave
+  ON frozen_wave.campaign_revision_id = frozen_member.campaign_revision_id
+ AND frozen_wave.organization_id = frozen_member.organization_id
+ AND frozen_wave.wave_order = frozen_member.wave_order
+JOIN DeploymentCampaignWaveRun AS wave_run
+  ON wave_run.id = member_run.wave_run_id
+ AND wave_run.campaign_run_id = member_run.campaign_run_id
+ AND wave_run.organization_id = member_run.organization_id
+ AND wave_run.campaign_wave_id = frozen_wave.id
+ AND wave_run.campaign_revision_id = frozen_wave.campaign_revision_id
+ AND wave_run.wave_order = frozen_wave.wave_order
+ AND wave_run.maximum_concurrency = frozen_wave.maximum_concurrency
+ AND wave_run.bake_duration_seconds = frozen_wave.bake_seconds
+WHERE campaign_run.id = @run_id
+  AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.lease_expires_at > now()
+  AND member_run.wave_order = @current_wave_order
+  AND member_run.status = 'PENDING'
+ORDER BY
+  member_run.wave_order,
+  member_run.member_order,
+  member_run.deployment_plan_id`
+
+const loadCandidatePrerequisitesSQL = `
+SELECT
+  frozen_prerequisite.organization_id,
+  frozen_prerequisite.upstream_plan_id,
+  frozen_prerequisite.upstream_step_key,
+  frozen_prerequisite.provider_placement_id,
+  frozen_prerequisite.provider_deployment_unit_id,
+  frozen_prerequisite.provider_component_instance_id,
+  frozen_prerequisite.expected_observed_state_checksum
+FROM DeploymentCampaignPrerequisite AS frozen_prerequisite
+JOIN DeploymentCampaignRun AS campaign_run
+  ON campaign_run.campaign_revision_id = frozen_prerequisite.campaign_revision_id
+ AND campaign_run.organization_id = frozen_prerequisite.organization_id
+WHERE campaign_run.id = @run_id
+  AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.lease_expires_at > now()
+  AND frozen_prerequisite.downstream_plan_id = @downstream_plan_id
+ORDER BY
+  frozen_prerequisite.upstream_plan_id,
+  frozen_prerequisite.upstream_step_key,
+  frozen_prerequisite.provider_placement_id`
 
 const lockCampaignRunForControlSQL = `
 SELECT
@@ -1233,6 +1461,12 @@ INSERT INTO CampaignControlRequest (
 )
 ON CONFLICT (organization_id, request_id) DO NOTHING`
 
+const lookupCampaignControlReplaySQL = `
+SELECT request_checksum, response_snapshot
+FROM CampaignControlRequest
+WHERE organization_id = @organization_id
+  AND request_id = @request_id`
+
 const applyCampaignControlSQL = `
 UPDATE DeploymentCampaignRun
 SET state = @state,
@@ -1252,6 +1486,24 @@ SET state = @state,
 WHERE id = @run_id
   AND organization_id = @organization_id
   AND version = @expected_version`
+
+const applyCampaignExclusionVersionSQL = `
+UPDATE DeploymentCampaignRun
+SET version = version + 1,
+    updated_at = @updated_at,
+    transition_evidence = transition_evidence || jsonb_build_array(
+      jsonb_build_object(
+        'controlRequestId', @request_id,
+        'kind', @control_kind,
+        'memberRunId', @member_run_id,
+        'reason', @reason,
+        'at', @updated_at
+      )
+    )
+WHERE id = @run_id
+  AND organization_id = @organization_id
+  AND version = @expected_version
+  AND state NOT IN ('FAILED', 'COMPLETED', 'CANCELED')`
 
 type CampaignRepository struct{}
 
@@ -1305,12 +1557,23 @@ func (CampaignRepository) ApplyCampaignControl(
 	if input.RequestedAt.IsZero() {
 		input.RequestedAt = time.Now().UTC()
 	}
+	checksum := campaignControlChecksum(input, uuid.Nil)
 	tx, err := internalctx.GetDb(ctx).Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	txCtx := internalctx.WithDb(ctx, tx)
+
+	if existing, found, err := lookupCampaignControlReplay(ctx, tx, input, checksum); err != nil {
+		return nil, err
+	} else if found {
+		existing.Duplicate = true
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
 
 	run, err := scanCampaignRun(tx.QueryRow(ctx, lockCampaignRunForControlSQL, pgx.NamedArgs{
 		"run_id":          input.RunID,
@@ -1321,6 +1584,15 @@ func (CampaignRepository) ApplyCampaignControl(
 	}
 	if err != nil {
 		return nil, err
+	}
+	if existing, found, err := lookupCampaignControlReplay(ctx, tx, input, checksum); err != nil {
+		return nil, err
+	} else if found {
+		existing.Duplicate = true
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return existing, nil
 	}
 	if err := tx.QueryRow(ctx, `
 SELECT pause_requested, reconciliation_required
@@ -1353,7 +1625,6 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 	if err != nil {
 		return nil, err
 	}
-	checksum := campaignControlChecksum(input, uuid.Nil)
 	controlID := uuid.New()
 	tag, err := tx.Exec(ctx, insertCampaignControlSQL, campaignControlArgs(
 		controlID,
@@ -1411,11 +1682,30 @@ func (CampaignRepository) ExcludeCampaignMember(
 	if input.RequestedAt.IsZero() {
 		input.RequestedAt = time.Now().UTC()
 	}
+	checksum := campaignControlChecksum(input.CampaignControlInput, input.MemberRunID)
 	tx, err := internalctx.GetDb(ctx).Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, found, err := lookupCampaignControlReplay(
+		ctx,
+		tx,
+		input.CampaignControlInput,
+		checksum,
+	); err != nil {
+		return nil, err
+	} else if found {
+		existing, err := getCampaignExclusionReplay(ctx, tx, input)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
 
 	run, err := scanCampaignRun(tx.QueryRow(ctx, lockCampaignRunForControlSQL, pgx.NamedArgs{
 		"run_id":          input.RunID,
@@ -1427,8 +1717,26 @@ func (CampaignRepository) ExcludeCampaignMember(
 	if err != nil {
 		return nil, err
 	}
-	if run.Version != input.ExpectedVersion {
-		return nil, apierrors.NewConflict("campaign version conflict")
+	if _, found, err := lookupCampaignControlReplay(
+		ctx,
+		tx,
+		input.CampaignControlInput,
+		checksum,
+	); err != nil {
+		return nil, err
+	} else if found {
+		existing, err := getCampaignExclusionReplay(ctx, tx, input)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
+	updatedRun, err := campaigns.DecideCampaignMemberMutation(*run, input)
+	if err != nil {
+		return nil, apierrors.NewConflict(err.Error())
 	}
 
 	var memberStatus string
@@ -1456,11 +1764,10 @@ FOR UPDATE`, pgx.NamedArgs{
 	if err != nil {
 		return nil, err
 	}
-	checksum := campaignControlChecksum(input.CampaignControlInput, input.MemberRunID)
 	result := types.CampaignControlResult{
 		RequestID: input.RequestID,
 		Status:    types.CampaignControlStatusApplied,
-		Run:       *run,
+		Run:       updatedRun,
 	}
 	response, err := json.Marshal(result)
 	if err != nil {
@@ -1479,56 +1786,14 @@ FOR UPDATE`, pgx.NamedArgs{
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
-		var existingChecksum string
-		err = tx.QueryRow(ctx, `
-SELECT request_checksum
-FROM CampaignControlRequest
-WHERE organization_id = @organization_id AND request_id = @request_id`,
-			pgx.NamedArgs{
-				"organization_id": input.OrganizationID,
-				"request_id":      input.RequestID,
-			},
-		).Scan(&existingChecksum)
+		existing, err := getCampaignExclusionReplay(ctx, tx, input)
 		if err != nil {
 			return nil, err
-		}
-		if existingChecksum != checksum {
-			return nil, apierrors.NewConflict(
-				"campaign control request ID reused with different input",
-			)
-		}
-		var existing types.CampaignExclusion
-		err := tx.QueryRow(ctx, `
-SELECT
-  id, organization_id, campaign_run_id, member_run_id, control_request_id,
-  reason, visible_incomplete, drift_reason, excluded_at, excluded_by_useraccount_id
-FROM CampaignExclusion
-WHERE organization_id = @organization_id
-  AND control_request_id = (
-    SELECT id FROM CampaignControlRequest
-    WHERE organization_id = @organization_id AND request_id = @request_id
-  )`, pgx.NamedArgs{
-			"organization_id": input.OrganizationID,
-			"request_id":      input.RequestID,
-		}).Scan(
-			&existing.ID,
-			&existing.OrganizationID,
-			&existing.CampaignRunID,
-			&existing.MemberRunID,
-			&existing.ControlRequestID,
-			&existing.Reason,
-			&existing.VisibleIncomplete,
-			&existing.DriftReason,
-			&existing.ExcludedAt,
-			&existing.ExcludedByActorID,
-		)
-		if err != nil {
-			return nil, apierrors.NewConflict("campaign control request ID reused with different input")
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
-		return &existing, nil
+		return existing, nil
 	}
 	exclusion.ControlRequestID = controlID
 	_, err = tx.Exec(ctx, `
@@ -1559,12 +1824,35 @@ INSERT INTO CampaignExclusion (
 		_, err = tx.Exec(ctx, `
 UPDATE DeploymentCampaignMemberRun
 SET status = 'EXCLUDED'
-WHERE id = @member_run_id AND status = 'PENDING'`,
-			pgx.NamedArgs{"member_run_id": input.MemberRunID},
+WHERE id = @member_run_id
+  AND campaign_run_id = @run_id
+  AND organization_id = @organization_id
+  AND status = 'PENDING'`,
+			pgx.NamedArgs{
+				"member_run_id":   input.MemberRunID,
+				"run_id":          input.RunID,
+				"organization_id": input.OrganizationID,
+			},
 		)
 		if err != nil {
 			return nil, err
 		}
+	}
+	tag, err = tx.Exec(ctx, applyCampaignExclusionVersionSQL, pgx.NamedArgs{
+		"updated_at":       input.RequestedAt,
+		"request_id":       input.RequestID,
+		"control_kind":     input.Kind,
+		"member_run_id":    input.MemberRunID,
+		"reason":           input.Reason,
+		"run_id":           input.RunID,
+		"organization_id":  input.OrganizationID,
+		"expected_version": input.ExpectedVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, apierrors.NewConflict("campaign member control lost optimistic update")
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -1673,7 +1961,7 @@ func RecordCampaignPrerequisiteEvaluation(
 	ctx context.Context,
 	evaluation types.CampaignPrerequisiteEvaluation,
 ) error {
-	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+	tag, err := internalctx.GetDb(ctx).Exec(ctx, `
 INSERT INTO CampaignPrerequisiteEvaluation (
   id,
   evaluated_at,
@@ -1684,6 +1972,7 @@ INSERT INTO CampaignPrerequisiteEvaluation (
   step_key,
   expected_checksum,
   actual_observation_id,
+  actual_observation_organization_id,
   actual_checksum,
   matched,
   reason,
@@ -1699,21 +1988,30 @@ SELECT
   @step_key,
   @expected_checksum,
   NULLIF(@actual_observation_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  CASE
+    WHEN @actual_observation_id = '00000000-0000-0000-0000-000000000000'::uuid
+      THEN NULL
+    ELSE campaign_run.organization_id
+  END,
   NULLIF(@actual_checksum, ''),
   @matched,
   @reason,
   @fencing_token
 FROM DeploymentCampaignRun AS campaign_run
 WHERE campaign_run.id = @campaign_run_id
-  AND campaign_run.fencing_token = @fencing_token`, prerequisiteEvaluationArgs(evaluation))
-	return err
+  AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.lease_expires_at > @evaluated_at`, prerequisiteEvaluationArgs(evaluation))
+	if err != nil {
+		return err
+	}
+	return campaigns.RequireCampaignLease(tag.RowsAffected())
 }
 
 func RecordThresholdEvaluation(
 	ctx context.Context,
 	evaluation types.CampaignThresholdEvaluation,
 ) error {
-	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+	tag, err := internalctx.GetDb(ctx).Exec(ctx, `
 INSERT INTO CampaignThresholdEvaluation (
   id,
   evaluated_at,
@@ -1741,8 +2039,12 @@ SELECT
   @fencing_token
 FROM DeploymentCampaignRun AS campaign_run
 WHERE campaign_run.id = @campaign_run_id
-  AND campaign_run.fencing_token = @fencing_token`, thresholdEvaluationArgs(evaluation))
-	return err
+  AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.lease_expires_at > @evaluated_at`, thresholdEvaluationArgs(evaluation))
+	if err != nil {
+		return err
+	}
+	return campaigns.RequireCampaignLease(tag.RowsAffected())
 }
 
 func GetDeploymentCampaignRun(
@@ -1822,67 +2124,156 @@ func (CampaignRepository) LoadCampaignSchedule(
 	runID uuid.UUID,
 	fencingToken int64,
 ) (types.CampaignSchedule, error) {
-	run, err := scanCampaignRun(internalctx.GetDb(ctx).QueryRow(ctx, `
-SELECT
-  id, created_at, updated_at, organization_id, campaign_revision_id,
-  state, version, current_wave_order, current_member_order,
-  admissions_blocked, fencing_token, COALESCE(lease_holder, ''), lease_expires_at
-FROM DeploymentCampaignRun
-WHERE id = @run_id AND fencing_token = @fencing_token`,
-		pgx.NamedArgs{"run_id": runID, "fencing_token": fencingToken},
-	))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return types.CampaignSchedule{}, fmt.Errorf("campaign scheduler lease lost")
-	}
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
 	if err != nil {
 		return types.CampaignSchedule{}, err
 	}
-	var scheduleSafePoint bool
-	if err := internalctx.GetDb(ctx).QueryRow(ctx, `
-SELECT
-  pause_requested,
-  reconciliation_required,
-  NOT EXISTS (
-    SELECT 1
-    FROM DeploymentCampaignMemberRun
-    WHERE campaign_run_id = @run_id AND status IN ('ADMITTED', 'RUNNING')
-  )
-FROM DeploymentCampaignRun
-WHERE id = @run_id AND fencing_token = @fencing_token`,
-		pgx.NamedArgs{"run_id": runID, "fencing_token": fencingToken},
-	).Scan(
-		&run.PauseRequested,
-		&run.ReconciliationRequired,
-		&scheduleSafePoint,
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(
+		ctx,
+		"SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
 	); err != nil {
 		return types.CampaignSchedule{}, err
 	}
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-SELECT id, wave_run_id, wave_order, member_order, deployment_plan_id
-FROM DeploymentCampaignMemberRun
-WHERE campaign_run_id = @run_id AND status = 'PENDING'
-ORDER BY wave_order, member_order, deployment_plan_id`,
-		pgx.NamedArgs{"run_id": runID},
+
+	var schedule types.CampaignSchedule
+	var failureToleranceBasisPoints int
+	var frozenWaveMatches bool
+	var priorWavePresent bool
+	err = tx.QueryRow(ctx, loadCampaignScheduleSQL, pgx.NamedArgs{
+		"run_id":        runID,
+		"fencing_token": fencingToken,
+	}).Scan(
+		&schedule.Run.ID,
+		&schedule.Run.CreatedAt,
+		&schedule.Run.UpdatedAt,
+		&schedule.Run.OrganizationID,
+		&schedule.Run.CampaignRevisionID,
+		&schedule.Run.State,
+		&schedule.Run.Version,
+		&schedule.Run.CurrentWaveOrder,
+		&schedule.Run.CurrentMemberOrder,
+		&schedule.Run.AdmissionsBlocked,
+		&schedule.Run.FencingToken,
+		&schedule.Run.LeaseHolder,
+		&schedule.Run.LeaseExpiresAt,
+		&schedule.Run.PauseRequested,
+		&schedule.Run.ReconciliationRequired,
+		&schedule.AtSafePoint,
+		&schedule.CurrentWaveOrder,
+		&schedule.BakeUntil,
+		&schedule.WaveMaximumConcurrency,
+		&schedule.WaveActive,
+		&schedule.CampaignMaximumConcurrency,
+		&schedule.CampaignActive,
+		&schedule.MinimumHealthyBasisPoints,
+		&failureToleranceBasisPoints,
+		&schedule.ThresholdSnapshot.Successful,
+		&schedule.ThresholdSnapshot.Failed,
+		&frozenWaveMatches,
+		&priorWavePresent,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return types.CampaignSchedule{}, campaigns.ErrCampaignLeaseLost
+	}
 	if err != nil {
 		return types.CampaignSchedule{}, err
 	}
-	defer rows.Close()
-	schedule := types.CampaignSchedule{Run: *run, AtSafePoint: scheduleSafePoint}
+	if schedule.CurrentWaveOrder > 0 && !frozenWaveMatches {
+		return types.CampaignSchedule{}, apierrors.NewConflict(
+			"campaign wave runtime no longer matches frozen wave",
+		)
+	}
+	if priorWavePresent && schedule.BakeUntil == nil {
+		return types.CampaignSchedule{}, apierrors.NewConflict(
+			"campaign prior wave runtime no longer matches frozen wave",
+		)
+	}
+	if schedule.CurrentWaveOrder > 0 {
+		schedule.ThresholdPolicy = types.CampaignThresholdPolicy{
+			MinimumSamples:     1,
+			MaximumFailureRate: float64(failureToleranceBasisPoints) / 10000,
+		}
+	}
+
+	rows, err := tx.Query(ctx, loadCampaignCandidatesSQL, pgx.NamedArgs{
+		"run_id":             runID,
+		"fencing_token":      fencingToken,
+		"current_wave_order": schedule.CurrentWaveOrder,
+	})
+	if err != nil {
+		return types.CampaignSchedule{}, err
+	}
 	for rows.Next() {
 		var candidate types.CampaignMemberCandidate
+		var frozenMaximumConcurrency int
 		if err := rows.Scan(
 			&candidate.MemberRunID,
 			&candidate.WaveRunID,
 			&candidate.WaveOrder,
 			&candidate.MemberOrder,
 			&candidate.PlanID,
+			&frozenMaximumConcurrency,
 		); err != nil {
+			rows.Close()
 			return types.CampaignSchedule{}, err
+		}
+		if schedule.WaveMaximumConcurrency != frozenMaximumConcurrency {
+			rows.Close()
+			return types.CampaignSchedule{}, apierrors.NewConflict(
+				"campaign wave runtime no longer matches frozen wave concurrency",
+			)
 		}
 		schedule.Candidates = append(schedule.Candidates, candidate)
 	}
-	return schedule, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return types.CampaignSchedule{}, err
+	}
+	rows.Close()
+
+	for i := range schedule.Candidates {
+		prerequisiteRows, err := tx.Query(
+			ctx,
+			loadCandidatePrerequisitesSQL,
+			pgx.NamedArgs{
+				"run_id":             runID,
+				"fencing_token":      fencingToken,
+				"downstream_plan_id": schedule.Candidates[i].PlanID,
+			},
+		)
+		if err != nil {
+			return types.CampaignSchedule{}, err
+		}
+		for prerequisiteRows.Next() {
+			var requirement types.CampaignObservationRequirement
+			if err := prerequisiteRows.Scan(
+				&requirement.OrganizationID,
+				&requirement.UpstreamPlanID,
+				&requirement.StepKey,
+				&requirement.ProviderPlacementID,
+				&requirement.ProviderDeploymentUnitID,
+				&requirement.ProviderComponentInstanceID,
+				&requirement.ExpectedChecksum,
+			); err != nil {
+				prerequisiteRows.Close()
+				return types.CampaignSchedule{}, err
+			}
+			schedule.Candidates[i].Prerequisites = append(
+				schedule.Candidates[i].Prerequisites,
+				requirement,
+			)
+		}
+		if err := prerequisiteRows.Err(); err != nil {
+			prerequisiteRows.Close()
+			return types.CampaignSchedule{}, err
+		}
+		prerequisiteRows.Close()
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return types.CampaignSchedule{}, err
+	}
+	return schedule, nil
 }
 
 func (CampaignRepository) FinalizePendingCampaignPause(
@@ -1941,7 +2332,10 @@ func (CampaignRepository) AdmitCampaignMember(
 ) (bool, error) {
 	tag, err := internalctx.GetDb(ctx).Exec(ctx, admitCampaignMemberSQL, pgx.NamedArgs{
 		"member_run_id": admission.MemberRunID,
+		"wave_run_id":   admission.WaveRunID,
 		"run_id":        admission.RunID,
+		"wave_order":    admission.WaveOrder,
+		"member_order":  admission.MemberOrder,
 		"admitted_at":   admission.AdmittedAt,
 		"fencing_token": fencingToken,
 	})
@@ -2125,28 +2519,93 @@ func getDuplicateCampaignControl(
 	input types.CampaignControlInput,
 	checksum string,
 ) (*types.CampaignControlResult, error) {
+	result, found, err := lookupCampaignControlReplay(ctx, tx, input, checksum)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, pgx.ErrNoRows
+	}
+	return result, nil
+}
+
+func lookupCampaignControlReplay(
+	ctx context.Context,
+	tx pgx.Tx,
+	input types.CampaignControlInput,
+	checksum string,
+) (*types.CampaignControlResult, bool, error) {
 	var existingChecksum string
 	var response []byte
-	err := tx.QueryRow(ctx, `
-SELECT request_checksum, response_snapshot
-FROM CampaignControlRequest
-WHERE organization_id = @organization_id AND request_id = @request_id`,
+	err := tx.QueryRow(ctx, lookupCampaignControlReplaySQL,
 		pgx.NamedArgs{
 			"organization_id": input.OrganizationID,
 			"request_id":      input.RequestID,
 		},
 	).Scan(&existingChecksum, &response)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if existingChecksum != checksum {
-		return nil, apierrors.NewConflict(
+		return nil, false, apierrors.NewConflict(
 			"campaign control request ID reused with different input",
 		)
 	}
 	var result types.CampaignControlResult
 	if err := json.Unmarshal(response, &result); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &result, nil
+	return &result, true, nil
+}
+
+func getCampaignExclusionReplay(
+	ctx context.Context,
+	tx pgx.Tx,
+	input types.CampaignMemberControlInput,
+) (*types.CampaignExclusion, error) {
+	var existing types.CampaignExclusion
+	err := tx.QueryRow(ctx, `
+SELECT
+  exclusion.id,
+  exclusion.organization_id,
+  exclusion.campaign_run_id,
+  exclusion.member_run_id,
+  exclusion.control_request_id,
+  exclusion.reason,
+  exclusion.visible_incomplete,
+  exclusion.drift_reason,
+  exclusion.excluded_at,
+  exclusion.excluded_by_useraccount_id
+FROM CampaignExclusion AS exclusion
+JOIN CampaignControlRequest AS control
+  ON control.id = exclusion.control_request_id
+ AND control.organization_id = exclusion.organization_id
+ AND control.campaign_run_id = exclusion.campaign_run_id
+WHERE control.organization_id = @organization_id
+  AND control.request_id = @request_id`,
+		pgx.NamedArgs{
+			"organization_id": input.OrganizationID,
+			"request_id":      input.RequestID,
+		},
+	).Scan(
+		&existing.ID,
+		&existing.OrganizationID,
+		&existing.CampaignRunID,
+		&existing.MemberRunID,
+		&existing.ControlRequestID,
+		&existing.Reason,
+		&existing.VisibleIncomplete,
+		&existing.DriftReason,
+		&existing.ExcludedAt,
+		&existing.ExcludedByActorID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.NewConflict(
+			"campaign control replay has no matching exclusion",
+		)
+	}
+	return &existing, err
 }

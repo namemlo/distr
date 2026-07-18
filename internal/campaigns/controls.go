@@ -127,6 +127,34 @@ func BuildCampaignExclusion(
 	return exclusion, nil
 }
 
+func DecideCampaignMemberMutation(
+	run types.CampaignRun,
+	input types.CampaignMemberControlInput,
+) (types.CampaignRun, error) {
+	if run.ID != input.RunID {
+		return types.CampaignRun{}, errors.New("campaign member mutation run identity does not match")
+	}
+	if run.Version != input.ExpectedVersion {
+		return types.CampaignRun{}, fmt.Errorf(
+			"%w: expected %d, found %d",
+			ErrCampaignVersionConflict,
+			input.ExpectedVersion,
+			run.Version,
+		)
+	}
+	switch run.State {
+	case types.CampaignRunStateFailed,
+		types.CampaignRunStateCompleted,
+		types.CampaignRunStateCanceled:
+		return types.CampaignRun{}, fmt.Errorf(
+			"campaign member mutation is forbidden for terminal state %s",
+			run.State,
+		)
+	}
+	run.Version++
+	return run, nil
+}
+
 type CampaignControlStore interface {
 	ApplyCampaignControl(
 		context.Context,
@@ -148,6 +176,42 @@ type SupersedingPlanCreator interface {
 type CampaignController struct {
 	store       CampaignControlStore
 	planCreator SupersedingPlanCreator
+}
+
+type CampaignControlService struct {
+	controller *CampaignController
+	store      CampaignControlStore
+}
+
+func NewCampaignControlService(
+	store CampaignControlStore,
+	planCreator SupersedingPlanCreator,
+) *CampaignControlService {
+	return &CampaignControlService{
+		controller: NewCampaignController(store, planCreator),
+		store:      store,
+	}
+}
+
+func (s *CampaignControlService) ApplyCampaignControl(
+	ctx context.Context,
+	input types.CampaignControlInput,
+) (*types.CampaignControlResult, error) {
+	return s.store.ApplyCampaignControl(ctx, input)
+}
+
+func (s *CampaignControlService) ExcludeCampaignMember(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+) (*types.CampaignExclusion, error) {
+	return s.store.ExcludeCampaignMember(ctx, input)
+}
+
+func (s *CampaignControlService) RetryCampaignMember(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+) (*types.DeploymentPlan, error) {
+	return s.controller.RetryCampaignMember(ctx, input)
 }
 
 func NewCampaignController(

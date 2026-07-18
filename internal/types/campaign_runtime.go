@@ -73,12 +73,15 @@ type CampaignThresholdDecision struct {
 }
 
 type CampaignObservationRequirement struct {
-	OrganizationID      uuid.UUID
-	UpstreamPlanID      uuid.UUID
-	StepKey             string
-	ObservationID       uuid.UUID
-	ObservationChecksum string
-	ExpectedChecksum    string
+	OrganizationID              uuid.UUID
+	UpstreamPlanID              uuid.UUID
+	StepKey                     string
+	ProviderPlacementID         uuid.UUID
+	ProviderDeploymentUnitID    uuid.UUID
+	ProviderComponentInstanceID uuid.UUID
+	ObservationID               uuid.UUID
+	ObservationChecksum         string
+	ExpectedChecksum            string
 }
 
 type CampaignMemberCandidate struct {
@@ -91,11 +94,18 @@ type CampaignMemberCandidate struct {
 }
 
 type CampaignSchedule struct {
-	Run               CampaignRun
-	Candidates        []CampaignMemberCandidate
-	ThresholdPolicy   CampaignThresholdPolicy
-	ThresholdSnapshot CampaignThresholdSnapshot
-	AtSafePoint       bool
+	Run                        CampaignRun
+	Candidates                 []CampaignMemberCandidate
+	ThresholdPolicy            CampaignThresholdPolicy
+	ThresholdSnapshot          CampaignThresholdSnapshot
+	AtSafePoint                bool
+	CurrentWaveOrder           int
+	BakeUntil                  *time.Time
+	WaveMaximumConcurrency     int
+	WaveActive                 int
+	CampaignMaximumConcurrency int
+	CampaignActive             int
+	MinimumHealthyBasisPoints  int
 }
 
 type CampaignMemberAdmission struct {

@@ -62,7 +62,9 @@ CREATE TABLE CampaignControlRequest (
     ON UPDATE NO ACTION
     ON DELETE CASCADE,
   CONSTRAINT campaigncontrolrequest_idempotency_unique
-    UNIQUE (organization_id, request_id)
+    UNIQUE (organization_id, request_id),
+  CONSTRAINT campaigncontrolrequest_control_identity_unique
+    UNIQUE (id, organization_id, campaign_run_id)
 );
 
 CREATE INDEX CampaignControlRequest_run_history
@@ -78,7 +80,7 @@ CREATE TABLE CampaignExclusion (
   organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
   campaign_run_id UUID NOT NULL,
   member_run_id UUID NOT NULL,
-  control_request_id UUID NOT NULL REFERENCES CampaignControlRequest(id) ON DELETE CASCADE,
+  control_request_id UUID NOT NULL,
   excluded_by_useraccount_id UUID NOT NULL REFERENCES UserAccount(id) ON DELETE RESTRICT,
   reason TEXT NOT NULL CHECK (
     reason = btrim(reason) AND length(reason) BETWEEN 1 AND 4000
@@ -93,6 +95,11 @@ CREATE TABLE CampaignExclusion (
   CONSTRAINT campaignexclusion_member_fk
     FOREIGN KEY (member_run_id, organization_id, campaign_run_id)
     REFERENCES DeploymentCampaignMemberRun(id, organization_id, campaign_run_id)
+    ON UPDATE NO ACTION
+    ON DELETE CASCADE,
+  CONSTRAINT campaignexclusion_control_fk
+    FOREIGN KEY (control_request_id, organization_id, campaign_run_id)
+    REFERENCES CampaignControlRequest(id, organization_id, campaign_run_id)
     ON UPDATE NO ACTION
     ON DELETE CASCADE,
   CONSTRAINT campaignexclusion_member_unique UNIQUE (campaign_run_id, member_run_id)
