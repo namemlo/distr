@@ -93,6 +93,8 @@ func deploymentPlansRouterWithVerifier(
 				With(option.Description("Create a new immutable plan for a previously successful state")).
 				With(option.Request(CreatePreviousStateDeploymentPlanRouteRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlan{}))
+
+			deploymentPlanAdmissionRoutes(r)
 		})
 
 		r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).

@@ -1355,3 +1355,28 @@ Use one entry per pull request:
 - Compatibility notes: Existing v1 deployments, schedulers, agents, and historical checksums remain unchanged.
   Campaign scope is reserved until immutable campaign revisions exist, and admission persistence/override behavior
   remains PR-070.
+
+### PR-070 - Deployment admission and emergency overrides
+
+- Status: Implemented on the speculative PR-069 stack; final PR-063 and PR-066 integration remains an explicit
+  dependency gate.
+- Upstream base: `3a335355`.
+- Feature flag: New admission and emergency-override routes require both `operator_control_plane_v2` and
+  `executor_protocol_v2`; v1 execution remains available while they are disabled.
+- User-facing behavior: Operators can append an exact deployment admission decision and create a short-lived,
+  approval-backed emergency acceleration that never bypasses protected or mandatory gates.
+- Database changes: Migration 152 adds append-only `AdmissionEvaluation` and `EmergencyOverride` evidence with
+  tenant-safe foreign keys, material/decision/override checksums, idempotency, retention-only deletion, and guarded
+  downgrade.
+- API changes: Adds `POST /api/v1/deployment-plans/{id}/admission` and
+  `POST /api/v1/deployment-plans/{id}/emergency-overrides`.
+- UI changes: None.
+- Agent protocol changes: No wire change. The admitted-v2 wrapper requires frozen protocol `v2`; the existing v1
+  task creator and agent behavior are unchanged.
+- Documentation: Added ADR-0063, PR-070 fork notes, and the governance API index entry.
+- Tests: Added pure admission/override, repository replay/migration, API/mapping, handler scope/flag, admitted-v2
+  wrapper, and flags-off v1 regression coverage.
+- Upstream contribution notes: Community-neutral admission and emergency-governance primitives; no adopter,
+  infrastructure provider, hostname, credential, or application-database behavior.
+- Compatibility notes: Authorization and effective enrollment fail closed until PR-066 is integrated. PR-063
+  supplies the immutable v2 plan identity consumed by the wrapper. No permissive fallback or v1 gate is added.

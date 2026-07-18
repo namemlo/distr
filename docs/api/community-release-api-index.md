@@ -32,6 +32,7 @@ embedded bundles; it remains optional for v1 and is required for Component Relea
 ## Governance
 
 - Approvals and manual intervention APIs.
+- Deployment-plan admission and checksum-bound emergency-override APIs.
 - Tag sets, rollout groups, freezes, subscriptions, retention previews, and runbooks.
 - Expanded RBAC permission checks on mutation paths.
 
