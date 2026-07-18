@@ -140,8 +140,23 @@ func TestComponentReleaseContractV2MigrationIsAdditive(t *testing.T) {
 	g.Expect(string(up)).To(ContainSubstring("ADD COLUMN release_contract_schema TEXT"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseArtifact"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseEvidence"))
+	g.Expect(string(up)).To(ContainSubstring("releasebundle_contract_v2_backfill_cursor_idx"))
+	g.Expect(string(up)).To(ContainSubstring("componentreleaseartifact_verification_identity_unique"))
+	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseEvidenceVerification"))
+	g.Expect(string(up)).To(ContainSubstring("componentreleaseverification_artifact_fk"))
+	g.Expect(string(up)).To(ContainSubstring("componentreleaseverification_identity_unique"))
+	g.Expect(string(up)).To(ContainSubstring("componentreleaseverification_preflight_idx"))
+	g.Expect(string(up)).To(ContainSubstring("component_release_verification_insert_guard"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseCapability"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseMigrationDeclaration"))
+	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ReleaseContractV2BackfillLineage"))
+	g.Expect(string(up)).To(ContainSubstring("releasecontractv2backfill_source_unique"))
+	g.Expect(string(up)).To(ContainSubstring("releasecontractv2backfill_derived_unique"))
+	g.Expect(string(up)).To(ContainSubstring("releasecontractv2backfill_checkpoint_idx"))
+	g.Expect(string(up)).To(ContainSubstring("ComponentReleaseEvidenceVerification_append_only"))
+	g.Expect(string(up)).To(ContainSubstring("ComponentReleaseEvidenceVerification_no_truncate"))
+	g.Expect(string(up)).To(ContainSubstring("ReleaseContractV2BackfillLineage_append_only"))
+	g.Expect(string(up)).To(ContainSubstring("ReleaseContractV2BackfillLineage_no_truncate"))
 	g.Expect(string(up)).To(ContainSubstring("componentreleaseartifact_media_type_check"))
 	g.Expect(string(up)).NotTo(ContainSubstring("canonical_payload ="))
 	g.Expect(string(up)).NotTo(ContainSubstring("canonical_checksum ="))
@@ -149,6 +164,17 @@ func TestComponentReleaseContractV2MigrationIsAdditive(t *testing.T) {
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "143_component_release_contract_v2.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down)).To(ContainSubstring("downgrade crossing 143 is forbidden"))
+	g.Expect(string(down)).To(ContainSubstring("ComponentReleaseEvidenceVerification"))
+	g.Expect(string(down)).To(ContainSubstring("ReleaseContractV2BackfillLineage"))
+	g.Expect(string(down)).To(ContainSubstring("releasebundle_contract_v2_backfill_cursor_idx"))
+}
+
+func TestOrganizationRetentionAuthorizesReleaseEvidenceCleanup(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("organization.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(source)).To(ContainSubstring("'distr.release_evidence_deletion_reason'"))
+	g.Expect(string(source)).To(ContainSubstring("'ORGANIZATION_RETENTION'"))
 }
 
 func TestComponentReleasePublicationIsTargetNeutralAndIdempotent(t *testing.T) {

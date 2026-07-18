@@ -409,6 +409,11 @@ func DeleteOrganizationsOlderThan(ctx context.Context, minAge time.Duration) (in
 			    'distr.target_config_snapshot_deletion_reason',
 			    'ORGANIZATION_RETENTION',
 			    true
+			  ),
+			  set_config(
+			    'distr.release_evidence_deletion_reason',
+			    'ORGANIZATION_RETENTION',
+			    true
 			  )`,
 			pgx.NamedArgs{"operationId": uuid.NewString()},
 		); err != nil {
