@@ -239,6 +239,10 @@ func deleteDeploymentTarget(w http.ResponseWriter, r *http.Request) {
 	} else if !isDeploymentTargetVisible(ctx, dt) {
 		http.Error(w, "must be vendor or creator", http.StatusForbidden)
 	} else if err := db.DeleteDeploymentTargetWithID(ctx, dt.ID); err != nil {
+		if errors.Is(err, apierrors.ErrConflict) {
+			http.Error(w, "deployment target is in use", http.StatusConflict)
+			return
+		}
 		log.Warn("error deleting deployment target", zap.Error(err))
 		sentry.GetHubFromContext(ctx).CaptureException(err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

@@ -533,10 +533,10 @@ func deleteApplication(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	} else if err := db.DeleteApplicationWithID(ctx, application.ID); err != nil {
 		if errors.Is(err, apierrors.ErrConflict) {
-			http.Error(w, "could not delete Application because it is still in use", http.StatusBadRequest)
+			http.Error(w, "application is in use", http.StatusConflict)
 		} else {
 			log.Warn("error deleting application", zap.Error(err))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		}
 	} else {
 		w.WriteHeader(http.StatusNoContent)

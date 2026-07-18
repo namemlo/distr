@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - PR-055 through PR-065 and their exit gate must be accepted first.
-- Migrations 147–159 are reserved from the program ledger; re-check immediately before each PR.
+- Migrations 148–160 are reserved from the program ledger after PR-065 migration 147; re-check immediately before each PR.
 - New action authorization is deny-by-default and checked at handler, service, and repository scope boundaries.
 - A process feature flag never grants tenant authority. Effective v2 access requires organization and environment enrollment from PR-066.
 - Draft edits create no approval or execution authority. Only published immutable revision checksums can be approved or scheduled.
@@ -28,8 +28,8 @@
 
 **Files:**
 
-- Create: `internal/migrations/sql/147_scoped_authorization_enrollment.up.sql`
-- Create: `internal/migrations/sql/147_scoped_authorization_enrollment.down.sql`
+- Create: `internal/migrations/sql/148_scoped_authorization_enrollment.up.sql`
+- Create: `internal/migrations/sql/148_scoped_authorization_enrollment.down.sql`
 - Create: `internal/types/authorization.go`
 - Modify: `internal/types/permissions.go`
 - Modify: `internal/types/permissions_test.go`
@@ -44,10 +44,10 @@
 - Create: `internal/handlers/authorization_test.go`
 - Modify: `internal/middleware/middleware.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0060-scoped-authorization-and-enrollment.md`
+- Create: `docs/adr/0061-scoped-authorization-and-enrollment.md`
 - Create: `docs/fork/PR-066_SCOPED_AUTHORIZATION_ENROLLMENT.md`
 
-Migration 147 creates `RoleDefinition`, `RolePermission`, `RoleBinding`, `PrincipalGroup`, `PrincipalGroupMember`, and `ControlPlaneEnrollment`. Supported scope kinds are `organization`, `customer`, `environment`, `deployment_unit`, `component`, and `campaign`. Enrollment can be organization- or environment-scoped and has effective interval, actor, reason, and revision.
+Migration 148 creates `RoleDefinition`, `RolePermission`, `RoleBinding`, `PrincipalGroup`, `PrincipalGroupMember`, and `ControlPlaneEnrollment`. Supported scope kinds are `organization`, `customer`, `environment`, `deployment_unit`, `component`, and `campaign`. Enrollment can be organization- or environment-scoped and has effective interval, actor, reason, and revision.
 
 ```go
 type Action string
@@ -72,7 +72,7 @@ Action constants cover release create/publish/block, registry/config manage, pla
 ```powershell
 go test ./internal/authorization ./internal/types ./internal/db ./api ./internal/handlers ./internal/middleware -run 'Authorization|RoleBinding|Enrollment|Scope' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/147_* internal/types/authorization.go internal/types/permissions* internal/authorization internal/db/authorization* api/authorization.go internal/handlers/authorization* internal/middleware/middleware.go internal/routing/routing.go docs
+git add internal/migrations/sql/148_* internal/types/authorization.go internal/types/permissions* internal/authorization internal/db/authorization* api/authorization.go internal/handlers/authorization* internal/middleware/middleware.go internal/routing/routing.go docs
 git commit -m "feat: authorize scoped control plane actions"
 ```
 
@@ -80,8 +80,8 @@ git commit -m "feat: authorize scoped control plane actions"
 
 **Files:**
 
-- Create: `internal/migrations/sql/148_deployment_policies.up.sql`
-- Create: `internal/migrations/sql/148_deployment_policies.down.sql`
+- Create: `internal/migrations/sql/149_deployment_policies.up.sql`
+- Create: `internal/migrations/sql/149_deployment_policies.down.sql`
 - Create: `internal/types/deployment_policy.go`
 - Create: `internal/governance/policy.go`
 - Create: `internal/governance/policy_test.go`
@@ -95,7 +95,7 @@ git commit -m "feat: authorize scoped control plane actions"
 - Modify: `internal/routing/routing.go`
 - Create: `docs/fork/PR-067_VERSIONED_DEPLOYMENT_POLICIES.md`
 
-Migration 148 creates `DeploymentPolicy`, immutable `DeploymentPolicyVersion`, and `DeploymentPolicyBinding`. Policy JSON has an exact schema for quorum, separation, risk gates, allowed resolution modes, minimum bake, wave thresholds, window/freeze references, override rules, required evidence, and bootstrap behavior.
+Migration 149 creates `DeploymentPolicy`, immutable `DeploymentPolicyVersion`, and `DeploymentPolicyBinding`. Policy JSON has an exact schema for quorum, separation, risk gates, allowed resolution modes, minimum bake, wave thresholds, window/freeze references, override rules, required evidence, and bootstrap behavior.
 
 ```go
 type EffectivePolicy struct { VersionIDs []uuid.UUID; Checksum string; ApprovalRules []ApprovalRule; AdmissionRules AdmissionRules; CampaignRules CampaignRules }
@@ -115,7 +115,7 @@ Composition uses strict conjunction: every owner/subscriber quorum must be indep
 ```powershell
 go test ./internal/governance ./internal/db ./api ./internal/mapping ./internal/handlers -run 'DeploymentPolicy|EffectivePolicy|PolicyBinding' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/148_* internal/types/deployment_policy.go internal/governance internal/db/deployment_policies* api/deployment_policy* internal/mapping/deployment_policy.go internal/handlers/deployment_policies* internal/routing/routing.go docs
+git add internal/migrations/sql/149_* internal/types/deployment_policy.go internal/governance internal/db/deployment_policies* api/deployment_policy* internal/mapping/deployment_policy.go internal/handlers/deployment_policies* internal/routing/routing.go docs
 git commit -m "feat: compose versioned deployment policies"
 ```
 
@@ -123,8 +123,8 @@ git commit -m "feat: compose versioned deployment policies"
 
 **Files:**
 
-- Create: `internal/migrations/sql/149_approval_workflow.up.sql`
-- Create: `internal/migrations/sql/149_approval_workflow.down.sql`
+- Create: `internal/migrations/sql/150_approval_workflow.up.sql`
+- Create: `internal/migrations/sql/150_approval_workflow.down.sql`
 - Create: `internal/types/approval.go`
 - Create: `internal/governance/approval.go`
 - Create: `internal/governance/approval_test.go`
@@ -139,7 +139,7 @@ git commit -m "feat: compose versioned deployment policies"
 - Modify: `internal/routing/routing.go`
 - Create: `docs/fork/PR-068_CHECKSUM_BOUND_APPROVALS.md`
 
-Migration 149 creates `ApprovalRequest`, `ApprovalRequirement`, and append-only `ApprovalDecision`. Requests pin subject type/ID/revision/checksum, effective policy checksum, requester, subscriber set checksum, expiry, and state. Decisions use optimistic request revision plus unique `(request_id, actor_id, idempotency_key)`.
+Migration 150 creates `ApprovalRequest`, `ApprovalRequirement`, and append-only `ApprovalDecision`. Requests pin subject type/ID/revision/checksum, effective policy checksum, requester, subscriber set checksum, expiry, and state. Decisions use optimistic request revision plus unique `(request_id, actor_id, idempotency_key)`.
 
 ```go
 func RequestApproval(context.Context, types.ApprovalRequestInput) (*types.ApprovalRequest, error)
@@ -158,7 +158,7 @@ Routes: `POST /api/v1/deployment-plans/{id}/approval-requests`, `GET /api/v1/app
 ```powershell
 go test ./internal/governance ./internal/db ./api ./internal/mapping ./internal/handlers -run 'Approval|Decision|FourEyes|Invalidation' -count=1 -race
 mise run lint:migrations
-git add internal/migrations/sql/149_* internal/types/approval.go internal/governance internal/db/approvals* api/approval* internal/mapping/approval.go internal/handlers/approvals* internal/handlers/deployment_plans.go internal/routing/routing.go docs
+git add internal/migrations/sql/150_* internal/types/approval.go internal/governance internal/db/approvals* api/approval* internal/mapping/approval.go internal/handlers/approvals* internal/handlers/deployment_plans.go internal/routing/routing.go docs
 git commit -m "feat: require checksum bound deployment approvals"
 ```
 
@@ -166,8 +166,8 @@ git commit -m "feat: require checksum bound deployment approvals"
 
 **Files:**
 
-- Create: `internal/migrations/sql/150_maintenance_calendars_freezes.up.sql`
-- Create: `internal/migrations/sql/150_maintenance_calendars_freezes.down.sql`
+- Create: `internal/migrations/sql/151_maintenance_calendars_freezes.up.sql`
+- Create: `internal/migrations/sql/151_maintenance_calendars_freezes.down.sql`
 - Create: `internal/types/calendar.go`
 - Create: `internal/scheduling/calendar.go`
 - Create: `internal/scheduling/calendar_test.go`
@@ -178,10 +178,10 @@ git commit -m "feat: require checksum bound deployment approvals"
 - Create: `internal/handlers/maintenance_calendars.go`
 - Create: `internal/handlers/maintenance_calendars_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0061-versioned-calendar-admission.md`
+- Create: `docs/adr/0062-versioned-calendar-admission.md`
 - Create: `docs/fork/PR-069_MAINTENANCE_CALENDARS_FREEZES.md`
 
-Migration 150 creates `MaintenanceCalendar`, `MaintenanceCalendarVersion`, `MaintenanceWindowRule`, `DeploymentFreeze`, and `DeploymentFreezeRevision`. Drafts are editable; versions/revisions are immutable and checksum-bound.
+Migration 151 creates `MaintenanceCalendar`, `MaintenanceCalendarVersion`, `MaintenanceWindowRule`, `DeploymentFreeze`, and `DeploymentFreezeRevision`. Drafts are editable; versions/revisions are immutable and checksum-bound.
 
 ```go
 type CalendarEvaluationInput struct { UTCInstant time.Time; IANAZone, RuleVersion string }
@@ -200,7 +200,7 @@ Routes: `/api/v1/maintenance-calendars` with draft/version/publish operations an
 ```powershell
 go test ./internal/scheduling ./internal/db ./api ./internal/mapping ./internal/handlers -run 'Calendar|Window|Freeze|DST' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/150_* internal/types/calendar.go internal/scheduling internal/db/maintenance_calendars* api/maintenance_calendar.go internal/mapping/maintenance_calendar.go internal/handlers/maintenance_calendars* internal/routing/routing.go docs
+git add internal/migrations/sql/151_* internal/types/calendar.go internal/scheduling internal/db/maintenance_calendars* api/maintenance_calendar.go internal/mapping/maintenance_calendar.go internal/handlers/maintenance_calendars* internal/routing/routing.go docs
 git commit -m "feat: evaluate versioned deployment calendars"
 ```
 
@@ -208,8 +208,8 @@ git commit -m "feat: evaluate versioned deployment calendars"
 
 **Files:**
 
-- Create: `internal/migrations/sql/151_deployment_admission_overrides.up.sql`
-- Create: `internal/migrations/sql/151_deployment_admission_overrides.down.sql`
+- Create: `internal/migrations/sql/152_deployment_admission_overrides.up.sql`
+- Create: `internal/migrations/sql/152_deployment_admission_overrides.down.sql`
 - Create: `internal/scheduling/admission.go`
 - Create: `internal/scheduling/admission_test.go`
 - Create: `internal/db/admission.go`
@@ -222,7 +222,7 @@ git commit -m "feat: evaluate versioned deployment calendars"
 - Modify: `internal/routing/routing.go`
 - Create: `docs/fork/PR-070_DEPLOYMENT_ADMISSION_OVERRIDES.md`
 
-Migration 151 creates append-only `AdmissionEvaluation` and `EmergencyOverride`. An evaluation pins plan/campaign/policy/calendar/freeze/approval revisions and records exact temporal evidence. An override pins allowed accelerations, reason, actor, approvals, expiry, and checksum; it cannot disable integrity, evidence, backup, provenance, observation, or mandatory health gates.
+Migration 152 creates append-only `AdmissionEvaluation` and `EmergencyOverride`. An evaluation pins plan/campaign/policy/calendar/freeze/approval revisions and records exact temporal evidence. An override pins allowed accelerations, reason, actor, approvals, expiry, and checksum; it cannot disable integrity, evidence, backup, provenance, observation, or mandatory health gates.
 
 ```go
 func EvaluateAdmission(context.Context, types.AdmissionRequest) (types.AdmissionEvaluation, error)
@@ -242,7 +242,7 @@ Routes: `POST /api/v1/deployment-plans/{id}/admission` and `POST /api/v1/deploym
 ```powershell
 go test ./internal/scheduling ./internal/db ./api ./internal/handlers -run 'Admission|EmergencyOverride|CreateTasksForAdmittedV2Plan|V1TaskCreation' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/151_* internal/scheduling internal/db/admission* api/admission.go internal/handlers/admission* internal/routing/routing.go docs
+git add internal/migrations/sql/152_* internal/scheduling internal/db/admission* api/admission.go internal/handlers/admission* internal/routing/routing.go docs
 git commit -m "feat: gate plans with deployment admission"
 ```
 
@@ -250,8 +250,8 @@ git commit -m "feat: gate plans with deployment admission"
 
 **Files:**
 
-- Create: `internal/migrations/sql/152_deployment_campaign_revisions.up.sql`
-- Create: `internal/migrations/sql/152_deployment_campaign_revisions.down.sql`
+- Create: `internal/migrations/sql/153_deployment_campaign_revisions.up.sql`
+- Create: `internal/migrations/sql/153_deployment_campaign_revisions.down.sql`
 - Create: `internal/types/campaign.go`
 - Create: `internal/campaigns/canonical.go`
 - Create: `internal/campaigns/canonical_test.go`
@@ -267,10 +267,10 @@ git commit -m "feat: gate plans with deployment admission"
 - Create: `internal/handlers/deployment_campaigns.go`
 - Create: `internal/handlers/deployment_campaigns_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0062-deterministic-deployment-campaigns.md`
+- Create: `docs/adr/0063-deterministic-deployment-campaigns.md`
 - Create: `docs/fork/PR-071_IMMUTABLE_CAMPAIGN_REVISIONS.md`
 
-Migration 152 creates `DeploymentCampaignDraft`, `DeploymentCampaignRevision`, `DeploymentCampaignWave`, `DeploymentCampaignMember`, and `DeploymentCampaignPrerequisite`. Published revisions freeze ordered plan membership, tag-query result, plan/approval checksums, wave assignment, risk/bake/threshold policy, and each cross-plan prerequisite's upstream plan ID, step key, and expected observed-state checksum.
+Migration 153 creates `DeploymentCampaignDraft`, `DeploymentCampaignRevision`, `DeploymentCampaignWave`, `DeploymentCampaignMember`, and `DeploymentCampaignPrerequisite`. Published revisions freeze ordered plan membership, tag-query result, plan/approval checksums, wave assignment, risk/bake/threshold policy, and each cross-plan prerequisite's upstream plan ID, step key, and expected observed-state checksum.
 
 ```go
 func ResolveCampaignMembership(context.Context, types.CampaignDraft) ([]types.CampaignMember, error)
@@ -288,7 +288,7 @@ Routes: `POST/PATCH /api/v1/deployment-campaign-drafts`, `GET /{id}`, `POST /{id
 ```powershell
 go test ./internal/campaigns ./internal/db ./api ./internal/mapping ./internal/handlers -run 'CampaignRevision|Membership|Prerequisite' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/152_* internal/types/campaign.go internal/campaigns internal/db/deployment_campaigns* api/deployment_campaign* internal/mapping/deployment_campaign.go internal/handlers/deployment_campaigns* internal/routing/routing.go docs
+git add internal/migrations/sql/153_* internal/types/campaign.go internal/campaigns internal/db/deployment_campaigns* api/deployment_campaign* internal/mapping/deployment_campaign.go internal/handlers/deployment_campaigns* internal/routing/routing.go docs
 git commit -m "feat: freeze deterministic deployment campaigns"
 ```
 
@@ -296,8 +296,8 @@ git commit -m "feat: freeze deterministic deployment campaigns"
 
 **Files:**
 
-- Create: `internal/migrations/sql/153_deployment_campaign_runs.up.sql`
-- Create: `internal/migrations/sql/153_deployment_campaign_runs.down.sql`
+- Create: `internal/migrations/sql/154_deployment_campaign_runs.up.sql`
+- Create: `internal/migrations/sql/154_deployment_campaign_runs.down.sql`
 - Create: `internal/campaigns/state_machine.go`
 - Create: `internal/campaigns/state_machine_test.go`
 - Create: `internal/campaigns/scheduler.go`
@@ -311,7 +311,7 @@ git commit -m "feat: freeze deterministic deployment campaigns"
 - Modify: `internal/handlers/deployment_campaigns.go`
 - Create: `docs/fork/PR-072_CAMPAIGN_SCHEDULER_THRESHOLDS.md`
 
-Migration 153 creates `DeploymentCampaignRun`, `DeploymentCampaignWaveRun`, `DeploymentCampaignMemberRun`, `CampaignPrerequisiteEvaluation`, and `CampaignThresholdEvaluation`. Each prerequisite evaluation retains the frozen expected checksum plus the actual matching observation ID/checksum used for admission. State transitions are optimistic and append evidence; scheduler leases use fencing and deterministic `(wave_order, member_order, plan_id)` admission.
+Migration 154 creates `DeploymentCampaignRun`, `DeploymentCampaignWaveRun`, `DeploymentCampaignMemberRun`, `CampaignPrerequisiteEvaluation`, and `CampaignThresholdEvaluation`. Each prerequisite evaluation retains the frozen expected checksum plus the actual matching observation ID/checksum used for admission. State transitions are optimistic and append evidence; scheduler leases use fencing and deterministic `(wave_order, member_order, plan_id)` admission.
 
 ```go
 func TransitionCampaign(context.Context, types.CampaignTransition) (*types.CampaignRun, error)
@@ -328,7 +328,7 @@ func RecordThresholdEvaluation(context.Context, types.ThresholdEvaluation) error
 ```powershell
 go test ./internal/campaigns ./internal/campaignworker ./internal/db ./internal/handlers -run 'CampaignRun|Scheduler|Threshold|WaveAdmission' -count=1 -race
 mise run lint:migrations
-git add internal/migrations/sql/153_* internal/campaigns internal/campaignworker internal/db/deployment_campaigns* internal/handlers/deployment_campaigns.go docs
+git add internal/migrations/sql/154_* internal/campaigns internal/campaignworker internal/db/deployment_campaigns* internal/handlers/deployment_campaigns.go docs
 git commit -m "feat: schedule campaign waves safely"
 ```
 
@@ -336,8 +336,8 @@ git commit -m "feat: schedule campaign waves safely"
 
 **Files:**
 
-- Create: `internal/migrations/sql/154_campaign_controls.up.sql`
-- Create: `internal/migrations/sql/154_campaign_controls.down.sql`
+- Create: `internal/migrations/sql/155_campaign_controls.up.sql`
+- Create: `internal/migrations/sql/155_campaign_controls.down.sql`
 - Create: `internal/campaigns/controls.go`
 - Create: `internal/campaigns/controls_test.go`
 - Modify: `internal/db/deployment_campaigns.go`
@@ -347,7 +347,7 @@ git commit -m "feat: schedule campaign waves safely"
 - Modify: `internal/handlers/deployment_campaigns_test.go`
 - Create: `docs/fork/PR-073_CAMPAIGN_OPERATIONAL_CONTROLS.md`
 
-Migration 154 creates `CampaignControlRequest` and `CampaignExclusion`. Control requests are idempotent, scoped, reasoned, and append-only.
+Migration 155 creates `CampaignControlRequest` and `CampaignExclusion`. Control requests are idempotent, scoped, reasoned, and append-only.
 
 ```go
 func PauseCampaign(context.Context, types.CampaignControlInput) error
@@ -366,7 +366,7 @@ Routes: `POST /api/v1/deployment-campaigns/{id}/pause`, `/resume`, `/retry`, `/e
 ```powershell
 go test ./internal/campaigns ./internal/db ./api ./internal/handlers -run 'PauseCampaign|ResumeCampaign|RetryCampaign|ExcludeCampaign|CancelCampaign' -count=1 -race
 mise run lint:migrations
-git add internal/migrations/sql/154_* internal/campaigns/controls* internal/db/deployment_campaigns* api/deployment_campaign.go internal/handlers/deployment_campaigns* docs
+git add internal/migrations/sql/155_* internal/campaigns/controls* internal/db/deployment_campaigns* api/deployment_campaign.go internal/handlers/deployment_campaigns* docs
 git commit -m "feat: control active deployment campaigns"
 ```
 
@@ -374,8 +374,8 @@ git commit -m "feat: control active deployment campaigns"
 
 **Files:**
 
-- Create: `internal/migrations/sql/155_adapter_assignments.up.sql`
-- Create: `internal/migrations/sql/155_adapter_assignments.down.sql`
+- Create: `internal/migrations/sql/156_adapter_assignments.up.sql`
+- Create: `internal/migrations/sql/156_adapter_assignments.down.sql`
 - Create: `internal/types/adapter.go`
 - Create: `internal/adapterresolution/resolver.go`
 - Create: `internal/adapterresolution/resolver_test.go`
@@ -390,7 +390,7 @@ git commit -m "feat: control active deployment campaigns"
 - Modify: `internal/routing/routing.go`
 - Create: `docs/fork/PR-074_VERSIONED_ADAPTER_RESOLUTION.md`
 
-Migration 155 creates `AdapterImplementation`, `AdapterCapability`, `AdapterAssignment`, and immutable `DeploymentPlanStepAdapter`. Release contracts declare required capability; target assignment selects implementation/version/config snapshot at plan time.
+Migration 156 creates `AdapterImplementation`, `AdapterCapability`, `AdapterAssignment`, and immutable `DeploymentPlanStepAdapter`. Release contracts declare required capability; target assignment selects implementation/version/config snapshot at plan time.
 
 ```go
 func ResolveStepAdapter(context.Context, types.AdapterResolutionRequest) (*types.ResolvedStepAdapter, []types.ValidationIssue)
@@ -406,7 +406,7 @@ Routes: `/api/v1/adapter-implementations`, `/adapter-assignments`, and plan read
 ```powershell
 go test ./internal/adapterresolution ./internal/planning ./internal/deploymentpreflight ./internal/db ./api ./internal/handlers -run 'Adapter|ResolveStepAdapter' -count=1
 mise run lint:migrations
-git add internal/migrations/sql/155_* internal/types/adapter.go internal/adapterresolution internal/db/adapters* api/adapter.go internal/mapping/adapter.go internal/handlers/adapters* internal/planning/resolver.go internal/deploymentpreflight/evaluate.go internal/routing/routing.go docs
+git add internal/migrations/sql/156_* internal/types/adapter.go internal/adapterresolution internal/db/adapters* api/adapter.go internal/mapping/adapter.go internal/handlers/adapters* internal/planning/resolver.go internal/deploymentpreflight/evaluate.go internal/routing/routing.go docs
 git commit -m "feat: freeze plan adapter assignments"
 ```
 
@@ -414,8 +414,8 @@ git commit -m "feat: freeze plan adapter assignments"
 
 **Files:**
 
-- Create: `internal/migrations/sql/156_external_execution_protocol_v2.up.sql`
-- Create: `internal/migrations/sql/156_external_execution_protocol_v2.down.sql`
+- Create: `internal/migrations/sql/157_external_execution_protocol_v2.up.sql`
+- Create: `internal/migrations/sql/157_external_execution_protocol_v2.down.sql`
 - Create: `internal/types/execution_v2.go`
 - Create: `internal/executionprotocol/intent.go`
 - Create: `internal/executionprotocol/intent_test.go`
@@ -434,10 +434,10 @@ git commit -m "feat: freeze plan adapter assignments"
 - Modify: `internal/types/task_queue.go`
 - Modify: `internal/db/task_queue.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0063-fenced-executor-protocol-v2.md`
+- Create: `docs/adr/0064-fenced-executor-protocol-v2.md`
 - Create: `docs/fork/PR-075_FENCED_EXECUTOR_PROTOCOL_V2.md`
 
-Migration 156 creates `ExecutionAttempt`, `ExecutionFence`, `ExecutionIntent`, and append-only `ExecutionEvent`; `Task` gains frozen `protocol_version`. It does not alter `ExternalExecution` or `ExternalExecutionEvent`.
+Migration 157 creates `ExecutionAttempt`, `ExecutionFence`, `ExecutionIntent`, and append-only `ExecutionEvent`; `Task` gains frozen `protocol_version`. It does not alter `ExternalExecution` or `ExternalExecutionEvent`.
 
 ```go
 type ExecutionIdentity struct { ExecutionID uuid.UUID; AttemptNumber int; StepKey string }
@@ -455,7 +455,7 @@ func FenceExecutionAttempt(context.Context, uuid.UUID, string) error
 
 Executor routes use executor credentials under `POST /api/executor/v2/executions/claim` and `/api/executor/v2/attempts/{id}/heartbeat|events|complete`. The idempotency tuple is `(execution_id, attempt_number, step_key, event_sequence)`; conflicting duplicates fail securely. Lease loss increments fence generation.
 
-ADR-0063 explicitly supersedes only v1 delivery semantics for plans frozen to v2. V1 remains claim-before-dispatch, at-most-once, late-callback rejecting, and requires a new plan after unprovable delivery.
+ADR-0064 explicitly supersedes only v1 delivery semantics for plans frozen to v2. V1 remains claim-before-dispatch, at-most-once, late-callback rejecting, and requires a new plan after unprovable delivery.
 
 - [ ] Add golden signed-intent tests and tamper/wrong-key/expired-intent/config/artifact mismatch cases.
 - [ ] Add state tests for claim, duplicate dispatch/event, conflicting duplicate, ordered sequence, heartbeat, lease loss, stale generation, resource locks, crash before acknowledge, crash after acknowledge, terminal lease/lock release, timeout, and restart.
@@ -471,7 +471,7 @@ mise run lint:migrations
 mise run build:hub:community
 mise run build:agent:docker
 mise run build:agent:kubernetes
-git add internal/migrations/sql/156_* internal/types/execution_v2.go internal/types/task_queue.go internal/executionprotocol internal/executionworker internal/db/execution_v2* internal/db/task_queue.go api/execution_v2* internal/handlers/execution_v2* internal/routing/routing.go docs
+git add internal/migrations/sql/157_* internal/types/execution_v2.go internal/types/task_queue.go internal/executionprotocol internal/executionworker internal/db/execution_v2* internal/db/task_queue.go api/execution_v2* internal/handlers/execution_v2* internal/routing/routing.go docs
 git commit -m "feat: add fenced executor protocol v2"
 ```
 
@@ -479,8 +479,8 @@ git commit -m "feat: add fenced executor protocol v2"
 
 **Files:**
 
-- Create: `internal/migrations/sql/157_execution_controls.up.sql`
-- Create: `internal/migrations/sql/157_execution_controls.down.sql`
+- Create: `internal/migrations/sql/158_execution_controls.up.sql`
+- Create: `internal/migrations/sql/158_execution_controls.down.sql`
 - Create: `internal/executionprotocol/controls.go`
 - Create: `internal/executionprotocol/controls_test.go`
 - Modify: `internal/db/execution_v2.go`
@@ -489,7 +489,7 @@ git commit -m "feat: add fenced executor protocol v2"
 - Modify: `internal/handlers/execution_v2.go`
 - Create: `docs/fork/PR-076_EXECUTION_CANCEL_STATUS_RECONCILIATION.md`
 
-Migration 157 creates `ExecutionCancelRequest`, `ExecutionStatusQuery`, and `ExecutionReconciliationEvent`.
+Migration 158 creates `ExecutionCancelRequest`, `ExecutionStatusQuery`, and `ExecutionReconciliationEvent`.
 
 ```go
 func RequestExecutionCancel(context.Context, types.CancelRequest) error
@@ -507,7 +507,7 @@ Operator routes: `POST /api/v1/executions/{id}/cancel`, `/status-queries`, and `
 ```powershell
 go test ./internal/executionprotocol ./internal/campaigns ./internal/db ./api ./internal/handlers -run 'Cancel|StatusQuery|CallbackLoss|ReconciliationStatus' -count=1 -race
 mise run lint:migrations
-git add internal/migrations/sql/157_* internal/executionprotocol/controls* internal/db/execution_v2* api/execution_v2.go internal/handlers/execution_v2.go docs
+git add internal/migrations/sql/158_* internal/executionprotocol/controls* internal/db/execution_v2* api/execution_v2.go internal/handlers/execution_v2.go docs
 git commit -m "feat: reconcile uncertain executor outcomes"
 ```
 
@@ -515,8 +515,8 @@ git commit -m "feat: reconcile uncertain executor outcomes"
 
 **Files:**
 
-- Create: `internal/migrations/sql/158_desired_observed_reconciliation.up.sql`
-- Create: `internal/migrations/sql/158_desired_observed_reconciliation.down.sql`
+- Create: `internal/migrations/sql/159_desired_observed_reconciliation.up.sql`
+- Create: `internal/migrations/sql/159_desired_observed_reconciliation.down.sql`
 - Create: `internal/types/desired_state.go`
 - Create: `internal/types/observation.go`
 - Create: `internal/types/reconciliation.go`
@@ -537,10 +537,10 @@ git commit -m "feat: reconcile uncertain executor outcomes"
 - Create: `internal/handlers/reconciliation.go`
 - Create: `internal/handlers/reconciliation_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0064-independent-observed-state.md`
+- Create: `docs/adr/0065-independent-observed-state.md`
 - Create: `docs/fork/PR-077_DESIRED_OBSERVED_RECONCILIATION.md`
 
-Migration 158 creates `PendingDesiredRevision`, `ActiveDesiredRevision`, `ComponentDesiredStateHead`, `ExecutorReport`, `ObserverRegistration`, `ObservedComponentState`, `ComponentObservationHead`, `DriftCase`, `DriftCaseEvent`, and `ReconciliationAction`. Existing `TargetComponentState`/`TargetComponentObservation` remain labeled legacy/executor projection.
+Migration 159 creates `PendingDesiredRevision`, `ActiveDesiredRevision`, `ComponentDesiredStateHead`, `ExecutorReport`, `ObserverRegistration`, `ObservedComponentState`, `ComponentObservationHead`, `DriftCase`, `DriftCaseEvent`, and `ReconciliationAction`. Existing `TargetComponentState`/`TargetComponentObservation` remain labeled legacy/executor projection.
 
 ```go
 func AdmitPendingDesiredRevision(context.Context, types.PendingDesiredRevisionInput) (*types.PendingDesiredRevision, error)
@@ -562,7 +562,7 @@ Observer route: `POST /api/observer/v1/observations`; management routes: `/api/v
 ```powershell
 go test ./internal/desiredstate ./internal/observation ./internal/reconciliation ./internal/db ./api ./internal/handlers -run 'Desired|Observation|Drift|Reconciliation' -count=1 -race
 mise run lint:migrations
-git add internal/migrations/sql/158_* internal/types/desired_state.go internal/types/observation.go internal/types/reconciliation.go internal/desiredstate internal/observation internal/reconciliation internal/db/desired_observed_state* api/observation.go api/reconciliation.go internal/handlers/observations* internal/handlers/reconciliation* internal/routing/routing.go docs
+git add internal/migrations/sql/159_* internal/types/desired_state.go internal/types/observation.go internal/types/reconciliation.go internal/desiredstate internal/observation internal/reconciliation internal/db/desired_observed_state* api/observation.go api/reconciliation.go internal/handlers/observations* internal/handlers/reconciliation* internal/routing/routing.go docs
 git commit -m "feat: verify independent observed state"
 ```
 
@@ -570,8 +570,8 @@ git commit -m "feat: verify independent observed state"
 
 **Files:**
 
-- Create: `internal/migrations/sql/159_control_plane_audit_export.up.sql`
-- Create: `internal/migrations/sql/159_control_plane_audit_export.down.sql`
+- Create: `internal/migrations/sql/160_control_plane_audit_export.up.sql`
+- Create: `internal/migrations/sql/160_control_plane_audit_export.down.sql`
 - Create: `internal/types/control_plane_audit.go`
 - Create: `internal/db/control_plane_audit.go`
 - Create: `internal/db/control_plane_audit_test.go`
@@ -583,10 +583,10 @@ git commit -m "feat: verify independent observed state"
 - Create: `internal/handlers/control_plane_audit.go`
 - Create: `internal/handlers/control_plane_audit_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0065-control-plane-audit-export.md`
+- Create: `docs/adr/0066-control-plane-audit-export.md`
 - Create: `docs/fork/PR-078_CONTROL_PLANE_AUDIT_EXPORT.md`
 
-Migration 159 creates append-only `ControlPlaneAuditEvent`, `AuditExportSink`, `AuditExportCheckpoint`, and `AuditExportAttempt`. Events correlate release/config/plan/approval/campaign/wave/execution/adapter/observation/reconciliation/actor/outcome IDs and checksums; payloads are bounded/redacted.
+Migration 160 creates append-only `ControlPlaneAuditEvent`, `AuditExportSink`, `AuditExportCheckpoint`, and `AuditExportAttempt`. Events correlate release/config/plan/approval/campaign/wave/execution/adapter/observation/reconciliation/actor/outcome IDs and checksums; payloads are bounded/redacted.
 
 ```go
 func AppendControlPlaneAuditEvent(context.Context, types.ControlPlaneAuditEventInput) (*types.ControlPlaneAuditEvent, error)
@@ -603,14 +603,14 @@ Routes: paginated `/api/v1/control-plane-audit/events`, `/evidence-bundles`, `/e
 ```powershell
 go test ./internal/auditexport ./internal/db ./api ./internal/handlers -run 'ControlPlaneAudit|EvidenceBundle|AuditExport' -count=1 -race
 mise run lint:migrations
-git add internal/migrations/sql/159_* internal/types/control_plane_audit.go internal/db/control_plane_audit* internal/auditexport api/control_plane_audit.go internal/handlers/control_plane_audit* internal/routing/routing.go docs
+git add internal/migrations/sql/160_* internal/types/control_plane_audit.go internal/db/control_plane_audit* internal/auditexport api/control_plane_audit.go internal/handlers/control_plane_audit* internal/routing/routing.go docs
 git commit -m "feat: export correlated control plane audit"
 ```
 
 ## Governance and Execution Exit Gate
 
 - [ ] PR-066 through PR-078 are individually reviewed and accepted.
-- [ ] Migrations 147–159 upgrade a migration-146 fixture and all backfilled roles/enrollments are countable/restartable.
+- [ ] Migrations 148–160 upgrade a migration-147 fixture and all backfilled roles/enrollments are countable/restartable.
 - [ ] A plan cannot execute without scoped enrollment, policy, current approvals, calendar/freeze admission, campaign membership, adapter match, signed intent, and locks.
 - [ ] V1 regression proves ADR-0052 behavior byte/status/event compatible with both flags disabled.
 - [ ] V2 duplicate delivery/callback, lease loss, stale fence, process restart, cancel, timeout, callback loss, and unknown state release or transfer every lock atomically.

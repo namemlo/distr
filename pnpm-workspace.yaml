@@ -6,3 +6,5 @@ allowBuilds:
   lmdb: false
   msgpackr-extract: false
   protobufjs: false
+overrides:
+  posthog-js>dompurify: 3.4.12

@@ -378,8 +378,7 @@ func DeleteApplicationEntitlementWithID(ctx context.Context, id uuid.UUID) error
 	db := internalctx.GetDb(ctx)
 	cmd, err := db.Exec(ctx, `DELETE FROM ApplicationEntitlement WHERE id = @id`, pgx.NamedArgs{"id": id})
 	if err != nil {
-		var pgError *pgconn.PgError
-		if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+		if isProtectedReferenceViolation(err) {
 			err = fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 		}
 		return err
@@ -402,8 +401,7 @@ func DeleteApplicationEntitlementsWithOrganizationID(ctx context.Context, orgID 
 		pgx.NamedArgs{"orgId": orgID},
 	)
 	if err != nil {
-		var pgError *pgconn.PgError
-		if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+		if isProtectedReferenceViolation(err) {
 			err = fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 		}
 		return 0, fmt.Errorf("could not delete ApplicationEntitlements: %w", err)
@@ -425,8 +423,7 @@ func DeleteApplicationEntitlementsWithOrganizationSubscriptionType(
 		pgx.NamedArgs{"subscriptionType": subscriptionType},
 	)
 	if err != nil {
-		var pgError *pgconn.PgError
-		if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+		if isProtectedReferenceViolation(err) {
 			err = fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 		}
 		return 0, fmt.Errorf("could not delete ApplicationEntitlements: %w", err)

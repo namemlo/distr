@@ -4,9 +4,10 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-055 are implemented locally. PR-054 freezes service-configuration and compose inputs for
-external execution. PR-055 establishes default-off, layered kill switches for the operator control plane and
-executor protocol v2 without changing v1 behavior.
+PR-000 through PR-055 are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
+recovery, and operator documentation are implemented locally; final acceptance remains pending. PR-055 establishes
+default-off, layered kill switches for the operator control plane and executor protocol v2 without changing v1
+behavior.
 
 ## Tracking Template
 
@@ -931,10 +932,43 @@ Use one entry per pull request:
 - Upstream contribution notes: Provider-neutral immutable execution inputs; no adopter or CI-provider names, credentials, or labels.
 - Compatibility notes: Versioned object references remain valid. Content-addressed S3 objects are accepted only when their path digest matches the declared checksum.
 
+### PR-054A - External-execution timestamp expand
+
+- Status: Implemented locally; CI matrix configured; independent review and real PostgreSQL 16.14/18.4
+  service-container legs remain pending Task 11.
+- Feature flag: None.
+- User-facing behavior: Operators gain the audited `timestamp-expand-recover-dirty` CLI; public API and UI behavior
+  remain unchanged.
+- Database changes: Migration 138 adds nullable instant shadows, paired future defaults, future indexes, immutable
+  timestamp manifest/provenance metadata, authorized append-only retention tombstones, contract-gate foundation,
+  and durable zero-history proof.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0055, the approved hybrid design, fenced Compose procedure, release/upgrade/smoke/security
+  guidance, and PostgreSQL 16.14/18.4 gates. The operating package now also documents audited dirty recovery.
+- Tests: Local non-database validators, migration-pair validation, and the Compose orchestration harness passed. The
+  focused CI matrix is configured for pinned PostgreSQL 16.14 and 18.4; both real service-container legs remain
+  pending Task 11.
+  The focused dirty-recovery harness covers manifest/no-manifest binding, retained evidence, clean retry,
+  interrupted result archiving, one Apply, and non-finalization.
+- Upstream contribution notes: Community-neutral control-plane migration; no adopter repository, application
+  database, credentials, host names, or cleanup behavior.
+- Compatibility notes: Expand continues reading legacy timestamps and writes paired legacy/instant values. Contract
+  eligibility and canonical instant reads are separate later work. Organization retention preserves timestamp
+  evidence through tombstones; a retained unresolved cell may be resolved later as provenance-only evidence, and
+  deletion must predate that promotion. Readiness separates live shadow and deleted-evidence decision buckets;
+  unexplained source deletion remains a failure. Downgrade is refused after retention, post-expand `ZERO_HISTORY`
+  rows, or manifest application, with an exclusive-lock recheck inside migration 138 down. The trusted-owner GUC is
+  an integrity guard, not a privilege boundary; least-privilege roles remain deferred. The separate modern
+  organization purge-order failure at `deploymentplantarget_target_fk` remains a functional blocker outside
+  PR-054A. Dirty recovery is catalog-proven marker repair only; it leaves Hub stopped and fenced and never replaces
+  normal timestamp-expand finalization.
+
 ### PR-055 - Operator control-plane v2 isolation boundary
 
 - Status: Implemented locally; focused backend and frontend feature-flag verification completed.
-- Upstream base: `8efe9c0f`.
+- Upstream base: `50c0bec4`.
 - Feature flag: Adds process-wide `operator_control_plane_v2` and `executor_protocol_v2` flags. Executor protocol v2 is effective only while the operator control-plane v2 umbrella is also effective.
 - User-facing behavior: Admins can see both registered flags and their effective state in Organization Settings. Both remain disabled unless explicitly configured.
 - Database changes: None.
