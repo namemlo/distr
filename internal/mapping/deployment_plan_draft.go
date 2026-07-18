@@ -33,6 +33,10 @@ func DeploymentPlanDraftValidationToAPI(
 		Draft:           DeploymentPlanDraftToAPI(validation.Draft),
 		Resolutions:     validation.Resolutions,
 		Graph:           validation.Graph,
+		Baselines:       validation.Baselines,
+		Changes:         validation.Changes,
+		Risks:           validation.Risks,
+		Bootstrap:       validation.Bootstrap,
 		Issues:          validation.Issues,
 		PreviewChecksum: validation.PreviewChecksum,
 	}

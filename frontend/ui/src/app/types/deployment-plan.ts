@@ -1,5 +1,5 @@
 import {DeploymentType} from '@distr-sh/distr-sdk';
-import {ReleaseContractV1} from './release-bundle';
+import {ReleaseContract} from './release-bundle';
 import {VariableResolutionTraceEntry, VariableType} from './variable-set';
 
 export type DeploymentPlanStatus = 'DRAFT' | 'VALIDATING' | 'BLOCKED' | 'READY' | 'EXPIRED' | 'EXECUTED';
@@ -28,15 +28,115 @@ export interface DeploymentPlan {
   environmentId: string;
   processSnapshotId?: string;
   variableSnapshotId?: string;
-  releaseContract?: ReleaseContractV1;
+  releaseContract?: ReleaseContract;
+  planSchema: 'distr.deployment-plan/v1' | 'distr.target-deployment-plan/v2';
+  draftId?: string;
+  deploymentUnitId?: string;
+  targetConfigSnapshotId?: string;
+  protocolVersion: 'v1' | 'v2';
+  supersedesDeploymentPlanId?: string;
+  supersedeReason?: string;
+  previousStateSourcePlanId?: string;
   status: DeploymentPlanStatus;
   canonicalChecksum: string;
+  bootstrap: boolean;
   targets: DeploymentPlanTarget[];
   targetComponents: DeploymentPlanTargetComponent[];
   preflightRuns: DeploymentPreflightRun[];
   steps: DeploymentPlanStep[];
   variables: DeploymentPlanVariable[];
   issues: DeploymentPlanIssue[];
+  baselines?: DeploymentPlanBaseline[];
+  changes?: DeploymentPlanChangeEntry[];
+  risks?: DeploymentPlanRiskEntry[];
+}
+
+export type DeploymentPlanBaselineProjection = 'verified_v2' | 'legacy_projection' | 'bootstrap';
+export type DeploymentPlanChangeKind =
+  | 'bootstrap'
+  | 'baseline_authority'
+  | 'image'
+  | 'config'
+  | 'provider'
+  | 'schema'
+  | 'topology'
+  | 'source_notes'
+  | 'previous_state'
+  | 'planning_limit_exceeded';
+export type DeploymentPlanRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export interface DeploymentPlanBaseline {
+  id?: string;
+  createdAt?: string;
+  deploymentPlanId?: string;
+  componentInstanceId: string;
+  componentKey: string;
+  sourceDeploymentPlanId?: string;
+  externalExecutionId?: string;
+  observationId?: string;
+  observedAt?: string;
+  desiredRevision: number;
+  desiredChecksum: string;
+  observationChecksum: string;
+  releaseBundleId?: string;
+  version: string;
+  image: string;
+  platform: string;
+  targetConfigSnapshotId?: string;
+  configChecksum: string;
+  providerBindingChecksum: string;
+  schemaState: string;
+  schemaChecksum: string;
+  topologyChecksum: string;
+  projection: DeploymentPlanBaselineProjection;
+  authorizesV2Execution: boolean;
+  bootstrap: boolean;
+  actorUserAccountId?: string;
+  canonicalChecksum: string;
+  sortOrder: number;
+}
+
+export interface DeploymentPlanReleaseNote {
+  releaseBundleId: string;
+  version: string;
+  publishedAt: string;
+  sourceRevision: string;
+  summary: string;
+}
+
+export interface DeploymentPlanChangeEntry {
+  id?: string;
+  createdAt?: string;
+  deploymentPlanId?: string;
+  componentInstanceId?: string;
+  componentKey: string;
+  kind: DeploymentPlanChangeKind;
+  before: string;
+  after: string;
+  releaseNotes?: DeploymentPlanReleaseNote[];
+  forwardOnly: boolean;
+  actorUserAccountId?: string;
+  canonicalChecksum: string;
+  sortOrder: number;
+}
+
+export interface DeploymentPlanRiskEntry {
+  id?: string;
+  createdAt?: string;
+  deploymentPlanId?: string;
+  componentKey: string;
+  code: string;
+  level: DeploymentPlanRiskLevel;
+  blocking: boolean;
+  message: string;
+  actorUserAccountId?: string;
+  canonicalChecksum: string;
+  sortOrder: number;
+}
+
+export interface CreatePreviousStateDeploymentPlanRequest {
+  successfulDeploymentPlanId: string;
+  reason: string;
 }
 
 export type DeploymentPreflightStatus = 'PASSED' | 'FAILED';

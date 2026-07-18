@@ -51,6 +51,17 @@ func DeploymentPlansRouter(r chiopenapi.Router) {
 				With(option.Description("Create durable tasks for a ready deployment plan")).
 				With(option.Request(CreateTasksForDeploymentPlanRouteRequest{})).
 				With(option.Response(http.StatusOK, []api.Task{}))
+
+			type CreatePreviousStateDeploymentPlanRouteRequest struct {
+				DeploymentPlanIDRequest
+				api.CreatePreviousStateDeploymentPlanRequest
+			}
+
+			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
+				Post("/previous-state", createPreviousStateDeploymentPlanHandler()).
+				With(option.Description("Create a new immutable plan for a previously successful state")).
+				With(option.Request(CreatePreviousStateDeploymentPlanRouteRequest{})).
+				With(option.Response(http.StatusOK, api.DeploymentPlan{}))
 		})
 
 		r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
@@ -148,6 +159,49 @@ func createDeploymentPlanHandler() http.HandlerFunc {
 			sentry.GetHubFromContext(ctx).CaptureException(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {
+			RespondJSON(w, mapping.DeploymentPlanToAPI(*plan))
+		}
+	}
+}
+
+func createPreviousStateDeploymentPlanHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		currentPlanID, err := uuid.Parse(r.PathValue("deploymentPlanId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		request, err := JsonBody[api.CreatePreviousStateDeploymentPlanRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		authentication := auth.Authentication.Require(ctx)
+		plan, err := db.CreatePreviousStatePlanForOrganization(
+			ctx,
+			*authentication.CurrentOrgID(),
+			authentication.CurrentUserID(),
+			currentPlanID,
+			request.SuccessfulDeploymentPlanID,
+			request.Reason,
+		)
+		switch {
+		case errors.Is(err, apierrors.ErrNotFound):
+			http.NotFound(w, r)
+		case errors.Is(err, apierrors.ErrBadRequest):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.Is(err, apierrors.ErrConflict), errors.Is(err, apierrors.ErrAlreadyExists):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case err != nil:
+			log.Error("failed to create previous-state deployment plan", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		default:
 			RespondJSON(w, mapping.DeploymentPlanToAPI(*plan))
 		}
 	}

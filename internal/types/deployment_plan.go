@@ -52,6 +52,7 @@ type DeploymentPlan struct {
 	ProtocolVersion            string                          `db:"protocol_version" json:"protocolVersion"`
 	SupersedesDeploymentPlanID *uuid.UUID                      `db:"supersedes_deployment_plan_id" json:"supersedesDeploymentPlanId,omitempty"`
 	SupersedeReason            string                          `db:"supersede_reason" json:"supersedeReason,omitempty"`
+	PreviousStateSourcePlanID  *uuid.UUID                      `db:"previous_state_source_plan_id" json:"previousStateSourcePlanId,omitempty"`
 	Status                     DeploymentPlanStatus            `db:"status" json:"status"`
 	CanonicalChecksum          string                          `db:"canonical_checksum" json:"canonicalChecksum"`
 	CanonicalPayload           []byte                          `db:"canonical_payload" json:"-"`
@@ -63,6 +64,188 @@ type DeploymentPlan struct {
 	Issues                     []DeploymentPlanIssue           `db:"-" json:"issues"`
 	ResolvedRequirements       []RequirementResolution         `db:"-" json:"resolvedRequirements,omitempty"`
 	StepEdges                  []DeploymentPlanStepEdge        `db:"-" json:"stepEdges,omitempty"`
+	Baselines                  []DeploymentPlanBaseline        `db:"-" json:"baselines,omitempty"`
+	Changes                    []DeploymentPlanChangeEntry     `db:"-" json:"changes,omitempty"`
+	Risks                      []DeploymentPlanRiskEntry       `db:"-" json:"risks,omitempty"`
+	Bootstrap                  bool                            `db:"bootstrap" json:"bootstrap"`
+}
+
+type BaselineProjection string
+
+const (
+	BaselineProjectionVerifiedV2 BaselineProjection = "verified_v2"
+	BaselineProjectionLegacy     BaselineProjection = "legacy_projection"
+	BaselineProjectionBootstrap  BaselineProjection = "bootstrap"
+)
+
+type BaselineQuery struct {
+	OrganizationID          uuid.UUID
+	DeploymentUnitID        uuid.UUID
+	ComponentInstanceID     uuid.UUID
+	ComponentKey            string
+	ExpectedDesiredRevision int64
+	ExpectedDesiredChecksum string
+	Candidates              []BaselineCandidate
+}
+
+type BaselineCandidate struct {
+	SourceDeploymentPlanID  *uuid.UUID
+	ExternalExecutionID     *uuid.UUID
+	ObservationID           uuid.UUID
+	ObservedAt              time.Time
+	Health                  TargetComponentHealth
+	DesiredRevision         int64
+	DesiredChecksum         string
+	ObservedRevision        int64
+	ObservedChecksum        string
+	PlanSchema              string
+	ProtocolVersion         string
+	PlanFactsMatch          bool
+	ReleaseBundleID         uuid.UUID
+	Version                 string
+	Image                   string
+	Platform                string
+	ConfigSnapshotID        *uuid.UUID
+	ConfigChecksum          string
+	ProviderBindingChecksum string
+	SchemaState             string
+	SchemaChecksum          string
+	TopologyChecksum        string
+}
+
+type DeploymentPlanBaseline struct {
+	ID                      uuid.UUID          `db:"id" json:"id,omitempty"`
+	CreatedAt               time.Time          `db:"created_at" json:"createdAt,omitempty"`
+	DeploymentPlanID        uuid.UUID          `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
+	OrganizationID          uuid.UUID          `db:"organization_id" json:"organizationId,omitempty"`
+	ComponentInstanceID     uuid.UUID          `db:"component_instance_id" json:"componentInstanceId"`
+	ComponentKey            string             `db:"component_key" json:"componentKey"`
+	SourceDeploymentPlanID  *uuid.UUID         `db:"source_deployment_plan_id" json:"sourceDeploymentPlanId,omitempty"`
+	ExternalExecutionID     *uuid.UUID         `db:"external_execution_id" json:"externalExecutionId,omitempty"`
+	ObservationID           *uuid.UUID         `db:"observation_id" json:"observationId,omitempty"`
+	ObservedAt              *time.Time         `db:"observed_at" json:"observedAt,omitempty"`
+	DesiredRevision         int64              `db:"desired_revision" json:"desiredRevision"`
+	DesiredChecksum         string             `db:"desired_checksum" json:"desiredChecksum"`
+	ObservationChecksum     string             `db:"observation_checksum" json:"observationChecksum"`
+	ReleaseBundleID         *uuid.UUID         `db:"release_bundle_id" json:"releaseBundleId,omitempty"`
+	Version                 string             `db:"version" json:"version"`
+	Image                   string             `db:"image" json:"image"`
+	Platform                string             `db:"platform" json:"platform"`
+	ConfigSnapshotID        *uuid.UUID         `db:"target_config_snapshot_id" json:"targetConfigSnapshotId,omitempty"`
+	ConfigChecksum          string             `db:"config_checksum" json:"configChecksum"`
+	ProviderBindingChecksum string             `db:"provider_binding_checksum" json:"providerBindingChecksum"`
+	SchemaState             string             `db:"schema_state" json:"schemaState"`
+	SchemaChecksum          string             `db:"schema_checksum" json:"schemaChecksum"`
+	TopologyChecksum        string             `db:"topology_checksum" json:"topologyChecksum"`
+	Projection              BaselineProjection `db:"projection" json:"projection"`
+	AuthorizesV2Execution   bool               `db:"authorizes_v2_execution" json:"authorizesV2Execution"`
+	Bootstrap               bool               `db:"bootstrap" json:"bootstrap"`
+	ActorUserAccountID      uuid.UUID          `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
+	CanonicalChecksum       string             `db:"canonical_checksum" json:"canonicalChecksum"`
+	SortOrder               int                `db:"sort_order" json:"sortOrder"`
+}
+
+type BaselineState struct {
+	ComponentInstanceID     uuid.UUID
+	ComponentKey            string
+	ReleaseBundleID         uuid.UUID
+	Version                 string
+	Image                   string
+	Platform                string
+	ConfigSnapshotID        *uuid.UUID
+	ConfigChecksum          string
+	ProviderBindingChecksum string
+	SchemaState             string
+	SchemaChecksum          string
+	TopologyChecksum        string
+	Projection              BaselineProjection
+	Bootstrap               bool
+}
+
+type PlannedState struct {
+	ComponentInstanceID     uuid.UUID
+	ComponentKey            string
+	ReleaseBundleID         uuid.UUID
+	Version                 string
+	Image                   string
+	Platform                string
+	ConfigSnapshotID        *uuid.UUID
+	ConfigChecksum          string
+	ProviderBindingChecksum string
+	SchemaState             string
+	SchemaChecksum          string
+	TopologyChecksum        string
+	ForwardOnly             bool
+}
+
+type ReleaseNote struct {
+	ReleaseBundleID uuid.UUID `json:"releaseBundleId"`
+	Version         string    `json:"version"`
+	PublishedAt     time.Time `json:"publishedAt"`
+	SourceRevision  string    `json:"sourceRevision"`
+	Summary         string    `json:"summary"`
+}
+
+type DeploymentPlanChangeKind string
+
+const (
+	DeploymentPlanChangeBootstrap         DeploymentPlanChangeKind = "bootstrap"
+	DeploymentPlanChangeBaselineAuthority DeploymentPlanChangeKind = "baseline_authority"
+	DeploymentPlanChangeImage             DeploymentPlanChangeKind = "image"
+	DeploymentPlanChangeConfig            DeploymentPlanChangeKind = "config"
+	DeploymentPlanChangeProvider          DeploymentPlanChangeKind = "provider"
+	DeploymentPlanChangeSchema            DeploymentPlanChangeKind = "schema"
+	DeploymentPlanChangeTopology          DeploymentPlanChangeKind = "topology"
+	DeploymentPlanChangeSourceNotes       DeploymentPlanChangeKind = "source_notes"
+	DeploymentPlanChangePreviousState     DeploymentPlanChangeKind = "previous_state"
+	DeploymentPlanChangeLimitExceeded     DeploymentPlanChangeKind = "planning_limit_exceeded"
+)
+
+type DeploymentPlanChangeEntry struct {
+	ID                  uuid.UUID                `db:"id" json:"id,omitempty"`
+	CreatedAt           time.Time                `db:"created_at" json:"createdAt,omitempty"`
+	DeploymentPlanID    uuid.UUID                `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
+	OrganizationID      uuid.UUID                `db:"organization_id" json:"organizationId,omitempty"`
+	ComponentInstanceID uuid.UUID                `db:"component_instance_id" json:"componentInstanceId,omitempty"`
+	ComponentKey        string                   `db:"component_key" json:"componentKey"`
+	Kind                DeploymentPlanChangeKind `db:"kind" json:"kind"`
+	Before              string                   `db:"before_value" json:"before"`
+	After               string                   `db:"after_value" json:"after"`
+	ReleaseNotes        []ReleaseNote            `db:"release_notes" json:"releaseNotes,omitempty"`
+	ForwardOnly         bool                     `db:"forward_only" json:"forwardOnly"`
+	ActorUserAccountID  uuid.UUID                `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
+	CanonicalChecksum   string                   `db:"canonical_checksum" json:"canonicalChecksum"`
+	SortOrder           int                      `db:"sort_order" json:"sortOrder"`
+}
+
+type DeploymentPlanRiskLevel string
+
+const (
+	DeploymentPlanRiskLow      DeploymentPlanRiskLevel = "low"
+	DeploymentPlanRiskMedium   DeploymentPlanRiskLevel = "medium"
+	DeploymentPlanRiskHigh     DeploymentPlanRiskLevel = "high"
+	DeploymentPlanRiskCritical DeploymentPlanRiskLevel = "critical"
+)
+
+type EffectivePolicy struct {
+	AllowForwardOnlyMigration      bool
+	RequireBootstrapApproval       bool
+	RequireAuthoritativeV2Baseline bool
+}
+
+type DeploymentPlanRiskEntry struct {
+	ID                 uuid.UUID               `db:"id" json:"id,omitempty"`
+	CreatedAt          time.Time               `db:"created_at" json:"createdAt,omitempty"`
+	DeploymentPlanID   uuid.UUID               `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
+	OrganizationID     uuid.UUID               `db:"organization_id" json:"organizationId,omitempty"`
+	ComponentKey       string                  `db:"component_key" json:"componentKey"`
+	Code               string                  `db:"code" json:"code"`
+	Level              DeploymentPlanRiskLevel `db:"level" json:"level"`
+	Blocking           bool                    `db:"blocking" json:"blocking"`
+	Message            string                  `db:"message" json:"message"`
+	ActorUserAccountID uuid.UUID               `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
+	CanonicalChecksum  string                  `db:"canonical_checksum" json:"canonicalChecksum"`
+	SortOrder          int                     `db:"sort_order" json:"sortOrder"`
 }
 
 type DeploymentPlanTarget struct {

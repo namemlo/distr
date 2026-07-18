@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/distr-sh/distr/internal/types"
@@ -39,34 +40,55 @@ func (r CreateDeploymentPlanRequest) Validate() error {
 }
 
 type DeploymentPlan struct {
-	ID                         uuid.UUID                       `json:"id"`
-	CreatedAt                  time.Time                       `json:"createdAt"`
-	SealedAt                   *time.Time                      `json:"sealedAt,omitempty"`
-	PublishedByUserAccountID   *uuid.UUID                      `json:"publishedByUserAccountId,omitempty"`
-	ApplicationID              uuid.UUID                       `json:"applicationId"`
-	ReleaseBundleID            uuid.UUID                       `json:"releaseBundleId"`
-	ChannelID                  uuid.UUID                       `json:"channelId"`
-	EnvironmentID              uuid.UUID                       `json:"environmentId"`
-	ProcessSnapshotID          *uuid.UUID                      `json:"processSnapshotId,omitempty"`
-	VariableSnapshotID         *uuid.UUID                      `json:"variableSnapshotId,omitempty"`
-	ReleaseContract            *types.ReleaseContract          `json:"releaseContract,omitempty"`
-	PlanSchema                 string                          `json:"planSchema"`
-	DraftID                    *uuid.UUID                      `json:"draftId,omitempty"`
-	DeploymentUnitID           *uuid.UUID                      `json:"deploymentUnitId,omitempty"`
-	TargetConfigSnapshotID     *uuid.UUID                      `json:"targetConfigSnapshotId,omitempty"`
-	ProtocolVersion            string                          `json:"protocolVersion"`
-	SupersedesDeploymentPlanID *uuid.UUID                      `json:"supersedesDeploymentPlanId,omitempty"`
-	SupersedeReason            string                          `json:"supersedeReason,omitempty"`
-	Status                     types.DeploymentPlanStatus      `json:"status"`
-	CanonicalChecksum          string                          `json:"canonicalChecksum"`
-	Targets                    []DeploymentPlanTarget          `json:"targets"`
-	TargetComponents           []DeploymentPlanTargetComponent `json:"targetComponents"`
-	PreflightRuns              []DeploymentPreflightRun        `json:"preflightRuns"`
-	Steps                      []DeploymentPlanStep            `json:"steps"`
-	Variables                  []DeploymentPlanVariable        `json:"variables"`
-	Issues                     []DeploymentPlanIssue           `json:"issues"`
-	ResolvedRequirements       []types.RequirementResolution   `json:"resolvedRequirements,omitempty"`
-	StepEdges                  []types.DeploymentPlanStepEdge  `json:"stepEdges,omitempty"`
+	ID                         uuid.UUID                         `json:"id"`
+	CreatedAt                  time.Time                         `json:"createdAt"`
+	SealedAt                   *time.Time                        `json:"sealedAt,omitempty"`
+	PublishedByUserAccountID   *uuid.UUID                        `json:"publishedByUserAccountId,omitempty"`
+	ApplicationID              uuid.UUID                         `json:"applicationId"`
+	ReleaseBundleID            uuid.UUID                         `json:"releaseBundleId"`
+	ChannelID                  uuid.UUID                         `json:"channelId"`
+	EnvironmentID              uuid.UUID                         `json:"environmentId"`
+	ProcessSnapshotID          *uuid.UUID                        `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID         *uuid.UUID                        `json:"variableSnapshotId,omitempty"`
+	ReleaseContract            *types.ReleaseContract            `json:"releaseContract,omitempty"`
+	PlanSchema                 string                            `json:"planSchema"`
+	DraftID                    *uuid.UUID                        `json:"draftId,omitempty"`
+	DeploymentUnitID           *uuid.UUID                        `json:"deploymentUnitId,omitempty"`
+	TargetConfigSnapshotID     *uuid.UUID                        `json:"targetConfigSnapshotId,omitempty"`
+	ProtocolVersion            string                            `json:"protocolVersion"`
+	SupersedesDeploymentPlanID *uuid.UUID                        `json:"supersedesDeploymentPlanId,omitempty"`
+	SupersedeReason            string                            `json:"supersedeReason,omitempty"`
+	PreviousStateSourcePlanID  *uuid.UUID                        `json:"previousStateSourcePlanId,omitempty"`
+	Status                     types.DeploymentPlanStatus        `json:"status"`
+	CanonicalChecksum          string                            `json:"canonicalChecksum"`
+	Targets                    []DeploymentPlanTarget            `json:"targets"`
+	TargetComponents           []DeploymentPlanTargetComponent   `json:"targetComponents"`
+	PreflightRuns              []DeploymentPreflightRun          `json:"preflightRuns"`
+	Steps                      []DeploymentPlanStep              `json:"steps"`
+	Variables                  []DeploymentPlanVariable          `json:"variables"`
+	Issues                     []DeploymentPlanIssue             `json:"issues"`
+	ResolvedRequirements       []types.RequirementResolution     `json:"resolvedRequirements,omitempty"`
+	StepEdges                  []types.DeploymentPlanStepEdge    `json:"stepEdges,omitempty"`
+	Baselines                  []types.DeploymentPlanBaseline    `json:"baselines,omitempty"`
+	Changes                    []types.DeploymentPlanChangeEntry `json:"changes,omitempty"`
+	Risks                      []types.DeploymentPlanRiskEntry   `json:"risks,omitempty"`
+	Bootstrap                  bool                              `json:"bootstrap"`
+}
+
+type CreatePreviousStateDeploymentPlanRequest struct {
+	SuccessfulDeploymentPlanID uuid.UUID `json:"successfulDeploymentPlanId"`
+	Reason                     string    `json:"reason"`
+}
+
+func (r CreatePreviousStateDeploymentPlanRequest) Validate() error {
+	if r.SuccessfulDeploymentPlanID == uuid.Nil {
+		return validation.NewValidationFailedError("successfulDeploymentPlanId is required")
+	}
+	reason := strings.TrimSpace(r.Reason)
+	if reason == "" || len(reason) > 2048 || strings.ContainsAny(r.Reason, "\r\n") {
+		return validation.NewValidationFailedError("reason is invalid")
+	}
+	return nil
 }
 
 type DeploymentPreflightRun struct {

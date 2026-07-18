@@ -102,9 +102,13 @@ type DeploymentPlanDraft struct {
 }
 
 type DeploymentPlanDraftValidation struct {
-	Draft           DeploymentPlanDraft           `json:"draft"`
-	Resolutions     []types.RequirementResolution `json:"resolutions"`
-	Graph           types.TargetPlanGraph         `json:"graph"`
-	Issues          []types.ValidationIssue       `json:"issues"`
-	PreviewChecksum string                        `json:"previewChecksum,omitempty"`
+	Draft           DeploymentPlanDraft               `json:"draft"`
+	Resolutions     []types.RequirementResolution     `json:"resolutions"`
+	Graph           types.TargetPlanGraph             `json:"graph"`
+	Baselines       []types.DeploymentPlanBaseline    `json:"baselines"`
+	Changes         []types.DeploymentPlanChangeEntry `json:"changes"`
+	Risks           []types.DeploymentPlanRiskEntry   `json:"risks"`
+	Bootstrap       bool                              `json:"bootstrap"`
+	Issues          []types.ValidationIssue           `json:"issues"`
+	PreviewChecksum string                            `json:"previewChecksum,omitempty"`
 }

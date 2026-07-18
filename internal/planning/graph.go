@@ -37,6 +37,33 @@ func CanonicalizeTargetDeploymentPlan(
 			return strings.Compare(a.RequirementKey, b.RequirementKey)
 		},
 	)
+	canonical.Baselines = slices.Clone(canonical.Baselines)
+	slices.SortFunc(canonical.Baselines, func(a, b types.DeploymentPlanBaseline) int {
+		if a.SortOrder != b.SortOrder {
+			return a.SortOrder - b.SortOrder
+		}
+		return strings.Compare(a.ComponentKey, b.ComponentKey)
+	})
+	canonical.Changes = slices.Clone(canonical.Changes)
+	slices.SortFunc(canonical.Changes, func(a, b types.DeploymentPlanChangeEntry) int {
+		if a.SortOrder != b.SortOrder {
+			return a.SortOrder - b.SortOrder
+		}
+		if cmp := strings.Compare(a.ComponentKey, b.ComponentKey); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(string(a.Kind), string(b.Kind))
+	})
+	canonical.Risks = slices.Clone(canonical.Risks)
+	slices.SortFunc(canonical.Risks, func(a, b types.DeploymentPlanRiskEntry) int {
+		if a.SortOrder != b.SortOrder {
+			return a.SortOrder - b.SortOrder
+		}
+		if cmp := strings.Compare(a.ComponentKey, b.ComponentKey); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.Code, b.Code)
+	})
 	payload, err := json.Marshal(canonical)
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal canonical target deployment plan: %w", err)

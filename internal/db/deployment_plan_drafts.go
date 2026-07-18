@@ -340,7 +340,30 @@ func validateDeploymentPlanDraft(
 		})
 		return result, nil
 	}
-	canonical := buildTargetPlanCanonical(*draft, *input, resolutions, graph)
+	baselines, changes, risks, bootstrap, err := resolveDeploymentPlanEvidence(
+		ctx,
+		*draft,
+		*input,
+		resolutions,
+		graph,
+	)
+	if err != nil {
+		return nil, err
+	}
+	result.Baselines = baselines
+	result.Changes = changes
+	result.Risks = risks
+	result.Bootstrap = bootstrap
+	canonical := buildTargetPlanCanonical(
+		*draft,
+		*input,
+		resolutions,
+		graph,
+		baselines,
+		changes,
+		risks,
+		bootstrap,
+	)
 	payload, checksum, err := planning.CanonicalizeTargetDeploymentPlan(canonical)
 	if err != nil {
 		return nil, err
@@ -501,6 +524,7 @@ func publishValidatedTargetPlan(
 		ProtocolVersion:            draft.ProtocolVersion,
 		SupersedesDeploymentPlanID: draft.SupersedesDeploymentPlanID,
 		SupersedeReason:            strings.TrimSpace(draft.SupersedeReason),
+		PreviousStateSourcePlanID:  draft.PreviousStateSourcePlanID,
 		Status:                     status,
 		CanonicalChecksum:          validation.PreviewChecksum,
 		CanonicalPayload:           validation.Draft.PreviewPayload,
@@ -513,6 +537,10 @@ func publishValidatedTargetPlan(
 		Issues:               issues,
 		ResolvedRequirements: validation.Resolutions,
 		StepEdges:            validation.Graph.Edges,
+		Baselines:            validation.Baselines,
+		Changes:              validation.Changes,
+		Risks:                validation.Risks,
+		Bootstrap:            validation.Bootstrap,
 	}
 	if err := lockAndValidateTargetPlanSupersession(ctx, *plan, target.ID); err != nil {
 		return nil, err
@@ -533,6 +561,9 @@ func publishValidatedTargetPlan(
 		return nil, err
 	}
 	if err := insertDeploymentPlanStepEdges(ctx, *plan); err != nil {
+		return nil, err
+	}
+	if err := persistDeploymentPlanEvidence(ctx, plan, publisherUserAccountID); err != nil {
 		return nil, err
 	}
 	draft.PreviewChecksum = validation.PreviewChecksum
@@ -571,6 +602,8 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 			protocol_version,
 			supersedes_deployment_plan_id,
 			supersede_reason,
+			previous_state_source_plan_id,
+			bootstrap,
 			status,
 			canonical_checksum,
 			canonical_payload
@@ -592,6 +625,8 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 			@protocolVersion,
 			@supersedesDeploymentPlanID,
 			@supersedeReason,
+			@previousStateSourcePlanID,
+			@bootstrap,
 			@status,
 			@canonicalChecksum,
 			@canonicalPayload
@@ -608,8 +643,11 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 			"targetConfigSnapshotID":     plan.TargetConfigSnapshotID,
 			"protocolVersion":            plan.ProtocolVersion,
 			"supersedesDeploymentPlanID": plan.SupersedesDeploymentPlanID,
-			"supersedeReason":            plan.SupersedeReason, "status": plan.Status,
-			"canonicalChecksum": plan.CanonicalChecksum, "canonicalPayload": plan.CanonicalPayload,
+			"supersedeReason":            plan.SupersedeReason,
+			"previousStateSourcePlanID":  plan.PreviousStateSourcePlanID,
+			"status":                     plan.Status,
+			"bootstrap":                  plan.Bootstrap,
+			"canonicalChecksum":          plan.CanonicalChecksum, "canonicalPayload": plan.CanonicalPayload,
 		},
 	)
 	if err != nil {
@@ -1720,6 +1758,10 @@ func buildTargetPlanCanonical(
 	input types.PlanResolutionInput,
 	resolutions []types.RequirementResolution,
 	graph types.TargetPlanGraph,
+	baselines []types.DeploymentPlanBaseline,
+	changes []types.DeploymentPlanChangeEntry,
+	risks []types.DeploymentPlanRiskEntry,
+	bootstrap bool,
 ) types.TargetDeploymentPlanCanonical {
 	return types.TargetDeploymentPlanCanonical{
 		Schema:                       types.TargetDeploymentPlanSchemaV2,
@@ -1739,8 +1781,13 @@ func buildTargetPlanCanonical(
 		ComponentBindings:            slices.Clone(input.Config.ComponentBindings),
 		RequirementResolutions:       slices.Clone(resolutions),
 		Graph:                        graph, ProtocolVersion: draft.ProtocolVersion,
+		Baselines:                  slices.Clone(baselines),
+		Changes:                    slices.Clone(changes),
+		Risks:                      slices.Clone(risks),
+		Bootstrap:                  bootstrap,
 		SupersedesDeploymentPlanID: draft.SupersedesDeploymentPlanID,
 		SupersedeReason:            strings.TrimSpace(draft.SupersedeReason),
+		PreviousStateSourcePlanID:  draft.PreviousStateSourcePlanID,
 	}
 }
 

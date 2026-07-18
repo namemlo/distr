@@ -1203,3 +1203,33 @@ Use one entry per pull request:
   rewritten. Generic Release Bundle mutations cannot bypass the Product Release workflow. Publication remains
   unavailable until PR-061 and PR-067 register exact organization-scoped provenance and immutable published-policy
   verifiers.
+
+### PR-064 - Exact target baseline, change set, and previous state
+
+- Status: Implemented on the prepared speculative branch; focused pure/unit/compile and static migration checks
+  completed, with live integration gates deferred until the numbered predecessors are rebased.
+- Upstream base: `ea6567b6` (PR-063 checkpoint).
+- Feature flag: Uses the existing `deployment_plans` and `operator_control_plane_v2` route boundary. Protocol-v2
+  execution remains disabled until PR-075.
+- User-facing behavior: Plan validation and published plan reads expose exact healthy baselines, client-specific
+  image/config/provider/schema/topology changes, accumulated skipped-release notes, bootstrap, and policy risks.
+  Operators may create a new B-to-A plan from an independently observed successful A without rewriting either
+  historical plan.
+- Database changes: Migration 146 adds append-only, actor-attributed `DeploymentPlanBaseline`,
+  `DeploymentPlanChangeEntry`, and `DeploymentPlanRiskEntry`, plus immutable bootstrap and previous-state source
+  lineage on `DeploymentPlan`. Composite tenant foreign keys and rollback refusal protect evidence.
+- API changes: Adds `POST /api/v1/deployment-plans/{currentPlanId}/previous-state` and additive
+  `baselines`/`changes`/`risks`/`bootstrap`/`previousStateSourcePlanId` response fields.
+- UI changes: Adds typed target-plan baseline, change, release-note, risk, and previous-state request contracts.
+- Agent protocol changes: None. Legacy projection is explicitly non-authoritative for v2 and PR-075 remains the
+  execution gate.
+- Documentation: Folded the accepted exact-baseline and previous-state decision
+  record into the PR-064 operator/fork note; no additional ADR number is
+  allocated.
+- Tests: Added exact newest healthy selection, bootstrap, stale CAS/static tenant fences, deterministic image/config/
+  provider/schema/topology comparison, skipped-note accumulation, stable ordering, forward-only risk, B-to-A route,
+  migration append-only/rollback, API validation, and mapping coverage.
+- Upstream contribution notes: Community-neutral plan comparison and recovery history; no adopter, CI provider,
+  infrastructure credential, client database, or application-specific behavior.
+- Compatibility notes: Existing v1 fields, rows, payloads, checksums, creation, and execution remain unchanged.
+  Migration 146 stacks after the final PR-058 through PR-063 migration sequence.

@@ -25,6 +25,7 @@ func DeploymentPlanToAPI(plan types.DeploymentPlan) api.DeploymentPlan {
 		ProtocolVersion:            plan.ProtocolVersion,
 		SupersedesDeploymentPlanID: plan.SupersedesDeploymentPlanID,
 		SupersedeReason:            plan.SupersedeReason,
+		PreviousStateSourcePlanID:  plan.PreviousStateSourcePlanID,
 		Status:                     plan.Status,
 		CanonicalChecksum:          plan.CanonicalChecksum,
 		Targets:                    List(plan.Targets, DeploymentPlanTargetToAPI),
@@ -35,6 +36,10 @@ func DeploymentPlanToAPI(plan types.DeploymentPlan) api.DeploymentPlan {
 		Issues:                     List(plan.Issues, DeploymentPlanIssueToAPI),
 		ResolvedRequirements:       plan.ResolvedRequirements,
 		StepEdges:                  plan.StepEdges,
+		Baselines:                  plan.Baselines,
+		Changes:                    plan.Changes,
+		Risks:                      plan.Risks,
+		Bootstrap:                  plan.Bootstrap,
 	}
 }
 

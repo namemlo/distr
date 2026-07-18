@@ -83,3 +83,19 @@ func TestCreateDeploymentPlanRequestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestCreatePreviousStateDeploymentPlanRequestValidate(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(CreatePreviousStateDeploymentPlanRequest{
+		SuccessfulDeploymentPlanID: uuid.New(),
+		Reason:                     "Restore the last verified compatible state",
+	}.Validate()).To(Succeed())
+	g.Expect(CreatePreviousStateDeploymentPlanRequest{
+		Reason: "missing plan",
+	}.Validate()).To(MatchError(ContainSubstring("successfulDeploymentPlanId is required")))
+	g.Expect(CreatePreviousStateDeploymentPlanRequest{
+		SuccessfulDeploymentPlanID: uuid.New(),
+		Reason:                     "line one\nline two",
+	}.Validate()).To(MatchError(ContainSubstring("reason is invalid")))
+}

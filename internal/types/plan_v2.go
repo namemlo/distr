@@ -29,6 +29,7 @@ type PlanDraft struct {
 	ProtocolVersion               string               `db:"protocol_version" json:"protocolVersion"`
 	SupersedesDeploymentPlanID    *uuid.UUID           `db:"supersedes_deployment_plan_id" json:"supersedesDeploymentPlanId,omitempty"`
 	SupersedeReason               string               `db:"supersede_reason" json:"supersedeReason,omitempty"`
+	PreviousStateSourcePlanID     *uuid.UUID           `db:"-" json:"previousStateSourcePlanId,omitempty"`
 	ExpectedPreviewChecksum       string               `db:"-" json:"expectedPreviewChecksum,omitempty"`
 	PreviewChecksum               string               `db:"preview_checksum" json:"previewChecksum"`
 	PreviewPayload                []byte               `db:"preview_payload" json:"-"`
@@ -38,11 +39,15 @@ type PlanDraft struct {
 }
 
 type PlanDraftValidation struct {
-	Draft           PlanDraft               `json:"draft"`
-	Resolutions     []RequirementResolution `json:"resolutions"`
-	Graph           TargetPlanGraph         `json:"graph"`
-	Issues          []ValidationIssue       `json:"issues"`
-	PreviewChecksum string                  `json:"previewChecksum"`
+	Draft           PlanDraft                   `json:"draft"`
+	Resolutions     []RequirementResolution     `json:"resolutions"`
+	Graph           TargetPlanGraph             `json:"graph"`
+	Baselines       []DeploymentPlanBaseline    `json:"baselines"`
+	Changes         []DeploymentPlanChangeEntry `json:"changes"`
+	Risks           []DeploymentPlanRiskEntry   `json:"risks"`
+	Bootstrap       bool                        `json:"bootstrap"`
+	Issues          []ValidationIssue           `json:"issues"`
+	PreviewChecksum string                      `json:"previewChecksum"`
 }
 
 type PlanResolutionInput struct {
@@ -250,24 +255,29 @@ type DeploymentPlanStepEdge struct {
 }
 
 type TargetDeploymentPlanCanonical struct {
-	Schema                       string                   `json:"schema"`
-	ProductReleaseID             uuid.UUID                `json:"productReleaseId"`
-	ProductReleaseChecksum       string                   `json:"productReleaseChecksum"`
-	DeploymentUnitID             uuid.UUID                `json:"deploymentUnitId"`
-	DeploymentScopeID            uuid.UUID                `json:"deploymentScopeId,omitempty"`
-	SubscriberSetChecksum        string                   `json:"subscriberSetChecksum"`
-	EnvironmentAssignmentID      uuid.UUID                `json:"environmentAssignmentId"`
-	EnvironmentID                uuid.UUID                `json:"environmentId"`
-	DeploymentTargetID           uuid.UUID                `json:"deploymentTargetId"`
-	TargetConfigSnapshotID       uuid.UUID                `json:"targetConfigSnapshotId"`
-	TargetConfigSnapshotChecksum string                   `json:"targetConfigSnapshotChecksum"`
-	TargetPlatform               string                   `json:"targetPlatform"`
-	ConfigVerificationFacts      []ConfigVerificationFact `json:"configVerificationFacts"`
-	ComponentReleasePins         []ComponentReleasePin    `json:"componentReleasePins"`
-	ComponentBindings            []ConfigComponentBinding `json:"componentBindings"`
-	RequirementResolutions       []RequirementResolution  `json:"requirementResolutions"`
-	Graph                        TargetPlanGraph          `json:"graph"`
-	ProtocolVersion              string                   `json:"protocolVersion"`
-	SupersedesDeploymentPlanID   *uuid.UUID               `json:"supersedesDeploymentPlanId,omitempty"`
-	SupersedeReason              string                   `json:"supersedeReason,omitempty"`
+	Schema                       string                      `json:"schema"`
+	ProductReleaseID             uuid.UUID                   `json:"productReleaseId"`
+	ProductReleaseChecksum       string                      `json:"productReleaseChecksum"`
+	DeploymentUnitID             uuid.UUID                   `json:"deploymentUnitId"`
+	DeploymentScopeID            uuid.UUID                   `json:"deploymentScopeId,omitempty"`
+	SubscriberSetChecksum        string                      `json:"subscriberSetChecksum"`
+	EnvironmentAssignmentID      uuid.UUID                   `json:"environmentAssignmentId"`
+	EnvironmentID                uuid.UUID                   `json:"environmentId"`
+	DeploymentTargetID           uuid.UUID                   `json:"deploymentTargetId"`
+	TargetConfigSnapshotID       uuid.UUID                   `json:"targetConfigSnapshotId"`
+	TargetConfigSnapshotChecksum string                      `json:"targetConfigSnapshotChecksum"`
+	TargetPlatform               string                      `json:"targetPlatform"`
+	ConfigVerificationFacts      []ConfigVerificationFact    `json:"configVerificationFacts"`
+	ComponentReleasePins         []ComponentReleasePin       `json:"componentReleasePins"`
+	ComponentBindings            []ConfigComponentBinding    `json:"componentBindings"`
+	RequirementResolutions       []RequirementResolution     `json:"requirementResolutions"`
+	Graph                        TargetPlanGraph             `json:"graph"`
+	Baselines                    []DeploymentPlanBaseline    `json:"baselines"`
+	Changes                      []DeploymentPlanChangeEntry `json:"changes"`
+	Risks                        []DeploymentPlanRiskEntry   `json:"risks"`
+	Bootstrap                    bool                        `json:"bootstrap"`
+	ProtocolVersion              string                      `json:"protocolVersion"`
+	SupersedesDeploymentPlanID   *uuid.UUID                  `json:"supersedesDeploymentPlanId,omitempty"`
+	SupersedeReason              string                      `json:"supersedeReason,omitempty"`
+	PreviousStateSourcePlanID    *uuid.UUID                  `json:"previousStateSourcePlanId,omitempty"`
 }

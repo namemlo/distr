@@ -45,6 +45,8 @@ const deploymentPlanOutputExpr = `
 	dp.protocol_version,
 	dp.supersedes_deployment_plan_id,
 	dp.supersede_reason,
+	dp.previous_state_source_plan_id,
+	dp.bootstrap,
 	dp.status,
 	dp.canonical_checksum,
 	dp.canonical_payload
@@ -270,6 +272,30 @@ func hydrateDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) erro
 			return err
 		}
 		plan.StepEdges, err = getDeploymentPlanStepEdges(
+			ctx,
+			plan.ID,
+			plan.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		plan.Baselines, err = getDeploymentPlanBaselines(
+			ctx,
+			plan.ID,
+			plan.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		plan.Changes, err = getDeploymentPlanChanges(
+			ctx,
+			plan.ID,
+			plan.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		plan.Risks, err = getDeploymentPlanRisks(
 			ctx,
 			plan.ID,
 			plan.OrganizationID,

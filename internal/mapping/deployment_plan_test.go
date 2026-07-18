@@ -31,6 +31,21 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 		VariableSnapshotID: &variableSnapshotID,
 		Status:             types.DeploymentPlanStatusReady,
 		CanonicalChecksum:  "sha256:abc",
+		Bootstrap:          true,
+		Baselines: []types.DeploymentPlanBaseline{{
+			ComponentInstanceID: uuid.New(),
+			ComponentKey:        "loyalty-api",
+			Projection:          types.BaselineProjectionBootstrap,
+			Bootstrap:           true,
+		}},
+		Changes: []types.DeploymentPlanChangeEntry{{
+			ComponentKey: "loyalty-api",
+			Kind:         types.DeploymentPlanChangeBootstrap,
+		}},
+		Risks: []types.DeploymentPlanRiskEntry{{
+			ComponentKey: "loyalty-api",
+			Code:         "bootstrap_approval_required",
+		}},
 		Targets: []types.DeploymentPlanTarget{
 			{
 				ID:                 planTargetID,
@@ -119,4 +134,8 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 	g.Expect(response.Variables[0].Value).To(MatchJSON(`"https://example.test"`))
 	g.Expect(response.Issues).To(HaveLen(1))
 	g.Expect(response.Issues[0].Code).To(Equal("dry_run_not_performed"))
+	g.Expect(response.Bootstrap).To(BeTrue())
+	g.Expect(response.Baselines).To(HaveLen(1))
+	g.Expect(response.Changes[0].Kind).To(Equal(types.DeploymentPlanChangeBootstrap))
+	g.Expect(response.Risks[0].Code).To(Equal("bootstrap_approval_required"))
 }
