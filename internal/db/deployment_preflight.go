@@ -317,7 +317,7 @@ func getDeploymentPreflightReleaseFacts(
 	contractValid := true
 	contractMessage := ""
 	if plan.ReleaseContract != nil {
-		validation := releasebundles.ValidateReleaseContract(*plan.ReleaseContract, bundle.Components)
+		validation := releasebundles.ValidateReleaseContractV1(*plan.ReleaseContract, bundle.Components)
 		planContract := releasebundles.NormalizedReleaseContract(plan.ReleaseContract)
 		bundleContract := releasebundles.NormalizedReleaseContract(bundle.ReleaseContract)
 		contractValid = validation.Valid && bundleContract != nil && reflect.DeepEqual(planContract, bundleContract)

@@ -11,6 +11,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
@@ -263,6 +264,10 @@ func getReleaseBundleProcessSnapshotHandler() http.HandlerFunc {
 
 //nolint:dupl
 func publishReleaseBundleHandler() http.HandlerFunc {
+	return publishReleaseBundleHandlerWithFlags(env.ExperimentalFeatureFlags())
+}
+
+func publishReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
 		if err != nil {
@@ -273,6 +278,22 @@ func publishReleaseBundleHandler() http.HandlerFunc {
 		ctx := r.Context()
 		log := internalctx.GetLogger(ctx)
 		auth := auth.Authentication.Require(ctx)
+		if !featureflags.NewRegistry(enabledFlags).IsEnabled(featureflags.KeyOperatorControlPlaneV2) {
+			existing, err := db.GetReleaseBundle(ctx, id, *auth.CurrentOrgID())
+			if errors.Is(err, apierrors.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			} else if err != nil {
+				log.Error("failed to inspect release bundle before publish", zap.Error(err))
+				sentry.GetHubFromContext(ctx).CaptureException(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if existing.Kind == types.ReleaseBundleKindComponent {
+				http.Error(w, "operator control plane v2 is not enabled", http.StatusForbidden)
+				return
+			}
+		}
 
 		bundle, result, err := db.PublishReleaseBundle(ctx, id, *auth.CurrentOrgID(), auth.CurrentUserID())
 		if errors.Is(err, apierrors.ErrNotFound) {
@@ -332,6 +353,10 @@ func releaseBundleTransitionHandler(
 }
 
 func createReleaseBundleHandler() http.HandlerFunc {
+	return createReleaseBundleHandlerWithFlags(env.ExperimentalFeatureFlags())
+}
+
+func createReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		log := internalctx.GetLogger(ctx)
@@ -342,6 +367,10 @@ func createReleaseBundleHandler() http.HandlerFunc {
 			return
 		} else if err := request.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !componentReleaseWriteEnabled(request.ReleaseContract, enabledFlags) {
+			http.Error(w, "operator control plane v2 is not enabled", http.StatusForbidden)
 			return
 		}
 
@@ -356,6 +385,10 @@ func createReleaseBundleHandler() http.HandlerFunc {
 
 //nolint:dupl
 func updateReleaseBundleHandler() http.HandlerFunc {
+	return updateReleaseBundleHandlerWithFlags(env.ExperimentalFeatureFlags())
+}
+
+func updateReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
 		if err != nil {
@@ -372,6 +405,10 @@ func updateReleaseBundleHandler() http.HandlerFunc {
 			return
 		} else if err := request.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !componentReleaseWriteEnabled(request.ReleaseContract, enabledFlags) {
+			http.Error(w, "operator control plane v2 is not enabled", http.StatusForbidden)
 			return
 		}
 
@@ -440,8 +477,14 @@ func releaseBundleFromCreateUpdateRequest(
 		ReleaseNotes:                request.ReleaseNotes,
 		SourceRevision:              strings.TrimSpace(request.SourceRevision),
 		ReleaseContract:             request.ReleaseContract,
+		Kind:                        types.ReleaseBundleKindLegacy,
+		ReleaseContractSchema:       types.ReleaseContractStorageSchemaV1,
 		Status:                      types.ReleaseBundleStatusDraft,
 		Components:                  components,
+	}
+	if request.ReleaseContract != nil && request.ReleaseContract.ComponentV2 != nil {
+		bundle.Kind = types.ReleaseBundleKindComponent
+		bundle.ReleaseContractSchema = types.ReleaseContractSchemaV2
 	}
 	if request.SourceMetadata != nil {
 		bundle.SourceRepository = request.SourceMetadata.Repository
@@ -452,6 +495,13 @@ func releaseBundleFromCreateUpdateRequest(
 		bundle.CIRunURL = request.SourceMetadata.CIRunURL
 	}
 	return bundle
+}
+
+func componentReleaseWriteEnabled(contract *types.ReleaseContract, enabledFlags []featureflags.Key) bool {
+	if contract == nil || contract.ComponentV2 == nil {
+		return true
+	}
+	return featureflags.NewRegistry(enabledFlags).IsEnabled(featureflags.KeyOperatorControlPlaneV2)
 }
 
 func releaseBundleResponses(bundles []types.ReleaseBundle) []api.ReleaseBundle {

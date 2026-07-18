@@ -1,6 +1,8 @@
 package releasebundles
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"path"
 	"regexp"
@@ -14,8 +16,12 @@ import (
 const maxReleaseContractItems = 256
 
 var commitPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+var componentCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var componentKeyPattern = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
+var componentDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var windowsAbsolutePathPattern = regexp.MustCompile(`(?i)(^|[\s"'(])[a-z]:\\`)
 
-func NormalizeReleaseContract(contract *types.ReleaseContract) {
+func normalizeReleaseContractV1(contract *types.ReleaseContract) {
 	if contract == nil {
 		return
 	}
@@ -76,6 +82,13 @@ func NormalizedReleaseContract(contract *types.ReleaseContract) *types.ReleaseCo
 	if contract == nil {
 		return nil
 	}
+	if contract.ComponentV2 != nil {
+		normalized := normalizedComponentReleaseContractV2(*contract.ComponentV2)
+		return &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &normalized,
+		}
+	}
 	normalized := *contract
 	normalized.Components = slices.Clone(contract.Components)
 	for i := range normalized.Components {
@@ -85,16 +98,187 @@ func NormalizedReleaseContract(contract *types.ReleaseContract) *types.ReleaseCo
 	normalized.Compatibility.AffectedComponents = slices.Clone(contract.Compatibility.AffectedComponents)
 	normalized.Config.ImmutableObjects = slices.Clone(contract.Config.ImmutableObjects)
 	normalized.Changes.Commits = slices.Clone(contract.Changes.Commits)
-	NormalizeReleaseContract(&normalized)
+	normalizeReleaseContractV1(&normalized)
 	return &normalized
 }
 
-func ValidateReleaseContract(
+func ParseReleaseContract(data []byte) (schema string, contract any, err error) {
+	var discriminator struct {
+		Schema string `json:"schema"`
+	}
+	if err := json.Unmarshal(data, &discriminator); err != nil {
+		return "", nil, fmt.Errorf("could not decode release contract schema: %w", err)
+	}
+	if strings.TrimSpace(discriminator.Schema) == "" {
+		return "", nil, fmt.Errorf("release contract schema is required")
+	}
+	switch discriminator.Schema {
+	case types.ReleaseContractSchemaV1:
+		var legacy types.ReleaseContract
+		if err := json.Unmarshal(data, &legacy); err != nil {
+			return "", nil, fmt.Errorf("could not decode v1 release contract: %w", err)
+		}
+		return discriminator.Schema, legacy, nil
+	case types.ReleaseContractSchemaV2:
+		var envelope types.ReleaseContract
+		if err := json.Unmarshal(data, &envelope); err != nil {
+			return "", nil, fmt.Errorf("could not decode v2 release contract: %w", err)
+		}
+		if envelope.ComponentV2 == nil {
+			return "", nil, fmt.Errorf("could not decode v2 release contract")
+		}
+		return discriminator.Schema, *envelope.ComponentV2, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported release contract schema %q", discriminator.Schema)
+	}
+}
+
+func NormalizeReleaseContract(contract any) ([]byte, error) {
+	switch value := contract.(type) {
+	case types.ReleaseContract:
+		if value.ComponentV2 != nil {
+			normalized := normalizedComponentReleaseContractV2(*value.ComponentV2)
+			return json.Marshal(normalized)
+		}
+		normalized := NormalizedReleaseContract(&value)
+		return json.Marshal(normalized)
+	case *types.ReleaseContract:
+		if value == nil {
+			return nil, fmt.Errorf("release contract is required")
+		}
+		return NormalizeReleaseContract(*value)
+	case types.ComponentReleaseContractV2:
+		normalized := normalizedComponentReleaseContractV2(value)
+		return json.Marshal(normalized)
+	case *types.ComponentReleaseContractV2:
+		if value == nil {
+			return nil, fmt.Errorf("release contract is required")
+		}
+		return NormalizeReleaseContract(*value)
+	default:
+		return nil, fmt.Errorf("unsupported release contract type %T", contract)
+	}
+}
+
+func normalizedComponentReleaseContractV2(contract types.ComponentReleaseContractV2) types.ComponentReleaseContractV2 {
+	normalized := contract
+	normalized.Schema = strings.TrimSpace(normalized.Schema)
+	normalized.ComponentKey = strings.TrimSpace(normalized.ComponentKey)
+	normalized.Version = strings.TrimSpace(normalized.Version)
+	normalized.Source.Repository = strings.TrimSpace(normalized.Source.Repository)
+	normalized.Source.RequestedRef = strings.TrimSpace(normalized.Source.RequestedRef)
+	normalized.Source.Commit = strings.TrimSpace(normalized.Source.Commit)
+	normalized.Build.ID = strings.TrimSpace(normalized.Build.ID)
+	normalized.Build.Builder = strings.TrimSpace(normalized.Build.Builder)
+	normalized.Artifacts = slices.Clone(contract.Artifacts)
+	for i := range normalized.Artifacts {
+		artifact := &normalized.Artifacts[i]
+		artifact.Key = strings.TrimSpace(artifact.Key)
+		artifact.Type = strings.TrimSpace(artifact.Type)
+		artifact.MediaType = strings.TrimSpace(artifact.MediaType)
+		artifact.Digest = strings.TrimSpace(artifact.Digest)
+		artifact.Platforms = slices.Clone(artifact.Platforms)
+		for j := range artifact.Platforms {
+			artifact.Platforms[j].Platform = strings.ToLower(strings.TrimSpace(artifact.Platforms[j].Platform))
+			artifact.Platforms[j].Digest = strings.TrimSpace(artifact.Platforms[j].Digest)
+		}
+		slices.SortFunc(artifact.Platforms, func(a, b types.ComponentReleasePlatform) int {
+			return strings.Compare(a.Platform+"\x00"+a.Digest, b.Platform+"\x00"+b.Digest)
+		})
+	}
+	slices.SortFunc(normalized.Artifacts, func(a, b types.ComponentReleaseArtifact) int {
+		return strings.Compare(a.Key+"\x00"+a.Type, b.Key+"\x00"+b.Type)
+	})
+	normalized.Provides = slices.Clone(contract.Provides)
+	for i := range normalized.Provides {
+		normalized.Provides[i].Name = strings.TrimSpace(normalized.Provides[i].Name)
+		normalized.Provides[i].Version = strings.TrimSpace(normalized.Provides[i].Version)
+	}
+	slices.SortFunc(normalized.Provides, func(a, b types.CapabilityDeclaration) int {
+		return strings.Compare(a.Name+"\x00"+a.Version, b.Name+"\x00"+b.Version)
+	})
+	normalized.Requires = slices.Clone(contract.Requires)
+	for i := range normalized.Requires {
+		requirement := &normalized.Requires[i]
+		requirement.Name = strings.TrimSpace(requirement.Name)
+		requirement.Range = strings.TrimSpace(requirement.Range)
+		requirement.ResolutionStage = strings.TrimSpace(requirement.ResolutionStage)
+		requirement.AllowedModes = normalizeSortedStrings(requirement.AllowedModes)
+	}
+	slices.SortFunc(normalized.Requires, func(a, b types.CapabilityRequirement) int {
+		return strings.Compare(a.Name+"\x00"+a.Range+"\x00"+a.ResolutionStage, b.Name+"\x00"+b.Range+"\x00"+b.ResolutionStage)
+	})
+	normalized.Migrations = slices.Clone(contract.Migrations)
+	for i := range normalized.Migrations {
+		migration := &normalized.Migrations[i]
+		migration.Key = strings.TrimSpace(migration.Key)
+		migration.Type = strings.TrimSpace(migration.Type)
+		migration.Compatibility = strings.TrimSpace(migration.Compatibility)
+		migration.FailurePolicy = strings.TrimSpace(migration.FailurePolicy)
+		migration.Description = strings.TrimSpace(migration.Description)
+	}
+	slices.SortFunc(normalized.Migrations, func(a, b types.MigrationDeclaration) int {
+		if a.Order != b.Order {
+			return a.Order - b.Order
+		}
+		return strings.Compare(a.Key, b.Key)
+	})
+	normalized.Changes.Summary = strings.TrimSpace(normalized.Changes.Summary)
+	normalized.Changes.Commits = normalizeSortedStrings(contract.Changes.Commits)
+	normalized.Evidence.Provenance = normalizeSortedStrings(contract.Evidence.Provenance)
+	normalized.Evidence.SBOM = normalizeSortedStrings(contract.Evidence.SBOM)
+	normalized.Evidence.Signatures = normalizeSortedStrings(contract.Evidence.Signatures)
+	normalized.Evidence.Tests = normalizeSortedStrings(contract.Evidence.Tests)
+	return normalized
+}
+
+func ValidateReleaseContract(contract any) []ValidationIssue {
+	switch value := contract.(type) {
+	case types.ReleaseContract:
+		if value.ComponentV2 != nil {
+			return ValidateComponentReleaseContractV2(*value.ComponentV2)
+		}
+		return ValidateReleaseContractV1(value, releaseContractV1IntrinsicComponents(value)).Errors
+	case *types.ReleaseContract:
+		if value == nil {
+			return []ValidationIssue{{Field: "releaseContract", Rule: "required", Message: "release contract is required"}}
+		}
+		return ValidateReleaseContract(*value)
+	case types.ComponentReleaseContractV2:
+		return ValidateComponentReleaseContractV2(value)
+	case *types.ComponentReleaseContractV2:
+		if value == nil {
+			return []ValidationIssue{{Field: "releaseContract", Rule: "required", Message: "release contract is required"}}
+		}
+		return ValidateComponentReleaseContractV2(*value)
+	default:
+		return []ValidationIssue{{
+			Field: "releaseContract", Rule: "type", Message: fmt.Sprintf("unsupported release contract type %T", contract),
+		}}
+	}
+}
+
+func releaseContractV1IntrinsicComponents(contract types.ReleaseContract) []types.ReleaseBundleComponent {
+	components := make([]types.ReleaseBundleComponent, 0, len(contract.Components))
+	for _, component := range contract.Components {
+		packageRef, digest, _ := splitImmutableImage(component.Image)
+		components = append(components, types.ReleaseBundleComponent{
+			Key:        component.Name,
+			Type:       types.ReleaseBundleComponentTypeOCIImage,
+			Version:    component.Version,
+			PackageRef: packageRef,
+			Digest:     digest,
+		})
+	}
+	return components
+}
+
+func ValidateReleaseContractV1(
 	contract types.ReleaseContract,
 	bundleComponents []types.ReleaseBundleComponent,
 ) ValidationResult {
 	result := NewValidResult()
-	NormalizeReleaseContract(&contract)
+	normalizeReleaseContractV1(&contract)
 	if contract.Schema != types.ReleaseContractSchemaV1 {
 		result.AddError("releaseContract.schema", "supported", "schema must be distr.release-contract/v1")
 	}
@@ -120,6 +304,303 @@ func ValidateReleaseContract(
 	}
 	result.Valid = len(result.Errors) == 0
 	return result
+}
+
+func ValidateComponentReleaseContractV2(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	contract = normalizedComponentReleaseContractV2(contract)
+	issues := make([]ValidationIssue, 0)
+	add := func(field, rule, message string) {
+		issues = append(issues, ValidationIssue{Field: field, Rule: rule, Message: message})
+	}
+	if contract.Schema != types.ReleaseContractSchemaV2 {
+		add("schema", "supported", "schema must be distr.component-release/v2")
+	}
+	if !componentKeyPattern.MatchString(contract.ComponentKey) {
+		add("componentKey", "key", "component key must be a lowercase stable key")
+	}
+	if _, err := semver.StrictNewVersion(contract.Version); err != nil {
+		add("version", "semver", "component version must be strict semantic version")
+	}
+	if contract.Source.Repository == "" {
+		add("source.repository", "required", "source repository is required")
+	}
+	if contract.Source.RequestedRef == "" {
+		add("source.requestedRef", "required", "requested source ref is required")
+	}
+	if !componentCommitPattern.MatchString(contract.Source.Commit) {
+		add("source.commit", "commit", "source commit must be a lowercase 40-character commit")
+	}
+	if contract.Build.ID == "" {
+		add("build.id", "required", "build id is required")
+	}
+	if contract.Build.Builder == "" {
+		add("build.builder", "required", "build builder is required")
+	}
+	issues = append(issues, ValidateArtifactIdentity(contract)...)
+	issues = append(issues, validateComponentCapabilities(contract)...)
+	issues = append(issues, validateComponentMigrations(contract)...)
+	if contract.Changes.Summary == "" {
+		add("changes.summary", "required", "change summary is required")
+	}
+	seenCommits := map[string]struct{}{}
+	for _, commit := range contract.Changes.Commits {
+		if !componentCommitPattern.MatchString(commit) {
+			add("changes.commits", "commit", "change commits must be lowercase 40-character commits")
+			break
+		}
+		if _, ok := seenCommits[commit]; ok {
+			add("changes.commits", "unique", "change commits must be unique")
+			break
+		}
+		seenCommits[commit] = struct{}{}
+	}
+	issues = append(issues, validateComponentEvidence(contract)...)
+	issues = append(issues, ValidateTargetNeutralContract(contract)...)
+	return issues
+}
+
+func ValidateArtifactIdentity(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	add := func(field, rule, message string) {
+		issues = append(issues, ValidationIssue{Field: field, Rule: rule, Message: message})
+	}
+	if len(contract.Artifacts) == 0 {
+		add("artifacts", "required", "at least one immutable artifact is required")
+		return issues
+	}
+	artifactKeys := map[string]struct{}{}
+	platformDigests := map[string]string{}
+	for _, artifact := range contract.Artifacts {
+		field := "artifacts." + artifact.Key
+		if !componentKeyPattern.MatchString(artifact.Key) {
+			add(field+".key", "key", "artifact key must be a lowercase stable key")
+		}
+		if _, ok := artifactKeys[artifact.Key]; ok {
+			add(field+".key", "unique", "artifact keys must be unique")
+		}
+		artifactKeys[artifact.Key] = struct{}{}
+		if artifact.Type != "oci-image" && artifact.Type != "oci-artifact" && artifact.Type != "helm-chart" {
+			add(field+".type", "supported", "artifact type is not supported")
+		}
+		switch artifact.MediaType {
+		case "application/vnd.oci.image.index.v1+json",
+			"application/vnd.oci.image.manifest.v1+json",
+			"application/vnd.oci.artifact.manifest.v1+json",
+			"application/vnd.cncf.helm.chart.content.v1.tar+gzip":
+		default:
+			add(field+".mediaType", "supported", "artifact media type is not supported")
+		}
+		if !componentDigestPattern.MatchString(artifact.Digest) {
+			add(field+".digest", "sha256", "artifact digest must be a lowercase sha256 digest")
+		}
+		if len(artifact.Platforms) == 0 {
+			add(field+".platforms", "required", "artifact must include at least one platform digest")
+		}
+		for _, platform := range artifact.Platforms {
+			platformField := field + ".platforms." + platform.Platform
+			if platform.Platform != "linux/amd64" && platform.Platform != "linux/arm64" {
+				add(platformField, "supported", "platform must be linux/amd64 or linux/arm64")
+			}
+			if !componentDigestPattern.MatchString(platform.Digest) {
+				add(platformField+".digest", "sha256", "platform digest must be a lowercase sha256 digest")
+			}
+			if digest, ok := platformDigests[platform.Platform]; ok {
+				if digest == platform.Digest {
+					add(platformField, "unique", "platform entries must be unique")
+				} else {
+					add(platformField, "conflict", "component version and platform cannot resolve to different digests")
+				}
+			} else {
+				platformDigests[platform.Platform] = platform.Digest
+			}
+		}
+	}
+	return issues
+}
+
+func validateComponentCapabilities(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	add := func(field, rule, message string) {
+		issues = append(issues, ValidationIssue{Field: field, Rule: rule, Message: message})
+	}
+	provided := map[string]struct{}{}
+	for _, capability := range contract.Provides {
+		field := "provides." + capability.Name
+		if !componentKeyPattern.MatchString(capability.Name) {
+			add(field+".name", "key", "capability name must be a lowercase stable key")
+		}
+		if _, ok := provided[capability.Name]; ok {
+			add(field+".name", "unique", "provided capability names must be unique")
+		}
+		provided[capability.Name] = struct{}{}
+		if _, err := semver.StrictNewVersion(capability.Version); err != nil {
+			add(field+".version", "semver", "provided capability version must be strict semantic version")
+		}
+	}
+	required := map[string]struct{}{}
+	for _, capability := range contract.Requires {
+		field := "requires." + capability.Name
+		if !componentKeyPattern.MatchString(capability.Name) {
+			add(field+".name", "key", "capability name must be a lowercase stable key")
+		}
+		if _, ok := required[capability.Name]; ok {
+			add(field+".name", "unique", "required capability names must be unique")
+		}
+		required[capability.Name] = struct{}{}
+		if _, err := semver.NewConstraint(capability.Range); err != nil {
+			add(field+".range", "semverRange", "required capability range must be valid")
+		}
+		if capability.ResolutionStage != "product" && capability.ResolutionStage != "target" {
+			add(field+".resolutionStage", "supported", "resolution stage must be product or target")
+		}
+		if capability.ResolutionStage == "target" && len(capability.AllowedModes) == 0 {
+			add(field+".allowedModes", "required", "target requirements must declare allowed resolution modes")
+		}
+		modes := map[string]struct{}{}
+		for _, mode := range capability.AllowedModes {
+			if _, ok := modes[mode]; ok {
+				add(field+".allowedModes", "unique", "capability resolution modes must be unique")
+			}
+			modes[mode] = struct{}{}
+			switch mode {
+			case "included", "pinned-existing", "shared-provider", "approved-external", "feature-disabled":
+			default:
+				add(field+".allowedModes", "supported", "capability resolution mode is not supported")
+			}
+		}
+	}
+	return issues
+}
+
+func validateComponentEvidence(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	for _, group := range []struct {
+		field      string
+		references []string
+	}{
+		{field: "evidence.provenance", references: contract.Evidence.Provenance},
+		{field: "evidence.sbom", references: contract.Evidence.SBOM},
+		{field: "evidence.signatures", references: contract.Evidence.Signatures},
+		{field: "evidence.tests", references: contract.Evidence.Tests},
+	} {
+		seen := map[string]struct{}{}
+		for _, reference := range group.references {
+			if reference == "" {
+				issues = append(issues, ValidationIssue{
+					Field: group.field, Rule: "required", Message: "evidence references must not be empty",
+				})
+				continue
+			}
+			if _, ok := seen[reference]; ok {
+				issues = append(issues, ValidationIssue{
+					Field: group.field, Rule: "unique", Message: "evidence references must be unique",
+				})
+			}
+			seen[reference] = struct{}{}
+		}
+	}
+	return issues
+}
+
+func validateComponentMigrations(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	add := func(field, rule, message string) {
+		issues = append(issues, ValidationIssue{Field: field, Rule: rule, Message: message})
+	}
+	keys := map[string]struct{}{}
+	orders := map[int]struct{}{}
+	for _, migration := range contract.Migrations {
+		field := "migrations." + migration.Key
+		if !componentKeyPattern.MatchString(migration.Key) {
+			add(field+".key", "key", "migration key must be a lowercase stable key")
+		}
+		if _, ok := keys[migration.Key]; ok {
+			add(field+".key", "unique", "migration keys must be unique")
+		}
+		keys[migration.Key] = struct{}{}
+		switch migration.Type {
+		case "database", "data", "runtime":
+		default:
+			add(field+".type", "supported", "migration type is not supported")
+		}
+		if migration.Order <= 0 {
+			add(field+".order", "positive", "migration order must be positive")
+		}
+		if _, ok := orders[migration.Order]; ok {
+			add(field+".order", "unique", "migration order must be unique")
+		}
+		orders[migration.Order] = struct{}{}
+		switch migration.Compatibility {
+		case "backward-compatible", "forward-compatible", "breaking":
+		default:
+			add(field+".compatibility", "supported", "migration compatibility is not supported")
+		}
+		switch migration.FailurePolicy {
+		case "stop", "retry", "forward-fix":
+		default:
+			add(field+".failurePolicy", "supported", "migration failure policy is not supported")
+		}
+		if migration.Description == "" {
+			add(field+".description", "required", "migration description is required")
+		}
+	}
+	return issues
+}
+
+func ValidateTargetNeutralContract(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	addIfUnsafe := func(field, value string, allowReference bool) {
+		if containsTargetSpecificValue(value, allowReference) {
+			issues = append(issues, ValidationIssue{
+				Field: field, Rule: "targetNeutral", Message: "component release values must not contain target paths, URLs, or secrets",
+			})
+		}
+	}
+	addIfUnsafe("source.repository", contract.Source.Repository, false)
+	addIfUnsafe("source.requestedRef", contract.Source.RequestedRef, false)
+	addIfUnsafe("build.id", contract.Build.ID, false)
+	addIfUnsafe("build.builder", contract.Build.Builder, false)
+	for _, migration := range contract.Migrations {
+		addIfUnsafe("migrations."+migration.Key+".description", migration.Description, false)
+	}
+	for _, reference := range contract.Evidence.Provenance {
+		addIfUnsafe("evidence.provenance", reference, true)
+	}
+	for _, reference := range contract.Evidence.SBOM {
+		addIfUnsafe("evidence.sbom", reference, true)
+	}
+	for _, reference := range contract.Evidence.Signatures {
+		addIfUnsafe("evidence.signatures", reference, true)
+	}
+	for _, reference := range contract.Evidence.Tests {
+		addIfUnsafe("evidence.tests", reference, true)
+	}
+	return issues
+}
+
+func containsTargetSpecificValue(value string, allowReference bool) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"authorization:", "bearer ", "password=", "secret=", "token=", "api_key=", "access_token=",
+		"clientsecret", "privatekey",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	if windowsAbsolutePathPattern.MatchString(value) || strings.HasPrefix(normalized, `\\`) {
+		return true
+	}
+	if !allowReference && (strings.Contains(normalized, "://") || strings.HasPrefix(normalized, "/")) {
+		return true
+	}
+	if allowReference && strings.ContainsAny(value, "?#") {
+		return true
+	}
+	return strings.ContainsAny(value, "\r\n")
 }
 
 func validateReleaseContractComponents(
@@ -341,6 +822,15 @@ func normalizeStringSet(values []string) []string {
 		}
 		seen[value] = struct{}{}
 		result = append(result, value)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func normalizeSortedStrings(values []string) []string {
+	result := slices.Clone(values)
+	for i := range result {
+		result[i] = strings.TrimSpace(result[i])
 	}
 	slices.Sort(result)
 	return result

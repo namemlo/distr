@@ -132,6 +132,91 @@ func TestReleaseContractMigrationDefinesReversibleJSONSchema(t *testing.T) {
 	g.Expect(string(down)).To(ContainSubstring("DROP COLUMN IF EXISTS release_contract"))
 }
 
+func TestComponentReleaseContractV2MigrationIsAdditive(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "143_component_release_contract_v2.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(up)).To(ContainSubstring("ADD COLUMN kind TEXT"))
+	g.Expect(string(up)).To(ContainSubstring("ADD COLUMN release_contract_schema TEXT"))
+	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseArtifact"))
+	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseEvidence"))
+	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseCapability"))
+	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseMigrationDeclaration"))
+	g.Expect(string(up)).NotTo(ContainSubstring("canonical_payload ="))
+	g.Expect(string(up)).NotTo(ContainSubstring("canonical_checksum ="))
+
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "143_component_release_contract_v2.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(down)).To(ContainSubstring("downgrade crossing 143 is forbidden"))
+}
+
+func TestComponentReleasePublicationIsTargetNeutralAndIdempotent(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, _ := createReleaseBundleDependencies(t, ctx)
+	bundle := ociReleaseBundleFixture(orgID, applicationID, channelID)
+	bundle.Components[0].Key = "image"
+	bundle.Components[0].Version = "2.4.0"
+	contract := componentReleaseContractFixture(bundle.Components[0].Digest, strings.Repeat("b", 64))
+	bundle.Kind = types.ReleaseBundleKindComponent
+	bundle.ReleaseContractSchema = types.ReleaseContractSchemaV2
+	bundle.ReleaseContract = &types.ReleaseContract{
+		Schema:      types.ReleaseContractSchemaV2,
+		ComponentV2: &contract,
+	}
+
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	actorID := createReleaseBundleTestUser(t, ctx, orgID)
+	first, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+	g.Expect(first.VariableSnapshotID).To(BeNil())
+
+	second, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+	g.Expect(second.ID).To(Equal(first.ID))
+	g.Expect(second.CanonicalChecksum).To(Equal(first.CanonicalChecksum))
+}
+
+func TestComponentReleasePublicationRejectsVersionPlatformDigestConflict(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, _ := createReleaseBundleDependencies(t, ctx)
+	first := ociReleaseBundleFixture(orgID, applicationID, channelID)
+	first.Components[0].Key = "image"
+	first.Components[0].Version = "2.4.0"
+	firstContract := componentReleaseContractFixture(first.Components[0].Digest, strings.Repeat("b", 64))
+	first.Kind = types.ReleaseBundleKindComponent
+	first.ReleaseContractSchema = types.ReleaseContractSchemaV2
+	first.ReleaseContract = &types.ReleaseContract{
+		Schema:      types.ReleaseContractSchemaV2,
+		ComponentV2: &firstContract,
+	}
+	g.Expect(db.CreateReleaseBundle(ctx, &first)).To(Succeed())
+	actorID := createReleaseBundleTestUser(t, ctx, orgID)
+	_, _, err := db.PublishReleaseBundle(ctx, first.ID, orgID, actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	second := ociReleaseBundleFixture(orgID, applicationID, channelID)
+	second.Components[0].Key = "image"
+	second.Components[0].Version = "2.4.0"
+	second.ReleaseNumber = first.ReleaseNumber + "-conflict"
+	second.Components[0].Digest = "sha256:" + strings.Repeat("c", 64)
+	secondContract := componentReleaseContractFixture(second.Components[0].Digest, strings.Repeat("d", 64))
+	second.Kind = types.ReleaseBundleKindComponent
+	second.ReleaseContractSchema = types.ReleaseContractSchemaV2
+	second.ReleaseContract = &types.ReleaseContract{
+		Schema:      types.ReleaseContractSchemaV2,
+		ComponentV2: &secondContract,
+	}
+	g.Expect(db.CreateReleaseBundle(ctx, &second)).To(Succeed())
+
+	_, _, err = db.PublishReleaseBundle(ctx, second.ID, orgID, actorID)
+
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+}
+
 func TestReleaseBundleRepositoryRejectsInvalidOCIDigest(t *testing.T) {
 	ctx := releaseBundleDBTestContext(t)
 	g := NewWithT(t)
@@ -1344,6 +1429,42 @@ func releaseContractFixture(digest string) *types.ReleaseContract {
 			ComposeChecksum:   checksum, ServiceConfigChecksum: checksum,
 		},
 		Changes: types.ReleaseContractChanges{Summary: "Choice TP loyalty deployment"},
+	}
+}
+
+func componentReleaseContractFixture(
+	manifestDigest string,
+	platformDigestHex string,
+) types.ComponentReleaseContractV2 {
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	return types.ComponentReleaseContractV2{
+		Schema:       types.ReleaseContractSchemaV2,
+		ComponentKey: "payments.api",
+		Version:      "2.4.0",
+		Source: types.ComponentReleaseSource{
+			Repository:   "source/payments-api",
+			RequestedRef: "refs/tags/v2.4.0",
+			Commit:       commit,
+		},
+		Build: types.ComponentReleaseBuild{ID: "build-42", Builder: "generic-ci"},
+		Artifacts: []types.ComponentReleaseArtifact{{
+			Key:       "image",
+			Type:      "oci-image",
+			MediaType: "application/vnd.oci.image.index.v1+json",
+			Digest:    manifestDigest,
+			Platforms: []types.ComponentReleasePlatform{{
+				Platform: "linux/amd64",
+				Digest:   "sha256:" + platformDigestHex,
+			}},
+		}},
+		Provides: []types.CapabilityDeclaration{{Name: "payments.api", Version: "2.4.0"}},
+		Changes: types.ComponentReleaseChanges{
+			Summary: "Release payments API",
+			Commits: []string{commit},
+		},
+		Evidence: types.ComponentReleaseEvidenceReferences{
+			Provenance: []string{"oci://evidence/provenance@sha256:" + strings.Repeat("e", 64)},
+		},
 	}
 }
 

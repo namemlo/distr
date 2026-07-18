@@ -12,6 +12,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -454,6 +455,114 @@ func TestReleaseBundlePublishHandlerReturnsValidationErrors(t *testing.T) {
 		Rule:    ">=2.0.0 <3.0.0",
 		Message: "version does not match an allowed range",
 	}))
+}
+
+func TestComponentReleaseV2HandlersCreateValidatePublishGetAndHideForeignOrganization(t *testing.T) {
+	ctx := channelHandlerDBTestContext(t)
+	g := NewWithT(t)
+	orgID, applicationID, channelID, _ := createReleaseBundleHandlerDependencies(t, ctx)
+	otherOrgID, _, _, _ := createReleaseBundleHandlerDependencies(t, ctx)
+	actorID := createReleaseBundleHandlerUser(t, ctx, orgID)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	contract := types.ComponentReleaseContractV2{
+		Schema:       types.ReleaseContractSchemaV2,
+		ComponentKey: "payments.api",
+		Version:      "2.4.0",
+		Source: types.ComponentReleaseSource{
+			Repository:   "source/payments-api",
+			RequestedRef: "refs/tags/v2.4.0",
+			Commit:       "0123456789abcdef0123456789abcdef01234567",
+		},
+		Build: types.ComponentReleaseBuild{ID: "build-42", Builder: "generic-ci"},
+		Artifacts: []types.ComponentReleaseArtifact{{
+			Key:       "image",
+			Type:      "oci-image",
+			MediaType: "application/vnd.oci.image.index.v1+json",
+			Digest:    digest,
+			Platforms: []types.ComponentReleasePlatform{{
+				Platform: "linux/amd64",
+				Digest:   "sha256:" + strings.Repeat("b", 64),
+			}},
+		}},
+		Provides: []types.CapabilityDeclaration{{Name: "payments.api", Version: "2.4.0"}},
+		Changes: types.ComponentReleaseChanges{
+			Summary: "Release payments API",
+			Commits: []string{"0123456789abcdef0123456789abcdef01234567"},
+		},
+	}
+	body, err := json.Marshal(api.CreateUpdateReleaseBundleRequest{
+		ApplicationID:  applicationID,
+		ChannelID:      channelID,
+		ReleaseNumber:  "2.4.0",
+		SourceRevision: contract.Source.Commit,
+		ReleaseContract: &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &contract,
+		},
+		Components: []api.ReleaseBundleComponentRequest{{
+			Key:        "image",
+			Name:       "Payments API",
+			Type:       types.ReleaseBundleComponentTypeOCIImage,
+			Version:    "2.4.0",
+			PackageRef: "registry.example/payments-api",
+			Digest:     digest,
+		}},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	flags := []featureflags.Key{featureflags.KeyOperatorControlPlaneV2}
+
+	createRecorder := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/release-bundles", strings.NewReader(string(body)))
+	createRequest = createRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, orgID, actorID))
+	createReleaseBundleHandlerWithFlags(flags).ServeHTTP(createRecorder, createRequest)
+	g.Expect(createRecorder.Code).To(Equal(http.StatusOK))
+	var created api.ReleaseBundle
+	g.Expect(json.Unmarshal(createRecorder.Body.Bytes(), &created)).To(Succeed())
+	g.Expect(created.Kind).To(Equal(types.ReleaseBundleKindComponent))
+	g.Expect(created.ReleaseContractSchema).To(Equal(types.ReleaseContractSchemaV2))
+
+	validateRecorder := httptest.NewRecorder()
+	validateRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/release-bundles/"+created.ID.String()+"/validate",
+		nil,
+	)
+	validateRequest.SetPathValue("releaseBundleId", created.ID.String())
+	validateRequest = validateRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, orgID, actorID))
+	validateReleaseBundleHandler().ServeHTTP(validateRecorder, validateRequest)
+	g.Expect(validateRecorder.Code).To(Equal(http.StatusOK))
+	var validation api.ReleaseBundleValidationResponse
+	g.Expect(json.Unmarshal(validateRecorder.Body.Bytes(), &validation)).To(Succeed())
+	g.Expect(validation.Valid).To(BeTrue())
+
+	publishRecorder := httptest.NewRecorder()
+	publishRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/release-bundles/"+created.ID.String()+"/publish",
+		nil,
+	)
+	publishRequest.SetPathValue("releaseBundleId", created.ID.String())
+	publishRequest = publishRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, orgID, actorID))
+	publishReleaseBundleHandlerWithFlags(flags).ServeHTTP(publishRecorder, publishRequest)
+	g.Expect(publishRecorder.Code).To(Equal(http.StatusOK))
+	var published api.ReleaseBundle
+	g.Expect(json.Unmarshal(publishRecorder.Body.Bytes(), &published)).To(Succeed())
+	g.Expect(published.Status).To(Equal(types.ReleaseBundleStatusPublished))
+	g.Expect(published.VariableSnapshotID).To(BeNil())
+
+	getRecorder := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/release-bundles/"+created.ID.String(), nil)
+	getRequest.SetPathValue("releaseBundleId", created.ID.String())
+	getRequest = getRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, orgID, actorID))
+	getReleaseBundleHandler().ServeHTTP(getRecorder, getRequest)
+	g.Expect(getRecorder.Code).To(Equal(http.StatusOK))
+
+	foreignRecorder := httptest.NewRecorder()
+	foreignRequest := httptest.NewRequest(http.MethodGet, "/api/v1/release-bundles/"+created.ID.String(), nil)
+	foreignRequest.SetPathValue("releaseBundleId", created.ID.String())
+	foreignRequest = foreignRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, otherOrgID, actorID))
+	getReleaseBundleHandler().ServeHTTP(foreignRecorder, foreignRequest)
+	g.Expect(foreignRecorder.Code).To(Equal(http.StatusNotFound))
 }
 
 func TestReleaseBundleHandlersReturnNotFoundForCrossOrganizationReferences(t *testing.T) {

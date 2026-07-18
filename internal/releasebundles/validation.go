@@ -57,7 +57,14 @@ func ValidateBundleContent(bundle types.ReleaseBundle) ValidationResult {
 		}
 	}
 	if bundle.ReleaseContract != nil {
-		result.Merge("", ValidateReleaseContract(*bundle.ReleaseContract, bundle.Components))
+		if bundle.ReleaseContract.ComponentV2 != nil {
+			for _, issue := range ValidateComponentReleaseContractV2(*bundle.ReleaseContract.ComponentV2) {
+				result.AddError("releaseContract."+issue.Field, issue.Rule, issue.Message)
+			}
+			validateComponentReleaseBundleMatch(&result, bundle, *bundle.ReleaseContract.ComponentV2)
+		} else {
+			result.Merge("", ValidateReleaseContractV1(*bundle.ReleaseContract, bundle.Components))
+		}
 	}
 
 	seenKeys := map[string]struct{}{}
@@ -75,6 +82,46 @@ func ValidateBundleContent(bundle types.ReleaseBundle) ValidationResult {
 	}
 	result.Valid = len(result.Errors) == 0
 	return result
+}
+
+func validateComponentReleaseBundleMatch(
+	result *ValidationResult,
+	bundle types.ReleaseBundle,
+	contract types.ComponentReleaseContractV2,
+) {
+	if bundle.Kind != "" && bundle.Kind != types.ReleaseBundleKindComponent {
+		result.AddError("kind", "matchesContract", "component release contract requires component bundle kind")
+	}
+	if bundle.ReleaseContractSchema != "" && bundle.ReleaseContractSchema != types.ReleaseContractSchemaV2 {
+		result.AddError(
+			"releaseContractSchema",
+			"matchesContract",
+			"component release contract requires distr.component-release/v2 metadata",
+		)
+	}
+	components := make(map[string]types.ReleaseBundleComponent, len(bundle.Components))
+	for _, component := range bundle.Components {
+		components[component.Key] = component
+	}
+	for _, artifact := range contract.Artifacts {
+		component, ok := components[artifact.Key]
+		field := "releaseContract.artifacts." + artifact.Key
+		if !ok {
+			result.AddError(field, "matchesBundle", "component release artifact must match a release bundle component")
+			continue
+		}
+		if component.Type != types.ReleaseBundleComponentTypeOCIImage &&
+			component.Type != types.ReleaseBundleComponentTypeOCIArtifact &&
+			component.Type != types.ReleaseBundleComponentTypeHelmChart {
+			result.AddError(field+".type", "matchesBundle", "component release artifact type must match the bundle")
+		}
+		if component.Version != contract.Version {
+			result.AddError(field+".version", "matchesBundle", "component release artifact version must match the contract")
+		}
+		if component.Digest != artifact.Digest {
+			result.AddError(field+".digest", "matchesBundle", "component release artifact digest must match the bundle")
+		}
+	}
 }
 
 func validateComponentContent(result *ValidationResult, key string, component types.ReleaseBundleComponent) {

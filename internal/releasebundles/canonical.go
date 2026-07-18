@@ -19,6 +19,8 @@ type canonicalBundle struct {
 	SourceRevision     string                   `json:"sourceRevision"`
 	SourceMetadata     *canonicalSourceMetadata `json:"sourceMetadata,omitempty"`
 	ReleaseContract    *types.ReleaseContract   `json:"releaseContract,omitempty"`
+	Kind               string                   `json:"kind,omitempty"`
+	ContractSchema     string                   `json:"releaseContractSchema,omitempty"`
 	Components         []canonicalComponent     `json:"components"`
 }
 
@@ -69,6 +71,10 @@ func Canonicalize(bundle types.ReleaseBundle) ([]byte, string, error) {
 	}
 	if bundle.VariableSnapshotID != nil {
 		canonical.VariableSnapshotID = bundle.VariableSnapshotID.String()
+	}
+	if bundle.Kind == types.ReleaseBundleKindComponent || bundle.Kind == types.ReleaseBundleKindProduct {
+		canonical.Kind = string(bundle.Kind)
+		canonical.ContractSchema = bundle.ReleaseContractSchema
 	}
 	sourceMetadata := canonicalSourceMetadata{
 		Repository: bundle.SourceRepository,

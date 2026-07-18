@@ -255,6 +255,48 @@ describe('ReleaseBundlesComponent', () => {
     expect(overlay.showModal).toHaveBeenCalled();
   });
 
+  it('opens component release v2 details without changing the legacy view model', () => {
+    const {component} = createComponent();
+    const componentRelease: ReleaseBundle = {
+      ...bundles[1],
+      id: 'component-release-1',
+      kind: 'component',
+      releaseContractSchema: 'distr.component-release/v2',
+      releaseContract: {
+        schema: 'distr.component-release/v2',
+        componentKey: 'payments.api',
+        version: '2.4.0',
+        source: {
+          repository: 'source/payments-api',
+          requestedRef: 'refs/tags/v2.4.0',
+          commit: '0123456789abcdef0123456789abcdef01234567',
+        },
+        build: {id: 'build-42', builder: 'generic-ci'},
+        artifacts: [
+          {
+            key: 'image',
+            type: 'oci-image',
+            mediaType: 'application/vnd.oci.image.index.v1+json',
+            digest: `sha256:${'a'.repeat(64)}`,
+            platforms: [{platform: 'linux/amd64', digest: `sha256:${'b'.repeat(64)}`}],
+          },
+        ],
+        provides: [{name: 'payments.api', version: '2.4.0'}],
+        requires: [],
+        migrations: [],
+        changes: {summary: 'Release payments API', commits: []},
+        evidence: {provenance: [], sbom: [], signatures: [], tests: []},
+      },
+    };
+
+    (component as any).showDetailDialog(componentRelease);
+
+    const selected = (component as any).selectedReleaseBundle() as ReleaseBundle;
+    expect(selected.kind).toBe('component');
+    expect(selected.releaseContract?.schema).toBe('distr.component-release/v2');
+    expect(overlay.showModal).toHaveBeenCalled();
+  });
+
   it('only offers published child release bundles and excludes the current bundle', () => {
     const {component} = createComponent();
 

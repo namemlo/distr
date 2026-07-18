@@ -71,10 +71,17 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 		})
 	}
 	if r.ReleaseContract != nil {
-		releasebundles.NormalizeReleaseContract(r.ReleaseContract)
-		result := releasebundles.ValidateReleaseContract(*r.ReleaseContract, typedComponents)
-		if !result.Valid {
-			return validation.NewValidationFailedError(result.Errors[0].Message)
+		r.ReleaseContract = releasebundles.NormalizedReleaseContract(r.ReleaseContract)
+		if r.ReleaseContract.ComponentV2 != nil {
+			issues := releasebundles.ValidateComponentReleaseContractV2(*r.ReleaseContract.ComponentV2)
+			if len(issues) > 0 {
+				return validation.NewValidationFailedError(issues[0].Message)
+			}
+		} else {
+			result := releasebundles.ValidateReleaseContractV1(*r.ReleaseContract, typedComponents)
+			if !result.Valid {
+				return validation.NewValidationFailedError(result.Errors[0].Message)
+			}
 		}
 	}
 	return nil
@@ -243,6 +250,8 @@ type ReleaseBundle struct {
 	SourceRevision           string                       `json:"sourceRevision"`
 	SourceMetadata           *ReleaseBundleSourceMetadata `json:"sourceMetadata,omitempty"`
 	ReleaseContract          *types.ReleaseContract       `json:"releaseContract,omitempty"`
+	Kind                     types.ReleaseBundleKind      `json:"kind"`
+	ReleaseContractSchema    string                       `json:"releaseContractSchema"`
 	Status                   types.ReleaseBundleStatus    `json:"status"`
 	PublishedByUserAccountID *uuid.UUID                   `json:"publishedByUserAccountId,omitempty"`
 	PublishedAt              *time.Time                   `json:"publishedAt,omitempty"`

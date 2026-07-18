@@ -19,7 +19,7 @@ func TestValidateReleaseContractRejectsDigestMismatchAndUnsafeConfigPath(t *test
 		PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
 	}}
 
-	result := ValidateReleaseContract(contract, bundleComponents)
+	result := ValidateReleaseContractV1(contract, bundleComponents)
 
 	g.Expect(result.Valid).To(BeFalse())
 	g.Expect(issueKeys(result.Errors)).To(ContainElement("releaseContract.components.loyalty-api.image:matchesBundle"))
@@ -56,7 +56,7 @@ func TestValidateReleaseContractAcceptsAMD64AndARM64Components(t *testing.T) {
 		},
 	}
 
-	result := ValidateReleaseContract(contract, bundleComponents)
+	result := ValidateReleaseContractV1(contract, bundleComponents)
 
 	g.Expect(result.Valid).To(BeTrue())
 }
@@ -76,7 +76,7 @@ func TestValidateReleaseContractAcceptsContentAddressedImmutableConfig(t *testin
 		PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
 	}}
 
-	result := ValidateReleaseContract(contract, bundleComponents)
+	result := ValidateReleaseContractV1(contract, bundleComponents)
 
 	g.Expect(result.Valid).To(BeTrue())
 }
@@ -95,7 +95,7 @@ func TestValidateReleaseContractRejectsContentAddressChecksumMismatch(t *testing
 		PackageRef: "registry.example/loyalty-api", Digest: digest, Version: "1.2.3",
 	}}
 
-	result := ValidateReleaseContract(contract, bundleComponents)
+	result := ValidateReleaseContractV1(contract, bundleComponents)
 
 	g.Expect(result.Valid).To(BeFalse())
 	g.Expect(issueKeys(result.Errors)).To(ContainElement(

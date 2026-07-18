@@ -1107,3 +1107,28 @@ Use one entry per pull request:
 - Compatibility notes: Original v1 release and plan IDs, exact canonical bytes, checksums, reads, and execution are
   never changed. Ambiguous, unverifiable, or unrepresentable sources remain blocked; retries create/reuse
   canonical snapshots and append lineage idempotently in a single transaction.
+
+### PR-060 - Component Release Contract v2
+
+- Status: Implemented on the prepared speculative branch; fast pure/unit/compile verification completed and
+  integration gates deferred until PR-059 integration.
+- Upstream base: `2ca41ab8` (PR-056 checkpoint).
+- Feature flag: `operator_control_plane_v2` gates new component-release create, update, and publish writes.
+  Historical reads and v1 writes retain existing behavior.
+- User-facing behavior: CI can publish one target-neutral component/version with immutable manifest and
+  per-platform digests, source intent and resolved commit, capabilities, migrations, changes, and evidence.
+- Database changes: Migration 143 adds release kind/schema metadata and normalized artifact, evidence, capability,
+  and migration facts without rewriting historical payloads or checksums.
+- API changes: Existing `/api/v1/release-bundles` accepts discriminated v1/v2 contracts and returns additive
+  `kind` and `releaseContractSchema` fields.
+- UI changes: Release Bundle detail retains v1 content and adds v2 artifact/platform, capability, migration, and
+  evidence summaries.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0058 and PR-060 fork notes.
+- Tests: Added strict parser, target-neutral validation, deterministic canonicalization, API/gate, migration, and
+  deferred PostgreSQL publication/idempotency/conflict coverage.
+- Upstream contribution notes: Community-neutral release identity; no adopter, CI provider, registry, target,
+  credential, or infrastructure-specific core behavior.
+- Compatibility notes: Embedded v1 remains `distr.release-contract/v1`; additive row metadata classifies it as
+  `legacy`/`distr.release/v1`. Component publish skips target Variable Snapshots and exact publish retry is
+  idempotent.

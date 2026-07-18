@@ -33,7 +33,7 @@ export interface ReleaseBundleSourceMetadata {
   ciRunUrl: string;
 }
 
-export interface ReleaseContract {
+export interface ReleaseContractV1 {
   schema: 'distr.release-contract/v1';
   source: {
     repository: string;
@@ -65,6 +65,52 @@ export interface ReleaseContract {
   changes: {summary: string; commits: string[]};
 }
 
+export interface ComponentReleaseContractV2 {
+  schema: 'distr.component-release/v2';
+  componentKey: string;
+  version: string;
+  source: {
+    repository: string;
+    requestedRef: string;
+    commit: string;
+  };
+  build: {id: string; builder: string};
+  artifacts: Array<{
+    key: string;
+    type: 'oci-image' | 'oci-artifact' | 'helm-chart';
+    mediaType: string;
+    digest: string;
+    platforms: Array<{
+      platform: 'linux/amd64' | 'linux/arm64';
+      digest: string;
+    }>;
+  }>;
+  provides: Array<{name: string; version: string}>;
+  requires: Array<{
+    name: string;
+    range: string;
+    resolutionStage: 'product' | 'target';
+    allowedModes: Array<'included' | 'pinned-existing' | 'shared-provider' | 'approved-external' | 'feature-disabled'>;
+  }>;
+  migrations: Array<{
+    key: string;
+    type: 'database' | 'data' | 'runtime';
+    order: number;
+    compatibility: 'backward-compatible' | 'forward-compatible' | 'breaking';
+    failurePolicy: 'stop' | 'retry' | 'forward-fix';
+    description: string;
+  }>;
+  changes: {summary: string; commits: string[]};
+  evidence: {
+    provenance: string[];
+    sbom: string[];
+    signatures: string[];
+    tests: string[];
+  };
+}
+
+export type ReleaseContract = ReleaseContractV1 | ComponentReleaseContractV2;
+
 export interface ReleaseBundle {
   id: string;
   createdAt: string;
@@ -78,6 +124,8 @@ export interface ReleaseBundle {
   sourceRevision: string;
   sourceMetadata?: ReleaseBundleSourceMetadata;
   releaseContract?: ReleaseContract;
+  kind?: 'legacy' | 'component' | 'product';
+  releaseContractSchema?: 'distr.release/v1' | 'distr.component-release/v2' | 'distr.product-release/v1';
   status: ReleaseBundleStatus;
   publishedByUserAccountId?: string;
   publishedAt?: string;

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -234,6 +235,62 @@ func TestCreateUpdateReleaseBundleRequestValidateReleaseContract(t *testing.T) {
 
 	request.ReleaseContract.Components[0].Image = "registry.example/loyalty-api:latest"
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("immutable image digest")))
+}
+
+func TestCreateUpdateReleaseBundleRequestAcceptsStrictComponentReleaseV2(t *testing.T) {
+	g := NewWithT(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	platformDigest := "sha256:" + strings.Repeat("b", 64)
+	raw := `{
+		"applicationId":"` + uuid.NewString() + `",
+		"channelId":"` + uuid.NewString() + `",
+		"releaseNumber":"2.4.0",
+		"releaseNotes":"target-neutral component build",
+		"sourceRevision":"0123456789abcdef0123456789abcdef01234567",
+		"releaseContract":{
+			"schema":"distr.component-release/v2",
+			"componentKey":"payments.api",
+			"version":"2.4.0",
+			"source":{
+				"repository":"source/payments-api",
+				"requestedRef":"refs/tags/v2.4.0",
+				"commit":"0123456789abcdef0123456789abcdef01234567"
+			},
+			"build":{"id":"build-42","builder":"generic-ci"},
+			"artifacts":[{
+				"key":"image",
+				"type":"oci-image",
+				"mediaType":"application/vnd.oci.image.index.v1+json",
+				"digest":"` + digest + `",
+				"platforms":[{"platform":"linux/amd64","digest":"` + platformDigest + `"}]
+			}],
+			"provides":[{"name":"payments.api","version":"2.4.0"}],
+			"requires":[],
+			"migrations":[],
+			"changes":{"summary":"release","commits":["0123456789abcdef0123456789abcdef01234567"]},
+			"evidence":{"provenance":[],"sbom":[],"signatures":[],"tests":[]}
+		},
+		"components":[{
+			"key":"image",
+			"name":"Payments API",
+			"type":"oci_image",
+			"version":"2.4.0",
+			"packageRef":"registry.example/payments-api",
+			"digest":"` + digest + `",
+			"checksum":""
+		}]
+	}`
+	var request CreateUpdateReleaseBundleRequest
+
+	g.Expect(json.Unmarshal([]byte(raw), &request)).To(Succeed())
+	g.Expect(request.Validate()).To(Succeed())
+
+	g.Expect(request.ReleaseContract).NotTo(BeNil())
+	g.Expect(request.ReleaseContract.ComponentV2).NotTo(BeNil())
+	g.Expect(request.ReleaseContract.ComponentV2.Source.RequestedRef).To(Equal("refs/tags/v2.4.0"))
+	g.Expect(request.ReleaseContract.ComponentV2.Source.Commit).To(Equal(
+		"0123456789abcdef0123456789abcdef01234567",
+	))
 }
 
 func TestCreateUpdateReleaseBundleRequestValidateRejectsInvalidPayloads(t *testing.T) {

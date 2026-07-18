@@ -232,6 +232,23 @@ func TestReleaseBundleProcessSnapshotFeatureFlagMiddlewareRejectsDisabledAPI(t *
 	g.Expect(called).To(BeFalse())
 }
 
+func TestComponentReleaseWritesRequireOperatorControlPlaneV2(t *testing.T) {
+	g := NewWithT(t)
+	legacy := &types.ReleaseContract{Schema: types.ReleaseContractSchemaV1}
+	component := &types.ReleaseContract{
+		Schema: types.ReleaseContractSchemaV2,
+		ComponentV2: &types.ComponentReleaseContractV2{
+			Schema: types.ReleaseContractSchemaV2,
+		},
+	}
+
+	g.Expect(componentReleaseWriteEnabled(legacy, nil)).To(BeTrue())
+	g.Expect(componentReleaseWriteEnabled(component, nil)).To(BeFalse())
+	g.Expect(componentReleaseWriteEnabled(component, []featureflags.Key{
+		featureflags.KeyOperatorControlPlaneV2,
+	})).To(BeTrue())
+}
+
 type releaseBundleTestAuth struct {
 	orgID uuid.UUID
 	role  types.UserRole

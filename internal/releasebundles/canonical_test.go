@@ -231,3 +231,38 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 
 	g.Expect(secondChecksum).To(Equal(firstChecksum))
 }
+
+func TestCanonicalizeComponentReleaseIncludesDiscriminatorAndStableContract(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	bundle := types.ReleaseBundle{
+		ApplicationID:         uuid.New(),
+		ChannelID:             uuid.New(),
+		ReleaseNumber:         contract.Version,
+		Kind:                  types.ReleaseBundleKindComponent,
+		ReleaseContractSchema: types.ReleaseContractSchemaV2,
+		ReleaseContract: &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &contract,
+		},
+		Components: []types.ReleaseBundleComponent{{
+			Key:        "image",
+			Type:       types.ReleaseBundleComponentTypeOCIImage,
+			Version:    contract.Version,
+			PackageRef: "registry.example/payments-api",
+			Digest:     contract.Artifacts[0].Digest,
+		}},
+	}
+
+	firstPayload, firstChecksum, err := Canonicalize(bundle)
+	g.Expect(err).NotTo(HaveOccurred())
+	slices.Reverse(bundle.ReleaseContract.ComponentV2.Provides)
+	slices.Reverse(bundle.ReleaseContract.ComponentV2.Requires[0].AllowedModes)
+	secondPayload, secondChecksum, err := Canonicalize(bundle)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(secondPayload).To(Equal(firstPayload))
+	g.Expect(secondChecksum).To(Equal(firstChecksum))
+	g.Expect(string(firstPayload)).To(ContainSubstring(`"kind":"component"`))
+	g.Expect(string(firstPayload)).To(ContainSubstring(`"releaseContractSchema":"distr.component-release/v2"`))
+}

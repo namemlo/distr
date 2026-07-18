@@ -21,16 +21,18 @@ func TestReleaseBundleToAPI(t *testing.T) {
 	versionID := uuid.New()
 
 	response := ReleaseBundleToAPI(types.ReleaseBundle{
-		ID:                 bundleID,
-		ApplicationID:      applicationID,
-		ChannelID:          channelID,
-		ProcessSnapshotID:  &processSnapshotID,
-		VariableSnapshotID: &variableSnapshotID,
-		ReleaseNumber:      "2026.06.20",
-		ReleaseNotes:       "Initial release",
-		SourceRevision:     "abc123",
-		Status:             types.ReleaseBundleStatusDraft,
-		CanonicalChecksum:  "sha256:abc",
+		ID:                    bundleID,
+		ApplicationID:         applicationID,
+		ChannelID:             channelID,
+		ProcessSnapshotID:     &processSnapshotID,
+		VariableSnapshotID:    &variableSnapshotID,
+		ReleaseNumber:         "2026.06.20",
+		ReleaseNotes:          "Initial release",
+		SourceRevision:        "abc123",
+		Kind:                  types.ReleaseBundleKindLegacy,
+		ReleaseContractSchema: types.ReleaseContractStorageSchemaV1,
+		Status:                types.ReleaseBundleStatusDraft,
+		CanonicalChecksum:     "sha256:abc",
 		Components: []types.ReleaseBundleComponent{
 			{
 				ID:                   componentID,
@@ -45,16 +47,18 @@ func TestReleaseBundleToAPI(t *testing.T) {
 	})
 
 	g.Expect(response).To(Equal(api.ReleaseBundle{
-		ID:                 bundleID,
-		ApplicationID:      applicationID,
-		ChannelID:          channelID,
-		ProcessSnapshotID:  &processSnapshotID,
-		VariableSnapshotID: &variableSnapshotID,
-		ReleaseNumber:      "2026.06.20",
-		ReleaseNotes:       "Initial release",
-		SourceRevision:     "abc123",
-		Status:             types.ReleaseBundleStatusDraft,
-		CanonicalChecksum:  "sha256:abc",
+		ID:                    bundleID,
+		ApplicationID:         applicationID,
+		ChannelID:             channelID,
+		ProcessSnapshotID:     &processSnapshotID,
+		VariableSnapshotID:    &variableSnapshotID,
+		ReleaseNumber:         "2026.06.20",
+		ReleaseNotes:          "Initial release",
+		SourceRevision:        "abc123",
+		Kind:                  types.ReleaseBundleKindLegacy,
+		ReleaseContractSchema: types.ReleaseContractStorageSchemaV1,
+		Status:                types.ReleaseBundleStatusDraft,
+		CanonicalChecksum:     "sha256:abc",
 		Components: []api.ReleaseBundleComponent{
 			{
 				ID:                   componentID,

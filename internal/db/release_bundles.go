@@ -40,6 +40,8 @@ const (
 	rb.ci_run_id,
 	rb.ci_run_url,
 	rb.release_contract,
+	rb.kind,
+	rb.release_contract_schema,
 	rb.status,
 	rb.published_by_user_account_id,
 	rb.published_at,
@@ -95,6 +97,9 @@ func CreateReleaseBundleWithIdempotency(ctx context.Context, bundle *types.Relea
 		if err := ensureReleaseBundleReferences(ctx, bundle); err != nil {
 			return err
 		}
+		if err := setReleaseBundleContractMetadata(bundle); err != nil {
+			return err
+		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
 			return err
 		}
@@ -141,6 +146,9 @@ func createReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 	if err := ensureReleaseBundleReferences(ctx, bundle); err != nil {
 		return err
 	}
+	if err := setReleaseBundleContractMetadata(bundle); err != nil {
+		return err
+	}
 	if err := setReleaseBundleCanonicalFields(bundle); err != nil {
 		return err
 	}
@@ -165,6 +173,8 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			ci_run_id,
 			ci_run_url,
 			release_contract,
+			kind,
+			release_contract_schema,
 			status,
 			canonical_checksum,
 			canonical_payload
@@ -183,28 +193,32 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			@ciRunId,
 			@ciRunUrl,
 			@releaseContract,
+			@kind,
+			@releaseContractSchema,
 			@status,
 			@canonicalChecksum,
 			@canonicalPayload
 		) RETURNING `+releaseBundleOutputExpr,
 		pgx.NamedArgs{
-			"organizationId":    bundle.OrganizationID,
-			"applicationId":     bundle.ApplicationID,
-			"channelId":         bundle.ChannelID,
-			"processSnapshotId": bundle.ProcessSnapshotID,
-			"releaseNumber":     bundle.ReleaseNumber,
-			"releaseNotes":      bundle.ReleaseNotes,
-			"sourceRevision":    bundle.SourceRevision,
-			"sourceRepository":  bundle.SourceRepository,
-			"sourceBranch":      bundle.SourceBranch,
-			"sourceTag":         bundle.SourceTag,
-			"ciProvider":        bundle.CIProvider,
-			"ciRunId":           bundle.CIRunID,
-			"ciRunUrl":          bundle.CIRunURL,
-			"releaseContract":   bundle.ReleaseContract,
-			"status":            bundle.Status,
-			"canonicalChecksum": bundle.CanonicalChecksum,
-			"canonicalPayload":  bundle.CanonicalPayload,
+			"organizationId":        bundle.OrganizationID,
+			"applicationId":         bundle.ApplicationID,
+			"channelId":             bundle.ChannelID,
+			"processSnapshotId":     bundle.ProcessSnapshotID,
+			"releaseNumber":         bundle.ReleaseNumber,
+			"releaseNotes":          bundle.ReleaseNotes,
+			"sourceRevision":        bundle.SourceRevision,
+			"sourceRepository":      bundle.SourceRepository,
+			"sourceBranch":          bundle.SourceBranch,
+			"sourceTag":             bundle.SourceTag,
+			"ciProvider":            bundle.CIProvider,
+			"ciRunId":               bundle.CIRunID,
+			"ciRunUrl":              bundle.CIRunURL,
+			"releaseContract":       bundle.ReleaseContract,
+			"kind":                  bundle.Kind,
+			"releaseContractSchema": bundle.ReleaseContractSchema,
+			"status":                bundle.Status,
+			"canonicalChecksum":     bundle.CanonicalChecksum,
+			"canonicalPayload":      bundle.CanonicalPayload,
 		},
 	)
 	if err != nil {
@@ -215,6 +229,9 @@ func insertReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 		return mapReleaseBundleWriteError("scan created", err)
 	}
 	if err := insertReleaseBundleComponents(ctx, created.ID, bundle.Components); err != nil {
+		return err
+	}
+	if err := replaceComponentReleaseFacts(ctx, created.ID, bundle.OrganizationID, bundle.ReleaseContract); err != nil {
 		return err
 	}
 	loaded, err := getReleaseBundle(ctx, created.ID, bundle.OrganizationID, false)
@@ -408,6 +425,9 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 		if err := ensureReleaseBundleReferences(ctx, bundle); err != nil {
 			return err
 		}
+		if err := setReleaseBundleContractMetadata(bundle); err != nil {
+			return err
+		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
 			return err
 		}
@@ -428,29 +448,33 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 				ci_run_id = @ciRunId,
 				ci_run_url = @ciRunUrl,
 				release_contract = @releaseContract,
+				kind = @kind,
+				release_contract_schema = @releaseContractSchema,
 				canonical_checksum = @canonicalChecksum,
 				canonical_payload = @canonicalPayload,
 				updated_at = now()
 			WHERE rb.id = @id AND rb.organization_id = @organizationId
 			RETURNING `+releaseBundleOutputExpr,
 			pgx.NamedArgs{
-				"id":                bundle.ID,
-				"organizationId":    bundle.OrganizationID,
-				"applicationId":     bundle.ApplicationID,
-				"channelId":         bundle.ChannelID,
-				"processSnapshotId": bundle.ProcessSnapshotID,
-				"releaseNumber":     bundle.ReleaseNumber,
-				"releaseNotes":      bundle.ReleaseNotes,
-				"sourceRevision":    bundle.SourceRevision,
-				"sourceRepository":  bundle.SourceRepository,
-				"sourceBranch":      bundle.SourceBranch,
-				"sourceTag":         bundle.SourceTag,
-				"ciProvider":        bundle.CIProvider,
-				"ciRunId":           bundle.CIRunID,
-				"ciRunUrl":          bundle.CIRunURL,
-				"releaseContract":   bundle.ReleaseContract,
-				"canonicalChecksum": bundle.CanonicalChecksum,
-				"canonicalPayload":  bundle.CanonicalPayload,
+				"id":                    bundle.ID,
+				"organizationId":        bundle.OrganizationID,
+				"applicationId":         bundle.ApplicationID,
+				"channelId":             bundle.ChannelID,
+				"processSnapshotId":     bundle.ProcessSnapshotID,
+				"releaseNumber":         bundle.ReleaseNumber,
+				"releaseNotes":          bundle.ReleaseNotes,
+				"sourceRevision":        bundle.SourceRevision,
+				"sourceRepository":      bundle.SourceRepository,
+				"sourceBranch":          bundle.SourceBranch,
+				"sourceTag":             bundle.SourceTag,
+				"ciProvider":            bundle.CIProvider,
+				"ciRunId":               bundle.CIRunID,
+				"ciRunUrl":              bundle.CIRunURL,
+				"releaseContract":       bundle.ReleaseContract,
+				"kind":                  bundle.Kind,
+				"releaseContractSchema": bundle.ReleaseContractSchema,
+				"canonicalChecksum":     bundle.CanonicalChecksum,
+				"canonicalPayload":      bundle.CanonicalPayload,
 			},
 		)
 		if err != nil {
@@ -470,6 +494,9 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			return fmt.Errorf("could not replace ReleaseBundle components: %w", err)
 		}
 		if err := insertReleaseBundleComponents(ctx, bundle.ID, bundle.Components); err != nil {
+			return err
+		}
+		if err := replaceComponentReleaseFacts(ctx, bundle.ID, bundle.OrganizationID, bundle.ReleaseContract); err != nil {
 			return err
 		}
 		loaded, err := getReleaseBundle(ctx, updated.ID, bundle.OrganizationID, false)
@@ -534,6 +561,11 @@ func PublishReleaseBundle(
 			return err
 		}
 		toStatus := types.ReleaseBundleStatusPublished
+		if bundle.Status == types.ReleaseBundleStatusPublished &&
+			bundle.Kind == types.ReleaseBundleKindComponent {
+			published = bundle
+			return nil
+		}
 		if bundle.Status != types.ReleaseBundleStatusDraft {
 			reason := releaseBundleTransitionRejectedReason(bundle.Status, toStatus)
 			if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
@@ -566,11 +598,31 @@ func PublishReleaseBundle(
 			return nil
 		}
 
-		snapshot, err := createVariableSnapshotForReleaseBundle(ctx, *bundle)
-		if err != nil {
-			return err
+		if bundle.Kind == types.ReleaseBundleKindComponent {
+			conflict, err := componentReleaseIdentityConflict(ctx, *bundle)
+			if err != nil {
+				return err
+			}
+			if conflict {
+				if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+					*bundle,
+					actorUserAccountID,
+					types.ReleaseBundleAuditEventTypeStateTransitionRejected,
+					&toStatus,
+					"component version and platform digest conflict",
+				)); err != nil {
+					return err
+				}
+				operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrConflict)
+				return nil
+			}
+		} else {
+			snapshot, err := createVariableSnapshotForReleaseBundle(ctx, *bundle)
+			if err != nil {
+				return err
+			}
+			bundle.VariableSnapshotID = &snapshot.ID
 		}
-		bundle.VariableSnapshotID = &snapshot.ID
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
 			return err
 		}
@@ -595,6 +647,77 @@ func PublishReleaseBundle(
 		return published, result, err
 	}
 	return published, result, operationErr
+}
+
+func componentReleaseIdentityConflict(ctx context.Context, bundle types.ReleaseBundle) (bool, error) {
+	if bundle.ReleaseContract == nil || bundle.ReleaseContract.ComponentV2 == nil {
+		return false, nil
+	}
+	component := bundle.ReleaseContract.ComponentV2
+	db := internalctx.GetDb(ctx)
+	identities := make([]string, 0)
+	for _, artifact := range component.Artifacts {
+		for _, platform := range artifact.Platforms {
+			identities = append(identities, strings.Join([]string{
+				bundle.OrganizationID.String(),
+				component.ComponentKey,
+				component.Version,
+				platform.Platform,
+			}, "\x00"))
+		}
+	}
+	if len(identities) > 0 {
+		if _, err := db.Exec(ctx, `
+			SELECT pg_advisory_xact_lock(hashtextextended(value, 0))
+			FROM unnest(@identities::text[]) AS locked_identity(value)
+			ORDER BY value`,
+			pgx.NamedArgs{"identities": identities},
+		); err != nil {
+			return false, fmt.Errorf("could not lock Component Release identity: %w", err)
+		}
+	}
+	rows, err := db.Query(ctx, `
+		SELECT artifact.platform, artifact.platform_digest
+		FROM ComponentReleaseArtifact artifact
+		JOIN ReleaseBundle existing_bundle
+		  ON existing_bundle.id = artifact.release_bundle_id
+		 AND existing_bundle.organization_id = artifact.organization_id
+		WHERE artifact.organization_id = @organizationId
+		  AND artifact.component_key = @componentKey
+		  AND artifact.component_version = @componentVersion
+		  AND artifact.release_bundle_id <> @releaseBundleId
+		  AND existing_bundle.status = @publishedStatus`,
+		pgx.NamedArgs{
+			"organizationId":   bundle.OrganizationID,
+			"componentKey":     component.ComponentKey,
+			"componentVersion": component.Version,
+			"releaseBundleId":  bundle.ID,
+			"publishedStatus":  types.ReleaseBundleStatusPublished,
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf("could not query Component Release identity: %w", err)
+	}
+	defer rows.Close()
+	existing := map[string]string{}
+	for rows.Next() {
+		var platform, digest string
+		if err := rows.Scan(&platform, &digest); err != nil {
+			return false, fmt.Errorf("could not scan Component Release identity: %w", err)
+		}
+		existing[platform] = digest
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("could not collect Component Release identity: %w", err)
+	}
+	for _, artifact := range component.Artifacts {
+		for _, platform := range artifact.Platforms {
+			if digest, ok := existing[platform.Platform]; ok && digest != platform.Digest {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func publishReleaseBundleStatus(
@@ -1112,14 +1235,174 @@ func insertReleaseBundleComponents(
 	return nil
 }
 
+func setReleaseBundleContractMetadata(bundle *types.ReleaseBundle) error {
+	if bundle.ReleaseContract != nil && bundle.ReleaseContract.ComponentV2 != nil {
+		bundle.Kind = types.ReleaseBundleKindComponent
+		bundle.ReleaseContractSchema = types.ReleaseContractSchemaV2
+		return nil
+	}
+	if bundle.Kind == "" {
+		bundle.Kind = types.ReleaseBundleKindLegacy
+	}
+	if bundle.ReleaseContractSchema == "" {
+		bundle.ReleaseContractSchema = types.ReleaseContractStorageSchemaV1
+	}
+	if bundle.Kind != types.ReleaseBundleKindLegacy ||
+		bundle.ReleaseContractSchema != types.ReleaseContractStorageSchemaV1 {
+		return apierrors.NewBadRequest("release bundle kind and release contract schema do not match")
+	}
+	return nil
+}
+
 func setReleaseBundleCanonicalFields(bundle *types.ReleaseBundle) error {
-	releasebundles.NormalizeReleaseContract(bundle.ReleaseContract)
+	bundle.ReleaseContract = releasebundles.NormalizedReleaseContract(bundle.ReleaseContract)
 	payload, checksum, err := releasebundles.Canonicalize(*bundle)
 	if err != nil {
 		return fmt.Errorf("could not canonicalize ReleaseBundle: %w", err)
 	}
 	bundle.CanonicalPayload = payload
 	bundle.CanonicalChecksum = checksum
+	return nil
+}
+
+type componentReleaseArtifactFact struct {
+	artifact types.ComponentReleaseArtifact
+	platform types.ComponentReleasePlatform
+}
+
+type componentReleaseEvidenceFact struct {
+	kind      string
+	reference string
+}
+
+func replaceComponentReleaseFacts(
+	ctx context.Context,
+	releaseBundleID uuid.UUID,
+	organizationID uuid.UUID,
+	contract *types.ReleaseContract,
+) error {
+	db := internalctx.GetDb(ctx)
+	if _, err := db.Exec(ctx, `
+		WITH deleted_migrations AS (
+			DELETE FROM ComponentReleaseMigrationDeclaration
+			WHERE release_bundle_id = @releaseBundleId
+		),
+		deleted_capabilities AS (
+			DELETE FROM ComponentReleaseCapability
+			WHERE release_bundle_id = @releaseBundleId
+		),
+		deleted_evidence AS (
+			DELETE FROM ComponentReleaseEvidence
+			WHERE release_bundle_id = @releaseBundleId
+		)
+		DELETE FROM ComponentReleaseArtifact
+		WHERE release_bundle_id = @releaseBundleId`,
+		pgx.NamedArgs{"releaseBundleId": releaseBundleID},
+	); err != nil {
+		return fmt.Errorf("could not replace Component Release facts: %w", err)
+	}
+	if contract == nil || contract.ComponentV2 == nil {
+		return nil
+	}
+	component := contract.ComponentV2
+	artifacts := make([]componentReleaseArtifactFact, 0)
+	for _, artifact := range component.Artifacts {
+		for _, platform := range artifact.Platforms {
+			artifacts = append(artifacts, componentReleaseArtifactFact{artifact: artifact, platform: platform})
+		}
+	}
+	if len(artifacts) > 0 {
+		if _, err := db.CopyFrom(
+			ctx,
+			pgx.Identifier{"componentreleaseartifact"},
+			[]string{
+				"id", "release_bundle_id", "organization_id", "component_key", "component_version",
+				"artifact_key", "artifact_type", "media_type", "manifest_digest", "platform", "platform_digest",
+			},
+			pgx.CopyFromSlice(len(artifacts), func(i int) ([]any, error) {
+				fact := artifacts[i]
+				return []any{
+					uuid.New(), releaseBundleID, organizationID, component.ComponentKey, component.Version,
+					fact.artifact.Key, fact.artifact.Type, fact.artifact.MediaType, fact.artifact.Digest,
+					fact.platform.Platform, fact.platform.Digest,
+				}, nil
+			}),
+		); err != nil {
+			return fmt.Errorf("could not insert Component Release artifacts: %w", err)
+		}
+	}
+	evidence := make([]componentReleaseEvidenceFact, 0)
+	for _, reference := range component.Evidence.Provenance {
+		evidence = append(evidence, componentReleaseEvidenceFact{kind: "provenance", reference: reference})
+	}
+	for _, reference := range component.Evidence.SBOM {
+		evidence = append(evidence, componentReleaseEvidenceFact{kind: "sbom", reference: reference})
+	}
+	for _, reference := range component.Evidence.Signatures {
+		evidence = append(evidence, componentReleaseEvidenceFact{kind: "signature", reference: reference})
+	}
+	for _, reference := range component.Evidence.Tests {
+		evidence = append(evidence, componentReleaseEvidenceFact{kind: "test", reference: reference})
+	}
+	if len(evidence) > 0 {
+		if _, err := db.CopyFrom(
+			ctx,
+			pgx.Identifier{"componentreleaseevidence"},
+			[]string{"id", "release_bundle_id", "organization_id", "evidence_type", "reference"},
+			pgx.CopyFromSlice(len(evidence), func(i int) ([]any, error) {
+				fact := evidence[i]
+				return []any{uuid.New(), releaseBundleID, organizationID, fact.kind, fact.reference}, nil
+			}),
+		); err != nil {
+			return fmt.Errorf("could not insert Component Release evidence: %w", err)
+		}
+	}
+	capabilityCount := len(component.Provides) + len(component.Requires)
+	if capabilityCount > 0 {
+		if _, err := db.CopyFrom(
+			ctx,
+			pgx.Identifier{"componentreleasecapability"},
+			[]string{
+				"id", "release_bundle_id", "organization_id", "direction", "name", "version_or_range",
+				"resolution_stage", "allowed_modes",
+			},
+			pgx.CopyFromSlice(capabilityCount, func(i int) ([]any, error) {
+				if i < len(component.Provides) {
+					capability := component.Provides[i]
+					return []any{
+						uuid.New(), releaseBundleID, organizationID, "provides", capability.Name,
+						capability.Version, "", []string{},
+					}, nil
+				}
+				capability := component.Requires[i-len(component.Provides)]
+				return []any{
+					uuid.New(), releaseBundleID, organizationID, "requires", capability.Name,
+					capability.Range, capability.ResolutionStage, capability.AllowedModes,
+				}, nil
+			}),
+		); err != nil {
+			return fmt.Errorf("could not insert Component Release capabilities: %w", err)
+		}
+	}
+	if len(component.Migrations) > 0 {
+		if _, err := db.CopyFrom(
+			ctx,
+			pgx.Identifier{"componentreleasemigrationdeclaration"},
+			[]string{
+				"id", "release_bundle_id", "organization_id", "key", "migration_type", "sort_order",
+				"compatibility", "failure_policy", "description",
+			},
+			pgx.CopyFromSlice(len(component.Migrations), func(i int) ([]any, error) {
+				migration := component.Migrations[i]
+				return []any{
+					uuid.New(), releaseBundleID, organizationID, migration.Key, migration.Type, migration.Order,
+					migration.Compatibility, migration.FailurePolicy, migration.Description,
+				}, nil
+			}),
+		); err != nil {
+			return fmt.Errorf("could not insert Component Release migrations: %w", err)
+		}
+	}
 	return nil
 }
 
