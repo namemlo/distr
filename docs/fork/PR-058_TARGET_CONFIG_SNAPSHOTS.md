@@ -17,27 +17,27 @@ that later source or provider changes cannot alter an approved deployment input.
 
 ## Identity and Security Contract
 
-| Concern | Contract |
-| --- | --- |
-| Placement | One organization, deployment unit, target-environment assignment, and environment |
-| Source | Credential-free repository identity, full immutable commit, adapter, and adapter version |
-| Objects | S3 version ID or ADR-0054 content-addressed path; reference, media type, size, checksum only |
-| Components | Physical name maps to one component instance in the same organization and unit |
-| Component race | Creation locks instances and requires the current physical name; later renames preserve copied evidence |
-| Secrets | Provider, opaque reference, and non-reversible version fingerprint only |
+| Concern        | Contract                                                                                                          |
+| -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Placement      | One organization, deployment unit, target-environment assignment, and environment                                 |
+| Source         | Credential-free repository identity, full immutable commit, adapter, and adapter version                          |
+| Objects        | S3 version ID or ADR-0054 content-addressed path; reference, media type, size, checksum only                      |
+| Components     | Physical name maps to one component instance in the same organization and unit                                    |
+| Component race | Creation locks instances and requires the current physical name; later renames preserve copied evidence           |
+| Secrets        | Provider, opaque reference, and non-reversible version fingerprint only                                           |
 | Canonical form | Explicit `distr.target-config/v1`; stable-key sorting; nil/null/empty sets normalize to `[]`; duplicates rejected |
-| Verification | Dedicated target-config S3 client; injected, streamed, 16 MiB maximum, bounded facts, no bytes or provider dumps |
-| Mutability | No update/delete repository or route; database triggers reject mutation |
-| Downgrade | Migration 141 down refuses while any snapshot evidence exists |
+| Verification   | Dedicated target-config S3 client; injected, streamed, 16 MiB maximum, bounded facts, no bytes or provider dumps  |
+| Mutability     | No update/delete repository or route; database triggers reject mutation                                           |
+| Downgrade      | Migration 141 down refuses while any snapshot evidence exists                                                     |
 
 ## API
 
-| Method | Route | Behavior |
-| --- | --- | --- |
-| `POST` | `/api/v1/target-config-snapshots` | Create one immutable snapshot |
-| `GET` | `/api/v1/target-config-snapshots` | List with optional placement filters and keyset cursor |
-| `GET` | `/api/v1/target-config-snapshots/{snapshotId}` | Get one tenant-scoped snapshot |
-| `POST` | `/api/v1/target-config-snapshots/{snapshotId}/verify` | Observe pinned object integrity |
+| Method | Route                                                 | Behavior                                               |
+| ------ | ----------------------------------------------------- | ------------------------------------------------------ |
+| `POST` | `/api/v1/target-config-snapshots`                     | Create one immutable snapshot                          |
+| `GET`  | `/api/v1/target-config-snapshots`                     | List with optional placement filters and keyset cursor |
+| `GET`  | `/api/v1/target-config-snapshots/{snapshotId}`        | Get one tenant-scoped snapshot                         |
+| `POST` | `/api/v1/target-config-snapshots/{snapshotId}/verify` | Observe pinned object integrity                        |
 
 Authenticated reads remain available with the feature flag disabled. Both POST operations require
 `operator_control_plane_v2`, a read-write or admin role, and a non-super-admin organization context. Public
