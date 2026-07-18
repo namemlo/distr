@@ -25,6 +25,9 @@ const (
 	maxTargetConfigProviderIDBytes = 128
 )
 
+const sensitiveTargetConfigTokenNames = "password|passwd|secret|api[_-]?key|access[_-]?token|" +
+	"authorization|private[_-]?key|credential"
+
 var (
 	targetConfigKeyPattern       = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
 	targetConfigProviderPattern  = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
@@ -32,11 +35,14 @@ var (
 	targetConfigChecksumPattern  = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	targetConfigMediaTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$`)
 	targetConfigPlatformPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$`)
-	secretLookingPattern         = regexp.MustCompile(`(?i)(password|passwd|secret|api[_-]?key|access[_-]?token|authorization|private[_-]?key|credential)`)
-	inlineSecretPattern          = regexp.MustCompile(`(?i)(password|passwd|secret|api[_-]?key|access[_-]?token|authorization|private[_-]?key|credential)\s*[:=]`)
+	secretLookingPattern         = regexp.MustCompile(`(?i)(` + sensitiveTargetConfigTokenNames + `)`)
+	inlineSecretPattern          = regexp.MustCompile(`(?i)(` + sensitiveTargetConfigTokenNames + `)\s*[:=]`)
 	credentialPairPattern        = regexp.MustCompile(`^[^:/\s]+:[^/\s]+$`)
-	commonCredentialPattern      = regexp.MustCompile(`(?i)^(gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16})$`)
-	windowsPathPattern           = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+	commonCredentialPattern      = regexp.MustCompile(
+		`(?i)^(gh[pousr]_[A-Za-z0-9]{20,}|` +
+			`xox[baprs]-[A-Za-z0-9-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16})$`,
+	)
+	windowsPathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 )
 
 type issueCollector struct {

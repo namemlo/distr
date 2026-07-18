@@ -14,6 +14,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const targetConfigTestObjectReference = "s3://config-bucket/path/config.json"
+
 func TestTargetConfigValidateDraftRejectsUnsafeInputs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -259,7 +261,7 @@ func TestS3ObjectVerifierPinsVersionAndComputesDigestWithoutReturningBody(t *tes
 		},
 	}
 	object := types.TargetConfigSnapshotObject{
-		Reference: "s3://config-bucket/path/config.json",
+		Reference: targetConfigTestObjectReference,
 		VersionID: "version-7",
 		SizeBytes: int64(len(body)),
 	}
@@ -328,7 +330,7 @@ func TestS3ObjectVerifierRejectsUnsafeProviderMetadata(t *testing.T) {
 				},
 			}
 			object := types.TargetConfigSnapshotObject{
-				Reference: "s3://config-bucket/path/config.json",
+				Reference: targetConfigTestObjectReference,
 				VersionID: "version-7",
 				SizeBytes: int64(len(body)),
 			}
@@ -356,7 +358,7 @@ func TestS3ObjectVerifierAcceptsProviderMetadataAtExactLimits(t *testing.T) {
 	}
 
 	observed, err := NewS3ObjectVerifier(client).Verify(t.Context(), types.TargetConfigSnapshotObject{
-		Reference: "s3://config-bucket/path/config.json",
+		Reference: targetConfigTestObjectReference,
 		VersionID: versionID,
 	})
 

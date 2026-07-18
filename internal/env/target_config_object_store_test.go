@@ -77,7 +77,10 @@ func TestTargetConfigObjectStoreConfigRejectsInvalidOptionalConfiguration(t *tes
 		valid     bool
 	}{
 		{name: "AWS defaults and IAM role", valid: true},
-		{name: "custom endpoint and static pair", endpoint: &endpoint, accessKey: &accessKey, secretKey: &secretKey, valid: true},
+		{
+			name: "custom endpoint and static pair", endpoint: &endpoint,
+			accessKey: &accessKey, secretKey: &secretKey, valid: true,
+		},
 		{name: "invalid endpoint", endpoint: &invalidEndpoint},
 		{name: "access key only", accessKey: &accessKey},
 		{name: "secret key only", secretKey: &secretKey},
