@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
@@ -82,6 +83,48 @@ func TestCreateUpdateReleaseBundleRequestValidateTrimsSourceMetadata(t *testing.
 	g.Expect(request.SourceMetadata.CIProvider).To(Equal("generic-ci"))
 	g.Expect(request.SourceMetadata.CIRunID).To(Equal("run-123"))
 	g.Expect(request.SourceMetadata.CIRunURL).To(Equal("https://ci.example.invalid/runs/123"))
+}
+
+func TestPublishReleaseBundleRequestPreservesFrozenProvenanceInputs(t *testing.T) {
+	g := NewWithT(t)
+	rootJSON := json.RawMessage(`{"mediaType":"application/vnd.dev.sigstore.trustedroot+json;version=0.1"}`)
+	bundleJSON := json.RawMessage(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`)
+	request := PublishReleaseBundleRequest{
+		Provenance: &ComponentReleasePublicationProvenance{
+			Policy: ComponentReleaseProvenancePolicy{
+				Version: " distr.provenance-policy/v1 ",
+				TrustedRoots: []ComponentReleaseProvenanceTrustRoot{{
+					ID: " root ", TrustedRoot: rootJSON,
+					ValidFrom:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+					ValidUntil: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+				}},
+				AllowedSignerIdentities: []ComponentReleaseProvenanceSignerIdentity{{
+					Issuer: " issuer ", Subject: " subject ",
+				}},
+				AllowedPredicateTypes:      []string{" predicate "},
+				AllowedBuilders:            []string{" builder "},
+				AllowedSourcePrefixes:      []string{" source "},
+				AllowedBuildTypes:          []string{" build "},
+				ExpectedExternalParameters: json.RawMessage(`{"release":true}`),
+			},
+			Evidence: []ComponentReleaseProvenanceEvidence{{
+				ArtifactKey: " artifact ", Platform: " platform ", Reference: " reference ",
+				TrustRootID: " root ", Bundle: bundleJSON,
+			}},
+		},
+	}
+
+	publication := request.PublicationProvenance()
+
+	g.Expect(publication.Policy.Version).To(Equal(" distr.provenance-policy/v1 "))
+	g.Expect(publication.Policy.TrustedRoots[0].ID).To(Equal(" root "))
+	g.Expect(publication.Policy.AllowedBuilders).To(Equal([]string{" builder "}))
+	g.Expect(publication.Evidence[0].ArtifactKey).To(Equal(" artifact "))
+	g.Expect(publication.Evidence[0].Evidence.Reference).To(Equal(" reference "))
+	rootJSON[0] = '['
+	bundleJSON[0] = '['
+	g.Expect(string(publication.Policy.TrustedRoots[0].JSON)).To(HavePrefix("{"))
+	g.Expect(string(publication.Evidence[0].Evidence.BundleJSON)).To(HavePrefix("{"))
 }
 
 func TestCreateUpdateReleaseBundleRequestValidateOCIComponentsRequireFullSHA256Digest(t *testing.T) {

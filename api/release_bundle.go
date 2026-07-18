@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/url"
 	"strings"
 	"time"
@@ -221,6 +223,83 @@ type ReleaseBundleComponentRequest struct {
 	Digest               string                           `json:"digest"`
 	Checksum             string                           `json:"checksum"`
 	ChildReleaseBundleID *uuid.UUID                       `json:"childReleaseBundleId,omitempty"`
+}
+
+type PublishReleaseBundleRequest struct {
+	Provenance *ComponentReleasePublicationProvenance `json:"provenance,omitempty"`
+}
+
+type ComponentReleasePublicationProvenance struct {
+	Policy   ComponentReleaseProvenancePolicy     `json:"policy"`
+	Evidence []ComponentReleaseProvenanceEvidence `json:"evidence"`
+}
+
+type ComponentReleaseProvenancePolicy struct {
+	Version                    string                                     `json:"version"`
+	TrustedRoots               []ComponentReleaseProvenanceTrustRoot      `json:"trustedRoots"`
+	AllowedSignerIdentities    []ComponentReleaseProvenanceSignerIdentity `json:"allowedSignerIdentities"`
+	AllowedPredicateTypes      []string                                   `json:"allowedPredicateTypes"`
+	AllowedBuilders            []string                                   `json:"allowedBuilders"`
+	AllowedSourcePrefixes      []string                                   `json:"allowedSourcePrefixes"`
+	AllowedBuildTypes          []string                                   `json:"allowedBuildTypes"`
+	ExpectedExternalParameters json.RawMessage                            `json:"expectedExternalParameters"`
+}
+
+type ComponentReleaseProvenanceTrustRoot struct {
+	ID          string          `json:"id"`
+	TrustedRoot json.RawMessage `json:"trustedRoot"`
+	ValidFrom   time.Time       `json:"validFrom"`
+	ValidUntil  time.Time       `json:"validUntil"`
+}
+
+type ComponentReleaseProvenanceSignerIdentity struct {
+	Issuer  string `json:"issuer"`
+	Subject string `json:"subject"`
+}
+
+type ComponentReleaseProvenanceEvidence struct {
+	ArtifactKey string          `json:"artifactKey"`
+	Platform    string          `json:"platform"`
+	Reference   string          `json:"reference"`
+	TrustRootID string          `json:"trustRootId"`
+	Bundle      json.RawMessage `json:"bundle"`
+}
+
+func (r PublishReleaseBundleRequest) PublicationProvenance() *releasebundles.PublicationProvenance {
+	if r.Provenance == nil {
+		return nil
+	}
+	policy := releasebundles.ProvenancePolicy{
+		Version:                    r.Provenance.Policy.Version,
+		AllowedPredicateTypes:      append([]string(nil), r.Provenance.Policy.AllowedPredicateTypes...),
+		AllowedBuilders:            append([]string(nil), r.Provenance.Policy.AllowedBuilders...),
+		AllowedSourcePrefixes:      append([]string(nil), r.Provenance.Policy.AllowedSourcePrefixes...),
+		AllowedBuildTypes:          append([]string(nil), r.Provenance.Policy.AllowedBuildTypes...),
+		ExpectedExternalParameters: bytes.Clone(r.Provenance.Policy.ExpectedExternalParameters),
+	}
+	for _, trustRoot := range r.Provenance.Policy.TrustedRoots {
+		policy.TrustedRoots = append(policy.TrustedRoots, releasebundles.TrustRoot{
+			ID: trustRoot.ID, JSON: bytes.Clone(trustRoot.TrustedRoot),
+			ValidFrom: trustRoot.ValidFrom, ValidUntil: trustRoot.ValidUntil,
+		})
+	}
+	for _, identity := range r.Provenance.Policy.AllowedSignerIdentities {
+		policy.AllowedSignerIdentities = append(policy.AllowedSignerIdentities, releasebundles.SignerIdentity{
+			Issuer: identity.Issuer, Subject: identity.Subject,
+		})
+	}
+	publication := &releasebundles.PublicationProvenance{Policy: policy}
+	for _, evidence := range r.Provenance.Evidence {
+		publication.Evidence = append(publication.Evidence, releasebundles.PublicationProvenanceEvidence{
+			ArtifactKey: evidence.ArtifactKey,
+			Platform:    evidence.Platform,
+			Evidence: releasebundles.ComponentReleaseEvidence{
+				Reference: evidence.Reference, TrustRootID: evidence.TrustRootID,
+				BundleJSON: bytes.Clone(evidence.Bundle),
+			},
+		})
+	}
+	return publication
 }
 
 func (r *ReleaseBundleComponentRequest) trim() {

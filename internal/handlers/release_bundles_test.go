@@ -73,6 +73,25 @@ func TestReleaseBundleFromCreateUpdateRequest(t *testing.T) {
 	}))
 }
 
+func TestDecodeOptionalPublishReleaseBundleRequestRejectsAmbiguousJSON(t *testing.T) {
+	for _, body := range []string{
+		`{"unknown":true}`,
+		`{} {}`,
+		`{"provenance":null,"provenance":null}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			g := NewWithT(t)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(body))
+
+			_, err := decodeOptionalPublishReleaseBundleRequest(recorder, request)
+
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+		})
+	}
+}
+
 func TestCreateReleaseBundleHandlerRejectsInvalidPayloadBeforeDatabaseAccess(t *testing.T) {
 	g := NewWithT(t)
 	recorder := httptest.NewRecorder()

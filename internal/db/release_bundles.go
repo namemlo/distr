@@ -562,6 +562,24 @@ func PublishReleaseBundle(
 	organizationID uuid.UUID,
 	actorUserAccountID uuid.UUID,
 ) (*types.ReleaseBundle, releasebundles.ValidationResult, error) {
+	return PublishReleaseBundleWithProvenance(
+		ctx,
+		id,
+		organizationID,
+		actorUserAccountID,
+		nil,
+		nil,
+	)
+}
+
+func PublishReleaseBundleWithProvenance(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+	actorUserAccountID uuid.UUID,
+	provenance *releasebundles.PublicationProvenance,
+	provenanceVerifier releasebundles.ProvenanceVerifier,
+) (*types.ReleaseBundle, releasebundles.ValidationResult, error) {
 	result := releasebundles.NewValidResult()
 	var published *types.ReleaseBundle
 	var operationErr error
@@ -573,6 +591,43 @@ func PublishReleaseBundle(
 		toStatus := types.ReleaseBundleStatusPublished
 		if bundle.Status == types.ReleaseBundleStatusPublished &&
 			bundle.Kind == types.ReleaseBundleKindComponent {
+			expected, provenanceResult := releasebundles.VerifyComponentReleasePublication(
+				ctx,
+				*bundle,
+				provenance,
+				provenanceVerifier,
+			)
+			result.Merge("", provenanceResult)
+			if result.Valid {
+				existing, err := GetComponentReleaseEvidenceVerifications(
+					ctx,
+					bundle.ID,
+					bundle.OrganizationID,
+				)
+				if err != nil {
+					return err
+				}
+				if !sameEvidenceVerificationSet(existing, expected) {
+					result.AddError(
+						"releaseContract.evidence.provenance",
+						"stored",
+						"published component provenance does not match the immutable stored verification receipt",
+					)
+				}
+			}
+			if !result.Valid {
+				if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+					*bundle,
+					actorUserAccountID,
+					types.ReleaseBundleAuditEventTypeStateTransitionRejected,
+					&toStatus,
+					"published provenance retry verification failed",
+				)); err != nil {
+					return err
+				}
+				operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrBadRequest)
+				return nil
+			}
 			published = bundle
 			return nil
 		}
@@ -608,7 +663,29 @@ func PublishReleaseBundle(
 			return nil
 		}
 
+		var evidenceVerifications []types.EvidenceVerification
 		if bundle.Kind == types.ReleaseBundleKindComponent {
+			var provenanceResult releasebundles.ValidationResult
+			evidenceVerifications, provenanceResult = releasebundles.VerifyComponentReleasePublication(
+				ctx,
+				*bundle,
+				provenance,
+				provenanceVerifier,
+			)
+			result.Merge("", provenanceResult)
+			if !result.Valid {
+				if err := insertReleaseBundleAuditEvent(ctx, releaseBundleAuditEventForTransition(
+					*bundle,
+					actorUserAccountID,
+					types.ReleaseBundleAuditEventTypeStateTransitionRejected,
+					&toStatus,
+					"provenance verification failed",
+				)); err != nil {
+					return err
+				}
+				operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrBadRequest)
+				return nil
+			}
 			conflict, err := componentReleaseIdentityConflict(ctx, *bundle)
 			if err != nil {
 				return err
@@ -625,6 +702,9 @@ func PublishReleaseBundle(
 				}
 				operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrConflict)
 				return nil
+			}
+			if err := recordComponentReleaseEvidenceVerifications(ctx, evidenceVerifications); err != nil {
+				return err
 			}
 		} else {
 			snapshot, err := createVariableSnapshotForReleaseBundle(ctx, *bundle)
@@ -657,6 +737,30 @@ func PublishReleaseBundle(
 		return published, result, err
 	}
 	return published, result, operationErr
+}
+
+func sameEvidenceVerificationSet(
+	existing []types.EvidenceVerification,
+	expected []types.EvidenceVerification,
+) bool {
+	if len(existing) != len(expected) {
+		return false
+	}
+	matched := make([]bool, len(existing))
+	for _, expectedVerification := range expected {
+		found := false
+		for i, existingVerification := range existing {
+			if !matched[i] && sameEvidenceVerification(existingVerification, expectedVerification) {
+				matched[i] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func componentReleaseIdentityConflict(ctx context.Context, bundle types.ReleaseBundle) (bool, error) {

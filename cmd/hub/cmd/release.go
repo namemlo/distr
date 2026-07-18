@@ -141,6 +141,7 @@ func releaseExactArgs(count int) cobra.PositionalArgs {
 type releaseCreateOptions struct {
 	File           string
 	IdempotencyKey string
+	Schema         string
 }
 
 func newReleaseCreateCommand(runtime releaseCommandRuntime, opts *releaseCommandOptions) *cobra.Command {
@@ -156,6 +157,9 @@ func newReleaseCreateCommand(runtime releaseCommandRuntime, opts *releaseCommand
 			}
 			body, err := readReleaseCreateBody(createOpts.File, runtime.Stdin)
 			if err != nil {
+				return err
+			}
+			if err := assertReleaseCreateSchema(body, createOpts.Schema); err != nil {
 				return err
 			}
 			response, err := doReleaseAPIRequest(
@@ -177,6 +181,7 @@ func newReleaseCreateCommand(runtime releaseCommandRuntime, opts *releaseCommand
 	configureReleaseCommandErrors(cmd)
 	cmd.Flags().StringVar(&createOpts.File, "file", "", "release bundle request JSON file, or - for stdin")
 	cmd.Flags().StringVar(&createOpts.IdempotencyKey, "idempotency-key", "", "optional idempotency key")
+	cmd.Flags().StringVar(&createOpts.Schema, "schema", "", "assert release contract schema: v1 or v2")
 	return cmd
 }
 
@@ -214,6 +219,7 @@ func newReleaseValidateCommand(runtime releaseCommandRuntime, opts *releaseComma
 }
 
 func newReleasePublishCommand(runtime releaseCommandRuntime, opts *releaseCommandOptions) *cobra.Command {
+	var provenanceFile string
 	cmd := &cobra.Command{
 		Use:   "publish RELEASE_BUNDLE_ID",
 		Short: "publish a release bundle",
@@ -226,13 +232,17 @@ func newReleasePublishCommand(runtime releaseCommandRuntime, opts *releaseComman
 			if _, err := uuid.Parse(args[0]); err != nil {
 				return newReleaseExitError(releaseExitUsage, "release bundle ID must be a UUID")
 			}
+			body, err := readOptionalReleasePublishBody(provenanceFile)
+			if err != nil {
+				return err
+			}
 			response, err := doReleaseAPIRequest(
 				cmd.Context(),
 				runtime,
 				config,
 				http.MethodPost,
 				"/api/v1/release-bundles/"+args[0]+"/publish",
-				[]byte(`{}`),
+				body,
 				"",
 				true,
 			)
@@ -246,6 +256,12 @@ func newReleasePublishCommand(runtime releaseCommandRuntime, opts *releaseComman
 		},
 	}
 	configureReleaseCommandErrors(cmd)
+	cmd.Flags().StringVar(
+		&provenanceFile,
+		"provenance-file",
+		"",
+		"optional component publication policy and Sigstore evidence JSON file",
+	)
 	return cmd
 }
 
@@ -309,6 +325,62 @@ func readReleaseCreateBody(file string, stdin io.Reader) ([]byte, error) {
 	}
 	if !json.Valid(data) {
 		return nil, newReleaseExitError(releaseExitUsage, "release request must be valid JSON")
+	}
+	return data, nil
+}
+
+func assertReleaseCreateSchema(body []byte, schema string) error {
+	schema = strings.TrimSpace(schema)
+	if schema == "" {
+		return nil
+	}
+	if schema != "v1" && schema != "v2" {
+		return newReleaseExitError(releaseExitUsage, "--schema must be v1 or v2")
+	}
+	var request struct {
+		ReleaseContract *struct {
+			Schema string `json:"schema"`
+		} `json:"releaseContract"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		return newReleaseExitError(releaseExitUsage, "release request must be valid JSON")
+	}
+	actual := ""
+	if request.ReleaseContract != nil {
+		actual = request.ReleaseContract.Schema
+	}
+	expected := "distr.release-contract/v1"
+	if schema == "v2" {
+		expected = "distr.component-release/v2"
+	}
+	if actual != expected {
+		return newReleaseExitError(
+			releaseExitUsage,
+			fmt.Sprintf("--schema %s requires releaseContract.schema %q", schema, expected),
+		)
+	}
+	return nil
+}
+
+func readOptionalReleasePublishBody(file string) ([]byte, error) {
+	file = strings.TrimSpace(file)
+	if file == "" {
+		return []byte(`{}`), nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, newReleaseExitError(releaseExitUsage, fmt.Sprintf("failed to read provenance request: %v", err))
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || !json.Valid(data) {
+		return nil, newReleaseExitError(releaseExitUsage, "provenance request must be valid non-empty JSON")
+	}
+	var request api.PublishReleaseBundleRequest
+	if err := json.Unmarshal(data, &request); err != nil || request.Provenance == nil {
+		return nil, newReleaseExitError(
+			releaseExitUsage,
+			"provenance request must be an object containing the provenance policy and evidence",
+		)
 	}
 	return data, nil
 }
@@ -467,14 +539,64 @@ func writeReleaseBundleOutput(stdout io.Writer, output string, response []byte) 
 		return err
 	}
 	var bundle struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
+		ID                    string `json:"id"`
+		Status                string `json:"status"`
+		ReleaseContractSchema string `json:"releaseContractSchema"`
+		CanonicalChecksum     string `json:"canonicalChecksum"`
+		ReleaseContract       *struct {
+			Schema    string `json:"schema"`
+			Artifacts []struct {
+				Key       string `json:"key"`
+				Digest    string `json:"digest"`
+				Platforms []struct {
+					Platform string `json:"platform"`
+					Digest   string `json:"digest"`
+				} `json:"platforms"`
+			} `json:"artifacts"`
+		} `json:"releaseContract"`
 	}
 	if err := json.Unmarshal(response, &bundle); err != nil {
 		return newReleaseExitError(releaseExitAPI, fmt.Sprintf("failed to parse release bundle response: %v", err))
 	}
-	_, err := fmt.Fprintf(stdout, "Release bundle %s %s\n", bundle.ID, bundle.Status)
-	return err
+	schema := bundle.ReleaseContractSchema
+	if schema == "" && bundle.ReleaseContract != nil {
+		schema = bundle.ReleaseContract.Schema
+	}
+	isComponentV2 := schema == "distr.component-release/v2" ||
+		(bundle.ReleaseContract != nil && bundle.ReleaseContract.Schema == "distr.component-release/v2")
+	if !isComponentV2 {
+		_, err := fmt.Fprintf(stdout, "Release bundle %s %s\n", bundle.ID, bundle.Status)
+		return err
+	}
+	if _, err := fmt.Fprintf(
+		stdout,
+		"Release bundle %s %s schema=%s checksum=%s\n",
+		bundle.ID,
+		bundle.Status,
+		schema,
+		bundle.CanonicalChecksum,
+	); err != nil {
+		return err
+	}
+	if bundle.ReleaseContract == nil {
+		return nil
+	}
+	for _, artifact := range bundle.ReleaseContract.Artifacts {
+		if _, err := fmt.Fprintf(stdout, "- artifact %s manifest=%s\n", artifact.Key, artifact.Digest); err != nil {
+			return err
+		}
+		for _, platform := range artifact.Platforms {
+			if _, err := fmt.Fprintf(
+				stdout,
+				"  - platform %s digest=%s\n",
+				platform.Platform,
+				platform.Digest,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func writeReleaseValidationOutput(stdout io.Writer, output string, response []byte) error {

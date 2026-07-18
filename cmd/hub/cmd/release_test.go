@@ -101,6 +101,36 @@ func TestReleaseCreateCommandReadsStdinAndUsesEnvironment(t *testing.T) {
 	g.Expect(stdout).To(ContainSubstring("Release bundle " + bundleID + " DRAFT"))
 }
 
+func TestReleaseCreateSchemaAssertionFailsBeforeRequest(t *testing.T) {
+	g := NewWithT(t)
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	t.Cleanup(server.Close)
+	inputFile := filepath.Join(t.TempDir(), "release.json")
+	g.Expect(os.WriteFile(
+		inputFile,
+		[]byte(`{"releaseContract":{"schema":"distr.release-contract/v1"}}`),
+		0o600,
+	)).To(Succeed())
+
+	_, _, err := executeReleaseCommandForTest(
+		t,
+		releaseCommandRuntime{Client: http.DefaultClient},
+		"--server", server.URL,
+		"--token", "token-value",
+		"create",
+		"--file", inputFile,
+		"--schema", "v2",
+	)
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(releaseExitCodeForTest(err)).To(Equal(releaseExitUsage))
+	g.Expect(err.Error()).To(ContainSubstring(`distr.component-release/v2`))
+	g.Expect(requests).To(Equal(0))
+}
+
 func TestReleaseValidateCommandReturnsValidationExitCode(t *testing.T) {
 	g := NewWithT(t)
 	bundleID := uuid.NewString()
@@ -162,6 +192,57 @@ func TestReleasePublishCommandReturnsValidationExitCodeForValidationFailure(t *t
 	g.Expect(stderr).To(BeEmpty())
 	g.Expect(stdout).To(ContainSubstring("invalid"))
 	g.Expect(stdout).To(ContainSubstring("sourceMetadata.branch"))
+}
+
+func TestReleasePublishCommandSendsProvenanceAndPrintsV2Digests(t *testing.T) {
+	g := NewWithT(t)
+	bundleID := uuid.NewString()
+	manifestDigest := "sha256:" + strings.Repeat("a", 64)
+	platformDigest := "sha256:" + strings.Repeat("b", 64)
+	checksum := "sha256:" + strings.Repeat("c", 64)
+	requestBody := `{"provenance":{"policy":{"version":"distr.provenance-policy/v1"},"evidence":[]}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.Expect(r.Method).To(Equal(http.MethodPost))
+		g.Expect(r.URL.Path).To(Equal("/api/v1/release-bundles/" + bundleID + "/publish"))
+		data, err := io.ReadAll(r.Body)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(string(data)).To(Equal(requestBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"` + bundleID + `",
+			"status":"PUBLISHED",
+			"releaseContractSchema":"distr.component-release/v2",
+			"canonicalChecksum":"` + checksum + `",
+			"releaseContract":{
+				"schema":"distr.component-release/v2",
+				"artifacts":[{
+					"key":"service",
+					"digest":"` + manifestDigest + `",
+					"platforms":[{"platform":"linux/amd64","digest":"` + platformDigest + `"}]
+				}]
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	provenanceFile := filepath.Join(t.TempDir(), "provenance.json")
+	g.Expect(os.WriteFile(provenanceFile, []byte(requestBody), 0o600)).To(Succeed())
+
+	stdout, stderr, err := executeReleaseCommandForTest(
+		t,
+		releaseCommandRuntime{Client: http.DefaultClient},
+		"--server", server.URL,
+		"--token", "token-value",
+		"publish",
+		bundleID,
+		"--provenance-file", provenanceFile,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(stderr).To(BeEmpty())
+	g.Expect(stdout).To(ContainSubstring("schema=distr.component-release/v2"))
+	g.Expect(stdout).To(ContainSubstring("checksum=" + checksum))
+	g.Expect(stdout).To(ContainSubstring("manifest=" + manifestDigest))
+	g.Expect(stdout).To(ContainSubstring("platform linux/amd64 digest=" + platformDigest))
 }
 
 func TestReleasePublishCommandMapsAuthFailureAndRedactsToken(t *testing.T) {

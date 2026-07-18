@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -81,7 +84,10 @@ func ReleaseBundlesRouter(r chiopenapi.Router) {
 
 				r.Post("/publish", publishReleaseBundleHandler()).
 					With(option.Description("Publish a valid draft release bundle")).
-					With(option.Request(ReleaseBundleIDRequest{})).
+					With(option.Request(struct {
+						ReleaseBundleIDRequest
+						api.PublishReleaseBundleRequest
+					}{})).
 					With(option.Response(http.StatusOK, api.ReleaseBundle{})).
 					With(option.Response(http.StatusBadRequest, api.ReleaseBundleValidationResponse{}))
 
@@ -268,6 +274,16 @@ func publishReleaseBundleHandler() http.HandlerFunc {
 }
 
 func publishReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.HandlerFunc {
+	return publishReleaseBundleHandlerWithFlagsAndVerifier(
+		enabledFlags,
+		releasebundles.SigstoreProvenanceVerifier{},
+	)
+}
+
+func publishReleaseBundleHandlerWithFlagsAndVerifier(
+	enabledFlags []featureflags.Key,
+	provenanceVerifier releasebundles.ProvenanceVerifier,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("releaseBundleId"))
 		if err != nil {
@@ -278,6 +294,10 @@ func publishReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.
 		ctx := r.Context()
 		log := internalctx.GetLogger(ctx)
 		auth := auth.Authentication.Require(ctx)
+		request, err := decodeOptionalPublishReleaseBundleRequest(w, r)
+		if err != nil {
+			return
+		}
 		if !featureflags.NewRegistry(enabledFlags).IsEnabled(featureflags.KeyOperatorControlPlaneV2) {
 			existing, err := db.GetReleaseBundle(ctx, id, *auth.CurrentOrgID())
 			if errors.Is(err, apierrors.ErrNotFound) {
@@ -295,7 +315,15 @@ func publishReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.
 			}
 		}
 
-		bundle, result, err := db.PublishReleaseBundle(ctx, id, *auth.CurrentOrgID(), auth.CurrentUserID())
+		publication := request.PublicationProvenance()
+		bundle, result, err := db.PublishReleaseBundleWithProvenance(
+			ctx,
+			id,
+			*auth.CurrentOrgID(),
+			auth.CurrentUserID(),
+			publication,
+			provenanceVerifier,
+		)
 		if errors.Is(err, apierrors.ErrNotFound) {
 			http.NotFound(w, r)
 		} else if errors.Is(err, apierrors.ErrBadRequest) {
@@ -310,6 +338,41 @@ func publishReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.
 			RespondJSON(w, mapping.ReleaseBundleToAPI(*bundle))
 		}
 	}
+}
+
+func decodeOptionalPublishReleaseBundleRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+) (api.PublishReleaseBundleRequest, error) {
+	var request api.PublishReleaseBundleRequest
+	if r.Body == nil {
+		return request, nil
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			http.Error(w, "publish provenance request is too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "publish provenance request must be valid JSON", http.StatusBadRequest)
+		}
+		return api.PublishReleaseBundleRequest{}, err
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return request, nil
+	}
+	if err := releasebundles.ValidateProvenanceJSONDocument(raw); err != nil {
+		http.Error(w, "publish provenance request must contain one valid JSON object", http.StatusBadRequest)
+		return api.PublishReleaseBundleRequest{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(w, "publish provenance request must be valid JSON", http.StatusBadRequest)
+		return api.PublishReleaseBundleRequest{}, err
+	}
+	return request, nil
 }
 
 //nolint:dupl

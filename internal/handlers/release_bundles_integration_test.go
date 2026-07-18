@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/featureflags"
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -469,11 +471,13 @@ func TestComponentReleaseV2HandlersCreateValidatePublishGetAndHideForeignOrganiz
 		ComponentKey: "payments.api",
 		Version:      "2.4.0",
 		Source: types.ComponentReleaseSource{
-			Repository:   "source/payments-api",
+			Repository:   "git+https://code.example.invalid/source/payments-api",
 			RequestedRef: "refs/tags/v2.4.0",
 			Commit:       "0123456789abcdef0123456789abcdef01234567",
 		},
-		Build: types.ComponentReleaseBuild{ID: "build-42", Builder: "generic-ci"},
+		Build: types.ComponentReleaseBuild{
+			ID: "build-42", Builder: "https://build.example.invalid/workers/release",
+		},
 		Artifacts: []types.ComponentReleaseArtifact{{
 			Key:       "image",
 			Type:      "oci-image",
@@ -488,6 +492,9 @@ func TestComponentReleaseV2HandlersCreateValidatePublishGetAndHideForeignOrganiz
 		Changes: types.ComponentReleaseChanges{
 			Summary: "Release payments API",
 			Commits: []string{"0123456789abcdef0123456789abcdef01234567"},
+		},
+		Evidence: types.ComponentReleaseEvidenceReferences{
+			Provenance: []string{"oci://evidence/provenance@sha256:" + strings.Repeat("e", 64)},
 		},
 	}
 	body, err := json.Marshal(api.CreateUpdateReleaseBundleRequest{
@@ -570,14 +577,29 @@ func TestComponentReleaseV2HandlersCreateValidatePublishGetAndHideForeignOrganiz
 	g.Expect(validation.Valid).To(BeTrue())
 
 	publishRecorder := httptest.NewRecorder()
+	publishBody, err := json.Marshal(api.PublishReleaseBundleRequest{
+		Provenance: &api.ComponentReleasePublicationProvenance{
+			Evidence: []api.ComponentReleaseProvenanceEvidence{{
+				ArtifactKey: "image",
+				Platform:    "linux/amd64",
+				Reference:   contract.Evidence.Provenance[0],
+				TrustRootID: "test-root",
+				Bundle:      json.RawMessage(`{}`),
+			}},
+		},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
 	publishRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/release-bundles/"+created.ID.String()+"/publish",
-		nil,
+		strings.NewReader(string(publishBody)),
 	)
 	publishRequest.SetPathValue("releaseBundleId", created.ID.String())
 	publishRequest = publishRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, orgID, actorID))
-	publishReleaseBundleHandlerWithFlags(flags).ServeHTTP(publishRecorder, publishRequest)
+	publishReleaseBundleHandlerWithFlagsAndVerifier(
+		flags,
+		handlerProvenanceVerifier{},
+	).ServeHTTP(publishRecorder, publishRequest)
 	g.Expect(publishRecorder.Code).To(Equal(http.StatusOK))
 	var published api.ReleaseBundle
 	g.Expect(json.Unmarshal(publishRecorder.Body.Bytes(), &published)).To(Succeed())
@@ -597,6 +619,31 @@ func TestComponentReleaseV2HandlersCreateValidatePublishGetAndHideForeignOrganiz
 	foreignRequest = foreignRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, otherOrgID, actorID))
 	getReleaseBundleHandler().ServeHTTP(foreignRecorder, foreignRequest)
 	g.Expect(foreignRecorder.Code).To(Equal(http.StatusNotFound))
+}
+
+type handlerProvenanceVerifier struct{}
+
+func (handlerProvenanceVerifier) Verify(
+	_ context.Context,
+	_ releasebundles.ProvenancePolicy,
+	artifact releasebundles.ProvenanceArtifact,
+	evidence releasebundles.ComponentReleaseEvidence,
+) (releasebundles.ProvenanceVerificationResult, error) {
+	return releasebundles.ProvenanceVerificationResult{
+		EvidenceDigest:             "sha256:" + strings.Repeat("1", 64),
+		PolicyChecksum:             "sha256:" + strings.Repeat("2", 64),
+		TrustRootID:                evidence.TrustRootID,
+		PredicateType:              "https://slsa.dev/provenance/v1",
+		BuilderID:                  artifact.BuilderID,
+		BuildID:                    artifact.BuildID,
+		SourceURI:                  artifact.SourceRepository,
+		SourceCommit:               artifact.SourceCommit,
+		BuildType:                  "https://build.example.invalid/types/container/v1",
+		ExternalParametersChecksum: "sha256:" + strings.Repeat("3", 64),
+		SignerIssuer:               "https://issuer.example.invalid",
+		SignerIdentity:             "builder@example.invalid",
+		VerifiedAt:                 time.Date(2026, 7, 18, 8, 0, 0, 0, time.UTC),
+	}, nil
 }
 
 func TestReleaseBundleHandlersReturnNotFoundForCrossOrganizationReferences(t *testing.T) {

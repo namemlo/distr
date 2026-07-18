@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
@@ -139,8 +140,8 @@ func TestComponentReleaseContractV2MigrationIsAdditive(t *testing.T) {
 	g.Expect(string(up)).To(ContainSubstring("ADD COLUMN kind TEXT"))
 	g.Expect(string(up)).To(ContainSubstring("ADD COLUMN release_contract_schema TEXT"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseArtifact"))
-	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseEvidence"))
 	g.Expect(string(up)).To(ContainSubstring("releasebundle_contract_v2_backfill_cursor_idx"))
+	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseEvidence"))
 	g.Expect(string(up)).To(ContainSubstring("componentreleaseartifact_verification_identity_unique"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseEvidenceVerification"))
 	g.Expect(string(up)).To(ContainSubstring("componentreleaseverification_artifact_fk"))
@@ -153,6 +154,8 @@ func TestComponentReleaseContractV2MigrationIsAdditive(t *testing.T) {
 	g.Expect(string(up)).To(ContainSubstring("releasecontractv2backfill_source_unique"))
 	g.Expect(string(up)).To(ContainSubstring("releasecontractv2backfill_derived_unique"))
 	g.Expect(string(up)).To(ContainSubstring("releasecontractv2backfill_checkpoint_idx"))
+	g.Expect(string(up)).To(ContainSubstring("artifact_digest"))
+	g.Expect(string(up)).To(ContainSubstring("platform_digest"))
 	g.Expect(string(up)).To(ContainSubstring("ComponentReleaseEvidenceVerification_append_only"))
 	g.Expect(string(up)).To(ContainSubstring("ComponentReleaseEvidenceVerification_no_truncate"))
 	g.Expect(string(up)).To(ContainSubstring("ReleaseContractV2BackfillLineage_append_only"))
@@ -194,12 +197,21 @@ func TestComponentReleasePublicationIsTargetNeutralAndIdempotent(t *testing.T) {
 
 	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
 	actorID := createReleaseBundleTestUser(t, ctx, orgID)
-	first, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	_, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+	g.Expect(result.Valid).To(BeFalse())
+
+	publication, verifier := componentReleasePublicationFixture(bundle)
+	first, result, err := db.PublishReleaseBundleWithProvenance(
+		ctx, bundle.ID, orgID, actorID, publication, verifier,
+	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(result.Valid).To(BeTrue())
 	g.Expect(first.VariableSnapshotID).To(BeNil())
 
-	second, result, err := db.PublishReleaseBundle(ctx, bundle.ID, orgID, actorID)
+	second, result, err := db.PublishReleaseBundleWithProvenance(
+		ctx, bundle.ID, orgID, actorID, publication, verifier,
+	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(result.Valid).To(BeTrue())
 	g.Expect(second.ID).To(Equal(first.ID))
@@ -222,7 +234,10 @@ func TestComponentReleasePublicationRejectsVersionPlatformDigestConflict(t *test
 	}
 	g.Expect(db.CreateReleaseBundle(ctx, &first)).To(Succeed())
 	actorID := createReleaseBundleTestUser(t, ctx, orgID)
-	_, _, err := db.PublishReleaseBundle(ctx, first.ID, orgID, actorID)
+	firstPublication, verifier := componentReleasePublicationFixture(first)
+	_, _, err := db.PublishReleaseBundleWithProvenance(
+		ctx, first.ID, orgID, actorID, firstPublication, verifier,
+	)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	second := ociReleaseBundleFixture(orgID, applicationID, channelID)
@@ -239,7 +254,10 @@ func TestComponentReleasePublicationRejectsVersionPlatformDigestConflict(t *test
 	}
 	g.Expect(db.CreateReleaseBundle(ctx, &second)).To(Succeed())
 
-	_, _, err = db.PublishReleaseBundle(ctx, second.ID, orgID, actorID)
+	secondPublication, verifier := componentReleasePublicationFixture(second)
+	_, _, err = db.PublishReleaseBundleWithProvenance(
+		ctx, second.ID, orgID, actorID, secondPublication, verifier,
+	)
 
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
 }
@@ -1520,11 +1538,13 @@ func componentReleaseContractFixture(
 		ComponentKey: "payments.api",
 		Version:      "2.4.0",
 		Source: types.ComponentReleaseSource{
-			Repository:   "source/payments-api",
+			Repository:   "git+https://code.example.invalid/source/payments-api",
 			RequestedRef: "refs/tags/v2.4.0",
 			Commit:       commit,
 		},
-		Build: types.ComponentReleaseBuild{ID: "build-42", Builder: "generic-ci"},
+		Build: types.ComponentReleaseBuild{
+			ID: "build-42", Builder: "https://build.example.invalid/workers/release",
+		},
 		Artifacts: []types.ComponentReleaseArtifact{{
 			Key:       "image",
 			Type:      "oci-image",
@@ -1544,6 +1564,64 @@ func componentReleaseContractFixture(
 			Provenance: []string{"oci://evidence/provenance@sha256:" + strings.Repeat("e", 64)},
 		},
 	}
+}
+
+func componentReleasePublicationFixture(
+	bundle types.ReleaseBundle,
+) (*releasebundles.PublicationProvenance, releasebundles.ProvenanceVerifier) {
+	contract := bundle.ReleaseContract.ComponentV2
+	evidenceReference := contract.Evidence.Provenance[0]
+	publication := &releasebundles.PublicationProvenance{}
+	for _, artifact := range contract.Artifacts {
+		for _, platform := range artifact.Platforms {
+			publication.Evidence = append(publication.Evidence, releasebundles.PublicationProvenanceEvidence{
+				ArtifactKey: artifact.Key,
+				Platform:    platform.Platform,
+				Evidence: releasebundles.ComponentReleaseEvidence{
+					Reference: evidenceReference, TrustRootID: "test-root",
+				},
+			})
+		}
+	}
+	verifier := componentReleaseProvenanceVerifierFunc(func(
+		_ context.Context,
+		_ releasebundles.ProvenancePolicy,
+		artifact releasebundles.ProvenanceArtifact,
+		evidence releasebundles.ComponentReleaseEvidence,
+	) (releasebundles.ProvenanceVerificationResult, error) {
+		return releasebundles.ProvenanceVerificationResult{
+			EvidenceDigest:             "sha256:" + strings.Repeat("1", 64),
+			PolicyChecksum:             "sha256:" + strings.Repeat("2", 64),
+			TrustRootID:                evidence.TrustRootID,
+			PredicateType:              "https://slsa.dev/provenance/v1",
+			BuilderID:                  artifact.BuilderID,
+			BuildID:                    artifact.BuildID,
+			SourceURI:                  artifact.SourceRepository,
+			SourceCommit:               artifact.SourceCommit,
+			BuildType:                  "https://build.example.invalid/types/container/v1",
+			ExternalParametersChecksum: "sha256:" + strings.Repeat("3", 64),
+			SignerIssuer:               "https://issuer.example.invalid",
+			SignerIdentity:             "builder@example.invalid",
+			VerifiedAt:                 time.Date(2026, 7, 18, 8, 0, 0, 0, time.UTC),
+		}, nil
+	})
+	return publication, verifier
+}
+
+type componentReleaseProvenanceVerifierFunc func(
+	context.Context,
+	releasebundles.ProvenancePolicy,
+	releasebundles.ProvenanceArtifact,
+	releasebundles.ComponentReleaseEvidence,
+) (releasebundles.ProvenanceVerificationResult, error)
+
+func (f componentReleaseProvenanceVerifierFunc) Verify(
+	ctx context.Context,
+	policy releasebundles.ProvenancePolicy,
+	artifact releasebundles.ProvenanceArtifact,
+	evidence releasebundles.ComponentReleaseEvidence,
+) (releasebundles.ProvenanceVerificationResult, error) {
+	return f(ctx, policy, artifact, evidence)
 }
 
 func createReleaseBundleProcessRevision(
