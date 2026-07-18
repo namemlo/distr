@@ -56,19 +56,29 @@ type CampaignDraft struct {
 }
 
 type CampaignPlanCandidate struct {
-	PlanID                     uuid.UUID
-	OrganizationID             uuid.UUID
-	DeploymentUnitID           uuid.UUID
-	PlanChecksum               string
-	CurrentPlanChecksum        string
-	ApprovalRequestID          uuid.UUID
-	ApprovalSubjectChecksum    string
-	ApprovalChecksum           string
-	Approved                   bool
-	Tags                       []string
-	ExpectedStepChecksums      map[string]string
-	ExpectedPlacementChecksums map[uuid.UUID]string
-	SharedProviderPlacements   []uuid.UUID
+	PlanID                         uuid.UUID
+	OrganizationID                 uuid.UUID
+	DeploymentUnitID               uuid.UUID
+	PlanChecksum                   string
+	CurrentPlanChecksum            string
+	EffectivePolicyChecksum        string
+	ApprovalRequestID              uuid.UUID
+	ApprovalRequestRevision        int64
+	ApprovalChecksum               string
+	Approved                       bool
+	CalendarVersionIDs             []uuid.UUID
+	CalendarChecksums              []string
+	AdmissionEvaluationID          uuid.UUID
+	AdmissionChecksum              string
+	Admitted                       bool
+	Tags                           []string
+	ExpectedStepPlacementChecksums map[CampaignStepPlacement]string
+	SharedProviderPlacements       []uuid.UUID
+}
+
+type CampaignStepPlacement struct {
+	StepKey     string
+	PlacementID uuid.UUID
 }
 
 type CampaignWave struct {
@@ -82,16 +92,22 @@ type CampaignWave struct {
 }
 
 type CampaignMember struct {
-	ID                 uuid.UUID `db:"id" json:"id,omitempty"`
-	CampaignRevisionID uuid.UUID `db:"campaign_revision_id" json:"campaignRevisionId,omitempty"`
-	OrganizationID     uuid.UUID `db:"organization_id" json:"organizationId,omitempty"`
-	PlanID             uuid.UUID `db:"deployment_plan_id" json:"planId"`
-	DeploymentUnitID   uuid.UUID `db:"deployment_unit_id" json:"deploymentUnitId"`
-	PlanChecksum       string    `db:"plan_checksum" json:"planChecksum"`
-	ApprovalRequestID  uuid.UUID `db:"approval_request_id" json:"approvalRequestId"`
-	ApprovalChecksum   string    `db:"approval_checksum" json:"approvalChecksum"`
-	WaveOrder          int       `db:"wave_order" json:"waveOrder"`
-	MemberOrder        int       `db:"member_order" json:"memberOrder"`
+	ID                      uuid.UUID   `db:"id" json:"id,omitempty"`
+	CampaignRevisionID      uuid.UUID   `db:"campaign_revision_id" json:"campaignRevisionId,omitempty"`
+	OrganizationID          uuid.UUID   `db:"organization_id" json:"organizationId,omitempty"`
+	PlanID                  uuid.UUID   `db:"deployment_plan_id" json:"planId"`
+	DeploymentUnitID        uuid.UUID   `db:"deployment_unit_id" json:"deploymentUnitId"`
+	PlanChecksum            string      `db:"plan_checksum" json:"planChecksum"`
+	EffectivePolicyChecksum string      `db:"effective_policy_checksum" json:"effectivePolicyChecksum"`
+	ApprovalRequestID       uuid.UUID   `db:"approval_request_id" json:"approvalRequestId"`
+	ApprovalRequestRevision int64       `db:"approval_request_revision" json:"approvalRequestRevision"`
+	ApprovalChecksum        string      `db:"approval_checksum" json:"approvalChecksum"`
+	CalendarVersionIDs      []uuid.UUID `db:"calendar_version_ids" json:"calendarVersionIds"`
+	CalendarChecksums       []string    `db:"calendar_checksums" json:"calendarChecksums"`
+	AdmissionEvaluationID   uuid.UUID   `db:"admission_evaluation_id" json:"admissionEvaluationId"`
+	AdmissionChecksum       string      `db:"admission_checksum" json:"admissionChecksum"`
+	WaveOrder               int         `db:"wave_order" json:"waveOrder"`
+	MemberOrder             int         `db:"member_order" json:"memberOrder"`
 }
 
 type CampaignPrerequisite struct {

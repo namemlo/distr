@@ -62,3 +62,34 @@ No push, merge, deployment, external mutation, or client mutation is authorized 
   provider-placement and v2 target-plan source.
 - PR-072: consume immutable rows for scheduling and persist the actual trusted observation identity/checksum;
   mismatch pauses and never rewrites PR-071 evidence.
+
+## Blocking Review Follow-up
+
+The blocking review findings were reproduced and fixed test-first:
+
+- Published members now persist and expose the exact effective-policy checksum, approval request ID/revision and
+  source subject checksum, ordered calendar version IDs/checksums, and admission evaluation ID/decision checksum.
+  The campaign-owned synthetic approval digest was removed. All evidence is included in canonical revision bytes.
+- Published updates remain rejected. Direct deletes with a forged marker are rejected because retention requires a
+  campaign-specific UUID operation marker, nested trigger depth, and an already-deleted parent `Organization`.
+  Truncate is rejected by statement-level triggers. The organization cleanup transaction now supplies the
+  campaign-specific retention markers.
+- Prerequisites use composite organization foreign keys to the revision, both member references, and both plan
+  references. Exact requested `(upstream plan, step key, provider placement)` tuples are hydrated and validated;
+  the former step-by-placement cross product and independent evidence maps were removed.
+- Candidate SQL applies explicit ID/tag selection before `LIMIT 1001`; only the bounded selected set is hydrated,
+  so an explicit one-plan campaign remains resolvable in an organization with more than 1,000 other eligible
+  plans.
+- Added focused regression coverage for exact frozen evidence/canonical materiality/API mapping, forged retention
+  markers, truncate guards, tenant-composite prerequisite references, exact step-placement pairing, missing
+  admission evidence, and membership-before-bound query shape.
+
+Follow-up verification:
+
+- `go test ./internal/campaigns ./internal/db ./api ./internal/mapping ./internal/handlers ./internal/routing -run
+  'Campaign|campaign' -count=1` passed.
+- `go vet ./internal/campaigns ./internal/db ./api ./internal/mapping ./internal/handlers ./internal/routing`
+  passed.
+- Direct `hack/validate-migrations.sh` again reached the validator and reported only the unchanged synthetic-stack
+  gaps: migrations 141 through 148 and 152. Migration 153 remains paired.
+- No live database, push, merge, rebase, deployment, or external mutation was performed.

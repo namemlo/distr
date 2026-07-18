@@ -79,13 +79,25 @@ func ResolveCampaignMembership(
 		}
 		memberOrderByWave[waveOrder]++
 		members = append(members, types.CampaignMember{
-			PlanID:            candidate.PlanID,
-			DeploymentUnitID:  candidate.DeploymentUnitID,
-			PlanChecksum:      candidate.PlanChecksum,
-			ApprovalRequestID: candidate.ApprovalRequestID,
-			ApprovalChecksum:  candidate.ApprovalChecksum,
-			WaveOrder:         waveOrder,
-			MemberOrder:       memberOrderByWave[waveOrder],
+			PlanID:                  candidate.PlanID,
+			DeploymentUnitID:        candidate.DeploymentUnitID,
+			PlanChecksum:            candidate.PlanChecksum,
+			EffectivePolicyChecksum: candidate.EffectivePolicyChecksum,
+			ApprovalRequestID:       candidate.ApprovalRequestID,
+			ApprovalRequestRevision: candidate.ApprovalRequestRevision,
+			ApprovalChecksum:        candidate.ApprovalChecksum,
+			CalendarVersionIDs: append(
+				[]uuid.UUID(nil),
+				candidate.CalendarVersionIDs...,
+			),
+			CalendarChecksums: append(
+				[]string(nil),
+				candidate.CalendarChecksums...,
+			),
+			AdmissionEvaluationID: candidate.AdmissionEvaluationID,
+			AdmissionChecksum:     candidate.AdmissionChecksum,
+			WaveOrder:             waveOrder,
+			MemberOrder:           memberOrderByWave[waveOrder],
 		})
 	}
 	return members, nil
@@ -115,6 +127,10 @@ func parseTagQuery(query string) ([]string, error) {
 	}
 	sort.Strings(terms)
 	return terms, nil
+}
+
+func ParseTagQuery(query string) ([]string, error) {
+	return parseTagQuery(query)
 }
 
 func matchesAllTags(tags, terms []string) bool {

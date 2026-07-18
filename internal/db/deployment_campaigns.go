@@ -2,8 +2,6 @@ package db
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +14,127 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+const campaignCandidateQuery = `
+	WITH selected_plan AS (
+		SELECT
+			plan.id,
+			plan.organization_id,
+			plan.deployment_unit_id,
+			plan.canonical_checksum,
+			plan.effective_policy_checksum,
+			plan.subscriber_set_checksum,
+			COALESCE(
+				array_agg(DISTINCT tag ORDER BY tag)
+					FILTER (WHERE tag IS NOT NULL),
+				'{}'::text[]
+			) AS tags
+		FROM DeploymentPlan plan
+		LEFT JOIN DeploymentPlanStep step
+		  ON step.deployment_plan_id = plan.id
+		 AND step.organization_id = plan.organization_id
+		LEFT JOIN LATERAL unnest(step.target_tags) tag ON true
+		WHERE plan.organization_id = $1
+		  AND plan.deployment_unit_id IS NOT NULL
+		  AND plan.status IN ('READY', 'EXECUTED')
+		  AND (
+			plan.id = ANY($2::uuid[])
+			OR cardinality($3::text[]) > 0
+		  )
+		GROUP BY
+			plan.id,
+			plan.organization_id,
+			plan.deployment_unit_id,
+			plan.canonical_checksum,
+			plan.effective_policy_checksum,
+			plan.subscriber_set_checksum
+		HAVING
+			plan.id = ANY($2::uuid[])
+			OR $3::text[] <@ COALESCE(
+				array_agg(DISTINCT tag)
+					FILTER (WHERE tag IS NOT NULL),
+				'{}'::text[]
+			)
+		ORDER BY plan.id
+		LIMIT 1001
+	)
+	SELECT
+		plan.id,
+		plan.organization_id,
+		plan.deployment_unit_id,
+		plan.canonical_checksum,
+		plan.effective_policy_checksum,
+		plan.tags,
+		approval.id,
+		approval.revision,
+		approval.subject_checksum,
+		COALESCE(
+			approval.state = 'APPROVED'
+				AND approval.expires_at > now()
+				AND approval.invalidated_at IS NULL
+				AND approval.subject_checksum = plan.canonical_checksum
+				AND approval.effective_policy_checksum =
+					plan.effective_policy_checksum
+				AND approval.subscriber_set_checksum =
+					plan.subscriber_set_checksum,
+			false
+		),
+		COALESCE(admission.id, '00000000-0000-0000-0000-000000000000'::uuid),
+		COALESCE(admission.decision_checksum, ''),
+		COALESCE(
+			ARRAY(
+				SELECT (item.value ->> 'versionId')::uuid
+				FROM jsonb_array_elements(
+					COALESCE(
+						admission.temporal_evidence -> 'calendarEvidence',
+						'[]'::jsonb
+					)
+				) WITH ORDINALITY item(value, ordinal)
+				ORDER BY item.ordinal
+			),
+			'{}'::uuid[]
+		),
+		COALESCE(
+			ARRAY(
+				SELECT item.value ->> 'checksum'
+				FROM jsonb_array_elements(
+					COALESCE(
+						admission.temporal_evidence -> 'calendarEvidence',
+						'[]'::jsonb
+					)
+				) WITH ORDINALITY item(value, ordinal)
+				ORDER BY item.ordinal
+			),
+			'{}'::text[]
+		),
+		COALESCE(
+			admission.decision = 'ADMIT'
+				AND admission.plan_checksum = plan.canonical_checksum
+				AND admission.effective_policy_checksum =
+					plan.effective_policy_checksum
+				AND admission.approval_request_id = approval.id
+				AND admission.approval_request_revision = approval.revision,
+			false
+		)
+	FROM selected_plan plan
+	LEFT JOIN LATERAL (
+		SELECT request.*
+		FROM ApprovalRequest request
+		WHERE request.organization_id = plan.organization_id
+		  AND request.subject_type = 'deployment_plan'
+		  AND request.subject_id = plan.id
+		ORDER BY request.created_at DESC, request.id DESC
+		LIMIT 1
+	) approval ON true
+	LEFT JOIN LATERAL (
+		SELECT evaluation.*
+		FROM AdmissionEvaluation evaluation
+		WHERE evaluation.organization_id = plan.organization_id
+		  AND evaluation.deployment_plan_id = plan.id
+		ORDER BY evaluation.created_at DESC, evaluation.id DESC
+		LIMIT 1
+	) admission ON true
+	ORDER BY plan.id`
 
 const campaignDraftOutput = `
 	id,
@@ -374,45 +493,16 @@ func hydrateCampaignCandidates(
 	ctx context.Context,
 	draft *types.CampaignDraft,
 ) error {
+	tagTerms, err := campaigns.ParseTagQuery(draft.Membership.TagQuery)
+	if err != nil {
+		return err
+	}
 	rows, err := internalctx.GetDb(ctx).Query(
 		ctx,
-		`SELECT
-			plan.id,
-			plan.organization_id,
-			plan.deployment_unit_id,
-			plan.canonical_checksum,
-			approval.id,
-			approval.subject_checksum,
-			COALESCE(
-				approval.state = 'APPROVED'
-				AND approval.expires_at > now()
-				AND approval.invalidated_at IS NULL
-				AND approval.subject_checksum = plan.canonical_checksum
-				AND approval.effective_policy_checksum =
-					plan.effective_policy_checksum
-				AND approval.subscriber_set_checksum =
-					plan.subscriber_set_checksum,
-				false
-			),
-			approval.effective_policy_checksum,
-			approval.subscriber_set_checksum,
-			approval.revision
-		FROM DeploymentPlan plan
-		LEFT JOIN LATERAL (
-			SELECT request.*
-			FROM ApprovalRequest request
-			WHERE request.organization_id = plan.organization_id
-			  AND request.subject_type = 'deployment_plan'
-			  AND request.subject_id = plan.id
-			ORDER BY request.created_at DESC, request.id DESC
-			LIMIT 1
-		) approval ON true
-		WHERE plan.organization_id = $1
-		  AND plan.deployment_unit_id IS NOT NULL
-		  AND plan.status IN ('READY', 'EXECUTED')
-		ORDER BY plan.id
-		LIMIT 1001`,
+		campaignCandidateQuery,
 		draft.OrganizationID,
+		draft.Membership.PlanIDs,
+		tagTerms,
 	)
 	if err != nil {
 		return err
@@ -422,38 +512,37 @@ func hydrateCampaignCandidates(
 	for rows.Next() {
 		var candidate types.CampaignPlanCandidate
 		var approvalRequestID *uuid.UUID
-		var approvalSubjectChecksum, effectivePolicyChecksum, subscriberChecksum *string
 		var approvalRevision *int64
+		var approvalChecksum *string
 		if err := rows.Scan(
 			&candidate.PlanID,
 			&candidate.OrganizationID,
 			&candidate.DeploymentUnitID,
 			&candidate.PlanChecksum,
+			&candidate.EffectivePolicyChecksum,
+			&candidate.Tags,
 			&approvalRequestID,
-			&approvalSubjectChecksum,
-			&candidate.Approved,
-			&effectivePolicyChecksum,
-			&subscriberChecksum,
 			&approvalRevision,
+			&approvalChecksum,
+			&candidate.Approved,
+			&candidate.AdmissionEvaluationID,
+			&candidate.AdmissionChecksum,
+			&candidate.CalendarVersionIDs,
+			&candidate.CalendarChecksums,
+			&candidate.Admitted,
 		); err != nil {
 			return err
 		}
 		candidate.CurrentPlanChecksum = candidate.PlanChecksum
 		if approvalRequestID != nil {
 			candidate.ApprovalRequestID = *approvalRequestID
-			candidate.ApprovalSubjectChecksum = campaignStringValue(
-				approvalSubjectChecksum,
+			candidate.ApprovalRequestRevision = campaignInt64Value(
+				approvalRevision,
 			)
-			candidate.ApprovalChecksum = campaignApprovalChecksum(
-				*approvalRequestID,
-				campaignStringValue(approvalSubjectChecksum),
-				campaignStringValue(effectivePolicyChecksum),
-				campaignStringValue(subscriberChecksum),
-				campaignInt64Value(approvalRevision),
-			)
+			candidate.ApprovalChecksum = campaignStringValue(approvalChecksum)
 		}
-		candidate.ExpectedStepChecksums = make(map[string]string)
-		candidate.ExpectedPlacementChecksums = make(map[uuid.UUID]string)
+		candidate.ExpectedStepPlacementChecksums =
+			make(map[types.CampaignStepPlacement]string)
 		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {
@@ -483,58 +572,56 @@ func hydrateCampaignCandidateEvidence(
 	planIDs []uuid.UUID,
 	indexByPlan map[uuid.UUID]int,
 ) error {
-	tagRows, err := internalctx.GetDb(ctx).Query(
-		ctx,
-		`SELECT step.deployment_plan_id, tag
-		FROM DeploymentPlanStep step
-		CROSS JOIN LATERAL unnest(step.target_tags) tag
-		WHERE step.organization_id = $1
-		  AND step.deployment_plan_id = ANY($2::uuid[])
-		ORDER BY step.deployment_plan_id, tag`,
-		draft.OrganizationID,
-		planIDs,
-	)
+	type requestedPair struct {
+		PlanID      uuid.UUID `json:"plan_id"`
+		StepKey     string    `json:"step_key"`
+		PlacementID uuid.UUID `json:"placement_id"`
+	}
+	requestedPairs := make([]requestedPair, 0, len(draft.Prerequisites))
+	for _, prerequisite := range draft.Prerequisites {
+		if _, selected := indexByPlan[prerequisite.UpstreamPlanID]; selected {
+			requestedPairs = append(requestedPairs, requestedPair{
+				PlanID:      prerequisite.UpstreamPlanID,
+				StepKey:     prerequisite.UpstreamStepKey,
+				PlacementID: prerequisite.ProviderPlacementID,
+			})
+		}
+	}
+	if len(requestedPairs) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(requestedPairs)
 	if err != nil {
 		return err
 	}
-	for tagRows.Next() {
-		var planID uuid.UUID
-		var tag string
-		if err := tagRows.Scan(&planID, &tag); err != nil {
-			tagRows.Close()
-			return err
-		}
-		index := indexByPlan[planID]
-		draft.CandidatePlans[index].Tags = append(
-			draft.CandidatePlans[index].Tags,
-			tag,
-		)
-	}
-	tagRows.Close()
-	if err := tagRows.Err(); err != nil {
-		return err
-	}
-
 	evidenceRows, err := internalctx.GetDb(ctx).Query(
 		ctx,
 		`SELECT
-			step.deployment_plan_id,
-			step.step_key,
-			component.id,
+			requested.plan_id,
+			requested.step_key,
+			requested.placement_id,
 			component.expected_state_checksum
-		FROM DeploymentPlanStep step
+		FROM jsonb_to_recordset($2::jsonb) AS requested(
+			plan_id uuid,
+			step_key text,
+			placement_id uuid
+		)
+		JOIN DeploymentPlanStep step
+		  ON step.deployment_plan_id = requested.plan_id
+		 AND step.step_key = requested.step_key
+		 AND step.organization_id = $1
 		JOIN DeploymentPlanTargetComponent component
-		  ON component.deployment_plan_id = step.deployment_plan_id
-		 AND component.organization_id = step.organization_id
-		WHERE step.organization_id = $1
-		  AND step.deployment_plan_id = ANY($2::uuid[])
+		  ON component.deployment_plan_id = requested.plan_id
+		 AND component.id = requested.placement_id
+		 AND component.organization_id = $1
+		WHERE requested.plan_id = ANY($3::uuid[])
 		  AND component.expected_state_checksum <> ''
 		ORDER BY
-			step.deployment_plan_id,
-			step.sort_order,
-			component.sort_order,
-			component.id`,
+			requested.plan_id,
+			requested.step_key,
+			requested.placement_id`,
 		draft.OrganizationID,
+		payload,
 		planIDs,
 	)
 	if err != nil {
@@ -554,10 +641,10 @@ func hydrateCampaignCandidateEvidence(
 		}
 		index := indexByPlan[planID]
 		candidate := &draft.CandidatePlans[index]
-		if _, exists := candidate.ExpectedStepChecksums[stepKey]; !exists {
-			candidate.ExpectedStepChecksums[stepKey] = checksum
-		}
-		candidate.ExpectedPlacementChecksums[placementID] = checksum
+		candidate.ExpectedStepPlacementChecksums[types.CampaignStepPlacement{
+			StepKey:     stepKey,
+			PlacementID: placementID,
+		}] = checksum
 		if !campaignContainsUUID(candidate.SharedProviderPlacements, placementID) {
 			candidate.SharedProviderPlacements = append(
 				candidate.SharedProviderPlacements,
@@ -566,30 +653,6 @@ func hydrateCampaignCandidateEvidence(
 		}
 	}
 	return evidenceRows.Err()
-}
-
-func campaignApprovalChecksum(
-	requestID uuid.UUID,
-	subjectChecksum string,
-	effectivePolicyChecksum string,
-	subscriberSetChecksum string,
-	revision int64,
-) string {
-	payload, _ := json.Marshal(struct {
-		RequestID               string `json:"requestId"`
-		SubjectChecksum         string `json:"subjectChecksum"`
-		EffectivePolicyChecksum string `json:"effectivePolicyChecksum"`
-		SubscriberSetChecksum   string `json:"subscriberSetChecksum"`
-		Revision                int64  `json:"revision"`
-	}{
-		RequestID:               requestID.String(),
-		SubjectChecksum:         subjectChecksum,
-		EffectivePolicyChecksum: effectivePolicyChecksum,
-		SubscriberSetChecksum:   subscriberSetChecksum,
-		Revision:                revision,
-	})
-	digest := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 func insertCampaignRevision(
@@ -689,8 +752,14 @@ func insertCampaignRevisionChildren(
 			"deployment_plan_id",
 			"deployment_unit_id",
 			"plan_checksum",
+			"effective_policy_checksum",
 			"approval_request_id",
+			"approval_request_revision",
 			"approval_checksum",
+			"calendar_version_ids",
+			"calendar_checksums",
+			"admission_evaluation_id",
+			"admission_checksum",
 			"wave_order",
 			"member_order",
 		},
@@ -703,8 +772,14 @@ func insertCampaignRevisionChildren(
 				member.PlanID,
 				member.DeploymentUnitID,
 				member.PlanChecksum,
+				member.EffectivePolicyChecksum,
 				member.ApprovalRequestID,
+				member.ApprovalRequestRevision,
 				member.ApprovalChecksum,
+				member.CalendarVersionIDs,
+				member.CalendarChecksums,
+				member.AdmissionEvaluationID,
+				member.AdmissionChecksum,
 				member.WaveOrder,
 				member.MemberOrder,
 			}, nil
@@ -852,8 +927,14 @@ func hydrateCampaignRevision(
 			deployment_plan_id,
 			deployment_unit_id,
 			plan_checksum,
+			effective_policy_checksum,
 			approval_request_id,
+			approval_request_revision,
 			approval_checksum,
+			calendar_version_ids,
+			calendar_checksums,
+			admission_evaluation_id,
+			admission_checksum,
 			wave_order,
 			member_order
 		FROM DeploymentCampaignMember

@@ -57,12 +57,56 @@ func TestCampaignRevisionValidationAcceptsFrozenSharedProviderPrerequisite(t *te
 		UpstreamStepKey:     "database.migrate",
 		ProviderPlacementID: draft.CandidatePlans[0].SharedProviderPlacements[0],
 		ExpectedObservedStateChecksum: draft.CandidatePlans[0].
-			ExpectedStepChecksums["database.migrate"],
+			ExpectedStepPlacementChecksums[types.CampaignStepPlacement{
+			StepKey:     "database.migrate",
+			PlacementID: draft.CandidatePlans[0].SharedProviderPlacements[0],
+		}],
 	}}
 
 	issues := ValidateCampaignDraft(context.Background(), draft)
 
 	g.Expect(issues).To(BeEmpty())
+}
+
+func TestCampaignRevisionValidationRejectsIndependentStepAndPlacementEvidence(t *testing.T) {
+	g := NewWithT(t)
+	draft := campaignDraftFixture()
+	draft.Membership.PlanIDs = []uuid.UUID{
+		draft.CandidatePlans[0].PlanID,
+		draft.CandidatePlans[1].PlanID,
+	}
+	otherPlacement := uuid.MustParse("60000000-0000-0000-0000-000000000009")
+	draft.CandidatePlans[0].SharedProviderPlacements = append(
+		draft.CandidatePlans[0].SharedProviderPlacements,
+		otherPlacement,
+	)
+	draft.Prerequisites = []types.CampaignPrerequisiteDraft{{
+		DownstreamPlanID:              draft.CandidatePlans[1].PlanID,
+		UpstreamPlanID:                draft.CandidatePlans[0].PlanID,
+		UpstreamStepKey:               "database.migrate",
+		ProviderPlacementID:           otherPlacement,
+		ExpectedObservedStateChecksum: "sha256:" + repeatHex("6"),
+	}}
+
+	issues := ValidateCampaignDraft(context.Background(), draft)
+
+	g.Expect(campaignIssueCodes(issues)).To(ContainElement(
+		"campaign.prerequisite.observation_checksum_mismatch",
+	))
+}
+
+func TestCampaignRevisionValidationRejectsMissingAdmissionEvidence(t *testing.T) {
+	g := NewWithT(t)
+	draft := campaignDraftFixture()
+	draft.Membership.PlanIDs = []uuid.UUID{draft.CandidatePlans[0].PlanID}
+	draft.Waves = draft.Waves[:1]
+	draft.CandidatePlans[0].Admitted = false
+
+	issues := ValidateCampaignDraft(context.Background(), draft)
+
+	g.Expect(campaignIssueCodes(issues)).To(ContainElement(
+		"campaign.member.admission_invalid",
+	))
 }
 
 func TestCampaignRevisionValidationRejectsObservationExpectationMismatch(t *testing.T) {

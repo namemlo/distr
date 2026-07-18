@@ -56,13 +56,19 @@ func CanonicalizeCampaignRevision(
 		MaximumConcurrency int    `json:"maximumConcurrency"`
 	}
 	type canonicalMember struct {
-		PlanID            string `json:"planId"`
-		DeploymentUnitID  string `json:"deploymentUnitId"`
-		PlanChecksum      string `json:"planChecksum"`
-		ApprovalRequestID string `json:"approvalRequestId"`
-		ApprovalChecksum  string `json:"approvalChecksum"`
-		WaveOrder         int    `json:"waveOrder"`
-		MemberOrder       int    `json:"memberOrder"`
+		PlanID                  string   `json:"planId"`
+		DeploymentUnitID        string   `json:"deploymentUnitId"`
+		PlanChecksum            string   `json:"planChecksum"`
+		EffectivePolicyChecksum string   `json:"effectivePolicyChecksum"`
+		ApprovalRequestID       string   `json:"approvalRequestId"`
+		ApprovalRequestRevision int64    `json:"approvalRequestRevision"`
+		ApprovalChecksum        string   `json:"approvalChecksum"`
+		CalendarVersionIDs      []string `json:"calendarVersionIds"`
+		CalendarChecksums       []string `json:"calendarChecksums"`
+		AdmissionEvaluationID   string   `json:"admissionEvaluationId"`
+		AdmissionChecksum       string   `json:"admissionChecksum"`
+		WaveOrder               int      `json:"waveOrder"`
+		MemberOrder             int      `json:"memberOrder"`
 	}
 	type canonicalPrerequisite struct {
 		DownstreamPlanID              string `json:"downstreamPlanId"`
@@ -107,14 +113,27 @@ func CanonicalizeCampaignRevision(
 		})
 	}
 	for _, member := range members {
+		calendarVersionIDs := make([]string, len(member.CalendarVersionIDs))
+		for index, versionID := range member.CalendarVersionIDs {
+			calendarVersionIDs[index] = versionID.String()
+		}
 		document.Members = append(document.Members, canonicalMember{
-			PlanID:            member.PlanID.String(),
-			DeploymentUnitID:  member.DeploymentUnitID.String(),
-			PlanChecksum:      member.PlanChecksum,
-			ApprovalRequestID: member.ApprovalRequestID.String(),
-			ApprovalChecksum:  member.ApprovalChecksum,
-			WaveOrder:         member.WaveOrder,
-			MemberOrder:       member.MemberOrder,
+			PlanID:                  member.PlanID.String(),
+			DeploymentUnitID:        member.DeploymentUnitID.String(),
+			PlanChecksum:            member.PlanChecksum,
+			EffectivePolicyChecksum: member.EffectivePolicyChecksum,
+			ApprovalRequestID:       member.ApprovalRequestID.String(),
+			ApprovalRequestRevision: member.ApprovalRequestRevision,
+			ApprovalChecksum:        member.ApprovalChecksum,
+			CalendarVersionIDs:      calendarVersionIDs,
+			CalendarChecksums: append(
+				[]string(nil),
+				member.CalendarChecksums...,
+			),
+			AdmissionEvaluationID: member.AdmissionEvaluationID.String(),
+			AdmissionChecksum:     member.AdmissionChecksum,
+			WaveOrder:             member.WaveOrder,
+			MemberOrder:           member.MemberOrder,
 		})
 	}
 	for _, prerequisite := range prerequisites {

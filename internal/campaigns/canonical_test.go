@@ -47,6 +47,22 @@ func TestCanonicalizeCampaignRevisionBindsMemberPlanChecksum(t *testing.T) {
 	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
 }
 
+func TestCanonicalizeCampaignRevisionBindsAllMemberEvidenceChecksums(t *testing.T) {
+	g := NewWithT(t)
+	revision := campaignRevisionFixture()
+	_, firstChecksum, err := CanonicalizeCampaignRevision(revision)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	revision.Members[0].EffectivePolicyChecksum = "sha256:" + repeatHex("9")
+	revision.Members[0].ApprovalChecksum = "sha256:" + repeatHex("a")
+	revision.Members[0].CalendarChecksums[0] = "sha256:" + repeatHex("b")
+	revision.Members[0].AdmissionChecksum = "sha256:" + repeatHex("c")
+	_, secondChecksum, err := CanonicalizeCampaignRevision(revision)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
+}
+
 func campaignRevisionFixture() types.CampaignRevision {
 	organizationID := uuid.MustParse("10000000-0000-0000-0000-000000000001")
 	draftID := uuid.MustParse("20000000-0000-0000-0000-000000000001")
@@ -78,9 +94,19 @@ func campaignRevisionFixture() types.CampaignRevision {
 				ApprovalRequestID: uuid.MustParse(
 					"50000000-0000-0000-0000-000000000002",
 				),
-				ApprovalChecksum: "sha256:" + repeatHex("4"),
-				WaveOrder:        2,
-				MemberOrder:      2,
+				ApprovalChecksum:        "sha256:" + repeatHex("4"),
+				ApprovalRequestRevision: 2,
+				EffectivePolicyChecksum: "sha256:" + repeatHex("5"),
+				CalendarVersionIDs: []uuid.UUID{
+					uuid.MustParse("70000000-0000-0000-0000-000000000002"),
+				},
+				CalendarChecksums: []string{"sha256:" + repeatHex("6")},
+				AdmissionEvaluationID: uuid.MustParse(
+					"80000000-0000-0000-0000-000000000002",
+				),
+				AdmissionChecksum: "sha256:" + repeatHex("7"),
+				WaveOrder:         2,
+				MemberOrder:       2,
 			},
 			{
 				PlanID:           firstPlanID,
@@ -89,9 +115,19 @@ func campaignRevisionFixture() types.CampaignRevision {
 				ApprovalRequestID: uuid.MustParse(
 					"50000000-0000-0000-0000-000000000001",
 				),
-				ApprovalChecksum: "sha256:" + repeatHex("3"),
-				WaveOrder:        1,
-				MemberOrder:      1,
+				ApprovalChecksum:        "sha256:" + repeatHex("3"),
+				ApprovalRequestRevision: 2,
+				EffectivePolicyChecksum: "sha256:" + repeatHex("4"),
+				CalendarVersionIDs: []uuid.UUID{
+					uuid.MustParse("70000000-0000-0000-0000-000000000001"),
+				},
+				CalendarChecksums: []string{"sha256:" + repeatHex("5")},
+				AdmissionEvaluationID: uuid.MustParse(
+					"80000000-0000-0000-0000-000000000001",
+				),
+				AdmissionChecksum: "sha256:" + repeatHex("6"),
+				WaveOrder:         1,
+				MemberOrder:       1,
 			},
 		},
 		Prerequisites: []types.CampaignPrerequisite{

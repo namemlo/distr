@@ -37,6 +37,43 @@ func TestCampaignRevisionToAPIPreservesFrozenPrerequisite(t *testing.T) {
 		To(Equal(prerequisite.ExpectedObservedStateChecksum))
 }
 
+func TestCampaignRevisionToAPIPreservesExactMemberEvidence(t *testing.T) {
+	g := NewWithT(t)
+	member := types.CampaignMember{
+		PlanID:                  uuid.New(),
+		DeploymentUnitID:        uuid.New(),
+		PlanChecksum:            "sha256:" + mappingCampaignHex("1"),
+		EffectivePolicyChecksum: "sha256:" + mappingCampaignHex("2"),
+		ApprovalRequestID:       uuid.New(),
+		ApprovalRequestRevision: 3,
+		ApprovalChecksum:        "sha256:" + mappingCampaignHex("3"),
+		CalendarVersionIDs:      []uuid.UUID{uuid.New()},
+		CalendarChecksums:       []string{"sha256:" + mappingCampaignHex("4")},
+		AdmissionEvaluationID:   uuid.New(),
+		AdmissionChecksum:       "sha256:" + mappingCampaignHex("5"),
+		WaveOrder:               1,
+		MemberOrder:             1,
+	}
+
+	result := CampaignRevisionToAPI(types.CampaignRevision{
+		Members: []types.CampaignMember{member},
+	})
+
+	g.Expect(result.Members).To(HaveLen(1))
+	g.Expect(result.Members[0].EffectivePolicyChecksum).To(Equal(
+		member.EffectivePolicyChecksum,
+	))
+	g.Expect(result.Members[0].ApprovalRequestRevision).To(Equal(
+		member.ApprovalRequestRevision,
+	))
+	g.Expect(result.Members[0].CalendarChecksums).To(Equal(
+		member.CalendarChecksums,
+	))
+	g.Expect(result.Members[0].AdmissionChecksum).To(Equal(
+		member.AdmissionChecksum,
+	))
+}
+
 func mappingCampaignHex(value string) string {
 	result := ""
 	for range 64 {

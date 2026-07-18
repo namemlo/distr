@@ -5,13 +5,33 @@ AS $$
 BEGIN
   IF TG_OP = 'DELETE'
      AND current_setting(
-       'distr.deployment_registry_deletion_reason',
+       'distr.deployment_campaign_deletion_reason',
        true
-     ) = 'ORGANIZATION_RETENTION' THEN
+     ) = 'ORGANIZATION_RETENTION'
+     AND current_setting(
+       'distr.deployment_campaign_deletion_operation_id',
+       true
+     ) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     AND pg_trigger_depth() > 1
+     AND NOT EXISTS (
+       SELECT 1
+       FROM Organization
+       WHERE id = OLD.organization_id
+     ) THEN
     RETURN OLD;
   END IF;
 
   RAISE EXCEPTION '% rows are immutable', TG_TABLE_NAME
+    USING ERRCODE = '23514';
+END;
+$$;
+
+CREATE FUNCTION deploymentcampaign_published_no_truncate()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION '% rows cannot be truncated', TG_TABLE_NAME
     USING ERRCODE = '23514';
 END;
 $$;
@@ -145,7 +165,7 @@ CREATE TABLE DeploymentCampaignWave (
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignwave_order_unique
-    UNIQUE (campaign_revision_id, wave_order)
+    UNIQUE (campaign_revision_id, wave_order, organization_id)
 );
 
 CREATE TABLE DeploymentCampaignMember (
@@ -157,9 +177,32 @@ CREATE TABLE DeploymentCampaignMember (
   plan_checksum TEXT NOT NULL CHECK (
     plan_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
+  effective_policy_checksum TEXT NOT NULL CHECK (
+    effective_policy_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
   approval_request_id UUID NOT NULL,
+  approval_request_revision BIGINT NOT NULL CHECK (
+    approval_request_revision > 0
+  ),
   approval_checksum TEXT NOT NULL CHECK (
     approval_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  calendar_version_ids UUID[] NOT NULL DEFAULT '{}' CHECK (
+    cardinality(calendar_version_ids) <= 256
+    AND array_position(calendar_version_ids, NULL) IS NULL
+  ),
+  calendar_checksums TEXT[] NOT NULL DEFAULT '{}' CHECK (
+    cardinality(calendar_checksums) = cardinality(calendar_version_ids)
+    AND array_position(calendar_checksums, NULL) IS NULL
+    AND (
+      cardinality(calendar_checksums) = 0
+      OR array_to_string(calendar_checksums, ',') ~
+        '^sha256:[0-9a-f]{64}(,sha256:[0-9a-f]{64})*$'
+    )
+  ),
+  admission_evaluation_id UUID NOT NULL,
+  admission_checksum TEXT NOT NULL CHECK (
+    admission_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
   wave_order INTEGER NOT NULL CHECK (wave_order > 0),
   member_order INTEGER NOT NULL CHECK (member_order > 0),
@@ -181,14 +224,24 @@ CREATE TABLE DeploymentCampaignMember (
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT deploymentcampaignmember_admission_fk
+    FOREIGN KEY (admission_evaluation_id)
+    REFERENCES AdmissionEvaluation(id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignmember_wave_fk
-    FOREIGN KEY (campaign_revision_id, wave_order)
-    REFERENCES DeploymentCampaignWave(campaign_revision_id, wave_order)
+    FOREIGN KEY (campaign_revision_id, wave_order, organization_id)
+    REFERENCES DeploymentCampaignWave(
+      campaign_revision_id,
+      wave_order,
+      organization_id
+    )
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignmember_plan_unique
-    UNIQUE (campaign_revision_id, deployment_plan_id),
+    UNIQUE (campaign_revision_id, deployment_plan_id, organization_id),
   CONSTRAINT deploymentcampaignmember_unit_unique
     UNIQUE (campaign_revision_id, deployment_unit_id),
   CONSTRAINT deploymentcampaignmember_order_unique
@@ -211,15 +264,49 @@ CREATE TABLE DeploymentCampaignPrerequisite (
   ),
   CONSTRAINT deploymentcampaignprerequisite_distinct_plans
     CHECK (downstream_plan_id <> upstream_plan_id),
+  CONSTRAINT deploymentcampaignprerequisite_revision_fk
+    FOREIGN KEY (campaign_revision_id, organization_id)
+    REFERENCES DeploymentCampaignRevision(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignprerequisite_downstream_fk
-    FOREIGN KEY (campaign_revision_id, downstream_plan_id)
-    REFERENCES DeploymentCampaignMember(campaign_revision_id, deployment_plan_id)
+    FOREIGN KEY (
+      campaign_revision_id,
+      downstream_plan_id,
+      organization_id
+    )
+    REFERENCES DeploymentCampaignMember(
+      campaign_revision_id,
+      deployment_plan_id,
+      organization_id
+    )
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignprerequisite_upstream_fk
-    FOREIGN KEY (campaign_revision_id, upstream_plan_id)
-    REFERENCES DeploymentCampaignMember(campaign_revision_id, deployment_plan_id)
+    FOREIGN KEY (
+      campaign_revision_id,
+      upstream_plan_id,
+      organization_id
+    )
+    REFERENCES DeploymentCampaignMember(
+      campaign_revision_id,
+      deployment_plan_id,
+      organization_id
+    )
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT deploymentcampaignprerequisite_downstream_plan_fk
+    FOREIGN KEY (downstream_plan_id, organization_id)
+    REFERENCES DeploymentPlan(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT deploymentcampaignprerequisite_upstream_plan_fk
+    FOREIGN KEY (upstream_plan_id, organization_id)
+    REFERENCES DeploymentPlan(id, organization_id)
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
@@ -266,3 +353,19 @@ FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
 CREATE TRIGGER DeploymentCampaignPrerequisite_immutable
 BEFORE UPDATE OR DELETE ON DeploymentCampaignPrerequisite
 FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+
+CREATE TRIGGER DeploymentCampaignRevision_no_truncate
+BEFORE TRUNCATE ON DeploymentCampaignRevision
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
+
+CREATE TRIGGER DeploymentCampaignWave_no_truncate
+BEFORE TRUNCATE ON DeploymentCampaignWave
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
+
+CREATE TRIGGER DeploymentCampaignMember_no_truncate
+BEFORE TRUNCATE ON DeploymentCampaignMember
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
+
+CREATE TRIGGER DeploymentCampaignPrerequisite_no_truncate
+BEFORE TRUNCATE ON DeploymentCampaignPrerequisite
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();

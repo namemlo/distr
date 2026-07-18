@@ -27,6 +27,14 @@ DROP TRIGGER DeploymentCampaignWave_immutable
   ON DeploymentCampaignWave;
 DROP TRIGGER DeploymentCampaignRevision_immutable
   ON DeploymentCampaignRevision;
+DROP TRIGGER DeploymentCampaignPrerequisite_no_truncate
+  ON DeploymentCampaignPrerequisite;
+DROP TRIGGER DeploymentCampaignMember_no_truncate
+  ON DeploymentCampaignMember;
+DROP TRIGGER DeploymentCampaignWave_no_truncate
+  ON DeploymentCampaignWave;
+DROP TRIGGER DeploymentCampaignRevision_no_truncate
+  ON DeploymentCampaignRevision;
 
 ALTER TABLE DeploymentCampaignDraft
   DROP CONSTRAINT deploymentcampaigndraft_last_published_fk;
@@ -35,4 +43,5 @@ DROP TABLE DeploymentCampaignMember;
 DROP TABLE DeploymentCampaignWave;
 DROP TABLE DeploymentCampaignRevision;
 DROP TABLE DeploymentCampaignDraft;
+DROP FUNCTION deploymentcampaign_published_no_truncate();
 DROP FUNCTION deploymentcampaign_published_immutable();

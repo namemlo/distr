@@ -25,6 +25,21 @@ func TestResolveCampaignMembershipOrdersFrozenTagResults(t *testing.T) {
 	g.Expect(members[0].WaveOrder).To(Equal(1))
 	g.Expect(members[0].MemberOrder).To(Equal(1))
 	g.Expect(members[0].PlanID).To(Equal(draft.CandidatePlans[1].PlanID))
+	g.Expect(members[0].EffectivePolicyChecksum).To(Equal(
+		draft.CandidatePlans[1].EffectivePolicyChecksum,
+	))
+	g.Expect(members[0].ApprovalRequestRevision).To(Equal(
+		draft.CandidatePlans[1].ApprovalRequestRevision,
+	))
+	g.Expect(members[0].ApprovalChecksum).To(Equal(
+		draft.CandidatePlans[1].ApprovalChecksum,
+	))
+	g.Expect(members[0].CalendarChecksums).To(Equal(
+		draft.CandidatePlans[1].CalendarChecksums,
+	))
+	g.Expect(members[0].AdmissionChecksum).To(Equal(
+		draft.CandidatePlans[1].AdmissionChecksum,
+	))
 	g.Expect(members[1].WaveOrder).To(Equal(2))
 	g.Expect(members[1].MemberOrder).To(Equal(1))
 }
@@ -83,13 +98,25 @@ func campaignDraftFixture() types.CampaignDraft {
 				PlanChecksum:            "sha256:" + repeatHex("1"),
 				CurrentPlanChecksum:     "sha256:" + repeatHex("1"),
 				ApprovalRequestID:       uuid.MustParse("50000000-0000-0000-0000-000000000001"),
-				ApprovalSubjectChecksum: "sha256:" + repeatHex("1"),
-				ApprovalChecksum:        "sha256:" + repeatHex("3"),
-				Approved:                true,
-				Tags:                    []string{"region=eu", "tier=production"},
-				ExpectedStepChecksums:   map[string]string{"database.migrate": "sha256:" + repeatHex("5")},
-				ExpectedPlacementChecksums: map[uuid.UUID]string{
-					uuid.MustParse("60000000-0000-0000-0000-000000000001"): "sha256:" + repeatHex("5"),
+				ApprovalRequestRevision: 2,
+				ApprovalChecksum:        "sha256:" + repeatHex("1"),
+				EffectivePolicyChecksum: "sha256:" + repeatHex("3"),
+				CalendarVersionIDs: []uuid.UUID{
+					uuid.MustParse("70000000-0000-0000-0000-000000000001"),
+				},
+				CalendarChecksums: []string{"sha256:" + repeatHex("4")},
+				AdmissionEvaluationID: uuid.MustParse(
+					"80000000-0000-0000-0000-000000000001",
+				),
+				AdmissionChecksum: "sha256:" + repeatHex("5"),
+				Admitted:          true,
+				Approved:          true,
+				Tags:              []string{"region=eu", "tier=production"},
+				ExpectedStepPlacementChecksums: map[types.CampaignStepPlacement]string{
+					{
+						StepKey:     "database.migrate",
+						PlacementID: uuid.MustParse("60000000-0000-0000-0000-000000000001"),
+					}: "sha256:" + repeatHex("6"),
 				},
 				SharedProviderPlacements: []uuid.UUID{
 					uuid.MustParse("60000000-0000-0000-0000-000000000001"),
@@ -102,10 +129,20 @@ func campaignDraftFixture() types.CampaignDraft {
 				PlanChecksum:            "sha256:" + repeatHex("2"),
 				CurrentPlanChecksum:     "sha256:" + repeatHex("2"),
 				ApprovalRequestID:       uuid.MustParse("50000000-0000-0000-0000-000000000002"),
-				ApprovalSubjectChecksum: "sha256:" + repeatHex("2"),
-				ApprovalChecksum:        "sha256:" + repeatHex("4"),
-				Approved:                true,
-				Tags:                    []string{"region=eu", "tier=production"},
+				ApprovalRequestRevision: 3,
+				ApprovalChecksum:        "sha256:" + repeatHex("2"),
+				EffectivePolicyChecksum: "sha256:" + repeatHex("6"),
+				CalendarVersionIDs: []uuid.UUID{
+					uuid.MustParse("70000000-0000-0000-0000-000000000002"),
+				},
+				CalendarChecksums: []string{"sha256:" + repeatHex("7")},
+				AdmissionEvaluationID: uuid.MustParse(
+					"80000000-0000-0000-0000-000000000002",
+				),
+				AdmissionChecksum: "sha256:" + repeatHex("8"),
+				Admitted:          true,
+				Approved:          true,
+				Tags:              []string{"region=eu", "tier=production"},
 			},
 		},
 	}

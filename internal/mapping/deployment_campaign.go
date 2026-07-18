@@ -97,13 +97,22 @@ func campaignWaveToAPI(wave types.CampaignWave) api.CampaignWave {
 
 func campaignMemberToAPI(member types.CampaignMember) api.CampaignMember {
 	return api.CampaignMember{
-		PlanID:            member.PlanID,
-		DeploymentUnitID:  member.DeploymentUnitID,
-		PlanChecksum:      member.PlanChecksum,
-		ApprovalRequestID: member.ApprovalRequestID,
-		ApprovalChecksum:  member.ApprovalChecksum,
-		WaveOrder:         member.WaveOrder,
-		MemberOrder:       member.MemberOrder,
+		PlanID:                  member.PlanID,
+		DeploymentUnitID:        member.DeploymentUnitID,
+		PlanChecksum:            member.PlanChecksum,
+		EffectivePolicyChecksum: member.EffectivePolicyChecksum,
+		ApprovalRequestID:       member.ApprovalRequestID,
+		ApprovalRequestRevision: member.ApprovalRequestRevision,
+		ApprovalChecksum:        member.ApprovalChecksum,
+		CalendarVersionIDs: append(
+			[]uuid.UUID(nil),
+			member.CalendarVersionIDs...,
+		),
+		CalendarChecksums:     append([]string(nil), member.CalendarChecksums...),
+		AdmissionEvaluationID: member.AdmissionEvaluationID,
+		AdmissionChecksum:     member.AdmissionChecksum,
+		WaveOrder:             member.WaveOrder,
+		MemberOrder:           member.MemberOrder,
 	}
 }
 

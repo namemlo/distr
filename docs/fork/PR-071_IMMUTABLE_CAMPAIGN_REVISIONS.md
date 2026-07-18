@@ -15,19 +15,23 @@ shared-provider expectations.
 - Draft concurrency: edits supply `expectedRevision`; a stale revision returns conflict.
 - Membership: explicit plan IDs and a conjunction of canonical `key=value` tag terms are resolved into at most
   1,000 eligible organization plans.
-- Publication: a repeatable-read transaction uses an idempotency key, revalidates current plans and approvals,
-  freezes normalized child rows, and returns the same revision for an idempotent replay.
-- Canonical evidence: ordered members, deployment units, plan and approval checksums, tag query, waves, bake,
-  thresholds, risk/concurrency policy, and shared-provider prerequisites are SHA-256 bound.
+- Publication: a repeatable-read transaction uses an idempotency key, applies explicit/tag membership before its
+  1,000-result bound, revalidates current plans, approvals, and admissions, freezes normalized child rows, and
+  returns the same revision for an idempotent replay.
+- Canonical evidence: ordered members, deployment units, plan, effective-policy, exact approval, calendar, and
+  admission evidence, tag query, waves, bake, thresholds, risk/concurrency policy, and shared-provider
+  prerequisites are SHA-256 bound.
 - Prerequisites: downstream plan, upstream plan, step key, provider placement, and expected observed-state checksum
   are frozen. A future observation ID is intentionally absent.
 
 ## Impact
 
 Migration 153 adds `DeploymentCampaignDraft`, `DeploymentCampaignRevision`, `DeploymentCampaignWave`,
-`DeploymentCampaignMember`, and `DeploymentCampaignPrerequisite`. Published tables are immutable except during the
-existing authorized organization-retention cascade. Unique constraints prevent a plan or deployment unit from
-appearing twice and preserve deterministic wave/member order.
+`DeploymentCampaignMember`, and `DeploymentCampaignPrerequisite`. Published tables reject updates, direct deletes,
+and truncates. A published delete is accepted only for the campaign-specific, operation-bound `Organization`
+retention cascade. Composite organization foreign keys bind each prerequisite to its revision, member plans, and
+plan rows. Unique constraints prevent a plan or deployment unit from appearing twice and preserve deterministic
+wave/member order.
 
 The API and route are additive and default-off for writes. There is no UI, scheduler, task creation, campaign run,
 pause/resume, executor protocol, observer write, client database, or deployment mutation in this slice. Existing
@@ -38,7 +42,8 @@ v1 deployment behavior and historical checksums are unchanged.
 Test-first coverage includes stable member resolution/order/checksum, checksum materiality, tag changes after
 publication, missing explicit plans, unapproved plans, plan-checksum mismatch, duplicate deployment unit,
 valid shared-provider prerequisites, expected-observation mismatch, invalid/decreasing bake, API bounds, immutable
-migration structure, mapping fidelity, and draft edits without scoped authority.
+migration structure, direct retention-marker forgery, exact step-placement pairs, pre-bound membership queries,
+mapping fidelity, and draft edits without scoped authority.
 
 Focused Go tests and `go vet` are the feature-local gates. Migrations 141 through 148 and migration 152 are absent
 from the assigned synthetic stack, so migration lint reports those exact predecessor gaps until the missing

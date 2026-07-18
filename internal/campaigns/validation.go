@@ -51,12 +51,27 @@ func ValidateCampaignDraft(
 		field := fmt.Sprintf("membership.planIds[%d]", index)
 		if !candidate.Approved ||
 			candidate.ApprovalRequestID == uuid.Nil ||
-			candidate.ApprovalSubjectChecksum != candidate.PlanChecksum ||
+			candidate.ApprovalRequestRevision <= 0 ||
+			candidate.ApprovalChecksum != candidate.PlanChecksum ||
 			!campaignChecksumPattern.MatchString(candidate.ApprovalChecksum) {
 			issues = append(issues, campaignIssue(
 				"campaign.member.unapproved",
 				field,
 				"campaign members require a current checksum-bound approval",
+			))
+		}
+		if !candidate.Admitted ||
+			candidate.AdmissionEvaluationID == uuid.Nil ||
+			!campaignChecksumPattern.MatchString(candidate.AdmissionChecksum) ||
+			!campaignChecksumPattern.MatchString(
+				candidate.EffectivePolicyChecksum,
+			) ||
+			len(candidate.CalendarVersionIDs) != len(candidate.CalendarChecksums) ||
+			!campaignChecksumsValid(candidate.CalendarChecksums) {
+			issues = append(issues, campaignIssue(
+				"campaign.member.admission_invalid",
+				field,
+				"campaign members require exact policy, calendar, and admission evidence",
 			))
 		}
 		if !campaignChecksumPattern.MatchString(candidate.PlanChecksum) ||
@@ -123,11 +138,13 @@ func ValidateCampaignDraft(
 				"provider placement is not a frozen shared-provider placement",
 			))
 		}
-		_, stepExists := upstream.ExpectedStepChecksums[prerequisite.UpstreamStepKey]
-		expected := upstream.ExpectedPlacementChecksums[prerequisite.ProviderPlacementID]
+		expected := upstream.ExpectedStepPlacementChecksums[types.CampaignStepPlacement{
+			StepKey:     prerequisite.UpstreamStepKey,
+			PlacementID: prerequisite.ProviderPlacementID,
+		}]
 		if !campaignChecksumPattern.MatchString(
 			prerequisite.ExpectedObservedStateChecksum,
-		) || !stepExists || expected == "" ||
+		) || expected == "" ||
 			expected != prerequisite.ExpectedObservedStateChecksum {
 			issues = append(issues, campaignIssue(
 				"campaign.prerequisite.observation_checksum_mismatch",
@@ -154,6 +171,15 @@ func ValidateCampaignDraft(
 		return issues[i].Code < issues[j].Code
 	})
 	return issues
+}
+
+func campaignChecksumsValid(checksums []string) bool {
+	for _, checksum := range checksums {
+		if !campaignChecksumPattern.MatchString(checksum) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateCampaignWaves(

@@ -202,13 +202,19 @@ type CampaignWave struct {
 }
 
 type CampaignMember struct {
-	PlanID            uuid.UUID `json:"planId"`
-	DeploymentUnitID  uuid.UUID `json:"deploymentUnitId"`
-	PlanChecksum      string    `json:"planChecksum"`
-	ApprovalRequestID uuid.UUID `json:"approvalRequestId"`
-	ApprovalChecksum  string    `json:"approvalChecksum"`
-	WaveOrder         int       `json:"waveOrder"`
-	MemberOrder       int       `json:"memberOrder"`
+	PlanID                  uuid.UUID   `json:"planId"`
+	DeploymentUnitID        uuid.UUID   `json:"deploymentUnitId"`
+	PlanChecksum            string      `json:"planChecksum"`
+	EffectivePolicyChecksum string      `json:"effectivePolicyChecksum"`
+	ApprovalRequestID       uuid.UUID   `json:"approvalRequestId"`
+	ApprovalRequestRevision int64       `json:"approvalRequestRevision"`
+	ApprovalChecksum        string      `json:"approvalChecksum"`
+	CalendarVersionIDs      []uuid.UUID `json:"calendarVersionIds"`
+	CalendarChecksums       []string    `json:"calendarChecksums"`
+	AdmissionEvaluationID   uuid.UUID   `json:"admissionEvaluationId"`
+	AdmissionChecksum       string      `json:"admissionChecksum"`
+	WaveOrder               int         `json:"waveOrder"`
+	MemberOrder             int         `json:"memberOrder"`
 }
 
 type CampaignPrerequisite struct {
