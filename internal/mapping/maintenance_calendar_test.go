@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/scheduling"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -54,9 +55,13 @@ func TestMaintenanceCalendarMappingsHideTenantAndCanonicalPayload(t *testing.T) 
 		Checksum:            "sha256:calendar",
 		PublishedAt:         now,
 		PublishedBy:         uuid.New(),
-		WindowRules:         calendar.DraftRules,
+		WindowRules: append(
+			[]types.MaintenanceWindowRule(nil),
+			calendar.DraftRules...,
+		),
 	}
 	version.WindowRules[0].VersionRuleID = uuid.New()
+	calendar.DraftRules[0].VersionRuleID = uuid.New()
 	nextVersion := version
 	nextVersion.ID = uuid.New()
 	nextVersion.WindowRules = append(
@@ -74,6 +79,7 @@ func TestMaintenanceCalendarMappingsHideTenantAndCanonicalPayload(t *testing.T) 
 
 	g.Expect(calendarResponse.DraftRules).To(HaveLen(1))
 	g.Expect(calendarResponse.DraftRules[0].ID).To(Equal(ruleID))
+	g.Expect(calendarResponse.DraftRules[0].VersionRuleID).To(BeNil())
 	g.Expect(versionResponse.WindowRules).To(HaveLen(1))
 	g.Expect(MaintenanceCalendarVersionToAPI(nextVersion).WindowRules[0].ID).To(
 		Equal(ruleID),
@@ -92,6 +98,40 @@ func TestMaintenanceCalendarMappingsHideTenantAndCanonicalPayload(t *testing.T) 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(payload)).NotTo(ContainSubstring(organizationID.String()))
 	g.Expect(string(payload)).NotTo(ContainSubstring("must-not-leak"))
+}
+
+func TestPublishedWindowRuleMappingCorrelatesEvaluationEvidence(t *testing.T) {
+	g := NewWithT(t)
+	logicalID := uuid.New()
+	versionRuleID := uuid.New()
+	version := types.MaintenanceCalendarVersion{
+		ID: uuid.New(), CalendarID: uuid.New(), Name: "Production",
+		IANAZone: "UTC", RuleVersion: "2026a",
+		WindowRules: []types.MaintenanceWindowRule{{
+			ID: logicalID, VersionRuleID: versionRuleID, Name: "Monday",
+			Weekdays: []int32{int32(time.Monday)}, StartMinute: 0, EndMinute: 24 * 60,
+		}},
+	}
+
+	response := MaintenanceCalendarVersionToAPI(version)
+	evaluation, err := scheduling.EvaluateCalendar(
+		version,
+		types.CalendarEvaluationInput{
+			UTCInstant:  time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC),
+			IANAZone:    "UTC",
+			RuleVersion: "2026a",
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(response.WindowRules[0].ID).To(Equal(logicalID))
+	g.Expect(response.WindowRules[0].VersionRuleID).To(Equal(&versionRuleID))
+	g.Expect(evaluation.WindowRuleID).To(Equal(response.WindowRules[0].VersionRuleID))
+
+	payload, err := json.Marshal(response.WindowRules[0])
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).To(ContainSubstring(
+		`"versionRuleId":"` + versionRuleID.String() + `"`,
+	))
 }
 
 func TestDeploymentFreezeMappingsExposeScopeWithoutTenant(t *testing.T) {

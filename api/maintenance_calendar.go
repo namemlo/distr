@@ -327,12 +327,13 @@ func (request PublishDeploymentFreezeRequest) Validate() error {
 }
 
 type MaintenanceWindowRule struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Weekdays    []int32   `json:"weekdays"`
-	StartMinute int32     `json:"startMinute"`
-	EndMinute   int32     `json:"endMinute"`
-	SortOrder   int32     `json:"sortOrder"`
+	ID            uuid.UUID  `json:"id"`
+	VersionRuleID *uuid.UUID `json:"versionRuleId,omitempty"`
+	Name          string     `json:"name"`
+	Weekdays      []int32    `json:"weekdays"`
+	StartMinute   int32      `json:"startMinute"`
+	EndMinute     int32      `json:"endMinute"`
+	SortOrder     int32      `json:"sortOrder"`
 }
 
 type MaintenanceCalendar struct {

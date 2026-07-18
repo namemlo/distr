@@ -16,6 +16,14 @@ func MaintenanceWindowRuleToAPI(rule types.MaintenanceWindowRule) api.Maintenanc
 	}
 }
 
+func PublishedMaintenanceWindowRuleToAPI(
+	rule types.MaintenanceWindowRule,
+) api.MaintenanceWindowRule {
+	mapped := MaintenanceWindowRuleToAPI(rule)
+	mapped.VersionRuleID = uuidPtrIfNotNil(rule.VersionRuleID)
+	return mapped
+}
+
 func MaintenanceCalendarToAPI(calendar types.MaintenanceCalendar) api.MaintenanceCalendar {
 	return api.MaintenanceCalendar{
 		ID:                     calendar.ID,
@@ -48,7 +56,7 @@ func MaintenanceCalendarVersionToAPI(
 		Checksum:            version.Checksum,
 		PublishedAt:         version.PublishedAt,
 		PublishedBy:         version.PublishedBy,
-		WindowRules:         List(version.WindowRules, MaintenanceWindowRuleToAPI),
+		WindowRules:         List(version.WindowRules, PublishedMaintenanceWindowRuleToAPI),
 	}
 }
 
