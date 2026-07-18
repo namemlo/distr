@@ -83,7 +83,7 @@ func resolveDeploymentPlanEvidence(
 	}
 	sortPlanChanges(changes)
 
-	risks := planning.ClassifyDeploymentRisk(changes, types.EffectivePolicy{
+	risks := planning.ClassifyDeploymentRisk(changes, types.PlanRiskPolicy{
 		AllowForwardOnlyMigration:      false,
 		RequireBootstrapApproval:       true,
 		RequireAuthoritativeV2Baseline: true,
@@ -1036,7 +1036,7 @@ func addPreviousStateEvidence(
 	sortPlanChanges(validation.Changes)
 	validation.Risks = planning.ClassifyDeploymentRisk(
 		validation.Changes,
-		types.EffectivePolicy{
+		types.PlanRiskPolicy{
 			AllowForwardOnlyMigration:      false,
 			RequireBootstrapApproval:       true,
 			RequireAuthoritativeV2Baseline: true,

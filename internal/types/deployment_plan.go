@@ -234,7 +234,7 @@ const (
 	DeploymentPlanRiskCritical DeploymentPlanRiskLevel = "critical"
 )
 
-type EffectivePolicy struct {
+type PlanRiskPolicy struct {
 	AllowForwardOnlyMigration      bool
 	RequireBootstrapApproval       bool
 	RequireAuthoritativeV2Baseline bool

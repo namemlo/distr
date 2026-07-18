@@ -21,29 +21,6 @@ func (state DeploymentPolicyVersionState) IsValid() bool {
 		state == DeploymentPolicyVersionStatePublished
 }
 
-type RequirementResolutionMode string
-
-const (
-	RequirementResolutionModeIncluded         RequirementResolutionMode = "included"
-	RequirementResolutionModePinnedExisting   RequirementResolutionMode = "pinned_existing"
-	RequirementResolutionModeSharedProvider   RequirementResolutionMode = "shared_provider"
-	RequirementResolutionModeApprovedExternal RequirementResolutionMode = "approved_external"
-	RequirementResolutionModeFeatureDisabled  RequirementResolutionMode = "feature_disabled"
-)
-
-func (mode RequirementResolutionMode) IsValid() bool {
-	switch mode {
-	case RequirementResolutionModeIncluded,
-		RequirementResolutionModePinnedExisting,
-		RequirementResolutionModeSharedProvider,
-		RequirementResolutionModeApprovedExternal,
-		RequirementResolutionModeFeatureDisabled:
-		return true
-	default:
-		return false
-	}
-}
-
 type SeparationConstraint string
 
 const (

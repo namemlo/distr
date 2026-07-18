@@ -24,6 +24,8 @@ func TestDeploymentPolicyRoutesArePublishedInOpenAPI(t *testing.T) {
 		nil,
 		nil,
 		obsertracing.Tracers{Default: tracer, Agent: tracer},
+		nil,
+		nil,
 	)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(

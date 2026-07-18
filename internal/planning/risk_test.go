@@ -19,7 +19,7 @@ func TestClassifyDeploymentRiskBlocksForwardOnlyAndNonAuthoritativeBaseline(t *t
 		},
 	}
 
-	risks := ClassifyDeploymentRisk(changes, types.EffectivePolicy{
+	risks := ClassifyDeploymentRisk(changes, types.PlanRiskPolicy{
 		AllowForwardOnlyMigration:      false,
 		RequireAuthoritativeV2Baseline: true,
 	})
@@ -36,7 +36,7 @@ func TestClassifyDeploymentRiskRequiresBootstrapApproval(t *testing.T) {
 
 	risks := ClassifyDeploymentRisk(
 		[]types.DeploymentPlanChangeEntry{{Kind: types.DeploymentPlanChangeBootstrap, ComponentKey: "worker"}},
-		types.EffectivePolicy{RequireBootstrapApproval: true},
+		types.PlanRiskPolicy{RequireBootstrapApproval: true},
 	)
 
 	g.Expect(risks).To(HaveLen(1))
@@ -65,7 +65,7 @@ func TestClassifyDeploymentRiskHasStableOrderForEquivalentChanges(t *testing.T) 
 			ForwardOnly:         true,
 		},
 	}
-	policy := types.EffectivePolicy{}
+	policy := types.PlanRiskPolicy{}
 	reversed := slices.Clone(changes)
 	slices.Reverse(reversed)
 

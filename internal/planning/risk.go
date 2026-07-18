@@ -10,7 +10,7 @@ import (
 
 func ClassifyDeploymentRisk(
 	changes []types.DeploymentPlanChangeEntry,
-	policy types.EffectivePolicy,
+	policy types.PlanRiskPolicy,
 ) []types.DeploymentPlanRiskEntry {
 	orderedChanges := slices.Clone(changes)
 	slices.SortStableFunc(orderedChanges, func(a, b types.DeploymentPlanChangeEntry) int {
