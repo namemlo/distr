@@ -126,11 +126,12 @@ func buildMigrationGraph(
 			"migration_validation", "database.migration.validate", targetLock, databaseLock,
 			map[string]any{
 				"migrationId": contract.ID, "migrationChecksum": contract.Checksum,
-				"databaseResourceKey":   contract.DatabaseResourceKey,
-				"databaseLockKey":       databaseLock,
-				"expectedSchemaVersion": contract.ResultingVersion,
-				"probes":                contract.PostconditionProbes,
-				"timeoutSeconds":        contract.LockTimeoutSeconds,
+				"databaseResourceKey":    contract.DatabaseResourceKey,
+				"databaseLockKey":        databaseLock,
+				"expectedSchemaVersion":  contract.ResultingVersion,
+				"expectedSchemaChecksum": contract.PostconditionProbes[0].ExpectedChecksum,
+				"probes":                 contract.PostconditionProbes,
+				"timeoutSeconds":         contract.LockTimeoutSeconds,
 			}, types.MigrationRetrySafe, "safe",
 			"resulting schema observation and postcondition probe evidence"),
 	)

@@ -72,6 +72,21 @@ func TestDatabaseMigrationActionsFreezeSourceSchemaChecksums(t *testing.T) {
 	g.Expect(missingApplyChecksum).To(HaveOccurred())
 	g.Expect(missingApplyChecksum.Error()).To(ContainSubstring("expectedSourceChecksum"))
 
+	missingValidationChecksum := registry.ValidateInput(
+		"database.migration.validate",
+		jsonObject(t, `{
+			"migrationId":"ledger.042",
+			"migrationChecksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"databaseResourceKey":"postgres:ledger",
+			"databaseLockKey":"database:postgres:ledger",
+			"expectedSchemaVersion":"41",
+			"probes":[{"name":"source","reference":"probe:ledger:source:v1","expectedChecksum":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+			"timeoutSeconds":1800
+		}`),
+	)
+	g.Expect(missingValidationChecksum).To(HaveOccurred())
+	g.Expect(missingValidationChecksum.Error()).To(ContainSubstring("expectedSchemaChecksum"))
+
 	g.Expect(registry.ValidateInput("database.migration.validate", jsonObject(t, `{
 		"migrationId":"ledger.042",
 		"migrationChecksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

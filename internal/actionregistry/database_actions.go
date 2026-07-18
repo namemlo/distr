@@ -55,7 +55,8 @@ func databaseActions() []types.ActionDefinition {
 				"probes":                 migrationProbeArraySchema(),
 			}), []any{
 				"migrationId", "migrationChecksum", "databaseResourceKey",
-				"databaseLockKey", "expectedSchemaVersion", "probes", "timeoutSeconds",
+				"databaseLockKey", "expectedSchemaVersion", "expectedSchemaChecksum",
+				"probes", "timeoutSeconds",
 			}),
 			OutputSchema: migrationOutputSchema(),
 		},
