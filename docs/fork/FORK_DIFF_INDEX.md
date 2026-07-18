@@ -1113,7 +1113,8 @@ Use one entry per pull request:
 - Status: Implemented on the prepared speculative branch; fast pure/unit/compile verification completed and
   integration gates deferred until PR-059 integration.
 - Upstream base: `2ca41ab8` (PR-056 checkpoint).
-- Feature flag: `operator_control_plane_v2` gates new component-release create, update, and publish writes.
+- Feature flag: `operator_control_plane_v2` gates new component-release create, update, and publish writes. A
+  disabled update checks both the tenant-scoped stored release and incoming payload, preventing v2 downgrade.
   Historical reads and v1 writes retain existing behavior.
 - User-facing behavior: CI can publish one target-neutral component/version with immutable manifest and
   per-platform digests, source intent and resolved commit, capabilities, migrations, changes, and evidence.
@@ -1125,10 +1126,11 @@ Use one entry per pull request:
   evidence summaries.
 - Agent protocol changes: None.
 - Documentation: Added ADR-0058 and PR-060 fork notes.
-- Tests: Added strict parser, target-neutral validation, deterministic canonicalization, API/gate, migration, and
-  deferred PostgreSQL publication/idempotency/conflict coverage.
+- Tests: Added strict parser, target-neutral validation, type-preserving artifact/component bijection, deterministic
+  non-null collection canonicalization, API/gate, migration, and deferred PostgreSQL
+  publication/idempotency/full-lineage conflict coverage.
 - Upstream contribution notes: Community-neutral release identity; no adopter, CI provider, registry, target,
   credential, or infrastructure-specific core behavior.
 - Compatibility notes: Embedded v1 remains `distr.release-contract/v1`; additive row metadata classifies it as
-  `legacy`/`distr.release/v1`. Component publish skips target Variable Snapshots and exact publish retry is
-  idempotent.
+  `legacy`/`distr.release/v1`. Component publish skips target Variable Snapshots, exact publish retry is idempotent,
+  and blocked or archived history still fences the complete artifact identity.

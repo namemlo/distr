@@ -89,6 +89,7 @@ func validateComponentReleaseBundleMatch(
 	bundle types.ReleaseBundle,
 	contract types.ComponentReleaseContractV2,
 ) {
+	contract = normalizedComponentReleaseContractV2(contract)
 	if bundle.Kind != "" && bundle.Kind != types.ReleaseBundleKindComponent {
 		result.AddError("kind", "matchesContract", "component release contract requires component bundle kind")
 	}
@@ -101,19 +102,23 @@ func validateComponentReleaseBundleMatch(
 	}
 	components := make(map[string]types.ReleaseBundleComponent, len(bundle.Components))
 	for _, component := range bundle.Components {
-		components[component.Key] = component
+		components[strings.TrimSpace(component.Key)] = component
 	}
+	artifacts := make(map[string]struct{}, len(contract.Artifacts))
 	for _, artifact := range contract.Artifacts {
+		artifacts[artifact.Key] = struct{}{}
 		component, ok := components[artifact.Key]
 		field := "releaseContract.artifacts." + artifact.Key
 		if !ok {
 			result.AddError(field, "matchesBundle", "component release artifact must match a release bundle component")
 			continue
 		}
-		if component.Type != types.ReleaseBundleComponentTypeOCIImage &&
-			component.Type != types.ReleaseBundleComponentTypeOCIArtifact &&
-			component.Type != types.ReleaseBundleComponentTypeHelmChart {
-			result.AddError(field+".type", "matchesBundle", "component release artifact type must match the bundle")
+		if component.Type != componentTypeForArtifact(artifact.Type) {
+			result.AddError(
+				field+".type",
+				"matchesBundle",
+				"component release artifact type must exactly match the release bundle component type",
+			)
 		}
 		if component.Version != contract.Version {
 			result.AddError(field+".version", "matchesBundle", "component release artifact version must match the contract")
@@ -121,6 +126,29 @@ func validateComponentReleaseBundleMatch(
 		if component.Digest != artifact.Digest {
 			result.AddError(field+".digest", "matchesBundle", "component release artifact digest must match the bundle")
 		}
+	}
+	for _, component := range bundle.Components {
+		key := strings.TrimSpace(component.Key)
+		if _, ok := artifacts[key]; !ok {
+			result.AddError(
+				"components."+key,
+				"matchesContract",
+				"release bundle component must match exactly one component release artifact",
+			)
+		}
+	}
+}
+
+func componentTypeForArtifact(artifactType string) types.ReleaseBundleComponentType {
+	switch artifactType {
+	case "oci-image":
+		return types.ReleaseBundleComponentTypeOCIImage
+	case "oci-artifact":
+		return types.ReleaseBundleComponentTypeOCIArtifact
+	case "helm-chart":
+		return types.ReleaseBundleComponentTypeHelmChart
+	default:
+		return ""
 	}
 }
 

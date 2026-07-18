@@ -170,14 +170,14 @@ func normalizedComponentReleaseContractV2(contract types.ComponentReleaseContrac
 	normalized.Source.Commit = strings.TrimSpace(normalized.Source.Commit)
 	normalized.Build.ID = strings.TrimSpace(normalized.Build.ID)
 	normalized.Build.Builder = strings.TrimSpace(normalized.Build.Builder)
-	normalized.Artifacts = slices.Clone(contract.Artifacts)
+	normalized.Artifacts = cloneNonNilSlice(contract.Artifacts)
 	for i := range normalized.Artifacts {
 		artifact := &normalized.Artifacts[i]
 		artifact.Key = strings.TrimSpace(artifact.Key)
 		artifact.Type = strings.TrimSpace(artifact.Type)
 		artifact.MediaType = strings.TrimSpace(artifact.MediaType)
 		artifact.Digest = strings.TrimSpace(artifact.Digest)
-		artifact.Platforms = slices.Clone(artifact.Platforms)
+		artifact.Platforms = cloneNonNilSlice(artifact.Platforms)
 		for j := range artifact.Platforms {
 			artifact.Platforms[j].Platform = strings.ToLower(strings.TrimSpace(artifact.Platforms[j].Platform))
 			artifact.Platforms[j].Digest = strings.TrimSpace(artifact.Platforms[j].Digest)
@@ -189,7 +189,7 @@ func normalizedComponentReleaseContractV2(contract types.ComponentReleaseContrac
 	slices.SortFunc(normalized.Artifacts, func(a, b types.ComponentReleaseArtifact) int {
 		return strings.Compare(a.Key+"\x00"+a.Type, b.Key+"\x00"+b.Type)
 	})
-	normalized.Provides = slices.Clone(contract.Provides)
+	normalized.Provides = cloneNonNilSlice(contract.Provides)
 	for i := range normalized.Provides {
 		normalized.Provides[i].Name = strings.TrimSpace(normalized.Provides[i].Name)
 		normalized.Provides[i].Version = strings.TrimSpace(normalized.Provides[i].Version)
@@ -197,7 +197,7 @@ func normalizedComponentReleaseContractV2(contract types.ComponentReleaseContrac
 	slices.SortFunc(normalized.Provides, func(a, b types.CapabilityDeclaration) int {
 		return strings.Compare(a.Name+"\x00"+a.Version, b.Name+"\x00"+b.Version)
 	})
-	normalized.Requires = slices.Clone(contract.Requires)
+	normalized.Requires = cloneNonNilSlice(contract.Requires)
 	for i := range normalized.Requires {
 		requirement := &normalized.Requires[i]
 		requirement.Name = strings.TrimSpace(requirement.Name)
@@ -208,7 +208,7 @@ func normalizedComponentReleaseContractV2(contract types.ComponentReleaseContrac
 	slices.SortFunc(normalized.Requires, func(a, b types.CapabilityRequirement) int {
 		return strings.Compare(a.Name+"\x00"+a.Range+"\x00"+a.ResolutionStage, b.Name+"\x00"+b.Range+"\x00"+b.ResolutionStage)
 	})
-	normalized.Migrations = slices.Clone(contract.Migrations)
+	normalized.Migrations = cloneNonNilSlice(contract.Migrations)
 	for i := range normalized.Migrations {
 		migration := &normalized.Migrations[i]
 		migration.Key = strings.TrimSpace(migration.Key)
@@ -369,7 +369,6 @@ func ValidateArtifactIdentity(contract types.ComponentReleaseContractV2) []Valid
 		return issues
 	}
 	artifactKeys := map[string]struct{}{}
-	platformDigests := map[string]string{}
 	for _, artifact := range contract.Artifacts {
 		field := "artifacts." + artifact.Key
 		if !componentKeyPattern.MatchString(artifact.Key) {
@@ -382,13 +381,10 @@ func ValidateArtifactIdentity(contract types.ComponentReleaseContractV2) []Valid
 		if artifact.Type != "oci-image" && artifact.Type != "oci-artifact" && artifact.Type != "helm-chart" {
 			add(field+".type", "supported", "artifact type is not supported")
 		}
-		switch artifact.MediaType {
-		case "application/vnd.oci.image.index.v1+json",
-			"application/vnd.oci.image.manifest.v1+json",
-			"application/vnd.oci.artifact.manifest.v1+json",
-			"application/vnd.cncf.helm.chart.content.v1.tar+gzip":
-		default:
+		if !isSupportedComponentArtifactMediaType(artifact.MediaType) {
 			add(field+".mediaType", "supported", "artifact media type is not supported")
+		} else if !componentArtifactMediaTypeMatchesType(artifact.Type, artifact.MediaType) {
+			add(field+".mediaType", "matchesType", "artifact media type must match the artifact type")
 		}
 		if !componentDigestPattern.MatchString(artifact.Digest) {
 			add(field+".digest", "sha256", "artifact digest must be a lowercase sha256 digest")
@@ -396,6 +392,7 @@ func ValidateArtifactIdentity(contract types.ComponentReleaseContractV2) []Valid
 		if len(artifact.Platforms) == 0 {
 			add(field+".platforms", "required", "artifact must include at least one platform digest")
 		}
+		platformDigests := map[string]string{}
 		for _, platform := range artifact.Platforms {
 			platformField := field + ".platforms." + platform.Platform
 			if platform.Platform != "linux/amd64" && platform.Platform != "linux/arm64" {
@@ -447,11 +444,16 @@ func validateComponentCapabilities(contract types.ComponentReleaseContractV2) []
 			add(field+".name", "unique", "required capability names must be unique")
 		}
 		required[capability.Name] = struct{}{}
-		if _, err := semver.NewConstraint(capability.Range); err != nil {
+		if capability.Range == "" {
+			add(field+".range", "required", "required capability range must not be empty")
+		} else if _, err := semver.NewConstraint(capability.Range); err != nil {
 			add(field+".range", "semverRange", "required capability range must be valid")
 		}
 		if capability.ResolutionStage != "product" && capability.ResolutionStage != "target" {
 			add(field+".resolutionStage", "supported", "resolution stage must be product or target")
+		}
+		if capability.ResolutionStage == "product" && len(capability.AllowedModes) > 0 {
+			add(field+".allowedModes", "forbidden", "product requirements must not declare target resolution modes")
 		}
 		if capability.ResolutionStage == "target" && len(capability.AllowedModes) == 0 {
 			add(field+".allowedModes", "required", "target requirements must declare allowed resolution modes")
@@ -560,6 +562,7 @@ func ValidateTargetNeutralContract(contract types.ComponentReleaseContractV2) []
 	addIfUnsafe("source.requestedRef", contract.Source.RequestedRef, false)
 	addIfUnsafe("build.id", contract.Build.ID, false)
 	addIfUnsafe("build.builder", contract.Build.Builder, false)
+	addIfUnsafe("changes.summary", contract.Changes.Summary, false)
 	for _, migration := range contract.Migrations {
 		addIfUnsafe("migrations."+migration.Key+".description", migration.Description, false)
 	}
@@ -828,10 +831,42 @@ func normalizeStringSet(values []string) []string {
 }
 
 func normalizeSortedStrings(values []string) []string {
-	result := slices.Clone(values)
+	result := cloneNonNilSlice(values)
 	for i := range result {
 		result[i] = strings.TrimSpace(result[i])
 	}
 	slices.Sort(result)
 	return result
+}
+
+func cloneNonNilSlice[S ~[]E, E any](values S) S {
+	result := make(S, len(values))
+	copy(result, values)
+	return result
+}
+
+func isSupportedComponentArtifactMediaType(mediaType string) bool {
+	switch mediaType {
+	case "application/vnd.oci.image.index.v1+json",
+		"application/vnd.oci.image.manifest.v1+json",
+		"application/vnd.oci.artifact.manifest.v1+json",
+		"application/vnd.cncf.helm.chart.content.v1.tar+gzip":
+		return true
+	default:
+		return false
+	}
+}
+
+func componentArtifactMediaTypeMatchesType(artifactType, mediaType string) bool {
+	switch artifactType {
+	case "oci-image":
+		return mediaType == "application/vnd.oci.image.index.v1+json" ||
+			mediaType == "application/vnd.oci.image.manifest.v1+json"
+	case "oci-artifact":
+		return mediaType == "application/vnd.oci.artifact.manifest.v1+json"
+	case "helm-chart":
+		return mediaType == "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+	default:
+		return false
+	}
 }

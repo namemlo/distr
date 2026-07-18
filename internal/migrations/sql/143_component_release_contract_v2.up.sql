@@ -36,6 +36,24 @@ CREATE TABLE ComponentReleaseArtifact (
     UNIQUE (release_bundle_id, artifact_key, platform),
   CONSTRAINT componentreleaseartifact_kind_check
     CHECK (artifact_type IN ('oci-image', 'oci-artifact', 'helm-chart')),
+  CONSTRAINT componentreleaseartifact_media_type_check
+    CHECK (
+      (
+        artifact_type = 'oci-image'
+        AND media_type IN (
+          'application/vnd.oci.image.index.v1+json',
+          'application/vnd.oci.image.manifest.v1+json'
+        )
+      )
+      OR (
+        artifact_type = 'oci-artifact'
+        AND media_type = 'application/vnd.oci.artifact.manifest.v1+json'
+      )
+      OR (
+        artifact_type = 'helm-chart'
+        AND media_type = 'application/vnd.cncf.helm.chart.content.v1.tar+gzip'
+      )
+    ),
   CONSTRAINT componentreleaseartifact_platform_check
     CHECK (platform IN ('linux/amd64', 'linux/arm64')),
   CONSTRAINT componentreleaseartifact_manifest_digest_check

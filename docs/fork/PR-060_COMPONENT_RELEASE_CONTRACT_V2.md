@@ -20,14 +20,14 @@ mixing in target configuration or secrets.
 | ----------------- | ---------------------------------------------------------------------------------------- |
 | Discriminator     | `distr.component-release/v2`                                                             |
 | Source            | Required canonical repository, requested ref, and resolved lowercase 40-character commit |
-| Artifact identity | Lowercase `sha256:<64 hex>` manifest/index and per-platform digests                      |
+| Artifact identity | Full immutable key/type/media/manifest/platform identity with lowercase SHA-256 digests  |
 | Platforms         | `linux/amd64`, `linux/arm64`                                                             |
 | Capabilities      | Strict provided versions and required ranges with explicit resolution                    |
 | Migrations        | Ordered symbolic type, compatibility, failure policy, and description                    |
 | Evidence          | Provenance, SBOM, signature, and test references with no credentials                     |
 | Target data       | Forbidden; no target, customer, environment, path, URL, snapshot, or secret              |
 | Retry             | Exact re-publish of the same published component resource is idempotent                  |
-| Conflict          | Same organization/component/version/platform with another digest returns stable conflict |
+| Conflict          | Any changed artifact identity in the organization/component/version lineage is rejected  |
 
 ## Required Impact Report
 
@@ -39,7 +39,8 @@ rows receive `legacy` and `distr.release/v1` defaults only; neither `release_con
 
 `ComponentReleaseArtifact`, `ComponentReleaseEvidence`, `ComponentReleaseCapability`, and
 `ComponentReleaseMigrationDeclaration` store normalized query facts linked through organization-consistent foreign
-keys. The canonical JSON contract remains authoritative. Downgrade refuses while component/product facts exist.
+keys. Artifact media types are constrained by artifact type. The canonical JSON contract remains authoritative.
+Downgrade refuses while component/product facts exist.
 
 ### Public API impact
 
@@ -59,20 +60,25 @@ messages.
 
 ### Feature-flag impact
 
-Creating, updating, or publishing a v2 component release requires `operator_control_plane_v2`. V1 writes and all
-historical release reads retain their existing `release_bundles` gate and behavior.
+Creating, updating, or publishing a v2 component release requires `operator_control_plane_v2`. With the flag off,
+update checks the tenant-scoped stored resource as well as the incoming payload, so a v2 draft cannot be downgraded
+and its normalized facts cannot be removed. V1 writes and all historical release reads retain their existing
+`release_bundles` gate and behavior.
 
 ### Security impact
 
 Strict unknown-field decoding and target-neutral validation reject undeclared target fields, credentials,
-secret-looking values, mutable digests, unsafe paths, duplicate platform identities, and unsupported media types.
-Every normalized fact carries the owning organization boundary.
+secret-looking values (including in change summaries), mutable digests, unsafe paths, duplicate platform
+identities, and media types that do not match their artifact type. Artifact and outer bundle component collections
+must form an exact type-preserving bijection. Every normalized fact carries the owning organization boundary.
 
 ### Backward-compatibility impact
 
-Historical v1 contract JSON, canonical bytes, and checksums are unchanged. Legacy publication still creates its
-Variable Snapshot and retains non-idempotent state transitions. Component publication does not require a target or
-Variable Snapshot. Migration 143 remains reserved while 140 through 142 are absent from this speculative branch.
+Historical v1 contract JSON, canonical bytes, and checksums are unchanged. V2 null, omitted, and empty set-like
+collections canonicalize to the same explicit empty arrays, and the UI normalizes legacy null arrays at its API
+boundary. Legacy publication still creates its Variable Snapshot and retains non-idempotent state transitions.
+Component publication does not require a target or Variable Snapshot. Migration 143 remains reserved while 140
+through 142 are absent from this speculative branch.
 
 ## Validation
 

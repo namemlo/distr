@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -609,7 +610,7 @@ func PublishReleaseBundle(
 					actorUserAccountID,
 					types.ReleaseBundleAuditEventTypeStateTransitionRejected,
 					&toStatus,
-					"component version and platform digest conflict",
+					"component version artifact identity conflict",
 				)); err != nil {
 					return err
 				}
@@ -655,69 +656,123 @@ func componentReleaseIdentityConflict(ctx context.Context, bundle types.ReleaseB
 	}
 	component := bundle.ReleaseContract.ComponentV2
 	db := internalctx.GetDb(ctx)
-	identities := make([]string, 0)
-	for _, artifact := range component.Artifacts {
-		for _, platform := range artifact.Platforms {
-			identities = append(identities, strings.Join([]string{
-				bundle.OrganizationID.String(),
-				component.ComponentKey,
-				component.Version,
-				platform.Platform,
-			}, "\x00"))
-		}
-	}
-	if len(identities) > 0 {
-		if _, err := db.Exec(ctx, `
-			SELECT pg_advisory_xact_lock(hashtextextended(value, 0))
-			FROM unnest(@identities::text[]) AS locked_identity(value)
-			ORDER BY value`,
-			pgx.NamedArgs{"identities": identities},
-		); err != nil {
-			return false, fmt.Errorf("could not lock Component Release identity: %w", err)
-		}
+	identityKey := strings.Join([]string{
+		bundle.OrganizationID.String(),
+		component.ComponentKey,
+		component.Version,
+	}, "\x00")
+	if _, err := db.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended(@identity, 0))`,
+		pgx.NamedArgs{"identity": identityKey},
+	); err != nil {
+		return false, fmt.Errorf("could not lock Component Release identity: %w", err)
 	}
 	rows, err := db.Query(ctx, `
-		SELECT artifact.platform, artifact.platform_digest
+		SELECT
+			artifact.release_bundle_id,
+			artifact.artifact_key,
+			artifact.artifact_type,
+			artifact.media_type,
+			artifact.manifest_digest,
+			artifact.platform,
+			artifact.platform_digest
 		FROM ComponentReleaseArtifact artifact
-		JOIN ReleaseBundle existing_bundle
-		  ON existing_bundle.id = artifact.release_bundle_id
-		 AND existing_bundle.organization_id = artifact.organization_id
 		WHERE artifact.organization_id = @organizationId
 		  AND artifact.component_key = @componentKey
 		  AND artifact.component_version = @componentVersion
 		  AND artifact.release_bundle_id <> @releaseBundleId
-		  AND existing_bundle.status = @publishedStatus`,
+		  AND EXISTS (
+		    SELECT 1
+		    FROM ReleaseBundleAuditEvent published_event
+		    WHERE published_event.organization_id = artifact.organization_id
+		      AND published_event.release_bundle_id = artifact.release_bundle_id
+		      AND published_event.event_type = @publishedEventType
+		  )
+		ORDER BY artifact.release_bundle_id, artifact.artifact_key, artifact.platform`,
 		pgx.NamedArgs{
-			"organizationId":   bundle.OrganizationID,
-			"componentKey":     component.ComponentKey,
-			"componentVersion": component.Version,
-			"releaseBundleId":  bundle.ID,
-			"publishedStatus":  types.ReleaseBundleStatusPublished,
+			"organizationId":     bundle.OrganizationID,
+			"componentKey":       component.ComponentKey,
+			"componentVersion":   component.Version,
+			"releaseBundleId":    bundle.ID,
+			"publishedEventType": types.ReleaseBundleAuditEventTypePublished,
 		},
 	)
 	if err != nil {
 		return false, fmt.Errorf("could not query Component Release identity: %w", err)
 	}
 	defer rows.Close()
-	existing := map[string]string{}
+	existing := map[uuid.UUID][]string{}
 	for rows.Next() {
-		var platform, digest string
-		if err := rows.Scan(&platform, &digest); err != nil {
+		var releaseBundleID uuid.UUID
+		var artifactKey, artifactType, mediaType, manifestDigest, platform, platformDigest string
+		if err := rows.Scan(
+			&releaseBundleID,
+			&artifactKey,
+			&artifactType,
+			&mediaType,
+			&manifestDigest,
+			&platform,
+			&platformDigest,
+		); err != nil {
 			return false, fmt.Errorf("could not scan Component Release identity: %w", err)
 		}
-		existing[platform] = digest
+		existing[releaseBundleID] = append(existing[releaseBundleID], componentReleaseArtifactIdentityToken(
+			artifactKey,
+			artifactType,
+			mediaType,
+			manifestDigest,
+			platform,
+			platformDigest,
+		))
 	}
 	if err := rows.Err(); err != nil {
 		return false, fmt.Errorf("could not collect Component Release identity: %w", err)
 	}
-	for _, artifact := range component.Artifacts {
-		for _, platform := range artifact.Platforms {
-			if digest, ok := existing[platform.Platform]; ok && digest != platform.Digest {
-				return true, nil
-			}
+	candidateIdentity := componentReleaseArtifactIdentity(component.Artifacts)
+	for _, existingIdentity := range existing {
+		slices.Sort(existingIdentity)
+		if !slices.Equal(existingIdentity, candidateIdentity) {
+			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func componentReleaseArtifactIdentity(artifacts []types.ComponentReleaseArtifact) []string {
+	identity := make([]string, 0)
+	for _, artifact := range artifacts {
+		for _, platform := range artifact.Platforms {
+			identity = append(identity, componentReleaseArtifactIdentityToken(
+				artifact.Key,
+				artifact.Type,
+				artifact.MediaType,
+				artifact.Digest,
+				platform.Platform,
+				platform.Digest,
+			))
+		}
+	}
+	slices.Sort(identity)
+	return identity
+}
+
+func componentReleaseArtifactIdentityToken(
+	artifactKey string,
+	artifactType string,
+	mediaType string,
+	manifestDigest string,
+	platform string,
+	platformDigest string,
+) string {
+	return strings.Join([]string{
+		artifactKey,
+		artifactType,
+		mediaType,
+		manifestDigest,
+		platform,
+		platformDigest,
+	}, "\x00")
 }
 
 func publishReleaseBundleStatus(

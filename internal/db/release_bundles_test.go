@@ -142,6 +142,7 @@ func TestComponentReleaseContractV2MigrationIsAdditive(t *testing.T) {
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseEvidence"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseCapability"))
 	g.Expect(string(up)).To(ContainSubstring("CREATE TABLE ComponentReleaseMigrationDeclaration"))
+	g.Expect(string(up)).To(ContainSubstring("componentreleaseartifact_media_type_check"))
 	g.Expect(string(up)).NotTo(ContainSubstring("canonical_payload ="))
 	g.Expect(string(up)).NotTo(ContainSubstring("canonical_checksum ="))
 
@@ -215,6 +216,57 @@ func TestComponentReleasePublicationRejectsVersionPlatformDigestConflict(t *test
 	_, _, err = db.PublishReleaseBundle(ctx, second.ID, orgID, actorID)
 
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+}
+
+func TestComponentReleasePublicationKeepsBlockedAndArchivedArtifactLineageImmutable(t *testing.T) {
+	for _, historicalStatus := range []types.ReleaseBundleStatus{
+		types.ReleaseBundleStatusBlocked,
+		types.ReleaseBundleStatusArchived,
+	} {
+		t.Run(string(historicalStatus), func(t *testing.T) {
+			ctx := releaseBundleDBTestContext(t)
+			g := NewWithT(t)
+			orgID, applicationID, channelID, _ := createReleaseBundleDependencies(t, ctx)
+			first := ociReleaseBundleFixture(orgID, applicationID, channelID)
+			first.Components[0].Key = "image"
+			first.Components[0].Version = "2.4.0"
+			firstContract := componentReleaseContractFixture(first.Components[0].Digest, strings.Repeat("b", 64))
+			first.Kind = types.ReleaseBundleKindComponent
+			first.ReleaseContractSchema = types.ReleaseContractSchemaV2
+			first.ReleaseContract = &types.ReleaseContract{
+				Schema:      types.ReleaseContractSchemaV2,
+				ComponentV2: &firstContract,
+			}
+			g.Expect(db.CreateReleaseBundle(ctx, &first)).To(Succeed())
+			actorID := createReleaseBundleTestUser(t, ctx, orgID)
+			_, _, err := db.PublishReleaseBundle(ctx, first.ID, orgID, actorID)
+			g.Expect(err).NotTo(HaveOccurred())
+			_, err = db.BlockReleaseBundle(ctx, first.ID, orgID, actorID)
+			g.Expect(err).NotTo(HaveOccurred())
+			if historicalStatus == types.ReleaseBundleStatusArchived {
+				_, err = db.ArchiveReleaseBundle(ctx, first.ID, orgID, actorID)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+
+			second := ociReleaseBundleFixture(orgID, applicationID, channelID)
+			second.Components[0].Key = "image"
+			second.Components[0].Version = "2.4.0"
+			second.ReleaseNumber = first.ReleaseNumber + "-" + strings.ToLower(string(historicalStatus))
+			second.Components[0].Digest = "sha256:" + strings.Repeat("c", 64)
+			secondContract := componentReleaseContractFixture(second.Components[0].Digest, strings.Repeat("d", 64))
+			second.Kind = types.ReleaseBundleKindComponent
+			second.ReleaseContractSchema = types.ReleaseContractSchemaV2
+			second.ReleaseContract = &types.ReleaseContract{
+				Schema:      types.ReleaseContractSchemaV2,
+				ComponentV2: &secondContract,
+			}
+			g.Expect(db.CreateReleaseBundle(ctx, &second)).To(Succeed())
+
+			_, _, err = db.PublishReleaseBundle(ctx, second.ID, orgID, actorID)
+
+			g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+		})
+	}
 }
 
 func TestReleaseBundleRepositoryRejectsInvalidOCIDigest(t *testing.T) {

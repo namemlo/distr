@@ -128,6 +128,41 @@ func TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData(t
 			},
 			wantRule: "migrations.schema-v2.description:targetNeutral",
 		},
+		{
+			name: "secret in change summary",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = "deploy with token=customer-secret"
+			},
+			wantRule: "changes.summary:targetNeutral",
+		},
+		{
+			name: "empty capability range",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Requires[0].Range = ""
+			},
+			wantRule: "requires.identity.verify.range:required",
+		},
+		{
+			name: "product requirement with target modes",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Requires[0].ResolutionStage = "product"
+			},
+			wantRule: "requires.identity.verify.allowedModes:forbidden",
+		},
+		{
+			name: "target requirement without modes",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Requires[0].AllowedModes = nil
+			},
+			wantRule: "requires.identity.verify.allowedModes:required",
+		},
+		{
+			name: "oci image with artifact media type",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Artifacts[0].MediaType = "application/vnd.oci.artifact.manifest.v1+json"
+			},
+			wantRule: "artifacts.image.mediaType:matchesType",
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,6 +203,68 @@ func TestNormalizeReleaseContractV2SortsOnlySetLikeCollections(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 
 	g.Expect(secondBytes).To(Equal(firstBytes))
+}
+
+func TestNormalizeReleaseContractV2TreatsNullOmittedAndEmptyCollectionsEqually(t *testing.T) {
+	g := NewWithT(t)
+	nilCollections := validComponentReleaseContract()
+	nilCollections.Artifacts = nil
+	nilCollections.Provides = nil
+	nilCollections.Requires = nil
+	nilCollections.Migrations = nil
+	nilCollections.Changes.Commits = nil
+	nilCollections.Evidence.Provenance = nil
+	nilCollections.Evidence.SBOM = nil
+	nilCollections.Evidence.Signatures = nil
+	nilCollections.Evidence.Tests = nil
+
+	emptyCollections := nilCollections
+	emptyCollections.Artifacts = []types.ComponentReleaseArtifact{}
+	emptyCollections.Provides = []types.CapabilityDeclaration{}
+	emptyCollections.Requires = []types.CapabilityRequirement{}
+	emptyCollections.Migrations = []types.MigrationDeclaration{}
+	emptyCollections.Changes.Commits = []string{}
+	emptyCollections.Evidence.Provenance = []string{}
+	emptyCollections.Evidence.SBOM = []string{}
+	emptyCollections.Evidence.Signatures = []string{}
+	emptyCollections.Evidence.Tests = []string{}
+
+	nilBytes, err := NormalizeReleaseContract(nilCollections)
+	g.Expect(err).NotTo(HaveOccurred())
+	emptyBytes, err := NormalizeReleaseContract(emptyCollections)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(nilBytes).To(Equal(emptyBytes))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"artifacts":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"provides":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"requires":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"migrations":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"commits":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"provenance":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"sbom":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"signatures":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"tests":[]`))
+}
+
+func TestNormalizeReleaseContractV2TreatsNestedNullAndEmptyCollectionsEqually(t *testing.T) {
+	g := NewWithT(t)
+	nilCollections := validComponentReleaseContract()
+	nilCollections.Artifacts[0].Platforms = nil
+	nilCollections.Requires[0].AllowedModes = nil
+	emptyCollections := nilCollections
+	emptyCollections.Artifacts = append([]types.ComponentReleaseArtifact{}, nilCollections.Artifacts...)
+	emptyCollections.Artifacts[0].Platforms = []types.ComponentReleasePlatform{}
+	emptyCollections.Requires = append([]types.CapabilityRequirement{}, nilCollections.Requires...)
+	emptyCollections.Requires[0].AllowedModes = []string{}
+
+	nilBytes, err := NormalizeReleaseContract(nilCollections)
+	g.Expect(err).NotTo(HaveOccurred())
+	emptyBytes, err := NormalizeReleaseContract(emptyCollections)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(nilBytes).To(Equal(emptyBytes))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"platforms":[]`))
+	g.Expect(string(nilBytes)).To(ContainSubstring(`"allowedModes":[]`))
 }
 
 func validComponentReleaseJSON(t *testing.T) []byte {

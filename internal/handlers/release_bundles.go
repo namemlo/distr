@@ -403,12 +403,25 @@ func updateReleaseBundleHandlerWithFlags(enabledFlags []featureflags.Key) http.H
 		request, err := JsonBody[api.CreateUpdateReleaseBundleRequest](w, r)
 		if err != nil {
 			return
-		} else if err := request.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
 		}
-		if !componentReleaseWriteEnabled(request.ReleaseContract, enabledFlags) {
-			http.Error(w, "operator control plane v2 is not enabled", http.StatusForbidden)
+		if !featureflags.NewRegistry(enabledFlags).IsEnabled(featureflags.KeyOperatorControlPlaneV2) {
+			existing, err := db.GetReleaseBundle(ctx, id, *auth.CurrentOrgID())
+			if errors.Is(err, apierrors.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			} else if err != nil {
+				log.Error("failed to inspect release bundle before update", zap.Error(err))
+				sentry.GetHubFromContext(ctx).CaptureException(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !componentReleaseUpdateEnabled(*existing, request.ReleaseContract, enabledFlags) {
+				http.Error(w, "operator control plane v2 is not enabled", http.StatusForbidden)
+				return
+			}
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -502,6 +515,20 @@ func componentReleaseWriteEnabled(contract *types.ReleaseContract, enabledFlags 
 		return true
 	}
 	return featureflags.NewRegistry(enabledFlags).IsEnabled(featureflags.KeyOperatorControlPlaneV2)
+}
+
+func componentReleaseUpdateEnabled(
+	existing types.ReleaseBundle,
+	incoming *types.ReleaseContract,
+	enabledFlags []featureflags.Key,
+) bool {
+	if featureflags.NewRegistry(enabledFlags).IsEnabled(featureflags.KeyOperatorControlPlaneV2) {
+		return true
+	}
+	existingIsComponentV2 := existing.Kind == types.ReleaseBundleKindComponent ||
+		existing.ReleaseContractSchema == types.ReleaseContractSchemaV2 ||
+		(existing.ReleaseContract != nil && existing.ReleaseContract.ComponentV2 != nil)
+	return !existingIsComponentV2 && (incoming == nil || incoming.ComponentV2 == nil)
 }
 
 func releaseBundleResponses(bundles []types.ReleaseBundle) []api.ReleaseBundle {

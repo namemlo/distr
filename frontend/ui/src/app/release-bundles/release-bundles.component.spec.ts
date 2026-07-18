@@ -297,6 +297,77 @@ describe('ReleaseBundlesComponent', () => {
     expect(overlay.showModal).toHaveBeenCalled();
   });
 
+  it('normalizes null legacy and v2 collections before rendering details', () => {
+    const legacyWithNullCollections = {
+      ...bundles[1],
+      id: 'legacy-null-collections',
+      components: null,
+      releaseContract: {
+        schema: 'distr.release-contract/v1',
+        source: {
+          repository: 'payments-api',
+          branch: 'main',
+          sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+          builtCommit: '0123456789abcdef0123456789abcdef01234567',
+        },
+        build: {externalId: '42', externalUrl: 'https://ci.example/build/42'},
+        components: null,
+        compatibility: {requires: null, affectedComponents: null},
+        operations: {migrationRequired: false, configChangeRequired: false},
+        config: {
+          repositoryCommit: '0123456789abcdef0123456789abcdef01234567',
+          composePath: 'compose.yaml',
+          serviceConfigPath: 'service.json',
+          composeChecksum: `sha256:${'a'.repeat(64)}`,
+          serviceConfigChecksum: `sha256:${'b'.repeat(64)}`,
+          immutableObjects: null,
+        },
+        changes: {summary: 'Legacy release', commits: null},
+      },
+    };
+    const v2WithNullCollections = {
+      ...bundles[1],
+      id: 'v2-null-collections',
+      components: null,
+      kind: 'component',
+      releaseContractSchema: 'distr.component-release/v2',
+      releaseContract: {
+        schema: 'distr.component-release/v2',
+        componentKey: 'payments.api',
+        version: '2.4.0',
+        source: {
+          repository: 'source/payments-api',
+          requestedRef: 'refs/tags/v2.4.0',
+          commit: '0123456789abcdef0123456789abcdef01234567',
+        },
+        build: {id: 'build-42', builder: 'generic-ci'},
+        artifacts: null,
+        provides: null,
+        requires: null,
+        migrations: null,
+        changes: {summary: 'Component release', commits: null},
+        evidence: {provenance: null, sbom: null, signatures: null, tests: null},
+      },
+    };
+    releaseBundlesService.list.mockReturnValue(of([legacyWithNullCollections, v2WithNullCollections] as any));
+
+    const {fixture, component} = createComponent();
+    const normalized = (component as any).releaseBundles() as ReleaseBundle[];
+
+    expect(normalized[0].components).toEqual([]);
+    expect((normalized[0].releaseContract as any).components).toEqual([]);
+    expect((normalized[0].releaseContract as any).compatibility.requires).toEqual([]);
+    expect((normalized[0].releaseContract as any).config.immutableObjects).toEqual([]);
+    expect(normalized[1].components).toEqual([]);
+    expect((normalized[1].releaseContract as any).artifacts).toEqual([]);
+    expect((normalized[1].releaseContract as any).evidence.provenance).toEqual([]);
+
+    (component as any).showDetailDialog(normalized[0]);
+    expect(() => fixture.detectChanges()).not.toThrow();
+    (component as any).showDetailDialog(normalized[1]);
+    expect(() => fixture.detectChanges()).not.toThrow();
+  });
+
   it('only offers published child release bundles and excludes the current bundle', () => {
     const {component} = createComponent();
 

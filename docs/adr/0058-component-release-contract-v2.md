@@ -25,21 +25,26 @@ A v2 contract contains:
 - `componentKey` and a strict semantic `version`;
 - source `repository`, required `requestedRef`, and the resolved lowercase 40-character `commit`;
 - portable build `id` and `builder`;
-- artifacts with stable keys, supported media types, a lowercase manifest/index digest, and lowercase per-platform
-  digests for `linux/amd64` or `linux/arm64`;
+- artifacts with stable keys, type-specific media types, a lowercase manifest/index digest, and lowercase
+  per-platform digests for `linux/amd64` or `linux/arm64`; each artifact has exactly one outer bundle component
+  with the corresponding component type;
 - symbolic capability `provides` versions and `requires` semantic ranges, resolution stages, and allowed modes;
 - ordered typed migration declarations with compatibility and failure policy;
 - change summary and commit references; and
 - provenance, SBOM, signature, and test evidence references.
 
 The parser dispatches only on an exact schema. V2 decoding rejects unknown fields. Canonicalization sorts only
-set-like collections by stable identity and rejects duplicate stable identities. A component version and platform
-cannot be published with a different digest; an exact publish retry of the same already-published resource is
-idempotent.
+set-like collections by stable identity, emits empty arrays for null, omitted, or empty collections, and rejects
+duplicate stable identities. Once any release in an organization/component/version lineage is published, its
+complete artifact identity (keys, types, media types, manifest digests, and complete platform/digest sets) is
+immutable even after block or archive. An exact publish retry of the same already-published resource is idempotent.
 
 Component releases contain no target, customer, environment, variable snapshot, target config snapshot, hostname,
 concrete path, credential, or secret. Publishing a component release therefore does not create or require a
-Variable Snapshot. New component writes require `operator_control_plane_v2`; historical reads and v1 writes do not.
+Variable Snapshot. Required capability ranges are explicit and non-empty. Product-stage requirements have no target
+resolution modes; target-stage requirements declare at least one supported mode. New component writes require
+`operator_control_plane_v2`; when the flag is off, an update is rejected if either its stored or incoming contract
+is v2, while historical reads and v1 writes remain available.
 The existing `/api/v1/release-bundles` route family remains the only release-bundle API.
 
 Migration 143 adds `kind` and `release_contract_schema` to `ReleaseBundle`, and normalized artifact, evidence,

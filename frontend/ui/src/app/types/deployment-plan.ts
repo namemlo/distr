@@ -1,5 +1,5 @@
 import {DeploymentType} from '@distr-sh/distr-sdk';
-import {ReleaseContract} from './release-bundle';
+import {ReleaseContractV1} from './release-bundle';
 import {VariableResolutionTraceEntry, VariableType} from './variable-set';
 
 export type DeploymentPlanStatus = 'DRAFT' | 'VALIDATING' | 'BLOCKED' | 'READY' | 'EXPIRED' | 'EXECUTED';
@@ -28,7 +28,7 @@ export interface DeploymentPlan {
   environmentId: string;
   processSnapshotId?: string;
   variableSnapshotId?: string;
-  releaseContract?: ReleaseContract;
+  releaseContract?: ReleaseContractV1;
   status: DeploymentPlanStatus;
   canonicalChecksum: string;
   targets: DeploymentPlanTarget[];

@@ -34,6 +34,7 @@ import {
   ReleaseBundleComponentRequest,
   ReleaseBundleComponentType,
   ReleaseBundleValidationResponse,
+  ReleaseContract,
 } from '../types/release-bundle';
 
 @Component({
@@ -124,7 +125,7 @@ export class ReleaseBundlesComponent {
       channels: this.channelsService.list(),
     }).subscribe({
       next: ({releaseBundles, applications, channels}) => {
-        this.releaseBundles.set(releaseBundles);
+        this.releaseBundles.set(releaseBundles.map((bundle) => this.normalizeReleaseBundleCollections(bundle)));
         this.applications.set(applications);
         this.channels.set(channels);
         this.applyFilter(this.filterForm.controls.search.value);
@@ -517,6 +518,60 @@ export class ReleaseBundlesComponent {
       checksum: component.checksum.trim(),
       childReleaseBundleId:
         type === 'child_release_bundle' && component.childReleaseBundleId ? component.childReleaseBundleId : undefined,
+    };
+  }
+
+  private normalizeReleaseBundleCollections(bundle: ReleaseBundle): ReleaseBundle {
+    return {
+      ...bundle,
+      components: bundle.components ?? [],
+      releaseContract: this.normalizeReleaseContractCollections(bundle.releaseContract),
+    };
+  }
+
+  private normalizeReleaseContractCollections(contract: ReleaseContract | undefined): ReleaseContract | undefined {
+    if (!contract) {
+      return undefined;
+    }
+    if (contract.schema === 'distr.component-release/v2') {
+      return {
+        ...contract,
+        artifacts: (contract.artifacts ?? []).map((artifact) => ({
+          ...artifact,
+          platforms: artifact.platforms ?? [],
+        })),
+        provides: contract.provides ?? [],
+        requires: (contract.requires ?? []).map((requirement) => ({
+          ...requirement,
+          allowedModes: requirement.allowedModes ?? [],
+        })),
+        migrations: contract.migrations ?? [],
+        changes: {...contract.changes, commits: contract.changes.commits ?? []},
+        evidence: {
+          ...contract.evidence,
+          provenance: contract.evidence.provenance ?? [],
+          sbom: contract.evidence.sbom ?? [],
+          signatures: contract.evidence.signatures ?? [],
+          tests: contract.evidence.tests ?? [],
+        },
+      };
+    }
+    return {
+      ...contract,
+      components: (contract.components ?? []).map((component) => ({
+        ...component,
+        contracts: component.contracts ?? [],
+      })),
+      compatibility: {
+        ...contract.compatibility,
+        requires: contract.compatibility.requires ?? [],
+        affectedComponents: contract.compatibility.affectedComponents ?? [],
+      },
+      config: {
+        ...contract.config,
+        immutableObjects: contract.config.immutableObjects ?? [],
+      },
+      changes: {...contract.changes, commits: contract.changes.commits ?? []},
     };
   }
 }

@@ -521,6 +521,40 @@ func TestComponentReleaseV2HandlersCreateValidatePublishGetAndHideForeignOrganiz
 	g.Expect(created.Kind).To(Equal(types.ReleaseBundleKindComponent))
 	g.Expect(created.ReleaseContractSchema).To(Equal(types.ReleaseContractSchemaV2))
 
+	var downgradeRequest api.CreateUpdateReleaseBundleRequest
+	g.Expect(json.Unmarshal(body, &downgradeRequest)).To(Succeed())
+	downgradeRequest.ReleaseContract = nil
+	downgradeBody, err := json.Marshal(downgradeRequest)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	updateRecorder := httptest.NewRecorder()
+	updateRequest := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/release-bundles/"+created.ID.String(),
+		strings.NewReader(string(downgradeBody)),
+	)
+	updateRequest.SetPathValue("releaseBundleId", created.ID.String())
+	updateRequest = updateRequest.WithContext(authenticatedReleaseBundleHandlerContext(ctx, orgID, actorID))
+	updateReleaseBundleHandlerWithFlags(nil).ServeHTTP(updateRecorder, updateRequest)
+	g.Expect(updateRecorder.Code).To(Equal(http.StatusForbidden))
+	stillComponent, err := db.GetReleaseBundle(ctx, created.ID, orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(stillComponent.Kind).To(Equal(types.ReleaseBundleKindComponent))
+	g.Expect(stillComponent.ReleaseContract.ComponentV2).NotTo(BeNil())
+
+	foreignUpdateRecorder := httptest.NewRecorder()
+	foreignUpdateRequest := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/release-bundles/"+created.ID.String(),
+		strings.NewReader(string(downgradeBody)),
+	)
+	foreignUpdateRequest.SetPathValue("releaseBundleId", created.ID.String())
+	foreignUpdateRequest = foreignUpdateRequest.WithContext(
+		authenticatedReleaseBundleHandlerContext(ctx, otherOrgID, actorID),
+	)
+	updateReleaseBundleHandlerWithFlags(nil).ServeHTTP(foreignUpdateRecorder, foreignUpdateRequest)
+	g.Expect(foreignUpdateRecorder.Code).To(Equal(http.StatusNotFound))
+
 	validateRecorder := httptest.NewRecorder()
 	validateRequest := httptest.NewRequest(
 		http.MethodPost,

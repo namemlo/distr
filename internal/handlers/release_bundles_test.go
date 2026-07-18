@@ -249,6 +249,35 @@ func TestComponentReleaseWritesRequireOperatorControlPlaneV2(t *testing.T) {
 	})).To(BeTrue())
 }
 
+func TestComponentReleaseUpdateRequiresFlagForExistingOrIncomingV2(t *testing.T) {
+	g := NewWithT(t)
+	legacy := &types.ReleaseContract{Schema: types.ReleaseContractSchemaV1}
+	component := &types.ReleaseContract{
+		Schema: types.ReleaseContractSchemaV2,
+		ComponentV2: &types.ComponentReleaseContractV2{
+			Schema: types.ReleaseContractSchemaV2,
+		},
+	}
+	legacyBundle := types.ReleaseBundle{
+		Kind:                  types.ReleaseBundleKindLegacy,
+		ReleaseContractSchema: types.ReleaseContractStorageSchemaV1,
+		ReleaseContract:       legacy,
+	}
+	componentBundle := types.ReleaseBundle{
+		Kind:                  types.ReleaseBundleKindComponent,
+		ReleaseContractSchema: types.ReleaseContractSchemaV2,
+		ReleaseContract:       component,
+	}
+
+	g.Expect(componentReleaseUpdateEnabled(legacyBundle, legacy, nil)).To(BeTrue())
+	g.Expect(componentReleaseUpdateEnabled(legacyBundle, component, nil)).To(BeFalse())
+	g.Expect(componentReleaseUpdateEnabled(componentBundle, legacy, nil)).To(BeFalse())
+	g.Expect(componentReleaseUpdateEnabled(componentBundle, nil, nil)).To(BeFalse())
+	g.Expect(componentReleaseUpdateEnabled(componentBundle, legacy, []featureflags.Key{
+		featureflags.KeyOperatorControlPlaneV2,
+	})).To(BeTrue())
+}
+
 type releaseBundleTestAuth struct {
 	orgID uuid.UUID
 	role  types.UserRole

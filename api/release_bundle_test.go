@@ -291,6 +291,11 @@ func TestCreateUpdateReleaseBundleRequestAcceptsStrictComponentReleaseV2(t *test
 	g.Expect(request.ReleaseContract.ComponentV2.Source.Commit).To(Equal(
 		"0123456789abcdef0123456789abcdef01234567",
 	))
+
+	request.Components[0].Type = types.ReleaseBundleComponentTypeOCIArtifact
+	g.Expect(request.Validate()).To(MatchError(ContainSubstring(
+		"component release artifact type must exactly match the release bundle component type",
+	)))
 }
 
 func TestCreateUpdateReleaseBundleRequestValidateRejectsInvalidPayloads(t *testing.T) {
