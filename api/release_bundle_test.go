@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -178,6 +179,12 @@ func TestCreateUpdateReleaseBundleRequestValidateRejectsUnsafeSourceMetadata(t *
 				CIRunID: "AccessToken distr-secret",
 			},
 		},
+		{
+			name: "credential bearing run URL",
+			metadata: ReleaseBundleSourceMetadata{
+				CIRunURL: "https://user:password@ci.example.invalid/runs/123",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -291,6 +298,14 @@ func TestCreateUpdateReleaseBundleRequestAcceptsStrictComponentReleaseV2(t *test
 	g.Expect(request.ReleaseContract.ComponentV2.Source.Commit).To(Equal(
 		"0123456789abcdef0123456789abcdef01234567",
 	))
+	g.Expect(request.SourceRevision).To(Equal("0123456789abcdef0123456789abcdef01234567"))
+	g.Expect(request.SourceMetadata).NotTo(BeNil())
+	g.Expect(request.SourceMetadata.Repository).To(Equal("source/payments-api"))
+	g.Expect(request.SourceMetadata.Branch).To(BeEmpty())
+	g.Expect(request.SourceMetadata.Tag).To(Equal("v2.4.0"))
+	g.Expect(request.SourceMetadata.CIProvider).To(Equal("generic-ci"))
+	g.Expect(request.SourceMetadata.CIRunID).To(Equal("build-42"))
+	g.Expect(request.SourceMetadata.CIRunURL).To(BeEmpty())
 
 	request.Components[0].Type = types.ReleaseBundleComponentTypeOCIArtifact
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring(
@@ -300,6 +315,130 @@ func TestCreateUpdateReleaseBundleRequestAcceptsStrictComponentReleaseV2(t *test
 	request.Components[0].Type = types.ReleaseBundleComponentTypeOCIImage
 	request.ReleaseContract.ComponentV2.Artifacts = make([]types.ComponentReleaseArtifact, 257)
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("artifacts contains too many entries")))
+}
+
+func TestCreateUpdateReleaseBundleRequestRejectsContradictoryComponentReleaseSourceProjection(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*CreateUpdateReleaseBundleRequest)
+		field  string
+	}{
+		{
+			name: "resolved commit mismatch",
+			mutate: func(request *CreateUpdateReleaseBundleRequest) {
+				request.SourceRevision = strings.Repeat("f", 40)
+			},
+			field: "sourceRevision",
+		},
+		{
+			name: "repository mismatch",
+			mutate: func(request *CreateUpdateReleaseBundleRequest) {
+				request.SourceMetadata.Repository = "source/other"
+			},
+			field: "sourceMetadata.repository",
+		},
+		{
+			name: "requested ref mismatch",
+			mutate: func(request *CreateUpdateReleaseBundleRequest) {
+				request.SourceMetadata.Tag = "v9.9.9"
+			},
+			field: "sourceMetadata.tag",
+		},
+		{
+			name: "builder projection mismatch",
+			mutate: func(request *CreateUpdateReleaseBundleRequest) {
+				request.SourceMetadata.CIProvider = "other-ci"
+			},
+			field: "sourceMetadata.ciProvider",
+		},
+		{
+			name: "build id projection mismatch",
+			mutate: func(request *CreateUpdateReleaseBundleRequest) {
+				request.SourceMetadata.CIRunID = "other-build"
+			},
+			field: "sourceMetadata.ciRunId",
+		},
+		{
+			name: "build URL is irrelevant",
+			mutate: func(request *CreateUpdateReleaseBundleRequest) {
+				request.SourceMetadata.CIRunURL = "https://ci.example.invalid/runs/42"
+			},
+			field: "sourceMetadata.ciRunUrl",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			request := validComponentReleaseRequest()
+			tt.mutate(&request)
+
+			err := request.Validate()
+
+			g.Expect(err).To(MatchError(ContainSubstring(tt.field)))
+		})
+	}
+}
+
+func TestCreateUpdateReleaseBundleRequestBoundsComponentReleaseOuterProjection(t *testing.T) {
+	g := NewWithT(t)
+	request := validComponentReleaseRequest()
+	request.Components = make(
+		[]ReleaseBundleComponentRequest,
+		releasebundles.MaxComponentReleaseProjectionItems+1,
+	)
+
+	err := request.Validate()
+
+	g.Expect(err).To(MatchError(ContainSubstring("components contains too many entries")))
+}
+
+func validComponentReleaseRequest() CreateUpdateReleaseBundleRequest {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	contract := types.ComponentReleaseContractV2{
+		Schema:       types.ReleaseContractSchemaV2,
+		ComponentKey: "payments.api",
+		Version:      "2.4.0",
+		Source: types.ComponentReleaseSource{
+			Repository:   "source/payments-api",
+			RequestedRef: "refs/tags/v2.4.0",
+			Commit:       "0123456789abcdef0123456789abcdef01234567",
+		},
+		Build: types.ComponentReleaseBuild{ID: "build-42", Builder: "generic-ci"},
+		Artifacts: []types.ComponentReleaseArtifact{{
+			Key:       "image",
+			Type:      "oci-image",
+			MediaType: "application/vnd.oci.image.index.v1+json",
+			Digest:    digest,
+			Platforms: []types.ComponentReleasePlatform{{
+				Platform: "linux/amd64",
+				Digest:   "sha256:" + strings.Repeat("b", 64),
+			}},
+		}},
+		Changes: types.ComponentReleaseChanges{Summary: "Release payments API"},
+	}
+	return CreateUpdateReleaseBundleRequest{
+		ApplicationID:  uuid.New(),
+		ChannelID:      uuid.New(),
+		ReleaseNumber:  "2.4.0",
+		SourceRevision: contract.Source.Commit,
+		SourceMetadata: &ReleaseBundleSourceMetadata{
+			Repository: contract.Source.Repository,
+			Tag:        "v2.4.0",
+		},
+		ReleaseContract: &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &contract,
+		},
+		Components: []ReleaseBundleComponentRequest{{
+			Key:        "image",
+			Name:       "Payments API",
+			Type:       types.ReleaseBundleComponentTypeOCIImage,
+			Version:    contract.Version,
+			PackageRef: "registry.example/payments-api",
+			Digest:     digest,
+		}},
+	}
 }
 
 func TestCreateUpdateReleaseBundleRequestValidateRejectsInvalidPayloads(t *testing.T) {

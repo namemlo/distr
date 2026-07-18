@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/url"
 	"strings"
 	"time"
 
@@ -48,6 +49,11 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 	if len(r.Components) == 0 {
 		return validation.NewValidationFailedError("at least one component is required")
 	}
+	if r.ReleaseContract != nil &&
+		r.ReleaseContract.ComponentV2 != nil &&
+		len(r.Components) > releasebundles.MaxComponentReleaseProjectionItems {
+		return validation.NewValidationFailedError("components contains too many entries")
+	}
 
 	seenKeys := map[string]struct{}{}
 	typedComponents := make([]types.ReleaseBundleComponent, 0, len(r.Components))
@@ -79,12 +85,35 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 		}
 		r.ReleaseContract = releasebundles.NormalizedReleaseContract(r.ReleaseContract)
 		if r.ReleaseContract.ComponentV2 != nil {
-			result := releasebundles.ValidateBundleContent(types.ReleaseBundle{
+			bundle := types.ReleaseBundle{
 				Kind:                  types.ReleaseBundleKindComponent,
 				ReleaseContractSchema: types.ReleaseContractSchemaV2,
 				ReleaseContract:       r.ReleaseContract,
 				Components:            typedComponents,
-			})
+				SourceRevision:        r.SourceRevision,
+			}
+			if r.SourceMetadata != nil {
+				bundle.SourceRepository = r.SourceMetadata.Repository
+				bundle.SourceBranch = r.SourceMetadata.Branch
+				bundle.SourceTag = r.SourceMetadata.Tag
+				bundle.CIProvider = r.SourceMetadata.CIProvider
+				bundle.CIRunID = r.SourceMetadata.CIRunID
+				bundle.CIRunURL = r.SourceMetadata.CIRunURL
+			}
+			if issues := releasebundles.BindComponentReleaseSourceProjection(&bundle); len(issues) > 0 {
+				return validation.NewValidationFailedError(issues[0].Message)
+			}
+			r.SourceRevision = bundle.SourceRevision
+			if r.SourceMetadata == nil {
+				r.SourceMetadata = &ReleaseBundleSourceMetadata{}
+			}
+			r.SourceMetadata.Repository = bundle.SourceRepository
+			r.SourceMetadata.Branch = bundle.SourceBranch
+			r.SourceMetadata.Tag = bundle.SourceTag
+			r.SourceMetadata.CIProvider = bundle.CIProvider
+			r.SourceMetadata.CIRunID = bundle.CIRunID
+			r.SourceMetadata.CIRunURL = bundle.CIRunURL
+			result := releasebundles.ValidateBundleContent(bundle)
 			if !result.Valid {
 				return validation.NewValidationFailedError(result.Errors[0].Message)
 			}
@@ -149,7 +178,10 @@ func (m ReleaseBundleSourceMetadata) validate() error {
 }
 
 func containsUnsafeSourceMetadata(value string) bool {
-	if strings.ContainsAny(value, "\r\n") {
+	if containsSourceMetadataControl(value) {
+		return true
+	}
+	if parsed, err := url.Parse(strings.TrimSpace(value)); err == nil && parsed.Scheme != "" && parsed.User != nil {
 		return true
 	}
 	normalized := strings.ToLower(value)
@@ -164,6 +196,15 @@ func containsUnsafeSourceMetadata(value string) bool {
 		"token=",
 	} {
 		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSourceMetadataControl(value string) bool {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
 			return true
 		}
 	}

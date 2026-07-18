@@ -8,14 +8,19 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/distr-sh/distr/internal/stepredaction"
 	"github.com/distr-sh/distr/internal/types"
+	"oras.land/oras-go/v2/registry"
 )
 
 const (
-	maxReleaseContractItems                     = 256
+	// MaxComponentReleaseProjectionItems bounds the persisted outer component projection for v2 contracts.
+	MaxComponentReleaseProjectionItems          = 256
+	maxReleaseContractItems                     = MaxComponentReleaseProjectionItems
 	maxComponentReleasePlatforms                = 2
 	maxComponentReleaseAllowedModes             = 5
 	maxComponentReleaseContractPayloadBytes     = 512 * 1024
@@ -34,11 +39,16 @@ var commitPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
 var componentCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var componentKeyPattern = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
 var componentDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-var windowsAbsolutePathPattern = regexp.MustCompile(`(?i)(^|[\s"'(])[a-z]:\\`)
+var windowsAbsolutePathTokenPattern = regexp.MustCompile(
+	`(?i)(^|[^[:alnum:]_./-])(?:[a-z]:[\\/]|\\\\[^\\/\s]+[\\/])`,
+)
 var componentSensitiveAssignmentPattern = regexp.MustCompile(
 	`(?i)\b(password|passwd|client[\s_-]?secret|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|token)\b\s*[:=]`,
 )
 var privateKeyMarkerPattern = regexp.MustCompile(`(?i)\bBEGIN(?: [A-Z0-9]+)* PRIVATE KEY\b`)
+var credentialedURLPattern = regexp.MustCompile(
+	`(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@`,
+)
 
 func normalizeReleaseContractV1(contract *types.ReleaseContract) {
 	if contract == nil {
@@ -348,6 +358,12 @@ func ValidateComponentReleaseContractV2(contract types.ComponentReleaseContractV
 	}
 	if contract.Source.RequestedRef == "" {
 		add("source.requestedRef", "required", "requested source ref is required")
+	} else if _, ok := componentReleaseSourceProjection(contract.Source); !ok {
+		add(
+			"source.requestedRef",
+			"supported",
+			"requested source ref must use refs/heads/<branch> or refs/tags/<tag>",
+		)
 	}
 	if !componentCommitPattern.MatchString(contract.Source.Commit) {
 		add("source.commit", "commit", "source commit must be a lowercase 40-character commit")
@@ -515,6 +531,13 @@ func validateComponentEvidence(contract types.ComponentReleaseContractV2) []Vali
 				})
 				continue
 			}
+			if !isPortableImmutableEvidenceReference(reference) {
+				issues = append(issues, ValidationIssue{
+					Field:   group.field,
+					Rule:    "immutableReference",
+					Message: "evidence references must use a portable immutable HTTPS or OCI reference",
+				})
+			}
 			if _, ok := seen[reference]; ok {
 				issues = append(issues, ValidationIssue{
 					Field: group.field, Rule: "unique", Message: "evidence references must be unique",
@@ -608,11 +631,29 @@ func containsTargetSpecificValue(value string, allowReference bool) bool {
 	if normalized == "" {
 		return false
 	}
-	if _, changed := stepredaction.RedactString(value); changed ||
-		componentSensitiveAssignmentPattern.MatchString(value) ||
-		privateKeyMarkerPattern.MatchString(value) {
+	if containsSensitiveComponentReleaseValue(value) {
 		return true
 	}
+	if !allowReference && containsAbsolutePathToken(value) {
+		return true
+	}
+	if !allowReference && (strings.Contains(normalized, "://") || strings.HasPrefix(normalized, "/")) {
+		return true
+	}
+	if allowReference && strings.ContainsAny(value, "?#") {
+		return true
+	}
+	return containsUnsupportedControlCharacter(value)
+}
+
+func containsSensitiveComponentReleaseValue(value string) bool {
+	if _, changed := stepredaction.RedactString(value); changed ||
+		componentSensitiveAssignmentPattern.MatchString(value) ||
+		privateKeyMarkerPattern.MatchString(value) ||
+		credentialedURLPattern.MatchString(value) {
+		return true
+	}
+	normalized := strings.ToLower(value)
 	for _, marker := range []string{
 		"authorization:", "bearer ", "password=", "secret=", "token=", "api_key=", "access_token=",
 		"clientsecret", "privatekey",
@@ -621,19 +662,231 @@ func containsTargetSpecificValue(value string, allowReference bool) bool {
 			return true
 		}
 	}
-	if windowsAbsolutePathPattern.MatchString(value) || strings.HasPrefix(normalized, `\\`) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && parsed.Scheme != "" && parsed.User != nil
+}
+
+func containsAbsolutePathToken(value string) bool {
+	if windowsAbsolutePathTokenPattern.MatchString(value) {
 		return true
 	}
-	if !allowReference && (strings.Contains(normalized, "://") || strings.HasPrefix(normalized, "/")) {
+	for index, current := range value {
+		if current != '/' {
+			continue
+		}
+		if index > 0 {
+			previous, _ := utf8.DecodeLastRuneInString(value[:index])
+			if !isAbsolutePathBoundary(previous) {
+				continue
+			}
+		}
+		rest := value[index+1:]
+		if rest == "" {
+			return true
+		}
+		if strings.HasPrefix(rest, "/") {
+			rest = strings.TrimPrefix(rest, "/")
+		}
+		next, _ := utf8.DecodeRuneInString(rest)
+		if !unicode.IsSpace(next) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAbsolutePathBoundary(value rune) bool {
+	return unicode.IsSpace(value) || strings.ContainsRune(`"'(=,:;[{`, value)
+}
+
+func containsUnsupportedControlCharacter(value string) bool {
+	if !utf8.ValidString(value) {
 		return true
 	}
-	if parsed, err := url.Parse(strings.TrimSpace(value)); err == nil && parsed.Scheme != "" && parsed.User != nil {
-		return true
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
 	}
-	if allowReference && strings.ContainsAny(value, "?#") {
-		return true
+	return false
+}
+
+func isPortableOCIRepository(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "?#\\\r\n") ||
+		strings.Contains(value, "://") || containsAbsolutePathToken(value) {
+		return false
 	}
-	return strings.ContainsAny(value, "\r\n")
+	if parsed, err := url.Parse("oci://" + value); err != nil || parsed.User != nil {
+		return false
+	}
+	reference, err := registry.ParseReference(value)
+	return err == nil &&
+		reference.Registry != "" &&
+		reference.Repository != "" &&
+		reference.Reference == "" &&
+		reference.String() == value
+}
+
+func isPortableImmutablePackageReference(repository, digest string) bool {
+	if !isPortableOCIRepository(repository) || !componentDigestPattern.MatchString(digest) {
+		return false
+	}
+	value := strings.TrimSpace(repository) + "@" + strings.TrimSpace(digest)
+	reference, err := registry.ParseReference(value)
+	return err == nil &&
+		reference.Reference == strings.TrimSpace(digest) &&
+		reference.String() == value
+}
+
+func isPortableImmutableEvidenceReference(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "\\\r\n") || strings.Contains(value, "%") {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" ||
+		path.Clean(parsed.Path) != parsed.Path {
+		return false
+	}
+	switch parsed.Scheme {
+	case "oci":
+		artifact := strings.TrimPrefix(value, "oci://")
+		reference, err := registry.ParseReference(artifact)
+		return err == nil &&
+			reference.Registry != "" &&
+			reference.Repository != "" &&
+			componentDigestPattern.MatchString(reference.Reference) &&
+			reference.String() == artifact
+	case "https":
+		return hasImmutableEvidencePath(parsed.Path)
+	default:
+		return false
+	}
+}
+
+func hasImmutableEvidencePath(value string) bool {
+	segments := strings.Split(strings.TrimPrefix(value, "/"), "/")
+	for i := 0; i+1 < len(segments); i++ {
+		if segments[i] == "sha256" &&
+			componentDigestPattern.MatchString("sha256:"+segments[i+1]) {
+			return true
+		}
+	}
+	if len(segments) == 0 {
+		return false
+	}
+	_, digest, ok := strings.Cut(segments[len(segments)-1], "@")
+	return ok && componentDigestPattern.MatchString(digest)
+}
+
+type componentReleaseSourceProjectionValues struct {
+	Revision   string
+	Repository string
+	Branch     string
+	Tag        string
+	CIProvider string
+	CIRunID    string
+}
+
+func componentReleaseSourceProjection(
+	source types.ComponentReleaseSource,
+) (componentReleaseSourceProjectionValues, bool) {
+	projection := componentReleaseSourceProjectionValues{
+		Revision:   strings.TrimSpace(source.Commit),
+		Repository: strings.TrimSpace(source.Repository),
+	}
+	requestedRef := strings.TrimSpace(source.RequestedRef)
+	switch {
+	case strings.HasPrefix(requestedRef, "refs/heads/"):
+		projection.Branch = strings.TrimPrefix(requestedRef, "refs/heads/")
+		if !isValidComponentReleaseRefName(projection.Branch) {
+			return componentReleaseSourceProjectionValues{}, false
+		}
+	case strings.HasPrefix(requestedRef, "refs/tags/"):
+		projection.Tag = strings.TrimPrefix(requestedRef, "refs/tags/")
+		if !isValidComponentReleaseRefName(projection.Tag) {
+			return componentReleaseSourceProjectionValues{}, false
+		}
+	default:
+		return componentReleaseSourceProjectionValues{}, false
+	}
+	return projection, true
+}
+
+func isValidComponentReleaseRefName(value string) bool {
+	if value == "" || strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") ||
+		strings.HasSuffix(value, ".") || strings.HasSuffix(value, ".lock") ||
+		strings.Contains(value, "..") || strings.Contains(value, "//") ||
+		strings.Contains(value, "@{") || strings.ContainsAny(value, " ~^:?*[\\\r\n") {
+		return false
+	}
+	if containsUnsupportedControlCharacter(value) {
+		return false
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "" || segment == "." || segment == ".." || strings.HasPrefix(segment, ".") {
+			return false
+		}
+	}
+	return true
+}
+
+// BindComponentReleaseSourceProjection rejects contradictory outer source values and fills their canonical v2 projection.
+func BindComponentReleaseSourceProjection(bundle *types.ReleaseBundle) []ValidationIssue {
+	if bundle == nil || bundle.ReleaseContract == nil || bundle.ReleaseContract.ComponentV2 == nil {
+		return nil
+	}
+	expected, ok := componentReleaseSourceProjection(bundle.ReleaseContract.ComponentV2.Source)
+	if !ok {
+		return []ValidationIssue{{
+			Field: "releaseContract.source.requestedRef", Rule: "supported",
+			Message: "requested source ref must use refs/heads/<branch> or refs/tags/<tag>",
+		}}
+	}
+	issues := make([]ValidationIssue, 0)
+	addMismatch := func(field string) {
+		issues = append(issues, ValidationIssue{
+			Field: field, Rule: "matchesContract", Message: field + " must match the component release contract source",
+		})
+	}
+	if bundle.SourceRevision != "" && strings.TrimSpace(bundle.SourceRevision) != expected.Revision {
+		addMismatch("sourceRevision")
+	}
+	if bundle.SourceRepository != "" && strings.TrimSpace(bundle.SourceRepository) != expected.Repository {
+		addMismatch("sourceMetadata.repository")
+	}
+	if bundle.SourceBranch != "" && strings.TrimSpace(bundle.SourceBranch) != expected.Branch {
+		addMismatch("sourceMetadata.branch")
+	}
+	if bundle.SourceTag != "" && strings.TrimSpace(bundle.SourceTag) != expected.Tag {
+		addMismatch("sourceMetadata.tag")
+	}
+	expected.CIProvider = strings.TrimSpace(bundle.ReleaseContract.ComponentV2.Build.Builder)
+	expected.CIRunID = strings.TrimSpace(bundle.ReleaseContract.ComponentV2.Build.ID)
+	if bundle.CIProvider != "" && strings.TrimSpace(bundle.CIProvider) != expected.CIProvider {
+		addMismatch("sourceMetadata.ciProvider")
+	}
+	if bundle.CIRunID != "" && strings.TrimSpace(bundle.CIRunID) != expected.CIRunID {
+		addMismatch("sourceMetadata.ciRunId")
+	}
+	if bundle.CIRunURL != "" {
+		issues = append(issues, ValidationIssue{
+			Field: "sourceMetadata.ciRunUrl", Rule: "forbidden",
+			Message: "sourceMetadata.ciRunUrl is not part of the component release contract",
+		})
+	}
+	if len(issues) == 0 {
+		bundle.SourceRevision = expected.Revision
+		bundle.SourceRepository = expected.Repository
+		bundle.SourceBranch = expected.Branch
+		bundle.SourceTag = expected.Tag
+		bundle.CIProvider = expected.CIProvider
+		bundle.CIRunID = expected.CIRunID
+		bundle.CIRunURL = ""
+	}
+	return issues
 }
 
 func validateComponentReleaseContractV2Bounds(

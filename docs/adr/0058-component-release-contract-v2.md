@@ -33,6 +33,12 @@ A v2 contract contains:
 - change summary and commit references; and
 - provenance, SBOM, signature, and test evidence references.
 
+The requested source ref is a fully qualified `refs/heads/<branch>` or `refs/tags/<tag>` value. Its repository,
+branch or tag, and resolved commit are projected into the outer Release Bundle source fields before canonicalization.
+Contradictory caller-supplied projections are rejected, and channel source policy is evaluated from the contract
+projection rather than independently supplied outer metadata. Outer CI provider and run ID are likewise bound to
+the contract builder and build ID; a separate CI run URL is forbidden because v2 has no authoritative field for it.
+
 The parser dispatches only on an exact schema. V2 decoding rejects unknown fields. Canonicalization sorts only
 set-like collections by stable identity, emits empty arrays for null, omitted, or empty collections, and rejects
 duplicate stable identities. Once any release in an organization/component/version lineage is published, its
@@ -51,7 +57,14 @@ supported platform set bounded to two and target resolution modes bounded to fiv
 most 512 bytes, evidence references at most 2,048 bytes, change summaries and migration descriptions at most 4,096
 bytes, and the normalized contract payload at most 512 KiB. Sensitive-text validation runs only after those bounds
 are established and rejects credential-bearing URI userinfo, authorization/secret assignments, and PEM private-key
-markers while preserving credential-free immutable evidence references.
+markers. Embedded Unix, Windows drive, and UNC path tokens are rejected wherever portable v2 text is accepted.
+Evidence references are restricted to credential-free, digest-pinned OCI references or normalized HTTPS references
+whose path binds a lowercase SHA-256 digest, including content-addressed paths with a filename after the digest.
+
+The outer component projection is also bounded to 256 entries before canonicalization. Every persisted string field
+is bounded and secret-checked. Package references must parse as canonical credential-free OCI repositories and are
+bound to the contract artifact digest as one immutable reference. Application-version IDs, child-release IDs, and
+checksums are rejected because they have no meaning in a v2 artifact projection.
 
 The Release Bundle detail view labels the embedded contract schema and outer row storage classification separately.
 For a historical release, `distr.release-contract/v1` remains the audit contract schema while `legacy` and

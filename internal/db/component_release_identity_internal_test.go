@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	. "github.com/onsi/gomega"
 )
@@ -127,10 +128,51 @@ func TestValidateComponentReleaseForPersistenceRejectsOversizedContract(t *testi
 		},
 	}
 
-	err := validateComponentReleaseForPersistence(bundle)
+	err := validateComponentReleaseForPersistence(&bundle)
 
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 	g.Expect(err).To(MatchError(ContainSubstring("artifacts contains too many entries")))
+}
+
+func TestComponentReleaseSourcePolicyUsesContractRequestedRef(t *testing.T) {
+	g := NewWithT(t)
+	contract := types.ComponentReleaseContractV2{
+		Schema:       types.ReleaseContractSchemaV2,
+		ComponentKey: "payments.api",
+		Version:      "2.4.0",
+		Source: types.ComponentReleaseSource{
+			Repository:   "source/payments-api",
+			RequestedRef: "refs/heads/feature/not-allowed",
+			Commit:       strings.Repeat("a", 40),
+		},
+	}
+	bundle := types.ReleaseBundle{
+		SourceRevision:   contract.Source.Commit,
+		SourceRepository: contract.Source.Repository,
+		SourceBranch:     "release/allowed",
+		ReleaseContract: &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &contract,
+		},
+	}
+	channel := types.Channel{AllowedSourceBranchPatterns: []string{"release/*"}}
+	result := releasebundles.NewValidResult()
+
+	err := validateReleaseBundleSourceRules(&result, bundle, channel)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(issueKeysForComponentReleasePersistence(result.Errors)).To(ContainElements(
+		"sourceMetadata.branch:matchesContract",
+		"sourceMetadata.branch:release/*",
+	))
+}
+
+func issueKeysForComponentReleasePersistence(issues []releasebundles.ValidationIssue) []string {
+	result := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		result = append(result, issue.Field+":"+issue.Rule)
+	}
+	return result
 }
 
 const maxReleaseContractItemsForPersistenceTest = 257

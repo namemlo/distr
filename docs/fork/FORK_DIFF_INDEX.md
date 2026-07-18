@@ -1126,7 +1126,9 @@ Use one entry per pull request:
   classification, and adds v2 artifact/platform, capability, migration, and evidence summaries.
 - Agent protocol changes: None.
 - Documentation: Added ADR-0058 and PR-060 fork notes.
-- Tests: Added strict parser, bounded credential/userinfo/PEM detection, collection/string/payload limits,
+- Tests: Added strict parser, bounded credential/userinfo/PEM and embedded absolute-path detection,
+  portable immutable evidence and package-reference parsing, collection/string/payload and outer-projection limits,
+  irrelevant projection-field rejection, exact contract-source projection and source-policy binding,
   type-preserving artifact/component bijection, deterministic non-null collection canonicalization, legacy schema
   rendering, API/gate, migration, and deferred PostgreSQL publication/idempotency/full-lineage conflict coverage.
 - Upstream contribution notes: Community-neutral release identity; no adopter, CI provider, registry, target,

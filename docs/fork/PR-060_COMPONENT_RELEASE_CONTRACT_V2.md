@@ -73,8 +73,13 @@ Strict unknown-field decoding and target-neutral validation reject undeclared ta
 secret-looking values (including in change summaries), mutable digests, unsafe paths, duplicate platform
 identities, and media types that do not match their artifact type. Artifact and outer bundle component collections
 must form an exact type-preserving bijection. URI userinfo, PEM private-key markers, and common password,
-client-secret, API-key, and token assignments are rejected without blocking credential-free immutable references.
-Every collection and string/reference field is conservatively bounded before normalization and persistence; the
+client-secret, API-key, and token assignments are rejected. Embedded Unix, Windows drive, and UNC path tokens are
+rejected. Evidence accepts only normalized digest-pinned OCI or HTTPS references. Every outer component field is
+bounded and secret-checked; package repositories are parsed and combined with the exact contract digest, while
+irrelevant checksum and legacy relationship fields are forbidden. The contract source is projected exactly into
+outer repository, branch or tag, revision, CI provider, and build ID fields; an unbound CI run URL is forbidden,
+and channel policy evaluates the contract projection. Every
+collection and string/reference field is conservatively bounded before normalization and persistence; the
 normalized v2 contract is limited to 512 KiB. Every normalized fact carries the owning organization boundary.
 
 ### Backward-compatibility impact

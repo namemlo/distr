@@ -90,6 +90,20 @@ func TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData(t
 			wantRule: "source.commit:commit",
 		},
 		{
+			name: "ambiguous requested ref",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Source.RequestedRef = "v2.4.0"
+			},
+			wantRule: "source.requestedRef:supported",
+		},
+		{
+			name: "requested ref with control",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Source.RequestedRef = "refs/tags/v2.4.0\tmasked"
+			},
+			wantRule: "source.requestedRef:supported",
+		},
+		{
 			name: "invalid manifest digest",
 			mutate: func(contract *types.ComponentReleaseContractV2) {
 				contract.Artifacts[0].Digest = "registry.example/component:latest"
@@ -317,11 +331,115 @@ func TestValidateComponentReleaseContractV2RejectsCredentialBearingTextAndRefere
 	}
 }
 
+func TestValidateComponentReleaseContractV2RejectsEmbeddedAbsolutePaths(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*types.ComponentReleaseContractV2)
+		field  string
+	}{
+		{
+			name: "embedded Unix path",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = "copy /srv/customer/config before rollout"
+			},
+			field: "changes.summary:targetNeutral",
+		},
+		{
+			name: "embedded Windows backslash path",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Migrations[0].Description = `copyFrom=C:\customers\acme\schema.sql`
+			},
+			field: "migrations.schema-v2.description:targetNeutral",
+		},
+		{
+			name: "embedded Windows forward slash path",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Build.ID = "input=C:/customers/acme/build"
+			},
+			field: "build.id:targetNeutral",
+		},
+		{
+			name: "embedded UNC path",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = `copy \\fileserver\customer\artifact`
+			},
+			field: "changes.summary:targetNeutral",
+		},
+		{
+			name: "embedded forward slash UNC path",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = "copy //fileserver/customer/artifact"
+			},
+			field: "changes.summary:targetNeutral",
+		},
+		{
+			name: "embedded punctuation path",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = "copy /@customer/config"
+			},
+			field: "changes.summary:targetNeutral",
+		},
+		{
+			name: "embedded path with spaces",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Migrations[0].Description = "copy /Program Files/customer/config"
+			},
+			field: "migrations.schema-v2.description:targetNeutral",
+		},
+		{
+			name: "embedded Unicode path",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = "copy /客户/config"
+			},
+			field: "changes.summary:targetNeutral",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			contract := validComponentReleaseContract()
+			tt.mutate(&contract)
+
+			issues := ValidateComponentReleaseContractV2(contract)
+
+			g.Expect(issueKeys(issues)).To(ContainElement(tt.field))
+		})
+	}
+}
+
+func TestValidateComponentReleaseContractV2RequiresPortableImmutableEvidenceReferences(t *testing.T) {
+	tests := []struct {
+		name      string
+		reference string
+	}{
+		{name: "bare relative path", reference: "reports/sbom.json"},
+		{name: "absolute local path", reference: "/var/lib/reports/sbom.json"},
+		{name: "file URL", reference: "file:///var/lib/reports/sbom.json"},
+		{name: "mutable OCI reference", reference: "oci://evidence.example/reports/sbom:latest"},
+		{name: "mutable HTTPS reference", reference: "https://evidence.example/reports/sbom.json"},
+		{name: "unsupported scheme", reference: "s3://evidence/reports/sbom.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			contract := validComponentReleaseContract()
+			contract.Evidence.SBOM = []string{tt.reference}
+
+			issues := ValidateComponentReleaseContractV2(contract)
+
+			g.Expect(issueKeys(issues)).To(ContainElement("evidence.sbom:immutableReference"))
+		})
+	}
+}
+
 func TestValidateComponentReleaseContractV2AcceptsCredentialFreeImmutableReferences(t *testing.T) {
 	g := NewWithT(t)
 	contract := validComponentReleaseContract()
 	contract.Evidence.Provenance = []string{
 		"https://evidence.example/provenance/sha256/" + strings.Repeat("a", 64),
+		"https://evidence.example/_immutable/sha256/" + strings.Repeat("c", 64) + "/provenance.json",
 		"oci://evidence/provenance@sha256:" + strings.Repeat("b", 64),
 	}
 	contract.Changes.Summary = "Rotate credential provider metadata without embedding credentials"

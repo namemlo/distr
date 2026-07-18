@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
 
@@ -129,6 +130,288 @@ func TestValidateComponentReleaseRequiresExactArtifactComponentBijection(t *test
 				Equal(tt.wantField),
 			)))
 		})
+	}
+}
+
+func TestValidateComponentReleaseRejectsUnsafeOuterComponentProjection(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*types.ReleaseBundleComponent)
+		wantIssue string
+	}{
+		{
+			name: "key too long",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Key = strings.Repeat("k", 257)
+			},
+			wantIssue: "components[0].key:limit",
+		},
+		{
+			name: "name too long",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Name = strings.Repeat("n", 257)
+			},
+			wantIssue: "components.image.name:limit",
+		},
+		{
+			name: "name contains secret",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Name = "password=customer-secret"
+			},
+			wantIssue: "components.image.name:targetNeutral",
+		},
+		{
+			name: "name contains embedded path",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Name = "copy /srv/customer/config"
+			},
+			wantIssue: "components.image.name:targetNeutral",
+		},
+		{
+			name: "name is not normalized",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Name = " Payments API "
+			},
+			wantIssue: "components.image.name:normalized",
+		},
+		{
+			name: "name contains control character",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Name = "Payments\x00API"
+			},
+			wantIssue: "components.image.name:targetNeutral",
+		},
+		{
+			name: "type too long",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Type = types.ReleaseBundleComponentType(strings.Repeat("t", 257))
+			},
+			wantIssue: "components.image.type:limit",
+		},
+		{
+			name: "version too long",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Version = strings.Repeat("v", 129)
+			},
+			wantIssue: "components.image.version:limit",
+		},
+		{
+			name: "package reference too long",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.PackageRef = strings.Repeat("r", 2049)
+			},
+			wantIssue: "components.image.packageRef:limit",
+		},
+		{
+			name: "package reference has credentials",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.PackageRef = "user:password@registry.example/payments-api"
+			},
+			wantIssue: "components.image.packageRef:targetNeutral",
+		},
+		{
+			name: "package reference has mutable tag",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.PackageRef = "registry.example/payments-api:latest"
+			},
+			wantIssue: "components.image.packageRef:immutableReference",
+		},
+		{
+			name: "package reference duplicates digest",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.PackageRef += "@" + component.Digest
+			},
+			wantIssue: "components.image.packageRef:immutableReference",
+		},
+		{
+			name: "package reference is local path",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.PackageRef = "/srv/customer/payments-api"
+			},
+			wantIssue: "components.image.packageRef:immutableReference",
+		},
+		{
+			name: "digest too long",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Digest = strings.Repeat("d", 257)
+			},
+			wantIssue: "components.image.digest:limit",
+		},
+		{
+			name: "checksum too long",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Checksum = strings.Repeat("c", 257)
+			},
+			wantIssue: "components.image.checksum:limit",
+		},
+		{
+			name: "key contains secret",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Key = "token=customer-secret"
+			},
+			wantIssue: "components[0].key:targetNeutral",
+		},
+		{
+			name: "type contains secret",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Type = "client_secret=customer-secret"
+			},
+			wantIssue: "components.image.type:targetNeutral",
+		},
+		{
+			name: "version contains secret",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Version = "password=customer-secret"
+			},
+			wantIssue: "components.image.version:targetNeutral",
+		},
+		{
+			name: "digest contains secret",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Digest = "api_key=customer-secret"
+			},
+			wantIssue: "components.image.digest:targetNeutral",
+		},
+		{
+			name: "checksum is irrelevant",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				component.Checksum = "sha256:" + strings.Repeat("c", 64)
+			},
+			wantIssue: "components.image.checksum:forbidden",
+		},
+		{
+			name: "application version reference is irrelevant",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				id := uuid.New()
+				component.ApplicationVersionID = &id
+			},
+			wantIssue: "components.image.applicationVersionId:forbidden",
+		},
+		{
+			name: "child release reference is irrelevant",
+			mutate: func(component *types.ReleaseBundleComponent) {
+				id := uuid.New()
+				component.ChildReleaseBundleID = &id
+			},
+			wantIssue: "components.image.childReleaseBundleId:forbidden",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			bundle := validComponentReleaseBundle()
+			tt.mutate(&bundle.Components[0])
+
+			result := ValidateBundleContent(bundle)
+
+			g.Expect(issueKeys(result.Errors)).To(ContainElement(tt.wantIssue))
+		})
+	}
+}
+
+func TestValidateComponentReleaseBoundsOuterComponentCollectionBeforeCanonicalization(t *testing.T) {
+	g := NewWithT(t)
+	bundle := validComponentReleaseBundle()
+	bundle.Components = make([]types.ReleaseBundleComponent, maxReleaseContractItems+1)
+	bundle.CanonicalChecksum = "force-canonical-validation"
+	bundle.CanonicalPayload = []byte("{}")
+
+	result := ValidateBundleContent(bundle)
+
+	g.Expect(issueKeys(result.Errors)).To(Equal([]string{"components:limit"}))
+}
+
+func TestValidateComponentReleaseAcceptsCanonicalCredentialFreePackageReference(t *testing.T) {
+	g := NewWithT(t)
+	bundle := validComponentReleaseBundle()
+	bundle.Components[0].PackageRef = "registry.example:5000/team/payments-api"
+
+	result := ValidateBundleContent(bundle)
+
+	g.Expect(result.Valid).To(BeTrue(), "validation errors: %v", result.Errors)
+}
+
+func TestValidateComponentReleaseBindsOuterSourceProjection(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*types.ReleaseBundle)
+		wantIssue string
+	}{
+		{
+			name: "resolved commit mismatch",
+			mutate: func(bundle *types.ReleaseBundle) {
+				bundle.SourceRevision = strings.Repeat("f", 40)
+			},
+			wantIssue: "sourceRevision:matchesContract",
+		},
+		{
+			name: "repository mismatch",
+			mutate: func(bundle *types.ReleaseBundle) {
+				bundle.SourceRepository = "source/other"
+			},
+			wantIssue: "sourceMetadata.repository:matchesContract",
+		},
+		{
+			name: "requested tag projected as branch",
+			mutate: func(bundle *types.ReleaseBundle) {
+				bundle.SourceBranch = "v2.4.0"
+				bundle.SourceTag = ""
+			},
+			wantIssue: "sourceMetadata.branch:matchesContract",
+		},
+		{
+			name: "requested tag mismatch",
+			mutate: func(bundle *types.ReleaseBundle) {
+				bundle.SourceTag = "v9.9.9"
+			},
+			wantIssue: "sourceMetadata.tag:matchesContract",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			bundle := validComponentReleaseBundle()
+			tt.mutate(&bundle)
+
+			result := ValidateBundleContent(bundle)
+
+			g.Expect(issueKeys(result.Errors)).To(ContainElement(tt.wantIssue))
+		})
+	}
+}
+
+func TestBindComponentReleaseSourceProjectionDoesNotMutateContradictoryInput(t *testing.T) {
+	g := NewWithT(t)
+	bundle := validComponentReleaseBundle()
+	bundle.SourceRevision = strings.Repeat("f", 40)
+
+	issues := BindComponentReleaseSourceProjection(&bundle)
+
+	g.Expect(issueKeys(issues)).To(ContainElement("sourceRevision:matchesContract"))
+	g.Expect(bundle.SourceRevision).To(Equal(strings.Repeat("f", 40)))
+}
+
+func validComponentReleaseBundle() types.ReleaseBundle {
+	contract := validComponentReleaseContract()
+	return types.ReleaseBundle{
+		Kind:                  types.ReleaseBundleKindComponent,
+		ReleaseContractSchema: types.ReleaseContractSchemaV2,
+		ReleaseContract: &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &contract,
+		},
+		SourceRevision:   contract.Source.Commit,
+		SourceRepository: contract.Source.Repository,
+		SourceTag:        "v2.4.0",
+		Components: []types.ReleaseBundleComponent{
+			componentReleaseBundleComponent(
+				"image",
+				types.ReleaseBundleComponentTypeOCIImage,
+				contract.Artifacts[0].Digest,
+			),
+		},
 	}
 }
 

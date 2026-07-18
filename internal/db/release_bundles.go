@@ -101,7 +101,7 @@ func CreateReleaseBundleWithIdempotency(ctx context.Context, bundle *types.Relea
 		if err := setReleaseBundleContractMetadata(bundle); err != nil {
 			return err
 		}
-		if err := validateComponentReleaseForPersistence(*bundle); err != nil {
+		if err := validateComponentReleaseForPersistence(bundle); err != nil {
 			return err
 		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -153,7 +153,7 @@ func createReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 	if err := setReleaseBundleContractMetadata(bundle); err != nil {
 		return err
 	}
-	if err := validateComponentReleaseForPersistence(*bundle); err != nil {
+	if err := validateComponentReleaseForPersistence(bundle); err != nil {
 		return err
 	}
 	if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -435,7 +435,7 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 		if err := setReleaseBundleContractMetadata(bundle); err != nil {
 			return err
 		}
-		if err := validateComponentReleaseForPersistence(*bundle); err != nil {
+		if err := validateComponentReleaseForPersistence(bundle); err != nil {
 			return err
 		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -947,11 +947,32 @@ func validateReleaseBundleSourceRules(
 	bundle types.ReleaseBundle,
 	channel types.Channel,
 ) error {
+	sourceBranch := bundle.SourceBranch
+	sourceTag := bundle.SourceTag
+	if bundle.ReleaseContract != nil && bundle.ReleaseContract.ComponentV2 != nil {
+		projected := bundle
+		bindingIssues := releasebundles.BindComponentReleaseSourceProjection(&projected)
+		for _, issue := range bindingIssues {
+			result.AddError(issue.Field, issue.Rule, issue.Message)
+		}
+		if len(bindingIssues) > 0 {
+			projected.SourceRevision = ""
+			projected.SourceRepository = ""
+			projected.SourceBranch = ""
+			projected.SourceTag = ""
+			projected.CIProvider = ""
+			projected.CIRunID = ""
+			projected.CIRunURL = ""
+			_ = releasebundles.BindComponentReleaseSourceProjection(&projected)
+		}
+		sourceBranch = projected.SourceBranch
+		sourceTag = projected.SourceTag
+	}
 	channelResult, err := channelrules.EvaluateSource(
 		channelrulesFromChannel(channel),
 		channelrules.Input{
-			SourceBranch: bundle.SourceBranch,
-			SourceTag:    bundle.SourceTag,
+			SourceBranch: sourceBranch,
+			SourceTag:    sourceTag,
 		},
 	)
 	if err != nil {
@@ -1329,16 +1350,20 @@ func setReleaseBundleCanonicalFields(bundle *types.ReleaseBundle) error {
 	return nil
 }
 
-func validateComponentReleaseForPersistence(bundle types.ReleaseBundle) error {
-	if bundle.ReleaseContract == nil || bundle.ReleaseContract.ComponentV2 == nil {
+func validateComponentReleaseForPersistence(bundle *types.ReleaseBundle) error {
+	if bundle == nil || bundle.ReleaseContract == nil || bundle.ReleaseContract.ComponentV2 == nil {
 		return nil
 	}
 	if issues := releasebundles.ValidateComponentReleaseContractV2(*bundle.ReleaseContract.ComponentV2); len(issues) > 0 {
 		return apierrors.NewBadRequest(issues[0].Message)
 	}
-	bundle.CanonicalChecksum = ""
-	bundle.CanonicalPayload = nil
-	result := releasebundles.ValidateBundleContent(bundle)
+	if issues := releasebundles.BindComponentReleaseSourceProjection(bundle); len(issues) > 0 {
+		return apierrors.NewBadRequest(issues[0].Message)
+	}
+	validated := *bundle
+	validated.CanonicalChecksum = ""
+	validated.CanonicalPayload = nil
+	result := releasebundles.ValidateBundleContent(validated)
 	if !result.Valid {
 		return apierrors.NewBadRequest(result.Errors[0].Message)
 	}
