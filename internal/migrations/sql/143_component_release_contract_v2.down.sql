@@ -1,5 +1,6 @@
 LOCK TABLE
   ReleaseContractV2BackfillLineage,
+  ReleaseContractV2BackfillCheckpoint,
   ComponentReleaseEvidenceVerification,
   ComponentReleaseMigrationDeclaration,
   ComponentReleaseCapability,
@@ -21,7 +22,8 @@ BEGIN
   OR EXISTS (SELECT 1 FROM ComponentReleaseEvidenceVerification)
   OR EXISTS (SELECT 1 FROM ComponentReleaseCapability)
   OR EXISTS (SELECT 1 FROM ComponentReleaseMigrationDeclaration)
-  OR EXISTS (SELECT 1 FROM ReleaseContractV2BackfillLineage) THEN
+  OR EXISTS (SELECT 1 FROM ReleaseContractV2BackfillLineage)
+  OR EXISTS (SELECT 1 FROM ReleaseContractV2BackfillCheckpoint) THEN
     RAISE EXCEPTION
       'downgrade crossing 143 is forbidden while component or product release facts exist';
   END IF;
@@ -32,6 +34,10 @@ DROP TRIGGER ReleaseContractV2BackfillLineage_append_only
   ON ReleaseContractV2BackfillLineage;
 DROP TRIGGER ReleaseContractV2BackfillLineage_no_truncate
   ON ReleaseContractV2BackfillLineage;
+DROP TRIGGER ReleaseContractV2BackfillCheckpoint_append_only
+  ON ReleaseContractV2BackfillCheckpoint;
+DROP TRIGGER ReleaseContractV2BackfillCheckpoint_no_truncate
+  ON ReleaseContractV2BackfillCheckpoint;
 DROP TRIGGER ComponentReleaseEvidenceVerification_append_only
   ON ComponentReleaseEvidenceVerification;
 DROP TRIGGER ComponentReleaseEvidenceVerification_no_truncate
@@ -42,6 +48,7 @@ DROP FUNCTION release_contract_v2_evidence_append_only();
 DROP FUNCTION component_release_verification_insert_guard();
 
 DROP TABLE ReleaseContractV2BackfillLineage;
+DROP TABLE ReleaseContractV2BackfillCheckpoint;
 DROP TABLE ComponentReleaseMigrationDeclaration;
 DROP TABLE ComponentReleaseCapability;
 DROP TABLE ComponentReleaseEvidenceVerification;

@@ -117,7 +117,9 @@ CREATE TABLE ComponentReleaseEvidenceVerification (
   trust_root_id TEXT NOT NULL,
   predicate_type TEXT NOT NULL,
   builder_id TEXT NOT NULL,
+  build_id TEXT NOT NULL,
   source_uri TEXT NOT NULL,
+  source_commit TEXT NOT NULL,
   build_type TEXT NOT NULL,
   external_parameters_checksum TEXT NOT NULL,
   signer_issuer TEXT NOT NULL,
@@ -157,6 +159,8 @@ CREATE TABLE ComponentReleaseEvidenceVerification (
     CHECK (policy_checksum ~ '^sha256:[0-9a-f]{64}$'),
   CONSTRAINT componentreleaseverification_external_parameters_checksum_check
     CHECK (external_parameters_checksum ~ '^sha256:[0-9a-f]{64}$'),
+  CONSTRAINT componentreleaseverification_source_commit_check
+    CHECK (source_commit ~ '^[0-9a-f]{40}$'),
   CONSTRAINT componentreleaseverification_text_bounds_check
     CHECK (
       artifact_key = btrim(artifact_key)
@@ -169,6 +173,8 @@ CREATE TABLE ComponentReleaseEvidenceVerification (
       AND length(predicate_type) BETWEEN 1 AND 1024
       AND builder_id = btrim(builder_id)
       AND length(builder_id) BETWEEN 1 AND 1024
+      AND build_id = btrim(build_id)
+      AND length(build_id) BETWEEN 1 AND 1024
       AND source_uri = btrim(source_uri)
       AND length(source_uri) BETWEEN 1 AND 2048
       AND build_type = btrim(build_type)
@@ -182,6 +188,7 @@ CREATE TABLE ComponentReleaseEvidenceVerification (
       AND trust_root_id !~ '[[:cntrl:]]'
       AND predicate_type !~ '[[:cntrl:]]'
       AND builder_id !~ '[[:cntrl:]]'
+      AND build_id !~ '[[:cntrl:]]'
       AND source_uri !~ '[[:cntrl:]]'
       AND build_type !~ '[[:cntrl:]]'
       AND signer_issuer !~ '[[:cntrl:]]'
@@ -298,6 +305,29 @@ CREATE INDEX componentreleasemigration_bundle_idx
     sort_order
   );
 
+CREATE TABLE ReleaseContractV2BackfillCheckpoint (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  organization_id UUID NOT NULL,
+  checkpoint_id UUID NOT NULL,
+  evidence_document_reference TEXT NOT NULL,
+  evidence_document_checksum TEXT NOT NULL,
+  CONSTRAINT releasecontractv2backfillcheckpoint_organization_fk
+    FOREIGN KEY (organization_id)
+    REFERENCES Organization(id)
+    ON DELETE CASCADE,
+  CONSTRAINT releasecontractv2backfillcheckpoint_identity_unique
+    UNIQUE (organization_id, checkpoint_id),
+  CONSTRAINT releasecontractv2backfillcheckpoint_checksum_check
+    CHECK (evidence_document_checksum ~ '^sha256:[0-9a-f]{64}$'),
+  CONSTRAINT releasecontractv2backfillcheckpoint_reference_check
+    CHECK (
+      evidence_document_reference = btrim(evidence_document_reference)
+      AND length(evidence_document_reference) BETWEEN 1 AND 2048
+      AND evidence_document_reference !~ '[[:cntrl:]]'
+    )
+);
+
 CREATE TABLE ReleaseContractV2BackfillLineage (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -309,6 +339,11 @@ CREATE TABLE ReleaseContractV2BackfillLineage (
   derived_canonical_checksum TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL,
   reason_code TEXT NOT NULL DEFAULT '',
+  reviewed_artifact_key TEXT NOT NULL,
+  reviewed_artifact_digest TEXT NOT NULL,
+  artifact_media_type TEXT NOT NULL,
+  artifact_evidence_reference TEXT NOT NULL,
+  artifact_evidence_digest TEXT NOT NULL,
   CONSTRAINT releasecontractv2backfill_organization_fk
     FOREIGN KEY (organization_id)
     REFERENCES Organization(id)
@@ -321,6 +356,13 @@ CREATE TABLE ReleaseContractV2BackfillLineage (
     FOREIGN KEY (derived_release_bundle_id, organization_id)
     REFERENCES ReleaseBundle(id, organization_id)
     DEFERRABLE INITIALLY DEFERRED,
+  CONSTRAINT releasecontractv2backfill_checkpoint_fk
+    FOREIGN KEY (organization_id, checkpoint_id)
+    REFERENCES ReleaseContractV2BackfillCheckpoint(
+      organization_id,
+      checkpoint_id
+    )
+    ON DELETE CASCADE,
   CONSTRAINT releasecontractv2backfill_source_unique
     UNIQUE (organization_id, source_release_bundle_id),
   CONSTRAINT releasecontractv2backfill_state_check
@@ -341,7 +383,29 @@ CREATE TABLE ReleaseContractV2BackfillLineage (
       )
     ),
   CONSTRAINT releasecontractv2backfill_source_checksum_check
-    CHECK (source_canonical_checksum ~ '^sha256:[0-9a-f]{64}$')
+    CHECK (source_canonical_checksum ~ '^sha256:[0-9a-f]{64}$'),
+  CONSTRAINT releasecontractv2backfill_artifact_digest_check
+    CHECK (reviewed_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+  CONSTRAINT releasecontractv2backfill_evidence_digest_check
+    CHECK (artifact_evidence_digest ~ '^sha256:[0-9a-f]{64}$'),
+  CONSTRAINT releasecontractv2backfill_artifact_media_type_check
+    CHECK (
+      artifact_media_type IN (
+        'application/vnd.oci.image.index.v1+json',
+        'application/vnd.oci.image.manifest.v1+json',
+        'application/vnd.oci.artifact.manifest.v1+json',
+        'application/vnd.cncf.helm.chart.content.v1.tar+gzip'
+      )
+    ),
+  CONSTRAINT releasecontractv2backfill_reviewed_text_check
+    CHECK (
+      reviewed_artifact_key = btrim(reviewed_artifact_key)
+      AND length(reviewed_artifact_key) BETWEEN 1 AND 128
+      AND artifact_evidence_reference = btrim(artifact_evidence_reference)
+      AND length(artifact_evidence_reference) BETWEEN 1 AND 2048
+      AND reviewed_artifact_key !~ '[[:cntrl:]]'
+      AND artifact_evidence_reference !~ '[[:cntrl:]]'
+    )
 );
 
 CREATE UNIQUE INDEX releasecontractv2backfill_derived_unique
@@ -372,7 +436,7 @@ BEGIN
     RETURN OLD;
   END IF;
 
-  RAISE EXCEPTION 'component release verification and backfill lineage are append-only'
+  RAISE EXCEPTION 'component release verification and backfill audit facts are append-only'
     USING ERRCODE = '23514';
 END;
 $$;
@@ -391,4 +455,12 @@ FOR EACH ROW EXECUTE FUNCTION release_contract_v2_evidence_append_only();
 
 CREATE TRIGGER ReleaseContractV2BackfillLineage_no_truncate
 BEFORE TRUNCATE ON ReleaseContractV2BackfillLineage
+FOR EACH STATEMENT EXECUTE FUNCTION release_contract_v2_evidence_append_only();
+
+CREATE TRIGGER ReleaseContractV2BackfillCheckpoint_append_only
+BEFORE UPDATE OR DELETE ON ReleaseContractV2BackfillCheckpoint
+FOR EACH ROW EXECUTE FUNCTION release_contract_v2_evidence_append_only();
+
+CREATE TRIGGER ReleaseContractV2BackfillCheckpoint_no_truncate
+BEFORE TRUNCATE ON ReleaseContractV2BackfillCheckpoint
 FOR EACH STATEMENT EXECUTE FUNCTION release_contract_v2_evidence_append_only();
