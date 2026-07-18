@@ -31,6 +31,22 @@ func ExecutionV2ExecutorRouter(r chiopenapi.Router) {
 		AttemptID uuid.UUID `path:"attemptId"`
 	}
 	r.Route("/attempts/{attemptId}", func(r chiopenapi.Router) {
+		r.Get("/cancel", getPendingExecutionCancelHandler()).
+			With(option.Request(attemptPath{})).
+			With(option.Response(http.StatusOK, struct {
+				Cancel any `json:"cancel"`
+			}{}))
+		r.Get("/status-query", getPendingExecutionStatusQueryHandler()).
+			With(option.Request(attemptPath{})).
+			With(option.Response(http.StatusOK, struct {
+				Query any `json:"query"`
+			}{}))
+		r.Post("/cancel-acknowledgements", acknowledgeExecutionCancelHandler()).
+			With(option.Request(struct {
+				attemptPath
+				api.ExecutionCancelAcknowledgementRequest
+			}{})).
+			With(option.Response(http.StatusNoContent, nil))
 		r.Post("/heartbeat", heartbeatExecutionV2Handler()).
 			With(option.Request(struct {
 				attemptPath
@@ -49,6 +65,43 @@ func ExecutionV2ExecutorRouter(r chiopenapi.Router) {
 			With(option.Request(struct {
 				attemptPath
 				api.ExecutionV2CompletionRequest
+			}{})).
+			With(option.Response(http.StatusNoContent, nil))
+	})
+}
+
+func ExecutionV2OperatorRouter(r chiopenapi.Router) {
+	r.WithOptions(option.GroupTags("Execution Controls"))
+	r.Use(
+		middleware.RequireVendor,
+		middleware.RequireOrgAndRole,
+		middleware.RequireReadWriteOrAdmin,
+		middleware.BlockSuperAdmin,
+		middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyOperatorControlPlaneV2),
+		middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyExecutorProtocolV2),
+	)
+	type executionPath struct {
+		ExecutionID uuid.UUID `path:"executionId"`
+	}
+	r.Route("/{executionId}", func(r chiopenapi.Router) {
+		r.Post("/cancel", requestExecutionCancelHandler()).
+			With(option.Request(struct {
+				executionPath
+				api.ExecutionCancelRequest
+			}{})).
+			With(option.Response(http.StatusNoContent, nil))
+		r.Post("/status-queries", requestExecutionStatusHandler()).
+			With(option.Request(struct {
+				executionPath
+				api.ExecutionStatusRequest
+			}{})).
+			With(option.Response(http.StatusOK, struct {
+				Query any `json:"query"`
+			}{}))
+		r.Post("/reconciliation-events", importExecutionReconciliationHandler()).
+			With(option.Request(struct {
+				executionPath
+				api.ExecutionReconciliationRequest
 			}{})).
 			With(option.Response(http.StatusNoContent, nil))
 	})
@@ -153,8 +206,159 @@ func completeExecutionV2Handler() http.HandlerFunc {
 	}
 }
 
+func getPendingExecutionCancelHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		attemptID, ok := executionV2AttemptID(w, r)
+		if !ok {
+			return
+		}
+		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
+		cancel, err := db.GetPendingExecutionCancel(r.Context(), attemptID, orgID)
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		RespondJSON(w, struct {
+			Cancel any `json:"cancel"`
+		}{Cancel: cancel})
+	}
+}
+
+func acknowledgeExecutionCancelHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		attemptID, ok := executionV2AttemptID(w, r)
+		if !ok {
+			return
+		}
+		request, err := JsonBody[api.ExecutionCancelAcknowledgementRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
+		err = db.RecordCancelAcknowledgement(
+			r.Context(), request.ToTypes(orgID, attemptID, time.Now().UTC()),
+		)
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func getPendingExecutionStatusQueryHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		attemptID, ok := executionV2AttemptID(w, r)
+		if !ok {
+			return
+		}
+		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
+		query, err := db.GetPendingExecutionStatusQuery(r.Context(), attemptID, orgID)
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		RespondJSON(w, struct {
+			Query any `json:"query"`
+		}{Query: query})
+	}
+}
+
+func requestExecutionCancelHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		executionID, ok := executionV2ExecutionID(w, r)
+		if !ok {
+			return
+		}
+		request, err := JsonBody[api.ExecutionCancelRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		authInfo := auth.Authentication.Require(r.Context())
+		err = db.RequestExecutionCancel(r.Context(), request.ToTypes(
+			*authInfo.CurrentOrgID(), executionID, authInfo.CurrentUserID(), time.Now().UTC(),
+		))
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func requestExecutionStatusHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		executionID, ok := executionV2ExecutionID(w, r)
+		if !ok {
+			return
+		}
+		request, err := JsonBody[api.ExecutionStatusRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		authInfo := auth.Authentication.Require(r.Context())
+		query, err := db.RequestExecutionStatus(r.Context(), request.ToTypes(
+			*authInfo.CurrentOrgID(), executionID, authInfo.CurrentUserID(), time.Now().UTC(),
+		))
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		RespondJSON(w, struct {
+			Query any `json:"query"`
+		}{Query: query})
+	}
+}
+
+func importExecutionReconciliationHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		executionID, ok := executionV2ExecutionID(w, r)
+		if !ok {
+			return
+		}
+		request, err := JsonBody[api.ExecutionReconciliationRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		authInfo := auth.Authentication.Require(r.Context())
+		err = db.ImportReconciliationStatus(
+			r.Context(), request.ToTypes(*authInfo.CurrentOrgID(), executionID),
+		)
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func executionV2AttemptID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(r.PathValue("attemptId"))
+	if err != nil {
+		http.NotFound(w, r)
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func executionV2ExecutionID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	id, err := uuid.Parse(r.PathValue("executionId"))
 	if err != nil {
 		http.NotFound(w, r)
 		return uuid.Nil, false

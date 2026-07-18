@@ -14,9 +14,12 @@ import (
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/executionprotocol"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var intentChecksumPatternDB = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -283,6 +286,9 @@ func RecordExecutionEvent(
 		}
 		if attempt.Fence.Generation != input.FenceGeneration {
 			return apierrors.NewConflict("stale execution fence generation")
+		}
+		if err := executionprotocol.ValidateCallbackWindow(*attempt, input.OccurredAt); err != nil {
+			return apierrors.NewConflict(err.Error())
 		}
 		existing, err := getExecutionEvent(ctx, input.AttemptID, input.EventSequence)
 		if err == nil {
@@ -554,4 +560,481 @@ func scanExecutionEvent(row rowScanner) (*types.ExecutionEvent, error) {
 		ExecutionID: executionID, AttemptNumber: attemptNumber, StepKey: stepKey,
 	}
 	return &event, nil
+}
+
+func RequestExecutionCancel(ctx context.Context, request types.CancelRequest) error {
+	if err := validateCancelRequest(request); err != nil {
+		return err
+	}
+	return RunTx(ctx, func(ctx context.Context) error {
+		attempt, err := getLatestExecutionAttemptByExecutionIDForUpdate(
+			ctx, request.ExecutionID, request.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		if err := executionprotocol.EvaluateCancelRequest(*attempt, request); err != nil {
+			return apierrors.NewConflict(err.Error())
+		}
+		db := internalctx.GetDb(ctx)
+		command, err := db.Exec(ctx, `
+			INSERT INTO ExecutionCancelRequest (
+				organization_id, execution_id, execution_attempt_id,
+				requested_by, idempotency_key, reason, created_at
+			) VALUES (
+				@organizationId, @executionId, @attemptId,
+				@requestedBy, @idempotencyKey, @reason, @requestedAt
+			)
+			ON CONFLICT (
+				organization_id, execution_id, idempotency_key
+			) DO NOTHING`,
+			pgx.NamedArgs{
+				"organizationId": request.OrganizationID, "executionId": request.ExecutionID,
+				"attemptId": attempt.ID, "requestedBy": request.RequestedBy,
+				"idempotencyKey": request.IdempotencyKey, "reason": request.Reason,
+				"requestedAt": request.RequestedAt.UTC(),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("insert ExecutionCancelRequest: %w", err)
+		}
+		if command.RowsAffected() == 1 {
+			return nil
+		}
+		existing, err := getExecutionCancelRequestByIdempotency(
+			ctx, request.OrganizationID, request.ExecutionID, request.IdempotencyKey,
+		)
+		if err != nil {
+			return err
+		}
+		if !executionprotocol.IsExactDuplicateCancel(*existing, request) {
+			return apierrors.NewConflict("conflicting duplicate execution cancel request")
+		}
+		return nil
+	})
+}
+
+func RecordCancelAcknowledgement(
+	ctx context.Context,
+	ack types.CancelAcknowledgement,
+) error {
+	if ack.OrganizationID == uuid.Nil || ack.CancelRequestID == uuid.Nil ||
+		ack.AttemptID == uuid.Nil || strings.TrimSpace(ack.ExecutorID) == "" ||
+		ack.FenceGeneration <= 0 || ack.AcknowledgedAt.IsZero() {
+		return apierrors.NewBadRequest("cancel acknowledgement is invalid")
+	}
+	return RunTx(ctx, func(ctx context.Context) error {
+		db := internalctx.GetDb(ctx)
+		cancel, err := scanExecutionCancelRequest(db.QueryRow(ctx, `
+			SELECT id, created_at, organization_id, execution_id,
+				execution_attempt_id, requested_by, idempotency_key, reason,
+				status, acknowledged_at, acknowledged_by
+			FROM ExecutionCancelRequest
+			WHERE id = @id AND organization_id = @organizationId
+			FOR UPDATE`,
+			pgx.NamedArgs{"id": ack.CancelRequestID, "organizationId": ack.OrganizationID},
+		))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierrors.ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("get ExecutionCancelRequest: %w", err)
+		}
+		if cancel.ExecutionAttemptID != ack.AttemptID {
+			return apierrors.NewConflict("cancel acknowledgement attempt mismatch")
+		}
+		attempt, err := getExecutionAttemptForUpdate(ctx, ack.AttemptID, ack.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if attempt.Fence.Generation != ack.FenceGeneration ||
+			attempt.ClaimedBy != ack.ExecutorID {
+			return apierrors.NewConflict("cancel acknowledgement rejected by fence or executor identity")
+		}
+		status := types.CancelRequestStatusRejected
+		if ack.Accepted {
+			status = types.CancelRequestStatusAcknowledged
+		}
+		if cancel.Status == status && cancel.AcknowledgedBy == ack.ExecutorID {
+			return nil
+		}
+		if cancel.Status != types.CancelRequestStatusRequested {
+			return apierrors.NewConflict("cancel request was already acknowledged differently")
+		}
+		_, err = db.Exec(ctx, `
+			UPDATE ExecutionCancelRequest
+			SET status = @status, acknowledged_at = @acknowledgedAt,
+				acknowledged_by = @executorId
+			WHERE id = @id AND organization_id = @organizationId`,
+			pgx.NamedArgs{
+				"status": status, "acknowledgedAt": ack.AcknowledgedAt.UTC(),
+				"executorId": ack.ExecutorID, "id": ack.CancelRequestID,
+				"organizationId": ack.OrganizationID,
+			},
+		)
+		return err
+	})
+}
+
+func RequestExecutionStatus(
+	ctx context.Context,
+	request types.StatusRequest,
+) (*types.ExecutionStatusQuery, error) {
+	if err := validateStatusRequest(request); err != nil {
+		return nil, err
+	}
+	var result *types.ExecutionStatusQuery
+	err := RunTx(ctx, func(ctx context.Context) error {
+		attempt, err := getLatestExecutionAttemptByExecutionIDForUpdate(
+			ctx, request.ExecutionID, request.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		db := internalctx.GetDb(ctx)
+		command, err := db.Exec(ctx, `
+			INSERT INTO ExecutionStatusQuery (
+				organization_id, execution_id, execution_attempt_id,
+				requested_by, idempotency_key, reason, created_at, expires_at
+			) VALUES (
+				@organizationId, @executionId, @attemptId,
+				@requestedBy, @idempotencyKey, @reason, @requestedAt, @expiresAt
+			)
+			ON CONFLICT (
+				organization_id, execution_id, idempotency_key
+			) DO NOTHING`,
+			pgx.NamedArgs{
+				"organizationId": request.OrganizationID, "executionId": request.ExecutionID,
+				"attemptId": attempt.ID, "requestedBy": request.RequestedBy,
+				"idempotencyKey": request.IdempotencyKey, "reason": request.Reason,
+				"requestedAt": request.RequestedAt.UTC(), "expiresAt": request.ExpiresAt.UTC(),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("insert ExecutionStatusQuery: %w", err)
+		}
+		result, err = getExecutionStatusQueryByIdempotency(
+			ctx, request.OrganizationID, request.ExecutionID, request.IdempotencyKey, false,
+		)
+		if err != nil {
+			return err
+		}
+		if command.RowsAffected() == 0 &&
+			(result.RequestedBy != request.RequestedBy || result.Reason != request.Reason ||
+				!result.ExpiresAt.Equal(request.ExpiresAt.UTC())) {
+			return apierrors.NewConflict("conflicting duplicate execution status query")
+		}
+		return nil
+	})
+	return result, err
+}
+
+func ImportReconciliationStatus(
+	ctx context.Context,
+	input types.ReconciliationStatusInput,
+) error {
+	if err := validateReconciliationStatusInput(input); err != nil {
+		return err
+	}
+	return RunTx(ctx, func(ctx context.Context) error {
+		query, err := getExecutionStatusQueryByIDForUpdate(
+			ctx, input.StatusQueryID, input.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		if query.ExecutionID != input.ExecutionID {
+			return apierrors.NewConflict("reconciliation status query identity mismatch")
+		}
+		if !input.ObservedAt.UTC().Before(query.ExpiresAt.UTC()) {
+			return apierrors.NewConflict("execution status query is expired")
+		}
+		if query.Status != types.StatusQueryStatusPending {
+			return apierrors.NewConflict("execution status query is already resolved")
+		}
+		attempt, err := getExecutionAttemptForUpdate(
+			ctx, query.ExecutionAttemptID, input.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		decision, err := executionprotocol.ReconcileCallbackLoss(*attempt, input)
+		if err != nil {
+			return apierrors.NewConflict(err.Error())
+		}
+		db := internalctx.GetDb(ctx)
+		_, err = db.Exec(ctx, `
+			INSERT INTO ExecutionReconciliationEvent (
+				organization_id, execution_id, execution_attempt_id,
+				status_query_id, event_identity, outcome, evidence_checksum,
+				observed_at, operation_incomplete, retry_requested,
+				retry_disposition
+			) VALUES (
+				@organizationId, @executionId, @attemptId,
+				@statusQueryId, @eventIdentity, @outcome, @evidenceChecksum,
+				@observedAt, @operationIncomplete, @retryRequested,
+				@retryDisposition
+			)`,
+			pgx.NamedArgs{
+				"organizationId": input.OrganizationID, "executionId": input.ExecutionID,
+				"attemptId": attempt.ID, "statusQueryId": input.StatusQueryID,
+				"eventIdentity": input.EventIdentity, "outcome": input.Outcome,
+				"evidenceChecksum": input.EvidenceChecksum, "observedAt": input.ObservedAt.UTC(),
+				"operationIncomplete": input.OperationIncomplete,
+				"retryRequested":      input.RetryRequested,
+				"retryDisposition":    decision.RetryDisposition,
+			},
+		)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+				return apierrors.NewConflict("reconciliation event identity must be new")
+			}
+			return fmt.Errorf("insert ExecutionReconciliationEvent: %w", err)
+		}
+		_, err = db.Exec(ctx, `
+			UPDATE ExecutionStatusQuery
+			SET status = 'REPORTED', reported_at = @reportedAt
+			WHERE id = @id AND organization_id = @organizationId`,
+			pgx.NamedArgs{
+				"id": query.ID, "organizationId": input.OrganizationID,
+				"reportedAt": input.ObservedAt.UTC(),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("resolve ExecutionStatusQuery: %w", err)
+		}
+		_, err = db.Exec(ctx, `
+			UPDATE ExecutionAttempt
+			SET status = @status, completed_at = @completedAt,
+				updated_at = @completedAt, claimed_by = ''
+			WHERE id = @attemptId AND organization_id = @organizationId`,
+			pgx.NamedArgs{
+				"status": decision.Status, "completedAt": input.ObservedAt.UTC(),
+				"attemptId": attempt.ID, "organizationId": input.OrganizationID,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("reconcile ExecutionAttempt: %w", err)
+		}
+		_, err = db.Exec(ctx, `
+			UPDATE ExecutionFence
+			SET lease_expires_at = NULL, released_at = @releasedAt
+			WHERE execution_attempt_id = @attemptId
+				AND organization_id = @organizationId`,
+			pgx.NamedArgs{
+				"attemptId": attempt.ID, "organizationId": input.OrganizationID,
+				"releasedAt": input.ObservedAt.UTC(),
+			},
+		)
+		return err
+	})
+}
+
+func GetPendingExecutionCancel(
+	ctx context.Context,
+	attemptID, orgID uuid.UUID,
+) (*types.ExecutionCancelRequest, error) {
+	db := internalctx.GetDb(ctx)
+	cancel, err := scanExecutionCancelRequest(db.QueryRow(ctx, `
+		SELECT id, created_at, organization_id, execution_id,
+			execution_attempt_id, requested_by, idempotency_key, reason,
+			status, acknowledged_at, acknowledged_by
+		FROM ExecutionCancelRequest
+		WHERE execution_attempt_id = @attemptId
+			AND organization_id = @organizationId
+			AND status = 'REQUESTED'
+		ORDER BY created_at, id
+		LIMIT 1`,
+		pgx.NamedArgs{"attemptId": attemptID, "organizationId": orgID},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get pending ExecutionCancelRequest: %w", err)
+	}
+	return cancel, nil
+}
+
+func GetPendingExecutionStatusQuery(
+	ctx context.Context,
+	attemptID, orgID uuid.UUID,
+) (*types.ExecutionStatusQuery, error) {
+	db := internalctx.GetDb(ctx)
+	query, err := scanExecutionStatusQuery(db.QueryRow(ctx, `
+		SELECT id, created_at, organization_id, execution_id,
+			execution_attempt_id, requested_by, idempotency_key, reason,
+			status, expires_at, reported_at
+		FROM ExecutionStatusQuery
+		WHERE execution_attempt_id = @attemptId
+			AND organization_id = @organizationId
+			AND status = 'PENDING'
+			AND expires_at > now()
+		ORDER BY created_at, id
+		LIMIT 1`,
+		pgx.NamedArgs{"attemptId": attemptID, "organizationId": orgID},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get pending ExecutionStatusQuery: %w", err)
+	}
+	return query, nil
+}
+
+func validateCancelRequest(request types.CancelRequest) error {
+	if request.OrganizationID == uuid.Nil || request.ExecutionID == uuid.Nil ||
+		request.RequestedBy == uuid.Nil || strings.TrimSpace(request.IdempotencyKey) == "" ||
+		strings.TrimSpace(request.Reason) == "" || request.RequestedAt.IsZero() {
+		return apierrors.NewBadRequest("cancel request idempotency and identity are required")
+	}
+	if len(request.IdempotencyKey) > 128 || len(request.Reason) > 2048 ||
+		strings.ContainsAny(request.IdempotencyKey+request.Reason, "\r\n") {
+		return apierrors.NewBadRequest("cancel request is invalid")
+	}
+	return nil
+}
+
+func validateStatusRequest(request types.StatusRequest) error {
+	if request.OrganizationID == uuid.Nil || request.ExecutionID == uuid.Nil ||
+		request.RequestedBy == uuid.Nil || strings.TrimSpace(request.IdempotencyKey) == "" ||
+		strings.TrimSpace(request.Reason) == "" || request.RequestedAt.IsZero() ||
+		!request.ExpiresAt.After(request.RequestedAt) {
+		return apierrors.NewBadRequest("execution status request is invalid")
+	}
+	return nil
+}
+
+func validateReconciliationStatusInput(input types.ReconciliationStatusInput) error {
+	if input.OrganizationID == uuid.Nil || input.ExecutionID == uuid.Nil ||
+		input.StatusQueryID == uuid.Nil || input.EventIdentity == uuid.Nil ||
+		!input.Outcome.IsValid() || !intentChecksumPatternDB.MatchString(input.EvidenceChecksum) ||
+		input.ObservedAt.IsZero() {
+		return apierrors.NewBadRequest("reconciliation status input is invalid")
+	}
+	if input.RetryRequested && input.Outcome != types.ReconciliationOutcomeUnknown {
+		return apierrors.NewBadRequest("retry is allowed only for unknown outcomes")
+	}
+	return nil
+}
+
+func getLatestExecutionAttemptByExecutionIDForUpdate(
+	ctx context.Context,
+	executionID, orgID uuid.UUID,
+) (*types.ExecutionAttempt, error) {
+	db := internalctx.GetDb(ctx)
+	attempt, err := scanExecutionAttempt(db.QueryRow(ctx,
+		executionAttemptSelect+`
+			WHERE ea.execution_id = @executionId
+				AND ea.organization_id = @organizationId
+			ORDER BY ea.attempt_number DESC, ea.created_at DESC, ea.id DESC
+			LIMIT 1
+			FOR UPDATE OF ea, ef`,
+		pgx.NamedArgs{"executionId": executionID, "organizationId": orgID},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest ExecutionAttempt: %w", err)
+	}
+	return attempt, nil
+}
+
+func getExecutionCancelRequestByIdempotency(
+	ctx context.Context,
+	orgID, executionID uuid.UUID,
+	idempotencyKey string,
+) (*types.ExecutionCancelRequest, error) {
+	db := internalctx.GetDb(ctx)
+	cancel, err := scanExecutionCancelRequest(db.QueryRow(ctx, `
+		SELECT id, created_at, organization_id, execution_id,
+			execution_attempt_id, requested_by, idempotency_key, reason,
+			status, acknowledged_at, acknowledged_by
+		FROM ExecutionCancelRequest
+		WHERE organization_id = @organizationId
+			AND execution_id = @executionId
+			AND idempotency_key = @idempotencyKey`,
+		pgx.NamedArgs{
+			"organizationId": orgID, "executionId": executionID,
+			"idempotencyKey": idempotencyKey,
+		},
+	))
+	if err != nil {
+		return nil, fmt.Errorf("get ExecutionCancelRequest: %w", err)
+	}
+	return cancel, nil
+}
+
+func scanExecutionCancelRequest(row rowScanner) (*types.ExecutionCancelRequest, error) {
+	var request types.ExecutionCancelRequest
+	err := row.Scan(
+		&request.ID, &request.CreatedAt, &request.OrganizationID, &request.ExecutionID,
+		&request.ExecutionAttemptID, &request.RequestedBy, &request.IdempotencyKey,
+		&request.Reason, &request.Status, &request.AcknowledgedAt, &request.AcknowledgedBy,
+	)
+	return &request, err
+}
+
+func getExecutionStatusQueryByIdempotency(
+	ctx context.Context,
+	orgID, executionID uuid.UUID,
+	idempotencyKey string,
+	forUpdate bool,
+) (*types.ExecutionStatusQuery, error) {
+	query := `
+		SELECT id, created_at, organization_id, execution_id,
+			execution_attempt_id, requested_by, idempotency_key, reason,
+			status, expires_at, reported_at
+		FROM ExecutionStatusQuery
+		WHERE organization_id = @organizationId
+			AND execution_id = @executionId
+			AND idempotency_key = @idempotencyKey`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	db := internalctx.GetDb(ctx)
+	result, err := scanExecutionStatusQuery(db.QueryRow(ctx, query, pgx.NamedArgs{
+		"organizationId": orgID, "executionId": executionID,
+		"idempotencyKey": idempotencyKey,
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("get ExecutionStatusQuery: %w", err)
+	}
+	return result, nil
+}
+
+func getExecutionStatusQueryByIDForUpdate(
+	ctx context.Context,
+	id, orgID uuid.UUID,
+) (*types.ExecutionStatusQuery, error) {
+	db := internalctx.GetDb(ctx)
+	result, err := scanExecutionStatusQuery(db.QueryRow(ctx, `
+		SELECT id, created_at, organization_id, execution_id,
+			execution_attempt_id, requested_by, idempotency_key, reason,
+			status, expires_at, reported_at
+		FROM ExecutionStatusQuery
+		WHERE id = @id AND organization_id = @organizationId
+		FOR UPDATE`,
+		pgx.NamedArgs{"id": id, "organizationId": orgID},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get ExecutionStatusQuery: %w", err)
+	}
+	return result, nil
+}
+
+func scanExecutionStatusQuery(row rowScanner) (*types.ExecutionStatusQuery, error) {
+	var query types.ExecutionStatusQuery
+	err := row.Scan(
+		&query.ID, &query.CreatedAt, &query.OrganizationID, &query.ExecutionID,
+		&query.ExecutionAttemptID, &query.RequestedBy, &query.IdempotencyKey,
+		&query.Reason, &query.Status, &query.ExpiresAt, &query.ReportedAt,
+	)
+	return &query, err
 }

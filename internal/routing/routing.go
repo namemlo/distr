@@ -251,6 +251,7 @@ func ApiRouter(
 					r.Route("/deployment-freezes", handlers.DeploymentFreezesRouter)
 					r.Route("/deployments", handlers.DeploymentsRouter)
 					r.Route("/environments", handlers.EnvironmentsRouter)
+					r.Route("/executions", handlers.ExecutionV2OperatorRouter)
 					r.Route("/external-executions", handlers.ExternalExecutionsRouter)
 					r.Route("/experimental-feature-flags", handlers.ExperimentalFeatureFlagsRouter)
 					r.Route("/files", handlers.FileRouter)

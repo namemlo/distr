@@ -41,12 +41,14 @@ const (
 	ExecutionAttemptStatusCanceled  ExecutionAttemptStatus = "CANCELED"
 	ExecutionAttemptStatusTimedOut  ExecutionAttemptStatus = "TIMED_OUT"
 	ExecutionAttemptStatusFenced    ExecutionAttemptStatus = "FENCED"
+	ExecutionAttemptStatusUnknown   ExecutionAttemptStatus = "UNKNOWN"
 )
 
 func (s ExecutionAttemptStatus) IsTerminal() bool {
 	switch s {
 	case ExecutionAttemptStatusSucceeded, ExecutionAttemptStatusFailed,
-		ExecutionAttemptStatusCanceled, ExecutionAttemptStatusTimedOut, ExecutionAttemptStatusFenced:
+		ExecutionAttemptStatusCanceled, ExecutionAttemptStatusTimedOut,
+		ExecutionAttemptStatusFenced, ExecutionAttemptStatusUnknown:
 		return true
 	default:
 		return false
@@ -164,4 +166,132 @@ type CompletionInput struct {
 	Status          ExecutionAttemptStatus
 	CompletedAt     time.Time
 	FailureReason   string
+}
+
+type CancelRequest struct {
+	OrganizationID uuid.UUID
+	ExecutionID    uuid.UUID
+	RequestedBy    uuid.UUID
+	IdempotencyKey string
+	Reason         string
+	RequestedAt    time.Time
+}
+
+type CancelRequestStatus string
+
+const (
+	CancelRequestStatusRequested    CancelRequestStatus = "REQUESTED"
+	CancelRequestStatusAcknowledged CancelRequestStatus = "ACKNOWLEDGED"
+	CancelRequestStatusRejected     CancelRequestStatus = "REJECTED"
+)
+
+type ExecutionCancelRequest struct {
+	ID                 uuid.UUID           `db:"id" json:"id"`
+	CreatedAt          time.Time           `db:"created_at" json:"createdAt"`
+	OrganizationID     uuid.UUID           `db:"organization_id" json:"organizationId"`
+	ExecutionID        uuid.UUID           `db:"execution_id" json:"executionId"`
+	ExecutionAttemptID uuid.UUID           `db:"execution_attempt_id" json:"executionAttemptId"`
+	RequestedBy        uuid.UUID           `db:"requested_by" json:"requestedBy"`
+	IdempotencyKey     string              `db:"idempotency_key" json:"idempotencyKey"`
+	Reason             string              `db:"reason" json:"reason"`
+	Status             CancelRequestStatus `db:"status" json:"status"`
+	AcknowledgedAt     *time.Time          `db:"acknowledged_at" json:"acknowledgedAt,omitempty"`
+	AcknowledgedBy     string              `db:"acknowledged_by" json:"acknowledgedBy,omitempty"`
+}
+
+type CancelAcknowledgement struct {
+	OrganizationID  uuid.UUID
+	CancelRequestID uuid.UUID
+	AttemptID       uuid.UUID
+	ExecutorID      string
+	FenceGeneration int64
+	Accepted        bool
+	AcknowledgedAt  time.Time
+}
+
+type StatusRequest struct {
+	OrganizationID uuid.UUID
+	ExecutionID    uuid.UUID
+	RequestedBy    uuid.UUID
+	IdempotencyKey string
+	Reason         string
+	RequestedAt    time.Time
+	ExpiresAt      time.Time
+}
+
+type StatusQueryStatus string
+
+const (
+	StatusQueryStatusPending  StatusQueryStatus = "PENDING"
+	StatusQueryStatusReported StatusQueryStatus = "REPORTED"
+	StatusQueryStatusExpired  StatusQueryStatus = "EXPIRED"
+)
+
+type ExecutionStatusQuery struct {
+	ID                 uuid.UUID         `db:"id" json:"id"`
+	CreatedAt          time.Time         `db:"created_at" json:"createdAt"`
+	OrganizationID     uuid.UUID         `db:"organization_id" json:"organizationId"`
+	ExecutionID        uuid.UUID         `db:"execution_id" json:"executionId"`
+	ExecutionAttemptID uuid.UUID         `db:"execution_attempt_id" json:"executionAttemptId"`
+	RequestedBy        uuid.UUID         `db:"requested_by" json:"requestedBy"`
+	IdempotencyKey     string            `db:"idempotency_key" json:"idempotencyKey"`
+	Reason             string            `db:"reason" json:"reason"`
+	Status             StatusQueryStatus `db:"status" json:"status"`
+	ExpiresAt          time.Time         `db:"expires_at" json:"expiresAt"`
+	ReportedAt         *time.Time        `db:"reported_at" json:"reportedAt,omitempty"`
+}
+
+type ReconciliationOutcome string
+
+const (
+	ReconciliationOutcomeProvenSucceeded ReconciliationOutcome = "PROVEN_SUCCEEDED"
+	ReconciliationOutcomeProvenFailed    ReconciliationOutcome = "PROVEN_FAILED"
+	ReconciliationOutcomeUnknown         ReconciliationOutcome = "UNKNOWN"
+)
+
+func (o ReconciliationOutcome) IsValid() bool {
+	return o == ReconciliationOutcomeProvenSucceeded ||
+		o == ReconciliationOutcomeProvenFailed ||
+		o == ReconciliationOutcomeUnknown
+}
+
+type RetryDisposition string
+
+const (
+	RetryDispositionAllowed      RetryDisposition = "ALLOWED"
+	RetryDispositionForbidden    RetryDisposition = "FORBIDDEN"
+	RetryDispositionNotRequested RetryDisposition = "NOT_REQUESTED"
+)
+
+type ReconciliationStatusInput struct {
+	OrganizationID      uuid.UUID
+	ExecutionID         uuid.UUID
+	StatusQueryID       uuid.UUID
+	EventIdentity       uuid.UUID
+	Outcome             ReconciliationOutcome
+	EvidenceChecksum    string
+	ObservedAt          time.Time
+	OperationIncomplete bool
+	RetryRequested      bool
+}
+
+type ReconciliationDecision struct {
+	Status           ExecutionAttemptStatus
+	RetryDisposition RetryDisposition
+}
+
+type ExecutionReconciliationEvent struct {
+	ID                  uuid.UUID             `db:"id" json:"id"`
+	CreatedAt           time.Time             `db:"created_at" json:"createdAt"`
+	OrganizationID      uuid.UUID             `db:"organization_id" json:"organizationId"`
+	ExecutionID         uuid.UUID             `db:"execution_id" json:"executionId"`
+	ExecutionAttemptID  uuid.UUID             `db:"execution_attempt_id" json:"executionAttemptId"`
+	StatusQueryID       uuid.UUID             `db:"status_query_id" json:"statusQueryId"`
+	EventIdentity       uuid.UUID             `db:"event_identity" json:"eventIdentity"`
+	Outcome             ReconciliationOutcome `db:"outcome" json:"outcome"`
+	EvidenceChecksum    string                `db:"evidence_checksum" json:"evidenceChecksum"`
+	ObservedAt          time.Time             `db:"observed_at" json:"observedAt"`
+	OperationIncomplete bool                  `db:"operation_incomplete" json:"operationIncomplete"`
+	RetryRequested      bool                  `db:"retry_requested" json:"retryRequested"`
+	RetryDisposition    RetryDisposition      `db:"retry_disposition" json:"retryDisposition"`
 }

@@ -59,3 +59,21 @@ func repeatDBHex(pair string) string {
 	}
 	return result
 }
+
+func TestCancelStatusAndReconciliationRepositoryValidation(t *testing.T) {
+	g := NewWithT(t)
+	cancel := types.CancelRequest{
+		OrganizationID: uuid.New(), ExecutionID: uuid.New(), RequestedBy: uuid.New(),
+		IdempotencyKey: "cancel-1", Reason: "operator requested", RequestedAt: time.Now().UTC(),
+	}
+	g.Expect(validateCancelRequest(cancel)).To(Succeed())
+	cancel.IdempotencyKey = ""
+	g.Expect(validateCancelRequest(cancel)).To(MatchError(ContainSubstring("idempotency")))
+
+	reconciliation := types.ReconciliationStatusInput{
+		OrganizationID: uuid.New(), ExecutionID: uuid.New(), StatusQueryID: uuid.New(),
+		EventIdentity: uuid.New(), Outcome: types.ReconciliationOutcomeUnknown,
+		EvidenceChecksum: "sha256:" + repeatDBHex("dd"), ObservedAt: time.Now().UTC(),
+	}
+	g.Expect(validateReconciliationStatusInput(reconciliation)).To(Succeed())
+}

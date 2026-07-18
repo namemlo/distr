@@ -1511,3 +1511,29 @@ Use one entry per pull request:
   adopter, infrastructure provider, credential or private-key persistence.
 - Compatibility notes: External execution v1 tables, routes, transitions and
   ADR-0052 retry behavior are unchanged.
+
+### PR-076 - Execution cancel, status and reconciliation
+
+- Status: Implemented on the prepared synthetic branch; campaign predecessor
+  binding remains an explicit interface seam.
+- Upstream base: `4f77d6c2` (PR-075 checkpoint).
+- Feature flag: Operator and executor controls require both
+  `operator_control_plane_v2` and `executor_protocol_v2`.
+- User-facing behavior: Operators can request cancellation, request status and
+  import callback-loss reconciliation evidence without inventing success.
+- Database changes: Migration 158 adds `ExecutionCancelRequest`,
+  `ExecutionStatusQuery`, append-only `ExecutionReconciliationEvent`, and the
+  explicit `UNKNOWN` attempt outcome.
+- API changes: Adds operator execution-control routes and executor cancel/status
+  polling plus cancel acknowledgement routes.
+- UI changes: None.
+- Agent protocol changes: Adds bounded cancel acknowledgement and status-query
+  polling contracts; late callbacks are rejected.
+- Documentation: Added PR-076 fork notes.
+- Tests: Added cancellability, duplicate cancel, acknowledged-delivery status
+  query, proven/unknown callback loss, callback expiry, event identity and
+  retry-safety coverage.
+- Upstream contribution notes: Community-neutral execution controls; no
+  provider or adopter semantics.
+- Compatibility notes: V1 callbacks and retry rules remain unchanged. V2
+  unknown evidence remains explicit and cannot be projected as success.

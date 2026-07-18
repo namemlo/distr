@@ -32,6 +32,30 @@ func TestExecutionV2ClaimRequiresExecutorIdentity(t *testing.T) {
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("executorId")))
 }
 
+func TestCancelStatusAndReconciliationRequests(t *testing.T) {
+	g := NewWithT(t)
+	cancel := ExecutionCancelRequest{
+		IdempotencyKey: "cancel-1", Reason: "operator requested",
+	}
+	g.Expect(cancel.Validate()).To(Succeed())
+	cancel.Reason = ""
+	g.Expect(cancel.Validate()).To(MatchError(ContainSubstring("reason")))
+
+	status := ExecutionStatusRequest{
+		IdempotencyKey: "status-1", Reason: "callback missing", ExpiresInSeconds: 60,
+	}
+	g.Expect(status.Validate()).To(Succeed())
+
+	reconciliation := ExecutionReconciliationRequest{
+		StatusQueryID: uuid.New(), EventIdentity: uuid.New(), Outcome: types.ReconciliationOutcomeUnknown,
+		EvidenceChecksum: "sha256:" + repeatAPIHex("ef"), ObservedAt: time.Now().UTC(),
+		OperationIncomplete: true, RetryRequested: true,
+	}
+	g.Expect(reconciliation.Validate()).To(Succeed())
+	reconciliation.EvidenceChecksum = "not-a-checksum"
+	g.Expect(reconciliation.Validate()).To(MatchError(ContainSubstring("evidenceChecksum")))
+}
+
 func repeatAPIHex(pair string) string {
 	result := ""
 	for range 32 {
