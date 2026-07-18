@@ -51,4 +51,7 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0061: Scoped Authorization and Enrollment](0061-scoped-authorization-and-enrollment.md)
 - [ADR-0062: Versioned Calendar Admission](0062-versioned-calendar-admission.md)
 - [ADR-0063: Deterministic Deployment Campaigns](0063-deterministic-deployment-campaigns.md)
+- [ADR-0064: Fenced Executor Protocol v2](0064-fenced-executor-protocol-v2.md)
+- [ADR-0065: Independent Observed State](0065-independent-observed-state.md)
+- [ADR-0066: Correlated Control-Plane Audit and External Export](0066-control-plane-audit-export.md)
 - [ADR-0069: Checksum-Bound Deployment Admission and Emergency Overrides](0069-deployment-admission-emergency-overrides.md)

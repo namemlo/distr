@@ -29,6 +29,7 @@ const (
 	PermissionFreezeManage           Permission = "FreezeManage"
 	PermissionTemplateManage         Permission = "TemplateManage"
 	PermissionAuditView              Permission = "AuditView"
+	PermissionAuditExport            Permission = "AuditExport"
 )
 
 var ErrInvalidPermission = errors.New("invalid permission")
@@ -55,6 +56,7 @@ var allPermissions = []Permission{
 	PermissionFreezeManage,
 	PermissionTemplateManage,
 	PermissionAuditView,
+	PermissionAuditExport,
 }
 
 var mutationPermissions = []Permission{
@@ -74,6 +76,7 @@ var mutationPermissions = []Permission{
 	PermissionTargetManage,
 	PermissionFreezeManage,
 	PermissionTemplateManage,
+	PermissionAuditExport,
 }
 
 type PermissionScope string

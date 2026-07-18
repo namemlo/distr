@@ -14,6 +14,7 @@ func TestBuiltInRolePermissions(t *testing.T) {
 	g.Expect(UserRoleReadOnly.HasPermission(PermissionVariableView)).To(BeTrue())
 	g.Expect(UserRoleReadOnly.HasPermission(PermissionRunbookView)).To(BeTrue())
 	g.Expect(UserRoleReadOnly.HasPermission(PermissionAuditView)).To(BeTrue())
+	g.Expect(UserRoleReadOnly.HasPermission(PermissionAuditExport)).To(BeFalse())
 	g.Expect(UserRoleReadOnly.HasPermission(PermissionReleaseCreate)).To(BeFalse())
 	g.Expect(UserRoleReadOnly.HasPermission(PermissionDeploymentExecute)).To(BeFalse())
 
@@ -22,6 +23,7 @@ func TestBuiltInRolePermissions(t *testing.T) {
 	g.Expect(UserRoleReadWrite.HasPermission(PermissionDeploymentExecute)).To(BeTrue())
 	g.Expect(UserRoleReadWrite.HasPermission(PermissionRunbookExecute)).To(BeTrue())
 	g.Expect(UserRoleReadWrite.HasPermission(PermissionEnvironmentManage)).To(BeTrue())
+	g.Expect(UserRoleReadWrite.HasPermission(PermissionAuditExport)).To(BeTrue())
 
 	for _, permission := range AllPermissions() {
 		g.Expect(UserRoleAdmin.HasPermission(permission)).To(BeTrue(), "admin missing %s", permission)
