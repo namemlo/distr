@@ -52,6 +52,40 @@ func TestBuildRecoveryPlanBlocksAutomaticReverseForForwardOnlyMigration(t *testi
 	g.Expect(err).To(MatchError(ContainSubstring("forward-fix")))
 }
 
+func TestBuildRecoveryPlanFailsClosedForUnresolvedReverseGraph(t *testing.T) {
+	first := migrationContractFixture()
+	dependent := migrationContractFixture()
+	dependent.ID = "ledger.043"
+	dependent.DependsOn = []string{first.ID}
+	cases := map[string]types.FailedPlan{
+		"unknown completed migration": {
+			PlanID: uuid.New(), Contracts: []types.MigrationContract{first},
+			CompletedMigrationIDs: []string{"ledger.999"},
+		},
+		"duplicate completed migration": {
+			PlanID: uuid.New(), Contracts: []types.MigrationContract{first},
+			CompletedMigrationIDs: []string{first.ID, first.ID},
+		},
+		"duplicate migration contract": {
+			PlanID: uuid.New(), Contracts: []types.MigrationContract{first, first},
+			CompletedMigrationIDs: []string{first.ID},
+		},
+		"completed dependency is missing": {
+			PlanID: uuid.New(), Contracts: []types.MigrationContract{first, dependent},
+			CompletedMigrationIDs: []string{dependent.ID},
+		},
+	}
+	for name, failed := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := BuildRecoveryPlan(failed, types.RecoveryRequest{
+				Mode: types.RecoveryModeReverse, Reason: "failed",
+			})
+
+			NewWithT(t).Expect(err).To(MatchError(ContainSubstring("resolve uniquely")))
+		})
+	}
+}
+
 func TestBuildRecoveryPlanSupportsManualForwardFix(t *testing.T) {
 	g := NewWithT(t)
 
@@ -118,4 +152,35 @@ func TestBuildRecoveryPlanRequiresSeparateRestoreApprovalAndFrozenBackup(t *test
 	g.Expect(recovery.Graph.Steps).To(HaveLen(2))
 	g.Expect(recovery.Graph.Steps[0].ActionType).To(Equal("database.restore.execute"))
 	g.Expect(recovery.Graph.Steps[1].ActionType).To(Equal("database.restore.verify"))
+	var executeInput map[string]any
+	g.Expect(json.Unmarshal(recovery.Graph.Steps[0].InputBindings, &executeInput)).To(Succeed())
+	g.Expect(executeInput).To(HaveKeyWithValue("recoveryPlanId", draft.ID.String()))
+	g.Expect(recovery.Graph.Steps[0].ExpectedInputChecksum).To(
+		Equal(checksumBytes(recovery.Graph.Steps[0].InputBindings)),
+	)
+}
+
+func TestBuildRestoreGraphIsDeterministicForFrozenRecoveryPlanID(t *testing.T) {
+	g := NewWithT(t)
+	request := types.RecoveryRequest{
+		SeparateApprovalID:  uuid.NewString(),
+		BackupID:            "backup-20260718-001",
+		BackupChecksum:      checksum("e"),
+		DatabaseResourceKey: "postgres:ledger", ExpectedDataLossBoundary: "2026-07-18T12:00:00Z",
+		ProcedureVersion: "restore:v3", OperatorScope: "database:ledger:restore",
+		RequiredApproverGroups: []string{"database-owners", "incident-commanders"},
+		ValidationProbes: []types.MigrationProbe{{
+			Name: "schema", Reference: "probe:ledger:restore:v1",
+			ExpectedChecksum: checksum("f"),
+		}},
+	}
+	recoveryPlanID := uuid.New()
+
+	first, firstErr := buildRestoreGraph(request, recoveryPlanID)
+	second, secondErr := buildRestoreGraph(request, recoveryPlanID)
+
+	g.Expect(firstErr).NotTo(HaveOccurred())
+	g.Expect(secondErr).NotTo(HaveOccurred())
+	g.Expect(second.Checksum).To(Equal(first.Checksum))
+	g.Expect(second).To(Equal(first))
 }

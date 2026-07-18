@@ -43,6 +43,13 @@ func ValidateMigrationContract(contract types.MigrationContract) []types.Validat
 	if strings.TrimSpace(contract.ExpectedSourceVersion) == "" {
 		add("source_version_required", "expectedSourceVersion", "expected source version is required")
 	}
+	if !checksumPattern.MatchString(contract.ExpectedSourceChecksum) {
+		add(
+			"source_checksum_invalid",
+			"expectedSourceChecksum",
+			"expected source checksum must be an immutable sha256 digest",
+		)
+	}
 	if strings.TrimSpace(contract.ResultingVersion) == "" {
 		add("resulting_version_required", "resultingVersion", "resulting schema version is required")
 	}
@@ -101,8 +108,18 @@ func ValidateMigrationContract(contract types.MigrationContract) []types.Validat
 	if contract.EvidenceRetentionDays < 1 || contract.EvidenceRetentionDays > 3650 {
 		add("evidence_retention_invalid", "evidenceRetentionDays", "evidence retention must be between 1 and 3650 days")
 	}
+	if len(contract.DependsOn) > 64 {
+		add("migration_dependency_limit", "dependsOn", "no more than 64 migration dependencies are allowed")
+	}
 	seenDependencies := map[string]struct{}{}
 	for index, dependency := range contract.DependsOn {
+		if !migrationIDPattern.MatchString(dependency) {
+			add(
+				"migration_dependency_invalid",
+				fmt.Sprintf("dependsOn[%d]", index),
+				"migration dependency must be a stable bounded key",
+			)
+		}
 		if dependency == contract.ID {
 			add("migration_self_dependency", fmt.Sprintf("dependsOn[%d]", index), "migration cannot depend on itself")
 		}
@@ -124,28 +141,85 @@ func ValidatePreviousReleaseCompatibility(
 	current types.SchemaState,
 	planned types.PlannedState,
 ) []types.ValidationIssue {
-	issues := make([]types.ValidationIssue, 0, 2)
+	issues := make([]types.ValidationIssue, 0, 8)
+	add := func(code, field, message string) {
+		issues = append(issues, types.ValidationIssue{Code: code, Field: field, Message: message})
+	}
 	if planned.ForwardOnly {
-		issues = append(issues, types.ValidationIssue{
-			Code: "previous_release_forward_only", Field: "forwardOnly",
-			Message: "previous release is not compatible after a forward-only schema transition",
-		})
+		add(
+			"previous_release_forward_only",
+			"forwardOnly",
+			"previous release is not compatible after a forward-only schema transition",
+		)
 	}
-	if current.ComponentKey != "" && planned.ComponentKey != "" &&
-		current.ComponentKey != planned.ComponentKey {
-		issues = append(issues, types.ValidationIssue{
-			Code: "previous_release_component_mismatch", Field: "componentKey",
-			Message: "previous release schema state belongs to a different component",
-		})
+	required := []struct {
+		value, field string
+		known        func(string) bool
+	}{
+		{current.ComponentKey, "current.componentKey", migrationIDPattern.MatchString},
+		{current.DatabaseResourceKey, "current.databaseResourceKey", resourceKeyPattern.MatchString},
+		{current.Version, "current.version", knownSchemaVersion},
+		{planned.ComponentKey, "planned.componentKey", migrationIDPattern.MatchString},
+		{planned.DatabaseResourceKey, "planned.databaseResourceKey", resourceKeyPattern.MatchString},
+		{planned.SchemaState, "planned.schemaState", knownSchemaVersion},
 	}
-	if current.Version != "" && planned.SchemaState != "" &&
-		current.Version != planned.SchemaState && current.Checksum != planned.SchemaChecksum {
-		issues = append(issues, types.ValidationIssue{
-			Code: "previous_release_schema_incompatible", Field: "schemaState",
-			Message: "current schema version and checksum do not match the previous release plan",
-		})
+	for _, candidate := range required {
+		if !candidate.known(candidate.value) {
+			add(
+				"previous_release_state_unknown",
+				candidate.field,
+				"previous release compatibility requires a complete known schema state",
+			)
+		}
 	}
+	for _, candidate := range []struct {
+		value, field string
+	}{
+		{current.Checksum, "current.checksum"},
+		{planned.SchemaChecksum, "planned.schemaChecksum"},
+	} {
+		if !checksumPattern.MatchString(candidate.value) {
+			add(
+				"previous_release_checksum_unknown",
+				candidate.field,
+				"previous release compatibility requires a valid immutable schema checksum",
+			)
+		}
+	}
+	if current.ComponentKey != planned.ComponentKey {
+		add(
+			"previous_release_component_mismatch",
+			"componentKey",
+			"previous release schema state belongs to a different component",
+		)
+	}
+	if current.DatabaseResourceKey != planned.DatabaseResourceKey {
+		add(
+			"previous_release_database_mismatch",
+			"databaseResourceKey",
+			"previous release schema state belongs to a different database resource",
+		)
+	}
+	if current.Version != planned.SchemaState || current.Checksum != planned.SchemaChecksum {
+		add(
+			"previous_release_schema_incompatible",
+			"schemaState",
+			"schema version and checksum must both match the previous release plan",
+		)
+	}
+	slices.SortFunc(issues, func(a, b types.ValidationIssue) int {
+		if cmp := strings.Compare(a.Field, b.Field); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.Code, b.Code)
+	})
 	return issues
+}
+
+func knownSchemaVersion(value string) bool {
+	return strings.TrimSpace(value) != "" &&
+		len(value) <= 128 &&
+		!strings.ContainsAny(value, "\r\n")
 }
 
 func validateProbes(

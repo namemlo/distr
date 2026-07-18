@@ -57,6 +57,9 @@ CREATE TABLE DeploymentPlanMigration (
     length(btrim(expected_source_version)) BETWEEN 1 AND 128
     AND expected_source_version !~ E'[\\r\\n]'
   ),
+  expected_source_checksum TEXT NOT NULL CHECK (
+    expected_source_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
   resulting_version TEXT NOT NULL CHECK (
     length(btrim(resulting_version)) BETWEEN 1 AND 128
     AND resulting_version !~ E'[\\r\\n]'

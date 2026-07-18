@@ -10,7 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
-var sha256ChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	sha256ChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	backupIDPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
+)
 
 type StateKey struct {
 	DeploymentTargetID uuid.UUID
@@ -162,6 +165,7 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 		contract := migration.Contract
 		backupPassed := !contract.BackupRequired ||
 			(migration.Backup != nil && migration.Backup.Verified &&
+				backupIDPattern.MatchString(migration.Backup.ID) &&
 				sha256ChecksumPattern.MatchString(migration.Backup.Checksum))
 		backupActual := map[string]any{"required": contract.BackupRequired, "verified": false}
 		if migration.Backup != nil {
@@ -173,13 +177,22 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 			map[string]any{"required": contract.BackupRequired, "verified": contract.BackupRequired},
 			backupActual, "required backup identity and verification evidence are available"))
 
-		schemaPassed := migration.CurrentSchema.Version == contract.ExpectedSourceVersion
+		schemaPassed :=
+			migration.CurrentSchema.DatabaseResourceKey == contract.DatabaseResourceKey &&
+				migration.CurrentSchema.Version == contract.ExpectedSourceVersion &&
+				sha256ChecksumPattern.MatchString(migration.CurrentSchema.Checksum) &&
+				migration.CurrentSchema.Checksum == contract.ExpectedSourceChecksum
 		add(migrationCheck(contract, "migration_schema:"+contract.ID, statusFor(schemaPassed),
-			map[string]any{"version": contract.ExpectedSourceVersion},
 			map[string]any{
-				"version":  migration.CurrentSchema.Version,
-				"checksum": migration.CurrentSchema.Checksum,
-			}, "current schema matches the migration contract source version"))
+				"databaseResourceKey": contract.DatabaseResourceKey,
+				"version":             contract.ExpectedSourceVersion,
+				"checksum":            contract.ExpectedSourceChecksum,
+			},
+			map[string]any{
+				"databaseResourceKey": migration.CurrentSchema.DatabaseResourceKey,
+				"version":             migration.CurrentSchema.Version,
+				"checksum":            migration.CurrentSchema.Checksum,
+			}, "current schema identity, version, and checksum match the migration contract"))
 
 		add(migrationCheck(contract, "migration_target_lock:"+contract.ID,
 			statusFor(migration.TargetLockAvailable),

@@ -119,6 +119,77 @@ func TestExpandMigrationGraphMakesRetryCallbackIdempotentButRejectsChangedInput(
 	g.Expect(err).To(MatchError(ContainSubstring("retry input checksum")))
 }
 
+func TestExpandMigrationGraphRejectsIncompleteOrChangedExistingSubgraph(t *testing.T) {
+	g := NewWithT(t)
+	contract := migrationContractFixture()
+	complete, err := ExpandMigrationGraph(contract, types.TargetPlanGraph{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	cases := map[string]func(*types.TargetPlanGraph){
+		"missing backup creation": func(graph *types.TargetPlanGraph) {
+			removeStep(graph, "migration:ledger.042:backup:create")
+		},
+		"changed backup verification action": func(graph *types.TargetPlanGraph) {
+			stepByKeyPointer(graph, "migration:ledger.042:backup:verify").ActionType = "database.backup.create"
+		},
+		"changed precondition lock": func(graph *types.TargetPlanGraph) {
+			stepByKeyPointer(graph, "migration:ledger.042:precondition").DatabaseLockKey = "database:other"
+		},
+		"changed postcondition observation": func(graph *types.TargetPlanGraph) {
+			stepByKeyPointer(graph, "migration:ledger.042:validate").ObservationRequirement = "weaker evidence"
+		},
+		"missing backup edge": func(graph *types.TargetPlanGraph) {
+			removeEdge(graph, "migration:ledger.042:backup:verify->migration:ledger.042:precondition")
+		},
+	}
+	for name, corrupt := range cases {
+		t.Run(name, func(t *testing.T) {
+			graph := cloneGraph(t, complete)
+			corrupt(&graph)
+
+			_, expandErr := ExpandMigrationGraph(contract, graph)
+
+			NewWithT(t).Expect(expandErr).To(MatchError(ContainSubstring("existing migration subgraph")))
+		})
+	}
+}
+
+func cloneGraph(t *testing.T, graph types.TargetPlanGraph) types.TargetPlanGraph {
+	t.Helper()
+	payload, err := json.Marshal(graph)
+	NewWithT(t).Expect(err).NotTo(HaveOccurred())
+	var result types.TargetPlanGraph
+	NewWithT(t).Expect(json.Unmarshal(payload, &result)).To(Succeed())
+	return result
+}
+
+func stepByKeyPointer(graph *types.TargetPlanGraph, key string) *types.TargetPlanStep {
+	for index := range graph.Steps {
+		if graph.Steps[index].StepKey == key {
+			return &graph.Steps[index]
+		}
+	}
+	return nil
+}
+
+func removeStep(graph *types.TargetPlanGraph, key string) {
+	for index := range graph.Steps {
+		if graph.Steps[index].StepKey == key {
+			graph.Steps = append(graph.Steps[:index], graph.Steps[index+1:]...)
+			return
+		}
+	}
+}
+
+func removeEdge(graph *types.TargetPlanGraph, key string) {
+	for index := range graph.Edges {
+		if graph.Edges[index].Key == key {
+			graph.Edges = append(graph.Edges[:index], graph.Edges[index+1:]...)
+			return
+		}
+	}
+}
+
 func stepByKey(graph types.TargetPlanGraph, key string) types.TargetPlanStep {
 	for _, step := range graph.Steps {
 		if step.StepKey == key {

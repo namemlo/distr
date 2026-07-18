@@ -20,6 +20,7 @@ func BuildRecoveryPlan(
 	if strings.TrimSpace(request.Reason) == "" {
 		return nil, fmt.Errorf("recovery reason is required")
 	}
+	recoveryPlanID := uuid.New()
 	var graph types.TargetPlanGraph
 	var err error
 	switch request.Mode {
@@ -28,7 +29,7 @@ func BuildRecoveryPlan(
 	case types.RecoveryModeForwardFix, types.RecoveryModeManual:
 		graph, err = finalizeGraph(types.TargetPlanGraph{})
 	case types.RecoveryModeRestore:
-		graph, err = buildRestoreGraph(request)
+		graph, err = buildRestoreGraph(request, recoveryPlanID)
 	default:
 		return nil, fmt.Errorf("unsupported recovery mode %q", request.Mode)
 	}
@@ -44,7 +45,7 @@ func BuildRecoveryPlan(
 		return nil, fmt.Errorf("marshal recovery plan: %w", err)
 	}
 	draft := failed.Draft
-	draft.ID = uuid.New()
+	draft.ID = recoveryPlanID
 	draft.Revision = 1
 	draft.ProtocolVersion = types.DeploymentPlanProtocolV2
 	sourcePlanID := failed.PlanID
@@ -61,6 +62,12 @@ func BuildRecoveryPlan(
 func buildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
 	completed := make(map[string]struct{}, len(failed.CompletedMigrationIDs))
 	for _, id := range failed.CompletedMigrationIDs {
+		if _, duplicate := completed[id]; duplicate {
+			return types.TargetPlanGraph{}, fmt.Errorf(
+				"completed migration %q does not resolve uniquely",
+				id,
+			)
+		}
 		completed[id] = struct{}{}
 	}
 	contracts := slices.Clone(failed.Contracts)
@@ -69,9 +76,32 @@ func buildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
 	})
 	steps := make([]types.TargetPlanStep, 0, len(contracts))
 	edges := make([]types.DeploymentPlanStepEdge, 0)
-	byID := make(map[string]types.MigrationContract, len(contracts))
+	byID := make(map[string][]types.MigrationContract, len(contracts))
 	for _, contract := range contracts {
-		byID[contract.ID] = contract
+		byID[contract.ID] = append(byID[contract.ID], contract)
+	}
+	for id := range completed {
+		if len(byID[id]) != 1 {
+			return types.TargetPlanGraph{}, fmt.Errorf(
+				"completed migration %q does not resolve uniquely",
+				id,
+			)
+		}
+	}
+	for id := range completed {
+		contract := byID[id][0]
+		for _, dependency := range contract.DependsOn {
+			_, dependencyCompleted := completed[dependency]
+			if !dependencyCompleted || len(byID[dependency]) != 1 {
+				return types.TargetPlanGraph{}, fmt.Errorf(
+					"completed dependency %q for migration %q does not resolve uniquely",
+					dependency,
+					contract.ID,
+				)
+			}
+		}
+	}
+	for _, contract := range contracts {
 		if _, ok := completed[contract.ID]; !ok {
 			continue
 		}
@@ -115,21 +145,22 @@ func buildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
 			continue
 		}
 		for _, dependency := range contract.DependsOn {
-			if _, dependencyCompleted := completed[dependency]; !dependencyCompleted {
-				continue
-			}
-			if _, known := byID[dependency]; known {
-				edges = append(edges, newEdge(
-					"recovery:"+contract.ID+":reverse",
-					"recovery:"+dependency+":reverse",
-				))
-			}
+			edges = append(edges, newEdge(
+				"recovery:"+contract.ID+":reverse",
+				"recovery:"+dependency+":reverse",
+			))
 		}
 	}
 	return finalizeGraph(types.TargetPlanGraph{Steps: steps, Edges: edges})
 }
 
-func buildRestoreGraph(request types.RecoveryRequest) (types.TargetPlanGraph, error) {
+func buildRestoreGraph(
+	request types.RecoveryRequest,
+	recoveryPlanID uuid.UUID,
+) (types.TargetPlanGraph, error) {
+	if recoveryPlanID == uuid.Nil {
+		return types.TargetPlanGraph{}, fmt.Errorf("database restore requires a recovery plan ID")
+	}
 	if strings.TrimSpace(request.SeparateApprovalID) == "" {
 		return types.TargetPlanGraph{}, fmt.Errorf("database restore requires a separate approval")
 	}
@@ -169,7 +200,7 @@ func buildRestoreGraph(request types.RecoveryRequest) (types.TargetPlanGraph, er
 	executeKey := "recovery:restore:execute"
 	verifyKey := "recovery:restore:verify"
 	executeInput := map[string]any{
-		"recoveryPlanId":           uuid.NewString(),
+		"recoveryPlanId":           recoveryPlanID.String(),
 		"separateApprovalId":       request.SeparateApprovalID,
 		"backupId":                 request.BackupID,
 		"backupChecksum":           request.BackupChecksum,

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -24,19 +25,25 @@ func ExpandMigrationGraph(
 		)
 	}
 	prefix := "migration:" + contract.ID
-	applyKey := prefix + ":apply"
 	databaseLock := "database:" + contract.DatabaseResourceKey
-	for _, step := range base.Steps {
-		if step.StepKey == applyKey {
-			expectedInput, _ := json.Marshal(migrationApplyInput(contract, databaseLock))
-			if step.ExpectedInputChecksum != checksumBytes(expectedInput) {
-				return types.TargetPlanGraph{}, fmt.Errorf(
-					"migration %q retry input checksum changed",
-					contract.ID,
-				)
-			}
-			return finalizeGraph(base)
+	if hasMigrationSubgraph(base, prefix) {
+		stripped := withoutMigrationSubgraph(base, prefix)
+		expected, err := buildMigrationGraph(contract, stripped)
+		if err != nil {
+			return types.TargetPlanGraph{}, err
 		}
+		if !reflect.DeepEqual(
+			migrationSubgraph(base, prefix),
+			migrationSubgraph(expected, prefix),
+		) {
+			return types.TargetPlanGraph{}, fmt.Errorf(
+				"existing migration subgraph %q retry input checksum or complete expected graph changed",
+				contract.ID,
+			)
+		}
+		return finalizeGraph(base)
+	}
+	for _, step := range base.Steps {
 		if step.DatabaseLockKey == databaseLock &&
 			!dependencyStep(contract.DependsOn, step.StepKey) {
 			return types.TargetPlanGraph{}, fmt.Errorf(
@@ -46,7 +53,16 @@ func ExpandMigrationGraph(
 			)
 		}
 	}
+	return buildMigrationGraph(contract, base)
+}
 
+func buildMigrationGraph(
+	contract types.MigrationContract,
+	base types.TargetPlanGraph,
+) (types.TargetPlanGraph, error) {
+	prefix := "migration:" + contract.ID
+	applyKey := prefix + ":apply"
+	databaseLock := "database:" + contract.DatabaseResourceKey
 	targetLock := migrationTargetLock(contract, base)
 	steps := slices.Clone(base.Steps)
 	edges := slices.Clone(base.Edges)
@@ -127,6 +143,65 @@ func ExpandMigrationGraph(
 		}
 	}
 	return finalizeGraph(types.TargetPlanGraph{Steps: steps, Edges: edges})
+}
+
+type comparableMigrationSubgraph struct {
+	Steps []types.TargetPlanStep
+	Edges []types.DeploymentPlanStepEdge
+}
+
+func hasMigrationSubgraph(graph types.TargetPlanGraph, prefix string) bool {
+	for _, step := range graph.Steps {
+		if strings.HasPrefix(step.StepKey, prefix+":") {
+			return true
+		}
+	}
+	return false
+}
+
+func withoutMigrationSubgraph(
+	graph types.TargetPlanGraph,
+	prefix string,
+) types.TargetPlanGraph {
+	result := types.TargetPlanGraph{}
+	for _, step := range graph.Steps {
+		if !strings.HasPrefix(step.StepKey, prefix+":") {
+			result.Steps = append(result.Steps, step)
+		}
+	}
+	for _, edge := range graph.Edges {
+		if !strings.HasPrefix(edge.FromStepKey, prefix+":") &&
+			!strings.HasPrefix(edge.ToStepKey, prefix+":") {
+			result.Edges = append(result.Edges, edge)
+		}
+	}
+	return result
+}
+
+func migrationSubgraph(
+	graph types.TargetPlanGraph,
+	prefix string,
+) comparableMigrationSubgraph {
+	result := comparableMigrationSubgraph{}
+	for _, step := range graph.Steps {
+		if strings.HasPrefix(step.StepKey, prefix+":") {
+			step.SortOrder = 0
+			result.Steps = append(result.Steps, step)
+		}
+	}
+	for _, edge := range graph.Edges {
+		if strings.HasPrefix(edge.FromStepKey, prefix+":") ||
+			strings.HasPrefix(edge.ToStepKey, prefix+":") {
+			result.Edges = append(result.Edges, edge)
+		}
+	}
+	slices.SortFunc(result.Steps, func(a, b types.TargetPlanStep) int {
+		return strings.Compare(a.StepKey, b.StepKey)
+	})
+	slices.SortFunc(result.Edges, func(a, b types.DeploymentPlanStepEdge) int {
+		return strings.Compare(a.Key, b.Key)
+	})
+	return result
 }
 
 func migrationApplyInput(

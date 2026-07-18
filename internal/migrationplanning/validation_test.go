@@ -60,7 +60,7 @@ func TestValidatePreviousReleaseCompatibilityBlocksForwardOnlySchema(t *testing.
 			Version: "41", Checksum: checksum("1"),
 		},
 		types.PlannedState{
-			ComponentKey: "ledger", SchemaState: "42",
+			ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger", SchemaState: "42",
 			SchemaChecksum: checksum("2"), ForwardOnly: true,
 		},
 	)
@@ -68,11 +68,75 @@ func TestValidatePreviousReleaseCompatibilityBlocksForwardOnlySchema(t *testing.
 	g.Expect(validationCodes(issues)).To(ContainElement("previous_release_forward_only"))
 }
 
+func TestValidatePreviousReleaseCompatibilityRequiresExactKnownState(t *testing.T) {
+	g := NewWithT(t)
+	current := types.SchemaState{
+		ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+		Version: "41", Checksum: checksum("1"),
+	}
+	planned := types.PlannedState{
+		ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+		SchemaState: "41", SchemaChecksum: checksum("1"),
+	}
+	g.Expect(ValidatePreviousReleaseCompatibility(current, planned)).To(BeEmpty())
+
+	cases := map[string]func(*types.SchemaState, *types.PlannedState){
+		"missing current version": func(current *types.SchemaState, _ *types.PlannedState) {
+			current.Version = ""
+		},
+		"missing planned checksum": func(_ *types.SchemaState, planned *types.PlannedState) {
+			planned.SchemaChecksum = ""
+		},
+		"unknown current checksum": func(current *types.SchemaState, _ *types.PlannedState) {
+			current.Checksum = "unknown"
+		},
+		"version mismatch only": func(_ *types.SchemaState, planned *types.PlannedState) {
+			planned.SchemaState = "42"
+		},
+		"checksum mismatch only": func(_ *types.SchemaState, planned *types.PlannedState) {
+			planned.SchemaChecksum = checksum("2")
+		},
+		"database resource mismatch": func(_ *types.SchemaState, planned *types.PlannedState) {
+			planned.DatabaseResourceKey = "postgres:other"
+		},
+		"missing database resource": func(_ *types.SchemaState, planned *types.PlannedState) {
+			planned.DatabaseResourceKey = ""
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			testCurrent, testPlanned := current, planned
+			mutate(&testCurrent, &testPlanned)
+			NewWithT(t).Expect(
+				ValidatePreviousReleaseCompatibility(testCurrent, testPlanned),
+			).NotTo(BeEmpty())
+		})
+	}
+}
+
+func TestValidateMigrationContractBoundsDependencyIDsAndCount(t *testing.T) {
+	g := NewWithT(t)
+	contract := migrationContractFixture()
+	contract.DependsOn = make([]string, 65)
+	for index := range contract.DependsOn {
+		contract.DependsOn[index] = "ledger.dep." + strings.Repeat("x", index+1)
+	}
+	contract.DependsOn[0] = "INVALID DEPENDENCY"
+
+	issues := ValidateMigrationContract(contract)
+
+	g.Expect(validationCodes(issues)).To(ContainElements(
+		"migration_dependency_limit",
+		"migration_dependency_invalid",
+	))
+}
+
 func migrationContractFixture() types.MigrationContract {
 	return types.MigrationContract{
 		ID: "ledger.042", Checksum: checksum("a"), ComponentKey: "ledger",
 		DatabaseResourceKey: "postgres:ledger", ExpectedSourceVersion: "41",
-		ResultingVersion: "42", Phase: types.MigrationPhaseExpand,
+		ExpectedSourceChecksum: checksum("1"),
+		ResultingVersion:       "42", Phase: types.MigrationPhaseExpand,
 		LockType: "exclusive", LockTimeoutSeconds: 30, OperationalImpact: "brief_write_lock",
 		BackupRequired: true, BackupVerifier: "backup-verifier:v1",
 		PreconditionProbes: []types.MigrationProbe{{

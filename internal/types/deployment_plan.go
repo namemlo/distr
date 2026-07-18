@@ -318,6 +318,7 @@ type PlannedState struct {
 	ConfigSnapshotID        *uuid.UUID
 	ConfigChecksum          string
 	ProviderBindingChecksum string
+	DatabaseResourceKey     string
 	SchemaState             string
 	SchemaChecksum          string
 	TopologyChecksum        string
@@ -334,6 +335,7 @@ type DeploymentPlanMigration struct {
 	ComponentKey                     string                 `db:"component_key" json:"componentKey"`
 	DatabaseResourceKey              string                 `db:"database_resource_key" json:"databaseResourceKey"`
 	ExpectedSourceVersion            string                 `db:"expected_source_version" json:"expectedSourceVersion"`
+	ExpectedSourceChecksum           string                 `db:"expected_source_checksum" json:"expectedSourceChecksum"`
 	ResultingVersion                 string                 `db:"resulting_version" json:"resultingVersion"`
 	Phase                            MigrationPhase         `db:"phase" json:"phase"`
 	DependsOn                        []string               `db:"depends_on" json:"dependsOn,omitempty"`

@@ -39,6 +39,7 @@ type MigrationContract struct {
 	ComponentKey                     string                 `json:"componentKey"`
 	DatabaseResourceKey              string                 `json:"databaseResourceKey"`
 	ExpectedSourceVersion            string                 `json:"expectedSourceVersion"`
+	ExpectedSourceChecksum           string                 `json:"expectedSourceChecksum"`
 	ResultingVersion                 string                 `json:"resultingVersion"`
 	Phase                            MigrationPhase         `json:"phase"`
 	DependsOn                        []string               `json:"dependsOn,omitempty"`
