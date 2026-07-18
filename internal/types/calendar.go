@@ -53,7 +53,10 @@ type CalendarScopeRef struct {
 }
 
 type MaintenanceWindowRule struct {
-	ID                uuid.UUID `db:"id" json:"id"`
+	// ID is the stable logical rule identity used by draft editing and API round trips.
+	ID uuid.UUID `db:"id" json:"id"`
+	// VersionRuleID is the immutable row identity of this rule in one published version.
+	VersionRuleID     uuid.UUID `db:"version_rule_id" json:"-"`
 	OrganizationID    uuid.UUID `db:"organization_id" json:"-"`
 	CalendarVersionID uuid.UUID `db:"calendar_version_id" json:"-"`
 	Name              string    `db:"name" json:"name"`

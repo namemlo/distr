@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/distr-sh/distr/internal/zonerules"
 	"github.com/google/uuid"
 )
 
@@ -68,6 +69,13 @@ type calendarEvaluationIdentity struct {
 func CanonicalizeCalendarVersion(
 	version types.MaintenanceCalendarVersion,
 ) ([]byte, string, error) {
+	return CanonicalizeCalendarVersionWithZoneRules(zonerules.Production(), version)
+}
+
+func CanonicalizeCalendarVersionWithZoneRules(
+	provider zonerules.Provider,
+	version types.MaintenanceCalendarVersion,
+) ([]byte, string, error) {
 	if version.CalendarID == uuid.Nil {
 		return nil, "", errors.New("calendar ID is required")
 	}
@@ -77,7 +85,11 @@ func CanonicalizeCalendarVersion(
 	if len(strings.TrimSpace(version.Name)) > 200 || len(version.Description) > 4000 {
 		return nil, "", errors.New("calendar name or description is too large")
 	}
-	if err := validateZoneAndRuleVersion(version.IANAZone, version.RuleVersion); err != nil {
+	if err := validateZoneAndRuleVersion(
+		provider,
+		version.IANAZone,
+		version.RuleVersion,
+	); err != nil {
 		return nil, "", err
 	}
 	if len(version.WindowRules) == 0 {
@@ -123,6 +135,13 @@ func CanonicalizeCalendarVersion(
 func CanonicalizeFreezeRevision(
 	revision types.DeploymentFreezeRevision,
 ) ([]byte, string, error) {
+	return CanonicalizeFreezeRevisionWithZoneRules(zonerules.Production(), revision)
+}
+
+func CanonicalizeFreezeRevisionWithZoneRules(
+	provider zonerules.Provider,
+	revision types.DeploymentFreezeRevision,
+) ([]byte, string, error) {
 	if revision.FreezeID == uuid.Nil {
 		return nil, "", errors.New("freeze ID is required")
 	}
@@ -135,7 +154,11 @@ func CanonicalizeFreezeRevision(
 	if err := validateFreezeInterval(revision.StartAt, revision.EndAt); err != nil {
 		return nil, "", err
 	}
-	if err := validateZoneAndRuleVersion(revision.IANAZone, revision.RuleVersion); err != nil {
+	if err := validateZoneAndRuleVersion(
+		provider,
+		revision.IANAZone,
+		revision.RuleVersion,
+	); err != nil {
 		return nil, "", err
 	}
 	if !revision.ScopeKind.IsValid() || revision.ScopeID == uuid.Nil {
@@ -176,17 +199,30 @@ func EvaluateCalendar(
 	version types.MaintenanceCalendarVersion,
 	input types.CalendarEvaluationInput,
 ) (types.CalendarEvaluation, error) {
-	if err := validateEvaluationInput(input); err != nil {
+	return EvaluateCalendarWithZoneRules(zonerules.Production(), version, input)
+}
+
+func EvaluateCalendarWithZoneRules(
+	provider zonerules.Provider,
+	version types.MaintenanceCalendarVersion,
+	input types.CalendarEvaluationInput,
+) (types.CalendarEvaluation, error) {
+	if err := validateEvaluationInput(provider, input); err != nil {
 		return types.CalendarEvaluation{}, err
+	}
+	if err := validateZoneAndRuleVersion(
+		provider,
+		version.IANAZone,
+		version.RuleVersion,
+	); err != nil {
+		return types.CalendarEvaluation{}, fmt.Errorf(
+			"calendar rule binding is invalid: %w",
+			err,
+		)
 	}
 	if strings.TrimSpace(version.IANAZone) != strings.TrimSpace(input.IANAZone) {
 		return types.CalendarEvaluation{}, errors.New(
 			"calendar IANA zone does not match the evaluated IANA zone",
-		)
-	}
-	if strings.TrimSpace(version.RuleVersion) != strings.TrimSpace(input.RuleVersion) {
-		return types.CalendarEvaluation{}, errors.New(
-			"calendar rule version does not match the evaluated rule version",
 		)
 	}
 	if version.ID == uuid.Nil {
@@ -198,7 +234,7 @@ func EvaluateCalendar(
 		)
 	}
 
-	instant, local, offset, err := calendarEvidence(input)
+	instant, local, offset, err := calendarEvidence(provider, input)
 	if err != nil {
 		return types.CalendarEvaluation{}, err
 	}
@@ -229,7 +265,11 @@ func EvaluateCalendar(
 	for _, rule := range rules {
 		if windowRuleMatches(rule, local) {
 			result.Allowed = true
-			result.WindowRuleID = copyUUID(rule.ID)
+			ruleIdentity := rule.VersionRuleID
+			if ruleIdentity == uuid.Nil {
+				ruleIdentity = rule.ID
+			}
+			result.WindowRuleID = copyUUID(ruleIdentity)
 			result.ReasonCode = types.CalendarReasonWindowOpen
 			break
 		}
@@ -257,6 +297,14 @@ func EvaluateFreeze(
 	revisions []types.DeploymentFreezeRevision,
 	input types.CalendarEvaluationInput,
 ) types.FreezeEvaluation {
+	return EvaluateFreezeWithZoneRules(zonerules.Production(), revisions, input)
+}
+
+func EvaluateFreezeWithZoneRules(
+	provider zonerules.Provider,
+	revisions []types.DeploymentFreezeRevision,
+	input types.CalendarEvaluationInput,
+) types.FreezeEvaluation {
 	instant := input.UTCInstant.UTC()
 	result := types.FreezeEvaluation{
 		Allowed:           true,
@@ -266,7 +314,7 @@ func EvaluateFreeze(
 		ActiveRevisionIDs: []uuid.UUID{},
 		ReasonCode:        types.CalendarReasonNoActiveFreeze,
 	}
-	if err := validateEvaluationInput(input); err != nil {
+	if err := validateEvaluationInput(provider, input); err != nil {
 		result.Allowed = false
 		result.Blocked = true
 		result.ReasonCode = types.CalendarReasonRuleBindingDrift
@@ -275,7 +323,7 @@ func EvaluateFreeze(
 		return result
 	}
 
-	_, local, offset, err := calendarEvidence(input)
+	_, local, offset, err := calendarEvidence(provider, input)
 	if err != nil {
 		result.Allowed = false
 		result.Blocked = true
@@ -309,8 +357,13 @@ func EvaluateFreeze(
 		result.Blocked = true
 		result.SelectedRevisionID = copyUUID(selected.ID)
 		result.ReasonCode = types.CalendarReasonFreezeActive
+		_, bindingErr := zonerules.ValidateBinding(
+			provider,
+			selected.IANAZone,
+			selected.RuleVersion,
+		)
 		if strings.TrimSpace(selected.IANAZone) != result.IANAZone ||
-			strings.TrimSpace(selected.RuleVersion) != result.RuleVersion {
+			bindingErr != nil {
 			result.ReasonCode = types.CalendarReasonRuleBindingDrift
 		}
 	}
@@ -337,14 +390,21 @@ func EvaluateFreeze(
 	return result
 }
 
-func validateEvaluationInput(input types.CalendarEvaluationInput) error {
+func validateEvaluationInput(
+	provider zonerules.Provider,
+	input types.CalendarEvaluationInput,
+) error {
 	if input.UTCInstant.IsZero() {
 		return errCalendarInstantRequired
 	}
-	return validateZoneAndRuleVersion(input.IANAZone, input.RuleVersion)
+	return validateZoneAndRuleVersion(provider, input.IANAZone, input.RuleVersion)
 }
 
-func validateZoneAndRuleVersion(ianaZone string, ruleVersion string) error {
+func validateZoneAndRuleVersion(
+	provider zonerules.Provider,
+	ianaZone string,
+	ruleVersion string,
+) error {
 	ianaZone = strings.TrimSpace(ianaZone)
 	if ianaZone == "" {
 		return errCalendarZoneRequired
@@ -355,7 +415,7 @@ func validateZoneAndRuleVersion(ianaZone string, ruleVersion string) error {
 	if len(ianaZone) > 128 || len(strings.TrimSpace(ruleVersion)) > 128 {
 		return errors.New("IANA zone or timezone rule version is too large")
 	}
-	if _, err := time.LoadLocation(ianaZone); err != nil {
+	if _, err := zonerules.ValidateBinding(provider, ianaZone, ruleVersion); err != nil {
 		return fmt.Errorf("IANA zone %q is invalid: %w", ianaZone, err)
 	}
 	return nil
@@ -372,9 +432,14 @@ func validateFreezeInterval(startAt, endAt time.Time) error {
 }
 
 func calendarEvidence(
+	provider zonerules.Provider,
 	input types.CalendarEvaluationInput,
 ) (time.Time, time.Time, int, error) {
-	location, err := time.LoadLocation(strings.TrimSpace(input.IANAZone))
+	location, err := zonerules.ValidateBinding(
+		provider,
+		strings.TrimSpace(input.IANAZone),
+		strings.TrimSpace(input.RuleVersion),
+	)
 	if err != nil {
 		return time.Time{}, time.Time{}, 0, fmt.Errorf(
 			"load IANA zone %q: %w",

@@ -42,6 +42,16 @@ func TestMaintenanceCalendarDraftRequestsValidateExactRules(t *testing.T) {
 	invalidZone.IANAZone = "Not/A_Zone"
 	g.Expect(invalidZone.Validate()).To(MatchError(ContainSubstring("IANA")))
 
+	localZone := valid
+	localZone.IANAZone = "Local"
+	g.Expect(localZone.Validate()).To(MatchError(ContainSubstring("Local")))
+
+	mismatchedRuleData := valid
+	mismatchedRuleData.RuleVersion = "2025b"
+	g.Expect(mismatchedRuleData.Validate()).To(
+		MatchError(ContainSubstring("does not match runtime")),
+	)
+
 	duplicateWeekday := valid
 	duplicateWeekday.WindowRules = append(
 		[]MaintenanceWindowRuleRequest(nil),

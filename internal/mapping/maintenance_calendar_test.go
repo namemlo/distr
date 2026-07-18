@@ -56,6 +56,14 @@ func TestMaintenanceCalendarMappingsHideTenantAndCanonicalPayload(t *testing.T) 
 		PublishedBy:         uuid.New(),
 		WindowRules:         calendar.DraftRules,
 	}
+	version.WindowRules[0].VersionRuleID = uuid.New()
+	nextVersion := version
+	nextVersion.ID = uuid.New()
+	nextVersion.WindowRules = append(
+		[]types.MaintenanceWindowRule(nil),
+		version.WindowRules...,
+	)
+	nextVersion.WindowRules[0].VersionRuleID = uuid.New()
 
 	calendarResponse := MaintenanceCalendarToAPI(calendar)
 	versionResponse := MaintenanceCalendarVersionToAPI(version)
@@ -67,6 +75,12 @@ func TestMaintenanceCalendarMappingsHideTenantAndCanonicalPayload(t *testing.T) 
 	g.Expect(calendarResponse.DraftRules).To(HaveLen(1))
 	g.Expect(calendarResponse.DraftRules[0].ID).To(Equal(ruleID))
 	g.Expect(versionResponse.WindowRules).To(HaveLen(1))
+	g.Expect(MaintenanceCalendarVersionToAPI(nextVersion).WindowRules[0].ID).To(
+		Equal(ruleID),
+	)
+	g.Expect(nextVersion.WindowRules[0].VersionRuleID).NotTo(
+		Equal(version.WindowRules[0].VersionRuleID),
+	)
 	g.Expect(versionResponse.Checksum).To(Equal("sha256:calendar"))
 	g.Expect(pageResponse.NextCursor).To(Equal("next"))
 

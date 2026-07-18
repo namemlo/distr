@@ -50,6 +50,24 @@ func TestEvaluateCalendarOrdinaryAllowAndDeny(t *testing.T) {
 	g.Expect(denied.WindowRuleID).To(BeNil())
 }
 
+func TestEvaluateCalendarEvidenceUsesImmutableVersionRuleIdentity(t *testing.T) {
+	g := NewWithT(t)
+	logicalID := uuid.New()
+	versionRuleID := uuid.New()
+	version := calendarVersion("UTC", types.MaintenanceWindowRule{
+		ID: logicalID, VersionRuleID: versionRuleID, Name: "monday",
+		Weekdays: []int32{int32(time.Monday)}, StartMinute: 0, EndMinute: 24 * 60,
+	})
+
+	result, err := EvaluateCalendar(version, types.CalendarEvaluationInput{
+		UTCInstant: mustTime(t, "2026-07-20T10:00:00Z"),
+		IANAZone:   "UTC", RuleVersion: "2026a",
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.WindowRuleID).To(Equal(&versionRuleID))
+	g.Expect(result.WindowRuleID).NotTo(Equal(&logicalID))
+}
+
 func TestEvaluateCalendarOvernightWindowUsesPreviousWeekday(t *testing.T) {
 	g := NewWithT(t)
 	rule := types.MaintenanceWindowRule{
@@ -180,7 +198,11 @@ func TestEvaluateCalendarRuleVersionUpdateChangesDecisionIdentity(t *testing.T) 
 		UTCInstant: instant, IANAZone: "Asia/Bangkok", RuleVersion: "2026a",
 	})
 	g.Expect(err).NotTo(HaveOccurred())
-	second, err := EvaluateCalendar(secondVersion, types.CalendarEvaluationInput{
+	second, err := EvaluateCalendarWithZoneRules(testZoneRulesProvider{
+		version:  "2026b",
+		identity: "test-2026b",
+		location: time.FixedZone("Asia/Bangkok", 7*60*60),
+	}, secondVersion, types.CalendarEvaluationInput{
 		UTCInstant: instant, IANAZone: "Asia/Bangkok", RuleVersion: "2026b",
 	})
 	g.Expect(err).NotTo(HaveOccurred())
@@ -213,6 +235,21 @@ func TestCanonicalizeCalendarVersionIsOrderStableAndContentBound(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(secondPayload).To(Equal(firstPayload))
 	g.Expect(secondChecksum).To(Equal(firstChecksum))
+
+	versionScopedIDs := version
+	versionScopedIDs.WindowRules = append(
+		[]types.MaintenanceWindowRule(nil),
+		version.WindowRules...,
+	)
+	for index := range versionScopedIDs.WindowRules {
+		versionScopedIDs.WindowRules[index].VersionRuleID = uuid.New()
+	}
+	versionScopedPayload, versionScopedChecksum, err := CanonicalizeCalendarVersion(
+		versionScopedIDs,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(versionScopedPayload).To(Equal(firstPayload))
+	g.Expect(versionScopedChecksum).To(Equal(firstChecksum))
 
 	reordered.WindowRules[0].EndMinute++
 	_, changedChecksum, err := CanonicalizeCalendarVersion(reordered)
@@ -344,4 +381,22 @@ func mustTime(t *testing.T, value string) time.Time {
 		panic(err)
 	}
 	return parsed
+}
+
+type testZoneRulesProvider struct {
+	version  string
+	identity string
+	location *time.Location
+}
+
+func (provider testZoneRulesProvider) RuleVersion() string {
+	return provider.version
+}
+
+func (provider testZoneRulesProvider) Identity() string {
+	return provider.identity
+}
+
+func (provider testZoneRulesProvider) LoadLocation(string) (*time.Location, error) {
+	return provider.location, nil
 }

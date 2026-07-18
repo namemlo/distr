@@ -9,6 +9,7 @@ import (
 
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/distr-sh/distr/internal/validation"
+	"github.com/distr-sh/distr/internal/zonerules"
 	"github.com/google/uuid"
 )
 
@@ -422,19 +423,24 @@ type DeploymentFreezeRevisionPage struct {
 
 func validateCalendarZoneBinding(ianaZone, ruleVersion string) error {
 	ianaZone = strings.TrimSpace(ianaZone)
+	ruleVersion = strings.TrimSpace(ruleVersion)
 	if ianaZone == "" {
 		return validation.NewValidationFailedError("IANA zone is required")
 	}
-	if _, err := time.LoadLocation(ianaZone); err != nil {
-		return validation.NewValidationFailedError("IANA zone is invalid")
-	}
-	if strings.TrimSpace(ruleVersion) == "" {
+	if ruleVersion == "" {
 		return validation.NewValidationFailedError("ruleVersion is required")
 	}
-	if len(ianaZone) > 128 || len(strings.TrimSpace(ruleVersion)) > 128 {
+	if len(ianaZone) > 128 || len(ruleVersion) > 128 {
 		return validation.NewValidationFailedError(
 			"IANA zone and ruleVersion must not exceed 128 characters",
 		)
+	}
+	if _, err := zonerules.ValidateBinding(
+		zonerules.Production(),
+		ianaZone,
+		ruleVersion,
+	); err != nil {
+		return validation.NewValidationFailedError(err.Error())
 	}
 	return nil
 }

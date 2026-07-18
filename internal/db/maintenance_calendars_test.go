@@ -43,6 +43,8 @@ func TestMigration151DefinesVersionedCalendarsAndFreezes(t *testing.T) {
 	g.Expect(sql).To(ContainSubstring("organization_id, created_at DESC, id DESC"))
 	g.Expect(sql).To(ContainSubstring("maintenancecalendarversion_draft_unique"))
 	g.Expect(sql).To(ContainSubstring("maintenancewindowrule_name_unique"))
+	g.Expect(sql).To(ContainSubstring("logical_rule_id UUID NOT NULL"))
+	g.Expect(sql).To(ContainSubstring("maintenancewindowrule_logical_unique"))
 	g.Expect(sql).To(ContainSubstring("deploymentfreezerevision_draft_unique"))
 	g.Expect(sql).To(ContainSubstring(
 		"FOREIGN KEY (last_published_version_id, organization_id, id)",
@@ -55,6 +57,88 @@ func TestMigration151DefinesVersionedCalendarsAndFreezes(t *testing.T) {
 	down, err := os.ReadFile("../migrations/sql/151_maintenance_calendars_freezes.down.sql")
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down)).To(ContainSubstring("downgrade crossing 151 is forbidden"))
+}
+
+func TestPublishedWindowRuleIdentityIsVersionScopedAndLogicalIDIsStable(t *testing.T) {
+	g := NewWithT(t)
+	logicalID := uuid.New()
+	first := types.MaintenanceCalendarVersion{
+		ID: uuid.New(), OrganizationID: uuid.New(),
+		WindowRules: []types.MaintenanceWindowRule{{ID: logicalID}},
+	}
+	second := first
+	second.ID = uuid.New()
+	second.WindowRules = append([]types.MaintenanceWindowRule(nil), first.WindowRules...)
+
+	assignVersionScopedWindowRuleIDs(&first)
+	assignVersionScopedWindowRuleIDs(&second)
+	g.Expect(first.WindowRules[0].ID).To(Equal(logicalID))
+	g.Expect(second.WindowRules[0].ID).To(Equal(logicalID))
+	g.Expect(first.WindowRules[0].VersionRuleID).NotTo(Equal(uuid.Nil))
+	g.Expect(second.WindowRules[0].VersionRuleID).NotTo(Equal(
+		first.WindowRules[0].VersionRuleID,
+	))
+
+	repeated := first
+	repeated.WindowRules = []types.MaintenanceWindowRule{{ID: logicalID}}
+	assignVersionScopedWindowRuleIDs(&repeated)
+	g.Expect(repeated.WindowRules[0].VersionRuleID).To(Equal(
+		first.WindowRules[0].VersionRuleID,
+	))
+}
+
+func TestMaintenanceWindowRulesAreGroupedForOneBatchQuery(t *testing.T) {
+	g := NewWithT(t)
+	firstID := uuid.New()
+	secondID := uuid.New()
+	firstRule := types.MaintenanceWindowRule{
+		ID: uuid.New(), CalendarVersionID: firstID, SortOrder: 1,
+	}
+	secondRule := types.MaintenanceWindowRule{
+		ID: uuid.New(), CalendarVersionID: secondID, SortOrder: 2,
+	}
+
+	grouped := groupMaintenanceWindowRules(
+		[]uuid.UUID{firstID, secondID},
+		[]types.MaintenanceWindowRule{firstRule, secondRule},
+	)
+	g.Expect(grouped[firstID]).To(Equal([]types.MaintenanceWindowRule{firstRule}))
+	g.Expect(grouped[secondID]).To(Equal([]types.MaintenanceWindowRule{secondRule}))
+
+	source, err := os.ReadFile("maintenance_calendars.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(source)).To(ContainSubstring(
+		"r.calendar_version_id = ANY(@versionIDs)",
+	))
+}
+
+func TestHistoricalPublishReplayWinsAfterDraftAdvances(t *testing.T) {
+	g := NewWithT(t)
+	existing := types.MaintenanceCalendarVersion{
+		ID: uuid.New(), SourceDraftRevision: 7, Checksum: "sha256:published",
+	}
+
+	replay, found, err := resolvePublicationReplay(
+		&existing,
+		nil,
+		8,
+		7,
+		"maintenance calendar",
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(found).To(BeTrue())
+	g.Expect(replay.ID).To(Equal(existing.ID))
+	g.Expect(replay.Checksum).To(Equal(existing.Checksum))
+
+	_, found, err = resolvePublicationReplay[types.MaintenanceCalendarVersion](
+		nil,
+		apierrors.ErrNotFound,
+		8,
+		7,
+		"maintenance calendar",
+	)
+	g.Expect(found).To(BeFalse())
+	g.Expect(err).To(MatchError(apierrors.ErrConflict))
 }
 
 func TestCalendarCursorRoundTripAndValidation(t *testing.T) {

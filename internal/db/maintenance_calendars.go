@@ -16,6 +16,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/scheduling"
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/distr-sh/distr/internal/zonerules"
 	"github.com/google/uuid"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -62,7 +63,8 @@ const maintenanceCalendarVersionOutputExpr = `
 `
 
 const maintenanceWindowRuleOutputExpr = `
-	r.id,
+	r.logical_rule_id AS id,
+	r.id AS version_rule_id,
 	r.organization_id,
 	r.calendar_version_id,
 	r.name,
@@ -357,21 +359,25 @@ func PublishMaintenanceCalendar(
 		if err != nil {
 			return err
 		}
-		if calendar.DraftRevision != expectedDraftRevision {
-			return apierrors.NewConflict("maintenance calendar draft revision changed")
-		}
 		existing, err := getMaintenanceCalendarVersionByDraft(
 			txCtx,
 			organizationID,
 			calendarID,
 			expectedDraftRevision,
 		)
-		if err == nil {
-			published = existing
-			return nil
-		}
-		if !errors.Is(err, apierrors.ErrNotFound) {
+		replay, isReplay, err := resolvePublicationReplay(
+			existing,
+			err,
+			calendar.DraftRevision,
+			expectedDraftRevision,
+			"maintenance calendar",
+		)
+		if err != nil {
 			return err
+		}
+		if isReplay {
+			published = replay
+			return nil
 		}
 
 		versionNumber, err := nextMaintenanceCalendarVersionNumber(txCtx, calendar.ID)
@@ -398,6 +404,7 @@ func PublishMaintenanceCalendar(
 		if err := insertMaintenanceCalendarVersion(txCtx, &version); err != nil {
 			return err
 		}
+		assignVersionScopedWindowRuleIDs(&version)
 		if err := insertMaintenanceWindowRules(txCtx, version); err != nil {
 			return err
 		}
@@ -513,15 +520,20 @@ func ListMaintenanceCalendarVersions(
 			err,
 		)
 	}
+	versionIDs := make([]uuid.UUID, len(items))
 	for index := range items {
-		items[index].WindowRules, err = listMaintenanceWindowRules(
-			ctx,
-			organizationID,
-			items[index].ID,
-		)
-		if err != nil {
-			return types.Page[types.MaintenanceCalendarVersion]{}, err
-		}
+		versionIDs[index] = items[index].ID
+	}
+	rulesByVersion, err := listMaintenanceWindowRulesForVersions(
+		ctx,
+		organizationID,
+		versionIDs,
+	)
+	if err != nil {
+		return types.Page[types.MaintenanceCalendarVersion]{}, err
+	}
+	for index := range items {
+		items[index].WindowRules = rulesByVersion[items[index].ID]
 	}
 	return buildCalendarPage(
 		items,
@@ -768,14 +780,20 @@ func UpdateDeploymentFreeze(
 	return nil
 }
 
+type DeploymentFreezeScopeAuthorizer func(
+	context.Context,
+	types.CalendarScopeRef,
+) error
+
 func PublishDeploymentFreeze(
 	ctx context.Context,
 	organizationID, freezeID uuid.UUID,
 	expectedDraftRevision int64,
 	actorID uuid.UUID,
+	authorizeScope DeploymentFreezeScopeAuthorizer,
 ) (*types.DeploymentFreezeRevision, error) {
 	if organizationID == uuid.Nil || freezeID == uuid.Nil ||
-		expectedDraftRevision < 1 || actorID == uuid.Nil {
+		expectedDraftRevision < 1 || actorID == uuid.Nil || authorizeScope == nil {
 		return nil, apierrors.NewBadRequest(
 			"organization, freeze, expected draft revision, and actor are required",
 		)
@@ -786,8 +804,37 @@ func PublishDeploymentFreeze(
 		if err != nil {
 			return err
 		}
-		if freeze.DraftRevision != expectedDraftRevision {
-			return apierrors.NewConflict("deployment freeze draft revision changed")
+		existing, err := getDeploymentFreezeRevisionByDraft(
+			txCtx,
+			organizationID,
+			freezeID,
+			expectedDraftRevision,
+		)
+		replay, isReplay, err := resolvePublicationReplay(
+			existing,
+			err,
+			freeze.DraftRevision,
+			expectedDraftRevision,
+			"deployment freeze",
+		)
+		if err != nil {
+			return err
+		}
+		if isReplay {
+			if err := authorizeScope(txCtx, types.CalendarScopeRef{
+				Kind: replay.ScopeKind,
+				ID:   replay.ScopeID,
+			}); err != nil {
+				return err
+			}
+			published = replay
+			return nil
+		}
+		if err := authorizeScope(txCtx, types.CalendarScopeRef{
+			Kind: freeze.DraftScopeKind,
+			ID:   freeze.DraftScopeID,
+		}); err != nil {
+			return err
 		}
 		if err := ensureCalendarScopeBelongsToOrganization(
 			txCtx,
@@ -795,19 +842,6 @@ func PublishDeploymentFreeze(
 			freeze.DraftScopeKind,
 			freeze.DraftScopeID,
 		); err != nil {
-			return err
-		}
-		existing, err := getDeploymentFreezeRevisionByDraft(
-			txCtx,
-			organizationID,
-			freezeID,
-			expectedDraftRevision,
-		)
-		if err == nil {
-			published = existing
-			return nil
-		}
-		if !errors.Is(err, apierrors.ErrNotFound) {
 			return err
 		}
 
@@ -1026,7 +1060,11 @@ func validateMaintenanceCalendarForWrite(calendar types.MaintenanceCalendar) err
 	if strings.TrimSpace(calendar.DraftRuleVersion) == "" {
 		return apierrors.NewBadRequest("rule version is required")
 	}
-	if _, err := time.LoadLocation(strings.TrimSpace(calendar.DraftIANAZone)); err != nil {
+	if _, err := zonerules.ValidateBinding(
+		zonerules.Production(),
+		strings.TrimSpace(calendar.DraftIANAZone),
+		strings.TrimSpace(calendar.DraftRuleVersion),
+	); err != nil {
 		return apierrors.NewBadRequest("IANA zone is invalid")
 	}
 	if len(calendar.DraftRules) == 0 {
@@ -1361,12 +1399,18 @@ func insertMaintenanceWindowRules(
 	for index := range version.WindowRules {
 		version.WindowRules[index].OrganizationID = version.OrganizationID
 		version.WindowRules[index].CalendarVersionID = version.ID
+		if version.WindowRules[index].VersionRuleID == uuid.Nil {
+			return apierrors.NewBadRequest(
+				"published maintenance window rule identity is required",
+			)
+		}
 	}
 	count, err := internalctx.GetDb(ctx).CopyFrom(
 		ctx,
 		pgx.Identifier{"maintenancewindowrule"},
 		[]string{
 			"id",
+			"logical_rule_id",
 			"organization_id",
 			"calendar_version_id",
 			"name",
@@ -1378,6 +1422,7 @@ func insertMaintenanceWindowRules(
 		pgx.CopyFromSlice(len(version.WindowRules), func(index int) ([]any, error) {
 			rule := version.WindowRules[index]
 			return []any{
+				rule.VersionRuleID,
 				rule.ID,
 				rule.OrganizationID,
 				rule.CalendarVersionID,
@@ -1471,15 +1516,34 @@ func listMaintenanceWindowRules(
 	ctx context.Context,
 	organizationID, versionID uuid.UUID,
 ) ([]types.MaintenanceWindowRule, error) {
+	grouped, err := listMaintenanceWindowRulesForVersions(
+		ctx,
+		organizationID,
+		[]uuid.UUID{versionID},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return grouped[versionID], nil
+}
+
+func listMaintenanceWindowRulesForVersions(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	versionIDs []uuid.UUID,
+) (map[uuid.UUID][]types.MaintenanceWindowRule, error) {
+	if len(versionIDs) == 0 {
+		return map[uuid.UUID][]types.MaintenanceWindowRule{}, nil
+	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT `+maintenanceWindowRuleOutputExpr+`
 		FROM MaintenanceWindowRule r
 		WHERE r.organization_id = @organizationID
-		  AND r.calendar_version_id = @versionID
-		ORDER BY r.sort_order, r.name, r.id`,
+		  AND r.calendar_version_id = ANY(@versionIDs)
+		ORDER BY r.calendar_version_id, r.sort_order, r.name, r.logical_rule_id, r.id`,
 		pgx.NamedArgs{
 			"organizationID": organizationID,
-			"versionID":      versionID,
+			"versionIDs":     versionIDs,
 		},
 	)
 	if err != nil {
@@ -1492,7 +1556,24 @@ func listMaintenanceWindowRules(
 	if err != nil {
 		return nil, fmt.Errorf("could not collect maintenance window rules: %w", err)
 	}
-	return rules, nil
+	return groupMaintenanceWindowRules(versionIDs, rules), nil
+}
+
+func groupMaintenanceWindowRules(
+	versionIDs []uuid.UUID,
+	rules []types.MaintenanceWindowRule,
+) map[uuid.UUID][]types.MaintenanceWindowRule {
+	grouped := make(map[uuid.UUID][]types.MaintenanceWindowRule, len(versionIDs))
+	for _, versionID := range versionIDs {
+		grouped[versionID] = []types.MaintenanceWindowRule{}
+	}
+	for _, rule := range rules {
+		grouped[rule.CalendarVersionID] = append(
+			grouped[rule.CalendarVersionID],
+			rule,
+		)
+	}
+	return grouped
 }
 
 func lockDeploymentFreeze(
@@ -1786,6 +1867,35 @@ func sortWindowRules(rules []types.MaintenanceWindowRule) {
 		}
 		return strings.Compare(left.ID.String(), right.ID.String())
 	})
+}
+
+func resolvePublicationReplay[T any](
+	existing *T,
+	lookupErr error,
+	currentDraftRevision, requestedDraftRevision int64,
+	resourceName string,
+) (*T, bool, error) {
+	if lookupErr == nil && existing != nil {
+		return existing, true, nil
+	}
+	if lookupErr != nil && !errors.Is(lookupErr, apierrors.ErrNotFound) {
+		return nil, false, lookupErr
+	}
+	if currentDraftRevision != requestedDraftRevision {
+		return nil, false, apierrors.NewConflict(
+			resourceName + " draft revision changed",
+		)
+	}
+	return nil, false, nil
+}
+
+func assignVersionScopedWindowRuleIDs(version *types.MaintenanceCalendarVersion) {
+	for index := range version.WindowRules {
+		rule := &version.WindowRules[index]
+		rule.VersionRuleID = uuid.NewSHA1(version.ID, rule.ID[:])
+		rule.OrganizationID = version.OrganizationID
+		rule.CalendarVersionID = version.ID
+	}
 }
 
 func mapCalendarWriteError(action string, err error) error {

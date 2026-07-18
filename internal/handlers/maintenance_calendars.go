@@ -58,19 +58,22 @@ func (fn calendarActionAuthorizerFunc) AuthorizeCalendarAction(
 	return fn(ctx, organizationID, actorID, action, scope)
 }
 
-// allowCalendarActions is intentionally narrow. Route middleware preserves the current
-// vendor-organization-admin policy; the scoped authorization implementation can replace
-// this seam without changing resource handlers or weakening tenant predicates.
-type allowCalendarActions struct{}
+// unavailableCalendarActionAuthorizer keeps calendar mutations fail-closed until
+// PR-066's shared authorization.Authorize adapter is rebased into this seam.
+type unavailableCalendarActionAuthorizer struct{}
 
-func (allowCalendarActions) AuthorizeCalendarAction(
+func (unavailableCalendarActionAuthorizer) AuthorizeCalendarAction(
 	context.Context,
 	uuid.UUID,
 	uuid.UUID,
 	string,
 	types.CalendarScopeRef,
 ) error {
-	return nil
+	return apierrors.ErrForbidden
+}
+
+func newCalendarActionAuthorizer() calendarActionAuthorizer {
+	return unavailableCalendarActionAuthorizer{}
 }
 
 type maintenanceCalendarIDRequest struct {
@@ -95,7 +98,7 @@ func MaintenanceCalendarsRouter(r chiopenapi.Router) {
 	maintenanceCalendarsRouterWithDependencies(
 		r,
 		env.ExperimentalFeatureFlags(),
-		allowCalendarActions{},
+		newCalendarActionAuthorizer(),
 	)
 }
 
@@ -159,7 +162,7 @@ func DeploymentFreezesRouter(r chiopenapi.Router) {
 	deploymentFreezesRouterWithDependencies(
 		r,
 		env.ExperimentalFeatureFlags(),
-		allowCalendarActions{},
+		newCalendarActionAuthorizer(),
 	)
 }
 
@@ -566,14 +569,30 @@ func updateDeploymentFreezeHandler(
 		ctx := r.Context()
 		userAuth := auth.Authentication.Require(ctx)
 		organizationID := *userAuth.CurrentOrgID()
-		scope := types.CalendarScopeRef{Kind: request.ScopeKind, ID: request.ScopeID}
-		if err := authorizeCalendarAction(
+		current, err := db.GetDeploymentFreeze(ctx, organizationID, freezeID)
+		if err != nil {
+			handleMaintenanceCalendarError(w, r, "get deployment freeze for update", err)
+			return
+		}
+		if current.DraftRevision != request.ExpectedDraftRevision {
+			handleMaintenanceCalendarError(
+				w,
+				r,
+				"bind deployment freeze update revision",
+				apierrors.NewConflict("deployment freeze draft revision changed"),
+			)
+			return
+		}
+		if err := authorizeDeploymentFreezeScopeTransition(
 			ctx,
 			authorizer,
 			organizationID,
 			userAuth.CurrentUserID(),
-			freezeActionManage,
-			scope,
+			types.CalendarScopeRef{
+				Kind: current.DraftScopeKind,
+				ID:   current.DraftScopeID,
+			},
+			types.CalendarScopeRef{Kind: request.ScopeKind, ID: request.ScopeID},
 		); err != nil {
 			handleMaintenanceCalendarError(w, r, "authorize deployment freeze update", err)
 			return
@@ -618,31 +637,22 @@ func publishDeploymentFreezeHandler(
 		ctx := r.Context()
 		userAuth := auth.Authentication.Require(ctx)
 		organizationID := *userAuth.CurrentOrgID()
-		freeze, err := db.GetDeploymentFreeze(ctx, organizationID, freezeID)
-		if err != nil {
-			handleMaintenanceCalendarError(w, r, "get deployment freeze for publication", err)
-			return
-		}
-		if err := authorizeCalendarAction(
-			ctx,
-			authorizer,
-			organizationID,
-			userAuth.CurrentUserID(),
-			freezeActionManage,
-			types.CalendarScopeRef{
-				Kind: freeze.DraftScopeKind,
-				ID:   freeze.DraftScopeID,
-			},
-		); err != nil {
-			handleMaintenanceCalendarError(w, r, "authorize deployment freeze publication", err)
-			return
-		}
 		revision, err := db.PublishDeploymentFreeze(
 			ctx,
 			organizationID,
 			freezeID,
 			request.ExpectedDraftRevision,
 			userAuth.CurrentUserID(),
+			func(txCtx context.Context, scope types.CalendarScopeRef) error {
+				return authorizeCalendarAction(
+					txCtx,
+					authorizer,
+					organizationID,
+					userAuth.CurrentUserID(),
+					freezeActionManage,
+					scope,
+				)
+			},
 		)
 		if err != nil {
 			handleMaintenanceCalendarError(w, r, "publish deployment freeze", err)
@@ -801,6 +811,35 @@ func authorizeCalendarAction(
 		actorID,
 		action,
 		scope,
+	)
+}
+
+func authorizeDeploymentFreezeScopeTransition(
+	ctx context.Context,
+	authorizer calendarActionAuthorizer,
+	organizationID, actorID uuid.UUID,
+	current, destination types.CalendarScopeRef,
+) error {
+	if err := authorizeCalendarAction(
+		ctx,
+		authorizer,
+		organizationID,
+		actorID,
+		freezeActionManage,
+		current,
+	); err != nil {
+		return err
+	}
+	if destination == current {
+		return nil
+	}
+	return authorizeCalendarAction(
+		ctx,
+		authorizer,
+		organizationID,
+		actorID,
+		freezeActionManage,
+		destination,
 	)
 }
 

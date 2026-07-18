@@ -138,6 +138,7 @@ ALTER TABLE MaintenanceCalendar
 
 CREATE TABLE MaintenanceWindowRule (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  logical_rule_id UUID NOT NULL,
   organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
   calendar_version_id UUID NOT NULL,
   name TEXT NOT NULL CHECK (
@@ -160,6 +161,8 @@ CREATE TABLE MaintenanceWindowRule (
     UNIQUE (id, organization_id),
   CONSTRAINT maintenancewindowrule_name_unique
     UNIQUE (calendar_version_id, name),
+  CONSTRAINT maintenancewindowrule_logical_unique
+    UNIQUE (calendar_version_id, logical_rule_id),
   CONSTRAINT maintenancewindowrule_version_fk
     FOREIGN KEY (calendar_version_id, organization_id)
     REFERENCES MaintenanceCalendarVersion(id, organization_id)

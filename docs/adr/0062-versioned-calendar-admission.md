@@ -17,15 +17,19 @@ Migration 151 adds mutable organization-scoped `MaintenanceCalendar` and `Deploy
 an optimistic `draft_revision`. Publication copies the draft into an immutable `MaintenanceCalendarVersion` or
 `DeploymentFreezeRevision`, stores a canonical payload and SHA-256 checksum, and binds publication to the source
 draft revision. Repeating publication for the same source revision returns the existing immutable result.
-`MaintenanceWindowRule` rows are immutable children of a calendar version.
+`MaintenanceWindowRule` rows are immutable children of a calendar version. A draft rule UUID remains its logical
+identity, while each published version derives a distinct immutable child-row UUID.
 
 A calendar version uses unique rule names, sorted weekdays, and local start-inclusive, end-exclusive minute
 intervals. An end minute less than the start minute is an overnight interval and its after-midnight portion belongs
 to the preceding configured weekday. A freeze uses start-inclusive, end-exclusive UTC instants. Overlapping freezes
 are ordered by descending priority and then immutable revision UUID, so every evaluator selects the same blocker.
 
-Evaluation begins with one UTC instant and converts it through the configured IANA zone. Evidence includes the UTC
-instant, resulting local time, exact UTC offset, IANA zone, caller-pinned timezone rule version, immutable
+Evaluation begins with one UTC instant and converts it through the configured IANA zone using an injected
+timezone-rule provider. Production pins an embedded IANA 2026a dataset whose exact module checksum identity is
+reported by the provider; it never consults host `ZONEINFO`, and the process-dependent `Local` zone is forbidden.
+Evidence includes the UTC instant, resulting local time, exact UTC offset, IANA zone, caller-pinned timezone rule
+version, immutable
 calendar/freeze identity, reason code, and a deterministic evaluation identity. A daylight-saving gap therefore
 cannot invent a nonexistent local time. The two occurrences of a repeated local hour retain different UTC
 instants, offsets, and identities. A zone or rule-version binding mismatch fails closed.
@@ -33,8 +37,11 @@ instants, offsets, and identities. A zone or rule-version binding mismatch fails
 The new APIs use opaque keyset pagination and organization predicates on every read and write. They are completely
 hidden unless `operator_control_plane_v2` is enabled, and currently require vendor organization admin access while
 blocking super-admin mutation-by-impersonation. Mutations call the `calendar.manage` or `freeze.manage` scoped
-authorization seam; the current adapter preserves the admin boundary and can be replaced by the scoped action
-authorizer without changing repository tenant predicates.
+authorization seam without changing repository tenant predicates. Until PR-066 supplies its shared
+`authorization.Authorize` adapter, the production seam fails closed; test injection cannot become a permissive
+production fallback. Freeze updates
+authorize both the exact expected current scope and any destination scope. Freeze publication authorizes the
+locked revision scope inside the publication transaction.
 
 Freeze scopes support organization, customer, environment, deployment unit, and component-definition identities.
 Campaign scope is part of the forward-compatible enum but cannot be written until immutable campaign revisions
@@ -52,9 +59,9 @@ and overlapping-freeze decisions from explicit evidence, and later admission rec
 checksums. Existing v1 deployment and agent behavior is unchanged because this slice only exposes feature-flagged
 governance APIs and pure evaluation.
 
-The application must supply the timezone-rule version associated with its deployed zone database; the Go runtime
-does not expose that label. Migration 151 is speculative until migrations 141 through 150 are integrated and must
-be rebased in sequence before live application.
+The application must submit the provider's IANA rule version and verify its exact reported rule-data identity as
+part of build/deployment evidence. Migration 151 is speculative until migrations 141 through 150 are integrated
+and must be rebased in sequence before live application.
 
 ## Alternatives Considered
 

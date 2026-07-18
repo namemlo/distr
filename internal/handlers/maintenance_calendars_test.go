@@ -96,7 +96,10 @@ func TestMaintenanceCalendarRoutesAreHiddenAndAdminOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			router := maintenanceCalendarRoutedTestHandler(tt.flags, allowCalendarActions{})
+			router := maintenanceCalendarRoutedTestHandler(
+				tt.flags,
+				allowCalendarActionsForTest(),
+			)
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
 			testAuth := testChannelAuth()
@@ -117,7 +120,7 @@ func TestMaintenanceCalendarRoutesAreHiddenAndAdminOnly(t *testing.T) {
 
 func TestMaintenanceCalendarDisabledRouteIsHiddenWithoutAuthentication(t *testing.T) {
 	g := NewWithT(t)
-	router := maintenanceCalendarRoutedTestHandler(nil, allowCalendarActions{})
+	router := maintenanceCalendarRoutedTestHandler(nil, allowCalendarActionsForTest())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -135,7 +138,7 @@ func TestDeploymentFreezeDisabledRouteIsHiddenWithoutAuthentication(t *testing.T
 	baseRouter := chi.NewRouter()
 	openAPIRouter := chiopenapi.NewRouter(baseRouter)
 	openAPIRouter.Route("/api/v1/deployment-freezes", func(r chiopenapi.Router) {
-		deploymentFreezesRouterWithDependencies(r, nil, allowCalendarActions{})
+		deploymentFreezesRouterWithDependencies(r, nil, allowCalendarActionsForTest())
 	})
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -174,7 +177,7 @@ func TestMaintenanceCalendarActionAuthorizationStopsBeforeDatabaseAccess(t *test
 			"name":"Retail production",
 			"description":"production maintenance",
 			"ianaZone":"Asia/Bangkok",
-			"ruleVersion":"tzdb-2026a",
+			"ruleVersion":"2026a",
 			"windowRules":[
 				{"name":"evening","weekdays":[1],"startMinute":1200,"endMinute":1320,"sortOrder":1}
 			]
@@ -187,6 +190,59 @@ func TestMaintenanceCalendarActionAuthorizationStopsBeforeDatabaseAccess(t *test
 	createMaintenanceCalendarHandler(authorizer).ServeHTTP(recorder, request)
 
 	g.Expect(recorder.Code).To(Equal(http.StatusForbidden))
+}
+
+func TestProductionCalendarAuthorizationSeamFailsClosedUntilPR066Adapter(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	err := authorizeCalendarAction(
+		context.Background(),
+		newCalendarActionAuthorizer(),
+		organizationID,
+		uuid.New(),
+		calendarActionManage,
+		types.CalendarScopeRef{
+			Kind: types.CalendarScopeOrganization,
+			ID:   organizationID,
+		},
+	)
+	g.Expect(err).To(MatchError(apierrors.ErrForbidden))
+}
+
+func TestFreezeScopeTransitionAuthorizesCurrentBeforeDestination(t *testing.T) {
+	g := NewWithT(t)
+	current := types.CalendarScopeRef{
+		Kind: types.CalendarScopeEnvironment,
+		ID:   uuid.New(),
+	}
+	destination := types.CalendarScopeRef{
+		Kind: types.CalendarScopeEnvironment,
+		ID:   uuid.New(),
+	}
+	visited := []types.CalendarScopeRef{}
+	authorizer := calendarActionAuthorizerFunc(func(
+		_ context.Context,
+		_, _ uuid.UUID,
+		_ string,
+		scope types.CalendarScopeRef,
+	) error {
+		visited = append(visited, scope)
+		if scope == current {
+			return apierrors.ErrForbidden
+		}
+		return nil
+	})
+
+	err := authorizeDeploymentFreezeScopeTransition(
+		context.Background(),
+		authorizer,
+		uuid.New(),
+		uuid.New(),
+		current,
+		destination,
+	)
+	g.Expect(err).To(MatchError(apierrors.ErrForbidden))
+	g.Expect(visited).To(Equal([]types.CalendarScopeRef{current}))
 }
 
 func TestDeploymentFreezeActionAuthorizationReceivesRequestedScope(t *testing.T) {
@@ -214,7 +270,7 @@ func TestDeploymentFreezeActionAuthorizationReceivesRequestedScope(t *testing.T)
 			"startAt":"2026-07-18T12:00:00Z",
 			"endAt":"2026-07-18T13:00:00Z",
 			"ianaZone":"Asia/Bangkok",
-			"ruleVersion":"tzdb-2026a",
+			"ruleVersion":"2026a",
 			"scopeKind":"environment",
 			"scopeId":"`+scopeID.String()+`",
 			"priority":100,
@@ -284,4 +340,16 @@ func maintenanceCalendarRoutedTestHandler(
 		maintenanceCalendarsRouterWithDependencies(r, enabledFlags, authorizer)
 	})
 	return baseRouter
+}
+
+func allowCalendarActionsForTest() calendarActionAuthorizer {
+	return calendarActionAuthorizerFunc(func(
+		context.Context,
+		uuid.UUID,
+		uuid.UUID,
+		string,
+		types.CalendarScopeRef,
+	) error {
+		return nil
+	})
 }

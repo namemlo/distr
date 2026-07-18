@@ -3,6 +3,7 @@ module github.com/distr-sh/distr
 go 1.26.5
 
 require (
+	github.com/KarpelesLab/gotz v0.1.2
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/avast/retry-go/v5 v5.0.0
 	github.com/aws/aws-sdk-go-v2 v1.42.0
