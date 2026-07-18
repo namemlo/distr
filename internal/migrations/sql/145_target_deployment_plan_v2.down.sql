@@ -1,6 +1,18 @@
+LOCK TABLE
+  DeploymentPlan,
+  DeploymentPlanDraft,
+  DeploymentPlanDraftAuditEvent,
+  DeploymentPlanResolvedRequirement,
+  DeploymentPlanStepEdge,
+  DeploymentPlanTarget,
+  DeploymentPlanStep,
+  DeploymentPlanIssue
+IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM DeploymentPlanDraft)
+     OR EXISTS (SELECT 1 FROM DeploymentPlanDraftAuditEvent)
      OR EXISTS (
        SELECT 1
        FROM DeploymentPlan
@@ -12,16 +24,39 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS DeploymentPlanStepEdge_append_only
-  ON DeploymentPlanStepEdge;
+DROP TRIGGER IF EXISTS DeploymentPlanDraftAuditEvent_append_only
+  ON DeploymentPlanDraftAuditEvent;
+DROP TRIGGER IF EXISTS DeploymentPlanDraftAuditEvent_no_truncate
+  ON DeploymentPlanDraftAuditEvent;
+DROP FUNCTION IF EXISTS deployment_plan_draft_audit_append_only_guard();
+
+DROP TRIGGER IF EXISTS DeploymentPlanTarget_v2_no_truncate
+  ON DeploymentPlanTarget;
+DROP TRIGGER IF EXISTS DeploymentPlanStep_v2_no_truncate
+  ON DeploymentPlanStep;
+DROP TRIGGER IF EXISTS DeploymentPlanIssue_v2_no_truncate
+  ON DeploymentPlanIssue;
+DROP TRIGGER IF EXISTS DeploymentPlanResolvedRequirement_no_truncate
+  ON DeploymentPlanResolvedRequirement;
 DROP TRIGGER IF EXISTS DeploymentPlanStepEdge_no_truncate
+  ON DeploymentPlanStepEdge;
+DROP FUNCTION IF EXISTS deployment_plan_v2_no_truncate_guard();
+
+DROP TRIGGER IF EXISTS DeploymentPlanTarget_v2_seal_guard
+  ON DeploymentPlanTarget;
+DROP TRIGGER IF EXISTS DeploymentPlanStep_v2_seal_guard
+  ON DeploymentPlanStep;
+DROP TRIGGER IF EXISTS DeploymentPlanIssue_v2_seal_guard
+  ON DeploymentPlanIssue;
+DROP TRIGGER IF EXISTS DeploymentPlanStepEdge_append_only
   ON DeploymentPlanStepEdge;
 DROP TRIGGER IF EXISTS DeploymentPlanResolvedRequirement_append_only
   ON DeploymentPlanResolvedRequirement;
-DROP TRIGGER IF EXISTS DeploymentPlanResolvedRequirement_no_truncate
-  ON DeploymentPlanResolvedRequirement;
-DROP FUNCTION IF EXISTS deployment_plan_v2_append_only_guard();
+DROP FUNCTION IF EXISTS deployment_plan_v2_child_seal_guard();
 
+DROP TRIGGER IF EXISTS DeploymentPlan_v2_sealed_commit_guard
+  ON DeploymentPlan;
+DROP FUNCTION IF EXISTS deployment_plan_v2_sealed_commit_guard();
 DROP TRIGGER IF EXISTS DeploymentPlan_v2_immutable_guard ON DeploymentPlan;
 DROP FUNCTION IF EXISTS deployment_plan_v2_immutable_guard();
 
@@ -35,7 +70,11 @@ DROP TABLE IF EXISTS DeploymentPlanStepEdge;
 DROP INDEX IF EXISTS DeploymentPlanResolvedRequirement_plan_order;
 DROP TABLE IF EXISTS DeploymentPlanResolvedRequirement;
 
+DROP INDEX IF EXISTS DeploymentPlanDraftAuditEvent_lineage;
+DROP TABLE IF EXISTS DeploymentPlanDraftAuditEvent;
+
 DROP INDEX IF EXISTS DeploymentPlan_v2_placement;
+DROP INDEX IF EXISTS DeploymentPlan_v2_supersedes_unique;
 DROP INDEX IF EXISTS DeploymentPlan_v2_draft_unique;
 
 ALTER TABLE DeploymentPlan
@@ -44,6 +83,7 @@ ALTER TABLE DeploymentPlan
   DROP CONSTRAINT IF EXISTS deploymentplan_config_unit_fk,
   DROP CONSTRAINT IF EXISTS deploymentplan_unit_fk,
   DROP CONSTRAINT IF EXISTS deploymentplan_draft_fk,
+  DROP CONSTRAINT IF EXISTS deploymentplan_publisher_organization_fk,
   DROP CONSTRAINT IF EXISTS deploymentplan_protocol_version_check,
   DROP CONSTRAINT IF EXISTS deploymentplan_plan_schema_check,
   DROP COLUMN IF EXISTS supersede_reason,
@@ -52,7 +92,9 @@ ALTER TABLE DeploymentPlan
   DROP COLUMN IF EXISTS target_config_snapshot_id,
   DROP COLUMN IF EXISTS deployment_unit_id,
   DROP COLUMN IF EXISTS draft_id,
-  DROP COLUMN IF EXISTS plan_schema;
+  DROP COLUMN IF EXISTS plan_schema,
+  DROP COLUMN IF EXISTS published_by_user_account_id,
+  DROP COLUMN IF EXISTS sealed_at;
 
 DROP INDEX IF EXISTS DeploymentPlanDraft_placement;
 DROP INDEX IF EXISTS DeploymentPlanDraft_organization_updated;

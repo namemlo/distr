@@ -32,6 +32,10 @@ func ResolveTargetRequirements(
 		}}
 	}
 	input := draft.ResolutionInput
+	if sizeIssues := validateTargetPlanSize(*input); len(sizeIssues) > 0 {
+		sortValidationIssues(sizeIssues)
+		return nil, sizeIssues
+	}
 	requirements := slices.Clone(input.Requirements)
 	slices.SortFunc(requirements, func(a, b types.TargetRequirement) int {
 		return strings.Compare(a.Key, b.Key)
@@ -147,6 +151,11 @@ func ValidatePlanDraft(ctx context.Context, draft types.PlanDraft) []types.Valid
 		return issues
 	}
 	input := draft.ResolutionInput
+	issues = append(issues, validateTargetPlanSize(*input)...)
+	if len(issues) > 0 {
+		sortValidationIssues(issues)
+		return deduplicateValidationIssues(issues)
+	}
 	issues = append(issues, validatePlacement(draft, *input)...)
 	issues = append(issues, validateTargetConfig(draft, *input)...)
 	issues = append(issues, validateReleasePins(draft, *input)...)
@@ -343,14 +352,13 @@ func validateTargetConfig(
 			Message: "target config snapshot checksum is not canonical sha256",
 		})
 	}
-	for _, platform := range normalizedStrings(input.RequiredPlatforms) {
-		if platform != strings.TrimSpace(config.TargetPlatform) {
-			issues = append(issues, types.ValidationIssue{
-				Code: "target_platform_mismatch", Field: "targetConfigSnapshotId",
-				Message: "target config platform does not satisfy the product release",
-			})
-			break
-		}
+	requiredPlatforms := normalizedStrings(input.RequiredPlatforms)
+	if len(requiredPlatforms) > 0 &&
+		!slices.Contains(requiredPlatforms, strings.TrimSpace(config.TargetPlatform)) {
+		issues = append(issues, types.ValidationIssue{
+			Code: "target_platform_mismatch", Field: "targetConfigSnapshotId",
+			Message: "target config platform does not satisfy the product release",
+		})
 	}
 	for _, fact := range input.Config.VerificationFacts {
 		if !fact.Verified ||

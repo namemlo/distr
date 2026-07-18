@@ -35,7 +35,9 @@ type CreateDeploymentPlanRequest struct {
 type DeploymentPlan struct {
 	ID                         uuid.UUID                       `db:"id" json:"id"`
 	CreatedAt                  time.Time                       `db:"created_at" json:"createdAt"`
+	SealedAt                   *time.Time                      `db:"sealed_at" json:"sealedAt,omitempty"`
 	OrganizationID             uuid.UUID                       `db:"organization_id" json:"organizationId"`
+	PublishedByUserAccountID   *uuid.UUID                      `db:"published_by_user_account_id" json:"publishedByUserAccountId,omitempty"`
 	ApplicationID              uuid.UUID                       `db:"application_id" json:"applicationId"`
 	ReleaseBundleID            uuid.UUID                       `db:"release_bundle_id" json:"releaseBundleId"`
 	ChannelID                  uuid.UUID                       `db:"channel_id" json:"channelId"`

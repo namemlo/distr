@@ -10,6 +10,8 @@ func DeploymentPlanDraftToAPI(draft types.PlanDraft) api.DeploymentPlanDraft {
 		ID:                            draft.ID,
 		CreatedAt:                     draft.CreatedAt,
 		UpdatedAt:                     draft.UpdatedAt,
+		CreatedByUserAccountID:        draft.CreatedByUserAccountID,
+		UpdatedByUserAccountID:        draft.UpdatedByUserAccountID,
 		Revision:                      draft.Revision,
 		ProductReleaseID:              draft.ProductReleaseID,
 		DeploymentUnitID:              draft.DeploymentUnitID,

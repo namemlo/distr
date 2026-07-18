@@ -19,6 +19,8 @@ type PlanDraft struct {
 	CreatedAt                     time.Time            `db:"created_at" json:"createdAt"`
 	UpdatedAt                     time.Time            `db:"updated_at" json:"updatedAt"`
 	OrganizationID                uuid.UUID            `db:"organization_id" json:"organizationId"`
+	CreatedByUserAccountID        uuid.UUID            `db:"created_by_user_account_id" json:"createdByUserAccountId"`
+	UpdatedByUserAccountID        uuid.UUID            `db:"updated_by_user_account_id" json:"updatedByUserAccountId"`
 	Revision                      int64                `db:"revision" json:"revision"`
 	ProductReleaseID              uuid.UUID            `db:"product_release_id" json:"productReleaseId"`
 	DeploymentUnitID              uuid.UUID            `db:"deployment_unit_id" json:"deploymentUnitId"`
@@ -79,10 +81,39 @@ type TargetConfigBinding struct {
 }
 
 type ConfigVerificationFact struct {
-	ObjectKey        string `json:"objectKey"`
-	Checksum         string `json:"checksum"`
-	ObservedChecksum string `json:"observedChecksum,omitempty"`
-	Verified         bool   `json:"verified"`
+	ObjectKey         string `json:"objectKey"`
+	Reference         string `json:"reference,omitempty"`
+	VersionID         string `json:"versionId,omitempty"`
+	MediaType         string `json:"mediaType,omitempty"`
+	SizeBytes         int64  `json:"sizeBytes,omitempty"`
+	Checksum          string `json:"checksum"`
+	ObservedReference string `json:"observedReference,omitempty"`
+	ObservedVersionID string `json:"observedVersionId,omitempty"`
+	ObservedMediaType string `json:"observedMediaType,omitempty"`
+	ObservedSizeBytes int64  `json:"observedSizeBytes,omitempty"`
+	ObservedChecksum  string `json:"observedChecksum,omitempty"`
+	Verified          bool   `json:"verified"`
+	VerificationCode  string `json:"verificationCode"`
+}
+
+// TargetPlanConfigObject mirrors the immutable PR-058 object identity without
+// importing the later stack package. PR-058 supplies an adapter to the object
+// store verifier when the numbered stack is rebased.
+type TargetPlanConfigObject struct {
+	Key       string `json:"key"`
+	Reference string `json:"reference"`
+	VersionID string `json:"versionId,omitempty"`
+	MediaType string `json:"mediaType"`
+	SizeBytes int64  `json:"sizeBytes"`
+	Checksum  string `json:"checksum"`
+}
+
+type TargetPlanConfigObservation struct {
+	Reference string
+	VersionID string
+	MediaType string
+	SizeBytes int64
+	Checksum  string
 }
 
 type ConfigComponentBinding struct {

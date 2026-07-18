@@ -24,6 +24,8 @@ const deploymentPlanDraftOutputExpr = `
 	d.created_at,
 	d.updated_at,
 	d.organization_id,
+	d.created_by_user_account_id,
+	d.updated_by_user_account_id,
 	d.revision,
 	d.product_release_id,
 	d.deployment_unit_id,
@@ -42,53 +44,81 @@ func CreateDeploymentPlanDraft(
 	ctx context.Context,
 	draft *types.PlanDraft,
 ) (*types.PlanDraft, error) {
+	if draft != nil && draft.UpdatedByUserAccountID == uuid.Nil {
+		draft.UpdatedByUserAccountID = draft.CreatedByUserAccountID
+	}
 	if err := validateDeploymentPlanDraftWrite(draft); err != nil {
 		return nil, err
+	}
+	if draft.CreatedByUserAccountID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("createdByUserAccountId is required")
 	}
 	if draft.ID == uuid.Nil {
 		draft.ID = uuid.New()
 	}
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		INSERT INTO DeploymentPlanDraft AS d (
-			id,
-			organization_id,
-			product_release_id,
-			deployment_unit_id,
-			environment_assignment_id,
-			target_config_snapshot_id,
-			protocol_version,
-			supersedes_deployment_plan_id,
-			supersede_reason
-		) VALUES (
-			@id,
-			@organizationID,
-			@productReleaseID,
-			@deploymentUnitID,
-			@environmentAssignmentID,
-			@targetConfigSnapshotID,
-			@protocolVersion,
-			@supersedesDeploymentPlanID,
-			@supersedeReason
+	draft.UpdatedByUserAccountID = draft.CreatedByUserAccountID
+	var created types.PlanDraft
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		rows, err := internalctx.GetDb(txCtx).Query(txCtx, `
+			INSERT INTO DeploymentPlanDraft AS d (
+				id,
+				organization_id,
+				created_by_user_account_id,
+				updated_by_user_account_id,
+				product_release_id,
+				deployment_unit_id,
+				environment_assignment_id,
+				target_config_snapshot_id,
+				protocol_version,
+				supersedes_deployment_plan_id,
+				supersede_reason
+			) VALUES (
+				@id,
+				@organizationID,
+				@createdByUserAccountID,
+				@updatedByUserAccountID,
+				@productReleaseID,
+				@deploymentUnitID,
+				@environmentAssignmentID,
+				@targetConfigSnapshotID,
+				@protocolVersion,
+				@supersedesDeploymentPlanID,
+				@supersedeReason
+			)
+			RETURNING `+deploymentPlanDraftOutputExpr,
+			pgx.NamedArgs{
+				"id": draft.ID, "organizationID": draft.OrganizationID,
+				"createdByUserAccountID":     draft.CreatedByUserAccountID,
+				"updatedByUserAccountID":     draft.UpdatedByUserAccountID,
+				"productReleaseID":           draft.ProductReleaseID,
+				"deploymentUnitID":           draft.DeploymentUnitID,
+				"environmentAssignmentID":    draft.EnvironmentAssignmentID,
+				"targetConfigSnapshotID":     draft.TargetConfigSnapshotID,
+				"protocolVersion":            draft.ProtocolVersion,
+				"supersedesDeploymentPlanID": draft.SupersedesDeploymentPlanID,
+				"supersedeReason":            strings.TrimSpace(draft.SupersedeReason),
+			},
 		)
-		RETURNING `+deploymentPlanDraftOutputExpr,
-		pgx.NamedArgs{
-			"id":                         draft.ID,
-			"organizationID":             draft.OrganizationID,
-			"productReleaseID":           draft.ProductReleaseID,
-			"deploymentUnitID":           draft.DeploymentUnitID,
-			"environmentAssignmentID":    draft.EnvironmentAssignmentID,
-			"targetConfigSnapshotID":     draft.TargetConfigSnapshotID,
-			"protocolVersion":            draft.ProtocolVersion,
-			"supersedesDeploymentPlanID": draft.SupersedesDeploymentPlanID,
-			"supersedeReason":            strings.TrimSpace(draft.SupersedeReason),
-		},
-	)
+		if err != nil {
+			return mapDeploymentPlanWriteError("create draft", err)
+		}
+		created, err = pgx.CollectExactlyOneRow(
+			rows,
+			pgx.RowToStructByName[types.PlanDraft],
+		)
+		if err != nil {
+			return mapDeploymentPlanWriteError("collect created draft", err)
+		}
+		return insertDeploymentPlanDraftAuditEvent(
+			txCtx,
+			created,
+			"CREATED",
+			nil,
+			created.CreatedByUserAccountID,
+		)
+	})
 	if err != nil {
-		return nil, mapDeploymentPlanWriteError("create draft", err)
-	}
-	created, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.PlanDraft])
-	if err != nil {
-		return nil, mapDeploymentPlanWriteError("collect created draft", err)
+		return nil, err
 	}
 	return &created, nil
 }
@@ -104,58 +134,82 @@ func UpdateDeploymentPlanDraft(
 	if draft.ID == uuid.Nil {
 		return nil, apierrors.NewBadRequest("id is required")
 	}
+	if draft.UpdatedByUserAccountID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("updatedByUserAccountId is required")
+	}
 	if expectedRevision < 1 {
 		return nil, apierrors.NewBadRequest("expectedRevision must be positive")
 	}
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		UPDATE DeploymentPlanDraft AS d
-		SET product_release_id = @productReleaseID,
-		    deployment_unit_id = @deploymentUnitID,
-		    environment_assignment_id = @environmentAssignmentID,
-		    target_config_snapshot_id = @targetConfigSnapshotID,
-		    protocol_version = @protocolVersion,
-		    supersedes_deployment_plan_id = @supersedesDeploymentPlanID,
-		    supersede_reason = @supersedeReason,
-		    revision = d.revision + 1,
-		    preview_checksum = '',
-		    preview_payload = NULL
-		WHERE d.id = @id
-		  AND d.organization_id = @organizationID
-		  AND d.revision = @expectedRevision
-		RETURNING `+deploymentPlanDraftOutputExpr,
-		pgx.NamedArgs{
-			"id":                         draft.ID,
-			"organizationID":             draft.OrganizationID,
-			"expectedRevision":           expectedRevision,
-			"productReleaseID":           draft.ProductReleaseID,
-			"deploymentUnitID":           draft.DeploymentUnitID,
-			"environmentAssignmentID":    draft.EnvironmentAssignmentID,
-			"targetConfigSnapshotID":     draft.TargetConfigSnapshotID,
-			"protocolVersion":            draft.ProtocolVersion,
-			"supersedesDeploymentPlanID": draft.SupersedesDeploymentPlanID,
-			"supersedeReason":            strings.TrimSpace(draft.SupersedeReason),
-		},
-	)
-	if err != nil {
-		return nil, mapDeploymentPlanWriteError("update draft", err)
-	}
-	updated, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.PlanDraft])
-	if errors.Is(err, pgx.ErrNoRows) {
-		existing, getErr := GetDeploymentPlanDraft(ctx, draft.ID, draft.OrganizationID)
-		if errors.Is(getErr, apierrors.ErrNotFound) {
-			return nil, apierrors.ErrNotFound
+	var updated types.PlanDraft
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		rows, err := internalctx.GetDb(txCtx).Query(txCtx, `
+			UPDATE DeploymentPlanDraft AS d
+			SET product_release_id = @productReleaseID,
+			    deployment_unit_id = @deploymentUnitID,
+			    environment_assignment_id = @environmentAssignmentID,
+			    target_config_snapshot_id = @targetConfigSnapshotID,
+			    protocol_version = @protocolVersion,
+			    supersedes_deployment_plan_id = @supersedesDeploymentPlanID,
+			    supersede_reason = @supersedeReason,
+			    updated_by_user_account_id = @updatedByUserAccountID,
+			    revision = d.revision + 1,
+			    preview_checksum = '',
+			    preview_payload = NULL
+			WHERE d.id = @id
+			  AND d.organization_id = @organizationID
+			  AND d.revision = @expectedRevision
+			RETURNING `+deploymentPlanDraftOutputExpr,
+			pgx.NamedArgs{
+				"id": draft.ID, "organizationID": draft.OrganizationID,
+				"expectedRevision":           expectedRevision,
+				"updatedByUserAccountID":     draft.UpdatedByUserAccountID,
+				"productReleaseID":           draft.ProductReleaseID,
+				"deploymentUnitID":           draft.DeploymentUnitID,
+				"environmentAssignmentID":    draft.EnvironmentAssignmentID,
+				"targetConfigSnapshotID":     draft.TargetConfigSnapshotID,
+				"protocolVersion":            draft.ProtocolVersion,
+				"supersedesDeploymentPlanID": draft.SupersedesDeploymentPlanID,
+				"supersedeReason":            strings.TrimSpace(draft.SupersedeReason),
+			},
+		)
+		if err != nil {
+			return mapDeploymentPlanWriteError("update draft", err)
 		}
-		if getErr != nil {
-			return nil, getErr
+		updated, err = pgx.CollectExactlyOneRow(
+			rows,
+			pgx.RowToStructByName[types.PlanDraft],
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			existing, getErr := GetDeploymentPlanDraft(
+				txCtx,
+				draft.ID,
+				draft.OrganizationID,
+			)
+			if errors.Is(getErr, apierrors.ErrNotFound) {
+				return apierrors.ErrNotFound
+			}
+			if getErr != nil {
+				return getErr
+			}
+			return apierrors.NewConflict(fmt.Sprintf(
+				"deployment plan draft revision mismatch: expected %d, current %d",
+				expectedRevision,
+				existing.Revision,
+			))
 		}
-		return nil, apierrors.NewConflict(fmt.Sprintf(
-			"deployment plan draft revision mismatch: expected %d, current %d",
-			expectedRevision,
-			existing.Revision,
-		))
-	}
+		if err != nil {
+			return mapDeploymentPlanWriteError("collect updated draft", err)
+		}
+		return insertDeploymentPlanDraftAuditEvent(
+			txCtx,
+			updated,
+			"UPDATED",
+			nil,
+			updated.UpdatedByUserAccountID,
+		)
+	})
 	if err != nil {
-		return nil, mapDeploymentPlanWriteError("collect updated draft", err)
+		return nil, err
 	}
 	return &updated, nil
 }
@@ -205,18 +259,33 @@ func ValidateDeploymentPlanDraft(
 	id uuid.UUID,
 	organizationID uuid.UUID,
 ) (*types.PlanDraftValidation, error) {
+	return ValidateDeploymentPlanDraftWithVerifier(
+		ctx,
+		id,
+		organizationID,
+		NewUnavailableTargetConfigObjectVerifier(),
+	)
+}
+
+func ValidateDeploymentPlanDraftWithVerifier(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+	verifier TargetConfigObjectVerifier,
+) (*types.PlanDraftValidation, error) {
 	draft, err := GetDeploymentPlanDraft(ctx, id, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	return validateDeploymentPlanDraft(ctx, draft)
+	return validateDeploymentPlanDraft(ctx, draft, verifier)
 }
 
 func validateDeploymentPlanDraft(
 	ctx context.Context,
 	draft *types.PlanDraft,
+	verifier TargetConfigObjectVerifier,
 ) (*types.PlanDraftValidation, error) {
-	input, err := loadPlanResolutionInput(ctx, *draft)
+	input, err := loadPlanResolutionInput(ctx, *draft, verifier)
 	if err != nil {
 		return nil, err
 	}
@@ -264,11 +333,34 @@ func PublishTargetDeploymentPlan(
 	expectedRevision int64,
 	expectedPreviewChecksum string,
 ) (*types.DeploymentPlan, error) {
+	return PublishTargetDeploymentPlanWithVerifier(
+		ctx,
+		draftID,
+		organizationID,
+		expectedRevision,
+		expectedPreviewChecksum,
+		NewUnavailableTargetConfigObjectVerifier(),
+		uuid.Nil,
+	)
+}
+
+func PublishTargetDeploymentPlanWithVerifier(
+	ctx context.Context,
+	draftID uuid.UUID,
+	organizationID uuid.UUID,
+	expectedRevision int64,
+	expectedPreviewChecksum string,
+	verifier TargetConfigObjectVerifier,
+	publisherUserAccountID uuid.UUID,
+) (*types.DeploymentPlan, error) {
 	if expectedRevision < 1 {
 		return nil, apierrors.NewBadRequest("expectedRevision must be positive")
 	}
 	if !targetPlanChecksumPattern.MatchString(expectedPreviewChecksum) {
 		return nil, apierrors.NewBadRequest("expectedPreviewChecksum must be lowercase sha256")
+	}
+	if publisherUserAccountID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("publisherUserAccountId is required")
 	}
 	var published *types.DeploymentPlan
 	err := RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
@@ -296,7 +388,7 @@ func PublishTargetDeploymentPlan(
 				draft.Revision,
 			))
 		}
-		validation, err := validateDeploymentPlanDraft(txCtx, draft)
+		validation, err := validateDeploymentPlanDraft(txCtx, draft, verifier)
 		if err != nil {
 			return err
 		}
@@ -308,7 +400,12 @@ func PublishTargetDeploymentPlan(
 				"deployment plan preview changed; validate the current draft and retry",
 			)
 		}
-		plan, err := publishValidatedTargetPlan(txCtx, *draft, *validation)
+		plan, err := publishValidatedTargetPlan(
+			txCtx,
+			*draft,
+			*validation,
+			publisherUserAccountID,
+		)
 		if err != nil {
 			return err
 		}
@@ -337,6 +434,7 @@ func publishValidatedTargetPlan(
 	ctx context.Context,
 	draft types.PlanDraft,
 	validation types.PlanDraftValidation,
+	publisherUserAccountID uuid.UUID,
 ) (*types.DeploymentPlan, error) {
 	bundle, _, err := GetProductRelease(ctx, draft.ProductReleaseID, draft.OrganizationID)
 	if err != nil {
@@ -351,21 +449,18 @@ func publishValidatedTargetPlan(
 	if err != nil {
 		return nil, err
 	}
-	status := types.DeploymentPlanStatusReady
-	issues := []types.DeploymentPlanIssue{}
-	if draft.ProtocolVersion == types.DeploymentPlanProtocolV2 {
-		status = types.DeploymentPlanStatusBlocked
-		issues = append(issues, types.DeploymentPlanIssue{
-			ID: uuid.New(), OrganizationID: draft.OrganizationID,
-			Severity: types.DeploymentPlanIssueSeverityBlocker,
-			Code:     "protocol_v2_execution_deferred", Field: "protocolVersion",
-			Message: "protocol v2 execution remains disabled until the fenced executor protocol is installed",
-		})
-	}
+	status := types.DeploymentPlanStatusBlocked
+	issues := []types.DeploymentPlanIssue{{
+		ID: uuid.New(), OrganizationID: draft.OrganizationID,
+		Severity: types.DeploymentPlanIssueSeverityBlocker,
+		Code:     "target_plan_execution_deferred", Field: "planSchema",
+		Message: "target deployment plan execution remains disabled until PR-075 installs the fenced executor",
+	}}
 	planTargetID := uuid.New()
 	plan := &types.DeploymentPlan{
 		ID:                         uuid.New(),
 		OrganizationID:             draft.OrganizationID,
+		PublishedByUserAccountID:   &publisherUserAccountID,
 		ApplicationID:              bundle.ApplicationID,
 		ReleaseBundleID:            bundle.ID,
 		ChannelID:                  bundle.ChannelID,
@@ -393,6 +488,9 @@ func publishValidatedTargetPlan(
 		ResolvedRequirements: validation.Resolutions,
 		StepEdges:            validation.Graph.Edges,
 	}
+	if err := lockAndValidateTargetPlanSupersession(ctx, *plan, target.ID); err != nil {
+		return nil, err
+	}
 	if err := insertPublishedTargetPlan(ctx, plan); err != nil {
 		return nil, err
 	}
@@ -411,6 +509,19 @@ func publishValidatedTargetPlan(
 	if err := insertDeploymentPlanStepEdges(ctx, *plan); err != nil {
 		return nil, err
 	}
+	draft.PreviewChecksum = validation.PreviewChecksum
+	if err := insertDeploymentPlanDraftAuditEvent(
+		ctx,
+		draft,
+		"PUBLISHED",
+		&plan.ID,
+		publisherUserAccountID,
+	); err != nil {
+		return nil, err
+	}
+	if err := sealPublishedTargetPlan(ctx, plan.ID, plan.OrganizationID); err != nil {
+		return nil, err
+	}
 	return getDeploymentPlan(ctx, plan.ID, plan.OrganizationID)
 }
 
@@ -419,6 +530,7 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 		INSERT INTO DeploymentPlan (
 			id,
 			organization_id,
+			published_by_user_account_id,
 			release_bundle_id,
 			application_id,
 			channel_id,
@@ -439,6 +551,7 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 		) VALUES (
 			@id,
 			@organizationID,
+			@publishedByUserAccountID,
 			@releaseBundleID,
 			@applicationID,
 			@channelID,
@@ -460,7 +573,8 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 		RETURNING `+deploymentPlanOutputExpr,
 		pgx.NamedArgs{
 			"id": plan.ID, "organizationID": plan.OrganizationID,
-			"releaseBundleID": plan.ReleaseBundleID, "applicationID": plan.ApplicationID,
+			"publishedByUserAccountID": plan.PublishedByUserAccountID,
+			"releaseBundleID":          plan.ReleaseBundleID, "applicationID": plan.ApplicationID,
 			"channelID": plan.ChannelID, "environmentID": plan.EnvironmentID,
 			"processSnapshotID": plan.ProcessSnapshotID, "variableSnapshotID": plan.VariableSnapshotID,
 			"releaseContract": plan.ReleaseContract, "planSchema": plan.PlanSchema,
@@ -537,6 +651,195 @@ func getDeploymentPlanByDraftID(
 	return &plan, nil
 }
 
+func lockAndValidateTargetPlanSupersession(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+	deploymentTargetID uuid.UUID,
+) error {
+	if plan.SupersedesDeploymentPlanID == nil {
+		return nil
+	}
+	var (
+		planSchema          string
+		deploymentUnitID    *uuid.UUID
+		environmentID       uuid.UUID
+		applicationID       uuid.UUID
+		sealed              bool
+		predecessorTargetID *uuid.UUID
+		alreadySuperseded   bool
+	)
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT predecessor.plan_schema,
+		       predecessor.deployment_unit_id,
+		       predecessor.environment_id,
+		       predecessor.application_id,
+		       predecessor.sealed_at IS NOT NULL,
+		       (
+		         SELECT target.deployment_target_id
+		         FROM DeploymentPlanTarget target
+		         WHERE target.deployment_plan_id = predecessor.id
+		           AND target.organization_id = predecessor.organization_id
+		         ORDER BY target.sort_order, target.id
+		         LIMIT 1
+		       ),
+		       EXISTS (
+		         SELECT 1
+		         FROM DeploymentPlan successor
+		         WHERE successor.supersedes_deployment_plan_id = predecessor.id
+		           AND successor.organization_id = predecessor.organization_id
+		       )
+		FROM DeploymentPlan predecessor
+		WHERE predecessor.id = @predecessorID
+		  AND predecessor.organization_id = @organizationID
+		FOR UPDATE OF predecessor`,
+		pgx.NamedArgs{
+			"predecessorID":  *plan.SupersedesDeploymentPlanID,
+			"organizationID": plan.OrganizationID,
+		},
+	).Scan(
+		&planSchema,
+		&deploymentUnitID,
+		&environmentID,
+		&applicationID,
+		&sealed,
+		&predecessorTargetID,
+		&alreadySuperseded,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apierrors.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("could not lock superseded target deployment plan: %w", err)
+	}
+	if planSchema != types.TargetDeploymentPlanSchemaV2 || !sealed {
+		return apierrors.NewConflict(
+			"superseded deployment plan must be a sealed target plan",
+		)
+	}
+	if deploymentUnitID == nil ||
+		plan.DeploymentUnitID == nil ||
+		*deploymentUnitID != *plan.DeploymentUnitID ||
+		environmentID != plan.EnvironmentID ||
+		applicationID != plan.ApplicationID ||
+		predecessorTargetID == nil ||
+		*predecessorTargetID != deploymentTargetID {
+		return apierrors.NewConflict(
+			"superseding deployment plan must preserve unit, environment, application, and target",
+		)
+	}
+	if alreadySuperseded {
+		return apierrors.NewConflict(
+			"superseded deployment plan is not the current lineage tip",
+		)
+	}
+	return nil
+}
+
+func sealPublishedTargetPlan(
+	ctx context.Context,
+	planID uuid.UUID,
+	organizationID uuid.UUID,
+) error {
+	var sealed bool
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		UPDATE DeploymentPlan
+		SET sealed_at = now()
+		WHERE id = @id
+		  AND organization_id = @organizationID
+		  AND plan_schema = @planSchema
+		  AND status = @status
+		  AND sealed_at IS NULL
+		RETURNING sealed_at IS NOT NULL`,
+		pgx.NamedArgs{
+			"id": planID, "organizationID": organizationID,
+			"planSchema": types.TargetDeploymentPlanSchemaV2,
+			"status":     types.DeploymentPlanStatusBlocked,
+		},
+	).Scan(&sealed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apierrors.NewConflict("target deployment plan could not be sealed")
+	}
+	if err != nil {
+		return fmt.Errorf("could not seal target deployment plan: %w", err)
+	}
+	if !sealed {
+		return apierrors.NewConflict("target deployment plan could not be sealed")
+	}
+	return nil
+}
+
+func insertDeploymentPlanDraftAuditEvent(
+	ctx context.Context,
+	draft types.PlanDraft,
+	eventType string,
+	publishedPlanID *uuid.UUID,
+	actorUserAccountID uuid.UUID,
+) error {
+	payload, err := json.Marshal(struct {
+		DraftID                    uuid.UUID  `json:"draftId"`
+		Revision                   int64      `json:"revision"`
+		EventType                  string     `json:"eventType"`
+		ProductReleaseID           uuid.UUID  `json:"productReleaseId"`
+		DeploymentUnitID           uuid.UUID  `json:"deploymentUnitId"`
+		EnvironmentAssignmentID    uuid.UUID  `json:"environmentAssignmentId"`
+		TargetConfigSnapshotID     uuid.UUID  `json:"targetConfigSnapshotId"`
+		ProtocolVersion            string     `json:"protocolVersion"`
+		SupersedesDeploymentPlanID *uuid.UUID `json:"supersedesDeploymentPlanId,omitempty"`
+		SupersedeReason            string     `json:"supersedeReason,omitempty"`
+		PreviewChecksum            string     `json:"previewChecksum,omitempty"`
+		PublishedDeploymentPlanID  *uuid.UUID `json:"publishedDeploymentPlanId,omitempty"`
+	}{
+		DraftID: draft.ID, Revision: draft.Revision, EventType: eventType,
+		ProductReleaseID:           draft.ProductReleaseID,
+		DeploymentUnitID:           draft.DeploymentUnitID,
+		EnvironmentAssignmentID:    draft.EnvironmentAssignmentID,
+		TargetConfigSnapshotID:     draft.TargetConfigSnapshotID,
+		ProtocolVersion:            draft.ProtocolVersion,
+		SupersedesDeploymentPlanID: draft.SupersedesDeploymentPlanID,
+		SupersedeReason:            strings.TrimSpace(draft.SupersedeReason),
+		PreviewChecksum:            draft.PreviewChecksum,
+		PublishedDeploymentPlanID:  publishedPlanID,
+	})
+	if err != nil {
+		return fmt.Errorf("could not marshal deployment plan draft audit event: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO DeploymentPlanDraftAuditEvent (
+			id,
+			deployment_plan_draft_id,
+			organization_id,
+			revision,
+			event_type,
+			actor_user_account_id,
+			published_deployment_plan_id,
+			event_payload,
+			event_checksum
+		) VALUES (
+			@id,
+			@draftID,
+			@organizationID,
+			@revision,
+			@eventType,
+			@actorUserAccountID,
+			@publishedPlanID,
+			@eventPayload,
+			@eventChecksum
+		)`,
+		pgx.NamedArgs{
+			"id": uuid.New(), "draftID": draft.ID,
+			"organizationID": draft.OrganizationID, "revision": draft.Revision,
+			"eventType": eventType, "actorUserAccountID": actorUserAccountID,
+			"publishedPlanID": publishedPlanID, "eventPayload": payload,
+			"eventChecksum": "sha256:" + hex.EncodeToString(sum[:]),
+		},
+	)
+	if err != nil {
+		return mapDeploymentPlanWriteError("insert draft audit event", err)
+	}
+	return nil
+}
+
 func validateDeploymentPlanDraftWrite(draft *types.PlanDraft) error {
 	if draft == nil {
 		return apierrors.NewBadRequest("deployment plan draft is required")
@@ -555,6 +858,9 @@ func validateDeploymentPlanDraftWrite(draft *types.PlanDraft) error {
 		if field.value == uuid.Nil {
 			return apierrors.NewBadRequest(field.name + " is required")
 		}
+	}
+	if draft.UpdatedByUserAccountID == uuid.Nil {
+		return apierrors.NewBadRequest("updatedByUserAccountId is required")
 	}
 	if draft.ProtocolVersion != types.DeploymentPlanProtocolV1 &&
 		draft.ProtocolVersion != types.DeploymentPlanProtocolV2 {
@@ -576,6 +882,7 @@ func validateDeploymentPlanDraftWrite(draft *types.PlanDraft) error {
 func loadPlanResolutionInput(
 	ctx context.Context,
 	draft types.PlanDraft,
+	verifier TargetConfigObjectVerifier,
 ) (*types.PlanResolutionInput, error) {
 	bundle, manifest, err := GetProductRelease(
 		ctx,
@@ -609,6 +916,7 @@ func loadPlanResolutionInput(
 		ctx,
 		draft.OrganizationID,
 		draft.TargetConfigSnapshotID,
+		verifier,
 	)
 	if err != nil {
 		return nil, err
@@ -653,6 +961,7 @@ func loadTargetConfigBinding(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	id uuid.UUID,
+	verifier TargetConfigObjectVerifier,
 ) (*types.TargetConfigBinding, error) {
 	var binding types.TargetConfigBinding
 	err := internalctx.GetDb(ctx).QueryRow(ctx, `
@@ -683,7 +992,12 @@ func loadTargetConfigBinding(
 		return nil, fmt.Errorf("could not query TargetConfigSnapshot plan binding: %w", err)
 	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT key, checksum
+		SELECT key,
+		       reference,
+		       version_id,
+		       media_type,
+		       size_bytes,
+		       checksum
 		FROM TargetConfigSnapshotObject
 		WHERE target_config_snapshot_id = @id
 		  AND organization_id = @organizationID
@@ -693,23 +1007,34 @@ func loadTargetConfigBinding(
 	if err != nil {
 		return nil, fmt.Errorf("could not query target config object facts: %w", err)
 	}
-	binding.VerificationFacts, err = pgx.CollectRows(
+	objects, err := pgx.CollectRows(
 		rows,
-		func(row pgx.CollectableRow) (types.ConfigVerificationFact, error) {
-			var fact types.ConfigVerificationFact
-			if scanErr := row.Scan(&fact.ObjectKey, &fact.Checksum); scanErr != nil {
-				return fact, scanErr
-			}
-			// The immutable snapshot checksum and its database-enforced object
-			// checksums are the frozen verification facts. Remote reachability
-			// is rechecked by execution preflight.
-			fact.ObservedChecksum = fact.Checksum
-			fact.Verified = true
-			return fact, nil
+		func(row pgx.CollectableRow) (types.TargetPlanConfigObject, error) {
+			var object types.TargetPlanConfigObject
+			scanErr := row.Scan(
+				&object.Key,
+				&object.Reference,
+				&object.VersionID,
+				&object.MediaType,
+				&object.SizeBytes,
+				&object.Checksum,
+			)
+			return object, scanErr
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not collect target config object facts: %w", err)
+	}
+	binding.VerificationFacts = make(
+		[]types.ConfigVerificationFact,
+		0,
+		len(objects),
+	)
+	for _, object := range objects {
+		binding.VerificationFacts = append(
+			binding.VerificationFacts,
+			verifyTargetPlanConfigObject(ctx, verifier, object),
+		)
 	}
 	rows, err = internalctx.GetDb(ctx).Query(ctx, `
 		SELECT definition.key,
@@ -770,51 +1095,73 @@ func loadTargetPlanReleasePins(
 	manifest types.ProductReleaseManifest,
 	platform string,
 ) ([]types.ComponentReleasePin, error) {
-	pins := make([]types.ComponentReleasePin, 0, len(manifest.Components))
+	if len(manifest.Components) > planning.MaxTargetPlanComponents {
+		return nil, apierrors.NewBadRequest("target plan exceeds the component limit")
+	}
+	releaseIDs := make([]uuid.UUID, 0, len(manifest.Components))
 	for _, component := range manifest.Components {
+		releaseIDs = append(releaseIDs, component.ComponentReleaseID)
+	}
+	type releasePlanFacts struct {
+		artifacts       []types.PinnedReleaseArtifact
+		provenanceFacts []types.ComponentProvenanceFact
+		verified        bool
+	}
+	factsByReleaseID := make(map[uuid.UUID]*releasePlanFacts, len(releaseIDs))
+	if len(releaseIDs) > 0 {
 		rows, err := internalctx.GetDb(ctx).Query(ctx, `
-			SELECT artifact.artifact_key,
+			SELECT artifact.release_bundle_id,
+			       artifact.artifact_key,
 			       artifact.artifact_type,
 			       artifact.media_type,
-		       artifact.manifest_digest,
-		       artifact.platform,
-		       artifact.platform_digest,
-		       verification.id,
-		       COALESCE(verification.evidence_digest, ''),
-		       COALESCE(verification.policy_checksum, ''),
-		       COALESCE(verification.trust_root_id::TEXT, '')
+			       artifact.manifest_digest,
+			       artifact.platform,
+			       artifact.platform_digest,
+			       verification.id,
+			       COALESCE(verification.evidence_digest, ''),
+			       COALESCE(verification.policy_checksum, ''),
+			       COALESCE(verification.trust_root_id::TEXT, '')
 			FROM ComponentReleaseArtifact artifact
-			LEFT JOIN ComponentReleaseEvidenceVerification verification
-			  ON verification.release_bundle_id = artifact.release_bundle_id
-			 AND verification.organization_id = artifact.organization_id
-			 AND verification.artifact_key = artifact.artifact_key
-			 AND verification.platform = artifact.platform
-			 AND verification.artifact_digest = artifact.platform_digest
-			WHERE artifact.release_bundle_id = @releaseBundleID
+			LEFT JOIN LATERAL (
+			  SELECT candidate.id,
+			         candidate.evidence_digest,
+			         candidate.policy_checksum,
+			         candidate.trust_root_id
+			  FROM ComponentReleaseEvidenceVerification candidate
+			  WHERE candidate.release_bundle_id = artifact.release_bundle_id
+			    AND candidate.organization_id = artifact.organization_id
+			    AND candidate.artifact_key = artifact.artifact_key
+			    AND candidate.platform = artifact.platform
+			    AND candidate.artifact_digest = artifact.platform_digest
+			  ORDER BY candidate.id DESC
+			  LIMIT 1
+			) verification ON true
+			WHERE artifact.release_bundle_id = ANY(@releaseBundleIDs)
 			  AND artifact.organization_id = @organizationID
 			  AND artifact.platform = @platform
-			ORDER BY artifact.artifact_key, artifact.platform`,
+			ORDER BY artifact.release_bundle_id,
+			         artifact.artifact_key,
+			         artifact.platform`,
 			pgx.NamedArgs{
-				"releaseBundleID": component.ComponentReleaseID,
-				"organizationID":  organizationID,
-				"platform":        platform,
+				"releaseBundleIDs": releaseIDs,
+				"organizationID":   organizationID,
+				"platform":         platform,
 			},
 		)
 		if err != nil {
-			return nil, fmt.Errorf("could not query component release plan artifacts: %w", err)
+			return nil, fmt.Errorf("could not batch query component release plan artifacts: %w", err)
 		}
-		artifacts := make([]types.PinnedReleaseArtifact, 0)
-		provenanceFacts := make([]types.ComponentProvenanceFact, 0)
-		provenanceVerified := true
 		for rows.Next() {
-			var artifact types.PinnedReleaseArtifact
 			var (
+				releaseID      uuid.UUID
+				artifact       types.PinnedReleaseArtifact
 				verificationID *uuid.UUID
 				evidenceDigest string
 				policyChecksum string
 				trustRootID    string
 			)
 			if err := rows.Scan(
+				&releaseID,
 				&artifact.Key,
 				&artifact.Type,
 				&artifact.MediaType,
@@ -828,29 +1175,47 @@ func loadTargetPlanReleasePins(
 			); err != nil {
 				return nil, fmt.Errorf("could not scan component release plan artifact: %w", err)
 			}
-			artifacts = append(artifacts, artifact)
+			facts := factsByReleaseID[releaseID]
+			if facts == nil {
+				facts = &releasePlanFacts{verified: true}
+				factsByReleaseID[releaseID] = facts
+			}
+			facts.artifacts = append(facts.artifacts, artifact)
 			if verificationID == nil {
-				provenanceVerified = false
+				facts.verified = false
 				continue
 			}
-			provenanceFacts = append(provenanceFacts, types.ComponentProvenanceFact{
-				VerificationID: *verificationID,
-				ArtifactKey:    artifact.Key,
-				Platform:       artifact.Platform,
-				ArtifactDigest: artifact.PlatformDigest,
-				EvidenceDigest: evidenceDigest,
-				PolicyChecksum: policyChecksum,
-				TrustRootID:    trustRootID,
-			})
+			facts.provenanceFacts = append(
+				facts.provenanceFacts,
+				types.ComponentProvenanceFact{
+					VerificationID: *verificationID,
+					ArtifactKey:    artifact.Key, Platform: artifact.Platform,
+					ArtifactDigest: artifact.PlatformDigest,
+					EvidenceDigest: evidenceDigest, PolicyChecksum: policyChecksum,
+					TrustRootID: trustRootID,
+				},
+			)
 		}
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("could not collect component release plan artifacts: %w", err)
 		}
-		if len(artifacts) == 0 {
-			provenanceVerified = false
+	}
+	pins := make([]types.ComponentReleasePin, 0, len(manifest.Components))
+	for _, component := range manifest.Components {
+		facts := factsByReleaseID[component.ComponentReleaseID]
+		artifacts := []types.PinnedReleaseArtifact{}
+		provenanceFacts := []types.ComponentProvenanceFact{}
+		provenanceVerified := false
+		if facts != nil {
+			artifacts = facts.artifacts
+			provenanceFacts = facts.provenanceFacts
+			provenanceVerified = facts.verified &&
+				len(artifacts) > 0 &&
+				len(provenanceFacts) == len(artifacts)
 		}
 		provenanceBindingChecksum := ""
-		if provenanceVerified && len(provenanceFacts) == len(artifacts) {
+		if provenanceVerified {
+			var err error
 			provenanceBindingChecksum, err = targetPlanFactChecksum(provenanceFacts)
 			if err != nil {
 				return nil, fmt.Errorf(
@@ -860,12 +1225,15 @@ func loadTargetPlanReleasePins(
 			}
 		}
 		pin := types.ComponentReleasePin{
-			ComponentKey: component.ComponentKey, ComponentReleaseID: component.ComponentReleaseID,
-			ReleaseChecksum: component.ComponentReleaseChecksum, Version: component.Version,
-			Platforms: slices.Clone(component.Platforms), Artifacts: artifacts,
+			ComponentKey:              component.ComponentKey,
+			ComponentReleaseID:        component.ComponentReleaseID,
+			ReleaseChecksum:           component.ComponentReleaseChecksum,
+			Version:                   component.Version,
+			Platforms:                 slices.Clone(component.Platforms),
+			Artifacts:                 slices.Clone(artifacts),
 			ProvenanceVerified:        provenanceVerified,
 			ProvenanceBindingChecksum: provenanceBindingChecksum,
-			ProvenanceFacts:           provenanceFacts,
+			ProvenanceFacts:           slices.Clone(provenanceFacts),
 			Migrations:                slices.Clone(component.Migrations),
 		}
 		if len(artifacts) == 1 {
@@ -964,25 +1332,42 @@ func loadObservedProviderCandidates(
 	organizationID uuid.UUID,
 	input types.PlanResolutionInput,
 ) ([]types.RequirementProviderCandidate, error) {
-	candidates := make([]types.RequirementProviderCandidate, 0)
+	if len(input.Requirements) > planning.MaxTargetPlanRequirements {
+		return nil, apierrors.NewBadRequest("target plan exceeds the requirement limit")
+	}
+	requirementsByCapability := make(
+		map[string][]types.TargetRequirement,
+		len(input.Requirements),
+	)
 	for _, requirement := range input.Requirements {
-		allowsExisting := slices.Contains(
+		if slices.Contains(
 			requirement.AllowedModes,
 			types.RequirementResolutionModePinnedExisting,
-		)
-		allowsShared := slices.Contains(
+		) || slices.Contains(
 			requirement.AllowedModes,
 			types.RequirementResolutionModeSharedProvider,
-		)
-		allowsExternal := slices.Contains(
+		) || slices.Contains(
 			requirement.AllowedModes,
 			types.RequirementResolutionModeApprovedExternal,
-		)
-		if !allowsExisting && !allowsShared && !allowsExternal {
-			continue
+		) {
+			requirementsByCapability[requirement.Capability] = append(
+				requirementsByCapability[requirement.Capability],
+				requirement,
+			)
 		}
-		rows, err := internalctx.GetDb(ctx).Query(ctx, `
-			SELECT release.id,
+	}
+	capabilities := make([]string, 0, len(requirementsByCapability))
+	for capability := range requirementsByCapability {
+		capabilities = append(capabilities, capability)
+	}
+	slices.Sort(capabilities)
+	if len(capabilities) == 0 {
+		return nil, nil
+	}
+	candidates := make([]types.RequirementProviderCandidate, 0)
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+			SELECT capability.name,
+			       release.id,
 			       capability.version_or_range,
 			       state.platform,
 			       release.canonical_checksum,
@@ -1098,7 +1483,7 @@ func loadObservedProviderCandidates(
 			 )
 			WHERE capability.organization_id = @organizationID
 			  AND capability.direction = 'provides'
-			  AND capability.name = @capability
+			  AND capability.name = ANY(@capabilities)
 			  AND (
 			    unit.id = @deploymentUnitID
 			    OR (
@@ -1118,76 +1503,74 @@ func loadObservedProviderCandidates(
 			    OR scope.delivery_model = 'external'
 			    OR instance.management_state = 'external'
 			  )
-			ORDER BY release.id, unit.id, instance.id, observation.id`,
-			pgx.NamedArgs{
-				"organizationID":         organizationID,
-				"effectiveAt":            input.EffectiveAt,
-				"capability":             requirement.Capability,
-				"deploymentUnitID":       input.Unit.ID,
-				"customerOrganizationID": input.Scope.CustomerOrganizationID,
-			},
+			ORDER BY capability.name,
+			         release.id,
+			         unit.id,
+			         instance.id,
+			         observation.id`,
+		pgx.NamedArgs{
+			"organizationID":         organizationID,
+			"effectiveAt":            input.EffectiveAt,
+			"capabilities":           capabilities,
+			"deploymentUnitID":       input.Unit.ID,
+			"customerOrganizationID": input.Scope.CustomerOrganizationID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not batch query observed target requirement providers: %w", err)
+	}
+	for rows.Next() {
+		var (
+			capabilityName            string
+			releaseID                 uuid.UUID
+			version                   string
+			platform                  string
+			releaseChecksum           string
+			unitID                    uuid.UUID
+			instanceID                uuid.UUID
+			subscriberChecksum        string
+			observationID             uuid.UUID
+			expectedVersion           int64
+			expectedChecksum          string
+			observedVersion           int64
+			observedChecksum          string
+			deliveryModel             types.DeliveryModel
+			managementState           types.RegistryManagementState
+			provenanceVerified        bool
+			provenanceBindingChecksum string
 		)
-		if err != nil {
-			return nil, fmt.Errorf("could not query observed target requirement providers: %w", err)
+		if err := rows.Scan(
+			&capabilityName,
+			&releaseID,
+			&version,
+			&platform,
+			&releaseChecksum,
+			&unitID,
+			&instanceID,
+			&subscriberChecksum,
+			&observationID,
+			&expectedVersion,
+			&expectedChecksum,
+			&observedVersion,
+			&observedChecksum,
+			&deliveryModel,
+			&managementState,
+			&provenanceVerified,
+			&provenanceBindingChecksum,
+		); err != nil {
+			return nil, fmt.Errorf("could not scan observed target requirement provider: %w", err)
 		}
-		for rows.Next() {
-			var (
-				releaseID                 uuid.UUID
-				version                   string
-				platform                  string
-				releaseChecksum           string
-				unitID                    uuid.UUID
-				instanceID                uuid.UUID
-				subscriberChecksum        string
-				observationID             uuid.UUID
-				expectedVersion           int64
-				expectedChecksum          string
-				observedVersion           int64
-				observedChecksum          string
-				deliveryModel             types.DeliveryModel
-				managementState           types.RegistryManagementState
-				provenanceVerified        bool
-				provenanceBindingChecksum string
+		for _, requirement := range requirementsByCapability[capabilityName] {
+			mode, componentInstanceID, allowed := observedProviderMode(
+				requirement,
+				unitID,
+				instanceID,
+				deliveryModel,
+				managementState,
+				input.Unit.ID,
 			)
-			if err := rows.Scan(
-				&releaseID,
-				&version,
-				&platform,
-				&releaseChecksum,
-				&unitID,
-				&instanceID,
-				&subscriberChecksum,
-				&observationID,
-				&expectedVersion,
-				&expectedChecksum,
-				&observedVersion,
-				&observedChecksum,
-				&deliveryModel,
-				&managementState,
-				&provenanceVerified,
-				&provenanceBindingChecksum,
-			); err != nil {
-				return nil, fmt.Errorf("could not scan observed target requirement provider: %w", err)
-			}
-			mode := types.RequirementResolutionModePinnedExisting
-			componentInstanceID := &instanceID
-			switch {
-			case deliveryModel == types.DeliveryModelExternal ||
-				managementState == types.RegistryManagementStateExternal:
-				if !allowsExternal {
-					continue
-				}
-				mode = types.RequirementResolutionModeApprovedExternal
-				componentInstanceID = nil
-			case unitID != input.Unit.ID:
-				if deliveryModel != types.DeliveryModelShared || !allowsShared {
-					continue
-				}
-				mode = types.RequirementResolutionModeSharedProvider
-			default:
-				if !allowsExisting {
-					continue
-				}
+			if !allowed {
+				continue
 			}
 			releaseIDCopy := releaseID
 			observationIDCopy := observationID
@@ -1211,9 +1594,9 @@ func loadObservedProviderCandidates(
 			}
 			candidates = append(candidates, candidate)
 		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("could not collect observed target requirement providers: %w", err)
-		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("could not collect observed target requirement providers: %w", err)
 	}
 	slices.SortFunc(candidates, func(a, b types.RequirementProviderCandidate) int {
 		if cmp := strings.Compare(a.RequirementKey, b.RequirementKey); cmp != 0 {
@@ -1228,6 +1611,43 @@ func loadObservedProviderCandidates(
 		return strings.Compare(a.ObservationID.String(), b.ObservationID.String())
 	})
 	return candidates, nil
+}
+
+func observedProviderMode(
+	requirement types.TargetRequirement,
+	unitID uuid.UUID,
+	instanceID uuid.UUID,
+	deliveryModel types.DeliveryModel,
+	managementState types.RegistryManagementState,
+	selectedUnitID uuid.UUID,
+) (types.RequirementResolutionMode, *uuid.UUID, bool) {
+	switch {
+	case deliveryModel == types.DeliveryModelExternal ||
+		managementState == types.RegistryManagementStateExternal:
+		return types.RequirementResolutionModeApprovedExternal, nil, slices.Contains(
+			requirement.AllowedModes,
+			types.RequirementResolutionModeApprovedExternal,
+		)
+	case unitID != selectedUnitID:
+		if deliveryModel != types.DeliveryModelShared ||
+			!slices.Contains(
+				requirement.AllowedModes,
+				types.RequirementResolutionModeSharedProvider,
+			) {
+			return "", nil, false
+		}
+		value := instanceID
+		return types.RequirementResolutionModeSharedProvider, &value, true
+	default:
+		if !slices.Contains(
+			requirement.AllowedModes,
+			types.RequirementResolutionModePinnedExisting,
+		) {
+			return "", nil, false
+		}
+		value := instanceID
+		return types.RequirementResolutionModePinnedExisting, &value, true
+	}
 }
 
 func buildTargetPlanCanonical(

@@ -106,8 +106,8 @@ func CreateTasksForDeploymentPlan(
 			tasks = existing
 			return nil
 		}
-		if plan.Status != types.DeploymentPlanStatusReady {
-			return apierrors.NewConflict("deployment plan must be READY before tasks can be created")
+		if err := validateDeploymentPlanTaskCreation(*plan); err != nil {
+			return err
 		}
 		lockGroups, err := getDeploymentPlanTaskResourceLockGroups(
 			ctx,
@@ -173,6 +173,18 @@ func CreateTasksForDeploymentPlan(
 		return nil, apierrors.NewConflict(deploymentPreflightFailureMessage(*failedPreflight))
 	}
 	return tasks, nil
+}
+
+func validateDeploymentPlanTaskCreation(plan types.DeploymentPlan) error {
+	if plan.PlanSchema == types.TargetDeploymentPlanSchemaV2 {
+		return apierrors.NewConflict(
+			"target deployment plan execution is disabled until PR-075",
+		)
+	}
+	if plan.Status != types.DeploymentPlanStatusReady {
+		return apierrors.NewConflict("deployment plan must be READY before tasks can be created")
+	}
+	return nil
 }
 
 func GetTasksByOrganizationID(ctx context.Context, orgID uuid.UUID) ([]types.Task, error) {

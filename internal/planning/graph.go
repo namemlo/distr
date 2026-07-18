@@ -41,6 +41,12 @@ func CanonicalizeTargetDeploymentPlan(
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal canonical target deployment plan: %w", err)
 	}
+	if len(payload) > MaxTargetPlanPayloadBytes {
+		return nil, "", fmt.Errorf(
+			"canonical target deployment plan exceeds payload limit of %d bytes",
+			MaxTargetPlanPayloadBytes,
+		)
+	}
 	sum := sha256.Sum256(payload)
 	return payload, "sha256:" + hex.EncodeToString(sum[:]), nil
 }
@@ -54,6 +60,9 @@ func BuildTargetPlanGraph(
 		return types.TargetPlanGraph{}, fmt.Errorf("resolution input is required")
 	}
 	input := draft.ResolutionInput
+	if issues := validateTargetPlanSize(*input); len(issues) > 0 {
+		return types.TargetPlanGraph{}, fmt.Errorf("%s", issues[0].Message)
+	}
 	steps := []types.TargetPlanStep{newTargetPlanStep(
 		"config:verify",
 		"Verify target configuration",
@@ -75,10 +84,11 @@ func BuildTargetPlanGraph(
 		"safe",
 		input.Config.CanonicalChecksum,
 		"all target config object checksums remain verified",
-		false,
+		true,
 	)}
 	edges := make([]types.DeploymentPlanStepEdge, 0)
 	pins := normalizedReleasePins(input.ReleasePins)
+	firstExecutableByComponent := make(map[string]string, len(pins))
 	for _, pin := range pins {
 		componentBinding := findComponentBinding(input.Config.ComponentBindings, pin.ComponentKey)
 		previousKey := "config:verify"
@@ -117,9 +127,12 @@ func BuildTargetPlanGraph(
 				migrationCancellationBehavior(migration),
 				pin.ReleaseChecksum,
 				"migration completion evidence with exact input checksum",
-				false,
+				migration.Compatibility != "breaking",
 			)
 			steps = append(steps, step)
+			if firstExecutableByComponent[pin.ComponentKey] == "" {
+				firstExecutableByComponent[pin.ComponentKey] = stepKey
+			}
 			edges = append(edges, edge(previousKey, stepKey))
 			previousKey = stepKey
 		}
@@ -148,9 +161,12 @@ func BuildTargetPlanGraph(
 			"cooperative",
 			pin.ReleaseChecksum,
 			"component reports the exact desired digest and healthy state",
-			false,
+			true,
 		)
 		steps = append(steps, deploy)
+		if firstExecutableByComponent[pin.ComponentKey] == "" {
+			firstExecutableByComponent[pin.ComponentKey] = deployKey
+		}
 		edges = append(edges, edge(previousKey, deployKey))
 		healthKey := "component:" + pin.ComponentKey + ":health"
 		steps = append(steps, newTargetPlanStep(
@@ -171,7 +187,7 @@ func BuildTargetPlanGraph(
 			"safe",
 			pin.ReleaseChecksum,
 			"trusted healthy observation for the exact component release",
-			false,
+			true,
 		))
 		edges = append(edges, edge(deployKey, healthKey))
 	}
@@ -183,7 +199,7 @@ func BuildTargetPlanGraph(
 		provider := strings.TrimPrefix(productEdge.From, "component:")
 		consumer := strings.TrimPrefix(productEdge.To, "component:")
 		from := "component:" + provider + ":health"
-		to := "component:" + consumer + ":deploy"
+		to := firstExecutableByComponent[consumer]
 		if hasStep(steps, from) && hasStep(steps, to) {
 			edges = append(edges, edge(from, to))
 		}
@@ -217,15 +233,27 @@ func BuildTargetPlanGraph(
 			"safe",
 			resolution.BindingChecksum,
 			"binding and observed-state checksum remain exact",
-			false,
+			resolution.V1Compatible,
 		))
 		edges = append(edges, edge("config:verify", verifyKey))
-		consumerDeploy := "component:" + resolution.ConsumerKey + ":deploy"
-		if hasStep(steps, consumerDeploy) {
-			edges = append(edges, edge(verifyKey, consumerDeploy))
+		consumerFirstExecutable := firstExecutableByComponent[resolution.ConsumerKey]
+		if hasStep(steps, consumerFirstExecutable) {
+			edges = append(edges, edge(verifyKey, consumerFirstExecutable))
 		}
 	}
 
+	if len(steps) > MaxTargetPlanSteps {
+		return types.TargetPlanGraph{}, fmt.Errorf(
+			"target plan exceeds step limit of %d",
+			MaxTargetPlanSteps,
+		)
+	}
+	if len(edges) > MaxTargetPlanEdges {
+		return types.TargetPlanGraph{}, fmt.Errorf(
+			"target plan exceeds edge limit of %d",
+			MaxTargetPlanEdges,
+		)
+	}
 	steps = normalizeTargetPlanSteps(steps)
 	edges = normalizeTargetPlanEdges(edges)
 	order, err := targetPlanTopologicalOrder(steps, edges)

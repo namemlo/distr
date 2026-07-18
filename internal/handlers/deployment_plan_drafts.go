@@ -21,6 +21,26 @@ import (
 )
 
 func DeploymentPlanDraftsRouter(r chiopenapi.Router) {
+	DeploymentPlanDraftsRouterWithVerifier(
+		db.NewUnavailableTargetConfigObjectVerifier(),
+	)(r)
+}
+
+func DeploymentPlanDraftsRouterWithVerifier(
+	verifier db.TargetConfigObjectVerifier,
+) func(chiopenapi.Router) {
+	if verifier == nil {
+		verifier = db.NewUnavailableTargetConfigObjectVerifier()
+	}
+	return func(r chiopenapi.Router) {
+		deploymentPlanDraftsRouterWithVerifier(r, verifier)
+	}
+}
+
+func deploymentPlanDraftsRouterWithVerifier(
+	r chiopenapi.Router,
+	verifier db.TargetConfigObjectVerifier,
+) {
 	r.WithOptions(option.GroupTags("Deployment Plan Drafts"))
 	r.With(
 		middleware.RequireVendor,
@@ -54,7 +74,7 @@ func DeploymentPlanDraftsRouter(r chiopenapi.Router) {
 			r.With(
 				middleware.RequireReadWriteOrAdmin,
 				middleware.BlockSuperAdmin,
-			).Post("/validate", validateDeploymentPlanDraftHandler()).
+			).Post("/validate", validateDeploymentPlanDraftHandler(verifier)).
 				With(option.Description("Resolve and validate an exact target deployment plan preview")).
 				With(option.Request(deploymentPlanDraftIDRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlanDraftValidation{}))
@@ -66,7 +86,7 @@ func DeploymentPlanDraftsRouter(r chiopenapi.Router) {
 			r.With(
 				middleware.RequireReadWriteOrAdmin,
 				middleware.BlockSuperAdmin,
-			).Post("/publish", publishDeploymentPlanDraftHandler()).
+			).Post("/publish", publishDeploymentPlanDraftHandler(verifier)).
 				With(option.Description("Publish an immutable target deployment plan")).
 				With(option.Request(publishDeploymentPlanDraftRouteRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlan{})).
@@ -99,6 +119,8 @@ func createDeploymentPlanDraftHandler() http.HandlerFunc {
 		authentication := auth.Authentication.Require(r.Context())
 		draft, err := db.CreateDeploymentPlanDraft(r.Context(), &types.PlanDraft{
 			OrganizationID:             *authentication.CurrentOrgID(),
+			CreatedByUserAccountID:     authentication.CurrentUserID(),
+			UpdatedByUserAccountID:     authentication.CurrentUserID(),
 			ProductReleaseID:           request.ProductReleaseID,
 			DeploymentUnitID:           request.DeploymentUnitID,
 			EnvironmentAssignmentID:    request.EnvironmentAssignmentID,
@@ -153,6 +175,7 @@ func updateDeploymentPlanDraftHandler() http.HandlerFunc {
 		draft, err := db.UpdateDeploymentPlanDraft(r.Context(), &types.PlanDraft{
 			ID:                         id,
 			OrganizationID:             *authentication.CurrentOrgID(),
+			UpdatedByUserAccountID:     authentication.CurrentUserID(),
 			ProductReleaseID:           request.ProductReleaseID,
 			DeploymentUnitID:           request.DeploymentUnitID,
 			EnvironmentAssignmentID:    request.EnvironmentAssignmentID,
@@ -169,17 +192,20 @@ func updateDeploymentPlanDraftHandler() http.HandlerFunc {
 	}
 }
 
-func validateDeploymentPlanDraftHandler() http.HandlerFunc {
+func validateDeploymentPlanDraftHandler(
+	verifier db.TargetConfigObjectVerifier,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := deploymentPlanDraftID(w, r)
 		if !ok {
 			return
 		}
 		authentication := auth.Authentication.Require(r.Context())
-		result, err := db.ValidateDeploymentPlanDraft(
+		result, err := db.ValidateDeploymentPlanDraftWithVerifier(
 			r.Context(),
 			id,
 			*authentication.CurrentOrgID(),
+			verifier,
 		)
 		if err != nil {
 			handleDeploymentPlanDraftError(w, r, "validate", err)
@@ -189,7 +215,9 @@ func validateDeploymentPlanDraftHandler() http.HandlerFunc {
 	}
 }
 
-func publishDeploymentPlanDraftHandler() http.HandlerFunc {
+func publishDeploymentPlanDraftHandler(
+	verifier db.TargetConfigObjectVerifier,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := deploymentPlanDraftID(w, r)
 		if !ok {
@@ -204,12 +232,14 @@ func publishDeploymentPlanDraftHandler() http.HandlerFunc {
 			return
 		}
 		authentication := auth.Authentication.Require(r.Context())
-		plan, err := db.PublishTargetDeploymentPlan(
+		plan, err := db.PublishTargetDeploymentPlanWithVerifier(
 			r.Context(),
 			id,
 			*authentication.CurrentOrgID(),
 			request.ExpectedRevision,
 			request.ExpectedPreviewChecksum,
+			verifier,
+			authentication.CurrentUserID(),
 		)
 		if err != nil {
 			var validationErr *db.DeploymentPlanDraftValidationError

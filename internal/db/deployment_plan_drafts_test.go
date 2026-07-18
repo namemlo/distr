@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,7 @@ func TestMigration145HasTenantFencesImmutabilityAndRollbackRefusal(t *testing.T)
 
 	for _, table := range []string{
 		"CREATE TABLE DeploymentPlanDraft",
+		"CREATE TABLE DeploymentPlanDraftAuditEvent",
 		"CREATE TABLE DeploymentPlanResolvedRequirement",
 		"CREATE TABLE DeploymentPlanStepEdge",
 	} {
@@ -83,6 +85,8 @@ func TestMigration145HasTenantFencesImmutabilityAndRollbackRefusal(t *testing.T)
 		"plan_schema", "draft_id", "deployment_unit_id",
 		"target_config_snapshot_id", "protocol_version",
 		"supersedes_deployment_plan_id", "supersede_reason",
+		"created_by_user_account_id", "updated_by_user_account_id",
+		"published_by_user_account_id", "sealed_at",
 	} {
 		g.Expect(upText).To(ContainSubstring(column))
 	}
@@ -91,6 +95,17 @@ func TestMigration145HasTenantFencesImmutabilityAndRollbackRefusal(t *testing.T)
 	g.Expect(upText).To(ContainSubstring("DeploymentPlan_v2_immutable_guard"))
 	g.Expect(upText).To(ContainSubstring("DeploymentPlanResolvedRequirement_append_only"))
 	g.Expect(upText).To(ContainSubstring("DeploymentPlanStepEdge_append_only"))
+	g.Expect(upText).To(ContainSubstring("DeploymentPlanTarget_v2_seal_guard"))
+	g.Expect(upText).To(ContainSubstring("DeploymentPlanStep_v2_seal_guard"))
+	g.Expect(upText).To(ContainSubstring("DeploymentPlanIssue_v2_seal_guard"))
+	g.Expect(upText).To(ContainSubstring("DeploymentPlanDraftAuditEvent_append_only"))
+	g.Expect(upText).To(ContainSubstring("status = 'BLOCKED'"))
+	g.Expect(upText).To(ContainSubstring("DeploymentPlan_v2_supersedes_unique"))
+	g.Expect(downText).To(ContainSubstring("LOCK TABLE"))
+	g.Expect(downText).To(ContainSubstring("ACCESS EXCLUSIVE MODE"))
+	g.Expect(
+		strings.Index(downText, "LOCK TABLE"),
+	).To(BeNumerically("<", strings.Index(downText, "refusing migration 145 rollback")))
 	g.Expect(downText).To(ContainSubstring("refusing migration 145 rollback"))
 }
 
@@ -103,7 +118,68 @@ func TestDraftPublicationUsesRowLockAndExactOptimisticChecksum(t *testing.T) {
 	g.Expect(text).To(ContainSubstring("FOR UPDATE"))
 	g.Expect(text).To(ContainSubstring("draft.Revision != expectedRevision"))
 	g.Expect(text).To(ContainSubstring("validation.PreviewChecksum != expectedPreviewChecksum"))
+	g.Expect(text).To(ContainSubstring("sealPublishedTargetPlan"))
+	g.Expect(text).To(ContainSubstring("lockAndValidateTargetPlanSupersession"))
 	g.Expect(strings.Count(text, "organization_id = @organizationID")).To(
 		BeNumerically(">=", 8),
 	)
+}
+
+func TestTargetConfigVerificationUsesObservedObjectEvidence(t *testing.T) {
+	g := NewWithT(t)
+	expected := types.TargetPlanConfigObject{
+		Key: "compose", Reference: "s3://config/_immutable/sha256/" +
+			strings.Repeat("a", 64) + "/compose.yaml",
+		VersionID: "version-1", MediaType: "application/yaml",
+		SizeBytes: 42, Checksum: checksumForDraftTest("a"),
+	}
+	verifier := targetPlanConfigVerifierFunc(func(
+		_ context.Context,
+		object types.TargetPlanConfigObject,
+	) (types.TargetPlanConfigObservation, error) {
+		g.Expect(object).To(Equal(expected))
+		return types.TargetPlanConfigObservation{
+			Reference: object.Reference, VersionID: object.VersionID,
+			MediaType: object.MediaType, SizeBytes: object.SizeBytes,
+			Checksum: object.Checksum,
+		}, nil
+	})
+
+	fact := verifyTargetPlanConfigObject(t.Context(), verifier, expected)
+
+	g.Expect(fact.Verified).To(BeTrue())
+	g.Expect(fact.ObservedReference).To(Equal(expected.Reference))
+	g.Expect(fact.ObservedVersionID).To(Equal(expected.VersionID))
+	g.Expect(fact.ObservedMediaType).To(Equal(expected.MediaType))
+	g.Expect(fact.ObservedSizeBytes).To(Equal(expected.SizeBytes))
+	g.Expect(fact.ObservedChecksum).To(Equal(expected.Checksum))
+}
+
+func TestTargetConfigVerificationFailsClosedWhenVerifierUnavailable(t *testing.T) {
+	g := NewWithT(t)
+	fact := verifyTargetPlanConfigObject(
+		t.Context(),
+		NewUnavailableTargetConfigObjectVerifier(),
+		types.TargetPlanConfigObject{Key: "compose", Checksum: checksumForDraftTest("a")},
+	)
+
+	g.Expect(fact.Verified).To(BeFalse())
+	g.Expect(fact.ObservedChecksum).To(BeEmpty())
+	g.Expect(fact.VerificationCode).To(Equal("verification_unavailable"))
+}
+
+type targetPlanConfigVerifierFunc func(
+	context.Context,
+	types.TargetPlanConfigObject,
+) (types.TargetPlanConfigObservation, error)
+
+func (fn targetPlanConfigVerifierFunc) VerifyTargetConfigObject(
+	ctx context.Context,
+	object types.TargetPlanConfigObject,
+) (types.TargetPlanConfigObservation, error) {
+	return fn(ctx, object)
+}
+
+func checksumForDraftTest(seed string) string {
+	return "sha256:" + strings.Repeat(seed, 64)
 }

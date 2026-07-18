@@ -28,7 +28,9 @@ import (
 const deploymentPlanOutputExpr = `
 	dp.id,
 	dp.created_at,
+	dp.sealed_at,
 	dp.organization_id,
+	dp.published_by_user_account_id,
 	dp.application_id,
 	dp.release_bundle_id,
 	dp.channel_id,

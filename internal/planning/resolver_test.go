@@ -192,6 +192,32 @@ func TestValidatePlanDraftRejectsV1IncompatibleResolution(t *testing.T) {
 	g.Expect(issueCodes(issues)).To(ContainElement("protocol_v1_incompatible"))
 }
 
+func TestValidatePlanDraftAcceptsSelectedPlatformInMultiPlatformSet(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ResolutionInput.RequiredPlatforms = []string{
+		"linux/arm64",
+		"linux/amd64",
+	}
+
+	issues := ValidatePlanDraft(context.Background(), draft)
+
+	g.Expect(issueCodes(issues)).NotTo(ContainElement("target_platform_mismatch"))
+}
+
+func TestValidatePlanDraftRejectsPlanSizeBeforeGraphConstruction(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ResolutionInput.Requirements = make(
+		[]types.TargetRequirement,
+		MaxTargetPlanRequirements+1,
+	)
+
+	issues := ValidatePlanDraft(context.Background(), draft)
+
+	g.Expect(issueCodes(issues)).To(ContainElement("plan_requirements_limit_exceeded"))
+}
+
 func TestResolveTargetRequirementsRequiresFrozenDisabledFeatureFlag(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()

@@ -2,9 +2,11 @@ package planning
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
 
@@ -71,6 +73,51 @@ func TestBuildTargetPlanGraphOrdersProviderHealthBeforeConsumerDeploy(t *testing
 	}))
 }
 
+func TestBuildTargetPlanGraphGatesConsumerFirstMigration(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: "schema", Type: "database", Order: 1,
+	}}
+	draft.ResolutionInput.ReleasePins = append(
+		draft.ResolutionInput.ReleasePins,
+		types.ComponentReleasePin{
+			ComponentKey:       "provider",
+			ComponentReleaseID: *draft.ResolutionInput.Candidates[0].ProviderReleaseID,
+			ReleaseChecksum:    checksum("f"),
+			Platforms:          []string{"linux/amd64"},
+			ProvenanceVerified: true,
+		},
+	)
+	draft.ResolutionInput.ProductEdges = []types.GraphEdge{{
+		Key:             "component:provider->component:consumer:cache",
+		From:            "component:provider",
+		To:              "component:consumer",
+		Capability:      "cache",
+		VersionRange:    "^1.0.0",
+		ProviderVersion: "1.4.0",
+		ResolutionStage: types.CapabilityResolutionStageProduct,
+	}}
+
+	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+	graph, err := BuildTargetPlanGraph(context.Background(), draft, resolutions)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	first := "component:consumer:migration:schema"
+	g.Expect(graph.Edges).To(ContainElement(types.DeploymentPlanStepEdge{
+		Key:         "component:provider:health->" + first,
+		FromStepKey: "component:provider:health",
+		ToStepKey:   first,
+	}))
+	requirementKey := "requirement:target.consumer.cache:verify"
+	g.Expect(graph.Edges).To(ContainElement(types.DeploymentPlanStepEdge{
+		Key:         requirementKey + "->" + first,
+		FromStepKey: requirementKey,
+		ToStepKey:   first,
+	}))
+}
+
 func TestBuildTargetPlanGraphRejectsCycles(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()
@@ -112,6 +159,41 @@ func TestValidateProtocolV1RequiresCompatibleSteps(t *testing.T) {
 	g.Expect(ValidateProtocolGraph(types.DeploymentPlanProtocolV1, graph)).
 		To(MatchError(ContainSubstring("not compatible")))
 	g.Expect(ValidateProtocolGraph(types.DeploymentPlanProtocolV2, graph)).To(Succeed())
+}
+
+func TestBuildTargetPlanGraphHasReachableProtocolV1Projection(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ProtocolVersion = types.DeploymentPlanProtocolV1
+	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+
+	graph, err := BuildTargetPlanGraph(context.Background(), draft, resolutions)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ValidateProtocolGraph(types.DeploymentPlanProtocolV1, graph)).To(Succeed())
+	for _, step := range graph.Steps {
+		g.Expect(step.V1Compatible).To(BeTrue(), step.StepKey)
+	}
+}
+
+func TestCanonicalizeTargetDeploymentPlanRejectsOversizedPayload(t *testing.T) {
+	g := NewWithT(t)
+	canonical := types.TargetDeploymentPlanCanonical{
+		Schema:                 types.TargetDeploymentPlanSchemaV2,
+		ProductReleaseID:       uuid.New(),
+		ProductReleaseChecksum: checksum("a"),
+		Graph: types.TargetPlanGraph{Steps: []types.TargetPlanStep{{
+			StepKey:       "huge",
+			Name:          strings.Repeat("x", MaxTargetPlanPayloadBytes),
+			V1Compatible:  true,
+			InputBindings: []byte(`{}`),
+		}}},
+	}
+
+	_, _, err := CanonicalizeTargetDeploymentPlan(canonical)
+
+	g.Expect(err).To(MatchError(ContainSubstring("payload limit")))
 }
 
 func reverseResolutions(values []types.RequirementResolution) []types.RequirementResolution {

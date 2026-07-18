@@ -41,6 +41,8 @@ func (r CreateDeploymentPlanRequest) Validate() error {
 type DeploymentPlan struct {
 	ID                         uuid.UUID                       `json:"id"`
 	CreatedAt                  time.Time                       `json:"createdAt"`
+	SealedAt                   *time.Time                      `json:"sealedAt,omitempty"`
+	PublishedByUserAccountID   *uuid.UUID                      `json:"publishedByUserAccountId,omitempty"`
 	ApplicationID              uuid.UUID                       `json:"applicationId"`
 	ReleaseBundleID            uuid.UUID                       `json:"releaseBundleId"`
 	ChannelID                  uuid.UUID                       `json:"channelId"`

@@ -9,6 +9,8 @@ func DeploymentPlanToAPI(plan types.DeploymentPlan) api.DeploymentPlan {
 	return api.DeploymentPlan{
 		ID:                         plan.ID,
 		CreatedAt:                  plan.CreatedAt,
+		SealedAt:                   plan.SealedAt,
+		PublishedByUserAccountID:   plan.PublishedByUserAccountID,
 		ApplicationID:              plan.ApplicationID,
 		ReleaseBundleID:            plan.ReleaseBundleID,
 		ChannelID:                  plan.ChannelID,

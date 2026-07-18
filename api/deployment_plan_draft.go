@@ -86,6 +86,8 @@ type DeploymentPlanDraft struct {
 	ID                            uuid.UUID  `json:"id"`
 	CreatedAt                     time.Time  `json:"createdAt"`
 	UpdatedAt                     time.Time  `json:"updatedAt"`
+	CreatedByUserAccountID        uuid.UUID  `json:"createdByUserAccountId"`
+	UpdatedByUserAccountID        uuid.UUID  `json:"updatedByUserAccountId"`
 	Revision                      int64      `json:"revision"`
 	ProductReleaseID              uuid.UUID  `json:"productReleaseId"`
 	DeploymentUnitID              uuid.UUID  `json:"deploymentUnitId"`
