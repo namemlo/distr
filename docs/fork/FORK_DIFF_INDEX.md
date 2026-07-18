@@ -1331,3 +1331,27 @@ Use one entry per pull request:
   or application-database behavior.
 - Compatibility notes: Existing v1 plans, tasks, execution, agents, and external executors remain unchanged.
   PR-070 supplies execution admission and PR-071 consumes the approved-plan campaign guard.
+### PR-069 - Versioned maintenance calendars and deployment freezes
+
+- Status: Implemented on the speculative PR-057 branch; live PostgreSQL and sequential migration verification are
+  deferred to the final integration gate.
+- Upstream base: `8cdf1a72`.
+- Feature flag: All new routes are hidden unless `operator_control_plane_v2` is enabled.
+- User-facing behavior: Vendor organization admins can manage editable calendar/freeze drafts and publish immutable
+  checksum-bound versions/revisions through the API.
+- Database changes: Migration 151 adds mutable `MaintenanceCalendar` and `DeploymentFreeze` roots, immutable
+  `MaintenanceCalendarVersion`, `MaintenanceWindowRule`, and `DeploymentFreezeRevision` records, canonical
+  payload/checksum storage, optimistic draft revisions, exact UTC-aware instants, keyset indexes, authorized
+  organization-retention deletion, and guarded downgrade.
+- API changes: Adds paginated draft/publish/version routes below `/api/v1/maintenance-calendars` and
+  `/api/v1/deployment-freezes`, with strict JSON, organization predicates, and scoped-action authorization seams.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0062 and PR-069 fork notes.
+- Tests: Added pure ordinary/overnight/DST/repeated-hour/freeze-overlap evaluators, canonical checksum tests, API,
+  mapping, handler, pagination, authorization, and static migration contract tests.
+- Upstream contribution notes: Community-neutral scheduling and governance primitives; no adopter, CI provider,
+  hostname, credential, or client database behavior.
+- Compatibility notes: Existing v1 deployments, schedulers, agents, and historical checksums remain unchanged.
+  Campaign scope is reserved until immutable campaign revisions exist, and admission persistence/override behavior
+  remains PR-070.
