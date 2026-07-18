@@ -5,6 +5,59 @@ import (
 	"github.com/distr-sh/distr/internal/types"
 )
 
+func RegistryImportPreviewToAPI(value types.RegistryImportPreview) api.RegistryImportPreview {
+	return api.RegistryImportPreview{
+		ID: value.ID, PreviewChecksum: value.PreviewChecksum, Counts: value.Counts,
+		Diff: api.RegistryImportDiff{
+			Creates:     List(value.Diff.Creates, registryImportChangeToAPI),
+			Updates:     List(value.Diff.Updates, registryImportChangeToAPI),
+			Retirements: List(value.Diff.Retirements, registryImportChangeToAPI),
+			Conflicts:   List(value.Diff.Conflicts, registryImportChangeToAPI),
+		},
+		Omissions:   value.Omissions,
+		Diagnostics: value.Diagnostics, DiagnosticsTruncated: value.DiagnosticsTruncated,
+		Roots: List(value.Roots, registryImportCandidateRootToAPI),
+	}
+}
+
+func registryImportChangeToAPI(value types.RegistryImportChange) api.RegistryImportChange {
+	return api.RegistryImportChange{
+		Kind: value.Kind, RootKey: value.RootKey, PlacementKey: value.PlacementKey,
+		PhysicalName: value.PhysicalName, Message: value.Message,
+	}
+}
+
+func registryImportCandidateRootToAPI(
+	value types.RegistryImportCandidateRoot,
+) api.RegistryImportCandidateRoot {
+	return api.RegistryImportCandidateRoot{
+		Key: value.Key, Name: value.Name, DeliveryModel: value.DeliveryModel,
+		Classification: value.Classification, CustomerOrganizationID: value.CustomerOrganizationID,
+		DeploymentTargetID: value.DeploymentTargetID, EnvironmentID: value.EnvironmentID,
+		SubscriberCustomerOrganizationIDs: value.SubscriberCustomerOrganizationIDs,
+		PhysicalIdentity:                  value.PhysicalIdentity,
+		Placements:                        List(value.Placements, registryImportCandidatePlacementToAPI),
+	}
+}
+
+func registryImportCandidatePlacementToAPI(
+	value types.RegistryImportCandidatePlacement,
+) api.RegistryImportCandidatePlacement {
+	return api.RegistryImportCandidatePlacement{
+		ComponentKey: value.ComponentKey, PhysicalName: value.PhysicalName,
+		ConfigNamespace: value.ConfigNamespace, DatabaseBoundary: value.DatabaseBoundary,
+		HealthAdapter: value.HealthAdapter, RenamedFrom: value.RenamedFrom,
+	}
+}
+
+func RegistryImportResultToAPI(value types.RegistryImportResult) types.RegistryImportResult {
+	return value
+}
+
+func RegistryCoverageReportToAPI(value types.RegistryCoverageReport) types.RegistryCoverageReport {
+	return value
+}
+
 func DeploymentScopeToAPI(scope types.DeploymentScope) api.DeploymentScope {
 	return api.DeploymentScope{
 		ID:                     scope.ID,

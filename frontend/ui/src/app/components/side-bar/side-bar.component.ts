@@ -45,6 +45,7 @@ import {FeatureFlagService} from '../../services/feature-flag.service';
 import {OrganizationService} from '../../services/organization.service';
 import {SidebarService} from '../../services/sidebar.service';
 import {TutorialsService} from '../../services/tutorials.service';
+import {canMutateDeploymentRegistry} from '../../setup/registry/deployment-registry-access';
 
 @Component({
   selector: 'app-side-bar',
@@ -164,6 +165,9 @@ export class SideBarComponent {
     this.auth.isVendor() && this.auth.hasRole('admin')
       ? toSignal(this.featureFlags.isScopedVariablesV2Enabled$, {initialValue: false})
       : signal(false);
+  protected readonly isOperatorControlPlaneV2FeatureEnabled = canMutateDeploymentRegistry(this.auth)
+    ? toSignal(this.featureFlags.isExperimentalFeatureEnabled$('operator_control_plane_v2'), {initialValue: false})
+    : signal(false);
 
   public readonly isSubscriptionBannerVisible = input<boolean>();
   public readonly isSidebarVisible = input<boolean>();

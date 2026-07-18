@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/deploymentregistry"
 	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
@@ -52,6 +55,14 @@ type componentInstanceIDRequest struct {
 	InstanceID uuid.UUID `path:"instanceId"`
 }
 
+type registryImportIDRequest struct {
+	ImportID uuid.UUID `path:"importId"`
+}
+
+type registryCoverageRequest struct {
+	ImportID uuid.UUID `query:"importId"`
+}
+
 func DeploymentRegistryRouter(r chiopenapi.Router) {
 	deploymentRegistryRouterWithFlags(r, env.ExperimentalFeatureFlags())
 }
@@ -74,7 +85,52 @@ func deploymentRegistryRouterWithFlags(
 		componentAliasRoutes(r, mutationAccess)
 		componentInstanceRoutes(r, mutationAccess)
 		deploymentRegistryPlacementRoutes(r)
+		deploymentRegistryImportRoutes(r, mutationAccess)
 	})
+}
+
+func deploymentRegistryImportRoutes(
+	r chiopenapi.Router,
+	mutationAccess func(http.Handler) http.Handler,
+) {
+	r.Route("/imports", func(r chiopenapi.Router) {
+		r.With(mutationAccess).
+			Post("/preview", previewRegistryImportHandler()).
+			With(option.Description("Preview and durably record a normalized deployment registry import")).
+			With(option.Request(api.RegistryImportPreviewRequest{})).
+			With(option.Response(http.StatusOK, api.RegistryImportPreview{})).
+			With(deploymentRegistryConflictMutationErrorResponses()...)
+		r.Route("/{importId}", func(r chiopenapi.Router) {
+			r.Get("/", getRegistryImportHandler()).
+				With(option.Description("Get an organization-scoped registry import")).
+				With(option.Request(registryImportIDRequest{})).
+				With(option.Response(http.StatusOK, api.RegistryImportPreview{})).
+				With(deploymentRegistryItemGetErrorResponses()...)
+			r.With(mutationAccess).
+				Post("/decisions", classifyRegistryImportRootHandler()).
+				With(option.Description("Append a root classification decision")).
+				With(option.Request(struct {
+					registryImportIDRequest
+					api.RegistryImportDecisionRequest
+				}{})).
+				With(option.Response(http.StatusNoContent, nil)).
+				With(deploymentRegistryConflictMutationErrorResponses()...)
+			r.With(mutationAccess).
+				Post("/apply", applyRegistryImportHandler()).
+				With(option.Description("Apply a checksum-bound registry import idempotently")).
+				With(option.Request(struct {
+					registryImportIDRequest
+					api.RegistryImportApplyRequest
+				}{})).
+				With(option.Response(http.StatusOK, types.RegistryImportResult{})).
+				With(deploymentRegistryConflictMutationErrorResponses()...)
+		})
+	})
+	r.Get("/coverage", registryCoverageHandler()).
+		With(option.Description("Get exact import coverage and omissions")).
+		With(option.Request(registryCoverageRequest{})).
+		With(option.Response(http.StatusOK, types.RegistryCoverageReport{})).
+		With(deploymentRegistryItemGetErrorResponses()...)
 }
 
 func deploymentRegistryPlainTextResponses(statuses ...int) []option.OperationOption {
@@ -727,6 +783,150 @@ func handleDeploymentRegistryWriteError(
 			hub.CaptureException(err)
 		}
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+}
+
+func previewRegistryImportHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		request, err := deploymentRegistryImportJSONBody[api.RegistryImportPreviewRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err = request.Validate(ctx); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		userAuth := auth.Authentication.Require(ctx)
+		domain := request.ToDomain(*userAuth.CurrentOrgID(), userAuth.CurrentUserID())
+		domain.ExistingRoots, err = db.RegistryImportBaseline(ctx, *userAuth.CurrentOrgID())
+		if err != nil {
+			handleDeploymentRegistryReadError(w, r, internalctx.GetLogger(ctx), "load registry import baseline", err)
+			return
+		}
+		preview, err := deploymentregistry.PreviewImport(ctx, domain)
+		if err == nil {
+			err = db.CreateRegistryImportPreview(ctx, domain, preview)
+		}
+		if err != nil {
+			handleDeploymentRegistryWriteError(w, r, internalctx.GetLogger(ctx), "preview", "registry import", err)
+			return
+		}
+		RespondJSON(w, mapping.RegistryImportPreviewToAPI(*preview))
+	}
+}
+
+func getRegistryImportHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		importID, ok := deploymentRegistryPathID(w, r, "importId")
+		if !ok {
+			return
+		}
+		ctx := r.Context()
+		userAuth := auth.Authentication.Require(ctx)
+		preview, err := db.GetRegistryImportPreview(ctx, *userAuth.CurrentOrgID(), importID)
+		if err != nil {
+			handleDeploymentRegistryReadError(w, r, internalctx.GetLogger(ctx), "get registry import", err)
+			return
+		}
+		RespondJSON(w, mapping.RegistryImportPreviewToAPI(*preview))
+	}
+}
+
+func classifyRegistryImportRootHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		importID, ok := deploymentRegistryPathID(w, r, "importId")
+		if !ok {
+			return
+		}
+		request, err := deploymentRegistryImportJSONBody[api.RegistryImportDecisionRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err = request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx := r.Context()
+		userAuth := auth.Authentication.Require(ctx)
+		err = db.ClassifyImportRoot(ctx, *userAuth.CurrentOrgID(), types.RegistryImportDecision{
+			ImportID: importID, RootKey: request.RootKey,
+			Classification: request.Classification, ActorID: userAuth.CurrentUserID(),
+		})
+		if err != nil {
+			handleDeploymentRegistryWriteError(w, r, internalctx.GetLogger(ctx), "classify", "registry import", err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func applyRegistryImportHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		importID, ok := deploymentRegistryPathID(w, r, "importId")
+		if !ok {
+			return
+		}
+		request, err := deploymentRegistryImportJSONBody[api.RegistryImportApplyRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err = request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx := r.Context()
+		userAuth := auth.Authentication.Require(ctx)
+		result, err := db.ApplyImport(
+			ctx, *userAuth.CurrentOrgID(), importID, request.PreviewChecksum, userAuth.CurrentUserID(),
+		)
+		if err != nil {
+			if errors.Is(err, apierrors.ErrConflict) {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			handleDeploymentRegistryWriteError(w, r, internalctx.GetLogger(ctx), "apply", "registry import", err)
+			return
+		}
+		RespondJSON(w, mapping.RegistryImportResultToAPI(*result))
+	}
+}
+
+func deploymentRegistryImportJSONBody[T any](w http.ResponseWriter, r *http.Request) (T, error) {
+	var value T
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return value, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("request body must contain exactly one JSON value")
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return value, err
+	}
+	return value, nil
+}
+
+func registryCoverageHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		importID, err := uuid.Parse(r.URL.Query().Get("importId"))
+		if err != nil {
+			http.Error(w, "importId is required", http.StatusBadRequest)
+			return
+		}
+		ctx := r.Context()
+		userAuth := auth.Authentication.Require(ctx)
+		report, err := db.CoverageReport(ctx, *userAuth.CurrentOrgID(), importID)
+		if err != nil {
+			handleDeploymentRegistryReadError(w, r, internalctx.GetLogger(ctx), "get registry coverage", err)
+			return
+		}
+		RespondJSON(w, mapping.RegistryCoverageReportToAPI(*report))
 	}
 }
 

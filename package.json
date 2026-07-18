@@ -14,7 +14,7 @@
     "build:enterprise": "pnpm buildconfig && pnpm agent-changelog && ng build --configuration=production-enterprise",
     "build:dev": "pnpm buildconfig && pnpm agent-changelog && ng build --configuration=development",
     "watch": "pnpm buildconfig && pnpm agent-changelog && ng build --watch --configuration=development",
-    "test": "pnpm buildconfig && ng test",
+    "test": "pnpm buildconfig && pnpm agent-changelog && ng test",
     "lint": "prettier --check .",
     "format": "prettier --write --list-different ."
   },

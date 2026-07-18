@@ -1,0 +1,464 @@
+<div class="space-y-6">
+  <div>
+    <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Registry setup</h1>
+    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+      Preview discovered registry roots, record classification evidence, and apply a reviewed import.
+    </p>
+  </div>
+
+  @if (error()) {
+    <div
+      class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+      {{ error() }}
+      @if (stale()) {
+        <button type="button" class="ml-3 underline" (click)="createPreview()">Refresh preview</button>
+      }
+    </div>
+  }
+
+  @if (!mutationAllowed()) {
+    <div
+      class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+      Registry setup requires a vendor read-write or admin account and the operator control-plane feature.
+    </div>
+  } @else {
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">1. Create preview</h2>
+      <form class="mt-4 grid gap-4 lg:grid-cols-2" [formGroup]="previewForm" (ngSubmit)="createPreview()">
+        <label class="distr-label"
+          >Source kind<input class="distr-input mt-1 w-full" formControlName="sourceKind"
+        /></label>
+        <label class="distr-label">Tool<input class="distr-input mt-1 w-full" formControlName="toolName" /></label>
+        <label class="distr-label"
+          >Tool version<input class="distr-input mt-1 w-full" formControlName="toolVersion"
+        /></label>
+        <label class="distr-label"
+          >Source commit<input class="distr-input mt-1 w-full" formControlName="sourceCommit"
+        /></label>
+        <label class="distr-label"
+          >Evidence reference<input class="distr-input mt-1 w-full" formControlName="evidenceReference"
+        /></label>
+        <label class="distr-label"
+          >Evidence checksum<input class="distr-input mt-1 w-full" formControlName="evidenceChecksum"
+        /></label>
+        <label class="distr-label"
+          >Parameters (JSON)<textarea
+            class="distr-input mt-1 min-h-28 w-full font-mono text-xs"
+            formControlName="parameters"></textarea>
+        </label>
+        <label class="distr-label"
+          >Roots (JSON)<textarea
+            class="distr-input mt-1 min-h-28 w-full font-mono text-xs"
+            formControlName="roots"></textarea>
+        </label>
+        <label class="distr-label lg:col-span-2"
+          >Source placements (JSON)<textarea
+            class="distr-input mt-1 min-h-28 w-full font-mono text-xs"
+            formControlName="sourcePlacements"></textarea>
+        </label>
+        <div class="lg:col-span-2">
+          <button type="submit" class="distr-btn-primary" [disabled]="previewing()">
+            {{ previewing() ? 'Preparing preview…' : 'Preview import' }}
+          </button>
+        </div>
+      </form>
+    </section>
+  }
+
+  @if (registryImport(); as registryImport) {
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">2. Review classifications and topology</h2>
+          <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+            {{ decisionCount(registryImport) }} of {{ registryImport.roots.length }} roots resolved. Preview checksum:
+            <code class="break-all">{{ registryImport.previewChecksum }}</code>
+          </p>
+        </div>
+        <div class="grid grid-cols-4 gap-2 text-center text-xs text-gray-600 dark:text-gray-300">
+          <span
+            >Creates<br /><strong>{{ registryImport.diff.creates.length }}</strong></span
+          >
+          <span
+            >Updates<br /><strong>{{ registryImport.diff.updates.length }}</strong></span
+          >
+          <span
+            >Retirements<br /><strong>{{ registryImport.diff.retirements.length }}</strong></span
+          >
+          <span
+            >Conflicts<br /><strong>{{ registryImport.diff.conflicts.length }}</strong></span
+          >
+        </div>
+      </div>
+
+      <div class="mt-4 overflow-x-auto">
+        <table class="distr-table">
+          <thead>
+            <tr>
+              <th>Root</th>
+              <th>Topology and physical identity</th>
+              <th>Ordered placements</th>
+              <th>Classification</th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (root of registryImport.roots; track rootKey(root); let rootIndex = $index) {
+              <tr class="distr-table-row align-top">
+                <td class="px-4 py-3 text-gray-900 dark:text-white">
+                  <div class="text-xs text-gray-500">Root order {{ rootIndex + 1 }}</div>
+                  <div>{{ root.name }}</div>
+                  <div class="font-mono text-xs text-gray-500">{{ root.key }}</div>
+                  <div class="mt-1 text-xs">Delivery model: {{ root.deliveryModel }}</div>
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
+                  <dl class="space-y-1">
+                    <div>
+                      <dt class="font-semibold">Customer organization</dt>
+                      <dd class="break-all font-mono">{{ root.customerOrganizationId ?? 'None' }}</dd>
+                    </div>
+                    <div>
+                      <dt class="font-semibold">Deployment target</dt>
+                      <dd class="break-all font-mono">{{ root.deploymentTargetId }}</dd>
+                    </div>
+                    <div>
+                      <dt class="font-semibold">Environment</dt>
+                      <dd class="break-all font-mono">{{ root.environmentId }}</dd>
+                    </div>
+                    <div>
+                      <dt class="font-semibold">Physical identity</dt>
+                      <dd class="break-all font-mono">{{ root.physicalIdentity }}</dd>
+                    </div>
+                  </dl>
+                  <div class="mt-2 font-semibold">Subscribers</div>
+                  @for (
+                    subscriber of root.subscriberCustomerOrganizationIds ?? [];
+                    track subscriber;
+                    let subscriberIndex = $index
+                  ) {
+                    <div class="break-all font-mono">Subscriber order {{ subscriberIndex + 1 }}: {{ subscriber }}</div>
+                  } @empty {
+                    <div>None</div>
+                  }
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
+                  <ol class="space-y-3">
+                    @for (placement of root.placements; track $index; let placementIndex = $index) {
+                      <li class="border-b border-gray-200 pb-2 last:border-0 dark:border-gray-700">
+                        <div class="font-semibold">Placement order {{ placementIndex + 1 }}</div>
+                        <div>
+                          Component: <code>{{ placement.componentKey }}</code>
+                        </div>
+                        <div>
+                          Physical name: <code>{{ placement.physicalName }}</code>
+                        </div>
+                        <div>
+                          Config namespace: <code>{{ placement.configNamespace ?? 'None' }}</code>
+                        </div>
+                        <div>
+                          Database boundary: <code>{{ placement.databaseBoundary ?? 'None' }}</code>
+                        </div>
+                        <div>
+                          Health adapter: <code>{{ placement.healthAdapter ?? 'None' }}</code>
+                        </div>
+                        <div>
+                          Renamed from: <code>{{ placement.renamedFrom ?? 'None' }}</code>
+                        </div>
+                      </li>
+                    } @empty {
+                      <li>No placements</li>
+                    }
+                  </ol>
+                </td>
+                <td class="px-4 py-3">
+                  <select
+                    class="distr-input"
+                    [value]="root.classification"
+                    [disabled]="!mutationAllowed() || savingRootId() === root.key || applying()"
+                    (change)="saveClassification(root, $any($event.target).value)">
+                    @for (classification of classifications; track classification) {
+                      <option [value]="classification">{{ classification }}</option>
+                    }
+                  </select>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                  @if (savingRootId() === root.key) {
+                    Saving…
+                  } @else if (root.classification === 'needs_decision') {
+                    Needs decision
+                  } @else {
+                    Resolved
+                  }
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="5" class="px-4 py-6 text-center text-gray-500 dark:text-gray-400">
+                  No roots were discovered.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">3. Review exact preview changes</h2>
+      <div class="mt-4 grid gap-5 lg:grid-cols-2">
+        <div>
+          <h3 class="font-semibold text-gray-900 dark:text-white">Creates</h3>
+          <ul class="mt-2 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+            @for (change of registryImport.diff.creates; track $index) {
+              <li class="rounded border border-gray-200 p-3 dark:border-gray-700">
+                <div>
+                  Kind: <code>{{ change.kind }}</code>
+                </div>
+                <div>
+                  Root: <code>{{ change.rootKey }}</code>
+                </div>
+                <div>
+                  Placement: <code>{{ change.placementKey ?? 'None' }}</code>
+                </div>
+                <div>
+                  Physical name: <code>{{ change.physicalName ?? 'None' }}</code>
+                </div>
+                <div>{{ change.message }}</div>
+              </li>
+            } @empty {
+              <li>None</li>
+            }
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-semibold text-gray-900 dark:text-white">Updates</h3>
+          <ul class="mt-2 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+            @for (change of registryImport.diff.updates; track $index) {
+              <li class="rounded border border-gray-200 p-3 dark:border-gray-700">
+                <div>
+                  Kind: <code>{{ change.kind }}</code>
+                </div>
+                <div>
+                  Root: <code>{{ change.rootKey }}</code>
+                </div>
+                <div>
+                  Placement: <code>{{ change.placementKey ?? 'None' }}</code>
+                </div>
+                <div>
+                  Physical name: <code>{{ change.physicalName ?? 'None' }}</code>
+                </div>
+                <div>{{ change.message }}</div>
+              </li>
+            } @empty {
+              <li>None</li>
+            }
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-semibold text-gray-900 dark:text-white">Retirements</h3>
+          <ul class="mt-2 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+            @for (change of registryImport.diff.retirements; track $index) {
+              <li class="rounded border border-gray-200 p-3 dark:border-gray-700">
+                <div>
+                  Kind: <code>{{ change.kind }}</code>
+                </div>
+                <div>
+                  Root: <code>{{ change.rootKey }}</code>
+                </div>
+                <div>
+                  Placement: <code>{{ change.placementKey ?? 'None' }}</code>
+                </div>
+                <div>
+                  Physical name: <code>{{ change.physicalName ?? 'None' }}</code>
+                </div>
+                <div>{{ change.message }}</div>
+              </li>
+            } @empty {
+              <li>None</li>
+            }
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-semibold text-gray-900 dark:text-white">Conflicts</h3>
+          <ul class="mt-2 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+            @for (change of registryImport.diff.conflicts; track $index) {
+              <li class="rounded border border-red-200 p-3 dark:border-red-900">
+                <div>
+                  Kind: <code>{{ change.kind }}</code>
+                </div>
+                <div>
+                  Root: <code>{{ change.rootKey }}</code>
+                </div>
+                <div>
+                  Placement: <code>{{ change.placementKey ?? 'None' }}</code>
+                </div>
+                <div>
+                  Physical name: <code>{{ change.physicalName ?? 'None' }}</code>
+                </div>
+                <div>{{ change.message }}</div>
+              </li>
+            } @empty {
+              <li>None</li>
+            }
+          </ul>
+        </div>
+      </div>
+
+      <h3 class="mt-6 font-semibold text-gray-900 dark:text-white">Preview omissions</h3>
+      <ul class="mt-2 space-y-1 text-sm text-gray-700 dark:text-gray-300">
+        @for (omission of registryImport.omissions; track $index) {
+          <li>
+            <code class="break-all">{{ omission }}</code>
+          </li>
+        } @empty {
+          <li>None</li>
+        }
+      </ul>
+
+      <h3 class="mt-6 font-semibold text-gray-900 dark:text-white">Diagnostics</h3>
+      <ul class="mt-2 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+        @for (diagnostic of registryImport.diagnostics; track $index) {
+          <li class="rounded border border-gray-200 p-3 dark:border-gray-700">
+            <div>
+              Code: <code>{{ diagnostic.code }}</code>
+            </div>
+            <div>
+              Field: <code>{{ diagnostic.field }}</code>
+            </div>
+            <div>{{ diagnostic.message }}</div>
+          </li>
+        } @empty {
+          <li>None</li>
+        }
+      </ul>
+      @if (registryImport.diagnosticsTruncated) {
+        <p class="mt-2 text-sm text-amber-700 dark:text-amber-300">
+          Diagnostics truncated: additional diagnostics were not returned.
+        </p>
+      }
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">4. Verify coverage, omissions, and conflicts</h2>
+      @if (coverageState() === 'loading') {
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">Loading coverage…</p>
+      } @else if (coverageState() === 'error') {
+        <p class="mt-2 text-sm text-red-700 dark:text-red-300">Could not load matching import coverage.</p>
+      } @else if (coverageState() === 'empty') {
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">No discovered registry roots yet.</p>
+      } @else if (coverage(); as coverage) {
+        @if (coverageState() === 'partial') {
+          <p class="mt-2 text-sm text-amber-700 dark:text-amber-300">
+            Coverage is partial: unresolved, omitted, or conflicting items still block completeness.
+          </p>
+        } @else {
+          <p class="mt-2 text-sm text-green-700 dark:text-green-300">Coverage is complete.</p>
+        }
+        <dl class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div>
+            <dt>Import</dt>
+            <dd class="break-all font-mono text-xs">{{ coverage.importId }}</dd>
+          </div>
+          <div>
+            <dt>Discovered</dt>
+            <dd>{{ coverage.discoveredRoots }}</dd>
+          </div>
+          <div>
+            <dt>Classified</dt>
+            <dd>{{ coverage.classifiedRoots }}</dd>
+          </div>
+          <div>
+            <dt>Managed/actionable</dt>
+            <dd>{{ coverage.actionableManagedRoots }}</dd>
+          </div>
+          <div>
+            <dt>Observe-only</dt>
+            <dd>{{ coverage.observeOnlyRoots }}</dd>
+          </div>
+          <div>
+            <dt>External</dt>
+            <dd>{{ coverage.externalRoots }}</dd>
+          </div>
+          <div>
+            <dt>Ignored</dt>
+            <dd>{{ coverage.ignoredRoots }}</dd>
+          </div>
+          <div>
+            <dt>Unresolved</dt>
+            <dd>{{ coverage.unresolvedRoots }}</dd>
+          </div>
+          <div>
+            <dt>Placements</dt>
+            <dd>{{ coverage.discoveredPlacements }}</dd>
+          </div>
+          <div>
+            <dt>Services</dt>
+            <dd>{{ coverage.services }}</dd>
+          </div>
+          <div>
+            <dt>Omitted placements</dt>
+            <dd>{{ coverage.omittedPlacements }}</dd>
+          </div>
+          <div>
+            <dt>Omissions</dt>
+            <dd>{{ coverage.omissions.length }}</dd>
+          </div>
+          <div>
+            <dt>Conflicts</dt>
+            <dd>{{ registryImport.diff.conflicts.length }}</dd>
+          </div>
+        </dl>
+
+        <h3 class="mt-5 font-semibold text-gray-900 dark:text-white">Exact omissions</h3>
+        <ul class="mt-2 space-y-1 text-sm text-gray-700 dark:text-gray-300">
+          @for (omission of coverage.omissions; track $index) {
+            <li>
+              <code class="break-all">{{ omission }}</code>
+            </li>
+          } @empty {
+            <li>None</li>
+          }
+        </ul>
+
+        <h3 class="mt-5 font-semibold text-gray-900 dark:text-white">Coverage conflicts</h3>
+        <ul class="mt-2 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+          @for (conflict of registryImport.diff.conflicts; track $index) {
+            <li class="rounded border border-red-200 p-3 dark:border-red-900">
+              <div>
+                Root: <code>{{ conflict.rootKey }}</code>
+              </div>
+              <div>
+                Placement: <code>{{ conflict.placementKey ?? 'None' }}</code>
+              </div>
+              <div>
+                Physical name: <code>{{ conflict.physicalName ?? 'None' }}</code>
+              </div>
+              <div>{{ conflict.message }}</div>
+            </li>
+          } @empty {
+            <li>None</li>
+          }
+        </ul>
+      }
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">5. Confirm and apply</h2>
+      @if (!canAcknowledge()) {
+        <p class="mt-2 text-sm text-amber-700 dark:text-amber-300">
+          Matching complete coverage, zero conflicts or omissions, and a saved decision for every root are required.
+        </p>
+      }
+      <label class="mt-4 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <input class="distr-checkbox" type="checkbox" [formControl]="applyConfirmed" [disabled]="!canAcknowledge()" />
+        I have reviewed the classifications and preview changes.
+      </label>
+      <button type="button" class="distr-btn-primary mt-4" [disabled]="!canApply()" (click)="apply()">
+        {{ applying() ? 'Applying…' : 'Apply import' }}
+      </button>
+      @if (applied()) {
+        <p class="mt-3 text-sm text-green-700 dark:text-green-300">Registry import applied.</p>
+      }
+    </section>
+  }
+</div>

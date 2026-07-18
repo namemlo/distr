@@ -83,6 +83,82 @@ func TestDeploymentRegistryMutationAccessMiddleware(t *testing.T) {
 	}
 }
 
+func TestRegistryImportJSONBodyRejectsUnknownFieldsAndTrailingValues(t *testing.T) {
+	g := NewWithT(t)
+	for _, body := range []string{
+		`{"previewChecksum":"sha256:` + strings.Repeat("a", 64) + `","unknown":true}`,
+		`{"previewChecksum":"sha256:` + strings.Repeat("a", 64) + `"} {}`,
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		recorder := httptest.NewRecorder()
+		_, err := deploymentRegistryImportJSONBody[api.RegistryImportApplyRequest](recorder, request)
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+	}
+}
+
+func TestRegistryImportJSONBodyPreservesPlacementMetadataAndRejectsSourcePath(t *testing.T) {
+	g := NewWithT(t)
+	targetID, environmentID := uuid.New(), uuid.New()
+	checksum := strings.Repeat("a", 64)
+	validBody := `{
+		"sourceKind":"compose",
+		"toolName":"scanner",
+		"toolVersion":"1.0",
+		"parameters":{},
+		"evidenceReference":"evidence://sha256/` + checksum + `",
+		"evidenceChecksum":"` + checksum + `",
+		"sourcePlacements":[{
+			"rootKey":"choice-tp-dev",
+			"physicalName":"choice-api"
+		}],
+		"roots":[{
+			"key":"choice-tp-dev",
+			"name":"Choice TP DEV",
+			"deliveryModel":"external",
+			"classification":"external",
+			"deploymentTargetId":"` + targetID.String() + `",
+			"environmentId":"` + environmentID.String() + `",
+			"physicalIdentity":"compose:choice-tp-dev",
+			"placements":[{
+				"componentKey":"api",
+				"physicalName":"choice-api",
+				"configNamespace":"choice-config",
+				"databaseBoundary":"choice-db",
+				"healthAdapter":"choice-health",
+				"renamedFrom":"choice-api-old"
+			}]
+		}]
+	}`
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(validBody))
+
+	decoded, err := deploymentRegistryImportJSONBody[api.RegistryImportPreviewRequest](
+		recorder, request,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(decoded.Roots[0].Placements).To(ConsistOf(api.RegistryImportCandidatePlacement{
+		ComponentKey: "api", PhysicalName: "choice-api",
+		ConfigNamespace: "choice-config", DatabaseBoundary: "choice-db",
+		HealthAdapter: "choice-health", RenamedFrom: "choice-api-old",
+	}))
+
+	withSourcePath := strings.Replace(
+		validBody,
+		`"physicalIdentity":"compose:choice-tp-dev",`,
+		`"physicalIdentity":"compose:choice-tp-dev","sourcePath":"C:\\private\\compose.yaml",`,
+		1,
+	)
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(withSourcePath))
+	_, err = deploymentRegistryImportJSONBody[api.RegistryImportPreviewRequest](
+		recorder, request,
+	)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+}
+
 func TestDeploymentRegistryRoutedAuthorizationAndFeatureFlag(t *testing.T) {
 	const scopesPath = "/api/v1/deployment-registry/scopes/"
 	tests := []struct {

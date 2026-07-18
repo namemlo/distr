@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/api"
+	"github.com/distr-sh/distr/internal/deploymentregistry"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -113,6 +115,52 @@ func TestDeploymentRegistryPlacementToAPI(t *testing.T) {
 	payload, err := json.Marshal(response)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(payload)).NotTo(ContainSubstring(organizationID.String()))
+}
+
+func TestRegistryImportPreviewToAPIMapsFullPlacementWithoutSourcePath(t *testing.T) {
+	g := NewWithT(t)
+	preview := types.RegistryImportPreview{
+		ID: uuid.New(), PreviewChecksum: "sha256:test",
+		Omissions: []string{"choice-tp-dev:choice-worker"},
+		Roots: []types.RegistryImportCandidateRoot{{
+			Key: "choice-tp-dev", Name: "Choice TP DEV",
+			DeliveryModel:  types.DeliveryModelDedicated,
+			Classification: types.ImportClassificationStandard,
+			SourcePath:     "must-not-leak",
+			Placements: []types.RegistryImportCandidatePlacement{{
+				ComponentKey: "api", PhysicalName: "choice-api",
+				ConfigNamespace: "choice-config", DatabaseBoundary: "choice-db",
+				HealthAdapter: "choice-health", RenamedFrom: "choice-api-old",
+			}},
+		}},
+	}
+
+	result := RegistryImportPreviewToAPI(preview)
+
+	g.Expect(result.Omissions).To(Equal([]string{"choice-tp-dev:choice-worker"}))
+	g.Expect(result.Roots).To(HaveLen(1))
+	g.Expect(result.Roots[0].Placements).To(Equal(
+		[]api.RegistryImportCandidatePlacement{{
+			ComponentKey: "api", PhysicalName: "choice-api",
+			ConfigNamespace: "choice-config", DatabaseBoundary: "choice-db",
+			HealthAdapter: "choice-health", RenamedFrom: "choice-api-old",
+		}},
+	))
+	payload, err := json.Marshal(result)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).NotTo(ContainSubstring("sourcePath"))
+	g.Expect(string(payload)).NotTo(ContainSubstring("must-not-leak"))
+}
+
+func TestRegistryCoverageReportToAPISerializesZeroOmissionsAsArray(t *testing.T) {
+	g := NewWithT(t)
+	report := deploymentregistry.RegistryCoverageWithOmissions(nil, nil)
+
+	g.Expect(report.Omissions).NotTo(BeNil())
+
+	payload, err := json.Marshal(RegistryCoverageReportToAPI(report))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).To(ContainSubstring(`"omissions":[]`))
 }
 
 func TestDeploymentRegistryPagesToAPI(t *testing.T) {
