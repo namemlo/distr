@@ -1483,3 +1483,31 @@ Use one entry per pull request:
   PR-071 through PR-073 campaign seams; integration must retain migration 156 ordering, hydrate database-resource and
   observer scope bindings from PR-065/PR-077, consume `scopeReference` plus both runtime checksums in PR-075, and
   consume frozen plan adapter evidence at campaign admission.
+
+### PR-075 - Fenced executor protocol v2
+
+- Status: Implemented on the prepared synthetic branch; predecessor integration
+  seams remain explicit.
+- Upstream base: `ea6567b6` (PR-063 checkpoint).
+- Feature flag: Requires both `operator_control_plane_v2` and
+  `executor_protocol_v2`; missing scoped enrollment, approval, admission or
+  adapter-preflight evidence denies dispatch.
+- User-facing behavior: Executors can claim, heartbeat, append ordered events
+  and complete signed fenced v2 attempts.
+- Database changes: Migration 157 adds `ExecutionAttempt`, `ExecutionFence`,
+  append-only `ExecutionIntent`, append-only `ExecutionEvent`, and frozen
+  `Task.protocol_version`.
+- API changes: Adds `/api/executor/v2` claim, heartbeat, event and completion
+  routes using the authenticated agent/executor organization scope.
+- UI changes: None.
+- Agent protocol changes: Adds canonical Ed25519-signed intent v2, public-key
+  fingerprint identity, bounded leases, monotonically increasing fencing and
+  conflict-secure event idempotency.
+- Documentation: Added ADR-0064 and PR-075 fork notes.
+- Tests: Added golden/tamper/wrong-key/expiry/input-mismatch signing coverage,
+  fencing/idempotency/restart/timeout state coverage, dispatcher admission,
+  repository validation, API validation, mapping and v1 regression coverage.
+- Upstream contribution notes: Community-neutral interfaces and schema; no
+  adopter, infrastructure provider, credential or private-key persistence.
+- Compatibility notes: External execution v1 tables, routes, transitions and
+  ADR-0052 retry behavior are unchanged.

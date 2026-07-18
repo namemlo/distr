@@ -36,6 +36,7 @@ const taskOutputExpr = `
 	t.environment_id,
 	t.actor_user_account_id,
 	t.status,
+	t.protocol_version,
 	t.queue_order
 `
 
@@ -421,7 +422,8 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID, 
 			channel_id,
 			environment_id,
 			actor_user_account_id,
-			status
+			status,
+			protocol_version
 		)
 		SELECT
 			dp.organization_id,
@@ -434,7 +436,8 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID, 
 			dp.channel_id,
 			dp.environment_id,
 			@actorUserAccountId,
-			@status
+			@status,
+			dp.protocol_version
 		FROM DeploymentPlan dp
 		JOIN DeploymentPlanTarget dpt
 			ON dpt.deployment_plan_id = dp.id

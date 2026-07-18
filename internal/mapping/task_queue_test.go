@@ -26,6 +26,7 @@ func TestTaskToAPI(t *testing.T) {
 		ChannelID:              uuid.New(),
 		EnvironmentID:          uuid.New(),
 		Status:                 types.TaskStatusQueued,
+		ProtocolVersion:        types.ExecutionProtocolVersionV2,
 		QueueOrder:             42,
 		Locks: []types.TaskResourceLock{
 			{
@@ -56,6 +57,7 @@ func TestTaskToAPI(t *testing.T) {
 	g.Expect(response.DeploymentPlanID).To(Equal(task.DeploymentPlanID))
 	g.Expect(response.DeploymentTargetID).To(Equal(task.DeploymentTargetID))
 	g.Expect(response.Status).To(Equal(types.TaskStatusQueued))
+	g.Expect(response.ProtocolVersion).To(Equal(types.ExecutionProtocolVersionV2))
 	g.Expect(response.QueueOrder).To(Equal(int64(42)))
 	g.Expect(response.Locks).To(HaveLen(1))
 	g.Expect(response.Locks[0].ResourceType).To(Equal(types.TaskLockResourceDeploymentTarget))

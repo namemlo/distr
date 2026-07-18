@@ -164,6 +164,18 @@ func ApiRouter(
 
 		r.Route("/public/v1", PublicRouter(tracingTracers.Default))
 
+		r.Route("/executor/v2", func(r chiopenapi.Router) {
+			r.WithOptions(option.GroupSecurity("bearer"))
+			r.Use(
+				tracingMiddleware(tracingTracers.Agent, requestSize1MiB)...,
+			)
+			r.Use(
+				auth.AgentAuthentication.Middleware,
+				middleware.SetSentryUserFromAgentAuth,
+			)
+			r.Route("/", handlers.ExecutionV2ExecutorRouter)
+		})
+
 		r.Route("/v1", func(r chiopenapi.Router) {
 			r.Group(func(r chiopenapi.Router) {
 				r.Use(

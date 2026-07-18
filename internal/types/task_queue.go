@@ -143,26 +143,27 @@ type TransitionStepRunStateRequest struct {
 }
 
 type Task struct {
-	ID                     uuid.UUID          `db:"id" json:"id"`
-	CreatedAt              time.Time          `db:"created_at" json:"createdAt"`
-	UpdatedAt              time.Time          `db:"updated_at" json:"updatedAt"`
-	QueuedAt               time.Time          `db:"queued_at" json:"queuedAt"`
-	StartedAt              *time.Time         `db:"started_at" json:"startedAt,omitempty"`
-	CompletedAt            *time.Time         `db:"completed_at" json:"completedAt,omitempty"`
-	OrganizationID         uuid.UUID          `db:"organization_id" json:"organizationId"`
-	TaskType               TaskType           `db:"task_type" json:"taskType"`
-	DeploymentPlanID       uuid.UUID          `db:"deployment_plan_id" json:"deploymentPlanId"`
-	DeploymentPlanTargetID uuid.UUID          `db:"deployment_plan_target_id" json:"deploymentPlanTargetId"`
-	DeploymentTargetID     uuid.UUID          `db:"deployment_target_id" json:"deploymentTargetId"`
-	ApplicationID          uuid.UUID          `db:"application_id" json:"applicationId"`
-	ReleaseBundleID        uuid.UUID          `db:"release_bundle_id" json:"releaseBundleId"`
-	ChannelID              uuid.UUID          `db:"channel_id" json:"channelId"`
-	EnvironmentID          uuid.UUID          `db:"environment_id" json:"environmentId"`
-	ActorUserAccountID     *uuid.UUID         `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
-	Status                 TaskStatus         `db:"status" json:"status"`
-	QueueOrder             int64              `db:"queue_order" json:"queueOrder"`
-	Locks                  []TaskResourceLock `db:"-" json:"locks"`
-	StepRuns               []StepRun          `db:"-" json:"stepRuns"`
+	ID                     uuid.UUID                `db:"id" json:"id"`
+	CreatedAt              time.Time                `db:"created_at" json:"createdAt"`
+	UpdatedAt              time.Time                `db:"updated_at" json:"updatedAt"`
+	QueuedAt               time.Time                `db:"queued_at" json:"queuedAt"`
+	StartedAt              *time.Time               `db:"started_at" json:"startedAt,omitempty"`
+	CompletedAt            *time.Time               `db:"completed_at" json:"completedAt,omitempty"`
+	OrganizationID         uuid.UUID                `db:"organization_id" json:"organizationId"`
+	TaskType               TaskType                 `db:"task_type" json:"taskType"`
+	DeploymentPlanID       uuid.UUID                `db:"deployment_plan_id" json:"deploymentPlanId"`
+	DeploymentPlanTargetID uuid.UUID                `db:"deployment_plan_target_id" json:"deploymentPlanTargetId"`
+	DeploymentTargetID     uuid.UUID                `db:"deployment_target_id" json:"deploymentTargetId"`
+	ApplicationID          uuid.UUID                `db:"application_id" json:"applicationId"`
+	ReleaseBundleID        uuid.UUID                `db:"release_bundle_id" json:"releaseBundleId"`
+	ChannelID              uuid.UUID                `db:"channel_id" json:"channelId"`
+	EnvironmentID          uuid.UUID                `db:"environment_id" json:"environmentId"`
+	ActorUserAccountID     *uuid.UUID               `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
+	Status                 TaskStatus               `db:"status" json:"status"`
+	ProtocolVersion        ExecutionProtocolVersion `db:"protocol_version" json:"protocolVersion"`
+	QueueOrder             int64                    `db:"queue_order" json:"queueOrder"`
+	Locks                  []TaskResourceLock       `db:"-" json:"locks"`
+	StepRuns               []StepRun                `db:"-" json:"stepRuns"`
 }
 
 type TaskResourceLock struct {

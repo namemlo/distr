@@ -61,25 +61,26 @@ func (r TransitionTaskStateRequest) Validate() error {
 }
 
 type Task struct {
-	ID                     uuid.UUID          `json:"id"`
-	CreatedAt              time.Time          `json:"createdAt"`
-	UpdatedAt              time.Time          `json:"updatedAt"`
-	QueuedAt               time.Time          `json:"queuedAt"`
-	StartedAt              *time.Time         `json:"startedAt,omitempty"`
-	CompletedAt            *time.Time         `json:"completedAt,omitempty"`
-	TaskType               types.TaskType     `json:"taskType"`
-	DeploymentPlanID       uuid.UUID          `json:"deploymentPlanId"`
-	DeploymentPlanTargetID uuid.UUID          `json:"deploymentPlanTargetId"`
-	DeploymentTargetID     uuid.UUID          `json:"deploymentTargetId"`
-	ApplicationID          uuid.UUID          `json:"applicationId"`
-	ReleaseBundleID        uuid.UUID          `json:"releaseBundleId"`
-	ChannelID              uuid.UUID          `json:"channelId"`
-	EnvironmentID          uuid.UUID          `json:"environmentId"`
-	ActorUserAccountID     *uuid.UUID         `json:"actorUserAccountId,omitempty"`
-	Status                 types.TaskStatus   `json:"status"`
-	QueueOrder             int64              `json:"queueOrder"`
-	Locks                  []TaskResourceLock `json:"locks"`
-	StepRuns               []StepRun          `json:"stepRuns"`
+	ID                     uuid.UUID                      `json:"id"`
+	CreatedAt              time.Time                      `json:"createdAt"`
+	UpdatedAt              time.Time                      `json:"updatedAt"`
+	QueuedAt               time.Time                      `json:"queuedAt"`
+	StartedAt              *time.Time                     `json:"startedAt,omitempty"`
+	CompletedAt            *time.Time                     `json:"completedAt,omitempty"`
+	TaskType               types.TaskType                 `json:"taskType"`
+	DeploymentPlanID       uuid.UUID                      `json:"deploymentPlanId"`
+	DeploymentPlanTargetID uuid.UUID                      `json:"deploymentPlanTargetId"`
+	DeploymentTargetID     uuid.UUID                      `json:"deploymentTargetId"`
+	ApplicationID          uuid.UUID                      `json:"applicationId"`
+	ReleaseBundleID        uuid.UUID                      `json:"releaseBundleId"`
+	ChannelID              uuid.UUID                      `json:"channelId"`
+	EnvironmentID          uuid.UUID                      `json:"environmentId"`
+	ActorUserAccountID     *uuid.UUID                     `json:"actorUserAccountId,omitempty"`
+	Status                 types.TaskStatus               `json:"status"`
+	ProtocolVersion        types.ExecutionProtocolVersion `json:"protocolVersion"`
+	QueueOrder             int64                          `json:"queueOrder"`
+	Locks                  []TaskResourceLock             `json:"locks"`
+	StepRuns               []StepRun                      `json:"stepRuns"`
 }
 
 type TaskResourceLock struct {

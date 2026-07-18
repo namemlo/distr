@@ -23,6 +23,7 @@ func TaskToAPI(task types.Task) api.Task {
 		EnvironmentID:          task.EnvironmentID,
 		ActorUserAccountID:     task.ActorUserAccountID,
 		Status:                 task.Status,
+		ProtocolVersion:        task.ProtocolVersion,
 		QueueOrder:             task.QueueOrder,
 		Locks:                  List(task.Locks, TaskResourceLockToAPI),
 		StepRuns:               List(task.StepRuns, StepRunToAPI),
