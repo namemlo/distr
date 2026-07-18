@@ -1554,3 +1554,27 @@ Use one entry per pull request:
   provider or adopter semantics.
 - Compatibility notes: V1 callbacks and retry rules remain unchanged. V2
   unknown evidence remains explicit and cannot be projected as success.
+### PR-077 - Desired state, independent observation, and drift
+
+- Status: Implemented on the prepared synthetic branch; focused backend, race, vet, and migration-contract
+  verification completed. Ordered migration-stack and live PostgreSQL verification remain integration gates.
+- Upstream base: `ea6567b6` (PR-063 synthetic checkpoint).
+- Feature flag: `operator_control_plane_v2` gates observer ingestion and all management routes.
+- User-facing behavior: An admitted component becomes active desired state only after fresh, trusted, independently
+  measured runtime state exactly matches. Failure, cancellation, partial/unknown evidence, mismatch, conflict, and
+  timeout retain the prior active revision and create visible quarantine/reconciliation state.
+- Database changes: Migration 159 adds pending/active desired revisions, desired/observation heads, executor reports,
+  observer registrations, independent observed state, drift cases/events, and reconciliation actions. Existing
+  executor-projected target state/history is unchanged.
+- API changes: Adds authenticated `/api/observer/v1/observations` ingestion plus organization-scoped observer
+  registration, observation, drift-case, and reconciliation-action management routes.
+- UI changes: None.
+- Agent protocol changes: No current agent route changes. Registered observer adapters use a separate opaque
+  credential and ordered evidence envelope.
+- Documentation: Added ADR-0065 and PR-077 fork notes.
+- Tests: Added desired-state, observer trust/freshness/sequence, gate, drift, reconciliation, campaign verifier,
+  API/mapping/handler, migration, tenant-fence, and route coverage.
+- Upstream contribution notes: Community-neutral desired/observed state and reconciliation contracts; no adopter,
+  infrastructure, CI-provider, cloud, credential value, or workload-specific core behavior.
+- Compatibility notes: v1 execution, `TargetComponentState`, and `TargetComponentObservation` remain unchanged.
+  The PR-072 scheduler wires `internal/observation.CampaignVerifier` structurally during ordered integration.

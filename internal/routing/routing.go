@@ -185,6 +185,17 @@ func ApiRouter(
 			r.Route("/", handlers.ExecutionV2ExecutorRouter)
 		})
 
+		r.Route("/observer/v1", func(r chiopenapi.Router) {
+			r.Use(
+				tracingMiddleware(tracingTracers.Default, requestSize1MiB)...,
+			)
+			r.Use(
+				httprate.Limit(60, 1*time.Minute),
+				httprate.Limit(1000, 1*time.Hour),
+			)
+			r.Route("/observations", handlers.ObserverIngestRouter)
+		})
+
 		r.Route("/v1", func(r chiopenapi.Router) {
 			r.Group(func(r chiopenapi.Router) {
 				r.Use(
@@ -268,11 +279,15 @@ func ApiRouter(
 					r.Route("/maintenance-calendars", handlers.MaintenanceCalendarsRouter)
 					r.Route("/notification-records", handlers.NotificationRecordsRouter)
 					r.Route("/observability", handlers.ObservabilityRouter)
+					r.Route("/observer-registrations", handlers.ObserverRegistrationsRouter)
+					r.Route("/observations", handlers.ObservationsRouter)
 					r.Route("/organization", handlers.OrganizationRouter)
 					r.Route("/organizations", handlers.OrganizationsRouter)
 					r.Route("/product-releases", handlers.ProductReleasesRouter)
 					r.Route("/release-bundles", handlers.ReleaseBundlesRouter)
 					r.Route("/retention-policies", handlers.RetentionPoliciesRouter)
+					r.Route("/drift-cases", handlers.DriftCasesRouter)
+					r.Route("/reconciliation-actions", handlers.ReconciliationActionsRouter)
 					r.Route("/runbooks", handlers.RunbooksRouter)
 					r.Route("/secrets", handlers.SecretsRouter)
 					r.Route("/settings", handlers.SettingsRouter)
