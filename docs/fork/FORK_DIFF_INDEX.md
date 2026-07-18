@@ -1047,7 +1047,8 @@ Use one entry per pull request:
   preview accepts an optional bounded `sourcePlacements` identity baseline.
 - UI changes: Setup UI is implemented in the separate PR-057 frontend slice.
 - Agent protocol changes: None.
-- Documentation: Added ADR-0057 and PR-057 fork notes.
+- Documentation: PR-057 architecture-decision evidence is folded into its fork note; ADR-0057 remains uniquely
+  allocated to PR-058.
 - Tests: Added fast pure import/checksum/classification/coverage/sanitization tests, static migration and assignment
   reuse contract tests, and deferred live PostgreSQL omission persistence/apply coverage.
 - Upstream contribution notes: Community-neutral normalized adapter input; no adopter, provider, hostname, path,

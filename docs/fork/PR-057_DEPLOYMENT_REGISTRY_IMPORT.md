@@ -45,6 +45,22 @@ refuses while evidence exists. The API is additive. Mutations reuse the PR-056 r
 The backend stores no raw report bytes, secret-bearing content, local/client paths, or hostnames. Diagnostics are
 bounded. Cross-organization import IDs return the same not-found result as missing IDs.
 
+## Architecture Decision
+
+PR-057 intentionally has no separately numbered ADR. Its long-lived decision evidence is retained here so ADR-0057
+remains uniquely allocated to PR-058 immutable target-configuration snapshots.
+
+Discovery never activates executable registry state. PostgreSQL stores normalized candidates, decisions,
+checkpoints, and immutable evidence metadata only; raw reports remain in the content-addressed evidence store.
+Classification is review evidence mapped to the PR-056 registry states, not a second management-state model.
+Apply uses the import UUID as its durable identity, a renewable database lease and conditional checkpoints, and
+atomically commits each root or placement mutation with its checkpoint.
+
+Alternatives rejected were storing raw report JSON in PostgreSQL, treating discovery as activation, extending the
+registry management enum with import-only classifications, and using the source checksum as the mutable import
+identity. Each alternative either expanded the sensitive-data boundary, bypassed operator decisions, duplicated
+the canonical state model, or made restartable decisions ambiguous.
+
 ## Verification
 
 Fast unit tests cover deep normalization, checksum stability, every placement metadata field, source-baseline
