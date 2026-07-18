@@ -92,11 +92,11 @@ git commit -m "feat: isolate operator control plane v2"
 - Modify: `docs/adr/README.md`
 - Modify: `docs/fork/FORK_DIFF_INDEX.md`
 
-Migration 139 creates organization-owned `DeploymentScope`, `TargetEnvironmentAssignment`, `DeploymentUnit`, `DeploymentUnitSubscriber`, `ComponentDefinition`, `ComponentAlias`, and `ComponentInstance`. It reuses `CustomerOrganization`, `DeploymentTarget`, and `Environment` foreign keys. Constraints enforce one physical unit per target/scope identity, explicit active environment intervals, unique subscriber/unit pairs, canonical component keys, alias uniqueness, active instance uniqueness, organization-consistent relations, and deterministic pagination indexes.
+Migration 139 creates organization-owned `DeploymentScope`, `TargetEnvironmentAssignment`, `DeploymentUnit`, `DeploymentUnitSubscriber`, `ComponentDefinition`, `ComponentAlias`, and `ComponentInstance`, plus private append-only `ComponentInstanceRename` evidence. It reuses `CustomerOrganization`, `DeploymentTarget`, and `Environment` foreign keys. Deferred `NO ACTION` composite constraints preserve ordinary history while allowing exact-marker organization retention to cascade the graph. Other constraints enforce one physical unit per target/scope identity, explicit active environment intervals, unique subscriber/unit pairs, canonical component keys, alias uniqueness, active instance uniqueness, organization-consistent relations, and deterministic pagination indexes.
 
 ```go
-type DeliveryModel string // dedicated, shared, external, observe_only
-type RegistryManagementState string // managed, external, observe_only, unclassified, retired
+type DeliveryModel string // dedicated, shared, external
+type RegistryManagementState string // managed, observe_only, external, legacy_cutover, backup, retired, unclassified
 
 type DeploymentRegistryPlacement struct {
     Scope       DeploymentScope
@@ -120,11 +120,14 @@ func ListDeploymentRegistryPlacements(context.Context, types.RegistryListFilter)
 
 API root: `/api/v1/deployment-registry`. Add scoped CRUD/list endpoints for scopes, assignments, units, subscribers, definitions, aliases, instances, and placements. Lists accept `cursor` and `limit` (default 50, maximum 100).
 
-- [ ] Write validation tests for dedicated/shared topology, ambiguous active environment, duplicate physical identity, missing subscriber, orphan instance, alias-required rename, and cross-organization substitution; run them red, then implement pure types/validation green.
-- [ ] Write migration/repository tests that apply migration 139, create a complete placement, reject foreign IDs, prove pagination order, and allow down migration only when no registry data exists.
-- [ ] Implement schema/repositories in transactions and translate uniqueness/FK failures into non-leaking domain errors.
-- [ ] Add API validation, mapping, handlers, feature middleware, and routing. Test admin success, read-only list, unauthorized mutation, foreign ID 404, flag disabled, and bounded pagination.
-- [ ] Verify, document, and commit.
+- [x] Write validation tests for dedicated/shared topology, ambiguous active environment, duplicate physical identity, missing subscriber, orphan instance, alias-required rename, and cross-organization substitution; run them red, then implement pure types/validation green.
+- [x] Write migration/repository tests that apply migration 139, create a complete placement, reject foreign IDs, prove pagination order, and allow down migration only when no registry data exists.
+- [x] Implement schema/repositories in transactions and translate uniqueness/FK failures into non-leaking domain errors.
+- [x] Add API validation, mapping, handlers, feature middleware, and routing. Test admin success, read-only list, unauthorized mutation, foreign ID 404, flag disabled, and bounded pagination.
+- [x] Prove sealed shared-unit retention, exact-marker-only guard bypass, durable multi-hop rename evidence, alias/instance history conflicts, and sequential/concurrent rename races.
+- [x] Replace placement-list per-row reads with a seven-query repeatable-read batch loader and assert its runtime query count at limit 100.
+- [x] Use native UUID/byte ordering for subscriber checksums and return not-found for zero-row and concurrent delete/update write results.
+- [x] Verify, document, and commit.
 
 ```powershell
 go test ./internal/deploymentregistry ./api ./internal/mapping ./internal/handlers -run 'Registry|DeploymentScope|ComponentInstance' -count=1

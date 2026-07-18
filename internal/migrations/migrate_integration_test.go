@@ -235,7 +235,7 @@ CREATE TABLE schema_migrations (
   version BIGINT PRIMARY KEY,
   dirty BOOLEAN NOT NULL
 );
-INSERT INTO schema_migrations VALUES (139, FALSE);
+INSERT INTO schema_migrations VALUES (140, FALSE);
 CREATE TABLE newer_schema_marker (id BIGINT PRIMARY KEY)`)
 			g.Expect(err).NotTo(HaveOccurred())
 
@@ -260,13 +260,13 @@ WHERE namespace.nspname=current_schema()
 			}
 			err = database.runner.Run(context.Background(), test.options)
 			g.Expect(err).To(MatchError(
-				"current schema 139 is newer than latest embedded schema 138",
+				"current schema 140 is newer than latest embedded schema 139",
 			))
 			g.Expect(constructed).To(Equal(uint64(0)))
 
 			status, statusErr := database.runner.Status(context.Background())
 			g.Expect(statusErr).NotTo(HaveOccurred())
-			g.Expect(status).To(Equal(SchemaStatus{Version: 139, Dirty: false}))
+			g.Expect(status).To(Equal(SchemaStatus{Version: 140, Dirty: false}))
 			var afterTables string
 			statusErr = database.pool.QueryRow(context.Background(), `
 SELECT COALESCE(string_agg(relation.relname, ',' ORDER BY relation.relname), '')
