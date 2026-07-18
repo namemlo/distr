@@ -816,7 +816,12 @@ func CreatePreviousStatePlanForOrganization(
 	currentPlanID,
 	successfulPlanID uuid.UUID,
 	reason string,
+	verifiers ...TargetConfigObjectVerifier,
 ) (*types.DeploymentPlan, error) {
+	verifier := NewUnavailableTargetConfigObjectVerifier()
+	if len(verifiers) == 1 && verifiers[0] != nil {
+		verifier = verifiers[0]
+	}
 	reason = strings.TrimSpace(reason)
 	if organizationID == uuid.Nil || actorUserAccountID == uuid.Nil ||
 		currentPlanID == uuid.Nil || successfulPlanID == uuid.Nil {
@@ -838,6 +843,7 @@ func CreatePreviousStatePlanForOrganization(
 			currentPlanID,
 			successfulPlanID,
 			reason,
+			verifier,
 		)
 		result = created
 		return createErr
@@ -864,6 +870,7 @@ func createPreviousStatePlanInTx(
 	currentPlanID,
 	successfulPlanID uuid.UUID,
 	reason string,
+	verifier TargetConfigObjectVerifier,
 ) (*types.DeploymentPlan, error) {
 	existing, err := getPreviousStatePlan(
 		ctx,
@@ -930,7 +937,7 @@ func createPreviousStatePlanInTx(
 	if err != nil {
 		return nil, err
 	}
-	validation, err := validateDeploymentPlanDraft(ctx, draft)
+	validation, err := validateDeploymentPlanDraft(ctx, draft, verifier)
 	if err != nil {
 		return nil, err
 	}

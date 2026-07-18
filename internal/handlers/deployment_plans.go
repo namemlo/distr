@@ -21,6 +21,24 @@ import (
 )
 
 func DeploymentPlansRouter(r chiopenapi.Router) {
+	DeploymentPlansRouterWithVerifier(db.NewUnavailableTargetConfigObjectVerifier())(r)
+}
+
+func DeploymentPlansRouterWithVerifier(
+	verifier db.TargetConfigObjectVerifier,
+) func(chiopenapi.Router) {
+	if verifier == nil {
+		verifier = db.NewUnavailableTargetConfigObjectVerifier()
+	}
+	return func(r chiopenapi.Router) {
+		deploymentPlansRouterWithVerifier(r, verifier)
+	}
+}
+
+func deploymentPlansRouterWithVerifier(
+	r chiopenapi.Router,
+	verifier db.TargetConfigObjectVerifier,
+) {
 	r.WithOptions(option.GroupTags("Deployment Plans"))
 	r.With(
 		middleware.RequireVendor,
@@ -58,7 +76,7 @@ func DeploymentPlansRouter(r chiopenapi.Router) {
 			}
 
 			r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
-				Post("/previous-state", createPreviousStateDeploymentPlanHandler()).
+				Post("/previous-state", createPreviousStateDeploymentPlanHandler(verifier)).
 				With(option.Description("Create a new immutable plan for a previously successful state")).
 				With(option.Request(CreatePreviousStateDeploymentPlanRouteRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlan{}))
@@ -164,7 +182,9 @@ func createDeploymentPlanHandler() http.HandlerFunc {
 	}
 }
 
-func createPreviousStateDeploymentPlanHandler() http.HandlerFunc {
+func createPreviousStateDeploymentPlanHandler(
+	verifier db.TargetConfigObjectVerifier,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		currentPlanID, err := uuid.Parse(r.PathValue("deploymentPlanId"))
 		if err != nil {
@@ -189,6 +209,7 @@ func createPreviousStateDeploymentPlanHandler() http.HandlerFunc {
 			currentPlanID,
 			request.SuccessfulDeploymentPlanID,
 			request.Reason,
+			verifier,
 		)
 		switch {
 		case errors.Is(err, apierrors.ErrNotFound):

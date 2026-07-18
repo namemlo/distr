@@ -214,7 +214,12 @@ func ApiRouter(
 					r.Route("/deployment-target-metrics", handlers.DeploymentTargetMetricsRouter)
 					r.Route("/deployment-targets", handlers.DeploymentTargetsRouter)
 					r.Route("/deployment-timeline", handlers.DeploymentTimelineRouter)
-					r.Route("/deployment-plans", handlers.DeploymentPlansRouter)
+					r.Route(
+						"/deployment-plans",
+						handlers.DeploymentPlansRouterWithVerifier(
+							internaldb.NewTargetPlanConfigObjectVerifier(targetConfigObjectVerifier),
+						),
+					)
 					r.Route(
 						"/deployment-plan-drafts",
 						handlers.DeploymentPlanDraftsRouterWithVerifier(
