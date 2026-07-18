@@ -1,6 +1,7 @@
 package api
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -8,6 +9,32 @@ import (
 	"github.com/distr-sh/distr/internal/validation"
 	"github.com/google/uuid"
 )
+
+const authorizationMaximumCursorSize = 2048
+
+var authorizationCursorPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+type AuthorizationListRequest struct {
+	Cursor string `query:"cursor"`
+	Limit  *int   `query:"limit"`
+}
+
+func (request AuthorizationListRequest) Validate() error {
+	if request.Limit != nil && (*request.Limit < 1 || *request.Limit > 100) {
+		return validation.NewValidationFailedError(
+			"limit must be between 1 and 100 when provided",
+		)
+	}
+	if len(request.Cursor) > authorizationMaximumCursorSize {
+		return validation.NewValidationFailedError("cursor is too large")
+	}
+	if request.Cursor != "" && !authorizationCursorPattern.MatchString(request.Cursor) {
+		return validation.NewValidationFailedError(
+			"cursor must be an opaque URL-safe token",
+		)
+	}
+	return nil
+}
 
 type AuthorizationRole struct {
 	ID                     uuid.UUID       `json:"id"`
@@ -23,7 +50,8 @@ type AuthorizationRole struct {
 }
 
 type AuthorizationRoleListResponse struct {
-	Roles []AuthorizationRole `json:"roles"`
+	Roles      []AuthorizationRole `json:"roles"`
+	NextCursor string              `json:"nextCursor,omitempty"`
 }
 
 type CreateAuthorizationRoleRequest struct {
@@ -34,8 +62,12 @@ type CreateAuthorizationRoleRequest struct {
 }
 
 func (request CreateAuthorizationRoleRequest) Validate() error {
-	if strings.TrimSpace(request.Key) == "" {
+	key := strings.ToLower(strings.TrimSpace(request.Key))
+	if key == "" {
 		return validation.NewValidationFailedError("key is required")
+	}
+	if types.IsReservedAuthorizationRoleKey(key) {
+		return validation.NewValidationFailedError("role key is reserved")
 	}
 	if strings.TrimSpace(request.DisplayName) == "" {
 		return validation.NewValidationFailedError("displayName is required")
@@ -67,7 +99,8 @@ type AuthorizationRoleBinding struct {
 }
 
 type AuthorizationRoleBindingListResponse struct {
-	Bindings []AuthorizationRoleBinding `json:"bindings"`
+	Bindings   []AuthorizationRoleBinding `json:"bindings"`
+	NextCursor string                     `json:"nextCursor,omitempty"`
 }
 
 type CreateAuthorizationRoleBindingRequest struct {
@@ -113,7 +146,8 @@ type AuthorizationPrincipalGroup struct {
 }
 
 type AuthorizationPrincipalGroupListResponse struct {
-	Groups []AuthorizationPrincipalGroup `json:"groups"`
+	Groups     []AuthorizationPrincipalGroup `json:"groups"`
+	NextCursor string                        `json:"nextCursor,omitempty"`
 }
 
 type CreateAuthorizationPrincipalGroupRequest struct {
@@ -144,7 +178,8 @@ type AuthorizationPrincipalGroupMember struct {
 }
 
 type AuthorizationPrincipalGroupMemberListResponse struct {
-	Members []AuthorizationPrincipalGroupMember `json:"members"`
+	Members    []AuthorizationPrincipalGroupMember `json:"members"`
+	NextCursor string                              `json:"nextCursor,omitempty"`
 }
 
 type AddAuthorizationPrincipalGroupMemberRequest struct {
@@ -152,6 +187,43 @@ type AddAuthorizationPrincipalGroupMemberRequest struct {
 	EffectiveFrom  time.Time  `json:"effectiveFrom"`
 	EffectiveUntil *time.Time `json:"effectiveUntil,omitempty"`
 	Reason         string     `json:"reason"`
+}
+
+type RevokeAuthorizationGrantRequest struct {
+	EffectiveFrom time.Time `json:"effectiveFrom"`
+	Reason        string    `json:"reason"`
+}
+
+func (request RevokeAuthorizationGrantRequest) Validate() error {
+	if request.EffectiveFrom.IsZero() {
+		return validation.NewValidationFailedError("effectiveFrom is required")
+	}
+	if strings.TrimSpace(request.Reason) == "" {
+		return validation.NewValidationFailedError("reason is required")
+	}
+	return nil
+}
+
+type AuthorizationRoleBindingRevision struct {
+	ID                 uuid.UUID                        `json:"id"`
+	CreatedAt          time.Time                        `json:"createdAt"`
+	RoleBindingID      uuid.UUID                        `json:"roleBindingId"`
+	Revision           int64                            `json:"revision"`
+	State              types.AuthorizationRevisionState `json:"state"`
+	EffectiveFrom      time.Time                        `json:"effectiveFrom"`
+	ActorUserAccountID uuid.UUID                        `json:"actorUserAccountId"`
+	Reason             string                           `json:"reason"`
+}
+
+type AuthorizationPrincipalGroupMemberRevision struct {
+	ID                     uuid.UUID                        `json:"id"`
+	CreatedAt              time.Time                        `json:"createdAt"`
+	PrincipalGroupMemberID uuid.UUID                        `json:"principalGroupMemberId"`
+	Revision               int64                            `json:"revision"`
+	State                  types.AuthorizationRevisionState `json:"state"`
+	EffectiveFrom          time.Time                        `json:"effectiveFrom"`
+	ActorUserAccountID     uuid.UUID                        `json:"actorUserAccountId"`
+	Reason                 string                           `json:"reason"`
 }
 
 func (request AddAuthorizationPrincipalGroupMemberRequest) Validate() error {
@@ -185,6 +257,7 @@ type ControlPlaneEnrollment struct {
 
 type ControlPlaneEnrollmentListResponse struct {
 	Enrollments []ControlPlaneEnrollment `json:"enrollments"`
+	NextCursor  string                   `json:"nextCursor,omitempty"`
 }
 
 type CreateControlPlaneEnrollmentRequest struct {

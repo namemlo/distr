@@ -47,7 +47,7 @@
 - Create: `docs/adr/0061-scoped-authorization-and-enrollment.md`
 - Create: `docs/fork/PR-066_SCOPED_AUTHORIZATION_ENROLLMENT.md`
 
-Migration 148 creates `RoleDefinition`, `RolePermission`, `RoleBinding`, `PrincipalGroup`, `PrincipalGroupMember`, and `ControlPlaneEnrollment`. Supported scope kinds are `organization`, `customer`, `environment`, `deployment_unit`, `component`, and `campaign`. Enrollment can be organization- or environment-scoped and has effective interval, actor, reason, and revision.
+Migration 148 creates `RoleDefinition`, `RolePermission`, `RoleBinding`, `RoleBindingRevision`, `PrincipalGroup`, `PrincipalGroupMember`, `PrincipalGroupMemberRevision`, and `ControlPlaneEnrollment`. Supported scope kinds are `organization`, `customer`, `environment`, `deployment_unit`, `component`, and `campaign`. Binding and membership revocation is append-only and monotonic. Enrollment can be organization- or environment-scoped and has effective interval, actor, reason, and revision. Every list is keyset paginated, and one UTC decision instant governs credential cap, binding, membership, and enrollment evaluation.
 
 ```go
 type Action string

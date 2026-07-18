@@ -18,6 +18,7 @@ type Repository interface {
 		context.Context,
 		uuid.UUID,
 		uuid.UUID,
+		time.Time,
 	) ([]types.AccessGrant, error)
 	GetLegacyUserRole(
 		context.Context,
@@ -33,6 +34,7 @@ type Repository interface {
 		uuid.UUID,
 		types.PermissionScope,
 		uuid.UUID,
+		time.Time,
 	) ([]types.ControlPlaneEnrollment, error)
 }
 
@@ -90,25 +92,35 @@ func (service *Service) Authorize(
 	}
 	if request.OrganizationID == uuid.Nil ||
 		request.PrincipalID == uuid.Nil ||
+		request.IsSuperAdmin ||
+		request.CredentialRole == nil ||
 		!request.Action.Valid() ||
 		!validResourceScopes(request.OrganizationID, request.ResourceScopes) {
 		return denied, nil
 	}
+	credentialActions := types.ActionsForLegacyRole(*request.CredentialRole)
+	if !slices.Contains(credentialActions, request.Action) {
+		return denied, nil
+	}
 
+	decisionAt := request.DecisionAt.UTC()
+	if request.DecisionAt.IsZero() {
+		decisionAt = service.clock().UTC()
+	}
 	grants, err := service.repository.ListAccessGrants(
 		ctx,
 		request.OrganizationID,
 		request.PrincipalID,
+		decisionAt,
 	)
 	if err != nil {
 		return denied, err
 	}
 
-	now := service.clock().UTC()
 	matches := make([]uuid.UUID, 0, len(grants))
 	seen := make(map[uuid.UUID]struct{}, len(grants))
 	for _, grant := range grants {
-		if !GrantEffectiveAt(grant, now) ||
+		if !GrantEffectiveAt(grant, decisionAt) ||
 			!slices.Contains(grant.Actions, request.Action) ||
 			!slices.Contains(request.ResourceScopes, grant.Scope) {
 			continue
@@ -188,8 +200,14 @@ func (databaseRepository) ListAccessGrants(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	principalID uuid.UUID,
+	decisionAt time.Time,
 ) ([]types.AccessGrant, error) {
-	return db.ListAuthorizationAccessGrants(ctx, organizationID, principalID)
+	return db.ListAuthorizationAccessGrants(
+		ctx,
+		organizationID,
+		principalID,
+		decisionAt,
+	)
 }
 
 func (databaseRepository) GetLegacyUserRole(
@@ -212,6 +230,13 @@ func (databaseRepository) ListControlPlaneEnrollments(
 	organizationID uuid.UUID,
 	scopeKind types.PermissionScope,
 	scopeID uuid.UUID,
+	decisionAt time.Time,
 ) ([]types.ControlPlaneEnrollment, error) {
-	return db.ListControlPlaneEnrollmentsForScope(ctx, organizationID, scopeKind, scopeID)
+	return db.ListControlPlaneEnrollmentsForScope(
+		ctx,
+		organizationID,
+		scopeKind,
+		scopeID,
+		decisionAt,
+	)
 }

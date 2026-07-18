@@ -45,7 +45,25 @@ func TestScopedAuthorizationAdminRoutesArePublishedInOpenAPI(t *testing.T) {
 		g.Expect(document.Paths).To(HaveKey(path), path)
 		g.Expect(document.Paths[path]).To(HaveKey("get"), path)
 		g.Expect(document.Paths[path]).To(HaveKey("post"), path)
+		var operation struct {
+			Parameters []struct {
+				Name string `json:"name"`
+			} `json:"parameters"`
+		}
+		g.Expect(json.Unmarshal(document.Paths[path]["get"], &operation)).To(Succeed())
+		g.Expect(operation.Parameters).To(ContainElements(
+			HaveField("Name", "cursor"),
+			HaveField("Name", "limit"),
+		), path)
 	}
+	for _, path := range []string{
+		"/api/v1/authorization/bindings/{bindingId}/revocations",
+		"/api/v1/authorization/groups/{groupId}/members/{memberId}/revocations",
+	} {
+		g.Expect(document.Paths).To(HaveKey(path), path)
+		g.Expect(document.Paths[path]).To(HaveKey("post"), path)
+	}
+	g.Expect(string(recorder.Body.Bytes())).To(ContainSubstring(`"nextCursor"`))
 }
 
 func TestDeploymentRegistryRoutesArePublishedInOpenAPI(t *testing.T) {

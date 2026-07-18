@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
@@ -19,57 +20,190 @@ import (
 
 var authorizationKeyPattern = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
 
+const authorizationAccessGrantsSQL = `
+	SELECT
+	  binding.id,
+	  binding.principal_kind,
+	  binding.scope_kind,
+	  binding.scope_id,
+	  binding.effective_from,
+	  binding.effective_until,
+	  array_agg(permission.action ORDER BY permission.action)
+	FROM RoleBinding binding
+	JOIN RolePermission permission
+	  ON permission.role_definition_id = binding.role_definition_id
+	 AND permission.organization_id = binding.organization_id
+	WHERE binding.organization_id = @organizationID
+	  AND binding.effective_from <= @decisionAt
+	  AND (
+	    binding.effective_until IS NULL
+	    OR binding.effective_until > @decisionAt
+	  )
+	  AND (
+	    SELECT revision.state = 'active'
+	    FROM RoleBindingRevision revision
+	    WHERE revision.organization_id = binding.organization_id
+	      AND revision.role_binding_id = binding.id
+	      AND revision.effective_from <= @decisionAt
+	    ORDER BY revision.revision DESC
+	    LIMIT 1
+	  )
+	  AND (
+	    (
+	      binding.principal_kind = 'user'
+	      AND binding.principal_id = @principalID
+	      AND EXISTS (
+	        SELECT 1
+	        FROM Organization_UserAccount principal_membership
+	        WHERE principal_membership.organization_id = binding.organization_id
+	          AND principal_membership.user_account_id = binding.principal_id
+	          AND principal_membership.created_at =
+	            binding.principal_membership_created_at
+	      )
+	    )
+	    OR (
+	      binding.principal_kind = 'group'
+	      AND EXISTS (
+	        SELECT 1
+	        FROM PrincipalGroupMember membership
+	        JOIN Organization_UserAccount user_membership
+	          ON user_membership.organization_id = membership.organization_id
+	         AND user_membership.user_account_id = membership.user_account_id
+	         AND user_membership.created_at = membership.user_membership_created_at
+	        WHERE membership.organization_id = binding.organization_id
+	          AND membership.group_id = binding.principal_id
+	          AND membership.user_account_id = @principalID
+	          AND membership.effective_from <= @decisionAt
+	          AND (
+	            membership.effective_until IS NULL
+	            OR membership.effective_until > @decisionAt
+	          )
+	          AND (
+	            SELECT member_revision.state = 'active'
+	            FROM PrincipalGroupMemberRevision member_revision
+	            WHERE member_revision.organization_id = membership.organization_id
+	              AND member_revision.principal_group_member_id = membership.id
+	              AND member_revision.effective_from <= @decisionAt
+	            ORDER BY member_revision.revision DESC
+	            LIMIT 1
+	          )
+	      )
+	    )
+	  )
+	GROUP BY
+	  binding.id,
+	  binding.principal_kind,
+	  binding.scope_kind,
+	  binding.scope_id,
+	  binding.effective_from,
+	  binding.effective_until
+	ORDER BY binding.id`
+
+const authorizationRoleBindingInitialRevisionSQL = `
+	INSERT INTO RoleBindingRevision (
+	  id,
+	  organization_id,
+	  role_binding_id,
+	  revision,
+	  state,
+	  effective_from,
+	  actor_useraccount_id,
+	  reason
+	) VALUES (
+	  @id,
+	  @organizationID,
+	  @subjectID,
+	  1,
+	  'active',
+	  @effectiveFrom,
+	  @actorUserID,
+	  @reason
+	)
+	RETURNING created_at, revision`
+
+const authorizationGroupMemberInitialRevisionSQL = `
+	INSERT INTO PrincipalGroupMemberRevision (
+	  id,
+	  organization_id,
+	  principal_group_member_id,
+	  revision,
+	  state,
+	  effective_from,
+	  actor_useraccount_id,
+	  reason
+	) VALUES (
+	  @id,
+	  @organizationID,
+	  @subjectID,
+	  1,
+	  'active',
+	  @effectiveFrom,
+	  @actorUserID,
+	  @reason
+	)
+	RETURNING created_at, revision`
+
+const authorizationRoleBindingRevocationSQL = `
+	INSERT INTO RoleBindingRevision (
+	  id,
+	  organization_id,
+	  role_binding_id,
+	  revision,
+	  state,
+	  effective_from,
+	  actor_useraccount_id,
+	  reason
+	)
+	SELECT
+	  @id,
+	  @organizationID,
+	  @subjectID,
+	  COALESCE(max(revision), 0) + 1,
+	  'revoked',
+	  @effectiveFrom,
+	  @actorUserID,
+	  @reason
+	FROM RoleBindingRevision
+	WHERE organization_id = @organizationID
+	  AND role_binding_id = @subjectID
+	RETURNING created_at, revision`
+
+const authorizationGroupMemberRevocationSQL = `
+	INSERT INTO PrincipalGroupMemberRevision (
+	  id,
+	  organization_id,
+	  principal_group_member_id,
+	  revision,
+	  state,
+	  effective_from,
+	  actor_useraccount_id,
+	  reason
+	)
+	SELECT
+	  @id,
+	  @organizationID,
+	  @subjectID,
+	  COALESCE(max(revision), 0) + 1,
+	  'revoked',
+	  @effectiveFrom,
+	  @actorUserID,
+	  @reason
+	FROM PrincipalGroupMemberRevision
+	WHERE organization_id = @organizationID
+	  AND principal_group_member_id = @subjectID
+	RETURNING created_at, revision`
+
 func ListAuthorizationAccessGrants(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	principalID uuid.UUID,
+	decisionAt time.Time,
 ) ([]types.AccessGrant, error) {
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT
-		  binding.id,
-		  binding.principal_kind,
-		  binding.scope_kind,
-		  binding.scope_id,
-		  binding.effective_from,
-		  binding.effective_until,
-		  array_agg(permission.action ORDER BY permission.action)
-		FROM RoleBinding binding
-		JOIN RolePermission permission
-		  ON permission.role_definition_id = binding.role_definition_id
-		 AND permission.organization_id = binding.organization_id
-		WHERE binding.organization_id = @organizationID
-		  AND (
-		    (
-		      binding.principal_kind = 'user'
-		      AND binding.principal_id = @principalID
-		    )
-		    OR (
-		      binding.principal_kind = 'group'
-		      AND EXISTS (
-		        SELECT 1
-		        FROM PrincipalGroupMember membership
-		        WHERE membership.organization_id = binding.organization_id
-		          AND membership.group_id = binding.principal_id
-		          AND membership.user_account_id = @principalID
-		          AND membership.effective_from <= now()
-		          AND (
-		            membership.effective_until IS NULL
-		            OR membership.effective_until > now()
-		          )
-		      )
-		    )
-		  )
-		GROUP BY
-		  binding.id,
-		  binding.principal_kind,
-		  binding.scope_kind,
-		  binding.scope_id,
-		  binding.effective_from,
-		  binding.effective_until
-		ORDER BY binding.id`,
+	rows, err := internalctx.GetDb(ctx).Query(ctx, authorizationAccessGrantsSQL,
 		pgx.NamedArgs{
 			"organizationID": organizationID,
 			"principalID":    principalID,
+			"decisionAt":     decisionAt.UTC(),
 		},
 	)
 	if err != nil {
@@ -107,6 +241,31 @@ func ListAuthorizationAccessGrants(
 		return nil, fmt.Errorf("could not collect scoped authorization grants: %w", err)
 	}
 	return grants, nil
+}
+
+type authorizationRevocationInput struct {
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	EffectiveFrom  time.Time
+	ActorUserID    uuid.UUID
+	Reason         string
+}
+
+func validateAuthorizationRevocation(input authorizationRevocationInput) error {
+	if input.OrganizationID == uuid.Nil ||
+		input.SubjectID == uuid.Nil ||
+		input.ActorUserID == uuid.Nil {
+		return apierrors.NewBadRequest(
+			"organizationId, subjectId, and actorUserAccountId are required",
+		)
+	}
+	if input.EffectiveFrom.IsZero() {
+		return apierrors.NewBadRequest("effectiveFrom is required")
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		return apierrors.NewBadRequest("reason is required")
+	}
+	return nil
 }
 
 func GetAuthorizationLegacyUserRole(
@@ -311,6 +470,7 @@ func ListControlPlaneEnrollmentsForScope(
 	organizationID uuid.UUID,
 	scopeKind types.PermissionScope,
 	scopeID uuid.UUID,
+	decisionAt time.Time,
 ) ([]types.ControlPlaneEnrollment, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
@@ -329,11 +489,17 @@ func ListControlPlaneEnrollmentsForScope(
 		WHERE organization_id = @organizationID
 		  AND scope_kind = @scopeKind
 		  AND scope_id = @scopeID
+		  AND effective_from <= @decisionAt
+		  AND (
+		    effective_until IS NULL
+		    OR effective_until > @decisionAt
+		  )
 		ORDER BY revision, id`,
 		pgx.NamedArgs{
 			"organizationID": organizationID,
 			"scopeKind":      scopeKind,
 			"scopeID":        scopeID,
+			"decisionAt":     decisionAt.UTC(),
 		},
 	)
 	if err != nil {
@@ -344,8 +510,16 @@ func ListControlPlaneEnrollmentsForScope(
 
 func ListControlPlaneEnrollments(
 	ctx context.Context,
-	organizationID uuid.UUID,
-) ([]types.ControlPlaneEnrollment, error) {
+	filter types.AuthorizationListFilter,
+) (types.Page[types.ControlPlaneEnrollment], error) {
+	page := types.Page[types.ControlPlaneEnrollment]{
+		Items: []types.ControlPlaneEnrollment{},
+	}
+	limit, cursor, err := normalizeAuthorizationListFilter(filter)
+	if err != nil {
+		return page, err
+	}
+	cursorCreatedAt, cursorID := authorizationCursorArguments(cursor)
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
 		  id,
@@ -361,13 +535,37 @@ func ListControlPlaneEnrollments(
 		  revision
 		FROM ControlPlaneEnrollment
 		WHERE organization_id = @organizationID
-		ORDER BY scope_kind, scope_id, revision, id`,
-		pgx.NamedArgs{"organizationID": organizationID},
+		  AND (
+		    @cursorCreatedAt::timestamptz IS NULL
+		    OR (created_at, id) < (
+		      @cursorCreatedAt::timestamptz,
+		      @cursorID::uuid
+		    )
+		  )
+		ORDER BY created_at DESC, id DESC
+		LIMIT @fetchLimit`,
+		pgx.NamedArgs{
+			"organizationID":  filter.OrganizationID,
+			"cursorCreatedAt": cursorCreatedAt,
+			"cursorID":        cursorID,
+			"fetchLimit":      limit + 1,
+		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query control-plane enrollments: %w", err)
+		return page, fmt.Errorf("could not query control-plane enrollments: %w", err)
 	}
-	return collectControlPlaneEnrollments(rows)
+	items, err := collectControlPlaneEnrollments(rows)
+	if err != nil {
+		return page, err
+	}
+	return completeAuthorizationPage(
+		items,
+		limit,
+		filter,
+		func(value types.ControlPlaneEnrollment) (time.Time, uuid.UUID) {
+			return value.CreatedAt, value.ID
+		},
+	)
 }
 
 func collectControlPlaneEnrollments(
@@ -531,6 +729,12 @@ func CreateAuthorizationRoleDefinition(
 	}
 
 	return withAuthorizationTransaction(ctx, func(txContext context.Context) error {
+		if err := backfillBuiltInAuthorizationInTransaction(
+			txContext,
+			role.OrganizationID,
+		); err != nil {
+			return err
+		}
 		err := internalctx.GetDb(txContext).QueryRow(txContext, `
 			INSERT INTO RoleDefinition (
 			  id,
@@ -597,6 +801,9 @@ func normalizeAuthorizationRoleDefinition(role *types.RoleDefinition) error {
 	if !authorizationKeyPattern.MatchString(role.Key) {
 		return apierrors.NewBadRequest("role key is invalid")
 	}
+	if types.IsReservedAuthorizationRoleKey(role.Key) {
+		return apierrors.NewBadRequest("role key is reserved")
+	}
 	if role.DisplayName == "" {
 		return apierrors.NewBadRequest("displayName is required")
 	}
@@ -629,8 +836,14 @@ func normalizeAuthorizationRoleDefinition(role *types.RoleDefinition) error {
 
 func ListAuthorizationRoleDefinitions(
 	ctx context.Context,
-	organizationID uuid.UUID,
-) ([]types.RoleDefinition, error) {
+	filter types.AuthorizationListFilter,
+) (types.Page[types.RoleDefinition], error) {
+	page := types.Page[types.RoleDefinition]{Items: []types.RoleDefinition{}}
+	limit, cursor, err := normalizeAuthorizationListFilter(filter)
+	if err != nil {
+		return page, err
+	}
+	cursorCreatedAt, cursorID := authorizationCursorArguments(cursor)
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
 		  definition.id,
@@ -649,12 +862,25 @@ func ListAuthorizationRoleDefinitions(
 		  ON permission.role_definition_id = definition.id
 		 AND permission.organization_id = definition.organization_id
 		WHERE definition.organization_id = @organizationID
+		  AND (
+		    @cursorCreatedAt::timestamptz IS NULL
+		    OR (definition.created_at, definition.id) < (
+		      @cursorCreatedAt::timestamptz,
+		      @cursorID::uuid
+		    )
+		  )
 		GROUP BY definition.id
-		ORDER BY definition.built_in DESC, definition.role_key, definition.id`,
-		pgx.NamedArgs{"organizationID": organizationID},
+		ORDER BY definition.created_at DESC, definition.id DESC
+		LIMIT @fetchLimit`,
+		pgx.NamedArgs{
+			"organizationID":  filter.OrganizationID,
+			"cursorCreatedAt": cursorCreatedAt,
+			"cursorID":        cursorID,
+			"fetchLimit":      limit + 1,
+		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query authorization role definitions: %w", err)
+		return page, fmt.Errorf("could not query authorization role definitions: %w", err)
 	}
 	defer rows.Close()
 
@@ -676,12 +902,12 @@ func ListAuthorizationRoleDefinitions(
 			&role.CreatedByUserID,
 			&actionValues,
 		); err != nil {
-			return nil, fmt.Errorf("could not scan authorization role definition: %w", err)
+			return page, fmt.Errorf("could not scan authorization role definition: %w", err)
 		}
 		if sourceLegacyRole != nil {
 			parsedRole, err := types.ParseUserRole(*sourceLegacyRole)
 			if err != nil {
-				return nil, fmt.Errorf("could not parse built-in authorization role: %w", err)
+				return page, fmt.Errorf("could not parse built-in authorization role: %w", err)
 			}
 			role.SourceLegacyRole = &parsedRole
 		}
@@ -691,9 +917,16 @@ func ListAuthorizationRoleDefinitions(
 		roles = append(roles, role)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("could not collect authorization role definitions: %w", err)
+		return page, fmt.Errorf("could not collect authorization role definitions: %w", err)
 	}
-	return roles, nil
+	return completeAuthorizationPage(
+		roles,
+		limit,
+		filter,
+		func(value types.RoleDefinition) (time.Time, uuid.UUID) {
+			return value.CreatedAt, value.ID
+		},
+	)
 }
 
 func CreateAuthorizationRoleBinding(
@@ -720,6 +953,14 @@ func CreateAuthorizationRoleBinding(
 	}
 
 	return withAuthorizationTransaction(ctx, func(txContext context.Context) error {
+		if err := lockAuthorizationRevision(
+			txContext,
+			"role_binding",
+			binding.OrganizationID,
+			binding.ID,
+		); err != nil {
+			return err
+		}
 		if err := ensureAuthorizationRoleExists(
 			txContext,
 			binding.OrganizationID,
@@ -727,14 +968,16 @@ func CreateAuthorizationRoleBinding(
 		); err != nil {
 			return err
 		}
-		if err := ensureAuthorizationPrincipalExists(
+		membershipCreatedAt, err := ensureAuthorizationPrincipalExists(
 			txContext,
 			binding.OrganizationID,
 			binding.PrincipalKind,
 			binding.PrincipalID,
-		); err != nil {
+		)
+		if err != nil {
 			return err
 		}
+		binding.PrincipalMembershipCreatedAt = membershipCreatedAt
 		if err := ensureAuthorizationScopeExists(
 			txContext,
 			binding.OrganizationID,
@@ -743,13 +986,14 @@ func CreateAuthorizationRoleBinding(
 			return err
 		}
 
-		err := internalctx.GetDb(txContext).QueryRow(txContext, `
+		err = internalctx.GetDb(txContext).QueryRow(txContext, `
 			INSERT INTO RoleBinding (
 			  id,
 			  organization_id,
 			  role_definition_id,
 			  principal_kind,
 			  principal_id,
+			  principal_membership_created_at,
 			  scope_kind,
 			  scope_id,
 			  effective_from,
@@ -764,6 +1008,7 @@ func CreateAuthorizationRoleBinding(
 			  @roleDefinitionID,
 			  @principalKind,
 			  @principalID,
+			  @principalMembershipCreatedAt,
 			  @scopeKind,
 			  @scopeID,
 			  @effectiveFrom,
@@ -775,23 +1020,51 @@ func CreateAuthorizationRoleBinding(
 			)
 			RETURNING created_at`,
 			pgx.NamedArgs{
-				"id":               binding.ID,
-				"organizationID":   binding.OrganizationID,
-				"roleDefinitionID": binding.RoleDefinitionID,
-				"principalKind":    binding.PrincipalKind,
-				"principalID":      binding.PrincipalID,
-				"scopeKind":        binding.Scope.Kind,
-				"scopeID":          binding.Scope.ID,
-				"effectiveFrom":    binding.EffectiveFrom,
-				"effectiveUntil":   binding.EffectiveUntil,
-				"reason":           binding.Reason,
-				"revision":         binding.Revision,
-				"createdByUserID":  binding.CreatedByUserID,
-				"source":           binding.Source,
+				"id":                           binding.ID,
+				"organizationID":               binding.OrganizationID,
+				"roleDefinitionID":             binding.RoleDefinitionID,
+				"principalKind":                binding.PrincipalKind,
+				"principalID":                  binding.PrincipalID,
+				"principalMembershipCreatedAt": binding.PrincipalMembershipCreatedAt,
+				"scopeKind":                    binding.Scope.Kind,
+				"scopeID":                      binding.Scope.ID,
+				"effectiveFrom":                binding.EffectiveFrom,
+				"effectiveUntil":               binding.EffectiveUntil,
+				"reason":                       binding.Reason,
+				"revision":                     binding.Revision,
+				"createdByUserID":              binding.CreatedByUserID,
+				"source":                       binding.Source,
 			},
 		).Scan(&binding.CreatedAt)
 		if err != nil {
 			return mapAuthorizationWriteError("create role binding", err)
+		}
+		revision := types.RoleBindingRevision{
+			ID:             uuid.New(),
+			OrganizationID: binding.OrganizationID,
+			RoleBindingID:  binding.ID,
+			State:          types.AuthorizationRevisionActive,
+			EffectiveFrom:  binding.EffectiveFrom,
+			ActorUserID:    *binding.CreatedByUserID,
+			Reason:         binding.Reason,
+		}
+		err = internalctx.GetDb(txContext).QueryRow(
+			txContext,
+			authorizationRoleBindingInitialRevisionSQL,
+			pgx.NamedArgs{
+				"id":             revision.ID,
+				"organizationID": revision.OrganizationID,
+				"subjectID":      revision.RoleBindingID,
+				"effectiveFrom":  revision.EffectiveFrom,
+				"actorUserID":    revision.ActorUserID,
+				"reason":         revision.Reason,
+			},
+		).Scan(&revision.CreatedAt, &revision.Revision)
+		if err != nil {
+			return mapAuthorizationWriteError(
+				"create role binding initial revision",
+				err,
+			)
 		}
 		return nil
 	})
@@ -824,13 +1097,22 @@ func validateAuthorizationRoleBinding(binding types.RoleBinding) error {
 	if strings.TrimSpace(binding.Reason) == "" {
 		return apierrors.NewBadRequest("reason is required")
 	}
+	if binding.CreatedByUserID == nil || *binding.CreatedByUserID == uuid.Nil {
+		return apierrors.NewBadRequest("createdByUserAccountId is required")
+	}
 	return nil
 }
 
 func ListAuthorizationRoleBindings(
 	ctx context.Context,
-	organizationID uuid.UUID,
-) ([]types.RoleBinding, error) {
+	filter types.AuthorizationListFilter,
+) (types.Page[types.RoleBinding], error) {
+	page := types.Page[types.RoleBinding]{Items: []types.RoleBinding{}}
+	limit, cursor, err := normalizeAuthorizationListFilter(filter)
+	if err != nil {
+		return page, err
+	}
+	cursorCreatedAt, cursorID := authorizationCursorArguments(cursor)
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
 		  id,
@@ -839,6 +1121,7 @@ func ListAuthorizationRoleBindings(
 		  role_definition_id,
 		  principal_kind,
 		  principal_id,
+		  principal_membership_created_at,
 		  scope_kind,
 		  scope_id,
 		  effective_from,
@@ -849,11 +1132,24 @@ func ListAuthorizationRoleBindings(
 		  source
 		FROM RoleBinding
 		WHERE organization_id = @organizationID
-		ORDER BY created_at, id`,
-		pgx.NamedArgs{"organizationID": organizationID},
+		  AND (
+		    @cursorCreatedAt::timestamptz IS NULL
+		    OR (created_at, id) < (
+		      @cursorCreatedAt::timestamptz,
+		      @cursorID::uuid
+		    )
+		  )
+		ORDER BY created_at DESC, id DESC
+		LIMIT @fetchLimit`,
+		pgx.NamedArgs{
+			"organizationID":  filter.OrganizationID,
+			"cursorCreatedAt": cursorCreatedAt,
+			"cursorID":        cursorID,
+			"fetchLimit":      limit + 1,
+		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query authorization role bindings: %w", err)
+		return page, fmt.Errorf("could not query authorization role bindings: %w", err)
 	}
 	defer rows.Close()
 	bindings := make([]types.RoleBinding, 0)
@@ -866,6 +1162,7 @@ func ListAuthorizationRoleBindings(
 			&binding.RoleDefinitionID,
 			&binding.PrincipalKind,
 			&binding.PrincipalID,
+			&binding.PrincipalMembershipCreatedAt,
 			&binding.Scope.Kind,
 			&binding.Scope.ID,
 			&binding.EffectiveFrom,
@@ -875,14 +1172,87 @@ func ListAuthorizationRoleBindings(
 			&binding.CreatedByUserID,
 			&binding.Source,
 		); err != nil {
-			return nil, fmt.Errorf("could not scan authorization role binding: %w", err)
+			return page, fmt.Errorf("could not scan authorization role binding: %w", err)
 		}
 		bindings = append(bindings, binding)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("could not collect authorization role bindings: %w", err)
+		return page, fmt.Errorf("could not collect authorization role bindings: %w", err)
 	}
-	return bindings, nil
+	return completeAuthorizationPage(
+		bindings,
+		limit,
+		filter,
+		func(value types.RoleBinding) (time.Time, uuid.UUID) {
+			return value.CreatedAt, value.ID
+		},
+	)
+}
+
+func RevokeAuthorizationRoleBinding(
+	ctx context.Context,
+	revision *types.RoleBindingRevision,
+) error {
+	input := authorizationRevocationInput{
+		OrganizationID: revision.OrganizationID,
+		SubjectID:      revision.RoleBindingID,
+		EffectiveFrom:  revision.EffectiveFrom,
+		ActorUserID:    revision.ActorUserID,
+		Reason:         revision.Reason,
+	}
+	if err := validateAuthorizationRevocation(input); err != nil {
+		return err
+	}
+	if revision.ID == uuid.Nil {
+		revision.ID = uuid.New()
+	}
+	revision.State = types.AuthorizationRevisionRevoked
+	revision.EffectiveFrom = revision.EffectiveFrom.UTC()
+	revision.Reason = strings.TrimSpace(revision.Reason)
+
+	return withAuthorizationTransaction(ctx, func(txContext context.Context) error {
+		if err := lockAuthorizationRevision(
+			txContext,
+			"role_binding",
+			revision.OrganizationID,
+			revision.RoleBindingID,
+		); err != nil {
+			return err
+		}
+		latestEffectiveFrom, err := latestAuthorizationRevisionEffectiveFrom(
+			txContext,
+			"RoleBinding",
+			"RoleBindingRevision",
+			"role_binding_id",
+			revision.OrganizationID,
+			revision.RoleBindingID,
+			uuid.Nil,
+		)
+		if err != nil {
+			return err
+		}
+		if revision.EffectiveFrom.Before(latestEffectiveFrom) {
+			return apierrors.NewBadRequest(
+				"effectiveFrom must not precede the latest binding revision",
+			)
+		}
+		err = internalctx.GetDb(txContext).QueryRow(
+			txContext,
+			authorizationRoleBindingRevocationSQL,
+			pgx.NamedArgs{
+				"id":             revision.ID,
+				"organizationID": revision.OrganizationID,
+				"subjectID":      revision.RoleBindingID,
+				"effectiveFrom":  revision.EffectiveFrom,
+				"actorUserID":    revision.ActorUserID,
+				"reason":         revision.Reason,
+			},
+		).Scan(&revision.CreatedAt, &revision.Revision)
+		if err != nil {
+			return mapAuthorizationWriteError("revoke role binding", err)
+		}
+		return nil
+	})
 }
 
 func CreateAuthorizationPrincipalGroup(
@@ -938,8 +1308,14 @@ func CreateAuthorizationPrincipalGroup(
 
 func ListAuthorizationPrincipalGroups(
 	ctx context.Context,
-	organizationID uuid.UUID,
-) ([]types.PrincipalGroup, error) {
+	filter types.AuthorizationListFilter,
+) (types.Page[types.PrincipalGroup], error) {
+	page := types.Page[types.PrincipalGroup]{Items: []types.PrincipalGroup{}}
+	limit, cursor, err := normalizeAuthorizationListFilter(filter)
+	if err != nil {
+		return page, err
+	}
+	cursorCreatedAt, cursorID := authorizationCursorArguments(cursor)
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
 		  id,
@@ -951,17 +1327,50 @@ func ListAuthorizationPrincipalGroups(
 		  created_by_useraccount_id
 		FROM PrincipalGroup
 		WHERE organization_id = @organizationID
-		ORDER BY group_key, id`,
-		pgx.NamedArgs{"organizationID": organizationID},
+		  AND (
+		    @cursorCreatedAt::timestamptz IS NULL
+		    OR (created_at, id) < (
+		      @cursorCreatedAt::timestamptz,
+		      @cursorID::uuid
+		    )
+		  )
+		ORDER BY created_at DESC, id DESC
+		LIMIT @fetchLimit`,
+		pgx.NamedArgs{
+			"organizationID":  filter.OrganizationID,
+			"cursorCreatedAt": cursorCreatedAt,
+			"cursorID":        cursorID,
+			"fetchLimit":      limit + 1,
+		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query principal groups: %w", err)
+		return page, fmt.Errorf("could not query principal groups: %w", err)
 	}
 	result, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.PrincipalGroup])
 	if err != nil {
-		return nil, fmt.Errorf("could not collect principal groups: %w", err)
+		return page, fmt.Errorf("could not collect principal groups: %w", err)
 	}
-	return result, nil
+	return completeAuthorizationPage(
+		result,
+		limit,
+		filter,
+		func(value types.PrincipalGroup) (time.Time, uuid.UUID) {
+			return value.CreatedAt, value.ID
+		},
+	)
+}
+
+func EnsureAuthorizationPrincipalGroupExists(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	groupID uuid.UUID,
+) error {
+	return authorizationResourceExists(
+		ctx,
+		"PrincipalGroup",
+		organizationID,
+		groupID,
+	)
 }
 
 func AddAuthorizationPrincipalGroupMember(
@@ -984,6 +1393,9 @@ func AddAuthorizationPrincipalGroupMember(
 	if member.Reason == "" {
 		return apierrors.NewBadRequest("reason is required")
 	}
+	if member.AddedByUserID == nil || *member.AddedByUserID == uuid.Nil {
+		return apierrors.NewBadRequest("addedByUserAccountId is required")
+	}
 	if member.ID == uuid.Nil {
 		member.ID = uuid.New()
 	}
@@ -992,49 +1404,116 @@ func AddAuthorizationPrincipalGroupMember(
 		value := member.EffectiveUntil.UTC()
 		member.EffectiveUntil = &value
 	}
-	err := internalctx.GetDb(ctx).QueryRow(ctx, `
-		INSERT INTO PrincipalGroupMember (
-		  id,
-		  organization_id,
-		  group_id,
-		  user_account_id,
-		  effective_from,
-		  effective_until,
-		  added_by_useraccount_id,
-		  reason
-		) VALUES (
-		  @id,
-		  @organizationID,
-		  @groupID,
-		  @userAccountID,
-		  @effectiveFrom,
-		  @effectiveUntil,
-		  @addedByUserID,
-		  @reason
+	return withAuthorizationTransaction(ctx, func(txContext context.Context) error {
+		if err := lockAuthorizationRevision(
+			txContext,
+			"principal_group_member",
+			member.OrganizationID,
+			member.ID,
+		); err != nil {
+			return err
+		}
+		if err := authorizationResourceExists(
+			txContext,
+			"PrincipalGroup",
+			member.OrganizationID,
+			member.GroupID,
+		); err != nil {
+			return err
+		}
+		membershipCreatedAt, err := getAuthorizationUserMembershipCreatedAt(
+			txContext,
+			member.OrganizationID,
+			member.UserAccountID,
 		)
-		RETURNING created_at`,
-		pgx.NamedArgs{
-			"id":             member.ID,
-			"organizationID": member.OrganizationID,
-			"groupID":        member.GroupID,
-			"userAccountID":  member.UserAccountID,
-			"effectiveFrom":  member.EffectiveFrom,
-			"effectiveUntil": member.EffectiveUntil,
-			"addedByUserID":  member.AddedByUserID,
-			"reason":         member.Reason,
-		},
-	).Scan(&member.CreatedAt)
-	if err != nil {
-		return mapAuthorizationWriteError("add principal group member", err)
-	}
-	return nil
+		if err != nil {
+			return err
+		}
+		member.UserMembershipCreatedAt = membershipCreatedAt
+		err = internalctx.GetDb(txContext).QueryRow(txContext, `
+			INSERT INTO PrincipalGroupMember (
+			  id,
+			  organization_id,
+			  group_id,
+			  user_account_id,
+			  user_membership_created_at,
+			  effective_from,
+			  effective_until,
+			  added_by_useraccount_id,
+			  reason
+			) VALUES (
+			  @id,
+			  @organizationID,
+			  @groupID,
+			  @userAccountID,
+			  @userMembershipCreatedAt,
+			  @effectiveFrom,
+			  @effectiveUntil,
+			  @addedByUserID,
+			  @reason
+			)
+			RETURNING created_at`,
+			pgx.NamedArgs{
+				"id":                      member.ID,
+				"organizationID":          member.OrganizationID,
+				"groupID":                 member.GroupID,
+				"userAccountID":           member.UserAccountID,
+				"userMembershipCreatedAt": member.UserMembershipCreatedAt,
+				"effectiveFrom":           member.EffectiveFrom,
+				"effectiveUntil":          member.EffectiveUntil,
+				"addedByUserID":           member.AddedByUserID,
+				"reason":                  member.Reason,
+			},
+		).Scan(&member.CreatedAt)
+		if err != nil {
+			return mapAuthorizationWriteError("add principal group member", err)
+		}
+		revision := types.PrincipalGroupMemberRevision{
+			ID:                     uuid.New(),
+			OrganizationID:         member.OrganizationID,
+			PrincipalGroupMemberID: member.ID,
+			State:                  types.AuthorizationRevisionActive,
+			EffectiveFrom:          member.EffectiveFrom,
+			ActorUserID:            *member.AddedByUserID,
+			Reason:                 member.Reason,
+		}
+		err = internalctx.GetDb(txContext).QueryRow(
+			txContext,
+			authorizationGroupMemberInitialRevisionSQL,
+			pgx.NamedArgs{
+				"id":             revision.ID,
+				"organizationID": revision.OrganizationID,
+				"subjectID":      revision.PrincipalGroupMemberID,
+				"effectiveFrom":  revision.EffectiveFrom,
+				"actorUserID":    revision.ActorUserID,
+				"reason":         revision.Reason,
+			},
+		).Scan(&revision.CreatedAt, &revision.Revision)
+		if err != nil {
+			return mapAuthorizationWriteError(
+				"create principal group member initial revision",
+				err,
+			)
+		}
+		return nil
+	})
 }
 
 func ListAuthorizationPrincipalGroupMembers(
 	ctx context.Context,
-	organizationID uuid.UUID,
-	groupID uuid.UUID,
-) ([]types.PrincipalGroupMember, error) {
+	filter types.AuthorizationListFilter,
+) (types.Page[types.PrincipalGroupMember], error) {
+	page := types.Page[types.PrincipalGroupMember]{
+		Items: []types.PrincipalGroupMember{},
+	}
+	if filter.ParentID == uuid.Nil {
+		return page, apierrors.ErrBadRequest
+	}
+	limit, cursor, err := normalizeAuthorizationListFilter(filter)
+	if err != nil {
+		return page, err
+	}
+	cursorCreatedAt, cursorID := authorizationCursorArguments(cursor)
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT
 		  id,
@@ -1042,6 +1521,7 @@ func ListAuthorizationPrincipalGroupMembers(
 		  organization_id,
 		  group_id,
 		  user_account_id,
+		  user_membership_created_at,
 		  effective_from,
 		  effective_until,
 		  added_by_useraccount_id,
@@ -1049,20 +1529,111 @@ func ListAuthorizationPrincipalGroupMembers(
 		FROM PrincipalGroupMember
 		WHERE organization_id = @organizationID
 		  AND group_id = @groupID
-		ORDER BY user_account_id, effective_from, id`,
+		  AND (
+		    @cursorCreatedAt::timestamptz IS NULL
+		    OR (created_at, id) < (
+		      @cursorCreatedAt::timestamptz,
+		      @cursorID::uuid
+		    )
+		  )
+		ORDER BY created_at DESC, id DESC
+		LIMIT @fetchLimit`,
 		pgx.NamedArgs{
-			"organizationID": organizationID,
-			"groupID":        groupID,
+			"organizationID":  filter.OrganizationID,
+			"groupID":         filter.ParentID,
+			"cursorCreatedAt": cursorCreatedAt,
+			"cursorID":        cursorID,
+			"fetchLimit":      limit + 1,
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not query principal group members: %w", err)
+		return page, fmt.Errorf("could not query principal group members: %w", err)
 	}
 	result, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.PrincipalGroupMember])
 	if err != nil {
-		return nil, fmt.Errorf("could not collect principal group members: %w", err)
+		return page, fmt.Errorf("could not collect principal group members: %w", err)
 	}
-	return result, nil
+	return completeAuthorizationPage(
+		result,
+		limit,
+		filter,
+		func(value types.PrincipalGroupMember) (time.Time, uuid.UUID) {
+			return value.CreatedAt, value.ID
+		},
+	)
+}
+
+func RevokeAuthorizationPrincipalGroupMember(
+	ctx context.Context,
+	groupID uuid.UUID,
+	revision *types.PrincipalGroupMemberRevision,
+) error {
+	input := authorizationRevocationInput{
+		OrganizationID: revision.OrganizationID,
+		SubjectID:      revision.PrincipalGroupMemberID,
+		EffectiveFrom:  revision.EffectiveFrom,
+		ActorUserID:    revision.ActorUserID,
+		Reason:         revision.Reason,
+	}
+	if groupID == uuid.Nil {
+		return apierrors.NewBadRequest("groupId is required")
+	}
+	if err := validateAuthorizationRevocation(input); err != nil {
+		return err
+	}
+	if revision.ID == uuid.Nil {
+		revision.ID = uuid.New()
+	}
+	revision.State = types.AuthorizationRevisionRevoked
+	revision.EffectiveFrom = revision.EffectiveFrom.UTC()
+	revision.Reason = strings.TrimSpace(revision.Reason)
+
+	return withAuthorizationTransaction(ctx, func(txContext context.Context) error {
+		if err := lockAuthorizationRevision(
+			txContext,
+			"principal_group_member",
+			revision.OrganizationID,
+			revision.PrincipalGroupMemberID,
+		); err != nil {
+			return err
+		}
+		latestEffectiveFrom, err := latestAuthorizationRevisionEffectiveFrom(
+			txContext,
+			"PrincipalGroupMember",
+			"PrincipalGroupMemberRevision",
+			"principal_group_member_id",
+			revision.OrganizationID,
+			revision.PrincipalGroupMemberID,
+			groupID,
+		)
+		if err != nil {
+			return err
+		}
+		if revision.EffectiveFrom.Before(latestEffectiveFrom) {
+			return apierrors.NewBadRequest(
+				"effectiveFrom must not precede the latest membership revision",
+			)
+		}
+		err = internalctx.GetDb(txContext).QueryRow(
+			txContext,
+			authorizationGroupMemberRevocationSQL,
+			pgx.NamedArgs{
+				"id":             revision.ID,
+				"organizationID": revision.OrganizationID,
+				"subjectID":      revision.PrincipalGroupMemberID,
+				"effectiveFrom":  revision.EffectiveFrom,
+				"actorUserID":    revision.ActorUserID,
+				"reason":         revision.Reason,
+			},
+		).Scan(&revision.CreatedAt, &revision.Revision)
+		if err != nil {
+			return mapAuthorizationWriteError(
+				"revoke principal group member",
+				err,
+			)
+		}
+		return nil
+	})
 }
 
 func BackfillBuiltInAuthorization(
@@ -1073,38 +1644,42 @@ func BackfillBuiltInAuthorization(
 		return apierrors.NewBadRequest("organizationId is required")
 	}
 	return withAuthorizationTransaction(ctx, func(txContext context.Context) error {
-		var completed bool
-		if err := internalctx.GetDb(txContext).QueryRow(txContext, `
-			SELECT COALESCE((
-			  SELECT completed
-			  FROM AuthorizationBackfillCheckpoint
-			  WHERE organization_id = @organizationID
-			    AND checkpoint_key = 'built_in_roles_v1'
-			), false)`,
-			pgx.NamedArgs{"organizationID": organizationID},
-		).Scan(&completed); err != nil {
-			return fmt.Errorf("could not read built-in authorization checkpoint: %w", err)
-		}
-		if completed {
-			return nil
-		}
-
-		queries := []string{
-			authorizationRoleDefinitionBackfillSQL,
-			authorizationRolePermissionBackfillSQL,
-			authorizationCheckpointBackfillSQL,
-		}
-		for _, query := range queries {
-			if _, err := internalctx.GetDb(txContext).Exec(
-				txContext,
-				query,
-				pgx.NamedArgs{"organizationID": organizationID},
-			); err != nil {
-				return mapAuthorizationWriteError("backfill built-in authorization", err)
-			}
-		}
-		return nil
+		return backfillBuiltInAuthorizationInTransaction(
+			txContext,
+			organizationID,
+		)
 	})
+}
+
+func backfillBuiltInAuthorizationInTransaction(
+	ctx context.Context,
+	organizationID uuid.UUID,
+) error {
+	if err := lockAuthorizationRevision(
+		ctx,
+		"built_in_roles",
+		organizationID,
+		organizationID,
+	); err != nil {
+		return err
+	}
+	for _, query := range []string{
+		authorizationRoleDefinitionBackfillSQL,
+		authorizationRolePermissionBackfillSQL,
+		authorizationCheckpointBackfillSQL,
+	} {
+		if _, err := internalctx.GetDb(ctx).Exec(
+			ctx,
+			query,
+			pgx.NamedArgs{"organizationID": organizationID},
+		); err != nil {
+			return mapAuthorizationWriteError(
+				"backfill built-in authorization",
+				err,
+			)
+		}
+	}
+	return nil
 }
 
 const authorizationRoleDefinitionBackfillSQL = `
@@ -1216,28 +1791,53 @@ func ensureAuthorizationRoleExists(
 	return authorizationResourceExists(ctx, "RoleDefinition", organizationID, roleID)
 }
 
+func getAuthorizationUserMembershipCreatedAt(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	userID uuid.UUID,
+) (time.Time, error) {
+	var createdAt *time.Time
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT created_at
+		FROM Organization_UserAccount
+		WHERE organization_id = @organizationID
+		  AND user_account_id = @userID`,
+		pgx.NamedArgs{
+			"organizationID": organizationID,
+			"userID":         userID,
+		},
+	).Scan(&createdAt)
+	if errors.Is(err, pgx.ErrNoRows) || createdAt == nil {
+		return time.Time{}, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf(
+			"could not validate authorization user membership: %w",
+			err,
+		)
+	}
+	return *createdAt, nil
+}
+
 func ensureAuthorizationPrincipalExists(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	kind types.AuthorizationPrincipalKind,
 	principalID uuid.UUID,
-) error {
+) (*time.Time, error) {
 	var exists bool
 	var err error
 	switch kind {
 	case types.AuthorizationPrincipalUser:
-		err = internalctx.GetDb(ctx).QueryRow(ctx, `
-			SELECT EXISTS (
-			  SELECT 1
-			  FROM Organization_UserAccount
-			  WHERE organization_id = @organizationID
-			    AND user_account_id = @principalID
-			)`,
-			pgx.NamedArgs{
-				"organizationID": organizationID,
-				"principalID":    principalID,
-			},
-		).Scan(&exists)
+		membershipCreatedAt, err := getAuthorizationUserMembershipCreatedAt(
+			ctx,
+			organizationID,
+			principalID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return &membershipCreatedAt, nil
 	case types.AuthorizationPrincipalGroup:
 		err = internalctx.GetDb(ctx).QueryRow(ctx, `
 			SELECT EXISTS (
@@ -1252,15 +1852,15 @@ func ensureAuthorizationPrincipalExists(
 			},
 		).Scan(&exists)
 	default:
-		return apierrors.ErrNotFound
+		return nil, apierrors.ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("could not validate authorization principal: %w", err)
+		return nil, fmt.Errorf("could not validate authorization principal: %w", err)
 	}
 	if !exists {
-		return apierrors.ErrNotFound
+		return nil, apierrors.ErrNotFound
 	}
-	return nil
+	return nil, nil
 }
 
 func ensureAuthorizationScopeExists(
@@ -1290,6 +1890,74 @@ func ensureAuthorizationScopeExists(
 	default:
 		return apierrors.ErrNotFound
 	}
+}
+
+func lockAuthorizationRevision(
+	ctx context.Context,
+	subjectKind string,
+	organizationID uuid.UUID,
+	subjectID uuid.UUID,
+) error {
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+		SELECT pg_advisory_xact_lock(
+		  hashtextextended(
+		    @subjectKind || ':' || @organizationID::text || ':' || @subjectID::text,
+		    0
+		  )
+		)`,
+		pgx.NamedArgs{
+			"subjectKind":    subjectKind,
+			"organizationID": organizationID,
+			"subjectID":      subjectID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("could not lock authorization revision: %w", err)
+	}
+	return nil
+}
+
+func latestAuthorizationRevisionEffectiveFrom(
+	ctx context.Context,
+	subjectTable string,
+	revisionTable string,
+	revisionSubjectColumn string,
+	organizationID uuid.UUID,
+	subjectID uuid.UUID,
+	groupID uuid.UUID,
+) (time.Time, error) {
+	groupPredicate := ""
+	if groupID != uuid.Nil {
+		groupPredicate = " AND subject.group_id = @groupID"
+	}
+	var effectiveFrom time.Time
+	err := internalctx.GetDb(ctx).QueryRow(ctx,
+		"SELECT revision.effective_from"+
+			" FROM "+revisionTable+" revision"+
+			" JOIN "+subjectTable+" subject"+
+			" ON subject.id = revision."+revisionSubjectColumn+
+			" AND subject.organization_id = revision.organization_id"+
+			" WHERE subject.organization_id = @organizationID"+
+			" AND subject.id = @subjectID"+
+			groupPredicate+
+			" ORDER BY revision.revision DESC"+
+			" LIMIT 1",
+		pgx.NamedArgs{
+			"organizationID": organizationID,
+			"subjectID":      subjectID,
+			"groupID":        groupID,
+		},
+	).Scan(&effectiveFrom)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf(
+			"could not read latest authorization revision: %w",
+			err,
+		)
+	}
+	return effectiveFrom, nil
 }
 
 func withAuthorizationTransaction(

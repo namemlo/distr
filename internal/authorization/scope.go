@@ -69,15 +69,44 @@ func IsControlPlaneV2Effective(
 		IsControlPlaneV2Effective(ctx, organizationID, environmentID)
 }
 
+func IsControlPlaneV2EffectiveAt(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	environmentID uuid.UUID,
+	decisionAt time.Time,
+) (bool, error) {
+	return NewService(databaseRepository{}).
+		IsControlPlaneV2EffectiveAt(ctx, organizationID, environmentID, decisionAt)
+}
+
 func (service *Service) IsControlPlaneV2Effective(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	environmentID uuid.UUID,
 ) (bool, error) {
+	return service.IsControlPlaneV2EffectiveAt(
+		ctx,
+		organizationID,
+		environmentID,
+		service.clock().UTC(),
+	)
+}
+
+func (service *Service) IsControlPlaneV2EffectiveAt(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	environmentID uuid.UUID,
+	decisionAt time.Time,
+) (bool, error) {
 	if !service.processEnabled() ||
 		organizationID == uuid.Nil ||
 		environmentID == uuid.Nil {
 		return false, nil
+	}
+	if decisionAt.IsZero() {
+		decisionAt = service.clock().UTC()
+	} else {
+		decisionAt = decisionAt.UTC()
 	}
 
 	organizationEnrollments, err := service.repository.ListControlPlaneEnrollments(
@@ -85,12 +114,12 @@ func (service *Service) IsControlPlaneV2Effective(
 		organizationID,
 		types.PermissionScopeOrganization,
 		organizationID,
+		decisionAt,
 	)
 	if err != nil {
 		return false, err
 	}
-	now := service.clock().UTC()
-	if !EnrollmentEffectiveAt(organizationEnrollments, now) {
+	if !EnrollmentEffectiveAt(organizationEnrollments, decisionAt) {
 		return false, nil
 	}
 
@@ -99,11 +128,12 @@ func (service *Service) IsControlPlaneV2Effective(
 		organizationID,
 		types.PermissionScopeEnvironment,
 		environmentID,
+		decisionAt,
 	)
 	if err != nil {
 		return false, err
 	}
-	return EnrollmentEffectiveAt(environmentEnrollments, now), nil
+	return EnrollmentEffectiveAt(environmentEnrollments, decisionAt), nil
 }
 
 func EnrollmentEffectiveAt(enrollments []types.ControlPlaneEnrollment, at time.Time) bool {

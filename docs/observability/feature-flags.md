@@ -62,8 +62,10 @@ This order keeps each layer observable on its own before adding links between la
 
 PR-066 adds append-only organization and environment enrollment revisions under `/api/v1/authorization`.
 The process flag remains the emergency kill switch; both tenant enrollment levels must be effective for the
-selected environment. These controls must remain disabled in shared and production environments until PR-083
-completes hardening. In an isolated developer environment only, the process-layer state can be evaluated with:
+selected environment at the same UTC decision instant used for credential-capped scoped authorization. Lowered
+JWT/PAT roles remain an upper bound even when a broader scoped binding exists. These controls must remain disabled
+in shared and production environments until PR-083 completes hardening. In an isolated developer environment
+only, the process-layer state can be evaluated with:
 
 ```text
 DISTR_EXPERIMENTAL_FEATURE_FLAGS=operator_control_plane_v2,executor_protocol_v2

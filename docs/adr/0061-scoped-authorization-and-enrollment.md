@@ -23,9 +23,9 @@ Migration 148 adds the following organization-owned records:
 
 - `RoleDefinition` and `RolePermission` define an immutable role and its action set.
 - `RoleBinding` assigns one role to one user or principal group at exactly one supported scope for a half-open
-  effective interval.
+  effective interval; `RoleBindingRevision` appends its active and revoked states.
 - `PrincipalGroup` and `PrincipalGroupMember` provide organization-scoped group membership with an independent
-  half-open effective interval.
+  half-open effective interval; `PrincipalGroupMemberRevision` appends its active and revoked states.
 - `ControlPlaneEnrollment` appends organization or environment enable/disable revisions with actor, reason, and
   effective interval.
 - `AuthorizationBackfillCheckpoint` records completion of the restart-safe built-in role migration.
@@ -38,6 +38,22 @@ deny-by-default. A binding grants an action only when:
 2. the binding is effective at the decision instant;
 3. the role contains the requested action; and
 4. the binding scope exactly matches the resource or one of its resolved ancestors.
+
+The authenticated credential's effective `CurrentUserRole` caps every decision before either scoped grants or
+legacy fallback are considered. A read-only PAT held by an organization administrator can therefore use only the
+viewer-compatible actions. A missing or malformed regular role denies access. Super administrators deliberately
+have no implicit organization role: an organization-scoped super administrator may read authorization
+administration collections, but mutation middleware blocks the principal before action evaluation.
+
+Middleware captures one UTC `decisionAt` instant and carries it through the access request, group-membership
+query, binding interval evaluation, and organization/environment enrollment evaluation. Repository SQL uses that
+parameter instead of database `now()`, preserving exact half-open interval behavior.
+
+Every new binding or membership writes active revision 1 in the same transaction. Revocation takes a per-subject
+transaction advisory lock and appends the next monotonic revoked revision effective at the requested instant.
+Revisions are never updated or deleted. User bindings and group memberships also snapshot the existing
+`Organization_UserAccount.created_at` membership identity; if that membership is deleted and later recreated, its
+old authorization facts stay inert without changing the legacy membership schema.
 
 Organization is always the root scope. A deployment unit resolves to its organization, environment, exact unit,
 and dedicated or active shared subscribers. Customer, environment, and component references are validated inside
@@ -77,14 +93,26 @@ The admin API is additive under `/api/v1/authorization`:
 - `GET|POST /groups`
 - `GET|POST /groups/{groupId}/members`
 - `GET|POST /control-plane-enrollments`
+- `POST /bindings/{bindingId}/revocations`
+- `POST /groups/{groupId}/members/{memberId}/revocations`
 
-The API creates append-only role, binding, membership, and enrollment records. It exposes no update or delete
-operation. Every repository query includes `organization_id`; a foreign role, principal, group, or scope is
-reported as not found without confirming its existence.
+The API creates append-only role, binding, membership, revocation, and enrollment records. It exposes no update or
+delete operation. Every collection GET is keyset paginated with a stable `created_at DESC, id DESC` order and a
+versioned opaque cursor bound to organization, collection, and parent group where applicable. Every repository
+query includes `organization_id`; a foreign role, principal, group, or scope is reported as not found without
+confirming its existence. Group-member listing first resolves the same-tenant parent, so missing and foreign groups
+both return not found while an existing empty group returns an empty page.
 
-Migration 148 down refuses after any custom role, administrator-created binding, principal group, or enrollment
-exists. It can remove an unused compatibility-only backfill. No v1 role row, release payload, deployment,
-execution, callback, or audit history is rewritten.
+The three compatibility role keys are reserved by API, repository, and database constraint. Custom-role creation
+takes the organization built-in-role advisory lock and transactionally initializes exactly viewer, developer, and
+administrator plus their permissions/checkpoint before inserting the custom role. A POST-before-GET request
+therefore cannot squat a compatibility key.
+
+Migration 148 down takes `ACCESS EXCLUSIVE` locks on all authorization evidence tables before checking for custom
+roles, bindings, principal groups, or enrollments. It refuses when evidence exists and can remove an unused
+compatibility-only backfill. A concurrent writer either finishes before the locked guard and is observed, or
+blocks and fails after rollback; it cannot race between guard and drop. No v1 role row, release payload,
+deployment, execution, callback, or audit history is rewritten.
 
 ## Consequences
 
@@ -117,9 +145,11 @@ campaign table. All other supported scope kinds are validated immediately by mig
   matched binding IDs, and generic denial.
 - Enrollment tests cover process-off, organization-off, environment-off, effective intervals, both gates on, and
   a later disabled revision.
-- Repository tests cover normalization and validation contracts; migration 148 statically verifies all seven
-  tables, compatibility backfill, and guarded downgrade.
+- Repository tests cover normalization, revision, cursor, and validation contracts; migration 148 statically
+  verifies all nine tables, compatibility backfill, and locked guarded downgrade.
 - Handler, middleware, and OpenAPI tests cover request validation, action-specific dispatch, hidden disabled or
   foreign resources, generic denial, tenant-safe write errors, and every admin collection route.
-- Live PostgreSQL 16/18 migration, repeated backfill, concurrency, and rollback tests remain mandatory at the
-  integrated PR-066 gate after prerequisite migrations 141 through 147 are present.
+- Compile-valid PostgreSQL tests cover concurrent revocation ordering, membership removal/re-entry, half-open
+  revocation, and downgrade/write serialization, and skip without `DISTR_TEST_DATABASE_URL`. Live PostgreSQL
+  16/18 execution and repeated backfill remain mandatory at the integrated PR-066 gate after prerequisite
+  migrations 141 through 147 are present.

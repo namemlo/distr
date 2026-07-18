@@ -40,6 +40,7 @@ func TestAuthorizationExactAndAncestorScopeMatches(t *testing.T) {
 	decision, err := service.Authorize(context.Background(), types.AccessRequest{
 		OrganizationID: organizationID,
 		PrincipalID:    principalID,
+		CredentialRole: authorizationRolePointer(types.UserRoleAdmin),
 		Action:         types.ActionPlanExecute,
 		ResourceScopes: []types.ScopeRef{
 			{Kind: types.PermissionScopeOrganization, ID: organizationID},
@@ -85,6 +86,7 @@ func TestAuthorizationDeniesWrongScopedAndExpiredBindingsWithoutLeaking(t *testi
 	request := types.AccessRequest{
 		OrganizationID: organizationID,
 		PrincipalID:    principalID,
+		CredentialRole: authorizationRolePointer(types.UserRoleAdmin),
 		Action:         types.ActionPlanExecute,
 		ResourceScopes: []types.ScopeRef{
 			{Kind: types.PermissionScopeOrganization, ID: organizationID},
@@ -131,6 +133,7 @@ func TestAuthorizationDeniesWrongCustomerEnvironmentAndUnit(t *testing.T) {
 			decision, err := service.Authorize(context.Background(), types.AccessRequest{
 				OrganizationID: organizationID,
 				PrincipalID:    principalID,
+				CredentialRole: authorizationRolePointer(types.UserRoleAdmin),
 				Action:         types.ActionPlanExecute,
 				ResourceScopes: []types.ScopeRef{
 					{Kind: types.PermissionScopeOrganization, ID: organizationID},
@@ -165,6 +168,7 @@ func TestAuthorizationUsesEffectiveGroupGrant(t *testing.T) {
 	decision, err := service.Authorize(context.Background(), types.AccessRequest{
 		OrganizationID: organizationID,
 		PrincipalID:    principalID,
+		CredentialRole: authorizationRolePointer(types.UserRoleAdmin),
 		Action:         types.ActionAuditView,
 		ResourceScopes: []types.ScopeRef{{
 			Kind: types.PermissionScopeOrganization,
@@ -188,6 +192,7 @@ func TestAuthorizationSeparatesViewFromMutationAndFallsBackToLegacyRole(t *testi
 	base := types.AccessRequest{
 		OrganizationID: organizationID,
 		PrincipalID:    principalID,
+		CredentialRole: authorizationRolePointer(types.UserRoleAdmin),
 		ResourceScopes: []types.ScopeRef{{
 			Kind: types.PermissionScopeOrganization,
 			ID:   organizationID,
@@ -210,19 +215,177 @@ func TestAuthorizationSeparatesViewFromMutationAndFallsBackToLegacyRole(t *testi
 	g.Expect(mutationDecision.ReasonCode).To(Equal(types.AccessReasonDenied))
 }
 
+func TestAuthorizationCredentialRoleCapsScopedAndLegacyAuthority(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 4, 0, 0, 0, time.UTC)
+	organizationID := uuid.New()
+	principalID := uuid.New()
+	bindingID := uuid.New()
+	persistedRole := types.UserRoleAdmin
+	readOnlyCredential := types.UserRoleReadOnly
+	readWriteCredential := types.UserRoleReadWrite
+	adminCredential := types.UserRoleAdmin
+	malformedCredential := types.UserRole("owner")
+	repository := &fakeRepository{
+		grants: []types.AccessGrant{{
+			BindingID: bindingID,
+			Scope: types.ScopeRef{
+				Kind: types.PermissionScopeOrganization,
+				ID:   organizationID,
+			},
+			Actions:       []types.Action{types.ActionAuditView, types.ActionPlanExecute},
+			EffectiveFrom: now.Add(-time.Hour),
+		}},
+		legacyRole: &persistedRole,
+	}
+	service := NewService(repository, WithClock(func() time.Time { return now }))
+	base := types.AccessRequest{
+		OrganizationID: organizationID,
+		PrincipalID:    principalID,
+		ResourceScopes: []types.ScopeRef{{
+			Kind: types.PermissionScopeOrganization,
+			ID:   organizationID,
+		}},
+	}
+
+	for _, tc := range []struct {
+		name           string
+		credentialRole *types.UserRole
+		action         types.Action
+		allowed        bool
+	}{
+		{
+			name:           "read-only PAT can view",
+			credentialRole: &readOnlyCredential,
+			action:         types.ActionAuditView,
+			allowed:        true,
+		},
+		{
+			name:           "read-only PAT cannot use admin scoped grant",
+			credentialRole: &readOnlyCredential,
+			action:         types.ActionPlanExecute,
+		},
+		{
+			name:           "read-write credential can execute",
+			credentialRole: &readWriteCredential,
+			action:         types.ActionPlanExecute,
+			allowed:        true,
+		},
+		{
+			name:           "equal admin session is unchanged",
+			credentialRole: &adminCredential,
+			action:         types.ActionPlanExecute,
+			allowed:        true,
+		},
+		{
+			name:   "missing regular role denies",
+			action: types.ActionAuditView,
+		},
+		{
+			name:           "malformed regular role denies",
+			credentialRole: &malformedCredential,
+			action:         types.ActionAuditView,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := base
+			request.CredentialRole = tc.credentialRole
+			request.Action = tc.action
+
+			decision, err := service.Authorize(context.Background(), request)
+
+			g := NewWithT(t)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(decision.Allowed).To(Equal(tc.allowed))
+		})
+	}
+}
+
+func TestAuthorizationExplicitlyDeniesSuperAdminWithoutCredentialRole(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 4, 0, 0, 0, time.UTC)
+	organizationID := uuid.New()
+	service := NewService(
+		&fakeRepository{grants: []types.AccessGrant{{
+			BindingID: uuid.New(),
+			Scope: types.ScopeRef{
+				Kind: types.PermissionScopeOrganization,
+				ID:   organizationID,
+			},
+			Actions:       []types.Action{types.ActionAuditView},
+			EffectiveFrom: now.Add(-time.Hour),
+		}}},
+		WithClock(func() time.Time { return now }),
+	)
+
+	decision, err := service.Authorize(context.Background(), types.AccessRequest{
+		OrganizationID: organizationID,
+		PrincipalID:    uuid.New(),
+		IsSuperAdmin:   true,
+		Action:         types.ActionAuditView,
+		ResourceScopes: []types.ScopeRef{{
+			Kind: types.PermissionScopeOrganization,
+			ID:   organizationID,
+		}},
+	})
+
+	g := NewWithT(t)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(decision.Allowed).To(BeFalse())
+	g.Expect(decision.ReasonCode).To(Equal(types.AccessReasonDenied))
+}
+
+func TestAuthorizationUsesRequestDecisionAtForRepositoryAndIntervals(t *testing.T) {
+	serviceClock := time.Date(2026, time.July, 18, 4, 0, 0, 0, time.UTC)
+	decisionAt := serviceClock.Add(30 * time.Minute)
+	organizationID := uuid.New()
+	repository := &fakeRepository{grants: []types.AccessGrant{{
+		BindingID: uuid.New(),
+		Scope: types.ScopeRef{
+			Kind: types.PermissionScopeOrganization,
+			ID:   organizationID,
+		},
+		Actions:       []types.Action{types.ActionAuditView},
+		EffectiveFrom: serviceClock.Add(15 * time.Minute),
+	}}}
+	service := NewService(repository, WithClock(func() time.Time { return serviceClock }))
+
+	decision, err := service.Authorize(context.Background(), types.AccessRequest{
+		OrganizationID: organizationID,
+		PrincipalID:    uuid.New(),
+		CredentialRole: authorizationRolePointer(types.UserRoleReadOnly),
+		Action:         types.ActionAuditView,
+		DecisionAt:     decisionAt,
+		ResourceScopes: []types.ScopeRef{{
+			Kind: types.PermissionScopeOrganization,
+			ID:   organizationID,
+		}},
+	})
+
+	g := NewWithT(t)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(decision.Allowed).To(BeTrue())
+	g.Expect(repository.grantDecisionAt).To(Equal(decisionAt))
+}
+
 type fakeRepository struct {
-	grants      []types.AccessGrant
-	legacyRole  *types.UserRole
-	scopes      []types.ScopeRef
-	enrollments []types.ControlPlaneEnrollment
-	err         error
+	grants          []types.AccessGrant
+	legacyRole      *types.UserRole
+	scopes          []types.ScopeRef
+	enrollments     []types.ControlPlaneEnrollment
+	grantDecisionAt time.Time
+	err             error
+}
+
+func authorizationRolePointer(role types.UserRole) *types.UserRole {
+	return &role
 }
 
 func (r *fakeRepository) ListAccessGrants(
-	context.Context,
-	uuid.UUID,
-	uuid.UUID,
+	_ context.Context,
+	_ uuid.UUID,
+	_ uuid.UUID,
+	decisionAt time.Time,
 ) ([]types.AccessGrant, error) {
+	r.grantDecisionAt = decisionAt
 	return append([]types.AccessGrant{}, r.grants...), r.err
 }
 
@@ -242,10 +405,11 @@ func (r *fakeRepository) ResolveResourceScopes(
 }
 
 func (r *fakeRepository) ListControlPlaneEnrollments(
-	context.Context,
-	uuid.UUID,
-	types.PermissionScope,
-	uuid.UUID,
+	_ context.Context,
+	_ uuid.UUID,
+	_ types.PermissionScope,
+	_ uuid.UUID,
+	_ time.Time,
 ) ([]types.ControlPlaneEnrollment, error) {
 	return append([]types.ControlPlaneEnrollment{}, r.enrollments...), r.err
 }

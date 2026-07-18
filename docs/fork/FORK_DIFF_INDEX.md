@@ -1265,18 +1265,22 @@ Use one entry per pull request:
 - Feature flag: `operator_control_plane_v2` remains the process kill switch; effective v2 operation additionally
   requires active organization and selected-environment enrollment.
 - User-facing behavior: Administrators can create action-specific immutable roles, direct or group bindings, group
-  memberships, and append-only organization/environment enrollment revisions.
-- Database changes: Migration 148 adds role definitions/permissions, scoped bindings, principal groups/members,
-  control-plane enrollments, an idempotent built-in role-definition/permission backfill, and its durable
-  checkpoint. Down migration refuses while custom authorization or enrollment evidence exists.
-- API changes: Adds GET/POST admin collections below `/api/v1/authorization` for roles, bindings, groups, group
-  members, and control-plane enrollments.
+  memberships, append revocations, and append organization/environment enrollment revisions. Credential roles cap
+  scoped grants; super administrators may inspect but not mutate authorization administration.
+- Database changes: Migration 148 adds role definitions/permissions, scoped bindings and binding revisions,
+  principal groups/members and membership revisions, control-plane enrollments, an idempotent locked built-in
+  role-definition/permission backfill, and its durable checkpoint. Membership identity snapshots prevent
+  delete/re-add resurrection without altering the legacy membership table. Down migration locks evidence tables
+  before refusing while custom authorization or enrollment evidence exists.
+- API changes: Adds keyset-paginated GET/POST admin collections below `/api/v1/authorization` for roles, bindings,
+  groups, group members, and control-plane enrollments, plus append-only binding and membership revocation routes.
 - UI changes: None.
 - Agent protocol changes: None.
 - Documentation: Added ADR-0061 and PR-066 fork notes.
-- Tests: Added fast pure action/scope/enrollment tests, repository validation and migration-contract tests,
-  handler/middleware tests, and generated OpenAPI route coverage. Live PostgreSQL 16/18, repeated concurrent
-  backfill, and the full regression gate remain deferred until integration.
+- Tests: Added fast credential/action/scope/enrollment tests, revision/cursor repository contracts,
+  handler/middleware tests, and generated OpenAPI route coverage. Compile-valid PostgreSQL concurrency and locked
+  downgrade tests skip without `DISTR_TEST_DATABASE_URL`; live PostgreSQL 16/18, repeated concurrent backfill, and
+  the full regression gate remain deferred until integration.
 - Upstream contribution notes: Community-neutral scoped RBAC and rollout enrollment; no adopter, infrastructure
   provider, CI provider, host, credential, or client database behavior.
 - Compatibility notes: Existing v1 middleware and `Organization_UserAccount.user_role` remain unchanged.

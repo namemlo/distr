@@ -9,7 +9,7 @@ alone can never grant tenant authority.
 ## Scope
 
 - Add organization-owned role definitions, action permissions, user/group bindings, group membership, and
-  enrollment revisions.
+  append-only binding/membership revocations, and enrollment revisions.
 - Resolve organization, customer, environment, deployment-unit, component, and campaign authorization scopes.
 - Keep the legacy `Organization_UserAccount.user_role` path unchanged and use it as a dual-read fallback.
 - Backfill the three existing roles idempotently and retain an explicit completion checkpoint.
@@ -33,7 +33,18 @@ Developer and administrator are deliberately distinct. Custom immutable roles ca
 An action is allowed only when an effective direct or group binding contains the action and its exact scope
 matches the resource or a resolved ancestor. If no scoped binding matches, the legacy compatibility role is read
 without changing its row. Every decision is deny-by-default and returns deterministically ordered matching binding
-IDs.
+IDs. The authenticated credential's effective `CurrentUserRole` is an independent upper bound: neither a scoped
+binding nor the legacy fallback can grant an action above a lowered JWT or PAT role. Regular credentials without a
+valid role are denied. Super administrators have no implicit scoped grant; with organization context they may read
+authorization administration collections, while all mutations remain blocked.
+
+The middleware establishes one UTC `decisionAt` instant and uses it for binding, group membership, and enrollment
+half-open interval evaluation. The repositories never mix database `now()` with that decision.
+
+Role bindings and group memberships append `active` revision 1 transactionally. Revocation appends a monotonic
+`revoked` revision under an advisory lock; it never updates or deletes the original fact. User-bound facts retain
+the existing organization-membership `created_at` identity. Removing and later re-adding a user therefore cannot
+reactivate an old direct binding or group membership.
 
 An execution-capable v2 route additionally requires:
 
@@ -50,18 +61,26 @@ reason, actor, or interval.
 
 ### Database/schema impact
 
-Migration 148 adds `RoleDefinition`, `RolePermission`, `RoleBinding`, `PrincipalGroup`,
-`PrincipalGroupMember`, `ControlPlaneEnrollment`, and `AuthorizationBackfillCheckpoint`. It inserts checkpointed
-built-in role definitions and their action permissions. It does not duplicate or alter current
-`Organization_UserAccount` memberships.
+Migration 148 adds `RoleDefinition`, `RolePermission`, `RoleBinding`, `RoleBindingRevision`, `PrincipalGroup`,
+`PrincipalGroupMember`, `PrincipalGroupMemberRevision`, `ControlPlaneEnrollment`, and
+`AuthorizationBackfillCheckpoint`. It inserts checkpointed built-in role definitions and their action permissions.
+It does not duplicate or alter current `Organization_UserAccount` memberships.
 
 The down migration refuses after any custom authorization or enrollment evidence exists. Compatibility-only
-backfill data can be removed when unused.
+backfill data can be removed when unused. It first takes `ACCESS EXCLUSIVE` locks on every authorization evidence
+table so a concurrent writer cannot pass the evidence guard.
 
 ### Public API impact
 
 Adds admin collections under `/api/v1/authorization` for roles, bindings, groups, group members, and
 control-plane enrollments. Collections support GET and append-only POST; no update or delete API is exposed.
+Bindings and memberships add append-only revocation routes:
+
+- `POST /bindings/{bindingId}/revocations`
+- `POST /groups/{groupId}/members/{memberId}/revocations`
+
+Every collection GET uses stable keyset pagination with optional `cursor` and `limit`, a default of 50, a maximum
+of 100, and an opaque versioned cursor bound to organization, collection, and parent group where applicable.
 
 ### Frontend/UI impact
 
@@ -78,9 +97,9 @@ an independent tenant rollout gate. Authorization administration is process-gate
 
 ### Security impact
 
-Positive authorization boundary. New actions are deny-by-default, group and binding intervals are checked, every
-resource lookup remains organization scoped, and foreign identifiers return not found. API responses omit
-organization IDs and database details. No secret value is stored.
+Positive authorization boundary. New actions are deny-by-default and credential-capped, group/binding revisions
+and intervals share one decision instant, every resource lookup remains organization scoped, and foreign
+identifiers return not found. API responses omit organization IDs and database details. No secret value is stored.
 
 ### Backward-compatibility impact
 
@@ -90,10 +109,13 @@ membership row.
 
 ## Validation
 
-Fast focused tests cover actions/scopes, exact and ancestor grants, wrong resource denial, group membership,
-expiry, legacy fallback, enrollment gates and rollback, request/repository validation, handler error mapping,
-middleware behavior, and OpenAPI publication. The migration pair is present at reserved version 148.
+Fast focused tests cover credential caps, actions/scopes, exact and ancestor grants, wrong resource denial, group
+membership, expiry, legacy fallback, enrollment gates and rollback, revision contracts, tenant-bound pagination,
+parent resolution, superadmin/vendor boundaries, request/repository validation, handler error mapping, middleware
+behavior, and OpenAPI publication. The migration pair is present at reserved version 148.
 
-Live PostgreSQL 16/18, repeated concurrent backfill, full Go regression, Hub/container builds, Angular/browser
-tests, and integrated migration validation are deferred to the final gate because this speculative branch
-intentionally does not contain prerequisite migrations 141 through 147.
+Compile-valid PostgreSQL tests cover concurrent monotonic revocation, membership removal/re-entry, half-open
+revocation, and down-migration writer serialization; they skip until `DISTR_TEST_DATABASE_URL` is supplied. Live
+PostgreSQL 16/18 execution, full Go regression, Hub/container builds, Angular/browser tests, and integrated
+migration validation remain deferred to the final gate because this speculative branch intentionally does not
+contain prerequisite migrations 141 through 147.

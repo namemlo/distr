@@ -230,22 +230,37 @@ func RequireEffectiveControlPlaneAction(
 	)
 }
 
+func RequireControlPlaneReadAction(
+	action types.Action,
+	resourceResolver ControlPlaneResourceResolver,
+) func(http.Handler) http.Handler {
+	return requireControlPlaneReadActionWith(
+		action,
+		resourceResolver,
+		defaultControlPlaneActionDependencies(),
+	)
+}
+
 type controlPlaneActionDependencies struct {
+	clock          func() time.Time
 	processEnabled func() bool
 	resolveScopes  func(context.Context, types.ResourceRef) ([]types.ScopeRef, error)
 	authorize      func(context.Context, types.AccessRequest) (types.AccessDecision, error)
-	isEffective    func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
+	isEffective    func(context.Context, uuid.UUID, uuid.UUID, time.Time) (bool, error)
 }
 
 func defaultControlPlaneActionDependencies() controlPlaneActionDependencies {
 	return controlPlaneActionDependencies{
+		clock: func() time.Time {
+			return time.Now().UTC()
+		},
 		processEnabled: func() bool {
 			return featureflags.NewRegistry(env.ExperimentalFeatureFlags()).
 				IsEnabled(featureflags.KeyOperatorControlPlaneV2)
 		},
 		resolveScopes: authorization.ResolveResourceScopes,
 		authorize:     authorization.Authorize,
-		isEffective:   authorization.IsControlPlaneV2Effective,
+		isEffective:   authorization.IsControlPlaneV2EffectiveAt,
 	}
 }
 
@@ -253,6 +268,36 @@ func requireControlPlaneActionWith(
 	action types.Action,
 	resourceResolver ControlPlaneResourceResolver,
 	requireEnrollment bool,
+	dependencies controlPlaneActionDependencies,
+) func(http.Handler) http.Handler {
+	return requireControlPlaneActionCore(
+		action,
+		resourceResolver,
+		requireEnrollment,
+		false,
+		dependencies,
+	)
+}
+
+func requireControlPlaneReadActionWith(
+	action types.Action,
+	resourceResolver ControlPlaneResourceResolver,
+	dependencies controlPlaneActionDependencies,
+) func(http.Handler) http.Handler {
+	return requireControlPlaneActionCore(
+		action,
+		resourceResolver,
+		false,
+		true,
+		dependencies,
+	)
+}
+
+func requireControlPlaneActionCore(
+	action types.Action,
+	resourceResolver ControlPlaneResourceResolver,
+	requireEnrollment bool,
+	allowSuperAdminRead bool,
 	dependencies controlPlaneActionDependencies,
 ) func(http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
@@ -276,6 +321,19 @@ func requireControlPlaneActionWith(
 				http.Error(w, "insufficient permissions", http.StatusForbidden)
 				return
 			}
+			isSuperAdmin := authInfo.IsSuperAdmin()
+			if isSuperAdmin && !allowSuperAdminRead {
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+			if !isSuperAdmin && authInfo.CurrentUserRole() == nil {
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+			decisionAt := time.Now().UTC()
+			if dependencies.clock != nil {
+				decisionAt = dependencies.clock().UTC()
+			}
 			organizationID := *authInfo.CurrentOrgID()
 			resource, err := resourceResolver(request, organizationID)
 			if err != nil {
@@ -288,30 +346,35 @@ func requireControlPlaneActionWith(
 				return
 			}
 
-			if dependencies.authorize == nil {
+			if !isSuperAdmin && dependencies.authorize == nil {
 				http.Error(w, "insufficient permissions", http.StatusForbidden)
 				return
 			}
-			decision, err := dependencies.authorize(
-				request.Context(),
-				types.AccessRequest{
-					OrganizationID: organizationID,
-					PrincipalID:    authInfo.CurrentUserID(),
-					Action:         action,
-					ResourceScopes: scopes,
-				},
-			)
-			if err != nil {
-				http.Error(
-					w,
-					http.StatusText(http.StatusInternalServerError),
-					http.StatusInternalServerError,
+			if !isSuperAdmin {
+				decision, err := dependencies.authorize(
+					request.Context(),
+					types.AccessRequest{
+						OrganizationID: organizationID,
+						PrincipalID:    authInfo.CurrentUserID(),
+						CredentialRole: authInfo.CurrentUserRole(),
+						IsSuperAdmin:   false,
+						DecisionAt:     decisionAt,
+						Action:         action,
+						ResourceScopes: scopes,
+					},
 				)
-				return
-			}
-			if !decision.Allowed {
-				http.Error(w, "insufficient permissions", http.StatusForbidden)
-				return
+				if err != nil {
+					http.Error(
+						w,
+						http.StatusText(http.StatusInternalServerError),
+						http.StatusInternalServerError,
+					)
+					return
+				}
+				if !decision.Allowed {
+					http.Error(w, "insufficient permissions", http.StatusForbidden)
+					return
+				}
 			}
 
 			if requireEnrollment {
@@ -335,6 +398,7 @@ func requireControlPlaneActionWith(
 						request.Context(),
 						organizationID,
 						environmentID,
+						decisionAt,
 					)
 					if err != nil {
 						http.Error(

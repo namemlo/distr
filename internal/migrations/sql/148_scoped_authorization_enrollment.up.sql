@@ -23,6 +23,27 @@ CREATE TABLE RoleDefinition (
   CONSTRAINT roledefinition_builtin_source_check CHECK (
     built_in = (source_legacy_role IS NOT NULL)
   ),
+  CONSTRAINT roledefinition_reserved_key_check CHECK (
+    (
+      built_in
+      AND (
+        (role_key = 'legacy.read_only' AND source_legacy_role = 'read_only')
+        OR
+        (role_key = 'legacy.read_write' AND source_legacy_role = 'read_write')
+        OR
+        (role_key = 'legacy.admin' AND source_legacy_role = 'admin')
+      )
+    )
+    OR
+    (
+      NOT built_in
+      AND role_key NOT IN (
+        'legacy.read_only',
+        'legacy.read_write',
+        'legacy.admin'
+      )
+    )
+  ),
   CONSTRAINT roledefinition_actor_fk
     FOREIGN KEY (created_by_useraccount_id)
     REFERENCES UserAccount(id)
@@ -107,6 +128,7 @@ CREATE TABLE PrincipalGroupMember (
   organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
   group_id UUID NOT NULL,
   user_account_id UUID NOT NULL,
+  user_membership_created_at TIMESTAMP NOT NULL,
   effective_from TIMESTAMPTZ NOT NULL,
   effective_until TIMESTAMPTZ,
   added_by_useraccount_id UUID,
@@ -158,6 +180,7 @@ CREATE TABLE RoleBinding (
     principal_kind IN ('user', 'group')
   ),
   principal_id UUID NOT NULL,
+  principal_membership_created_at TIMESTAMP,
   scope_kind TEXT NOT NULL CHECK (
     scope_kind IN (
       'organization',
@@ -195,6 +218,11 @@ CREATE TABLE RoleBinding (
   CONSTRAINT rolebinding_organization_scope_check CHECK (
     scope_kind <> 'organization' OR scope_id = organization_id
   ),
+  CONSTRAINT rolebinding_membership_created_at_check CHECK (
+    (principal_kind = 'user' AND principal_membership_created_at IS NOT NULL)
+    OR
+    (principal_kind = 'group' AND principal_membership_created_at IS NULL)
+  ),
   CONSTRAINT rolebinding_role_fk
     FOREIGN KEY (role_definition_id, organization_id)
     REFERENCES RoleDefinition(id, organization_id)
@@ -222,6 +250,82 @@ CREATE INDEX RoleBinding_principal_effective_lookup
 
 CREATE INDEX RoleBinding_role_lookup
   ON RoleBinding (organization_id, role_definition_id, id);
+
+CREATE TABLE RoleBindingRevision (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  role_binding_id UUID NOT NULL,
+  revision BIGINT NOT NULL CHECK (revision > 0),
+  state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+  effective_from TIMESTAMPTZ NOT NULL,
+  actor_useraccount_id UUID NOT NULL,
+  reason TEXT NOT NULL CHECK (
+    reason = btrim(reason) AND length(reason) > 0
+  ),
+  CONSTRAINT rolebindingrevision_id_organization_unique
+    UNIQUE (id, organization_id),
+  CONSTRAINT rolebindingrevision_revision_unique
+    UNIQUE (role_binding_id, revision),
+  CONSTRAINT rolebindingrevision_binding_fk
+    FOREIGN KEY (role_binding_id, organization_id)
+    REFERENCES RoleBinding(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT rolebindingrevision_actor_fk
+    FOREIGN KEY (actor_useraccount_id)
+    REFERENCES UserAccount(id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE
+);
+
+CREATE INDEX RoleBindingRevision_effective_lookup
+  ON RoleBindingRevision (
+    organization_id,
+    role_binding_id,
+    effective_from,
+    revision DESC
+  );
+
+CREATE TABLE PrincipalGroupMemberRevision (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  principal_group_member_id UUID NOT NULL,
+  revision BIGINT NOT NULL CHECK (revision > 0),
+  state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+  effective_from TIMESTAMPTZ NOT NULL,
+  actor_useraccount_id UUID NOT NULL,
+  reason TEXT NOT NULL CHECK (
+    reason = btrim(reason) AND length(reason) > 0
+  ),
+  CONSTRAINT principalgroupmemberrevision_id_organization_unique
+    UNIQUE (id, organization_id),
+  CONSTRAINT principalgroupmemberrevision_revision_unique
+    UNIQUE (principal_group_member_id, revision),
+  CONSTRAINT principalgroupmemberrevision_member_fk
+    FOREIGN KEY (principal_group_member_id, organization_id)
+    REFERENCES PrincipalGroupMember(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT principalgroupmemberrevision_actor_fk
+    FOREIGN KEY (actor_useraccount_id)
+    REFERENCES UserAccount(id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE
+);
+
+CREATE INDEX PrincipalGroupMemberRevision_effective_lookup
+  ON PrincipalGroupMemberRevision (
+    organization_id,
+    principal_group_member_id,
+    effective_from,
+    revision DESC
+  );
 
 CREATE TABLE ControlPlaneEnrollment (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -340,12 +444,53 @@ EXECUTE FUNCTION authorization_validate_membership_at_write(
   'created_by_useraccount_id'
 );
 
+CREATE TRIGGER RoleBindingRevision_validate_actor_membership
+BEFORE INSERT ON RoleBindingRevision
+FOR EACH ROW
+EXECUTE FUNCTION authorization_validate_membership_at_write(
+  'actor_useraccount_id'
+);
+
+CREATE TRIGGER PrincipalGroupMemberRevision_validate_actor_membership
+BEFORE INSERT ON PrincipalGroupMemberRevision
+FOR EACH ROW
+EXECUTE FUNCTION authorization_validate_membership_at_write(
+  'actor_useraccount_id'
+);
+
 CREATE TRIGGER ControlPlaneEnrollment_validate_actor_membership
 BEFORE INSERT ON ControlPlaneEnrollment
 FOR EACH ROW
 EXECUTE FUNCTION authorization_validate_membership_at_write(
   'actor_useraccount_id'
 );
+
+CREATE FUNCTION authorization_validate_group_member_boundary()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM Organization_UserAccount membership
+    WHERE membership.organization_id = NEW.organization_id
+      AND membership.user_account_id = NEW.user_account_id
+      AND membership.created_at = NEW.user_membership_created_at
+  ) THEN
+    RAISE EXCEPTION
+      'authorization group member epoch is outside the organization'
+      USING
+        ERRCODE = '23503',
+        CONSTRAINT = 'principalgroupmember_membership_created_at_guard';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER PrincipalGroupMember_validate_boundary
+BEFORE INSERT ON PrincipalGroupMember
+FOR EACH ROW
+EXECUTE FUNCTION authorization_validate_group_member_boundary();
 
 CREATE FUNCTION authorization_validate_role_binding_boundary()
 RETURNS trigger
@@ -357,6 +502,7 @@ BEGIN
     FROM Organization_UserAccount membership
     WHERE membership.organization_id = NEW.organization_id
       AND membership.user_account_id = NEW.principal_id
+      AND membership.created_at = NEW.principal_membership_created_at
   ) THEN
     RAISE EXCEPTION
       'authorization principal is outside the organization'
@@ -482,6 +628,11 @@ BEFORE UPDATE OR DELETE ON RoleBinding
 FOR EACH ROW
 EXECUTE FUNCTION authorization_prevent_immutable_mutation();
 
+CREATE TRIGGER RoleBindingRevision_immutable
+BEFORE UPDATE OR DELETE ON RoleBindingRevision
+FOR EACH ROW
+EXECUTE FUNCTION authorization_prevent_immutable_mutation();
+
 CREATE TRIGGER PrincipalGroup_immutable
 BEFORE UPDATE OR DELETE ON PrincipalGroup
 FOR EACH ROW
@@ -489,6 +640,11 @@ EXECUTE FUNCTION authorization_prevent_immutable_mutation();
 
 CREATE TRIGGER PrincipalGroupMember_immutable
 BEFORE UPDATE OR DELETE ON PrincipalGroupMember
+FOR EACH ROW
+EXECUTE FUNCTION authorization_prevent_immutable_mutation();
+
+CREATE TRIGGER PrincipalGroupMemberRevision_immutable
+BEFORE UPDATE OR DELETE ON PrincipalGroupMemberRevision
 FOR EACH ROW
 EXECUTE FUNCTION authorization_prevent_immutable_mutation();
 

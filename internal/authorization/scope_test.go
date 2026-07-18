@@ -180,9 +180,58 @@ func TestEnrollmentEffectiveAtUsesLatestActiveRevisionForRollback(t *testing.T) 
 	}}, now)).To(BeFalse())
 }
 
+func TestControlPlaneEnrollmentUsesCallerDecisionAtEndToEnd(t *testing.T) {
+	serviceClock := time.Date(2026, time.July, 18, 5, 0, 0, 0, time.UTC)
+	decisionAt := serviceClock.Add(30 * time.Minute)
+	organizationID := uuid.New()
+	environmentID := uuid.New()
+	repository := &enrollmentRepository{
+		byScope: map[types.PermissionScope][]types.ControlPlaneEnrollment{
+			types.PermissionScopeOrganization: {{
+				OrganizationID: organizationID,
+				Scope: types.ScopeRef{
+					Kind: types.PermissionScopeOrganization,
+					ID:   organizationID,
+				},
+				Enabled:       true,
+				EffectiveFrom: serviceClock.Add(15 * time.Minute),
+				Revision:      1,
+			}},
+			types.PermissionScopeEnvironment: {{
+				OrganizationID: organizationID,
+				Scope: types.ScopeRef{
+					Kind: types.PermissionScopeEnvironment,
+					ID:   environmentID,
+				},
+				Enabled:       true,
+				EffectiveFrom: serviceClock.Add(15 * time.Minute),
+				Revision:      1,
+			}},
+		},
+	}
+	service := NewService(
+		repository,
+		WithClock(func() time.Time { return serviceClock }),
+		WithProcessFlag(func() bool { return true }),
+	)
+
+	effective, err := service.IsControlPlaneV2EffectiveAt(
+		context.Background(),
+		organizationID,
+		environmentID,
+		decisionAt,
+	)
+
+	g := NewWithT(t)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(effective).To(BeTrue())
+	g.Expect(repository.enrollmentDecisionAt).To(Equal(decisionAt))
+}
+
 type enrollmentRepository struct {
 	fakeRepository
-	byScope map[types.PermissionScope][]types.ControlPlaneEnrollment
+	byScope              map[types.PermissionScope][]types.ControlPlaneEnrollment
+	enrollmentDecisionAt time.Time
 }
 
 func (r *enrollmentRepository) ListControlPlaneEnrollments(
@@ -190,6 +239,8 @@ func (r *enrollmentRepository) ListControlPlaneEnrollments(
 	_ uuid.UUID,
 	scope types.PermissionScope,
 	_ uuid.UUID,
+	decisionAt time.Time,
 ) ([]types.ControlPlaneEnrollment, error) {
+	r.enrollmentDecisionAt = decisionAt
 	return append([]types.ControlPlaneEnrollment{}, r.byScope[scope]...), r.err
 }
