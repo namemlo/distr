@@ -30,9 +30,13 @@ tolerance, and minimum healthy thresholds. Bake durations cannot decrease as exp
 threshold evaluation, pause/resume state, and operational controls remain PR-072 and PR-073.
 
 A cross-plan prerequisite freezes the downstream plan, upstream plan, upstream step key, provider placement, and
-expected observed-state checksum. It deliberately does not store a future observation ID. PR-072 admission must
-record the actual trusted observation used and compare its measured checksum to the frozen expectation. A mismatch
-pauses admission; it never rewrites or rebinds this revision. Publication asks the database only for the exact
+expected runtime-state checksum. The checksum uses `distr.campaign-runtime-expectation/v1`: canonical provider
+deployment-unit ID, component-instance ID, component key, pinned artifact digest, frozen config checksum, and
+platform. Observer identity, capture time, sequence, evidence reference, health, and outcome are excluded, so a
+fresh observation of the same desired runtime produces the same expectation checksum. The campaign deliberately
+does not store a future observation ID. PR-072 admission must record the actual trusted observation used and
+compare its stable runtime fields to the frozen expectation. A mismatch pauses admission; it never rewrites or
+rebinds this revision. Publication asks the database only for the exact
 requested `(upstream plan, step key, provider placement)` tuples, avoiding a step-by-placement cross product. The
 draft's plan-local provider placement is resolved through the immutable plan target-config snapshot. Published
 evidence additionally freezes the provider deployment-unit ID and canonical component-instance ID. Later
@@ -51,6 +55,12 @@ ordinary updates, deletes, and truncates. Deletion is allowed only while the con
 campaign-specific operation identity and the delete is executing inside an `Organization` cascade. A caller that
 forges only the session marker remains at trigger depth one and is rejected. Downgrade refuses while campaign rows
 exist.
+
+Database constraints bind every member's plan to its deployment unit, approval request to the same tenant/plan,
+and admission evaluation to the same tenant/plan. Prerequisite step and plan-local placement references are both
+foreign-keyed to the frozen upstream plan. The database recomputes the campaign revision SHA-256 from
+`canonical_payload`, and draft/published concurrency cannot exceed 1,000. Concurrent publication attempts with the
+same idempotency key replay the winning revision after unique or serialization conflicts.
 
 The API is additive below `/api/v1/deployment-campaign-drafts`. Mutations require
 `operator_control_plane_v2` and a scoped campaign-action authorization seam. This synthetic stack does not contain

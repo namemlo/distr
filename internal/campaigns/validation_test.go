@@ -56,11 +56,11 @@ func TestCampaignRevisionValidationAcceptsFrozenSharedProviderPrerequisite(t *te
 		UpstreamPlanID:      draft.CandidatePlans[0].PlanID,
 		UpstreamStepKey:     "database.migrate",
 		ProviderPlacementID: draft.CandidatePlans[0].SharedProviderPlacements[0],
-		ExpectedObservedStateChecksum: draft.CandidatePlans[0].
+		ExpectedRuntimeStateChecksum: draft.CandidatePlans[0].
 			ExpectedStepPlacementEvidence[types.CampaignStepPlacement{
 			StepKey:     "database.migrate",
 			PlacementID: draft.CandidatePlans[0].SharedProviderPlacements[0],
-		}].ExpectedObservedStateChecksum,
+		}].ExpectedRuntimeStateChecksum,
 	}}
 
 	issues := ValidateCampaignDraft(context.Background(), draft)
@@ -88,11 +88,11 @@ func TestCampaignRevisionValidationRejectsPlacementWithoutCanonicalProviderIdent
 		PlacementID: placementID,
 	}] = evidence
 	draft.Prerequisites = []types.CampaignPrerequisiteDraft{{
-		DownstreamPlanID:              draft.CandidatePlans[1].PlanID,
-		UpstreamPlanID:                draft.CandidatePlans[0].PlanID,
-		UpstreamStepKey:               "database.migrate",
-		ProviderPlacementID:           placementID,
-		ExpectedObservedStateChecksum: evidence.ExpectedObservedStateChecksum,
+		DownstreamPlanID:             draft.CandidatePlans[1].PlanID,
+		UpstreamPlanID:               draft.CandidatePlans[0].PlanID,
+		UpstreamStepKey:              "database.migrate",
+		ProviderPlacementID:          placementID,
+		ExpectedRuntimeStateChecksum: evidence.ExpectedRuntimeStateChecksum,
 	}}
 
 	issues := ValidateCampaignDraft(context.Background(), draft)
@@ -115,17 +115,17 @@ func TestCampaignRevisionValidationRejectsIndependentStepAndPlacementEvidence(t 
 		otherPlacement,
 	)
 	draft.Prerequisites = []types.CampaignPrerequisiteDraft{{
-		DownstreamPlanID:              draft.CandidatePlans[1].PlanID,
-		UpstreamPlanID:                draft.CandidatePlans[0].PlanID,
-		UpstreamStepKey:               "database.migrate",
-		ProviderPlacementID:           otherPlacement,
-		ExpectedObservedStateChecksum: "sha256:" + repeatHex("6"),
+		DownstreamPlanID:             draft.CandidatePlans[1].PlanID,
+		UpstreamPlanID:               draft.CandidatePlans[0].PlanID,
+		UpstreamStepKey:              "database.migrate",
+		ProviderPlacementID:          otherPlacement,
+		ExpectedRuntimeStateChecksum: "sha256:" + repeatHex("6"),
 	}}
 
 	issues := ValidateCampaignDraft(context.Background(), draft)
 
 	g.Expect(campaignIssueCodes(issues)).To(ContainElement(
-		"campaign.prerequisite.observation_checksum_mismatch",
+		"campaign.prerequisite.runtime_state_checksum_mismatch",
 	))
 }
 
@@ -143,7 +143,7 @@ func TestCampaignRevisionValidationRejectsMissingAdmissionEvidence(t *testing.T)
 	))
 }
 
-func TestCampaignRevisionValidationRejectsObservationExpectationMismatch(t *testing.T) {
+func TestCampaignRevisionValidationRejectsRuntimeExpectationMismatch(t *testing.T) {
 	g := NewWithT(t)
 	draft := campaignDraftFixture()
 	draft.Membership.PlanIDs = []uuid.UUID{
@@ -151,17 +151,17 @@ func TestCampaignRevisionValidationRejectsObservationExpectationMismatch(t *test
 		draft.CandidatePlans[1].PlanID,
 	}
 	draft.Prerequisites = []types.CampaignPrerequisiteDraft{{
-		DownstreamPlanID:              draft.CandidatePlans[1].PlanID,
-		UpstreamPlanID:                draft.CandidatePlans[0].PlanID,
-		UpstreamStepKey:               "database.migrate",
-		ProviderPlacementID:           draft.CandidatePlans[0].SharedProviderPlacements[0],
-		ExpectedObservedStateChecksum: "sha256:" + repeatHex("7"),
+		DownstreamPlanID:             draft.CandidatePlans[1].PlanID,
+		UpstreamPlanID:               draft.CandidatePlans[0].PlanID,
+		UpstreamStepKey:              "database.migrate",
+		ProviderPlacementID:          draft.CandidatePlans[0].SharedProviderPlacements[0],
+		ExpectedRuntimeStateChecksum: "sha256:" + repeatHex("7"),
 	}}
 
 	issues := ValidateCampaignDraft(context.Background(), draft)
 
 	g.Expect(campaignIssueCodes(issues)).To(ContainElement(
-		"campaign.prerequisite.observation_checksum_mismatch",
+		"campaign.prerequisite.runtime_state_checksum_mismatch",
 	))
 }
 
@@ -186,6 +186,24 @@ func TestCampaignRevisionValidationRejectsInvalidOrDecreasingBake(t *testing.T) 
 	g.Expect(campaignIssueCodes(issues)).To(ContainElements(
 		"campaign.wave.bake_decreased",
 		"campaign.wave.bake_invalid",
+	))
+}
+
+func TestCampaignRevisionValidationCapsAllConcurrencyAtOneThousand(t *testing.T) {
+	g := NewWithT(t)
+	draft := campaignDraftFixture()
+	draft.Membership.PlanIDs = []uuid.UUID{
+		draft.CandidatePlans[0].PlanID,
+		draft.CandidatePlans[1].PlanID,
+	}
+	draft.RiskPolicy.MaximumConcurrency = 1001
+	draft.Waves[0].MaximumConcurrency = 1001
+
+	issues := ValidateCampaignDraft(context.Background(), draft)
+
+	g.Expect(campaignIssueCodes(issues)).To(ContainElements(
+		"campaign.risk_policy.invalid",
+		"campaign.wave.concurrency_invalid",
 	))
 }
 

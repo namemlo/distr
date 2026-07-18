@@ -36,6 +36,22 @@ BEGIN
 END;
 $$;
 
+ALTER TABLE AdmissionEvaluation
+  ADD CONSTRAINT admissionevaluation_id_plan_organization_unique
+  UNIQUE (id, deployment_plan_id, organization_id);
+
+ALTER TABLE ApprovalRequest
+  ADD CONSTRAINT approvalrequest_id_plan_organization_unique
+  UNIQUE (id, subject_id, organization_id);
+
+ALTER TABLE DeploymentPlan
+  ADD CONSTRAINT deploymentplan_id_unit_organization_unique
+  UNIQUE (id, deployment_unit_id, organization_id);
+
+ALTER TABLE DeploymentPlanTargetComponent
+  ADD CONSTRAINT deploymentplantargetcomponent_id_plan_organization_unique
+  UNIQUE (id, deployment_plan_id, organization_id);
+
 CREATE TABLE DeploymentCampaignDraft (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -62,6 +78,9 @@ CREATE TABLE DeploymentCampaignDraft (
   risk_policy JSONB NOT NULL CHECK (
     jsonb_typeof(risk_policy) = 'object'
     AND pg_column_size(risk_policy) <= 65536
+    AND jsonb_typeof(risk_policy -> 'maximumConcurrency') = 'number'
+    AND (risk_policy ->> 'maximumConcurrency') ~ '^[0-9]+$'
+    AND (risk_policy ->> 'maximumConcurrency')::integer BETWEEN 1 AND 1000
   ),
   revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
   last_published_revision_id UUID,
@@ -96,12 +115,17 @@ CREATE TABLE DeploymentCampaignRevision (
   risk_policy JSONB NOT NULL CHECK (
     jsonb_typeof(risk_policy) = 'object'
     AND pg_column_size(risk_policy) <= 65536
+    AND jsonb_typeof(risk_policy -> 'maximumConcurrency') = 'number'
+    AND (risk_policy ->> 'maximumConcurrency') ~ '^[0-9]+$'
+    AND (risk_policy ->> 'maximumConcurrency')::integer BETWEEN 1 AND 1000
   ),
   canonical_payload BYTEA NOT NULL CHECK (
     octet_length(canonical_payload) BETWEEN 2 AND 1048576
   ),
   canonical_checksum TEXT NOT NULL CHECK (
     canonical_checksum ~ '^sha256:[0-9a-f]{64}$'
+    AND canonical_checksum =
+      'sha256:' || encode(sha256(canonical_payload), 'hex')
   ),
   published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   published_by_useraccount_id UUID NOT NULL
@@ -213,20 +237,32 @@ CREATE TABLE DeploymentCampaignMember (
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignmember_plan_fk
-    FOREIGN KEY (deployment_plan_id, organization_id)
-    REFERENCES DeploymentPlan(id, organization_id)
+    FOREIGN KEY (
+      deployment_plan_id,
+      deployment_unit_id,
+      organization_id
+    )
+    REFERENCES DeploymentPlan(id, deployment_unit_id, organization_id)
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignmember_approval_fk
-    FOREIGN KEY (approval_request_id, organization_id)
-    REFERENCES ApprovalRequest(id, organization_id)
+    FOREIGN KEY (
+      approval_request_id,
+      deployment_plan_id,
+      organization_id
+    )
+    REFERENCES ApprovalRequest(id, subject_id, organization_id)
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT deploymentcampaignmember_admission_fk
-    FOREIGN KEY (admission_evaluation_id)
-    REFERENCES AdmissionEvaluation(id)
+    FOREIGN KEY (
+      admission_evaluation_id,
+      deployment_plan_id,
+      organization_id
+    )
+    REFERENCES AdmissionEvaluation(id, deployment_plan_id, organization_id)
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
@@ -261,8 +297,8 @@ CREATE TABLE DeploymentCampaignPrerequisite (
   provider_placement_id UUID NOT NULL,
   provider_deployment_unit_id UUID NOT NULL,
   provider_component_instance_id UUID NOT NULL,
-  expected_observed_state_checksum TEXT NOT NULL CHECK (
-    expected_observed_state_checksum ~ '^sha256:[0-9a-f]{64}$'
+  expected_runtime_state_checksum TEXT NOT NULL CHECK (
+    expected_runtime_state_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
   CONSTRAINT deploymentcampaignprerequisite_distinct_plans
     CHECK (downstream_plan_id <> upstream_plan_id),
@@ -309,6 +345,34 @@ CREATE TABLE DeploymentCampaignPrerequisite (
   CONSTRAINT deploymentcampaignprerequisite_upstream_plan_fk
     FOREIGN KEY (upstream_plan_id, organization_id)
     REFERENCES DeploymentPlan(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT deploymentcampaignprerequisite_upstream_step_fk
+    FOREIGN KEY (
+      upstream_plan_id,
+      upstream_step_key,
+      organization_id
+    )
+    REFERENCES DeploymentPlanStep(
+      deployment_plan_id,
+      step_key,
+      organization_id
+    )
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT deploymentcampaignprerequisite_provider_placement_fk
+    FOREIGN KEY (
+      provider_placement_id,
+      upstream_plan_id,
+      organization_id
+    )
+    REFERENCES DeploymentPlanTargetComponent(
+      id,
+      deployment_plan_id,
+      organization_id
+    )
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,

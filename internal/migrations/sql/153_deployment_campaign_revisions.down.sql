@@ -43,5 +43,13 @@ DROP TABLE DeploymentCampaignMember;
 DROP TABLE DeploymentCampaignWave;
 DROP TABLE DeploymentCampaignRevision;
 DROP TABLE DeploymentCampaignDraft;
+ALTER TABLE DeploymentPlanTargetComponent
+  DROP CONSTRAINT deploymentplantargetcomponent_id_plan_organization_unique;
+ALTER TABLE DeploymentPlan
+  DROP CONSTRAINT deploymentplan_id_unit_organization_unique;
+ALTER TABLE ApprovalRequest
+  DROP CONSTRAINT approvalrequest_id_plan_organization_unique;
+ALTER TABLE AdmissionEvaluation
+  DROP CONSTRAINT admissionevaluation_id_plan_organization_unique;
 DROP FUNCTION deploymentcampaign_published_no_truncate();
 DROP FUNCTION deploymentcampaign_published_immutable();

@@ -102,7 +102,7 @@ the plan's immutable `TargetConfigSnapshotComponent` binding. Each published pre
 
 - `providerDeploymentUnitId`;
 - `providerComponentInstanceId`; and
-- the expected observed-state checksum.
+- the stable desired runtime-state checksum.
 
 Migration 153 binds the deployment-unit/component-instance pair with tenant-composite foreign keys. The pair is
 included in canonical campaign bytes and returned by the published API. Publication fails validation when a
@@ -112,3 +112,28 @@ unstable DPTC-to-observation lookup.
 Canonical-identity follow-up verification reran the focused campaign/API/database/handler/routing tests and
 focused `go vet`; both passed. Migration validation again reported only the unchanged missing synthetic
 predecessors 141 through 148 and 152.
+
+## Final Re-review Hardening
+
+- Member foreign keys now bind the admission evaluation to tenant+plan, approval request to tenant+plan, and
+  deployment unit to the selected plan.
+- Prerequisite foreign keys bind both the step key and plan-local provider placement to the upstream plan.
+- `expectedRuntimeStateChecksum` replaces the ambiguous observed-state field. It follows
+  `distr.campaign-runtime-expectation/v1` and hashes only canonical provider identity plus stable desired runtime
+  fields from the immutable plan/snapshot: component key, pinned artifact digest, config checksum, and platform.
+  Volatile observer/capture/health/outcome evidence is excluded.
+- Migration 153 enforces campaign `canonical_checksum` directly from `canonical_payload`.
+- Publication replays the existing same-key revision after concurrent unique or repeatable-read serialization
+  conflicts.
+- Domain validation and draft/revision database constraints cap campaign and wave concurrency at 1,000.
+
+Final re-review verification:
+
+- `go test ./internal/campaigns ./internal/db ./api ./internal/mapping ./internal/handlers ./internal/routing
+  -run 'Campaign|campaign' -count=1` passed.
+- `go vet ./internal/campaigns ./internal/db ./api ./internal/mapping ./internal/handlers ./internal/routing`
+  passed.
+- `git diff --check` passed.
+- `hack/validate-migrations.sh` reached migration 153 and reported only the unchanged synthetic-stack gaps:
+  migrations 141 through 148 and 152. Migration 153 remains paired.
+- No live database, push, merge, rebase, deployment, external mutation, or client action was performed.

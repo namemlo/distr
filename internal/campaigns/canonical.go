@@ -71,13 +71,13 @@ func CanonicalizeCampaignRevision(
 		MemberOrder             int      `json:"memberOrder"`
 	}
 	type canonicalPrerequisite struct {
-		DownstreamPlanID              string `json:"downstreamPlanId"`
-		UpstreamPlanID                string `json:"upstreamPlanId"`
-		UpstreamStepKey               string `json:"upstreamStepKey"`
-		ProviderPlacementID           string `json:"providerPlacementId"`
-		ProviderDeploymentUnitID      string `json:"providerDeploymentUnitId"`
-		ProviderComponentInstanceID   string `json:"providerComponentInstanceId"`
-		ExpectedObservedStateChecksum string `json:"expectedObservedStateChecksum"`
+		DownstreamPlanID             string `json:"downstreamPlanId"`
+		UpstreamPlanID               string `json:"upstreamPlanId"`
+		UpstreamStepKey              string `json:"upstreamStepKey"`
+		ProviderPlacementID          string `json:"providerPlacementId"`
+		ProviderDeploymentUnitID     string `json:"providerDeploymentUnitId"`
+		ProviderComponentInstanceID  string `json:"providerComponentInstanceId"`
+		ExpectedRuntimeStateChecksum string `json:"expectedRuntimeStateChecksum"`
 	}
 	document := struct {
 		Schema              string                   `json:"schema"`
@@ -150,8 +150,8 @@ func CanonicalizeCampaignRevision(
 					ProviderDeploymentUnitID.String(),
 				ProviderComponentInstanceID: prerequisite.
 					ProviderComponentInstanceID.String(),
-				ExpectedObservedStateChecksum: prerequisite.
-					ExpectedObservedStateChecksum,
+				ExpectedRuntimeStateChecksum: prerequisite.
+					ExpectedRuntimeStateChecksum,
 			},
 		)
 	}

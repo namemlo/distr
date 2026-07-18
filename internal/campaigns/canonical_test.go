@@ -78,6 +78,45 @@ func TestCanonicalizeCampaignRevisionBindsCanonicalProviderIdentity(t *testing.T
 	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
 }
 
+func TestCampaignRuntimeExpectationChecksumUsesStableDesiredRuntimeFields(
+	t *testing.T,
+) {
+	g := NewWithT(t)
+	expectation := types.CampaignRuntimeExpectation{
+		ProviderDeploymentUnitID:    uuid.MustParse("40000000-0000-0000-0000-000000000001"),
+		ProviderComponentInstanceID: uuid.MustParse("90000000-0000-0000-0000-000000000001"),
+		ComponentKey:                "database",
+		ArtifactDigest:              "sha256:" + repeatHex("1"),
+		ConfigChecksum:              "sha256:" + repeatHex("2"),
+		Platform:                    "linux/amd64",
+	}
+
+	first, err := RuntimeExpectationChecksum(expectation)
+	g.Expect(err).NotTo(HaveOccurred())
+	second, err := RuntimeExpectationChecksum(expectation)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(second).To(Equal(first))
+	g.Expect(first).To(Equal(
+		"sha256:5485fd6e45b5ad107574e0a67028f27d669cf13d117633c9ddb2a2682b174bba",
+	))
+}
+
+func TestCampaignRuntimeExpectationChecksumRejectsMutableImageTag(t *testing.T) {
+	g := NewWithT(t)
+
+	_, err := RuntimeExpectationChecksum(types.CampaignRuntimeExpectation{
+		ProviderDeploymentUnitID:    uuid.New(),
+		ProviderComponentInstanceID: uuid.New(),
+		ComponentKey:                "database",
+		ArtifactDigest:              "registry.example.com/database:latest",
+		ConfigChecksum:              "sha256:" + repeatHex("2"),
+		Platform:                    "linux/amd64",
+	})
+
+	g.Expect(err).To(MatchError(ContainSubstring("artifact digest")))
+}
+
 func campaignRevisionFixture() types.CampaignRevision {
 	organizationID := uuid.MustParse("10000000-0000-0000-0000-000000000001")
 	draftID := uuid.MustParse("20000000-0000-0000-0000-000000000001")
@@ -147,22 +186,22 @@ func campaignRevisionFixture() types.CampaignRevision {
 		},
 		Prerequisites: []types.CampaignPrerequisite{
 			{
-				DownstreamPlanID:              secondPlanID,
-				UpstreamPlanID:                firstPlanID,
-				UpstreamStepKey:               "database.migrate",
-				ProviderPlacementID:           uuid.MustParse("60000000-0000-0000-0000-000000000001"),
-				ProviderDeploymentUnitID:      uuid.MustParse("40000000-0000-0000-0000-000000000001"),
-				ProviderComponentInstanceID:   uuid.MustParse("90000000-0000-0000-0000-000000000001"),
-				ExpectedObservedStateChecksum: "sha256:" + repeatHex("5"),
+				DownstreamPlanID:             secondPlanID,
+				UpstreamPlanID:               firstPlanID,
+				UpstreamStepKey:              "database.migrate",
+				ProviderPlacementID:          uuid.MustParse("60000000-0000-0000-0000-000000000001"),
+				ProviderDeploymentUnitID:     uuid.MustParse("40000000-0000-0000-0000-000000000001"),
+				ProviderComponentInstanceID:  uuid.MustParse("90000000-0000-0000-0000-000000000001"),
+				ExpectedRuntimeStateChecksum: "sha256:" + repeatHex("5"),
 			},
 			{
-				DownstreamPlanID:              secondPlanID,
-				UpstreamPlanID:                firstPlanID,
-				UpstreamStepKey:               "service.deploy",
-				ProviderPlacementID:           uuid.MustParse("60000000-0000-0000-0000-000000000002"),
-				ProviderDeploymentUnitID:      uuid.MustParse("40000000-0000-0000-0000-000000000001"),
-				ProviderComponentInstanceID:   uuid.MustParse("90000000-0000-0000-0000-000000000002"),
-				ExpectedObservedStateChecksum: "sha256:" + repeatHex("6"),
+				DownstreamPlanID:             secondPlanID,
+				UpstreamPlanID:               firstPlanID,
+				UpstreamStepKey:              "service.deploy",
+				ProviderPlacementID:          uuid.MustParse("60000000-0000-0000-0000-000000000002"),
+				ProviderDeploymentUnitID:     uuid.MustParse("40000000-0000-0000-0000-000000000001"),
+				ProviderComponentInstanceID:  uuid.MustParse("90000000-0000-0000-0000-000000000002"),
+				ExpectedRuntimeStateChecksum: "sha256:" + repeatHex("6"),
 			},
 		},
 	}

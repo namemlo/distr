@@ -11,13 +11,13 @@ import (
 func TestCampaignRevisionToAPIPreservesFrozenPrerequisite(t *testing.T) {
 	g := NewWithT(t)
 	prerequisite := types.CampaignPrerequisite{
-		DownstreamPlanID:              uuid.New(),
-		UpstreamPlanID:                uuid.New(),
-		UpstreamStepKey:               "database.migrate",
-		ProviderPlacementID:           uuid.New(),
-		ProviderDeploymentUnitID:      uuid.New(),
-		ProviderComponentInstanceID:   uuid.New(),
-		ExpectedObservedStateChecksum: "sha256:" + mappingCampaignHex("a"),
+		DownstreamPlanID:             uuid.New(),
+		UpstreamPlanID:               uuid.New(),
+		UpstreamStepKey:              "database.migrate",
+		ProviderPlacementID:          uuid.New(),
+		ProviderDeploymentUnitID:     uuid.New(),
+		ProviderComponentInstanceID:  uuid.New(),
+		ExpectedRuntimeStateChecksum: "sha256:" + mappingCampaignHex("a"),
 	}
 	revision := types.CampaignRevision{
 		ID:                  uuid.New(),
@@ -35,8 +35,8 @@ func TestCampaignRevisionToAPIPreservesFrozenPrerequisite(t *testing.T) {
 
 	g.Expect(result.Prerequisites).To(HaveLen(1))
 	g.Expect(result.Prerequisites[0].UpstreamStepKey).To(Equal("database.migrate"))
-	g.Expect(result.Prerequisites[0].ExpectedObservedStateChecksum).
-		To(Equal(prerequisite.ExpectedObservedStateChecksum))
+	g.Expect(result.Prerequisites[0].ExpectedRuntimeStateChecksum).
+		To(Equal(prerequisite.ExpectedRuntimeStateChecksum))
 	g.Expect(result.Prerequisites[0].ProviderDeploymentUnitID).
 		To(Equal(prerequisite.ProviderDeploymentUnitID))
 	g.Expect(result.Prerequisites[0].ProviderComponentInstanceID).

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,8 @@ import (
 	"github.com/distr-sh/distr/internal/campaigns"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	. "github.com/onsi/gomega"
 )
 
@@ -33,7 +36,7 @@ func TestCampaignRevisionMigrationFreezesMembershipAndPrerequisites(t *testing.T
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE DeploymentCampaignWave"))
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE DeploymentCampaignMember"))
 	g.Expect(sql).To(ContainSubstring("CREATE TABLE DeploymentCampaignPrerequisite"))
-	g.Expect(sql).To(ContainSubstring("expected_observed_state_checksum"))
+	g.Expect(sql).To(ContainSubstring("expected_runtime_state_checksum"))
 	g.Expect(sql).To(ContainSubstring("effective_policy_checksum"))
 	g.Expect(sql).To(ContainSubstring("approval_request_revision"))
 	g.Expect(sql).To(ContainSubstring("calendar_version_ids"))
@@ -94,6 +97,112 @@ func TestCampaignPlacementHydrationUsesImmutableSnapshotBridge(t *testing.T) {
 	g.Expect(campaignPrerequisiteEvidenceQuery).To(ContainSubstring(
 		"provider_deployment_unit_id",
 	))
+	g.Expect(campaignPrerequisiteEvidenceQuery).NotTo(ContainSubstring(
+		"component.expected_state_checksum",
+	))
+	g.Expect(campaignPrerequisiteEvidenceQuery).To(ContainSubstring(
+		"component.config_checksum",
+	))
+	g.Expect(campaignPrerequisiteEvidenceQuery).To(ContainSubstring(
+		"plan.canonical_payload",
+	))
+	g.Expect(campaignPrerequisiteEvidenceQuery).To(ContainSubstring(
+		"platformDigest",
+	))
+}
+
+func TestCampaignMemberMigrationBindsAllEvidenceToTenantPlanAndUnit(t *testing.T) {
+	g := NewWithT(t)
+	sql := campaignMigrationSQL(t)
+
+	g.Expect(sql).To(MatchRegexp(
+		`(?s)deploymentcampaignmember_admission_fk.*FOREIGN KEY \(\s*` +
+			`admission_evaluation_id,\s*deployment_plan_id,\s*organization_id`,
+	))
+	g.Expect(sql).To(MatchRegexp(
+		`(?s)deploymentcampaignmember_approval_fk.*FOREIGN KEY \(\s*` +
+			`approval_request_id,\s*deployment_plan_id,\s*organization_id`,
+	))
+	g.Expect(sql).To(MatchRegexp(
+		`(?s)deploymentcampaignmember_plan_fk.*FOREIGN KEY \(\s*` +
+			`deployment_plan_id,\s*deployment_unit_id,\s*organization_id`,
+	))
+}
+
+func TestCampaignMigrationBindsCanonicalChecksumToPayload(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(campaignMigrationSQL(t)).To(MatchRegexp(
+		`(?s)canonical_checksum\s*=\s*'sha256:'\s*\|\|\s*` +
+			`encode\(sha256\(canonical_payload\),\s*'hex'\)`,
+	))
+}
+
+func TestCampaignPrerequisiteMigrationBindsStepAndPlacementToUpstreamPlan(
+	t *testing.T,
+) {
+	g := NewWithT(t)
+	sql := campaignMigrationSQL(t)
+
+	g.Expect(sql).To(MatchRegexp(
+		`(?s)deploymentcampaignprerequisite_upstream_step_fk.*` +
+			`FOREIGN KEY \(\s*upstream_plan_id,\s*upstream_step_key,\s*organization_id`,
+	))
+	g.Expect(sql).To(MatchRegexp(
+		`(?s)deploymentcampaignprerequisite_provider_placement_fk.*` +
+			`FOREIGN KEY \(\s*provider_placement_id,\s*upstream_plan_id,\s*organization_id`,
+	))
+}
+
+func TestCampaignMigrationCapsDraftAndPublishedConcurrency(t *testing.T) {
+	g := NewWithT(t)
+	sql := campaignMigrationSQL(t)
+
+	g.Expect(strings.Count(
+		sql,
+		"(risk_policy ->> 'maximumConcurrency')::integer BETWEEN 1 AND 1000",
+	)).To(Equal(2))
+}
+
+func TestCampaignPublicationConflictReplaysExistingRevision(t *testing.T) {
+	for _, code := range []string{
+		pgerrcode.UniqueViolation,
+		pgerrcode.SerializationFailure,
+	} {
+		t.Run(code, func(t *testing.T) {
+			g := NewWithT(t)
+			expected := &types.CampaignRevision{ID: uuid.New()}
+			lookupCalls := 0
+
+			result, err := replayCampaignPublicationConflict(
+				&pgconn.PgError{Code: code},
+				func() (*types.CampaignRevision, error) {
+					lookupCalls++
+					return expected, nil
+				},
+			)
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result).To(BeIdenticalTo(expected))
+			g.Expect(lookupCalls).To(Equal(1))
+		})
+	}
+}
+
+func TestCampaignPublicationNonConflictPreservesOriginalError(t *testing.T) {
+	g := NewWithT(t)
+	original := errors.New("write failed")
+
+	result, err := replayCampaignPublicationConflict(
+		original,
+		func() (*types.CampaignRevision, error) {
+			t.Fatal("lookup must not run")
+			return nil, nil
+		},
+	)
+
+	g.Expect(result).To(BeNil())
+	g.Expect(err).To(MatchError(original))
 }
 
 func TestCampaignRetentionMarkerForgeryCannotDeletePublishedEvidence(t *testing.T) {
@@ -214,11 +323,11 @@ func TestCampaignRevisionFromDraftFreezesCanonicalProviderIdentity(t *testing.T)
 		Name:           "provider campaign",
 		Revision:       1,
 		Prerequisites: []types.CampaignPrerequisiteDraft{{
-			DownstreamPlanID:              uuid.New(),
-			UpstreamPlanID:                upstreamPlanID,
-			UpstreamStepKey:               "database.migrate",
-			ProviderPlacementID:           placementID,
-			ExpectedObservedStateChecksum: "sha256:" + campaignTestHex("1"),
+			DownstreamPlanID:             uuid.New(),
+			UpstreamPlanID:               upstreamPlanID,
+			UpstreamStepKey:              "database.migrate",
+			ProviderPlacementID:          placementID,
+			ExpectedRuntimeStateChecksum: "sha256:" + campaignTestHex("1"),
 		}},
 		CandidatePlans: []types.CampaignPlanCandidate{{
 			PlanID: upstreamPlanID,
@@ -227,9 +336,9 @@ func TestCampaignRevisionFromDraftFreezesCanonicalProviderIdentity(t *testing.T)
 					StepKey:     "database.migrate",
 					PlacementID: placementID,
 				}: {
-					ExpectedObservedStateChecksum: "sha256:" + campaignTestHex("1"),
-					ProviderDeploymentUnitID:      providerUnitID,
-					ProviderComponentInstanceID:   componentInstanceID,
+					ExpectedRuntimeStateChecksum: "sha256:" + campaignTestHex("1"),
+					ProviderDeploymentUnitID:     providerUnitID,
+					ProviderComponentInstanceID:  componentInstanceID,
 				},
 			},
 		}},

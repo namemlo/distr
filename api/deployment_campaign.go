@@ -31,11 +31,11 @@ type CampaignWaveRequest struct {
 }
 
 type CampaignPrerequisiteRequest struct {
-	DownstreamPlanID              uuid.UUID `json:"downstreamPlanId"`
-	UpstreamPlanID                uuid.UUID `json:"upstreamPlanId"`
-	UpstreamStepKey               string    `json:"upstreamStepKey"`
-	ProviderPlacementID           uuid.UUID `json:"providerPlacementId"`
-	ExpectedObservedStateChecksum string    `json:"expectedObservedStateChecksum"`
+	DownstreamPlanID             uuid.UUID `json:"downstreamPlanId"`
+	UpstreamPlanID               uuid.UUID `json:"upstreamPlanId"`
+	UpstreamStepKey              string    `json:"upstreamStepKey"`
+	ProviderPlacementID          uuid.UUID `json:"providerPlacementId"`
+	ExpectedRuntimeStateChecksum string    `json:"expectedRuntimeStateChecksum"`
 }
 
 type CreateDeploymentCampaignDraftRequest struct {
@@ -128,11 +128,11 @@ func (request CreateDeploymentCampaignDraftRequest) ToDomain(
 	)
 	for index, prerequisite := range request.Prerequisites {
 		prerequisites[index] = types.CampaignPrerequisiteDraft{
-			DownstreamPlanID:              prerequisite.DownstreamPlanID,
-			UpstreamPlanID:                prerequisite.UpstreamPlanID,
-			UpstreamStepKey:               strings.TrimSpace(prerequisite.UpstreamStepKey),
-			ProviderPlacementID:           prerequisite.ProviderPlacementID,
-			ExpectedObservedStateChecksum: prerequisite.ExpectedObservedStateChecksum,
+			DownstreamPlanID:             prerequisite.DownstreamPlanID,
+			UpstreamPlanID:               prerequisite.UpstreamPlanID,
+			UpstreamStepKey:              strings.TrimSpace(prerequisite.UpstreamStepKey),
+			ProviderPlacementID:          prerequisite.ProviderPlacementID,
+			ExpectedRuntimeStateChecksum: prerequisite.ExpectedRuntimeStateChecksum,
 		}
 	}
 	return types.CampaignDraft{
@@ -218,13 +218,13 @@ type CampaignMember struct {
 }
 
 type CampaignPrerequisite struct {
-	DownstreamPlanID              uuid.UUID `json:"downstreamPlanId"`
-	UpstreamPlanID                uuid.UUID `json:"upstreamPlanId"`
-	UpstreamStepKey               string    `json:"upstreamStepKey"`
-	ProviderPlacementID           uuid.UUID `json:"providerPlacementId"`
-	ProviderDeploymentUnitID      uuid.UUID `json:"providerDeploymentUnitId"`
-	ProviderComponentInstanceID   uuid.UUID `json:"providerComponentInstanceId"`
-	ExpectedObservedStateChecksum string    `json:"expectedObservedStateChecksum"`
+	DownstreamPlanID             uuid.UUID `json:"downstreamPlanId"`
+	UpstreamPlanID               uuid.UUID `json:"upstreamPlanId"`
+	UpstreamStepKey              string    `json:"upstreamStepKey"`
+	ProviderPlacementID          uuid.UUID `json:"providerPlacementId"`
+	ProviderDeploymentUnitID     uuid.UUID `json:"providerDeploymentUnitId"`
+	ProviderComponentInstanceID  uuid.UUID `json:"providerComponentInstanceId"`
+	ExpectedRuntimeStateChecksum string    `json:"expectedRuntimeStateChecksum"`
 }
 
 type DeploymentCampaignRevision struct {

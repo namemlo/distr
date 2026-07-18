@@ -151,18 +151,19 @@ func ValidateCampaignDraft(
 			))
 		}
 		if !campaignChecksumPattern.MatchString(
-			prerequisite.ExpectedObservedStateChecksum,
-		) || evidence.ExpectedObservedStateChecksum == "" ||
-			evidence.ExpectedObservedStateChecksum !=
-				prerequisite.ExpectedObservedStateChecksum {
+			prerequisite.ExpectedRuntimeStateChecksum,
+		) || evidence.ExpectedRuntimeStateChecksum == "" ||
+			evidence.ExpectedRuntimeStateChecksum !=
+				prerequisite.ExpectedRuntimeStateChecksum {
 			issues = append(issues, campaignIssue(
-				"campaign.prerequisite.observation_checksum_mismatch",
-				field+".expectedObservedStateChecksum",
-				"observed-state expectation does not match the frozen upstream step",
+				"campaign.prerequisite.runtime_state_checksum_mismatch",
+				field+".expectedRuntimeStateChecksum",
+				"runtime-state expectation does not match the frozen upstream step",
 			))
 		}
 	}
 	if draft.RiskPolicy.MaximumConcurrency <= 0 ||
+		draft.RiskPolicy.MaximumConcurrency > 1000 ||
 		draft.RiskPolicy.FailureToleranceBasisPoints < 0 ||
 		draft.RiskPolicy.FailureToleranceBasisPoints > 10000 ||
 		draft.RiskPolicy.MinimumHealthyBasisPoints < 0 ||
@@ -241,11 +242,11 @@ func validateCampaignWaves(
 		if wave.BakeSeconds >= 0 {
 			previousBake = wave.BakeSeconds
 		}
-		if wave.MaximumConcurrency <= 0 {
+		if wave.MaximumConcurrency <= 0 || wave.MaximumConcurrency > 1000 {
 			*issues = append(*issues, campaignIssue(
 				"campaign.wave.concurrency_invalid",
 				field+".maximumConcurrency",
-				"wave maximum concurrency must be positive",
+				"wave maximum concurrency must be between 1 and 1000",
 			))
 		}
 	}

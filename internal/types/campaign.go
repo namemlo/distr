@@ -9,6 +9,7 @@ import (
 )
 
 const CampaignRevisionSchemaV1 = "distr.deployment-campaign/v1"
+const CampaignRuntimeExpectationSchemaV1 = "distr.campaign-runtime-expectation/v1"
 
 type CampaignMembership struct {
 	PlanIDs  []uuid.UUID `json:"planIds"`
@@ -30,11 +31,11 @@ type CampaignWaveDraft struct {
 }
 
 type CampaignPrerequisiteDraft struct {
-	DownstreamPlanID              uuid.UUID `json:"downstreamPlanId"`
-	UpstreamPlanID                uuid.UUID `json:"upstreamPlanId"`
-	UpstreamStepKey               string    `json:"upstreamStepKey"`
-	ProviderPlacementID           uuid.UUID `json:"providerPlacementId"`
-	ExpectedObservedStateChecksum string    `json:"expectedObservedStateChecksum"`
+	DownstreamPlanID             uuid.UUID `json:"downstreamPlanId"`
+	UpstreamPlanID               uuid.UUID `json:"upstreamPlanId"`
+	UpstreamStepKey              string    `json:"upstreamStepKey"`
+	ProviderPlacementID          uuid.UUID `json:"providerPlacementId"`
+	ExpectedRuntimeStateChecksum string    `json:"expectedRuntimeStateChecksum"`
 }
 
 type CampaignDraft struct {
@@ -82,9 +83,18 @@ type CampaignStepPlacement struct {
 }
 
 type CampaignStepPlacementEvidence struct {
-	ExpectedObservedStateChecksum string
-	ProviderDeploymentUnitID      uuid.UUID
-	ProviderComponentInstanceID   uuid.UUID
+	ExpectedRuntimeStateChecksum string
+	ProviderDeploymentUnitID     uuid.UUID
+	ProviderComponentInstanceID  uuid.UUID
+}
+
+type CampaignRuntimeExpectation struct {
+	ProviderDeploymentUnitID    uuid.UUID
+	ProviderComponentInstanceID uuid.UUID
+	ComponentKey                string
+	ArtifactDigest              string
+	ConfigChecksum              string
+	Platform                    string
 }
 
 type CampaignWave struct {
@@ -117,16 +127,16 @@ type CampaignMember struct {
 }
 
 type CampaignPrerequisite struct {
-	ID                            uuid.UUID `db:"id" json:"id,omitempty"`
-	CampaignRevisionID            uuid.UUID `db:"campaign_revision_id" json:"campaignRevisionId,omitempty"`
-	OrganizationID                uuid.UUID `db:"organization_id" json:"organizationId,omitempty"`
-	DownstreamPlanID              uuid.UUID `db:"downstream_plan_id" json:"downstreamPlanId"`
-	UpstreamPlanID                uuid.UUID `db:"upstream_plan_id" json:"upstreamPlanId"`
-	UpstreamStepKey               string    `db:"upstream_step_key" json:"upstreamStepKey"`
-	ProviderPlacementID           uuid.UUID `db:"provider_placement_id" json:"providerPlacementId"`
-	ProviderDeploymentUnitID      uuid.UUID `db:"provider_deployment_unit_id" json:"providerDeploymentUnitId"`
-	ProviderComponentInstanceID   uuid.UUID `db:"provider_component_instance_id" json:"providerComponentInstanceId"`
-	ExpectedObservedStateChecksum string    `db:"expected_observed_state_checksum" json:"expectedObservedStateChecksum"`
+	ID                           uuid.UUID `db:"id" json:"id,omitempty"`
+	CampaignRevisionID           uuid.UUID `db:"campaign_revision_id" json:"campaignRevisionId,omitempty"`
+	OrganizationID               uuid.UUID `db:"organization_id" json:"organizationId,omitempty"`
+	DownstreamPlanID             uuid.UUID `db:"downstream_plan_id" json:"downstreamPlanId"`
+	UpstreamPlanID               uuid.UUID `db:"upstream_plan_id" json:"upstreamPlanId"`
+	UpstreamStepKey              string    `db:"upstream_step_key" json:"upstreamStepKey"`
+	ProviderPlacementID          uuid.UUID `db:"provider_placement_id" json:"providerPlacementId"`
+	ProviderDeploymentUnitID     uuid.UUID `db:"provider_deployment_unit_id" json:"providerDeploymentUnitId"`
+	ProviderComponentInstanceID  uuid.UUID `db:"provider_component_instance_id" json:"providerComponentInstanceId"`
+	ExpectedRuntimeStateChecksum string    `db:"expected_runtime_state_checksum" json:"expectedRuntimeStateChecksum"`
 }
 
 type CampaignRevision struct {

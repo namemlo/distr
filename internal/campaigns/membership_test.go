@@ -117,7 +117,7 @@ func campaignDraftFixture() types.CampaignDraft {
 						StepKey:     "database.migrate",
 						PlacementID: uuid.MustParse("60000000-0000-0000-0000-000000000001"),
 					}: {
-						ExpectedObservedStateChecksum: "sha256:" + repeatHex("6"),
+						ExpectedRuntimeStateChecksum: "sha256:" + repeatHex("6"),
 						ProviderDeploymentUnitID: uuid.MustParse(
 							"40000000-0000-0000-0000-000000000001",
 						),

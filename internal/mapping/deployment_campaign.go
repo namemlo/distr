@@ -78,11 +78,11 @@ func campaignPrerequisiteDraftToAPI(
 	prerequisite types.CampaignPrerequisiteDraft,
 ) api.CampaignPrerequisiteRequest {
 	return api.CampaignPrerequisiteRequest{
-		DownstreamPlanID:              prerequisite.DownstreamPlanID,
-		UpstreamPlanID:                prerequisite.UpstreamPlanID,
-		UpstreamStepKey:               prerequisite.UpstreamStepKey,
-		ProviderPlacementID:           prerequisite.ProviderPlacementID,
-		ExpectedObservedStateChecksum: prerequisite.ExpectedObservedStateChecksum,
+		DownstreamPlanID:             prerequisite.DownstreamPlanID,
+		UpstreamPlanID:               prerequisite.UpstreamPlanID,
+		UpstreamStepKey:              prerequisite.UpstreamStepKey,
+		ProviderPlacementID:          prerequisite.ProviderPlacementID,
+		ExpectedRuntimeStateChecksum: prerequisite.ExpectedRuntimeStateChecksum,
 	}
 }
 
@@ -120,12 +120,12 @@ func campaignPrerequisiteToAPI(
 	prerequisite types.CampaignPrerequisite,
 ) api.CampaignPrerequisite {
 	return api.CampaignPrerequisite{
-		DownstreamPlanID:              prerequisite.DownstreamPlanID,
-		UpstreamPlanID:                prerequisite.UpstreamPlanID,
-		UpstreamStepKey:               prerequisite.UpstreamStepKey,
-		ProviderPlacementID:           prerequisite.ProviderPlacementID,
-		ProviderDeploymentUnitID:      prerequisite.ProviderDeploymentUnitID,
-		ProviderComponentInstanceID:   prerequisite.ProviderComponentInstanceID,
-		ExpectedObservedStateChecksum: prerequisite.ExpectedObservedStateChecksum,
+		DownstreamPlanID:             prerequisite.DownstreamPlanID,
+		UpstreamPlanID:               prerequisite.UpstreamPlanID,
+		UpstreamStepKey:              prerequisite.UpstreamStepKey,
+		ProviderPlacementID:          prerequisite.ProviderPlacementID,
+		ProviderDeploymentUnitID:     prerequisite.ProviderDeploymentUnitID,
+		ProviderComponentInstanceID:  prerequisite.ProviderComponentInstanceID,
+		ExpectedRuntimeStateChecksum: prerequisite.ExpectedRuntimeStateChecksum,
 	}
 }

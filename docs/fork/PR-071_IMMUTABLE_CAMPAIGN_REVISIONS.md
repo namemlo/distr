@@ -17,14 +17,15 @@ shared-provider expectations.
   1,000 eligible organization plans.
 - Publication: a repeatable-read transaction uses an idempotency key, applies explicit/tag membership before its
   1,000-result bound, revalidates current plans, approvals, and admissions, freezes normalized child rows, and
-  returns the same revision for an idempotent replay.
+  returns the same revision for an idempotent replay, including concurrent unique/serialization races.
 - Canonical evidence: ordered members, deployment units, plan, effective-policy, exact approval, calendar, and
   admission evidence, tag query, waves, bake, thresholds, risk/concurrency policy, and shared-provider
   prerequisites are SHA-256 bound.
-- Prerequisites: downstream plan, upstream plan, step key, provider placement, and expected observed-state checksum
+- Prerequisites: downstream plan, upstream plan, step key, provider placement, and expected runtime-state checksum
   are frozen. Publication resolves the plan-local placement through the immutable target-config snapshot and also
   freezes the provider deployment unit and canonical component instance used by trusted-observation replay. A
-  future observation ID is intentionally absent.
+  future observation ID is intentionally absent. `distr.campaign-runtime-expectation/v1` hashes only stable desired
+  runtime fields: provider unit, component instance/key, pinned artifact digest, config checksum, and platform.
 
 ## Impact
 
@@ -32,8 +33,10 @@ Migration 153 adds `DeploymentCampaignDraft`, `DeploymentCampaignRevision`, `Dep
 `DeploymentCampaignMember`, and `DeploymentCampaignPrerequisite`. Published tables reject updates, direct deletes,
 and truncates. A published delete is accepted only for the campaign-specific, operation-bound `Organization`
 retention cascade. Composite organization foreign keys bind each prerequisite to its revision, member plans, and
-plan rows. Unique constraints prevent a plan or deployment unit from appearing twice and preserve deterministic
-wave/member order.
+plan rows, and bind each member's plan/unit, approval/plan, and admission/plan identities. Step and plan-local
+placement foreign keys both target the upstream plan. Unique constraints prevent a plan or deployment unit from
+appearing twice and preserve deterministic wave/member order. The database recomputes the canonical checksum from
+the canonical payload and caps both wave and campaign concurrency at 1,000.
 
 The API and route are additive and default-off for writes. There is no UI, scheduler, task creation, campaign run,
 pause/resume, executor protocol, observer write, client database, or deployment mutation in this slice. Existing

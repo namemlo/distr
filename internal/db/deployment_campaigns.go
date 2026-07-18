@@ -12,7 +12,9 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const campaignCandidateQuery = `
@@ -141,7 +143,10 @@ const campaignPrerequisiteEvidenceQuery = `
 		requested.plan_id,
 		requested.step_key,
 		requested.placement_id,
-		component.expected_state_checksum,
+		definition.key,
+		runtime_pin.artifact_digest,
+		component.config_checksum,
+		component.platform,
 		snapshot_component.deployment_unit_id AS provider_deployment_unit_id,
 		snapshot_component.component_instance_id AS provider_component_instance_id
 	FROM jsonb_to_recordset($2::jsonb) AS requested(
@@ -167,6 +172,20 @@ const campaignPrerequisiteEvidenceQuery = `
 	  ON instance.component_definition_id = definition.id
 	 AND instance.deployment_unit_id = plan.deployment_unit_id
 	 AND instance.organization_id = $1
+	JOIN LATERAL (
+		SELECT pin.value ->> 'platformDigest' AS artifact_digest
+		FROM jsonb_array_elements(
+			COALESCE(
+				convert_from(plan.canonical_payload, 'UTF8')::jsonb
+					-> 'componentReleasePins',
+				'[]'::jsonb
+			)
+		) pin(value)
+		WHERE pin.value ->> 'componentKey' = definition.key
+		  AND pin.value ->> 'platformDigest' ~ '^sha256:[0-9a-f]{64}$'
+		ORDER BY pin.value ->> 'platformDigest'
+		LIMIT 1
+	) runtime_pin ON true
 	JOIN TargetConfigSnapshotComponent snapshot_component
 	  ON snapshot_component.target_config_snapshot_id =
 			plan.target_config_snapshot_id
@@ -174,7 +193,6 @@ const campaignPrerequisiteEvidenceQuery = `
 	 AND snapshot_component.component_instance_id = instance.id
 	 AND snapshot_component.organization_id = $1
 	WHERE requested.plan_id = ANY($3::uuid[])
-	  AND component.expected_state_checksum <> ''
 	ORDER BY
 		requested.plan_id,
 		requested.step_key,
@@ -404,7 +422,40 @@ func PublishCampaignRevision(
 		result = revision
 		return nil
 	})
-	return result, err
+	if err == nil {
+		return result, nil
+	}
+	return replayCampaignPublicationConflict(
+		err,
+		func() (*types.CampaignRevision, error) {
+			return getCampaignRevisionByPublicationKey(
+				ctx,
+				campaignDraftID,
+				publication.OrganizationID,
+				idempotencyKey,
+			)
+		},
+	)
+}
+
+func replayCampaignPublicationConflict(
+	err error,
+	lookup func() (*types.CampaignRevision, error),
+) (*types.CampaignRevision, error) {
+	var postgresError *pgconn.PgError
+	if !errors.As(err, &postgresError) ||
+		(postgresError.Code != pgerrcode.UniqueViolation &&
+			postgresError.Code != pgerrcode.SerializationFailure) {
+		return nil, err
+	}
+	existing, lookupErr := lookup()
+	if lookupErr == nil {
+		return existing, nil
+	}
+	if errors.Is(lookupErr, apierrors.ErrNotFound) {
+		return nil, err
+	}
+	return nil, fmt.Errorf("replay concurrent campaign publication: %w", lookupErr)
 }
 
 func campaignRevisionFromDraft(
@@ -442,13 +493,13 @@ func campaignRevisionFromDraft(
 	for index, prerequisite := range draft.Prerequisites {
 		evidence := campaignDraftPrerequisiteEvidence(draft, prerequisite)
 		revision.Prerequisites[index] = types.CampaignPrerequisite{
-			DownstreamPlanID:              prerequisite.DownstreamPlanID,
-			UpstreamPlanID:                prerequisite.UpstreamPlanID,
-			UpstreamStepKey:               prerequisite.UpstreamStepKey,
-			ProviderPlacementID:           prerequisite.ProviderPlacementID,
-			ProviderDeploymentUnitID:      evidence.ProviderDeploymentUnitID,
-			ProviderComponentInstanceID:   evidence.ProviderComponentInstanceID,
-			ExpectedObservedStateChecksum: prerequisite.ExpectedObservedStateChecksum,
+			DownstreamPlanID:             prerequisite.DownstreamPlanID,
+			UpstreamPlanID:               prerequisite.UpstreamPlanID,
+			UpstreamStepKey:              prerequisite.UpstreamStepKey,
+			ProviderPlacementID:          prerequisite.ProviderPlacementID,
+			ProviderDeploymentUnitID:     evidence.ProviderDeploymentUnitID,
+			ProviderComponentInstanceID:  evidence.ProviderComponentInstanceID,
+			ExpectedRuntimeStateChecksum: prerequisite.ExpectedRuntimeStateChecksum,
 		}
 	}
 	payload, checksum, err := campaigns.CanonicalizeCampaignRevision(*revision)
@@ -670,16 +721,35 @@ func hydrateCampaignCandidateEvidence(
 	defer evidenceRows.Close()
 	for evidenceRows.Next() {
 		var planID, placementID, providerUnitID, componentInstanceID uuid.UUID
-		var stepKey, checksum string
+		var stepKey, componentKey, artifactDigest, configChecksum, platform string
 		if err := evidenceRows.Scan(
 			&planID,
 			&stepKey,
 			&placementID,
-			&checksum,
+			&componentKey,
+			&artifactDigest,
+			&configChecksum,
+			&platform,
 			&providerUnitID,
 			&componentInstanceID,
 		); err != nil {
 			return err
+		}
+		runtimeChecksum, err := campaigns.RuntimeExpectationChecksum(
+			types.CampaignRuntimeExpectation{
+				ProviderDeploymentUnitID:    providerUnitID,
+				ProviderComponentInstanceID: componentInstanceID,
+				ComponentKey:                componentKey,
+				ArtifactDigest:              artifactDigest,
+				ConfigChecksum:              configChecksum,
+				Platform:                    platform,
+			},
+		)
+		if err != nil {
+			return apierrors.NewBadRequest(
+				"provider placement runtime expectation is invalid: " +
+					err.Error(),
+			)
 		}
 		index := indexByPlan[planID]
 		candidate := &draft.CandidatePlans[index]
@@ -687,9 +757,9 @@ func hydrateCampaignCandidateEvidence(
 			StepKey:     stepKey,
 			PlacementID: placementID,
 		}] = types.CampaignStepPlacementEvidence{
-			ExpectedObservedStateChecksum: checksum,
-			ProviderDeploymentUnitID:      providerUnitID,
-			ProviderComponentInstanceID:   componentInstanceID,
+			ExpectedRuntimeStateChecksum: runtimeChecksum,
+			ProviderDeploymentUnitID:     providerUnitID,
+			ProviderComponentInstanceID:  componentInstanceID,
 		}
 		if !campaignContainsUUID(candidate.SharedProviderPlacements, placementID) {
 			candidate.SharedProviderPlacements = append(
@@ -852,7 +922,7 @@ func insertCampaignRevisionChildren(
 			"provider_placement_id",
 			"provider_deployment_unit_id",
 			"provider_component_instance_id",
-			"expected_observed_state_checksum",
+			"expected_runtime_state_checksum",
 		},
 		pgx.CopyFromSlice(
 			len(revision.Prerequisites),
@@ -868,7 +938,7 @@ func insertCampaignRevisionChildren(
 					prerequisite.ProviderPlacementID,
 					prerequisite.ProviderDeploymentUnitID,
 					prerequisite.ProviderComponentInstanceID,
-					prerequisite.ExpectedObservedStateChecksum,
+					prerequisite.ExpectedRuntimeStateChecksum,
 				}, nil
 			},
 		),
@@ -1015,7 +1085,7 @@ func hydrateCampaignRevision(
 			provider_placement_id,
 			provider_deployment_unit_id,
 			provider_component_instance_id,
-			expected_observed_state_checksum
+			expected_runtime_state_checksum
 		FROM DeploymentCampaignPrerequisite
 		WHERE campaign_revision_id = $1 AND organization_id = $2
 		ORDER BY
