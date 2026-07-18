@@ -25,6 +25,7 @@ func TestMigration147DefinesStructuredMigrationEvidence(t *testing.T) {
 		"observation_requirement",
 		"target_lock_key",
 		"database_lock_key",
+		"resulting_schema_checksum",
 		"backup_required",
 		"backup_verifier",
 		"depends_on",
@@ -40,6 +41,23 @@ func TestMigration147DefinesStructuredMigrationEvidence(t *testing.T) {
 		g.Expect(sql).To(ContainSubstring(fragment))
 	}
 	g.Expect(strings.ToLower(sql)).NotTo(ContainSubstring("password"))
+}
+
+func TestCanonicalMigrationFreezesResultingSchemaChecksum(t *testing.T) {
+	g := NewWithT(t)
+	resultingChecksum := "sha256:" + strings.Repeat("f", 64)
+
+	payload, err := canonicalizeDeploymentPlan(types.DeploymentPlan{
+		Migrations: []types.DeploymentPlanMigration{{
+			MigrationID:             "ledger.042",
+			ResultingSchemaChecksum: resultingChecksum,
+		}},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).To(ContainSubstring(
+		`"resultingSchemaChecksum":"` + resultingChecksum + `"`,
+	))
 }
 
 func TestMigration147DownRefusesToDiscardEvidence(t *testing.T) {

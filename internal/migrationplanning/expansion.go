@@ -129,7 +129,7 @@ func buildMigrationGraph(
 				"databaseResourceKey":    contract.DatabaseResourceKey,
 				"databaseLockKey":        databaseLock,
 				"expectedSchemaVersion":  contract.ResultingVersion,
-				"expectedSchemaChecksum": contract.PostconditionProbes[0].ExpectedChecksum,
+				"expectedSchemaChecksum": contract.ResultingSchemaChecksum,
 				"probes":                 contract.PostconditionProbes,
 				"timeoutSeconds":         contract.LockTimeoutSeconds,
 			}, types.MigrationRetrySafe, "safe",
@@ -215,11 +215,12 @@ func migrationApplyInput(
 ) map[string]any {
 	input := map[string]any{
 		"migrationId": contract.ID, "migrationChecksum": contract.Checksum,
-		"databaseResourceKey":    contract.DatabaseResourceKey,
-		"databaseLockKey":        databaseLock,
-		"expectedSourceVersion":  contract.ExpectedSourceVersion,
-		"expectedSourceChecksum": contract.ExpectedSourceChecksum,
-		"resultingVersion":       contract.ResultingVersion,
+		"databaseResourceKey":     contract.DatabaseResourceKey,
+		"databaseLockKey":         databaseLock,
+		"expectedSourceVersion":   contract.ExpectedSourceVersion,
+		"expectedSourceChecksum":  contract.ExpectedSourceChecksum,
+		"resultingVersion":        contract.ResultingVersion,
+		"resultingSchemaChecksum": contract.ResultingSchemaChecksum,
 		"idempotencyKey": migrationOperationIdempotencyKey(
 			contract,
 			"apply",

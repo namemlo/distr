@@ -41,6 +41,7 @@ type MigrationContract struct {
 	ExpectedSourceVersion            string                 `json:"expectedSourceVersion"`
 	ExpectedSourceChecksum           string                 `json:"expectedSourceChecksum"`
 	ResultingVersion                 string                 `json:"resultingVersion"`
+	ResultingSchemaChecksum          string                 `json:"resultingSchemaChecksum"`
 	Phase                            MigrationPhase         `json:"phase"`
 	DependsOn                        []string               `json:"dependsOn,omitempty"`
 	LockType                         string                 `json:"lockType"`

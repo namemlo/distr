@@ -27,11 +27,12 @@ func databaseActions() []types.ActionDefinition {
 			Type: "database.migration.apply", Name: "Apply database migration",
 			Description: "Applies one checksum-bound migration with a stable retry key and exclusive database lock.",
 			InputSchema: objectSchema(mergeSchemaProperties(common, map[string]any{
-				"migrationId":            boundedKeySchema(128),
-				"migrationChecksum":      checksumSchema(),
-				"expectedSourceVersion":  boundedStringSchema(128),
-				"expectedSourceChecksum": checksumSchema(),
-				"resultingVersion":       boundedStringSchema(128),
+				"migrationId":             boundedKeySchema(128),
+				"migrationChecksum":       checksumSchema(),
+				"expectedSourceVersion":   boundedStringSchema(128),
+				"expectedSourceChecksum":  checksumSchema(),
+				"resultingVersion":        boundedStringSchema(128),
+				"resultingSchemaChecksum": checksumSchema(),
 				"artifactDigest": map[string]any{
 					"type":      "string",
 					"pattern":   `^\S+@sha256:[A-Fa-f0-9]{64}$`,
@@ -39,7 +40,8 @@ func databaseActions() []types.ActionDefinition {
 				},
 			}), []any{
 				"migrationId", "migrationChecksum", "databaseResourceKey",
-				"databaseLockKey", "expectedSourceVersion", "expectedSourceChecksum", "resultingVersion",
+				"databaseLockKey", "expectedSourceVersion", "expectedSourceChecksum",
+				"resultingVersion", "resultingSchemaChecksum",
 				"artifactDigest", "idempotencyKey", "timeoutSeconds",
 			}),
 			OutputSchema: migrationOutputSchema(),

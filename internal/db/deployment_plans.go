@@ -134,6 +134,7 @@ type canonicalDeploymentPlanMigration struct {
 	ExpectedSourceVersion            string                       `json:"expectedSourceVersion"`
 	ExpectedSourceChecksum           string                       `json:"expectedSourceChecksum"`
 	ResultingVersion                 string                       `json:"resultingVersion"`
+	ResultingSchemaChecksum          string                       `json:"resultingSchemaChecksum"`
 	Phase                            types.MigrationPhase         `json:"phase"`
 	DependsOn                        []string                     `json:"dependsOn,omitempty"`
 	LockType                         string                       `json:"lockType"`
@@ -1033,11 +1034,13 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 		migrations = append(migrations, canonicalDeploymentPlanMigration{
 			MigrationID: migration.MigrationID, ContractChecksum: migration.ContractChecksum,
 			ComponentKey: migration.ComponentKey, DatabaseResourceKey: migration.DatabaseResourceKey,
-			ExpectedSourceVersion:  migration.ExpectedSourceVersion,
-			ExpectedSourceChecksum: migration.ExpectedSourceChecksum,
-			ResultingVersion:       migration.ResultingVersion, Phase: migration.Phase,
-			DependsOn: slices.Clone(migration.DependsOn),
-			LockType:  migration.LockType, LockTimeoutSeconds: migration.LockTimeoutSeconds,
+			ExpectedSourceVersion:   migration.ExpectedSourceVersion,
+			ExpectedSourceChecksum:  migration.ExpectedSourceChecksum,
+			ResultingVersion:        migration.ResultingVersion,
+			ResultingSchemaChecksum: migration.ResultingSchemaChecksum,
+			Phase:                   migration.Phase,
+			DependsOn:               slices.Clone(migration.DependsOn),
+			LockType:                migration.LockType, LockTimeoutSeconds: migration.LockTimeoutSeconds,
 			OperationalImpact: migration.OperationalImpact,
 			BackupRequired:    migration.BackupRequired, BackupVerifier: migration.BackupVerifier,
 			RetryClass:     migration.RetryClass,
@@ -1375,7 +1378,7 @@ func insertDeploymentPlanMigrations(ctx context.Context, plan types.DeploymentPl
 			"id", "deployment_plan_id", "organization_id", "migration_id",
 			"contract_checksum", "component_key", "database_resource_key",
 			"expected_source_version", "expected_source_checksum",
-			"resulting_version", "phase", "depends_on",
+			"resulting_version", "resulting_schema_checksum", "phase", "depends_on",
 			"lock_type", "lock_timeout_seconds", "operational_impact",
 			"backup_required", "backup_verifier", "retry_class", "idempotency_key", "reversibility",
 			"previous_application_compatibility",
@@ -1403,7 +1406,8 @@ func insertDeploymentPlanMigrations(ctx context.Context, plan types.DeploymentPl
 				migration.ContractChecksum, migration.ComponentKey,
 				migration.DatabaseResourceKey, migration.ExpectedSourceVersion,
 				migration.ExpectedSourceChecksum,
-				migration.ResultingVersion, migration.Phase, migration.DependsOn,
+				migration.ResultingVersion, migration.ResultingSchemaChecksum,
+				migration.Phase, migration.DependsOn,
 				migration.LockType, migration.LockTimeoutSeconds, migration.OperationalImpact,
 				migration.BackupRequired, migration.BackupVerifier,
 				migration.RetryClass, migration.IdempotencyKey, migration.Reversibility,
@@ -1636,7 +1640,7 @@ func getDeploymentPlanMigrations(
 			id, created_at, deployment_plan_id, organization_id, migration_id,
 			contract_checksum, component_key, database_resource_key,
 			expected_source_version, expected_source_checksum,
-			resulting_version, phase, depends_on,
+			resulting_version, resulting_schema_checksum, phase, depends_on,
 			lock_type, lock_timeout_seconds, operational_impact,
 			backup_required, backup_verifier, retry_class, idempotency_key, reversibility,
 			previous_application_compatibility,

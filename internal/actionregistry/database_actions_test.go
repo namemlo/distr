@@ -33,6 +33,7 @@ func TestDatabaseMigrationActionRequiresFrozenRetryAndLockInputs(t *testing.T) {
 		"expectedSourceVersion":"41",
 		"expectedSourceChecksum":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		"resultingVersion":"42",
+		"resultingSchemaChecksum":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
 		"artifactDigest":"registry.example.com/migrations/ledger@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"idempotencyKey":"ledger.042",
 		"timeoutSeconds":1800
@@ -46,6 +47,7 @@ func TestDatabaseMigrationActionRequiresFrozenRetryAndLockInputs(t *testing.T) {
 		"expectedSourceVersion":"41",
 		"expectedSourceChecksum":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		"resultingVersion":"42",
+		"resultingSchemaChecksum":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
 		"artifactDigest":"migration:latest",
 		"idempotencyKey":"ledger.042",
 		"timeoutSeconds":1800
@@ -71,6 +73,21 @@ func TestDatabaseMigrationActionsFreezeSourceSchemaChecksums(t *testing.T) {
 	}`))
 	g.Expect(missingApplyChecksum).To(HaveOccurred())
 	g.Expect(missingApplyChecksum.Error()).To(ContainSubstring("expectedSourceChecksum"))
+
+	missingResultingChecksum := registry.ValidateInput("database.migration.apply", jsonObject(t, `{
+		"migrationId":"ledger.042",
+		"migrationChecksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"databaseResourceKey":"postgres:ledger",
+		"databaseLockKey":"database:postgres:ledger",
+		"expectedSourceVersion":"41",
+		"expectedSourceChecksum":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		"resultingVersion":"42",
+		"artifactDigest":"registry.example.com/migrations/ledger@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"idempotencyKey":"ledger.042",
+		"timeoutSeconds":1800
+	}`))
+	g.Expect(missingResultingChecksum).To(HaveOccurred())
+	g.Expect(missingResultingChecksum.Error()).To(ContainSubstring("resultingSchemaChecksum"))
 
 	missingValidationChecksum := registry.ValidateInput(
 		"database.migration.validate",

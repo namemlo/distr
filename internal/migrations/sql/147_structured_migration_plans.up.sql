@@ -64,6 +64,9 @@ CREATE TABLE DeploymentPlanMigration (
     length(btrim(resulting_version)) BETWEEN 1 AND 128
     AND resulting_version !~ E'[\\r\\n]'
   ),
+  resulting_schema_checksum TEXT NOT NULL CHECK (
+    resulting_schema_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
   phase TEXT NOT NULL CHECK (
     phase IN ('expand', 'data', 'switch', 'contract')
   ),

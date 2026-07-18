@@ -51,6 +51,16 @@ func TestValidateMigrationContractRejectsForwardOnlyReverseShortcut(t *testing.T
 	))
 }
 
+func TestValidateMigrationContractRequiresResultingSchemaChecksum(t *testing.T) {
+	g := NewWithT(t)
+	contract := migrationContractFixture()
+	contract.ResultingSchemaChecksum = "unknown"
+
+	issues := ValidateMigrationContract(contract)
+
+	g.Expect(validationCodes(issues)).To(ContainElement("resulting_schema_checksum_invalid"))
+}
+
 func TestValidatePreviousReleaseCompatibilityBlocksForwardOnlySchema(t *testing.T) {
 	g := NewWithT(t)
 
@@ -136,7 +146,8 @@ func migrationContractFixture() types.MigrationContract {
 		ID: "ledger.042", Checksum: checksum("a"), ComponentKey: "ledger",
 		DatabaseResourceKey: "postgres:ledger", ExpectedSourceVersion: "41",
 		ExpectedSourceChecksum: checksum("1"),
-		ResultingVersion:       "42", Phase: types.MigrationPhaseExpand,
+		ResultingVersion:       "42", ResultingSchemaChecksum: checksum("2"),
+		Phase:    types.MigrationPhaseExpand,
 		LockType: "exclusive", LockTimeoutSeconds: 30, OperationalImpact: "brief_write_lock",
 		BackupRequired: true, BackupVerifier: "backup-verifier:v1",
 		PreconditionProbes: []types.MigrationProbe{{

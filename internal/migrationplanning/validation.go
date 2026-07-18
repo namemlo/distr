@@ -53,6 +53,13 @@ func ValidateMigrationContract(contract types.MigrationContract) []types.Validat
 	if strings.TrimSpace(contract.ResultingVersion) == "" {
 		add("resulting_version_required", "resultingVersion", "resulting schema version is required")
 	}
+	if !checksumPattern.MatchString(contract.ResultingSchemaChecksum) {
+		add(
+			"resulting_schema_checksum_invalid",
+			"resultingSchemaChecksum",
+			"resulting schema checksum must be an immutable sha256 digest",
+		)
+	}
 	switch contract.Phase {
 	case types.MigrationPhaseExpand, types.MigrationPhaseData,
 		types.MigrationPhaseSwitch, types.MigrationPhaseContract:

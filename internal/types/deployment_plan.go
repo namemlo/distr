@@ -338,6 +338,7 @@ type DeploymentPlanMigration struct {
 	ExpectedSourceVersion            string                 `db:"expected_source_version" json:"expectedSourceVersion"`
 	ExpectedSourceChecksum           string                 `db:"expected_source_checksum" json:"expectedSourceChecksum"`
 	ResultingVersion                 string                 `db:"resulting_version" json:"resultingVersion"`
+	ResultingSchemaChecksum          string                 `db:"resulting_schema_checksum" json:"resultingSchemaChecksum"`
 	Phase                            MigrationPhase         `db:"phase" json:"phase"`
 	DependsOn                        []string               `db:"depends_on" json:"dependsOn,omitempty"`
 	LockType                         string                 `db:"lock_type" json:"lockType"`
@@ -370,6 +371,7 @@ func (migration DeploymentPlanMigration) MigrationContract() MigrationContract {
 		ExpectedSourceVersion:            migration.ExpectedSourceVersion,
 		ExpectedSourceChecksum:           migration.ExpectedSourceChecksum,
 		ResultingVersion:                 migration.ResultingVersion,
+		ResultingSchemaChecksum:          migration.ResultingSchemaChecksum,
 		Phase:                            migration.Phase,
 		DependsOn:                        slices.Clone(migration.DependsOn),
 		LockType:                         migration.LockType,

@@ -64,6 +64,25 @@ func TestExpandMigrationGraphUsesStableRetryInputAndDatabaseLock(t *testing.T) {
 	g.Expect(input).To(HaveKeyWithValue("expectedSchemaChecksum", contract.ExpectedSourceChecksum))
 }
 
+func TestExpandMigrationGraphUsesExplicitResultingSchemaChecksum(t *testing.T) {
+	g := NewWithT(t)
+	contract := migrationContractFixture()
+	contract.ResultingSchemaChecksum = checksum("9")
+	contract.PostconditionProbes[0].ExpectedChecksum = checksum("8")
+
+	graph, err := ExpandMigrationGraph(contract, types.TargetPlanGraph{})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	apply := stepByKey(graph, "migration:ledger.042:apply")
+	var input map[string]any
+	g.Expect(json.Unmarshal(apply.InputBindings, &input)).To(Succeed())
+	g.Expect(input).To(HaveKeyWithValue("resultingSchemaChecksum", checksum("9")))
+	validate := stepByKey(graph, "migration:ledger.042:validate")
+	g.Expect(json.Unmarshal(validate.InputBindings, &input)).To(Succeed())
+	g.Expect(input).To(HaveKeyWithValue("expectedSchemaChecksum", checksum("9")))
+	g.Expect(input).NotTo(HaveKeyWithValue("expectedSchemaChecksum", checksum("8")))
+}
+
 func TestRetryNoneDerivesDeterministicUniqueOperationKeys(t *testing.T) {
 	g := NewWithT(t)
 	first := migrationContractFixture()

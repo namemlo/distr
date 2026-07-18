@@ -178,6 +178,7 @@ func withPlanMigrations(input Input) Input {
 			ExpectedSourceVersion:            contract.ExpectedSourceVersion,
 			ExpectedSourceChecksum:           contract.ExpectedSourceChecksum,
 			ResultingVersion:                 contract.ResultingVersion,
+			ResultingSchemaChecksum:          contract.ResultingSchemaChecksum,
 			Phase:                            contract.Phase,
 			DependsOn:                        append([]string(nil), contract.DependsOn...),
 			LockType:                         contract.LockType,
@@ -206,8 +207,8 @@ func migrationPreflightContract() types.MigrationContract {
 		ID: "ledger.042", Checksum: preflightChecksum("a"),
 		ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
 		ExpectedSourceVersion: "41", ExpectedSourceChecksum: preflightChecksum("c"),
-		ResultingVersion: "42",
-		BackupRequired:   true, BackupVerifier: "backup-verifier:v1",
+		ResultingVersion: "42", ResultingSchemaChecksum: preflightChecksum("d"),
+		BackupRequired: true, BackupVerifier: "backup-verifier:v1",
 		AdapterType: "database.postgres.v1",
 	}
 }
