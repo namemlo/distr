@@ -69,6 +69,7 @@ type DeploymentPlan struct {
 	Issues                     []DeploymentPlanIssue           `db:"-" json:"issues"`
 	ResolvedRequirements       []RequirementResolution         `db:"-" json:"resolvedRequirements,omitempty"`
 	StepEdges                  []DeploymentPlanStepEdge        `db:"-" json:"stepEdges,omitempty"`
+	StepAdapters               []DeploymentPlanStepAdapter     `db:"-" json:"stepAdapters,omitempty"`
 	Baselines                  []DeploymentPlanBaseline        `db:"-" json:"baselines,omitempty"`
 	Changes                    []DeploymentPlanChangeEntry     `db:"-" json:"changes,omitempty"`
 	Risks                      []DeploymentPlanRiskEntry       `db:"-" json:"risks,omitempty"`

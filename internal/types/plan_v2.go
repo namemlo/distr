@@ -41,6 +41,7 @@ type PlanDraft struct {
 type PlanDraftValidation struct {
 	Draft           PlanDraft                   `json:"draft"`
 	Resolutions     []RequirementResolution     `json:"resolutions"`
+	StepAdapters    []ResolvedPlanStepAdapter   `json:"stepAdapters"`
 	Graph           TargetPlanGraph             `json:"graph"`
 	Baselines       []DeploymentPlanBaseline    `json:"baselines"`
 	Changes         []DeploymentPlanChangeEntry `json:"changes"`
@@ -70,6 +71,10 @@ type PlanResolutionInput struct {
 	Candidates         []RequirementProviderCandidate `json:"candidates"`
 	ReleasePins        []ComponentReleasePin          `json:"releasePins"`
 	ComponentInstances []ComponentInstance            `json:"componentInstances"`
+
+	AdapterRequirements    []StepAdapterRequirement `json:"adapterRequirements"`
+	AdapterImplementations []AdapterImplementation  `json:"adapterImplementations"`
+	AdapterAssignments     []AdapterAssignment      `json:"adapterAssignments"`
 }
 
 type TargetConfigBinding struct {
@@ -140,6 +145,7 @@ type ComponentReleasePin struct {
 	ProvenanceBindingChecksum string                    `json:"provenanceBindingChecksum"`
 	ProvenanceFacts           []ComponentProvenanceFact `json:"provenanceFacts"`
 	Migrations                []MigrationDeclaration    `json:"migrations"`
+	AdapterRequirements       []AdapterRequirement      `json:"adapterRequirements,omitempty"`
 }
 
 type ComponentProvenanceFact struct {
@@ -271,6 +277,7 @@ type TargetDeploymentPlanCanonical struct {
 	ComponentReleasePins         []ComponentReleasePin       `json:"componentReleasePins"`
 	ComponentBindings            []ConfigComponentBinding    `json:"componentBindings"`
 	RequirementResolutions       []RequirementResolution     `json:"requirementResolutions"`
+	StepAdapters                 []ResolvedPlanStepAdapter   `json:"stepAdapters"`
 	Graph                        TargetPlanGraph             `json:"graph"`
 	Baselines                    []DeploymentPlanBaseline    `json:"baselines"`
 	Changes                      []DeploymentPlanChangeEntry `json:"changes"`

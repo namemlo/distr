@@ -351,8 +351,19 @@ func hydrateDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) erro
 			plan.ID,
 			plan.OrganizationID,
 		)
+		if err != nil {
+			return err
+		}
+		plan.StepAdapters, err = GetDeploymentPlanStepAdapters(
+			ctx,
+			plan.ID,
+			plan.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
 }
 
 func validateDeploymentPlanRequest(request types.CreateDeploymentPlanRequest) error {

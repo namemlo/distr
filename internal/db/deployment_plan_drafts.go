@@ -321,8 +321,12 @@ func validateDeploymentPlanDraft(
 	if len(resolutionIssues) > 0 {
 		issues = appendUniquePlanIssues(issues, resolutionIssues)
 	}
+	stepAdapters, adapterIssues := planning.ResolvePlanStepAdapters(ctx, *draft)
+	if len(adapterIssues) > 0 {
+		issues = appendUniquePlanIssues(issues, adapterIssues)
+	}
 	result := &types.PlanDraftValidation{
-		Draft: *draft, Resolutions: resolutions, Issues: issues,
+		Draft: *draft, Resolutions: resolutions, StepAdapters: stepAdapters, Issues: issues,
 	}
 	if len(issues) > 0 {
 		return result, nil
@@ -358,6 +362,7 @@ func validateDeploymentPlanDraft(
 		*draft,
 		*input,
 		resolutions,
+		stepAdapters,
 		graph,
 		baselines,
 		changes,
@@ -541,6 +546,7 @@ func publishValidatedTargetPlan(
 		Changes:              validation.Changes,
 		Risks:                validation.Risks,
 		Bootstrap:            validation.Bootstrap,
+		StepAdapters:         projectResolvedPlanStepAdapters(validation.StepAdapters),
 	}
 	if err := lockAndValidateTargetPlanSupersession(ctx, *plan, target.ID); err != nil {
 		return nil, err
@@ -552,6 +558,9 @@ func publishValidatedTargetPlan(
 		return nil, err
 	}
 	if err := insertDeploymentPlanSteps(ctx, *plan); err != nil {
+		return nil, err
+	}
+	if err := insertDeploymentPlanStepAdapters(ctx, *plan); err != nil {
 		return nil, err
 	}
 	if err := insertDeploymentPlanIssues(ctx, *plan); err != nil {
@@ -1008,6 +1017,21 @@ func loadPlanResolutionInput(
 		Requirements: requirements, ReleasePins: pins,
 		ComponentInstances: slices.Clone(placement.Instances),
 	}
+	if releasePinsRequireAdapters(input.ReleasePins) {
+		input.AdapterImplementations, err = ListAdapterImplementations(ctx, draft.OrganizationID)
+		if err != nil {
+			return nil, err
+		}
+		assignments, assignmentErr := ListAdapterAssignments(ctx, draft.OrganizationID)
+		if assignmentErr != nil {
+			return nil, assignmentErr
+		}
+		for _, assignment := range assignments {
+			if assignment.ConfigSnapshotID == draft.TargetConfigSnapshotID {
+				input.AdapterAssignments = append(input.AdapterAssignments, assignment)
+			}
+		}
+	}
 	input.Candidates, err = includedAndDisabledCandidates(*input, *manifest)
 	if err != nil {
 		return nil, err
@@ -1030,6 +1054,12 @@ func loadPlanResolutionInput(
 		}
 	}
 	return input, nil
+}
+
+func releasePinsRequireAdapters(pins []types.ComponentReleasePin) bool {
+	return slices.ContainsFunc(pins, func(pin types.ComponentReleasePin) bool {
+		return len(pin.AdapterRequirements) > 0
+	})
 }
 
 func loadTargetConfigBinding(
@@ -1313,6 +1343,9 @@ func loadTargetPlanReleasePins(
 			ProvenanceBindingChecksum: provenanceBindingChecksum,
 			ProvenanceFacts:           slices.Clone(provenanceFacts),
 			Migrations:                slices.Clone(component.Migrations),
+		}
+		if component.Contract != nil {
+			pin.AdapterRequirements = slices.Clone(component.Contract.AdapterRequirements)
 		}
 		if len(artifacts) == 1 {
 			pin.PlatformDigest = artifacts[0].PlatformDigest
@@ -1757,6 +1790,7 @@ func buildTargetPlanCanonical(
 	draft types.PlanDraft,
 	input types.PlanResolutionInput,
 	resolutions []types.RequirementResolution,
+	stepAdapters []types.ResolvedPlanStepAdapter,
 	graph types.TargetPlanGraph,
 	baselines []types.DeploymentPlanBaseline,
 	changes []types.DeploymentPlanChangeEntry,
@@ -1780,6 +1814,7 @@ func buildTargetPlanCanonical(
 		ComponentReleasePins:         slices.Clone(input.ReleasePins),
 		ComponentBindings:            slices.Clone(input.Config.ComponentBindings),
 		RequirementResolutions:       slices.Clone(resolutions),
+		StepAdapters:                 slices.Clone(stepAdapters),
 		Graph:                        graph, ProtocolVersion: draft.ProtocolVersion,
 		Baselines:                  slices.Clone(baselines),
 		Changes:                    slices.Clone(changes),
@@ -1789,6 +1824,25 @@ func buildTargetPlanCanonical(
 		SupersedeReason:            strings.TrimSpace(draft.SupersedeReason),
 		PreviousStateSourcePlanID:  draft.PreviousStateSourcePlanID,
 	}
+}
+
+func projectResolvedPlanStepAdapters(
+	values []types.ResolvedPlanStepAdapter,
+) []types.DeploymentPlanStepAdapter {
+	result := make([]types.DeploymentPlanStepAdapter, 0, len(values))
+	for index, value := range values {
+		result = append(result, types.DeploymentPlanStepAdapter{
+			ID: uuid.New(), StepKey: value.StepKey,
+			AdapterAssignmentID:     value.AdapterAssignmentID,
+			AdapterImplementationID: value.AdapterImplementationID,
+			ImplementationVersion:   value.ImplementationVersion,
+			Capability:              value.Capability, CapabilityVersion: value.CapabilityVersion,
+			ScopeType: value.ScopeType, ScopeID: value.ScopeID,
+			ConfigSnapshotID: value.ConfigSnapshotID, ConfigChecksum: value.ConfigChecksum,
+			KeyConfiguration: value.KeyConfiguration, SortOrder: index,
+		})
+	}
+	return result
 }
 
 func projectTargetPlanSteps(graph types.TargetPlanGraph) []types.DeploymentPlanStep {

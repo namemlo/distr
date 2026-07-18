@@ -101,6 +101,42 @@ func TestEvaluateRejectsCurrentEligibilityAndReleaseContractFailures(t *testing.
 	g.Expect(failedCheckKeys(checks)).To(ContainElements("release_eligibility", "release_contract"))
 }
 
+func TestEvaluateRejectsAdapterDriftAfterPlanApproval(t *testing.T) {
+	g := NewWithT(t)
+	input := preflightInputFixture()
+	frozen := types.DeploymentPlanStepAdapter{
+		ID: uuid.New(), DeploymentPlanID: input.Plan.ID,
+		OrganizationID: input.Plan.OrganizationID, StepKey: "component:loyalty-api:deploy",
+		AdapterAssignmentID: uuid.New(), AdapterImplementationID: uuid.New(),
+		ImplementationVersion: "2.0.0", Capability: "deployment.compose",
+		CapabilityVersion: "1.0.0", ScopeType: types.AdapterScopeDeploymentTarget,
+		ScopeID:          input.Plan.Targets[0].DeploymentTargetID,
+		ConfigSnapshotID: uuid.New(), ConfigChecksum: "sha256:" + strings.Repeat("c", 64),
+		KeyConfiguration: types.AdapterKeyConfiguration{
+			KeyID:                        "signing-v1",
+			PublicKeyFingerprint:         "sha256:" + strings.Repeat("d", 64),
+			SigningKeyReference:          "secret-provider://signing",
+			SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("e", 64),
+		},
+	}
+	input.Plan.StepAdapters = []types.DeploymentPlanStepAdapter{frozen}
+	input.CurrentAdapters = map[uuid.UUID]types.AdapterRuntimeState{
+		frozen.AdapterAssignmentID: {
+			AdapterAssignmentID:     frozen.AdapterAssignmentID,
+			AdapterImplementationID: frozen.AdapterImplementationID,
+			ImplementationVersion:   "2.1.0", Capability: frozen.Capability,
+			CapabilityVersion: frozen.CapabilityVersion, ScopeType: frozen.ScopeType,
+			ScopeID: frozen.ScopeID, ConfigSnapshotID: frozen.ConfigSnapshotID,
+			ConfigChecksum: frozen.ConfigChecksum, KeyConfiguration: frozen.KeyConfiguration,
+			Enabled: true,
+		},
+	}
+
+	checks := Evaluate(input)
+
+	g.Expect(failedCheckKeys(checks)).To(ContainElement("adapter:component:loyalty-api:deploy"))
+}
+
 func preflightInputFixture() Input {
 	orgID := uuid.New()
 	targetID := uuid.New()

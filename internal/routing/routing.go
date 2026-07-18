@@ -196,6 +196,8 @@ func ApiRouter(
 						// pass the Authentication chain (DbAuthenticator can't find the user -> 401)
 					)
 					r.Route("/action-definitions", handlers.ActionDefinitionsRouter)
+					r.Route("/adapter-assignments", handlers.AdapterAssignmentsRouter)
+					r.Route("/adapter-implementations", handlers.AdapterImplementationsRouter)
 					r.Route("/agent-versions", handlers.AgentVersionsRouter)
 					r.Route("/application-entitlements", handlers.ApplicationEntitlementsRouter)
 					r.Route("/applications", handlers.ApplicationsRouter)

@@ -10,6 +10,46 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+func TestCanonicalTargetPlanFreezesAdaptersDeterministically(t *testing.T) {
+	g := NewWithT(t)
+	firstID := uuid.MustParse("10000000-0000-0000-0000-000000000001")
+	secondID := uuid.MustParse("10000000-0000-0000-0000-000000000002")
+	first := types.ResolvedPlanStepAdapter{
+		StepKey: "component:web:health",
+		ResolvedStepAdapter: types.ResolvedStepAdapter{
+			AdapterAssignmentID: firstID, AdapterImplementationID: firstID,
+			ImplementationVersion: "2.0.0", Capability: "health.http",
+			CapabilityVersion: "1.0.0",
+		},
+	}
+	second := types.ResolvedPlanStepAdapter{
+		StepKey: "component:web:deploy",
+		ResolvedStepAdapter: types.ResolvedStepAdapter{
+			AdapterAssignmentID: secondID, AdapterImplementationID: secondID,
+			ImplementationVersion: "3.0.0", Capability: "deployment.compose",
+			CapabilityVersion: "1.0.0",
+		},
+	}
+	left := types.TargetDeploymentPlanCanonical{
+		StepAdapters: []types.ResolvedPlanStepAdapter{first, second},
+	}
+	right := types.TargetDeploymentPlanCanonical{
+		StepAdapters: []types.ResolvedPlanStepAdapter{second, first},
+	}
+
+	leftPayload, leftChecksum, err := CanonicalizeTargetDeploymentPlan(left)
+	g.Expect(err).NotTo(HaveOccurred())
+	rightPayload, rightChecksum, err := CanonicalizeTargetDeploymentPlan(right)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(rightPayload).To(Equal(leftPayload))
+	g.Expect(rightChecksum).To(Equal(leftChecksum))
+
+	right.StepAdapters[0].ImplementationVersion = "3.1.0"
+	_, driftedChecksum, err := CanonicalizeTargetDeploymentPlan(right)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(driftedChecksum).NotTo(Equal(leftChecksum))
+}
+
 func TestBuildTargetPlanGraphIsStableAndAcyclic(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()

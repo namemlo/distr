@@ -193,6 +193,22 @@ func TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData(t
 	}
 }
 
+func TestValidateComponentReleaseContractV2AcceptsVersionedAdapterRequirements(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	contract.AdapterRequirements = []types.AdapterRequirement{
+		{StepKind: "deploy", Capability: "deployment.compose", Version: "1.0.0"},
+		{StepKind: "health", Capability: "health.http", Version: "2.0.0"},
+	}
+
+	g.Expect(ValidateComponentReleaseContractV2(contract)).To(BeEmpty())
+
+	contract.AdapterRequirements[0].Version = "latest"
+	issues := ValidateComponentReleaseContractV2(contract)
+	g.Expect(issues).NotTo(BeEmpty())
+	g.Expect(issues[0].Field).To(ContainSubstring("adapterRequirements"))
+}
+
 func TestNormalizeReleaseContractV2SortsOnlySetLikeCollections(t *testing.T) {
 	g := NewWithT(t)
 	first := validComponentReleaseContract()

@@ -252,6 +252,19 @@ func normalizedComponentReleaseContractV2(contract types.ComponentReleaseContrac
 		}
 		return strings.Compare(a.Key, b.Key)
 	})
+	normalized.AdapterRequirements = slices.Clone(contract.AdapterRequirements)
+	for i := range normalized.AdapterRequirements {
+		requirement := &normalized.AdapterRequirements[i]
+		requirement.StepKind = strings.TrimSpace(requirement.StepKind)
+		requirement.Capability = strings.TrimSpace(requirement.Capability)
+		requirement.Version = strings.TrimSpace(requirement.Version)
+	}
+	slices.SortFunc(normalized.AdapterRequirements, func(a, b types.AdapterRequirement) int {
+		return strings.Compare(
+			a.StepKind+"\x00"+a.Capability+"\x00"+a.Version,
+			b.StepKind+"\x00"+b.Capability+"\x00"+b.Version,
+		)
+	})
 	normalized.Changes.Summary = strings.TrimSpace(normalized.Changes.Summary)
 	normalized.Changes.Commits = normalizeSortedStrings(contract.Changes.Commits)
 	normalized.Evidence.Provenance = normalizeSortedStrings(contract.Evidence.Provenance)
@@ -377,6 +390,7 @@ func ValidateComponentReleaseContractV2(contract types.ComponentReleaseContractV
 	issues = append(issues, ValidateArtifactIdentity(contract)...)
 	issues = append(issues, validateComponentCapabilities(contract)...)
 	issues = append(issues, validateComponentMigrations(contract)...)
+	issues = append(issues, validateAdapterRequirements(contract)...)
 	if contract.Changes.Summary == "" {
 		add("changes.summary", "required", "change summary is required")
 	}
@@ -394,6 +408,43 @@ func ValidateComponentReleaseContractV2(contract types.ComponentReleaseContractV
 	}
 	issues = append(issues, validateComponentEvidence(contract)...)
 	issues = append(issues, ValidateTargetNeutralContract(contract)...)
+	return issues
+}
+
+func validateAdapterRequirements(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	seen := map[string]struct{}{}
+	for _, requirement := range contract.AdapterRequirements {
+		field := "adapterRequirements." + requirement.StepKind
+		switch requirement.StepKind {
+		case "deploy", "migration", "backup", "health":
+		default:
+			issues = append(issues, ValidationIssue{
+				Field: field + ".stepKind", Rule: "supported",
+				Message: "adapter step kind must be deploy, migration, backup, or health",
+			})
+		}
+		if !componentKeyPattern.MatchString(requirement.Capability) {
+			issues = append(issues, ValidationIssue{
+				Field: field + ".capability", Rule: "key",
+				Message: "adapter capability must be a lowercase stable key",
+			})
+		}
+		if _, err := semver.StrictNewVersion(requirement.Version); err != nil {
+			issues = append(issues, ValidationIssue{
+				Field: field + ".version", Rule: "semver",
+				Message: "adapter capability version must be strict semantic version",
+			})
+		}
+		key := requirement.StepKind + "\x00" + requirement.Capability
+		if _, duplicate := seen[key]; duplicate {
+			issues = append(issues, ValidationIssue{
+				Field: field, Rule: "unique",
+				Message: "adapter step kind and capability pairs must be unique",
+			})
+		}
+		seen[key] = struct{}{}
+	}
 	return issues
 }
 

@@ -12,9 +12,105 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/distr-sh/distr/internal/adapterresolution"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
+
+func ResolvePlanStepAdapters(
+	ctx context.Context,
+	draft types.PlanDraft,
+) ([]types.ResolvedPlanStepAdapter, []types.ValidationIssue) {
+	if draft.ResolutionInput == nil {
+		return nil, []types.ValidationIssue{{
+			Code: "resolution_input_required", Field: "resolutionInput",
+			Message: "server-side resolution facts are required",
+		}}
+	}
+	input := draft.ResolutionInput
+	requirements := slices.Clone(input.AdapterRequirements)
+	if len(requirements) == 0 {
+		requirements = adapterRequirementsFromReleasePins(*input)
+	}
+	slices.SortFunc(requirements, func(a, b types.StepAdapterRequirement) int {
+		return strings.Compare(a.StepKey, b.StepKey)
+	})
+	resolved := make([]types.ResolvedPlanStepAdapter, 0, len(requirements))
+	issues := make([]types.ValidationIssue, 0)
+	for _, requirement := range requirements {
+		adapter, adapterIssues := adapterresolution.ResolveStepAdapter(
+			ctx,
+			types.AdapterResolutionRequest{
+				OrganizationID:            draft.OrganizationID,
+				StepKey:                   requirement.StepKey,
+				RequiredCapability:        requirement.Capability,
+				RequiredCapabilityVersion: requirement.CapabilityVersion,
+				ScopeType:                 requirement.ScopeType,
+				ScopeID:                   requirement.ScopeID,
+				TargetConfigSnapshotID:    draft.TargetConfigSnapshotID,
+				TargetConfigChecksum:      input.Config.CanonicalChecksum,
+				Implementations:           input.AdapterImplementations,
+				Assignments:               input.AdapterAssignments,
+			},
+		)
+		for _, issue := range adapterIssues {
+			issue.Field = "steps." + requirement.StepKey + "." + issue.Field
+			issues = append(issues, issue)
+		}
+		if adapter != nil {
+			resolved = append(resolved, types.ResolvedPlanStepAdapter{
+				StepKey: requirement.StepKey, ResolvedStepAdapter: *adapter,
+			})
+		}
+	}
+	sortValidationIssues(issues)
+	return resolved, issues
+}
+
+func adapterRequirementsFromReleasePins(
+	input types.PlanResolutionInput,
+) []types.StepAdapterRequirement {
+	result := make([]types.StepAdapterRequirement, 0)
+	bindingIDs := make(map[string]uuid.UUID, len(input.Config.ComponentBindings))
+	for _, binding := range input.Config.ComponentBindings {
+		bindingIDs[strings.TrimSpace(binding.ComponentKey)] = binding.ComponentInstanceID
+	}
+	for _, pin := range input.ReleasePins {
+		scopeType := types.AdapterScopeDeploymentUnit
+		scopeID := input.Unit.ID
+		if instanceID, ok := bindingIDs[strings.TrimSpace(pin.ComponentKey)]; ok {
+			scopeType = types.AdapterScopeComponentInstance
+			scopeID = instanceID
+		}
+		for _, requirement := range pin.AdapterRequirements {
+			stepKeys := []string{}
+			switch requirement.StepKind {
+			case "deploy":
+				stepKeys = append(stepKeys, "component:"+pin.ComponentKey+":deploy")
+			case "health":
+				stepKeys = append(stepKeys, "component:"+pin.ComponentKey+":health")
+			case "migration":
+				for _, migration := range pin.Migrations {
+					stepKeys = append(
+						stepKeys,
+						"component:"+pin.ComponentKey+":migration:"+migration.Key,
+					)
+				}
+			}
+			for _, stepKey := range stepKeys {
+				result = append(result, types.StepAdapterRequirement{
+					StepKey: stepKey, Capability: requirement.Capability,
+					CapabilityVersion: requirement.Version,
+					ScopeType:         scopeType, ScopeID: scopeID,
+				})
+			}
+		}
+	}
+	slices.SortFunc(result, func(a, b types.StepAdapterRequirement) int {
+		return strings.Compare(a.StepKey, b.StepKey)
+	})
+	return result
+}
 
 var planChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -161,6 +257,8 @@ func ValidatePlanDraft(ctx context.Context, draft types.PlanDraft) []types.Valid
 	issues = append(issues, validateReleasePins(draft, *input)...)
 	resolutions, resolutionIssues := ResolveTargetRequirements(ctx, draft)
 	issues = append(issues, resolutionIssues...)
+	_, adapterIssues := ResolvePlanStepAdapters(ctx, draft)
+	issues = append(issues, adapterIssues...)
 	if draft.ProtocolVersion == types.DeploymentPlanProtocolV1 {
 		for _, resolution := range resolutions {
 			if !resolution.V1Compatible {

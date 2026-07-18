@@ -90,17 +90,18 @@ type ReleaseContractChanges struct {
 }
 
 type ComponentReleaseContractV2 struct {
-	Schema       string                             `json:"schema"`
-	ComponentKey string                             `json:"componentKey"`
-	Version      string                             `json:"version"`
-	Source       ComponentReleaseSource             `json:"source"`
-	Build        ComponentReleaseBuild              `json:"build"`
-	Artifacts    []ComponentReleaseArtifact         `json:"artifacts"`
-	Provides     []CapabilityDeclaration            `json:"provides"`
-	Requires     []CapabilityRequirement            `json:"requires"`
-	Migrations   []MigrationDeclaration             `json:"migrations"`
-	Changes      ComponentReleaseChanges            `json:"changes"`
-	Evidence     ComponentReleaseEvidenceReferences `json:"evidence"`
+	Schema              string                             `json:"schema"`
+	ComponentKey        string                             `json:"componentKey"`
+	Version             string                             `json:"version"`
+	Source              ComponentReleaseSource             `json:"source"`
+	Build               ComponentReleaseBuild              `json:"build"`
+	Artifacts           []ComponentReleaseArtifact         `json:"artifacts"`
+	Provides            []CapabilityDeclaration            `json:"provides"`
+	Requires            []CapabilityRequirement            `json:"requires"`
+	Migrations          []MigrationDeclaration             `json:"migrations"`
+	AdapterRequirements []AdapterRequirement               `json:"adapterRequirements,omitempty"`
+	Changes             ComponentReleaseChanges            `json:"changes"`
+	Evidence            ComponentReleaseEvidenceReferences `json:"evidence"`
 }
 
 type ComponentReleaseSource struct {

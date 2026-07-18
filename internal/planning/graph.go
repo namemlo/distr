@@ -64,6 +64,10 @@ func CanonicalizeTargetDeploymentPlan(
 		}
 		return strings.Compare(a.Code, b.Code)
 	})
+	canonical.StepAdapters = slices.Clone(canonical.StepAdapters)
+	slices.SortFunc(canonical.StepAdapters, func(a, b types.ResolvedPlanStepAdapter) int {
+		return strings.Compare(a.StepKey, b.StepKey)
+	})
 	payload, err := json.Marshal(canonical)
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal canonical target deployment plan: %w", err)

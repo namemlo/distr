@@ -76,6 +76,7 @@ type DeploymentPlan struct {
 	Issues                     []DeploymentPlanIssue             `json:"issues"`
 	ResolvedRequirements       []types.RequirementResolution     `json:"resolvedRequirements,omitempty"`
 	StepEdges                  []types.DeploymentPlanStepEdge    `json:"stepEdges,omitempty"`
+	StepAdapters               []DeploymentPlanStepAdapter       `json:"stepAdapters,omitempty"`
 	Baselines                  []types.DeploymentPlanBaseline    `json:"baselines,omitempty"`
 	Changes                    []types.DeploymentPlanChangeEntry `json:"changes,omitempty"`
 	Risks                      []types.DeploymentPlanRiskEntry   `json:"risks,omitempty"`

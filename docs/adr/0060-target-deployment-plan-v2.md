@@ -85,6 +85,22 @@ Steps, edges, resolutions, pins, bindings, and verification facts are sorted
 before canonical JSON encoding. The graph must be acyclic and its checksum is
 part of the plan checksum.
 
+### Versioned adapter freeze
+
+Component Release v2 contracts declare exact adapter capabilities by typed
+step kind. Target configuration selects an enabled implementation,
+implementation version, scope, and immutable config checksum. Planning freezes
+the assignment ID, implementation ID/version, capability/version, target
+scope, Target Config Snapshot, config checksum, key ID, public-key
+fingerprint, opaque signing-key provider reference, and non-reversible signing
+key version fingerprint into an append-only plan-step adapter record.
+
+The release declaration remains authoritative; an assignment cannot weaken or
+replace it. Start-time preflight reloads current adapter state. Missing,
+disabled, or drifted adapter state blocks execution and requires exact
+restoration or a new target plan revision. Private key bytes remain exclusively
+in the configured secret provider.
+
 ### Protocol boundary
 
 `protocolVersion=v1` is publishable only when every generated step and

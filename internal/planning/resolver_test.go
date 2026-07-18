@@ -68,6 +68,88 @@ func TestResolveTargetRequirementsBlocksAmbiguousAndUnresolvedBindings(t *testin
 	g.Expect(issueCodes(issues)).To(ConsistOf("ambiguous_requirement", "unresolved_requirement"))
 }
 
+func TestResolvePlanStepAdaptersUsesReleaseDeclaredRequirements(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	implementation := types.AdapterImplementation{
+		ID: uuid.New(), OrganizationID: draft.OrganizationID, Key: "compose",
+		Name: "Compose", Version: "2.0.0", Enabled: true,
+		Capabilities: []types.AdapterCapability{{
+			Capability: "deployment.compose", Version: "1.0.0",
+		}},
+	}
+	assignment := types.AdapterAssignment{
+		ID: uuid.New(), OrganizationID: draft.OrganizationID,
+		AdapterImplementationID: implementation.ID,
+		ScopeType:               types.AdapterScopeDeploymentUnit, ScopeID: draft.DeploymentUnitID,
+		ConfigSnapshotID: draft.TargetConfigSnapshotID,
+		ConfigChecksum:   draft.ResolutionInput.Config.CanonicalChecksum,
+		KeyConfiguration: types.AdapterKeyConfiguration{
+			KeyID: "signing-v1", PublicKeyFingerprint: checksum("1"),
+			SigningKeyReference:          "secret-provider://signing",
+			SigningKeyVersionFingerprint: checksum("2"),
+		},
+		Enabled: true,
+	}
+	draft.ResolutionInput.AdapterRequirements = []types.StepAdapterRequirement{{
+		StepKey: "component:consumer:deploy", Capability: "deployment.compose",
+		CapabilityVersion: "1.0.0", ScopeType: types.AdapterScopeDeploymentUnit,
+		ScopeID: draft.DeploymentUnitID,
+	}}
+	draft.ResolutionInput.AdapterImplementations = []types.AdapterImplementation{implementation}
+	draft.ResolutionInput.AdapterAssignments = []types.AdapterAssignment{assignment}
+
+	resolved, issues := ResolvePlanStepAdapters(context.Background(), draft)
+
+	g.Expect(issues).To(BeEmpty())
+	g.Expect(resolved).To(ConsistOf(types.ResolvedPlanStepAdapter{
+		StepKey: "component:consumer:deploy",
+		ResolvedStepAdapter: types.ResolvedStepAdapter{
+			AdapterAssignmentID: assignment.ID, AdapterImplementationID: implementation.ID,
+			ImplementationVersion: "2.0.0", Capability: "deployment.compose",
+			CapabilityVersion: "1.0.0", ScopeType: types.AdapterScopeDeploymentUnit,
+			ScopeID: draft.DeploymentUnitID, ConfigSnapshotID: draft.TargetConfigSnapshotID,
+			ConfigChecksum:   draft.ResolutionInput.Config.CanonicalChecksum,
+			KeyConfiguration: assignment.KeyConfiguration,
+		},
+	}))
+}
+
+func TestResolvePlanStepAdaptersDoesNotAcceptAssignmentCapabilityOverride(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ResolutionInput.AdapterRequirements = []types.StepAdapterRequirement{{
+		StepKey: "component:consumer:deploy", Capability: "database.migrate",
+		CapabilityVersion: "3.0.0", ScopeType: types.AdapterScopeDeploymentUnit,
+		ScopeID: draft.DeploymentUnitID,
+	}}
+	draft.ResolutionInput.AdapterImplementations = []types.AdapterImplementation{{
+		ID: uuid.New(), OrganizationID: draft.OrganizationID, Key: "compose",
+		Name: "Compose", Version: "2.0.0", Enabled: true,
+		Capabilities: []types.AdapterCapability{{
+			Capability: "deployment.compose", Version: "1.0.0",
+		}},
+	}}
+	draft.ResolutionInput.AdapterAssignments = []types.AdapterAssignment{{
+		ID: uuid.New(), OrganizationID: draft.OrganizationID,
+		AdapterImplementationID: draft.ResolutionInput.AdapterImplementations[0].ID,
+		ScopeType:               types.AdapterScopeDeploymentUnit, ScopeID: draft.DeploymentUnitID,
+		ConfigSnapshotID: draft.TargetConfigSnapshotID,
+		ConfigChecksum:   draft.ResolutionInput.Config.CanonicalChecksum,
+		KeyConfiguration: types.AdapterKeyConfiguration{
+			KeyID: "signing-v1", PublicKeyFingerprint: checksum("1"),
+			SigningKeyReference:          "secret-provider://signing",
+			SigningKeyVersionFingerprint: checksum("2"),
+		},
+		Enabled: true,
+	}}
+
+	resolved, issues := ResolvePlanStepAdapters(context.Background(), draft)
+
+	g.Expect(resolved).To(BeEmpty())
+	g.Expect(issueCodes(issues)).To(ContainElement("adapter_implementation_missing"))
+}
+
 func TestValidatePlanDraftRequiresOneExactActivePlacement(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()

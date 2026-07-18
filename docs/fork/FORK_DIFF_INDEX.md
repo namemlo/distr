@@ -1407,6 +1407,7 @@ Use one entry per pull request:
   or client-database behavior.
 - Compatibility notes: Existing v1 plans, tasks, agents, and execution remain unchanged. PR-072 consumes the
   immutable revision and its stable runtime expectation contract.
+
 ### PR-072 - Campaign scheduler and thresholds
 
 - Status: Implemented on the synthetic PR-069 base, including run instantiation, registered runtime routes,
@@ -1451,3 +1452,30 @@ Use one entry per pull request:
   or client database behavior.
 - Compatibility notes: Existing v1 deployment APIs and callback state transitions remain unchanged; unresolved
   campaign dependencies fail closed.
+
+### PR-074 - Versioned adapter resolution
+
+- Status: Implemented on the synthetic PR-063 base; focused domain, planning, preflight, API, repository compile,
+  mapping, handler, routing, and migration-shape tests completed.
+- Upstream base: `ea6567b6` (PR-063 checkpoint).
+- Feature flag: `operator_control_plane_v2` gates adapter implementation and assignment routes. Existing plan reads
+  remain under their current Deployment Plan gates.
+- User-facing behavior: Operators register versioned adapter implementations/capabilities, bind them to exact target
+  scopes and immutable Target Config Snapshots, and inspect the adapter version/config/key fingerprints frozen per
+  plan step.
+- Database changes: Migration 156 adds `AdapterImplementation`, `AdapterCapability`, `AdapterAssignment`, and
+  append-only `DeploymentPlanStepAdapter`. Rollback refuses while frozen plan adapter evidence exists.
+- API changes: Adds cursor-paginated `GET|POST /api/v1/adapter-implementations`,
+  `GET|POST /api/v1/adapter-assignments`, and additive read-only `stepAdapters` on Deployment Plan responses.
+- UI changes: None.
+- Agent protocol changes: None. PR-075 consumes the frozen non-secret key/fingerprint contract; private keys remain in
+  the secret provider.
+- Documentation: Added PR-074 notes and extended ADR-0060 with the immutable adapter freeze decision.
+- Tests: Added exact/missing/ambiguous/disabled resolution, target scope, config checksum, release authority,
+  start-time drift, API validation, tenant-safe handler, preflight, migration-shape, and route coverage.
+- Upstream contribution notes: Community-neutral adapter vocabulary and scope model; no adopter, executor vendor,
+  target name, credential, or private key material.
+- Compatibility notes: Existing Component Release v2 documents omit the additive adapter requirement field; v1
+  plans and execution remain unchanged. This synthetic base lacks allocated migrations 140-142 and 146-155 and the
+  PR-071 through PR-073 campaign seams; integration must retain migration 156 ordering and consume frozen plan
+  adapter evidence at campaign admission.

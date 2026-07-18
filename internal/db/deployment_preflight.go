@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/deploymentpreflight"
 	"github.com/distr-sh/distr/internal/releasebundles"
@@ -100,6 +102,10 @@ func evaluateAndPersistDeploymentPreflightScope(
 	if err != nil {
 		return nil, false, err
 	}
+	currentAdapters, err := getDeploymentPreflightAdapters(ctx, evaluationPlan)
+	if err != nil {
+		return nil, false, err
+	}
 	canonicalStateValid, err := deploymentPlanCanonicalStateValid(canonicalPlan)
 	if err != nil {
 		return nil, false, err
@@ -118,6 +124,7 @@ func evaluateAndPersistDeploymentPreflightScope(
 		CurrentTargets:            currentTargets,
 		CurrentStates:             currentStates,
 		Migrations:                deploymentPreflightMigrations(evaluationPlan.Migrations),
+		CurrentAdapters:           currentAdapters,
 	})
 	status := types.DeploymentPreflightStatusPassed
 	for _, check := range checks {
@@ -156,6 +163,30 @@ func deploymentPreflightMigrations(
 		})
 	}
 	return result
+}
+
+func getDeploymentPreflightAdapters(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+) (map[uuid.UUID]types.AdapterRuntimeState, error) {
+	result := make(map[uuid.UUID]types.AdapterRuntimeState, len(plan.StepAdapters))
+	for _, frozen := range plan.StepAdapters {
+		current, err := GetAdapterRuntimeState(
+			ctx,
+			frozen.AdapterAssignmentID,
+			plan.OrganizationID,
+			frozen.Capability,
+			frozen.CapabilityVersion,
+		)
+		if errors.Is(err, apierrors.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[frozen.AdapterAssignmentID] = *current
+	}
+	return result, nil
 }
 
 func getDeploymentPreflightTargets(

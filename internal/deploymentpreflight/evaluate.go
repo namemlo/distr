@@ -1,12 +1,14 @@
 package deploymentpreflight
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/distr-sh/distr/internal/adapterresolution"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -32,6 +34,7 @@ type Input struct {
 	CurrentTargets            map[uuid.UUID]types.DeploymentTarget
 	CurrentStates             map[StateKey]types.TargetComponentState
 	Migrations                []types.MigrationPreflight
+	CurrentAdapters           map[uuid.UUID]types.AdapterRuntimeState
 }
 
 //nolint:gocyclo // The evaluator deliberately emits all independent preflight checks in one deterministic pass.
@@ -227,6 +230,46 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 			map[string]any{"passed": true, "count": len(contract.PreconditionProbes)},
 			map[string]any{"passed": migration.PreconditionProbesPassed},
 			"migration precondition probes match their frozen expectations"))
+	}
+
+	for _, frozen := range input.Plan.StepAdapters {
+		current, found := input.CurrentAdapters[frozen.AdapterAssignmentID]
+		err := fmt.Errorf("current adapter assignment is missing")
+		if found {
+			err = adapterresolution.VerifyAdapterAtStart(
+				adapterresolution.WithRuntimeState(context.Background(), current),
+				frozen,
+			)
+		}
+		status := types.DeploymentPreflightCheckStatusPassed
+		message := "adapter implementation, capability, config, and key fingerprints match the frozen plan"
+		if err != nil {
+			status = types.DeploymentPreflightCheckStatusFailed
+			message = err.Error()
+		}
+		add(types.DeploymentPreflightCheck{
+			CheckKey: "adapter:" + frozen.StepKey,
+			Status:   status,
+			Expected: map[string]any{
+				"adapterAssignmentId":     frozen.AdapterAssignmentID,
+				"adapterImplementationId": frozen.AdapterImplementationID,
+				"implementationVersion":   frozen.ImplementationVersion,
+				"capability":              frozen.Capability,
+				"capabilityVersion":       frozen.CapabilityVersion,
+				"configChecksum":          frozen.ConfigChecksum,
+				"publicKeyFingerprint":    frozen.KeyConfiguration.PublicKeyFingerprint,
+			},
+			Actual: map[string]any{
+				"found":                   found,
+				"adapterImplementationId": current.AdapterImplementationID,
+				"implementationVersion":   current.ImplementationVersion,
+				"capability":              current.Capability,
+				"capabilityVersion":       current.CapabilityVersion,
+				"configChecksum":          current.ConfigChecksum,
+				"publicKeyFingerprint":    current.KeyConfiguration.PublicKeyFingerprint,
+			},
+			Message: message,
+		})
 	}
 
 	if input.Plan.ReleaseContract == nil {
