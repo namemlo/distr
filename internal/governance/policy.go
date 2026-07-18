@@ -76,7 +76,7 @@ func NormalizeDeploymentPolicyDocument(
 	normalized := document
 	normalized.Schema = strings.TrimSpace(document.Schema)
 	normalized.ApprovalRules = cloneApprovalRules(document.ApprovalRules, false)
-	normalized.RiskGates = cloneRiskGates(document.RiskGates)
+	normalized.RiskGates = cloneRiskGates(document.RiskGates, false)
 	normalized.AdmissionRules = cloneAdmissionRules(document.AdmissionRules)
 	normalized.OverrideRules = cloneOverrideRules(document.OverrideRules, false)
 	normalized.RequiredEvidence = normalizedStrings(document.RequiredEvidence)
@@ -160,11 +160,8 @@ func ComposeEffectivePolicy(
 	var windowIntersection map[uuid.UUID]struct{}
 	windowConstraintCount := 0
 	versionIDs := map[uuid.UUID]struct{}{}
-	riskGates := map[string]types.PolicyRiskGate{}
 	freezeIDs := map[uuid.UUID]struct{}{}
 	requiredEvidence := map[string]struct{}{}
-	bootstrapApprovalKeys := map[string]struct{}{}
-	bootstrapGateKeys := map[string]struct{}{}
 	bootstrapMode := types.BootstrapModeAllowAfterPreflight
 	validPolicyCount := 0
 
@@ -212,7 +209,10 @@ func ComposeEffectivePolicy(
 				effective.ApprovalRules = append(effective.ApprovalRules, rule)
 			}
 			for _, gate := range normalized.RiskGates {
-				riskGates[gate.Key+"\x00"+gate.Condition] = gate
+				gate.PolicyVersionID = version.ID
+				gate.AuthorityKind = policySet.AuthorityKind
+				gate.AuthorityID = policySet.AuthorityID
+				effective.RiskGates = append(effective.RiskGates, gate)
 			}
 			modeIntersection = intersectResolutionModes(
 				modeIntersection,
@@ -250,25 +250,36 @@ func ComposeEffectivePolicy(
 				normalized.BootstrapRules.Mode,
 			)
 			for _, key := range normalized.BootstrapRules.ApprovalRuleKeys {
-				bootstrapApprovalKeys[key] = struct{}{}
+				effective.BootstrapRules.ApprovalRules = append(
+					effective.BootstrapRules.ApprovalRules,
+					types.EffectivePolicyReference{
+						Key:             key,
+						PolicyVersionID: version.ID,
+						AuthorityKind:   policySet.AuthorityKind,
+						AuthorityID:     policySet.AuthorityID,
+					},
+				)
 			}
 			for _, key := range normalized.BootstrapRules.RequiredGateKeys {
-				bootstrapGateKeys[key] = struct{}{}
+				effective.BootstrapRules.RequiredGates = append(
+					effective.BootstrapRules.RequiredGates,
+					types.EffectivePolicyReference{
+						Key:             key,
+						PolicyVersionID: version.ID,
+						AuthorityKind:   policySet.AuthorityKind,
+						AuthorityID:     policySet.AuthorityID,
+					},
+				)
 			}
 		}
 	}
 
 	effective.VersionIDs = sortedUUIDSet(versionIDs)
-	effective.RiskGates = sortedRiskGateSet(riskGates)
 	effective.AdmissionRules.AllowedResolutionModes = sortedResolutionModeSet(modeIntersection)
 	effective.AdmissionRules.MaintenanceWindowVersionIDs = sortedUUIDSet(windowIntersection)
 	effective.AdmissionRules.FreezeRuleVersionIDs = sortedUUIDSet(freezeIDs)
 	effective.RequiredEvidence = sortedStringSet(requiredEvidence)
-	effective.BootstrapRules = types.BootstrapRules{
-		Mode:             bootstrapMode,
-		ApprovalRuleKeys: sortedStringSet(bootstrapApprovalKeys),
-		RequiredGateKeys: sortedStringSet(bootstrapGateKeys),
-	}
+	effective.BootstrapRules.Mode = bootstrapMode
 	sortEffectivePolicy(&effective)
 
 	if validPolicyCount == 0 {
@@ -389,6 +400,15 @@ func validateRiskGates(gates []types.PolicyRiskGate) []types.ValidationIssue {
 	seen := make(map[string]struct{}, len(gates))
 	for index, gate := range gates {
 		field := fmt.Sprintf("document.riskGates.%d", index)
+		if gate.PolicyVersionID != uuid.Nil ||
+			gate.AuthorityKind != "" ||
+			gate.AuthorityID != uuid.Nil {
+			issues = append(issues, policyIssue(
+				"policy.risk_gate.authority_forbidden",
+				field,
+				"document risk gates must not contain derived authority fields",
+			))
+		}
 		if !isCanonicalPolicyKey(gate.Key) {
 			issues = append(issues, policyIssue(
 				"policy.risk_gate.key_invalid",
@@ -724,9 +744,9 @@ func emptyEffectivePolicy() types.EffectivePolicy {
 		},
 		OverrideRules:    []types.OverrideRules{},
 		RequiredEvidence: []string{},
-		BootstrapRules: types.BootstrapRules{
-			ApprovalRuleKeys: []string{},
-			RequiredGateKeys: []string{},
+		BootstrapRules: types.EffectiveBootstrapRules{
+			ApprovalRules: []types.EffectivePolicyReference{},
+			RequiredGates: []types.EffectivePolicyReference{},
 		},
 	}
 }
@@ -824,20 +844,6 @@ func sortedStringSet(values map[string]struct{}) []string {
 	return result
 }
 
-func sortedRiskGateSet(values map[string]types.PolicyRiskGate) []types.PolicyRiskGate {
-	result := make([]types.PolicyRiskGate, 0, len(values))
-	for _, value := range values {
-		result = append(result, value)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Key != result[j].Key {
-			return result[i].Key < result[j].Key
-		}
-		return result[i].Condition < result[j].Condition
-	})
-	return result
-}
-
 func stricterBootstrapMode(left, right types.BootstrapMode) types.BootstrapMode {
 	rank := map[types.BootstrapMode]int{
 		types.BootstrapModeAllowAfterPreflight: 0,
@@ -874,20 +880,54 @@ func sortEffectivePolicy(effective *types.EffectivePolicy) {
 		}
 		return left.PolicyVersionID.String() < right.PolicyVersionID.String()
 	})
+	sort.Slice(effective.RiskGates, func(i, j int) bool {
+		left, right := effective.RiskGates[i], effective.RiskGates[j]
+		if left.AuthorityKind != right.AuthorityKind {
+			return left.AuthorityKind < right.AuthorityKind
+		}
+		if left.AuthorityID != right.AuthorityID {
+			return left.AuthorityID.String() < right.AuthorityID.String()
+		}
+		if left.Key != right.Key {
+			return left.Key < right.Key
+		}
+		if left.PolicyVersionID != right.PolicyVersionID {
+			return left.PolicyVersionID.String() < right.PolicyVersionID.String()
+		}
+		return left.Condition < right.Condition
+	})
+	sortEffectivePolicyReferences(effective.BootstrapRules.ApprovalRules)
+	sortEffectivePolicyReferences(effective.BootstrapRules.RequiredGates)
+}
+
+func sortEffectivePolicyReferences(references []types.EffectivePolicyReference) {
+	sort.Slice(references, func(i, j int) bool {
+		left, right := references[i], references[j]
+		if left.AuthorityKind != right.AuthorityKind {
+			return left.AuthorityKind < right.AuthorityKind
+		}
+		if left.AuthorityID != right.AuthorityID {
+			return left.AuthorityID.String() < right.AuthorityID.String()
+		}
+		if left.Key != right.Key {
+			return left.Key < right.Key
+		}
+		return left.PolicyVersionID.String() < right.PolicyVersionID.String()
+	})
 }
 
 func effectivePolicyChecksum(effective types.EffectivePolicy) (string, error) {
 	input := struct {
-		Domain                string                 `json:"domain"`
-		VersionIDs            []uuid.UUID            `json:"versionIds"`
-		SubscriberSetChecksum string                 `json:"subscriberSetChecksum"`
-		ApprovalRules         []types.ApprovalRule   `json:"approvalRules"`
-		RiskGates             []types.PolicyRiskGate `json:"riskGates"`
-		AdmissionRules        types.AdmissionRules   `json:"admissionRules"`
-		CampaignRules         types.CampaignRules    `json:"campaignRules"`
-		OverrideRules         []types.OverrideRules  `json:"overrideRules"`
-		RequiredEvidence      []string               `json:"requiredEvidence"`
-		BootstrapRules        types.BootstrapRules   `json:"bootstrapRules"`
+		Domain                string                        `json:"domain"`
+		VersionIDs            []uuid.UUID                   `json:"versionIds"`
+		SubscriberSetChecksum string                        `json:"subscriberSetChecksum"`
+		ApprovalRules         []types.ApprovalRule          `json:"approvalRules"`
+		RiskGates             []types.PolicyRiskGate        `json:"riskGates"`
+		AdmissionRules        types.AdmissionRules          `json:"admissionRules"`
+		CampaignRules         types.CampaignRules           `json:"campaignRules"`
+		OverrideRules         []types.OverrideRules         `json:"overrideRules"`
+		RequiredEvidence      []string                      `json:"requiredEvidence"`
+		BootstrapRules        types.EffectiveBootstrapRules `json:"bootstrapRules"`
 	}{
 		Domain:                "distr.effective-deployment-policy/v1",
 		VersionIDs:            effective.VersionIDs,
@@ -932,11 +972,19 @@ func cloneApprovalRules(
 	return result
 }
 
-func cloneRiskGates(gates []types.PolicyRiskGate) []types.PolicyRiskGate {
+func cloneRiskGates(
+	gates []types.PolicyRiskGate,
+	keepDerivedAuthority bool,
+) []types.PolicyRiskGate {
 	result := make([]types.PolicyRiskGate, len(gates))
 	for index, gate := range gates {
 		gate.Key = strings.TrimSpace(gate.Key)
 		gate.Condition = strings.TrimSpace(gate.Condition)
+		if !keepDerivedAuthority {
+			gate.PolicyVersionID = uuid.Nil
+			gate.AuthorityKind = ""
+			gate.AuthorityID = uuid.Nil
+		}
 		result[index] = gate
 	}
 	return result

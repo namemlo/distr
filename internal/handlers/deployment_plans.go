@@ -161,6 +161,16 @@ func createDeploymentPlanHandler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if request.DeploymentUnitID != nil {
+			scopedAuthorizationStackPresent, probeErr := pr066ScopedAuthorizationSchemaPresent(ctx)
+			if probeErr != nil || scopedAuthorizationStackPresent {
+				// Creating a v2 plan freezes policy evidence and is itself a
+				// policy-managed operation. A PR-066 stack must authorize it
+				// through policy.manage plus effective enrollment.
+				http.Error(w, "insufficient permissions", http.StatusForbidden)
+				return
+			}
+		}
 
 		plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
 			OrganizationID:   *auth.CurrentOrgID(),

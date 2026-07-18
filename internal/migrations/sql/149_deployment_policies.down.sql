@@ -10,7 +10,10 @@ BEGIN
   IF EXISTS (
     SELECT 1
     FROM DeploymentPlan
-    WHERE effective_policy IS NOT NULL
+    WHERE deployment_unit_id IS NOT NULL
+       OR effective_policy IS NOT NULL
+       OR effective_policy_checksum IS NOT NULL
+       OR subscriber_set_checksum IS NOT NULL
   )
      OR EXISTS (SELECT 1 FROM DeploymentPolicyBinding)
      OR EXISTS (SELECT 1 FROM DeploymentPolicyVersion)
@@ -22,6 +25,9 @@ END;
 $$;
 
 DROP INDEX DeploymentPlan_effective_policy;
+
+DROP TRIGGER DeploymentPlan_policy_evidence_immutable ON DeploymentPlan;
+DROP FUNCTION deployment_plan_policy_evidence_immutable();
 
 ALTER TABLE DeploymentPlan
   DROP CONSTRAINT deploymentplan_effective_policy_shape_check,

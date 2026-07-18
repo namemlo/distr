@@ -124,9 +124,22 @@ func deploymentPoliciesRouterWithFlags(
 func deploymentPolicyMutationAccessMiddlewareWithFlags(
 	enabledFlags []featureflags.Key,
 ) func(http.Handler) http.Handler {
-	// PR-066 owns action-specific enrollment/authorization. This process guard
-	// remains the outer compatibility boundary and is intentionally isolated.
-	return operatorControlPlaneMutationAccessMiddlewareWithFlags(enabledFlags)
+	return func(handler http.Handler) http.Handler {
+		scoped := failClosedUntilScopedAuthorizationAdapter(
+			pr066ScopedAuthorizationSchemaPresent,
+		)(handler)
+		mutation := operatorControlPlaneMutationAccessMiddlewareWithFlags(enabledFlags)(
+			scoped,
+		)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				handler.ServeHTTP(w, r)
+			default:
+				mutation.ServeHTTP(w, r)
+			}
+		})
+	}
 }
 
 func deploymentPolicyJSONBody[T any](

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,55 @@ import (
 	"github.com/distr-sh/distr/internal/types"
 	. "github.com/onsi/gomega"
 )
+
+func TestFailClosedUntilScopedAuthorizationAdapter(t *testing.T) {
+	tests := []struct {
+		name       string
+		stackFound bool
+		probeErr   error
+		wantStatus int
+		wantCalled bool
+	}{
+		{
+			name:       "isolated branch delegates to legacy process guard",
+			wantStatus: http.StatusNoContent,
+			wantCalled: true,
+		},
+		{
+			name:       "PR-066 stack cannot bypass scoped authorization",
+			stackFound: true,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "probe failure denies",
+			probeErr:   errors.New("catalog unavailable"),
+			wantStatus: http.StatusForbidden,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			called := false
+			handler := failClosedUntilScopedAuthorizationAdapter(
+				func(context.Context) (bool, error) {
+					return test.stackFound, test.probeErr
+				},
+			)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(
+				recorder,
+				httptest.NewRequest(http.MethodPost, "/", nil),
+			)
+
+			g.Expect(recorder.Code).To(Equal(test.wantStatus))
+			g.Expect(called).To(Equal(test.wantCalled))
+		})
+	}
+}
 
 func TestDeploymentPolicyMutationAccessMiddleware(t *testing.T) {
 	g := NewWithT(t)

@@ -209,6 +209,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   version_state TEXT;
+  scope_belongs_to_organization BOOLEAN := false;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     IF current_setting(
@@ -233,6 +234,55 @@ BEGIN
         'deployment policy bindings require a published immutable version'
         USING ERRCODE = '23514';
     END IF;
+
+    CASE NEW.scope_kind
+      WHEN 'organization' THEN
+        SELECT EXISTS (
+          SELECT 1
+          FROM Organization organization
+          WHERE organization.id = NEW.scope_id
+            AND organization.id = NEW.organization_id
+        ) INTO scope_belongs_to_organization;
+      WHEN 'customer' THEN
+        SELECT EXISTS (
+          SELECT 1
+          FROM CustomerOrganization customer
+          WHERE customer.id = NEW.scope_id
+            AND customer.organization_id = NEW.organization_id
+        ) INTO scope_belongs_to_organization;
+      WHEN 'environment' THEN
+        SELECT EXISTS (
+          SELECT 1
+          FROM Environment scoped_environment
+          WHERE scoped_environment.id = NEW.scope_id
+            AND scoped_environment.organization_id = NEW.organization_id
+        ) INTO scope_belongs_to_organization;
+      WHEN 'deployment_unit' THEN
+        SELECT EXISTS (
+          SELECT 1
+          FROM DeploymentUnit deployment_unit
+          WHERE deployment_unit.id = NEW.scope_id
+            AND deployment_unit.organization_id = NEW.organization_id
+        ) INTO scope_belongs_to_organization;
+      WHEN 'component' THEN
+        SELECT EXISTS (
+          SELECT 1
+          FROM ComponentDefinition component
+          WHERE component.id = NEW.scope_id
+            AND component.organization_id = NEW.organization_id
+        ) INTO scope_belongs_to_organization;
+      ELSE
+        -- Campaign resources are introduced by PR-071. Until that table is
+        -- present, campaign bindings remain unavailable at the DB boundary.
+        scope_belongs_to_organization := false;
+    END CASE;
+
+    IF NOT scope_belongs_to_organization THEN
+      RAISE EXCEPTION
+        'deployment policy binding scope does not belong to organization'
+        USING ERRCODE = '23503';
+    END IF;
+
     RETURN NEW;
   END IF;
 
@@ -276,7 +326,7 @@ ALTER TABLE DeploymentPlan
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
-  ADD CONSTRAINT deploymentplan_effective_policy_shape_check CHECK (
+  ADD CONSTRAINT deploymentplan_effective_policy_shape_check CHECK (COALESCE((
     (
       deployment_unit_id IS NULL
       AND effective_policy IS NULL
@@ -286,6 +336,9 @@ ALTER TABLE DeploymentPlan
     OR
     (
       deployment_unit_id IS NOT NULL
+      AND effective_policy IS NOT NULL
+      AND effective_policy_checksum IS NOT NULL
+      AND subscriber_set_checksum IS NOT NULL
       AND jsonb_typeof(effective_policy) = 'object'
       AND pg_column_size(effective_policy) <= 1048576
       AND effective_policy_checksum ~ '^sha256:[0-9a-f]{64}$'
@@ -294,7 +347,34 @@ ALTER TABLE DeploymentPlan
       AND effective_policy->>'subscriberSetChecksum' =
         subscriber_set_checksum
     )
-  );
+  ), false));
+
+CREATE FUNCTION deployment_plan_policy_evidence_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.deployment_unit_id IS DISTINCT FROM OLD.deployment_unit_id
+     OR NEW.effective_policy IS DISTINCT FROM OLD.effective_policy
+     OR NEW.effective_policy_checksum IS DISTINCT FROM
+       OLD.effective_policy_checksum
+     OR NEW.subscriber_set_checksum IS DISTINCT FROM
+       OLD.subscriber_set_checksum THEN
+    RAISE EXCEPTION 'deployment plan policy evidence is immutable'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER DeploymentPlan_policy_evidence_immutable
+BEFORE UPDATE OF
+  deployment_unit_id,
+  effective_policy,
+  effective_policy_checksum,
+  subscriber_set_checksum
+ON DeploymentPlan
+FOR EACH ROW EXECUTE FUNCTION deployment_plan_policy_evidence_immutable();
 
 CREATE INDEX DeploymentPlan_effective_policy
   ON DeploymentPlan (

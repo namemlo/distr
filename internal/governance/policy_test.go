@@ -22,6 +22,20 @@ func TestValidateDeploymentPolicyVersionRejectsInvalidRestrictedExpression(t *te
 	})))
 }
 
+func TestValidateDeploymentPolicyVersionRejectsDerivedRiskGateAuthority(t *testing.T) {
+	g := NewWithT(t)
+	version := validDeploymentPolicyVersion(uuid.New(), uuid.New(), uuid.New(), uuid.New())
+	version.Document.RiskGates[0].PolicyVersionID = uuid.New()
+	version.Document.RiskGates[0].AuthorityKind = types.PolicyAuthorityOwner
+	version.Document.RiskGates[0].AuthorityID = uuid.New()
+
+	issues := ValidateDeploymentPolicyVersion(version)
+
+	g.Expect(issues).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"Code": Equal("policy.risk_gate.authority_forbidden"),
+	})))
+}
+
 func TestValidateDeploymentPolicyVersionRequiresConcreteBootstrapApproval(t *testing.T) {
 	g := NewWithT(t)
 	version := validDeploymentPolicyVersion(uuid.New(), uuid.New(), uuid.New(), uuid.New())
@@ -90,6 +104,13 @@ func TestComposeEffectivePolicyUsesStrictConjunction(t *testing.T) {
 	g.Expect(effective.SubscriberSetChecksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
 	g.Expect(effective.ApprovalRules).To(HaveLen(2))
 	g.Expect(effective.ApprovalRules[0].AuthorityID).NotTo(Equal(effective.ApprovalRules[1].AuthorityID))
+	g.Expect(effective.RiskGates).To(HaveLen(2))
+	g.Expect(effective.RiskGates[0].AuthorityID).NotTo(Equal(effective.RiskGates[1].AuthorityID))
+	g.Expect(effective.BootstrapRules.ApprovalRules).To(HaveLen(2))
+	g.Expect(effective.BootstrapRules.ApprovalRules[0].AuthorityID).NotTo(Equal(
+		effective.BootstrapRules.ApprovalRules[1].AuthorityID,
+	))
+	g.Expect(effective.BootstrapRules.RequiredGates).To(HaveLen(2))
 	g.Expect(effective.AdmissionRules.AllowedResolutionModes).To(Equal([]types.RequirementResolutionMode{
 		types.RequirementResolutionModeIncluded,
 		types.RequirementResolutionModeSharedProvider,

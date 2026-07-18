@@ -244,6 +244,21 @@ func deploymentPlanCanonicalStateValid(plan types.DeploymentPlan) (bool, error) 
 	}
 	if _, legacyPayload := stored["status"]; legacyPayload {
 		delete(stored, "status")
+		_, storedDeploymentUnit := stored["deploymentUnitId"]
+		_, storedEffectivePolicy := stored["effectivePolicy"]
+		_, storedEffectivePolicyChecksum := stored["effectivePolicyChecksum"]
+		_, storedSubscriberSetChecksum := stored["subscriberSetChecksum"]
+		storedHasPolicyEvidence := storedDeploymentUnit &&
+			storedEffectivePolicy &&
+			storedEffectivePolicyChecksum &&
+			storedSubscriberSetChecksum
+		currentHasPolicyEvidence := plan.DeploymentUnitID != nil ||
+			plan.EffectivePolicy != nil ||
+			plan.EffectivePolicyChecksum != "" ||
+			plan.SubscriberSetChecksum != ""
+		if currentHasPolicyEvidence && !storedHasPolicyEvidence {
+			return false, nil
+		}
 		currentPayload, err := canonicalizeDeploymentPlan(plan)
 		if err != nil {
 			return false, fmt.Errorf("could not canonicalize legacy deployment plan during preflight: %w", err)

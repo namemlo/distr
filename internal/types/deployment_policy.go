@@ -87,8 +87,11 @@ type ApprovalRule struct {
 }
 
 type PolicyRiskGate struct {
-	Key       string `json:"key"`
-	Condition string `json:"condition"`
+	Key             string              `json:"key"`
+	Condition       string              `json:"condition"`
+	PolicyVersionID uuid.UUID           `json:"policyVersionId,omitempty"`
+	AuthorityKind   PolicyAuthorityKind `json:"authorityKind,omitempty"`
+	AuthorityID     uuid.UUID           `json:"authorityId,omitempty"`
 }
 
 type AdmissionRules struct {
@@ -138,6 +141,19 @@ type BootstrapRules struct {
 	Mode             BootstrapMode `json:"mode"`
 	ApprovalRuleKeys []string      `json:"approvalRuleKeys"`
 	RequiredGateKeys []string      `json:"requiredGateKeys"`
+}
+
+type EffectivePolicyReference struct {
+	Key             string              `json:"key"`
+	PolicyVersionID uuid.UUID           `json:"policyVersionId"`
+	AuthorityKind   PolicyAuthorityKind `json:"authorityKind"`
+	AuthorityID     uuid.UUID           `json:"authorityId"`
+}
+
+type EffectiveBootstrapRules struct {
+	Mode          BootstrapMode              `json:"mode"`
+	ApprovalRules []EffectivePolicyReference `json:"approvalRules"`
+	RequiredGates []EffectivePolicyReference `json:"requiredGates"`
 }
 
 type DeploymentPolicyDocument struct {
@@ -243,14 +259,14 @@ type PolicySet struct {
 }
 
 type EffectivePolicy struct {
-	VersionIDs            []uuid.UUID      `json:"versionIds"`
-	Checksum              string           `json:"checksum"`
-	SubscriberSetChecksum string           `json:"subscriberSetChecksum"`
-	ApprovalRules         []ApprovalRule   `json:"approvalRules"`
-	RiskGates             []PolicyRiskGate `json:"riskGates"`
-	AdmissionRules        AdmissionRules   `json:"admissionRules"`
-	CampaignRules         CampaignRules    `json:"campaignRules"`
-	OverrideRules         []OverrideRules  `json:"overrideRules"`
-	RequiredEvidence      []string         `json:"requiredEvidence"`
-	BootstrapRules        BootstrapRules   `json:"bootstrapRules"`
+	VersionIDs            []uuid.UUID             `json:"versionIds"`
+	Checksum              string                  `json:"checksum"`
+	SubscriberSetChecksum string                  `json:"subscriberSetChecksum"`
+	ApprovalRules         []ApprovalRule          `json:"approvalRules"`
+	RiskGates             []PolicyRiskGate        `json:"riskGates"`
+	AdmissionRules        AdmissionRules          `json:"admissionRules"`
+	CampaignRules         CampaignRules           `json:"campaignRules"`
+	OverrideRules         []OverrideRules         `json:"overrideRules"`
+	RequiredEvidence      []string                `json:"requiredEvidence"`
+	BootstrapRules        EffectiveBootstrapRules `json:"bootstrapRules"`
 }

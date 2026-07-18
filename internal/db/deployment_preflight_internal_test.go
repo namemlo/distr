@@ -87,6 +87,26 @@ func TestDeploymentPlanCanonicalStateValidComparesLegacyPayload(t *testing.T) {
 		t.Fatal("expected unchanged legacy immutable state to remain valid")
 	}
 
+	deploymentUnitID := uuid.New()
+	plan.DeploymentUnitID = &deploymentUnitID
+	plan.EffectivePolicy = &types.EffectivePolicy{
+		Checksum:              "sha256:policy",
+		SubscriberSetChecksum: "sha256:subscribers",
+	}
+	plan.EffectivePolicyChecksum = "sha256:policy"
+	plan.SubscriberSetChecksum = "sha256:subscribers"
+	valid, err = deploymentPlanCanonicalStateValid(plan)
+	if err != nil {
+		t.Fatalf("validate legacy plan with injected policy evidence: %v", err)
+	}
+	if valid {
+		t.Fatal("expected legacy payload to reject policy evidence added after publication")
+	}
+	plan.DeploymentUnitID = nil
+	plan.EffectivePolicy = nil
+	plan.EffectivePolicyChecksum = ""
+	plan.SubscriberSetChecksum = ""
+
 	plan.EnvironmentID = uuid.New()
 	valid, err = deploymentPlanCanonicalStateValid(plan)
 	if err != nil {

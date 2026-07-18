@@ -42,6 +42,15 @@ func TestDeploymentPolicyMigrationDefinesImmutableOrganizationScopedResources(t 
 		"effective_policy jsonb",
 		"effective_policy_checksum text",
 		"subscriber_set_checksum text",
+		"check (coalesce((",
+		"effective_policy is not null",
+		"deployment_plan_policy_evidence_immutable",
+		"before update of",
+		"deployment policy binding scope does not belong to organization",
+		"from customerorganization customer",
+		"from environment scoped_environment",
+		"from deploymentunit deployment_unit",
+		"from componentdefinition component",
 	} {
 		g.Expect(sql).To(ContainSubstring(fragment))
 	}
@@ -62,6 +71,14 @@ func TestDeploymentPolicyMigrationDowngradeRefusesEvidenceLoss(t *testing.T) {
 	g.Expect(sql).To(ContainSubstring("lock table"))
 	g.Expect(sql).To(ContainSubstring("downgrade crossing 149 is forbidden"))
 	g.Expect(sql).To(ContainSubstring("exists (select 1 from deploymentpolicyversion)"))
+	for _, field := range []string{
+		"deployment_unit_id is not null",
+		"effective_policy is not null",
+		"effective_policy_checksum is not null",
+		"subscriber_set_checksum is not null",
+	} {
+		g.Expect(sql).To(ContainSubstring(field))
+	}
 }
 
 func TestValidatePolicyBindingRequestEnforcesExactScopeRoleContract(t *testing.T) {
