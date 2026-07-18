@@ -104,7 +104,9 @@ func TestRegistryFlagsRequireControlPlaneForExecutorProtocol(t *testing.T) {
 	g.Expect(protocol.Enabled).To(BeTrue())
 	g.Expect(AllKeys()).To(ContainElement(KeyOperatorControlPlaneV2))
 	g.Expect(AllKeys()).To(ContainElement(KeyExecutorProtocolV2))
-	g.Expect(indexOfKey(AllKeys(), KeyOperatorControlPlaneV2)).To(BeNumerically("<", indexOfKey(AllKeys(), KeyExecutorProtocolV2)))
+	g.Expect(indexOfKey(AllKeys(), KeyOperatorControlPlaneV2)).To(
+		BeNumerically("<", indexOfKey(AllKeys(), KeyExecutorProtocolV2)),
+	)
 }
 
 func TestRegistryMarksEnabledFlags(t *testing.T) {

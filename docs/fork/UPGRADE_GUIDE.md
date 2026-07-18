@@ -93,8 +93,9 @@ migration for schema `131`. Original deployment history remains in `Deployment` 
 
 ## PR-055 Operator Control-Plane v2 Isolation
 
-PR-055 adds two default-off process flags and has no database migration. Deploying the binary without changing
-`DISTR_EXPERIMENTAL_FEATURE_FLAGS` leaves runtime behavior unchanged.
+PR-055 adds two default-off process flags and has no database migration. When the existing value excludes both
+new keys and `all`, deploying the binary without changing `DISTR_EXPERIMENTAL_FEATURE_FLAGS` leaves runtime
+behavior unchanged.
 
 ### Upgrade
 
