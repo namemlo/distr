@@ -1308,3 +1308,26 @@ Use one entry per pull request:
   or application-database behavior.
 - Compatibility notes: Existing v1 plan requests and canonical payloads remain unchanged. Approval decisions and
   execution enforcement are intentionally deferred to later governance slices.
+
+### PR-068 - Checksum-bound approval workflow
+
+- Status: Implemented on the speculative PR-067 base; live stacked PostgreSQL verification is deferred to the
+  final integration gate.
+- Upstream base: `4c2eb9af`.
+- Feature flag: `operator_control_plane_v2` gates mutations; authenticated organization-scoped reads remain
+  available while disabled. Mutations additionally fail closed until the PR-066 scoped authorization adapter is
+  wired after rebase.
+- User-facing behavior: Operators can request approval for an exact frozen deployment plan, review pending work,
+  append actor-attributed decisions, and see owner/subscriber quorum independently resolved.
+- Database changes: Migration 150 adds immutable approval requests and requirements plus append-only decisions,
+  optimistic request revisions, active-request uniqueness, keyset work indexes, and guarded organization retention.
+- API changes: Adds plan approval-request creation and approval-request list/detail/decision routes.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added PR-068 fork notes with exact PR-066/PR-067 and later admission/campaign wiring.
+- Tests: Added pure governance, API, mapping, handler, repository-contract, idempotency, invalidation, pagination,
+  retention, and migration coverage.
+- Upstream contribution notes: Community-neutral approval primitives with no adopter, provider, host, credential,
+  or application-database behavior.
+- Compatibility notes: Existing v1 plans, tasks, execution, agents, and external executors remain unchanged.
+  PR-070 supplies execution admission and PR-071 consumes the approved-plan campaign guard.

@@ -59,6 +59,19 @@ func deploymentPlansRouterWithVerifier(
 				With(option.Request(DeploymentPlanIDRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlan{}))
 
+			type CreateApprovalRequestRouteRequest struct {
+				DeploymentPlanIDRequest
+				api.CreateApprovalRequestRequest
+			}
+
+			r.With(approvalMutationAccessMiddleware()).
+				Post("/approval-requests", createApprovalRequestHandler()).
+				With(option.Description(
+					"Request approval bound to the immutable deployment plan and policy checksums",
+				)).
+				With(option.Request(CreateApprovalRequestRouteRequest{})).
+				With(option.Response(http.StatusOK, api.ApprovalRequest{}))
+
 			type CreateTasksForDeploymentPlanRouteRequest struct {
 				DeploymentPlanIDRequest
 				api.CreateTasksForDeploymentPlanRequest

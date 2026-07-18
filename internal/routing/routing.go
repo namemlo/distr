@@ -199,6 +199,7 @@ func ApiRouter(
 					r.Route("/agent-versions", handlers.AgentVersionsRouter)
 					r.Route("/application-entitlements", handlers.ApplicationEntitlementsRouter)
 					r.Route("/applications", handlers.ApplicationsRouter)
+					r.Route("/approval-requests", handlers.ApprovalRequestsRouter)
 					r.Route("/artifact-entitlements", handlers.ArtifactEntitlementsRouter)
 					r.Route("/artifact-pulls", handlers.ArtifactPullsRouter)
 					r.Route("/artifacts", handlers.ArtifactsRouter)
