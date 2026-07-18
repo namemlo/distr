@@ -10,6 +10,36 @@ import (
 	"github.com/google/uuid"
 )
 
+var ErrObserverNotAuthorized = errors.New("reconciliation observer is not authorized")
+
+type ReconciliationObserverGate interface {
+	AuthorizeReconciliationObserver(context.Context, types.ReconciliationEvidence) error
+}
+
+func ReconcileVerifiedEvidence(
+	ctx context.Context,
+	gate ReconciliationObserverGate,
+	attempt types.ExecutionAttempt,
+	evidence types.ReconciliationEvidence,
+) (types.ReconciliationDecision, error) {
+	if gate == nil {
+		return types.ReconciliationDecision{}, ErrObserverNotAuthorized
+	}
+	if err := gate.AuthorizeReconciliationObserver(ctx, evidence); err != nil {
+		return types.ReconciliationDecision{}, err
+	}
+	if attempt.Status.IsTerminal() {
+		return types.ReconciliationDecision{}, errors.New("terminal execution attempt is immutable")
+	}
+	return ReconcileCallbackLoss(attempt, types.ReconciliationStatusInput{
+		OrganizationID: evidence.OrganizationID, ExecutionID: evidence.ExecutionID,
+		StatusQueryID: evidence.StatusQueryID, EventIdentity: evidence.EventIdentity,
+		Outcome: evidence.Outcome, EvidenceChecksum: evidence.EvidenceChecksum,
+		ObservedAt: evidence.ObservedAt, OperationIncomplete: evidence.OperationIncomplete,
+		RetryRequested: evidence.RetryRequested,
+	})
+}
+
 func EvaluateCancelRequest(
 	attempt types.ExecutionAttempt,
 	request types.CancelRequest,
@@ -118,4 +148,62 @@ func ValidateReconciliationEventIdentity(
 type CampaignExecutionControlBridge interface {
 	CancelCampaignExecution(context.Context, uuid.UUID) error
 	RetryCampaignExecution(context.Context, uuid.UUID, types.RetryDisposition) error
+}
+
+type CampaignControlCoordinator struct {
+	bridge CampaignExecutionControlBridge
+}
+
+type campaignControlCoordinatorContextKey struct{}
+
+func WithCampaignControlCoordinator(
+	ctx context.Context,
+	coordinator *CampaignControlCoordinator,
+) context.Context {
+	return context.WithValue(ctx, campaignControlCoordinatorContextKey{}, coordinator)
+}
+
+func BridgeCampaignCancelIfConfigured(ctx context.Context, executionID uuid.UUID) error {
+	coordinator, _ := ctx.Value(campaignControlCoordinatorContextKey{}).(*CampaignControlCoordinator)
+	if coordinator == nil {
+		return nil
+	}
+	return coordinator.Cancel(ctx, executionID)
+}
+
+func BridgeCampaignRetryIfConfigured(
+	ctx context.Context,
+	executionID uuid.UUID,
+	disposition types.RetryDisposition,
+) error {
+	coordinator, _ := ctx.Value(campaignControlCoordinatorContextKey{}).(*CampaignControlCoordinator)
+	if coordinator == nil {
+		return nil
+	}
+	return coordinator.Retry(ctx, executionID, disposition)
+}
+
+func NewCampaignControlCoordinator(bridge CampaignExecutionControlBridge) *CampaignControlCoordinator {
+	return &CampaignControlCoordinator{bridge: bridge}
+}
+
+func (c *CampaignControlCoordinator) Cancel(ctx context.Context, executionID uuid.UUID) error {
+	if c == nil || c.bridge == nil {
+		return errors.New("campaign execution control bridge is not configured")
+	}
+	return c.bridge.CancelCampaignExecution(ctx, executionID)
+}
+
+func (c *CampaignControlCoordinator) Retry(
+	ctx context.Context,
+	executionID uuid.UUID,
+	disposition types.RetryDisposition,
+) error {
+	if c == nil || c.bridge == nil {
+		return errors.New("campaign execution control bridge is not configured")
+	}
+	if disposition != types.RetryDispositionAllowed {
+		return errors.New("campaign retry is not allowed")
+	}
+	return c.bridge.RetryCampaignExecution(ctx, executionID, disposition)
 }

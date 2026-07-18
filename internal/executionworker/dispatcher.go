@@ -2,10 +2,14 @@ package executionworker
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/executionprotocol"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -51,12 +55,13 @@ type AdmissionGate interface {
 }
 
 type CreateAttemptRequest struct {
-	OrganizationID uuid.UUID
-	ExecutionID    uuid.UUID
-	PlanID         uuid.UUID
-	TaskID         uuid.UUID
-	StepRunID      uuid.UUID
-	StepKey        string
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	ExecutionID        uuid.UUID
+	PlanID             uuid.UUID
+	TaskID             uuid.UUID
+	StepRunID          uuid.UUID
+	StepKey            string
 }
 
 type AttemptCreator interface {
@@ -64,13 +69,14 @@ type AttemptCreator interface {
 }
 
 type DispatchRequest struct {
-	OrganizationID uuid.UUID
-	EnvironmentID  uuid.UUID
-	ExecutionID    uuid.UUID
-	PlanID         uuid.UUID
-	TaskID         uuid.UUID
-	StepRunID      uuid.UUID
-	StepKey        string
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	EnvironmentID      uuid.UUID
+	ExecutionID        uuid.UUID
+	PlanID             uuid.UUID
+	TaskID             uuid.UUID
+	StepRunID          uuid.UUID
+	StepKey            string
 }
 
 type Dispatcher struct {
@@ -89,7 +95,8 @@ func (d *Dispatcher) Dispatch(
 	if d == nil || d.gate == nil || d.creator == nil {
 		return nil, errors.New("execution v2 dispatcher is not configured")
 	}
-	if request.OrganizationID == uuid.Nil || request.ExecutionID == uuid.Nil ||
+	if request.OrganizationID == uuid.Nil || request.DeploymentTargetID == uuid.Nil ||
+		request.ExecutionID == uuid.Nil ||
 		strings.TrimSpace(request.StepKey) == "" {
 		return nil, errors.New("execution v2 dispatch request is invalid")
 	}
@@ -104,8 +111,157 @@ func (d *Dispatcher) Dispatch(
 		return nil, fmt.Errorf("execution v2 admission denied: %s", reason)
 	}
 	return d.creator.CreateExecutionAttempt(ctx, CreateAttemptRequest{
-		OrganizationID: request.OrganizationID, ExecutionID: request.ExecutionID,
-		PlanID: request.PlanID, TaskID: request.TaskID, StepRunID: request.StepRunID,
+		OrganizationID: request.OrganizationID, DeploymentTargetID: request.DeploymentTargetID,
+		ExecutionID: request.ExecutionID,
+		PlanID:      request.PlanID, TaskID: request.TaskID, StepRunID: request.StepRunID,
 		StepKey: strings.TrimSpace(request.StepKey),
+	})
+}
+
+type V1Dispatcher interface {
+	DispatchExecutionV1(context.Context, DispatchRequest) error
+}
+
+type ProtocolDispatcher struct {
+	v1 V1Dispatcher
+	v2 *Dispatcher
+}
+
+type protocolDispatcherContextKey struct{}
+
+func WithProtocolDispatcher(ctx context.Context, dispatcher *ProtocolDispatcher) context.Context {
+	return context.WithValue(ctx, protocolDispatcherContextKey{}, dispatcher)
+}
+
+// DispatchCreatedTasks is the production handoff from durable task creation.
+// V1 remains on the established lease workers; V2 is admitted and persisted as
+// a signed attempt and never falls through into the V1 lease path.
+func DispatchCreatedTasks(ctx context.Context, tasks []types.Task) error {
+	for _, task := range tasks {
+		if task.ProtocolVersion == types.ExecutionProtocolVersionV1 {
+			continue
+		}
+		dispatcher, ok := ctx.Value(protocolDispatcherContextKey{}).(*ProtocolDispatcher)
+		if !ok || dispatcher == nil {
+			return errors.New("execution protocol dispatcher is not configured")
+		}
+		var step *types.StepRun
+		for i := range task.StepRuns {
+			if task.StepRuns[i].Status == types.StepRunStatusPending {
+				step = &task.StepRuns[i]
+				break
+			}
+		}
+		if step == nil {
+			return errors.New("execution v2 task has no pending step")
+		}
+		_, err := dispatcher.Dispatch(ctx, task.ProtocolVersion, DispatchRequest{
+			OrganizationID:     task.OrganizationID,
+			DeploymentTargetID: task.DeploymentTargetID,
+			EnvironmentID:      task.EnvironmentID, ExecutionID: task.ID,
+			PlanID: task.DeploymentPlanID, TaskID: task.ID,
+			StepRunID: step.ID, StepKey: step.StepKey,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func NewProtocolDispatcher(v1 V1Dispatcher, v2 *Dispatcher) *ProtocolDispatcher {
+	return &ProtocolDispatcher{v1: v1, v2: v2}
+}
+
+func (d *ProtocolDispatcher) Dispatch(
+	ctx context.Context,
+	version types.ExecutionProtocolVersion,
+	request DispatchRequest,
+) (*types.ExecutionAttempt, error) {
+	switch version {
+	case types.ExecutionProtocolVersionV1:
+		if d == nil || d.v1 == nil {
+			return nil, errors.New("execution v1 dispatcher is not configured")
+		}
+		return nil, d.v1.DispatchExecutionV1(ctx, request)
+	case types.ExecutionProtocolVersionV2:
+		if d == nil || d.v2 == nil {
+			return nil, errors.New("execution v2 dispatcher is not configured")
+		}
+		return d.v2.Dispatch(ctx, request)
+	default:
+		return nil, errors.New("execution protocol version is invalid")
+	}
+}
+
+type FrozenAttemptInputs struct {
+	AttemptNumber   int
+	PlanChecksum    string
+	ArtifactDigest  string
+	ConfigChecksum  string
+	AdapterRevision string
+	ResourceKey     string
+	FenceGeneration int64
+	Cancellable     bool
+	RetrySafe       bool
+	IntentTTL       time.Duration
+}
+
+type FrozenAttemptInputsLoader interface {
+	LoadFrozenAttemptInputs(context.Context, CreateAttemptRequest) (FrozenAttemptInputs, error)
+}
+
+type RepositoryAttemptCreator struct {
+	loader FrozenAttemptInputsLoader
+	signer executionprotocol.IntentSigner
+}
+
+func NewRepositoryAttemptCreator(
+	loader FrozenAttemptInputsLoader,
+	signer executionprotocol.IntentSigner,
+) *RepositoryAttemptCreator {
+	return &RepositoryAttemptCreator{loader: loader, signer: signer}
+}
+
+func (c *RepositoryAttemptCreator) CreateExecutionAttempt(
+	ctx context.Context,
+	request CreateAttemptRequest,
+) (*types.ExecutionAttempt, error) {
+	if c == nil || c.loader == nil || c.signer == nil {
+		return nil, errors.New("repository attempt creator is not configured")
+	}
+	inputs, err := c.loader.LoadFrozenAttemptInputs(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("load frozen execution inputs: %w", err)
+	}
+	now, err := db.GetTrustedExecutionTime(ctx)
+	if err != nil {
+		return nil, err
+	}
+	attempt := types.ExecutionAttempt{
+		ID: uuid.New(), OrganizationID: request.OrganizationID,
+		DeploymentTargetID: request.DeploymentTargetID,
+		TaskID:             request.TaskID, StepRunID: request.StepRunID,
+		Identity: types.ExecutionIdentity{
+			ExecutionID: request.ExecutionID, AttemptNumber: inputs.AttemptNumber,
+			StepKey: strings.TrimSpace(request.StepKey),
+		},
+		Status:       types.ExecutionAttemptStatusPending,
+		PlanChecksum: inputs.PlanChecksum, ArtifactDigest: inputs.ArtifactDigest,
+		ConfigChecksum: inputs.ConfigChecksum, AdapterRevision: inputs.AdapterRevision,
+		IntentIssuedAt: now, IntentExpiresAt: now.Add(inputs.IntentTTL),
+		Cancellable: inputs.Cancellable, RetrySafe: inputs.RetrySafe,
+		Fence: types.ExecutionFence{
+			ResourceKey: inputs.ResourceKey, Generation: inputs.FenceGeneration,
+		},
+	}
+	intent, err := executionprotocol.BuildExecutionIntent(
+		executionprotocol.WithIntentSigner(ctx, c.signer), attempt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return db.CreateExecutionAttempt(ctx, attempt, intent, types.TrustPolicy{
+		Keys: map[string]ed25519.PublicKey{c.signer.KeyID(): c.signer.PublicKey()},
 	})
 }

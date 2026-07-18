@@ -12,6 +12,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/executionworker"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
@@ -113,6 +114,9 @@ func createTasksForDeploymentPlanHandler() http.HandlerFunc {
 			ConcurrencyPolicy:   request.ConcurrencyPolicy,
 			AdditionalResources: taskLockResourcesFromAPI(request.LockResources),
 		})
+		if err == nil {
+			err = executionworker.DispatchCreatedTasks(ctx, tasks)
+		}
 		respondTaskQueueResult(w, r, log, err, func() {
 			RespondJSON(w, mapping.List(tasks, mapping.TaskToAPI))
 		})

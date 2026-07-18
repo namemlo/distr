@@ -75,6 +75,29 @@ func (m *StateMachine) Heartbeat(request types.HeartbeatRequest) error {
 	return nil
 }
 
+func (m *StateMachine) Acknowledge(request types.HeartbeatRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if request.AttemptID != m.attempt.ID ||
+		request.ExecutorID != m.attempt.ClaimedBy ||
+		request.FenceGeneration != m.attempt.Fence.Generation {
+		return errors.New("execution acknowledgement identity is invalid")
+	}
+	if m.attempt.Status != types.ExecutionAttemptStatusClaimed &&
+		m.attempt.Status != types.ExecutionAttemptStatusRunning {
+		return errors.New("execution attempt does not accept acknowledgement")
+	}
+	if !m.attempt.Fence.LeaseExpiresAt.After(request.Now.UTC()) {
+		return errors.New("execution attempt lease is lost")
+	}
+	if m.attempt.AcknowledgedAt == nil {
+		acknowledgedAt := request.Now.UTC()
+		m.attempt.AcknowledgedAt = &acknowledgedAt
+	}
+	m.attempt.Status = types.ExecutionAttemptStatusRunning
+	return nil
+}
+
 func (m *StateMachine) RecordEvent(
 	input types.ExecutionEventInput,
 ) (types.ExecutionEvent, bool, error) {
@@ -86,8 +109,20 @@ func (m *StateMachine) RecordEvent(
 	if input.FenceGeneration != m.attempt.Fence.Generation {
 		return types.ExecutionEvent{}, false, errors.New("stale fence generation")
 	}
+	if input.ExecutorID != m.attempt.ClaimedBy ||
+		(m.attempt.Status != types.ExecutionAttemptStatusClaimed &&
+			m.attempt.Status != types.ExecutionAttemptStatusRunning) {
+		return types.ExecutionEvent{}, false, errors.New("execution event ownership is invalid")
+	}
+	if !m.attempt.Fence.LeaseExpiresAt.After(input.OccurredAt.UTC()) {
+		return types.ExecutionEvent{}, false, errors.New("execution attempt lease is lost")
+	}
 	if existing, ok := m.events[input.EventSequence]; ok {
-		if existing.PayloadChecksum != input.PayloadChecksum || existing.Status != input.Status {
+		if existing.PayloadChecksum != input.PayloadChecksum ||
+			existing.Status != input.Status || existing.Message != input.Message ||
+			!existing.OccurredAt.Equal(input.OccurredAt.UTC()) ||
+			existing.Identity != input.Identity ||
+			existing.FenceGeneration != input.FenceGeneration {
 			return types.ExecutionEvent{}, false, errors.New("conflicting duplicate execution event")
 		}
 		return existing, true, nil
@@ -99,7 +134,8 @@ func (m *StateMachine) RecordEvent(
 		return types.ExecutionEvent{}, false, errors.New("execution event status is invalid")
 	}
 	event := types.ExecutionEvent{
-		ID: uuid.New(), OrganizationID: input.OrganizationID, AttemptID: input.AttemptID,
+		ID: uuid.New(), OrganizationID: input.OrganizationID,
+		DeploymentTargetID: input.DeploymentTargetID, AttemptID: input.AttemptID,
 		Identity: input.Identity, FenceGeneration: input.FenceGeneration,
 		EventSequence: input.EventSequence, Status: input.Status, PayloadChecksum: input.PayloadChecksum,
 		Message: input.Message, OccurredAt: input.OccurredAt.UTC(), CreatedAt: time.Now().UTC(),
@@ -120,6 +156,13 @@ func (m *StateMachine) Complete(input types.CompletionInput) error {
 	}
 	if input.FenceGeneration != m.attempt.Fence.Generation {
 		return errors.New("stale fence generation")
+	}
+	if m.attempt.Status != types.ExecutionAttemptStatusClaimed &&
+		m.attempt.Status != types.ExecutionAttemptStatusRunning {
+		return errors.New("completion requires an owned active attempt")
+	}
+	if !m.attempt.Fence.LeaseExpiresAt.After(input.CompletedAt.UTC()) {
+		return errors.New("execution attempt lease is lost")
 	}
 	switch input.Status {
 	case types.ExecutionAttemptStatusSucceeded, types.ExecutionAttemptStatusFailed,

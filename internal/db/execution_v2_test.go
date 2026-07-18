@@ -1,13 +1,13 @@
 package db
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/executionprotocol"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -16,7 +16,8 @@ import (
 func TestExecutionV2RepositoryRequestValidation(t *testing.T) {
 	g := NewWithT(t)
 	request := types.ClaimRequest{
-		OrganizationID: uuid.New(), AttemptID: uuid.New(), ExecutorID: "executor-a", ExpectedGeneration: 1,
+		OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		AttemptID: uuid.New(), ExecutorID: "executor-a", ExpectedGeneration: 1,
 		Now: time.Now().UTC(), LeaseDuration: time.Minute,
 	}
 	g.Expect(validateExecutionV2ClaimRequest(request)).To(Succeed())
@@ -27,9 +28,11 @@ func TestExecutionV2RepositoryRequestValidation(t *testing.T) {
 func TestExecutionV2AttemptInsertValidation(t *testing.T) {
 	g := NewWithT(t)
 	seed := sha256.Sum256([]byte("repository-key"))
-	publicKey := ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)
+	privateKey := ed25519.NewKeyFromSeed(seed[:])
+	keyID := executionprotocol.PublicKeyFingerprint(privateKey.Public().(ed25519.PublicKey))
 	attempt := types.ExecutionAttempt{
-		ID: uuid.New(), OrganizationID: uuid.New(), TaskID: uuid.New(), StepRunID: uuid.New(),
+		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		TaskID: uuid.New(), StepRunID: uuid.New(),
 		Identity: types.ExecutionIdentity{
 			ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy",
 		},
@@ -39,14 +42,12 @@ func TestExecutionV2AttemptInsertValidation(t *testing.T) {
 		IntentIssuedAt: time.Now().UTC(), IntentExpiresAt: time.Now().UTC().Add(time.Minute),
 		Fence: types.ExecutionFence{ResourceKey: "target:1", Generation: 1},
 	}
-	intent := types.SignedExecutionIntent{
-		Payload:   []byte(`{}`),
-		Signature: base64.RawStdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)),
-	}
-	payloadSum := sha256.Sum256(intent.Payload)
-	keySum := sha256.Sum256(publicKey)
-	intent.Checksum = "sha256:" + hex.EncodeToString(payloadSum[:])
-	intent.KeyID = "sha256:" + hex.EncodeToString(keySum[:])
+	signer, err := executionprotocol.NewEd25519IntentSigner(keyID, privateKey)
+	g.Expect(err).NotTo(HaveOccurred())
+	intent, err := executionprotocol.BuildExecutionIntent(
+		executionprotocol.WithIntentSigner(context.Background(), signer), attempt,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(Succeed())
 	attempt.Status = types.ExecutionAttemptStatusRunning
 	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(MatchError(ContainSubstring("PENDING")))
@@ -74,6 +75,11 @@ func TestCancelStatusAndReconciliationRepositoryValidation(t *testing.T) {
 		OrganizationID: uuid.New(), ExecutionID: uuid.New(), StatusQueryID: uuid.New(),
 		EventIdentity: uuid.New(), Outcome: types.ReconciliationOutcomeUnknown,
 		EvidenceChecksum: "sha256:" + repeatDBHex("dd"), ObservedAt: time.Now().UTC(),
+		SignedEvidence: types.SignedReconciliationEvidence{
+			Payload:  []byte(`{"outcome":"UNKNOWN"}`),
+			Checksum: "sha256:" + repeatDBHex("aa"),
+			KeyID:    "sha256:" + repeatDBHex("bb"), Signature: "signed",
+		},
 	}
 	g.Expect(validateReconciliationStatusInput(reconciliation)).To(Succeed())
 }

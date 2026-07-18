@@ -9,8 +9,10 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/executionprotocol"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/middleware"
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/oaswrap/spec/adapter/chiopenapi"
 	"github.com/oaswrap/spec/option"
@@ -31,6 +33,12 @@ func ExecutionV2ExecutorRouter(r chiopenapi.Router) {
 		AttemptID uuid.UUID `path:"attemptId"`
 	}
 	r.Route("/attempts/{attemptId}", func(r chiopenapi.Router) {
+		r.Post("/acknowledge", acknowledgeExecutionV2Handler()).
+			With(option.Request(struct {
+				attemptPath
+				api.ExecutionV2AcknowledgeRequest
+			}{})).
+			With(option.Response(http.StatusNoContent, nil))
 		r.Get("/cancel", getPendingExecutionCancelHandler()).
 			With(option.Request(attemptPath{})).
 			With(option.Response(http.StatusOK, struct {
@@ -117,8 +125,11 @@ func claimExecutionV2Handler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
-		attempt, err := db.ClaimExecutionAttempt(r.Context(), request.ToTypes(orgID, time.Now().UTC()))
+		agent := auth.AgentAuthentication.Require(r.Context())
+		orgID := agent.CurrentOrgID()
+		attempt, err := db.ClaimExecutionAttempt(r.Context(), request.ToTypes(
+			orgID, agent.CurrentDeploymentTargetID(), time.Now().UTC(),
+		))
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return
@@ -129,6 +140,32 @@ func claimExecutionV2Handler() http.HandlerFunc {
 			return
 		}
 		RespondJSON(w, api.ExecutionV2AttemptResponse{Attempt: *attempt, Intent: intent})
+	}
+}
+
+func acknowledgeExecutionV2Handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		attemptID, ok := executionV2AttemptID(w, r)
+		if !ok {
+			return
+		}
+		request, err := JsonBody[api.ExecutionV2AcknowledgeRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agent := auth.AgentAuthentication.Require(r.Context())
+		err = db.AcknowledgeExecutionAttempt(r.Context(), request.ToTypes(
+			agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(), attemptID,
+		))
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -146,8 +183,10 @@ func heartbeatExecutionV2Handler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
-		err = db.HeartbeatExecutionAttempt(r.Context(), request.ToTypes(orgID, attemptID, time.Now().UTC()))
+		agent := auth.AgentAuthentication.Require(r.Context())
+		err = db.HeartbeatExecutionAttempt(r.Context(), request.ToTypes(
+			agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(), attemptID, time.Now().UTC(),
+		))
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return
@@ -170,8 +209,10 @@ func recordExecutionV2EventHandler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
-		event, err := db.RecordExecutionEvent(r.Context(), request.ToTypes(orgID, attemptID))
+		agent := auth.AgentAuthentication.Require(r.Context())
+		event, err := db.RecordExecutionEvent(r.Context(), request.ToTypes(
+			agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(), attemptID,
+		))
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return
@@ -196,8 +237,10 @@ func completeExecutionV2Handler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
-		err = db.CompleteExecutionAttempt(r.Context(), request.ToTypes(orgID, attemptID))
+		agent := auth.AgentAuthentication.Require(r.Context())
+		err = db.CompleteExecutionAttempt(r.Context(), request.ToTypes(
+			agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(), attemptID,
+		))
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return
@@ -212,8 +255,10 @@ func getPendingExecutionCancelHandler() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
-		cancel, err := db.GetPendingExecutionCancel(r.Context(), attemptID, orgID)
+		agent := auth.AgentAuthentication.Require(r.Context())
+		cancel, err := db.GetPendingExecutionCancel(
+			r.Context(), attemptID, agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(),
+		)
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return
@@ -238,9 +283,12 @@ func acknowledgeExecutionCancelHandler() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
+		agent := auth.AgentAuthentication.Require(r.Context())
 		err = db.RecordCancelAcknowledgement(
-			r.Context(), request.ToTypes(orgID, attemptID, time.Now().UTC()),
+			r.Context(), request.ToTypes(
+				agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(),
+				attemptID, time.Now().UTC(),
+			),
 		)
 		if err != nil {
 			respondExecutionV2Error(w, err)
@@ -256,8 +304,10 @@ func getPendingExecutionStatusQueryHandler() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		orgID := auth.AgentAuthentication.Require(r.Context()).CurrentOrgID()
-		query, err := db.GetPendingExecutionStatusQuery(r.Context(), attemptID, orgID)
+		agent := auth.AgentAuthentication.Require(r.Context())
+		query, err := db.GetPendingExecutionStatusQuery(
+			r.Context(), attemptID, agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(),
+		)
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return
@@ -286,6 +336,9 @@ func requestExecutionCancelHandler() http.HandlerFunc {
 		err = db.RequestExecutionCancel(r.Context(), request.ToTypes(
 			*authInfo.CurrentOrgID(), executionID, authInfo.CurrentUserID(), time.Now().UTC(),
 		))
+		if err == nil {
+			err = executionprotocol.BridgeCampaignCancelIfConfigured(r.Context(), executionID)
+		}
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return
@@ -337,9 +390,26 @@ func importExecutionReconciliationHandler() http.HandlerFunc {
 			return
 		}
 		authInfo := auth.Authentication.Require(r.Context())
-		err = db.ImportReconciliationStatus(
-			r.Context(), request.ToTypes(*authInfo.CurrentOrgID(), executionID),
+		evidence, err := executionprotocol.VerifyImportedReconciliationEvidence(
+			r.Context(), request.Evidence,
 		)
+		if err != nil {
+			respondExecutionV2Error(w, apierrors.NewConflict(err.Error()))
+			return
+		}
+		if evidence.OrganizationID != *authInfo.CurrentOrgID() ||
+			evidence.ExecutionID != executionID {
+			respondExecutionV2Error(w, apierrors.NewConflict("reconciliation evidence scope mismatch"))
+			return
+		}
+		err = db.ImportReconciliationStatus(
+			r.Context(), api.ReconciliationEvidenceToTypes(evidence, request.Evidence),
+		)
+		if err == nil && evidence.RetryRequested {
+			err = executionprotocol.BridgeCampaignRetryIfConfigured(
+				r.Context(), executionID, types.RetryDispositionAllowed,
+			)
+		}
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return

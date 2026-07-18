@@ -36,9 +36,13 @@ func (r *ExecutionV2ClaimRequest) Validate() error {
 	return nil
 }
 
-func (r ExecutionV2ClaimRequest) ToTypes(orgID uuid.UUID, now time.Time) types.ClaimRequest {
+func (r ExecutionV2ClaimRequest) ToTypes(
+	orgID, deploymentTargetID uuid.UUID,
+	now time.Time,
+) types.ClaimRequest {
 	return types.ClaimRequest{
-		OrganizationID: orgID, AttemptID: r.AttemptID, ExecutorID: r.ExecutorID,
+		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID,
+		AttemptID: r.AttemptID, ExecutorID: r.ExecutorID,
 		ExpectedGeneration: r.ExpectedGeneration, Now: now.UTC(),
 		LeaseDuration: time.Duration(r.LeaseSeconds) * time.Second,
 	}
@@ -65,17 +69,43 @@ func (r *ExecutionV2HeartbeatRequest) Validate() error {
 }
 
 func (r ExecutionV2HeartbeatRequest) ToTypes(
-	orgID, attemptID uuid.UUID,
+	orgID, deploymentTargetID, attemptID uuid.UUID,
 	now time.Time,
 ) types.HeartbeatRequest {
 	return types.HeartbeatRequest{
-		OrganizationID: orgID, AttemptID: attemptID, ExecutorID: r.ExecutorID,
+		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID,
+		AttemptID: attemptID, ExecutorID: r.ExecutorID,
 		FenceGeneration: r.FenceGeneration, Now: now.UTC(),
 		LeaseDuration: time.Duration(r.LeaseSeconds) * time.Second,
 	}
 }
 
+type ExecutionV2AcknowledgeRequest struct {
+	ExecutorID      string `json:"executorId"`
+	FenceGeneration int64  `json:"fenceGeneration"`
+}
+
+func (r *ExecutionV2AcknowledgeRequest) Validate() error {
+	r.ExecutorID = strings.TrimSpace(r.ExecutorID)
+	if r.ExecutorID == "" || len(r.ExecutorID) > 128 ||
+		strings.ContainsAny(r.ExecutorID, "\r\n") || r.FenceGeneration <= 0 {
+		return validation.NewValidationFailedError("acknowledgement identity is invalid")
+	}
+	return nil
+}
+
+func (r ExecutionV2AcknowledgeRequest) ToTypes(
+	orgID, deploymentTargetID, attemptID uuid.UUID,
+) types.HeartbeatRequest {
+	return types.HeartbeatRequest{
+		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID,
+		AttemptID: attemptID, ExecutorID: r.ExecutorID,
+		FenceGeneration: r.FenceGeneration,
+	}
+}
+
 type ExecutionV2EventRequest struct {
+	ExecutorID      string                     `json:"executorId"`
 	ExecutionID     uuid.UUID                  `json:"executionId"`
 	AttemptNumber   int                        `json:"attemptNumber"`
 	StepKey         string                     `json:"stepKey"`
@@ -89,8 +119,11 @@ type ExecutionV2EventRequest struct {
 
 func (r *ExecutionV2EventRequest) Validate() error {
 	r.StepKey = strings.TrimSpace(r.StepKey)
+	r.ExecutorID = strings.TrimSpace(r.ExecutorID)
 	r.Message = strings.TrimSpace(r.Message)
-	if r.ExecutionID == uuid.Nil || r.AttemptNumber <= 0 || r.StepKey == "" {
+	if r.ExecutorID == "" || len(r.ExecutorID) > 128 ||
+		strings.ContainsAny(r.ExecutorID, "\r\n") ||
+		r.ExecutionID == uuid.Nil || r.AttemptNumber <= 0 || r.StepKey == "" {
 		return validation.NewValidationFailedError("execution identity is invalid")
 	}
 	if r.FenceGeneration <= 0 {
@@ -115,16 +148,17 @@ func (r *ExecutionV2EventRequest) Validate() error {
 }
 
 func (r ExecutionV2EventRequest) ToTypes(
-	orgID, attemptID uuid.UUID,
+	orgID, deploymentTargetID, attemptID uuid.UUID,
 ) types.ExecutionEventInput {
 	return types.ExecutionEventInput{
-		OrganizationID: orgID, AttemptID: attemptID,
+		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID,
+		AttemptID: attemptID, ExecutorID: r.ExecutorID,
 		Identity: types.ExecutionIdentity{
 			ExecutionID: r.ExecutionID, AttemptNumber: r.AttemptNumber, StepKey: r.StepKey,
 		},
 		FenceGeneration: r.FenceGeneration, EventSequence: r.EventSequence,
 		Status: r.Status, PayloadChecksum: r.PayloadChecksum, Message: r.Message,
-		OccurredAt: r.OccurredAt.UTC(),
+		OccurredAt: r.OccurredAt.UTC().Truncate(time.Microsecond),
 	}
 }
 
@@ -158,10 +192,11 @@ func (r *ExecutionV2CompletionRequest) Validate() error {
 }
 
 func (r ExecutionV2CompletionRequest) ToTypes(
-	orgID, attemptID uuid.UUID,
+	orgID, deploymentTargetID, attemptID uuid.UUID,
 ) types.CompletionInput {
 	return types.CompletionInput{
-		OrganizationID: orgID, AttemptID: attemptID, ExecutorID: r.ExecutorID,
+		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID,
+		AttemptID: attemptID, ExecutorID: r.ExecutorID,
 		FenceGeneration: r.FenceGeneration, Status: r.Status,
 		FailureReason: r.FailureReason, CompletedAt: r.CompletedAt.UTC(),
 	}
@@ -233,45 +268,30 @@ func (r ExecutionStatusRequest) ToTypes(
 }
 
 type ExecutionReconciliationRequest struct {
-	StatusQueryID       uuid.UUID                   `json:"statusQueryId"`
-	EventIdentity       uuid.UUID                   `json:"eventIdentity"`
-	Outcome             types.ReconciliationOutcome `json:"outcome"`
-	EvidenceChecksum    string                      `json:"evidenceChecksum"`
-	ObservedAt          time.Time                   `json:"observedAt"`
-	OperationIncomplete bool                        `json:"operationIncomplete"`
-	RetryRequested      bool                        `json:"retryRequested"`
+	Evidence types.SignedReconciliationEvidence `json:"evidence"`
 }
 
 func (r *ExecutionReconciliationRequest) Validate() error {
-	if r.StatusQueryID == uuid.Nil {
-		return validation.NewValidationFailedError("statusQueryId is required")
-	}
-	if r.EventIdentity == uuid.Nil {
-		return validation.NewValidationFailedError("eventIdentity is required")
-	}
-	if !r.Outcome.IsValid() {
-		return validation.NewValidationFailedError("outcome is invalid")
-	}
-	if !executionV2ChecksumPattern.MatchString(r.EvidenceChecksum) {
-		return validation.NewValidationFailedError("evidenceChecksum must be a sha256 checksum")
-	}
-	if r.ObservedAt.IsZero() {
-		return validation.NewValidationFailedError("observedAt is required")
-	}
-	if r.RetryRequested && r.Outcome != types.ReconciliationOutcomeUnknown {
-		return validation.NewValidationFailedError("retry is allowed only for unknown outcomes")
+	if len(r.Evidence.Payload) == 0 ||
+		!executionV2ChecksumPattern.MatchString(r.Evidence.Checksum) ||
+		!executionV2ChecksumPattern.MatchString(r.Evidence.KeyID) ||
+		strings.TrimSpace(r.Evidence.Signature) == "" {
+		return validation.NewValidationFailedError("signed reconciliation evidence is required")
 	}
 	return nil
 }
 
-func (r ExecutionReconciliationRequest) ToTypes(
-	orgID, executionID uuid.UUID,
+func ReconciliationEvidenceToTypes(
+	evidence types.ReconciliationEvidence,
+	signed types.SignedReconciliationEvidence,
 ) types.ReconciliationStatusInput {
 	return types.ReconciliationStatusInput{
-		OrganizationID: orgID, ExecutionID: executionID, StatusQueryID: r.StatusQueryID,
-		EventIdentity: r.EventIdentity, Outcome: r.Outcome,
-		EvidenceChecksum: r.EvidenceChecksum, ObservedAt: r.ObservedAt.UTC(),
-		OperationIncomplete: r.OperationIncomplete, RetryRequested: r.RetryRequested,
+		OrganizationID: evidence.OrganizationID, ExecutionID: evidence.ExecutionID,
+		StatusQueryID: evidence.StatusQueryID, EventIdentity: evidence.EventIdentity,
+		Outcome: evidence.Outcome, EvidenceChecksum: evidence.EvidenceChecksum,
+		ObservedAt:          evidence.ObservedAt.UTC(),
+		OperationIncomplete: evidence.OperationIncomplete, RetryRequested: evidence.RetryRequested,
+		SignedEvidence: signed,
 	}
 }
 
@@ -291,11 +311,12 @@ func (r *ExecutionCancelAcknowledgementRequest) Validate() error {
 }
 
 func (r ExecutionCancelAcknowledgementRequest) ToTypes(
-	orgID, attemptID uuid.UUID,
+	orgID, deploymentTargetID, attemptID uuid.UUID,
 	now time.Time,
 ) types.CancelAcknowledgement {
 	return types.CancelAcknowledgement{
-		OrganizationID: orgID, CancelRequestID: r.CancelRequestID, AttemptID: attemptID,
+		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID,
+		CancelRequestID: r.CancelRequestID, AttemptID: attemptID,
 		ExecutorID: r.ExecutorID, FenceGeneration: r.FenceGeneration,
 		Accepted: r.Accepted, AcknowledgedAt: now.UTC(),
 	}

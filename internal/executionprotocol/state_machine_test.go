@@ -34,9 +34,15 @@ func TestExecutionV2StateMachineFencingAndIdempotency(t *testing.T) {
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(duplicate.ClaimedBy).To(Equal("executor-a"))
+	g.Expect(duplicate.AcknowledgedAt).To(BeNil())
+	g.Expect(machine.Acknowledge(types.HeartbeatRequest{
+		AttemptID: attempt.ID, ExecutorID: "executor-a", FenceGeneration: 3,
+		Now: now.Add(time.Second),
+	})).To(Succeed())
+	g.Expect(machine.Attempt().AcknowledgedAt).NotTo(BeNil())
 
 	first, duplicateEvent, err := machine.RecordEvent(types.ExecutionEventInput{
-		AttemptID: attempt.ID, Identity: attempt.Identity, FenceGeneration: 3,
+		AttemptID: attempt.ID, ExecutorID: "executor-a", Identity: attempt.Identity, FenceGeneration: 3,
 		EventSequence: 1, Status: types.ExecutionEventStatusRunning, PayloadChecksum: "sha256:" + repeatHex("66"),
 		OccurredAt: now.Add(2 * time.Second),
 	})
@@ -45,7 +51,7 @@ func TestExecutionV2StateMachineFencingAndIdempotency(t *testing.T) {
 	g.Expect(first.EventSequence).To(Equal(int64(1)))
 
 	replayed, duplicateEvent, err := machine.RecordEvent(types.ExecutionEventInput{
-		AttemptID: attempt.ID, Identity: attempt.Identity, FenceGeneration: 3,
+		AttemptID: attempt.ID, ExecutorID: "executor-a", Identity: attempt.Identity, FenceGeneration: 3,
 		EventSequence: 1, Status: types.ExecutionEventStatusRunning, PayloadChecksum: "sha256:" + repeatHex("66"),
 		OccurredAt: now.Add(2 * time.Second),
 	})
@@ -54,14 +60,23 @@ func TestExecutionV2StateMachineFencingAndIdempotency(t *testing.T) {
 	g.Expect(replayed.ID).To(Equal(first.ID))
 
 	_, _, err = machine.RecordEvent(types.ExecutionEventInput{
-		AttemptID: attempt.ID, Identity: attempt.Identity, FenceGeneration: 3,
+		AttemptID: attempt.ID, ExecutorID: "executor-a",
+		Identity: attempt.Identity, FenceGeneration: 3,
+		EventSequence: 1, Status: types.ExecutionEventStatusRunning,
+		PayloadChecksum: "sha256:" + repeatHex("66"), Message: "changed",
+		OccurredAt: now.Add(2 * time.Second),
+	})
+	g.Expect(err).To(MatchError(ContainSubstring("conflicting duplicate")))
+
+	_, _, err = machine.RecordEvent(types.ExecutionEventInput{
+		AttemptID: attempt.ID, ExecutorID: "executor-a", Identity: attempt.Identity, FenceGeneration: 3,
 		EventSequence: 1, Status: types.ExecutionEventStatusRunning, PayloadChecksum: "sha256:" + repeatHex("77"),
 		OccurredAt: now.Add(2 * time.Second),
 	})
 	g.Expect(err).To(MatchError(ContainSubstring("conflicting duplicate")))
 
 	_, _, err = machine.RecordEvent(types.ExecutionEventInput{
-		AttemptID: attempt.ID, Identity: attempt.Identity, FenceGeneration: 3,
+		AttemptID: attempt.ID, ExecutorID: "executor-a", Identity: attempt.Identity, FenceGeneration: 3,
 		EventSequence: 3, Status: types.ExecutionEventStatusRunning, PayloadChecksum: "sha256:" + repeatHex("88"),
 		OccurredAt: now.Add(3 * time.Second),
 	})
@@ -133,7 +148,7 @@ func TestExecutionV2CrashRecoveryTimeoutAndRestart(t *testing.T) {
 	restarted, err = NewStateMachine(running)
 	g.Expect(err).NotTo(HaveOccurred())
 	_, duplicate, err := restarted.RecordEvent(types.ExecutionEventInput{
-		AttemptID: running.ID, Identity: identity, FenceGeneration: 1,
+		AttemptID: running.ID, ExecutorID: "executor-a", Identity: identity, FenceGeneration: 1,
 		EventSequence: 2, Status: types.ExecutionEventStatusRunning,
 		PayloadChecksum: "sha256:" + repeatHex("99"), OccurredAt: now.Add(2 * time.Second),
 	})
@@ -141,7 +156,7 @@ func TestExecutionV2CrashRecoveryTimeoutAndRestart(t *testing.T) {
 	g.Expect(duplicate).To(BeFalse())
 	err = restarted.Complete(types.CompletionInput{
 		AttemptID: running.ID, ExecutorID: "executor-a", FenceGeneration: 1,
-		Status: types.ExecutionAttemptStatusTimedOut, CompletedAt: now.Add(2 * time.Minute),
+		Status: types.ExecutionAttemptStatusTimedOut, CompletedAt: now.Add(30 * time.Second),
 		FailureReason: "deadline exceeded",
 	})
 	g.Expect(err).NotTo(HaveOccurred())

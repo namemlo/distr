@@ -14,6 +14,7 @@ CREATE TABLE ExecutionAttempt (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  deployment_target_id UUID NOT NULL,
   task_id UUID NOT NULL,
   step_run_id UUID NOT NULL,
   execution_id UUID NOT NULL,
@@ -62,15 +63,18 @@ CREATE TABLE ExecutionAttempt (
     UNIQUE (
       id,
       organization_id,
+      deployment_target_id,
       execution_id,
       attempt_number,
       step_key
     ),
   CONSTRAINT executionattempt_id_organization_unique
     UNIQUE (id, organization_id),
+  CONSTRAINT executionattempt_id_org_target_unique
+    UNIQUE (id, organization_id, deployment_target_id),
   CONSTRAINT executionattempt_task_fk
-    FOREIGN KEY (task_id, organization_id)
-    REFERENCES Task(id, organization_id)
+    FOREIGN KEY (task_id, deployment_target_id, organization_id)
+    REFERENCES Task(id, deployment_target_id, organization_id)
     ON UPDATE NO ACTION
     ON DELETE CASCADE,
   CONSTRAINT executionattempt_step_run_fk
@@ -146,6 +150,7 @@ CREATE TABLE ExecutionEvent (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  deployment_target_id UUID NOT NULL,
   execution_attempt_id UUID NOT NULL,
   execution_id UUID NOT NULL,
   attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
@@ -169,6 +174,7 @@ CREATE TABLE ExecutionEvent (
     FOREIGN KEY (
       execution_attempt_id,
       organization_id,
+      deployment_target_id,
       execution_id,
       attempt_number,
       step_key
@@ -176,6 +182,7 @@ CREATE TABLE ExecutionEvent (
     REFERENCES ExecutionAttempt(
       id,
       organization_id,
+      deployment_target_id,
       execution_id,
       attempt_number,
       step_key
@@ -183,9 +190,21 @@ CREATE TABLE ExecutionEvent (
     ON UPDATE NO ACTION
     ON DELETE CASCADE,
   CONSTRAINT executionevent_identity_unique
-    UNIQUE (execution_id, attempt_number, step_key, event_sequence),
+    UNIQUE (
+      organization_id,
+      deployment_target_id,
+      execution_id,
+      attempt_number,
+      step_key,
+      event_sequence
+    ),
   CONSTRAINT executionevent_attempt_sequence_unique
-    UNIQUE (execution_attempt_id, event_sequence)
+    UNIQUE (
+      organization_id,
+      deployment_target_id,
+      execution_attempt_id,
+      event_sequence
+    )
 );
 
 CREATE INDEX ExecutionAttempt_organization_status

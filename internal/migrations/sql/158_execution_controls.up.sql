@@ -8,6 +8,19 @@ ALTER TABLE ExecutionAttempt
   );
 
 ALTER TABLE ExecutionAttempt
+  DROP CONSTRAINT executionattempt_completion_check,
+  ADD CONSTRAINT executionattempt_completion_check CHECK (
+    (
+      status IN ('PENDING', 'CLAIMED', 'RUNNING', 'UNKNOWN')
+      AND completed_at IS NULL
+    )
+    OR (
+      status IN ('SUCCEEDED', 'FAILED', 'CANCELED', 'TIMED_OUT', 'FENCED')
+      AND completed_at IS NOT NULL
+    )
+  );
+
+ALTER TABLE ExecutionAttempt
   ADD CONSTRAINT executionattempt_id_org_execution_unique
     UNIQUE (id, organization_id, execution_id);
 
@@ -48,7 +61,7 @@ CREATE TABLE ExecutionCancelRequest (
     ON UPDATE NO ACTION
     ON DELETE CASCADE,
   CONSTRAINT executioncancelrequest_idempotency_unique
-    UNIQUE (organization_id, execution_id, idempotency_key),
+    UNIQUE (organization_id, execution_attempt_id, idempotency_key),
   CONSTRAINT executioncancelrequest_ack_check CHECK (
     (
       status = 'REQUESTED'
@@ -97,7 +110,7 @@ CREATE TABLE ExecutionStatusQuery (
     ON UPDATE NO ACTION
     ON DELETE CASCADE,
   CONSTRAINT executionstatusquery_idempotency_unique
-    UNIQUE (organization_id, execution_id, idempotency_key),
+    UNIQUE (organization_id, execution_attempt_id, idempotency_key),
   CONSTRAINT executionstatusquery_interval_check CHECK (
     expires_at > created_at
   ),
@@ -130,6 +143,21 @@ CREATE TABLE ExecutionReconciliationEvent (
   ),
   evidence_checksum TEXT NOT NULL CHECK (
     evidence_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  evidence_payload BYTEA NOT NULL CHECK (
+    octet_length(evidence_payload) BETWEEN 2 AND 1048576
+  ),
+  evidence_envelope_checksum TEXT NOT NULL CHECK (
+    evidence_envelope_checksum ~ '^sha256:[0-9a-f]{64}$'
+    AND evidence_envelope_checksum =
+      'sha256:' || encode(sha256(evidence_payload), 'hex')
+  ),
+  evidence_key_id TEXT NOT NULL CHECK (
+    evidence_key_id ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  evidence_signature TEXT NOT NULL CHECK (
+    length(evidence_signature) BETWEEN 80 AND 128
+    AND evidence_signature !~ E'[\r\n]'
   ),
   observed_at TIMESTAMPTZ NOT NULL,
   operation_incomplete BOOLEAN NOT NULL,

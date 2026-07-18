@@ -56,28 +56,29 @@ func (s ExecutionAttemptStatus) IsTerminal() bool {
 }
 
 type ExecutionAttempt struct {
-	ID                uuid.UUID              `db:"id" json:"id"`
-	CreatedAt         time.Time              `db:"created_at" json:"createdAt"`
-	UpdatedAt         time.Time              `db:"updated_at" json:"updatedAt"`
-	OrganizationID    uuid.UUID              `db:"organization_id" json:"organizationId"`
-	TaskID            uuid.UUID              `db:"task_id" json:"taskId"`
-	StepRunID         uuid.UUID              `db:"step_run_id" json:"stepRunId"`
-	Identity          ExecutionIdentity      `db:"-" json:"identity"`
-	Status            ExecutionAttemptStatus `db:"status" json:"status"`
-	ClaimedBy         string                 `db:"claimed_by" json:"claimedBy,omitempty"`
-	PlanChecksum      string                 `db:"plan_checksum" json:"planChecksum"`
-	ArtifactDigest    string                 `db:"artifact_digest" json:"artifactDigest"`
-	ConfigChecksum    string                 `db:"config_checksum" json:"configChecksum"`
-	AdapterRevision   string                 `db:"adapter_revision" json:"adapterRevision"`
-	IntentIssuedAt    time.Time              `db:"intent_issued_at" json:"intentIssuedAt"`
-	IntentExpiresAt   time.Time              `db:"intent_expires_at" json:"intentExpiresAt"`
-	LastEventSequence int64                  `db:"last_event_sequence" json:"lastEventSequence"`
-	AcknowledgedAt    *time.Time             `db:"acknowledged_at" json:"acknowledgedAt,omitempty"`
-	CompletedAt       *time.Time             `db:"completed_at" json:"completedAt,omitempty"`
-	Cancellable       bool                   `db:"cancellable" json:"cancellable"`
-	RetrySafe         bool                   `db:"retry_safe" json:"retrySafe"`
-	FailureReason     string                 `db:"failure_reason" json:"failureReason,omitempty"`
-	Fence             ExecutionFence         `db:"-" json:"fence"`
+	ID                 uuid.UUID              `db:"id" json:"id"`
+	CreatedAt          time.Time              `db:"created_at" json:"createdAt"`
+	UpdatedAt          time.Time              `db:"updated_at" json:"updatedAt"`
+	OrganizationID     uuid.UUID              `db:"organization_id" json:"organizationId"`
+	DeploymentTargetID uuid.UUID              `db:"deployment_target_id" json:"deploymentTargetId"`
+	TaskID             uuid.UUID              `db:"task_id" json:"taskId"`
+	StepRunID          uuid.UUID              `db:"step_run_id" json:"stepRunId"`
+	Identity           ExecutionIdentity      `db:"-" json:"identity"`
+	Status             ExecutionAttemptStatus `db:"status" json:"status"`
+	ClaimedBy          string                 `db:"claimed_by" json:"claimedBy,omitempty"`
+	PlanChecksum       string                 `db:"plan_checksum" json:"planChecksum"`
+	ArtifactDigest     string                 `db:"artifact_digest" json:"artifactDigest"`
+	ConfigChecksum     string                 `db:"config_checksum" json:"configChecksum"`
+	AdapterRevision    string                 `db:"adapter_revision" json:"adapterRevision"`
+	IntentIssuedAt     time.Time              `db:"intent_issued_at" json:"intentIssuedAt"`
+	IntentExpiresAt    time.Time              `db:"intent_expires_at" json:"intentExpiresAt"`
+	LastEventSequence  int64                  `db:"last_event_sequence" json:"lastEventSequence"`
+	AcknowledgedAt     *time.Time             `db:"acknowledged_at" json:"acknowledgedAt,omitempty"`
+	CompletedAt        *time.Time             `db:"completed_at" json:"completedAt,omitempty"`
+	Cancellable        bool                   `db:"cancellable" json:"cancellable"`
+	RetrySafe          bool                   `db:"retry_safe" json:"retrySafe"`
+	FailureReason      string                 `db:"failure_reason" json:"failureReason,omitempty"`
+	Fence              ExecutionFence         `db:"-" json:"fence"`
 }
 
 type SignedExecutionIntent struct {
@@ -97,6 +98,7 @@ type TrustPolicy struct {
 
 type ClaimRequest struct {
 	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
 	AttemptID          uuid.UUID
 	ExecutorID         string
 	ExpectedGeneration int64
@@ -105,12 +107,13 @@ type ClaimRequest struct {
 }
 
 type HeartbeatRequest struct {
-	OrganizationID  uuid.UUID
-	AttemptID       uuid.UUID
-	ExecutorID      string
-	FenceGeneration int64
-	Now             time.Time
-	LeaseDuration   time.Duration
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	AttemptID          uuid.UUID
+	ExecutorID         string
+	FenceGeneration    int64
+	Now                time.Time
+	LeaseDuration      time.Duration
 }
 
 type ExecutionEventStatus string
@@ -133,39 +136,43 @@ func (s ExecutionEventStatus) IsValid() bool {
 }
 
 type ExecutionEventInput struct {
-	OrganizationID  uuid.UUID
-	AttemptID       uuid.UUID
-	Identity        ExecutionIdentity
-	FenceGeneration int64
-	EventSequence   int64
-	Status          ExecutionEventStatus
-	PayloadChecksum string
-	Message         string
-	OccurredAt      time.Time
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	AttemptID          uuid.UUID
+	ExecutorID         string
+	Identity           ExecutionIdentity
+	FenceGeneration    int64
+	EventSequence      int64
+	Status             ExecutionEventStatus
+	PayloadChecksum    string
+	Message            string
+	OccurredAt         time.Time
 }
 
 type ExecutionEvent struct {
-	ID              uuid.UUID            `db:"id" json:"id"`
-	CreatedAt       time.Time            `db:"created_at" json:"createdAt"`
-	OrganizationID  uuid.UUID            `db:"organization_id" json:"organizationId"`
-	AttemptID       uuid.UUID            `db:"attempt_id" json:"attemptId"`
-	Identity        ExecutionIdentity    `db:"-" json:"identity"`
-	FenceGeneration int64                `db:"fence_generation" json:"fenceGeneration"`
-	EventSequence   int64                `db:"event_sequence" json:"eventSequence"`
-	Status          ExecutionEventStatus `db:"status" json:"status"`
-	PayloadChecksum string               `db:"payload_checksum" json:"payloadChecksum"`
-	Message         string               `db:"message" json:"message,omitempty"`
-	OccurredAt      time.Time            `db:"occurred_at" json:"occurredAt"`
+	ID                 uuid.UUID            `db:"id" json:"id"`
+	CreatedAt          time.Time            `db:"created_at" json:"createdAt"`
+	OrganizationID     uuid.UUID            `db:"organization_id" json:"organizationId"`
+	DeploymentTargetID uuid.UUID            `db:"deployment_target_id" json:"deploymentTargetId"`
+	AttemptID          uuid.UUID            `db:"attempt_id" json:"attemptId"`
+	Identity           ExecutionIdentity    `db:"-" json:"identity"`
+	FenceGeneration    int64                `db:"fence_generation" json:"fenceGeneration"`
+	EventSequence      int64                `db:"event_sequence" json:"eventSequence"`
+	Status             ExecutionEventStatus `db:"status" json:"status"`
+	PayloadChecksum    string               `db:"payload_checksum" json:"payloadChecksum"`
+	Message            string               `db:"message" json:"message,omitempty"`
+	OccurredAt         time.Time            `db:"occurred_at" json:"occurredAt"`
 }
 
 type CompletionInput struct {
-	OrganizationID  uuid.UUID
-	AttemptID       uuid.UUID
-	ExecutorID      string
-	FenceGeneration int64
-	Status          ExecutionAttemptStatus
-	CompletedAt     time.Time
-	FailureReason   string
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	AttemptID          uuid.UUID
+	ExecutorID         string
+	FenceGeneration    int64
+	Status             ExecutionAttemptStatus
+	CompletedAt        time.Time
+	FailureReason      string
 }
 
 type CancelRequest struct {
@@ -200,13 +207,14 @@ type ExecutionCancelRequest struct {
 }
 
 type CancelAcknowledgement struct {
-	OrganizationID  uuid.UUID
-	CancelRequestID uuid.UUID
-	AttemptID       uuid.UUID
-	ExecutorID      string
-	FenceGeneration int64
-	Accepted        bool
-	AcknowledgedAt  time.Time
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	CancelRequestID    uuid.UUID
+	AttemptID          uuid.UUID
+	ExecutorID         string
+	FenceGeneration    int64
+	Accepted           bool
+	AcknowledgedAt     time.Time
 }
 
 type StatusRequest struct {
@@ -273,6 +281,28 @@ type ReconciliationStatusInput struct {
 	ObservedAt          time.Time
 	OperationIncomplete bool
 	RetryRequested      bool
+	SignedEvidence      SignedReconciliationEvidence
+}
+
+type ReconciliationEvidence struct {
+	OrganizationID      uuid.UUID             `json:"organizationId"`
+	ExecutionID         uuid.UUID             `json:"executionId"`
+	AttemptID           uuid.UUID             `json:"attemptId"`
+	StatusQueryID       uuid.UUID             `json:"statusQueryId"`
+	EventIdentity       uuid.UUID             `json:"eventIdentity"`
+	Outcome             ReconciliationOutcome `json:"outcome"`
+	EvidenceChecksum    string                `json:"evidenceChecksum"`
+	ObservedAt          time.Time             `json:"observedAt"`
+	OperationIncomplete bool                  `json:"operationIncomplete"`
+	RetryRequested      bool                  `json:"retryRequested"`
+	ObserverID          string                `json:"observerId"`
+}
+
+type SignedReconciliationEvidence struct {
+	Payload   []byte `json:"payload"`
+	Checksum  string `json:"checksum"`
+	KeyID     string `json:"keyId"`
+	Signature string `json:"signature"`
 }
 
 type ReconciliationDecision struct {
@@ -281,17 +311,21 @@ type ReconciliationDecision struct {
 }
 
 type ExecutionReconciliationEvent struct {
-	ID                  uuid.UUID             `db:"id" json:"id"`
-	CreatedAt           time.Time             `db:"created_at" json:"createdAt"`
-	OrganizationID      uuid.UUID             `db:"organization_id" json:"organizationId"`
-	ExecutionID         uuid.UUID             `db:"execution_id" json:"executionId"`
-	ExecutionAttemptID  uuid.UUID             `db:"execution_attempt_id" json:"executionAttemptId"`
-	StatusQueryID       uuid.UUID             `db:"status_query_id" json:"statusQueryId"`
-	EventIdentity       uuid.UUID             `db:"event_identity" json:"eventIdentity"`
-	Outcome             ReconciliationOutcome `db:"outcome" json:"outcome"`
-	EvidenceChecksum    string                `db:"evidence_checksum" json:"evidenceChecksum"`
-	ObservedAt          time.Time             `db:"observed_at" json:"observedAt"`
-	OperationIncomplete bool                  `db:"operation_incomplete" json:"operationIncomplete"`
-	RetryRequested      bool                  `db:"retry_requested" json:"retryRequested"`
-	RetryDisposition    RetryDisposition      `db:"retry_disposition" json:"retryDisposition"`
+	ID                       uuid.UUID             `db:"id" json:"id"`
+	CreatedAt                time.Time             `db:"created_at" json:"createdAt"`
+	OrganizationID           uuid.UUID             `db:"organization_id" json:"organizationId"`
+	ExecutionID              uuid.UUID             `db:"execution_id" json:"executionId"`
+	ExecutionAttemptID       uuid.UUID             `db:"execution_attempt_id" json:"executionAttemptId"`
+	StatusQueryID            uuid.UUID             `db:"status_query_id" json:"statusQueryId"`
+	EventIdentity            uuid.UUID             `db:"event_identity" json:"eventIdentity"`
+	Outcome                  ReconciliationOutcome `db:"outcome" json:"outcome"`
+	EvidenceChecksum         string                `db:"evidence_checksum" json:"evidenceChecksum"`
+	EvidencePayload          []byte                `db:"evidence_payload" json:"evidencePayload"`
+	EvidenceEnvelopeChecksum string                `db:"evidence_envelope_checksum" json:"evidenceEnvelopeChecksum"`
+	EvidenceKeyID            string                `db:"evidence_key_id" json:"evidenceKeyId"`
+	EvidenceSignature        string                `db:"evidence_signature" json:"evidenceSignature"`
+	ObservedAt               time.Time             `db:"observed_at" json:"observedAt"`
+	OperationIncomplete      bool                  `db:"operation_incomplete" json:"operationIncomplete"`
+	RetryRequested           bool                  `db:"retry_requested" json:"retryRequested"`
+	RetryDisposition         RetryDisposition      `db:"retry_disposition" json:"retryDisposition"`
 }

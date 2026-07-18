@@ -1492,17 +1492,20 @@ Use one entry per pull request:
 - Feature flag: Requires both `operator_control_plane_v2` and
   `executor_protocol_v2`; missing scoped enrollment, approval, admission or
   adapter-preflight evidence denies dispatch.
-- User-facing behavior: Executors can claim, heartbeat, append ordered events
-  and complete signed fenced v2 attempts.
+- User-facing behavior: Target-authenticated executors can claim, separately
+  acknowledge, heartbeat, append ordered events and complete signed fenced v2
+  attempts while the owning lease and intent remain live.
 - Database changes: Migration 157 adds `ExecutionAttempt`, `ExecutionFence`,
   append-only `ExecutionIntent`, append-only `ExecutionEvent`, and frozen
   `Task.protocol_version`.
-- API changes: Adds `/api/executor/v2` claim, heartbeat, event and completion
-  routes using the authenticated agent/executor organization scope.
+- API changes: Adds `/api/executor/v2` claim, acknowledgement, heartbeat, event
+  and completion routes scoped to the authenticated organization and deployment
+  target.
 - UI changes: None.
 - Agent protocol changes: Adds canonical Ed25519-signed intent v2, public-key
-  fingerprint identity, bounded leases, monotonically increasing fencing and
-  conflict-secure event idempotency.
+  fingerprint identity, exact tenant/target/task/step/plan/adapter/resource
+  binding, database-time leases, monotonically increasing fencing and
+  conflict-secure exact event replay.
 - Documentation: Added ADR-0064 and PR-075 fork notes.
 - Tests: Added golden/tamper/wrong-key/expiry/input-mismatch signing coverage,
   fencing/idempotency/restart/timeout state coverage, dispatcher admission,
@@ -1519,11 +1522,13 @@ Use one entry per pull request:
 - Upstream base: `4f77d6c2` (PR-075 checkpoint).
 - Feature flag: Operator and executor controls require both
   `operator_control_plane_v2` and `executor_protocol_v2`.
-- User-facing behavior: Operators can request cancellation, request status and
-  import callback-loss reconciliation evidence without inventing success.
+- User-facing behavior: Operators can request cancellation and status; callback
+  loss can be reconciled only from independently signed, observer-authorized
+  evidence without inventing success or rewriting terminal state.
 - Database changes: Migration 158 adds `ExecutionCancelRequest`,
-  `ExecutionStatusQuery`, append-only `ExecutionReconciliationEvent`, and the
-  explicit `UNKNOWN` attempt outcome.
+  `ExecutionStatusQuery`, append-only signed
+  `ExecutionReconciliationEvent`, attempt-scoped control idempotency, and the
+  explicit completion-consistent `UNKNOWN` attempt outcome.
 - API changes: Adds operator execution-control routes and executor cancel/status
   polling plus cancel acknowledgement routes.
 - UI changes: None.

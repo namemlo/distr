@@ -25,18 +25,23 @@ func WithIntentSigner(ctx context.Context, signer IntentSigner) context.Context 
 }
 
 type canonicalIntent struct {
-	Schema          string    `json:"schema"`
-	ExecutionID     uuid.UUID `json:"executionId"`
-	AttemptNumber   int       `json:"attemptNumber"`
-	StepKey         string    `json:"stepKey"`
-	PlanChecksum    string    `json:"planChecksum"`
-	ArtifactDigest  string    `json:"artifactDigest"`
-	ConfigChecksum  string    `json:"configChecksum"`
-	AdapterRevision string    `json:"adapterRevision"`
-	ResourceKey     string    `json:"resourceKey"`
-	FenceGeneration int64     `json:"fenceGeneration"`
-	IssuedAt        time.Time `json:"issuedAt"`
-	ExpiresAt       time.Time `json:"expiresAt"`
+	Schema             string    `json:"schema"`
+	OrganizationID     uuid.UUID `json:"organizationId"`
+	DeploymentTargetID uuid.UUID `json:"deploymentTargetId"`
+	AttemptID          uuid.UUID `json:"attemptId"`
+	TaskID             uuid.UUID `json:"taskId"`
+	StepRunID          uuid.UUID `json:"stepRunId"`
+	ExecutionID        uuid.UUID `json:"executionId"`
+	AttemptNumber      int       `json:"attemptNumber"`
+	StepKey            string    `json:"stepKey"`
+	PlanChecksum       string    `json:"planChecksum"`
+	ArtifactDigest     string    `json:"artifactDigest"`
+	ConfigChecksum     string    `json:"configChecksum"`
+	AdapterRevision    string    `json:"adapterRevision"`
+	ResourceKey        string    `json:"resourceKey"`
+	FenceGeneration    int64     `json:"fenceGeneration"`
+	IssuedAt           time.Time `json:"issuedAt"`
+	ExpiresAt          time.Time `json:"expiresAt"`
 }
 
 func BuildExecutionIntent(
@@ -51,7 +56,10 @@ func BuildExecutionIntent(
 		return types.SignedExecutionIntent{}, err
 	}
 	value := canonicalIntent{
-		Schema: "distr.execution-intent/v2", ExecutionID: attempt.Identity.ExecutionID,
+		Schema: "distr.execution-intent/v2", OrganizationID: attempt.OrganizationID,
+		DeploymentTargetID: attempt.DeploymentTargetID, AttemptID: attempt.ID,
+		TaskID: attempt.TaskID, StepRunID: attempt.StepRunID,
+		ExecutionID:   attempt.Identity.ExecutionID,
 		AttemptNumber: attempt.Identity.AttemptNumber, StepKey: strings.TrimSpace(attempt.Identity.StepKey),
 		PlanChecksum: attempt.PlanChecksum, ArtifactDigest: attempt.ArtifactDigest,
 		ConfigChecksum: attempt.ConfigChecksum, AdapterRevision: strings.TrimSpace(attempt.AdapterRevision),
@@ -71,6 +79,31 @@ func BuildExecutionIntent(
 	return types.SignedExecutionIntent{
 		Payload: payload, Checksum: checksum, KeyID: signer.KeyID(), Signature: encodeSignature(signature),
 	}, nil
+}
+
+func ValidateExecutionIntentBinding(
+	attempt types.ExecutionAttempt,
+	intent types.SignedExecutionIntent,
+) error {
+	var payload canonicalIntent
+	if err := json.Unmarshal(intent.Payload, &payload); err != nil {
+		return fmt.Errorf("execution intent payload is invalid: %w", err)
+	}
+	expected := canonicalIntent{
+		Schema: "distr.execution-intent/v2", OrganizationID: attempt.OrganizationID,
+		DeploymentTargetID: attempt.DeploymentTargetID, AttemptID: attempt.ID,
+		TaskID: attempt.TaskID, StepRunID: attempt.StepRunID,
+		ExecutionID:   attempt.Identity.ExecutionID,
+		AttemptNumber: attempt.Identity.AttemptNumber, StepKey: strings.TrimSpace(attempt.Identity.StepKey),
+		PlanChecksum: attempt.PlanChecksum, ArtifactDigest: attempt.ArtifactDigest,
+		ConfigChecksum: attempt.ConfigChecksum, AdapterRevision: strings.TrimSpace(attempt.AdapterRevision),
+		ResourceKey: strings.TrimSpace(attempt.Fence.ResourceKey), FenceGeneration: attempt.Fence.Generation,
+		IssuedAt: attempt.IntentIssuedAt.UTC(), ExpiresAt: attempt.IntentExpiresAt.UTC(),
+	}
+	if payload != expected {
+		return errors.New("execution intent binding mismatch")
+	}
+	return nil
 }
 
 func VerifyExecutionIntent(intent types.SignedExecutionIntent, policy types.TrustPolicy) error {
@@ -138,7 +171,10 @@ func ValidateTrustPolicy(policy types.TrustPolicy) error {
 }
 
 func validateIntentAttempt(attempt types.ExecutionAttempt) error {
-	if attempt.Identity.ExecutionID == uuid.Nil || attempt.Identity.AttemptNumber <= 0 ||
+	if attempt.ID == uuid.Nil || attempt.OrganizationID == uuid.Nil ||
+		attempt.DeploymentTargetID == uuid.Nil || attempt.TaskID == uuid.Nil ||
+		attempt.StepRunID == uuid.Nil || attempt.Identity.ExecutionID == uuid.Nil ||
+		attempt.Identity.AttemptNumber <= 0 ||
 		strings.TrimSpace(attempt.Identity.StepKey) == "" {
 		return errors.New("execution identity is invalid")
 	}
@@ -157,7 +193,8 @@ func validateIntentAttempt(attempt types.ExecutionAttempt) error {
 	if strings.TrimSpace(attempt.Fence.ResourceKey) == "" || attempt.Fence.Generation <= 0 {
 		return errors.New("execution fence is invalid")
 	}
-	if attempt.IntentIssuedAt.IsZero() || !attempt.IntentExpiresAt.After(attempt.IntentIssuedAt) {
+	if attempt.IntentIssuedAt.IsZero() || !attempt.IntentExpiresAt.After(attempt.IntentIssuedAt) ||
+		attempt.IntentExpiresAt.Sub(attempt.IntentIssuedAt) > 15*time.Minute {
 		return errors.New("execution intent validity interval is invalid")
 	}
 	return nil

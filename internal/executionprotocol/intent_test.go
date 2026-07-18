@@ -21,8 +21,11 @@ func TestSignedIntentGoldenAndTamperCases(t *testing.T) {
 	keyID := PublicKeyFingerprint(publicKey)
 	issuedAt := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
 	attempt := types.ExecutionAttempt{
-		ID:             uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-		OrganizationID: uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+		ID:                 uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		OrganizationID:     uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+		DeploymentTargetID: uuid.MustParse("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+		TaskID:             uuid.MustParse("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+		StepRunID:          uuid.MustParse("ffffffff-ffff-4fff-8fff-ffffffffffff"),
 		Identity: types.ExecutionIdentity{
 			ExecutionID:   uuid.MustParse("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
 			AttemptNumber: 2,
@@ -46,7 +49,7 @@ func TestSignedIntentGoldenAndTamperCases(t *testing.T) {
 	signed, err := BuildExecutionIntent(WithIntentSigner(context.Background(), signer), attempt)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	expectedPayload := `{"schema":"distr.execution-intent/v2","executionId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","attemptNumber":2,"stepKey":"deploy","planChecksum":"sha256:` +
+	expectedPayload := `{"schema":"distr.execution-intent/v2","organizationId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","deploymentTargetId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","attemptId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","taskId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","stepRunId":"ffffffff-ffff-4fff-8fff-ffffffffffff","executionId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","attemptNumber":2,"stepKey":"deploy","planChecksum":"sha256:` +
 		repeatHex("11") + `","artifactDigest":"sha256:` + repeatHex("22") +
 		`","configChecksum":"sha256:` + repeatHex("33") +
 		`","adapterRevision":"adapter.compose@2","resourceKey":"deployment-target:dddddddd-dddd-4ddd-8ddd-dddddddddddd","fenceGeneration":7,"issuedAt":"2026-07-18T00:00:00Z","expiresAt":"2026-07-18T00:05:00Z"}`
@@ -63,6 +66,11 @@ func TestSignedIntentGoldenAndTamperCases(t *testing.T) {
 		ExpectedConfigChecksum: attempt.ConfigChecksum,
 	}
 	g.Expect(VerifyExecutionIntent(signed, policy)).To(Succeed())
+	g.Expect(ValidateExecutionIntentBinding(attempt, signed)).To(Succeed())
+	differentAttempt := attempt
+	differentAttempt.DeploymentTargetID = uuid.New()
+	g.Expect(ValidateExecutionIntentBinding(differentAttempt, signed)).
+		To(MatchError(ContainSubstring("binding")))
 
 	tampered := signed
 	tampered.Payload = append([]byte(nil), signed.Payload...)

@@ -30,6 +30,17 @@ DROP TABLE IF EXISTS ExecutionCancelRequest;
 
 ALTER TABLE ExecutionAttempt
   DROP CONSTRAINT IF EXISTS executionattempt_id_org_execution_unique,
+  DROP CONSTRAINT executionattempt_completion_check,
+  ADD CONSTRAINT executionattempt_completion_check CHECK (
+    (
+      status IN ('SUCCEEDED', 'FAILED', 'CANCELED', 'TIMED_OUT', 'FENCED')
+      AND completed_at IS NOT NULL
+    )
+    OR (
+      status IN ('PENDING', 'CLAIMED', 'RUNNING')
+      AND completed_at IS NULL
+    )
+  ),
   DROP CONSTRAINT executionattempt_status_check,
   ADD CONSTRAINT executionattempt_status_check CHECK (
     status IN (

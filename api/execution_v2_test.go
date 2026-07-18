@@ -12,7 +12,7 @@ import (
 func TestExecutionV2EventRequestValidation(t *testing.T) {
 	g := NewWithT(t)
 	request := ExecutionV2EventRequest{
-		ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy",
+		ExecutorID: "executor-a", ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy",
 		FenceGeneration: 2, EventSequence: 1, Status: types.ExecutionEventStatusRunning,
 		PayloadChecksum: "sha256:" + repeatAPIHex("ab"), OccurredAt: time.Now().UTC(),
 	}
@@ -47,13 +47,16 @@ func TestCancelStatusAndReconciliationRequests(t *testing.T) {
 	g.Expect(status.Validate()).To(Succeed())
 
 	reconciliation := ExecutionReconciliationRequest{
-		StatusQueryID: uuid.New(), EventIdentity: uuid.New(), Outcome: types.ReconciliationOutcomeUnknown,
-		EvidenceChecksum: "sha256:" + repeatAPIHex("ef"), ObservedAt: time.Now().UTC(),
-		OperationIncomplete: true, RetryRequested: true,
+		Evidence: types.SignedReconciliationEvidence{
+			Payload:   []byte(`{"outcome":"UNKNOWN"}`),
+			Checksum:  "sha256:" + repeatAPIHex("ef"),
+			KeyID:     "sha256:" + repeatAPIHex("ab"),
+			Signature: "signed",
+		},
 	}
 	g.Expect(reconciliation.Validate()).To(Succeed())
-	reconciliation.EvidenceChecksum = "not-a-checksum"
-	g.Expect(reconciliation.Validate()).To(MatchError(ContainSubstring("evidenceChecksum")))
+	reconciliation.Evidence.Checksum = "not-a-checksum"
+	g.Expect(reconciliation.Validate()).To(MatchError(ContainSubstring("signed reconciliation")))
 }
 
 func repeatAPIHex(pair string) string {

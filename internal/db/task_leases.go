@@ -304,6 +304,7 @@ func getNextTaskLeaseCandidateForUpdate(
 			AND active_lease.released_at IS NULL
 		WHERE t.organization_id = @organizationId
 			AND t.deployment_target_id = @agentId
+			AND t.protocol_version = 'v1'
 			AND (
 			t.status = @queuedStatus
 				OR (
@@ -385,7 +386,8 @@ func getNextHubTaskLeaseCandidateForUpdate(ctx context.Context) (*taskLeaseCandi
 			ON active_lease.task_id = t.id
 			AND active_lease.organization_id = t.organization_id
 			AND active_lease.released_at IS NULL
-		WHERE (
+		WHERE t.protocol_version = 'v1'
+		AND (
 			t.status = @queuedStatus
 				OR (
 					t.status = @runningStatus
