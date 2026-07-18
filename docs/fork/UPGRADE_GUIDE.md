@@ -110,7 +110,8 @@ PR-055 adds two default-off process flags and has no database migration. Deployi
 ### Compatibility and rollback
 
 - Existing v1 APIs, tasks, agents, callback execution, and historical reads are unchanged.
-- Removing `operator_control_plane_v2` makes both the umbrella and executor protocol v2 ineffective.
+- Removing `operator_control_plane_v2` and restarting the Hub makes both the umbrella and executor protocol v2
+  ineffective.
 - Removing both keys and restarting the Hub restores the default-off state without a database rollback.
 - Downgrading the binary requires no schema action because PR-055 adds no tables or columns.
 - Do not use `all` in shared or production environments before PR-083 because it includes both new keys.

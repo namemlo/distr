@@ -51,9 +51,9 @@ executor-v2 routes, attempts, retries, or conversion of in-flight work.
 
 ### Feature-flag impact
 
-Both flags are default-off process kill switches until resource enrollment is added in PR-066. Disabling the
-umbrella makes executor v2 ineffective even if its key remains configured. Shared and production environments
-must keep both disabled until PR-083.
+Both flags are default-off process kill switches until resource enrollment is added in PR-066. Removing the
+umbrella from the configured keys and restarting the Hub makes executor v2 ineffective even if its key remains
+configured. Shared and production environments must keep both disabled until PR-083.
 
 ### Security impact
 

@@ -69,8 +69,8 @@ DISTR_EXPERIMENTAL_FEATURE_FLAGS=operator_control_plane_v2,executor_protocol_v2
 ```
 
 Do not use `all` in a shared or production environment during this program because it includes both registered
-control-plane flags. Removing the umbrella key immediately makes executor protocol v2 ineffective without
-removing its configured key.
+control-plane flags. Removing the umbrella key and restarting the Hub makes executor protocol v2 ineffective
+without removing its configured key.
 
 ## Boundaries
 
