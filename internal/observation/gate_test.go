@@ -13,7 +13,9 @@ import (
 type campaignObservationStoreStub struct {
 	organizationID uuid.UUID
 	observationID  uuid.UUID
+	placementID    uuid.UUID
 	checksum       string
+	actualChecksum string
 	err            error
 }
 
@@ -27,6 +29,18 @@ func (s *campaignObservationStoreStub) VerifyTrustedObservation(
 	s.observationID = observationID
 	s.checksum = checksum
 	return s.err
+}
+
+func (s *campaignObservationStoreStub) ResolveTrustedObservation(
+	_ context.Context,
+	organizationID uuid.UUID,
+	componentInstanceID uuid.UUID,
+	expectedChecksum string,
+) (uuid.UUID, string, error) {
+	s.organizationID = organizationID
+	s.placementID = componentInstanceID
+	s.checksum = expectedChecksum
+	return s.observationID, s.actualChecksum, s.err
 }
 
 func TestObservationGateRequiresIndependentExactMatch(t *testing.T) {
@@ -188,6 +202,32 @@ func TestCampaignObservationVerifierBindsTrustedIdentityAndChecksum(t *testing.T
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(store.organizationID).To(Equal(organizationID))
 	g.Expect(store.observationID).To(Equal(observationID))
+	g.Expect(store.checksum).To(Equal(checksum))
+}
+
+func TestCampaignObservationResolverUsesCanonicalComponentPlacement(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	componentInstanceID := uuid.New()
+	observationID := uuid.New()
+	checksum := digest("frozen-campaign-observation")
+	store := &campaignObservationStoreStub{
+		observationID: observationID, actualChecksum: checksum,
+	}
+
+	resolvedID, actualChecksum, err := (CampaignResolver{Store: store}).
+		ResolveCampaignObservation(
+			context.Background(),
+			organizationID,
+			componentInstanceID,
+			checksum,
+		)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(resolvedID).To(Equal(observationID))
+	g.Expect(actualChecksum).To(Equal(checksum))
+	g.Expect(store.organizationID).To(Equal(organizationID))
+	g.Expect(store.placementID).To(Equal(componentInstanceID))
 	g.Expect(store.checksum).To(Equal(checksum))
 }
 

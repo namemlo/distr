@@ -52,6 +52,8 @@ DROP TABLE IF EXISTS DriftCase;
 
 DROP TABLE IF EXISTS ComponentObservationHead;
 
+ALTER TABLE CampaignPrerequisiteEvaluation
+  DROP CONSTRAINT IF EXISTS campaignprerequisiteevaluation_observation_fk;
 ALTER TABLE ActiveDesiredRevision
   DROP CONSTRAINT IF EXISTS activedesiredrevision_verified_observation_fk;
 ALTER TABLE PendingDesiredRevision

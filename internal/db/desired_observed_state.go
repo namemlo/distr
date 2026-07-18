@@ -753,6 +753,45 @@ func VerifyTrustedObservation(
 	return nil
 }
 
+func ResolveTrustedCampaignObservation(
+	ctx context.Context,
+	organizationID, componentInstanceID uuid.UUID,
+	expectedChecksum string,
+) (uuid.UUID, string, error) {
+	var observationID uuid.UUID
+	var actualChecksum string
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT id, state_checksum
+		FROM ObservedComponentState
+		WHERE organization_id = @organizationID
+		  AND component_instance_id = @componentInstanceID
+		  AND state_checksum = @expectedChecksum
+		  AND trusted = TRUE
+		  AND is_current = TRUE
+		  AND disposition = 'ACCEPTED'
+		  AND outcome = 'COMPLETE'
+		ORDER BY captured_at DESC, id DESC
+		LIMIT 1`,
+		pgx.NamedArgs{
+			"organizationID":      organizationID,
+			"componentInstanceID": componentInstanceID,
+			"expectedChecksum":    expectedChecksum,
+		},
+	).Scan(&observationID, &actualChecksum)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, "", apierrors.NewConflict(
+			"trusted observation for canonical component placement does not match frozen checksum",
+		)
+	}
+	if err != nil {
+		return uuid.Nil, "", fmt.Errorf(
+			"could not resolve trusted campaign observation: %w",
+			err,
+		)
+	}
+	return observationID, actualChecksum, nil
+}
+
 type CampaignObservationRepository struct{}
 
 func (CampaignObservationRepository) VerifyTrustedObservation(
@@ -761,6 +800,19 @@ func (CampaignObservationRepository) VerifyTrustedObservation(
 	checksum string,
 ) error {
 	return VerifyTrustedObservation(ctx, organizationID, observationID, checksum)
+}
+
+func (CampaignObservationRepository) ResolveTrustedObservation(
+	ctx context.Context,
+	organizationID, componentInstanceID uuid.UUID,
+	expectedChecksum string,
+) (uuid.UUID, string, error) {
+	return ResolveTrustedCampaignObservation(
+		ctx,
+		organizationID,
+		componentInstanceID,
+		expectedChecksum,
+	)
 }
 
 func ListObservedComponentStates(

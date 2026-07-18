@@ -36,6 +36,15 @@ func TestMigration159CreatesIndependentAppendOnlyStateAndMutableHeads(t *testing
 	}
 	g.Expect(upText).To(ContainSubstring("desired_observed_append_only_guard"))
 	g.Expect(upText).To(ContainSubstring("FOREIGN KEY (organization_id)"))
+	g.Expect(upText).To(ContainSubstring(
+		"FOREIGN KEY (actual_observation_id, organization_id)",
+	))
+	g.Expect(upText).To(ContainSubstring(
+		"REFERENCES ObservedComponentState(id, organization_id)",
+	))
+	g.Expect(downText).To(ContainSubstring(
+		"campaignprerequisiteevaluation_observation_fk",
+	))
 	g.Expect(upText).To(ContainSubstring("source_sequence"))
 	g.Expect(upText).To(ContainSubstring("credential_fingerprint"))
 	g.Expect(upText).To(ContainSubstring("accepted_until"))
@@ -57,6 +66,8 @@ func TestDesiredObservedRepositoryUsesTenantFencesAndSerializedHeadUpdates(t *te
 	g.Expect(text).To(ContainSubstring("EvaluateAdmission"))
 	g.Expect(text).To(ContainSubstring("EvaluateGate"))
 	g.Expect(text).To(ContainSubstring("VerifyTrustedObservation"))
+	g.Expect(text).To(ContainSubstring("ResolveTrustedCampaignObservation"))
+	g.Expect(text).To(ContainSubstring("component_instance_id = @componentInstanceID"))
 	g.Expect(text).To(ContainSubstring("state_checksum = @checksum"))
 	g.Expect(text).To(ContainSubstring("trusted = TRUE"))
 	g.Expect(text).To(ContainSubstring("is_current = TRUE"))

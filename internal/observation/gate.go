@@ -160,8 +160,47 @@ type CampaignObservationStore interface {
 	) error
 }
 
+type CampaignObservationResolverStore interface {
+	ResolveTrustedObservation(
+		context.Context,
+		uuid.UUID,
+		uuid.UUID,
+		string,
+	) (uuid.UUID, string, error)
+}
+
 type CampaignVerifier struct {
 	Store CampaignObservationStore
+}
+
+// CampaignResolver resolves a frozen canonical component placement to its
+// current trusted observation. The placement UUID is ComponentInstance.id,
+// not the plan-local DeploymentPlanTargetComponent.id.
+type CampaignResolver struct {
+	Store CampaignObservationResolverStore
+}
+
+func (r CampaignResolver) ResolveCampaignObservation(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	componentInstanceID uuid.UUID,
+	expectedChecksum string,
+) (uuid.UUID, string, error) {
+	if r.Store == nil {
+		return uuid.Nil, "", errors.New("campaign observation store is required")
+	}
+	if organizationID == uuid.Nil || componentInstanceID == uuid.Nil ||
+		!observationChecksumPattern.MatchString(expectedChecksum) {
+		return uuid.Nil, "", errors.New(
+			"campaign organization, canonical component placement, and lowercase sha256 checksum are required",
+		)
+	}
+	return r.Store.ResolveTrustedObservation(
+		ctx,
+		organizationID,
+		componentInstanceID,
+		expectedChecksum,
+	)
 }
 
 func (v CampaignVerifier) VerifyCampaignObservation(

@@ -381,6 +381,12 @@ ALTER TABLE ActiveDesiredRevision
   REFERENCES ObservedComponentState(id, organization_id)
   ON UPDATE NO ACTION ON DELETE NO ACTION;
 
+ALTER TABLE CampaignPrerequisiteEvaluation
+  ADD CONSTRAINT campaignprerequisiteevaluation_observation_fk
+  FOREIGN KEY (actual_observation_id, organization_id)
+  REFERENCES ObservedComponentState(id, organization_id)
+  ON UPDATE NO ACTION ON DELETE NO ACTION;
+
 CREATE TABLE ComponentObservationHead (
   organization_id UUID NOT NULL,
   observer_id UUID NOT NULL,

@@ -88,6 +88,24 @@ repository is not wired. Ordered integration wires this adapter into the
 campaign scheduler; this synthetic-base PR does not import a future-only
 campaign package.
 
+`internal/observation.CampaignResolver` also exposes the frozen-prerequisite
+resolution seam:
+
+```go
+ResolveCampaignObservation(context.Context, uuid.UUID, uuid.UUID, string) (uuid.UUID, string, error)
+```
+
+Its arguments are organization ID, canonical provider placement
+(`ComponentInstance.id`), and expected checksum. The repository returns the
+newest current, trusted, accepted, complete observation with that exact state
+checksum; the scheduler must then fence the returned observation ID/checksum
+through `CampaignVerifier` before admission.
+
+`DeploymentPlanTargetComponent.id` is a plan-local projection and is not
+interchangeable with `ComponentInstance.id`. Ordered campaign integration must
+freeze the canonical component-instance identity or add an immutable bridge
+from the plan-local provider placement before calling this resolver.
+
 ### Drift and reconciliation
 
 Drift compares the active desired revision with independent measured state.
@@ -118,6 +136,11 @@ Organization IDs are carried through composite foreign keys. Evidence is
 append-only. Mutable heads may advance atomically; the observation read-model
 flag may only transition from current to historical while all evidence fields
 remain unchanged. Rollback refuses while evidence exists.
+
+Because migration 159 follows campaign migration 154, it also adds the tenant
+composite foreign key from
+`CampaignPrerequisiteEvaluation(actual_observation_id, organization_id)` to
+`ObservedComponentState(id, organization_id)`.
 
 `TargetComponentState` and `TargetComponentObservation` remain unchanged and
 are explicitly treated as legacy/executor projections.

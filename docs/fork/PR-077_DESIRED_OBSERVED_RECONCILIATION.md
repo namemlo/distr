@@ -91,6 +91,30 @@ trusted, accepted, complete observation. A nil store fails closed. During
 ordered integration, construct it with
 `db.CampaignObservationRepository{}` and supply it to the campaign scheduler.
 
+The same repository backs `internal/observation.CampaignResolver`, whose
+structural method is:
+
+```go
+ResolveCampaignObservation(
+    ctx,
+    organizationID,
+    providerComponentInstanceID,
+    expectedChecksum,
+) (observationID, actualChecksum, error)
+```
+
+Resolution is organization-fenced and accepts only the newest current,
+trusted, accepted, complete observation for the canonical
+`ComponentInstance.id` with the frozen checksum. The scheduler must pass the
+returned ID/checksum through `CampaignVerifier` before admission.
+
+PR-071 currently names a plan-local `DeploymentPlanTargetComponent.id` as
+`provider_placement_id`; it is not the canonical component-instance UUID.
+Ordered integration must freeze the canonical ID or add an immutable bridge
+before using this resolver. Migration 159 also adds the tenant composite
+foreign key from campaign prerequisite evidence to the resolved independent
+observation.
+
 ## Drift and reconciliation
 
 Drift classes distinguish artifact, configuration, schema, capability,

@@ -30,6 +30,11 @@ performed.
   checksum) error`. It fails closed when unwired and delegates to an exact
   current/trusted/accepted/complete observation lookup when configured with
   `db.CampaignObservationRepository{}`.
+- Added the review-fix `internal/observation.CampaignResolver` structural seam,
+  resolving organization plus canonical `ComponentInstance.id` plus frozen
+  checksum to an exact trusted observation ID/checksum for subsequent verifier
+  fencing. Migration 159 now tenant-fences campaign prerequisite evidence to
+  that observation with a composite foreign key.
 - Added observer registration/observation and drift/reconciliation API types,
   mappings, handlers, tenant-safe errors, feature/RBAC gates, and routes.
   Observer tokens use the separate `Observer` authorization scheme and only
@@ -56,6 +61,8 @@ Observed RED failures before implementation included:
    executor failure/cancellation/unknown outcomes could incorrectly verify.
 8. A regression proving that observation cancellation was not preserved as a
    terminal desired-state outcome.
+9. Missing frozen-prerequisite resolver and campaign-evidence tenant foreign
+   key coverage.
 
 Each red failure was followed by the minimal implementation and a focused
 green rerun.
@@ -96,6 +103,12 @@ created; a commit cannot include its own final SHA in its contents.
   `observation.CampaignVerifier{Store: db.CampaignObservationRepository{}}`
   into the scheduler's `campaigns.CampaignObservationVerifier` dependency.
   No synthetic-base import of the future package was added.
+- Wire `observation.CampaignResolver{Store:
+  db.CampaignObservationRepository{}}` into the resolver seam and fence its
+  returned ID/checksum with `CampaignVerifier`. PR-071's current
+  `provider_placement_id` is `DeploymentPlanTargetComponent.id`, while this
+  resolver intentionally requires canonical `ComponentInstance.id`; ordered
+  integration must freeze that canonical ID or add an immutable bridge.
 - Migration 159 must be applied only after migrations 146-158 are integrated.
   The global migration linter is expected to fail on this isolated synthetic
   branch and must pass after ordered integration.
