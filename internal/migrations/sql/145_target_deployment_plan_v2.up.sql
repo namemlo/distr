@@ -710,35 +710,48 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  parent_plan_id UUID;
-  parent_organization_id UUID;
-  parent_schema TEXT;
-  parent_sealed_at TIMESTAMPTZ;
+  old_parent_schema TEXT;
+  old_parent_sealed_at TIMESTAMPTZ;
+  new_parent_schema TEXT;
+  new_parent_sealed_at TIMESTAMPTZ;
 BEGIN
-  IF TG_OP = 'INSERT' THEN
-    parent_plan_id := NEW.deployment_plan_id;
-    parent_organization_id := NEW.organization_id;
-  ELSE
-    parent_plan_id := OLD.deployment_plan_id;
-    parent_organization_id := OLD.organization_id;
-  END IF;
-  SELECT plan_schema, sealed_at
-  INTO parent_schema, parent_sealed_at
-  FROM DeploymentPlan
-  WHERE id = parent_plan_id
-    AND organization_id = parent_organization_id;
-  IF parent_schema = 'distr.target-deployment-plan/v2'
-     AND parent_sealed_at IS NOT NULL THEN
-    IF TG_OP = 'DELETE'
-       AND current_setting(
-         'distr.deployment_registry_deletion_reason',
-         true
-       ) = 'ORGANIZATION_RETENTION' THEN
-      RETURN OLD;
+  IF TG_OP <> 'INSERT' THEN
+    SELECT plan_schema, sealed_at
+    INTO old_parent_schema, old_parent_sealed_at
+    FROM DeploymentPlan
+    WHERE id = OLD.deployment_plan_id
+      AND organization_id = OLD.organization_id;
+    IF old_parent_schema = 'distr.target-deployment-plan/v2'
+       AND old_parent_sealed_at IS NOT NULL THEN
+      IF TG_OP = 'DELETE'
+         AND current_setting(
+           'distr.deployment_registry_deletion_reason',
+           true
+         ) = 'ORGANIZATION_RETENTION' THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'sealed target deployment plan children are immutable'
+        USING ERRCODE = '23514';
     END IF;
-    RAISE EXCEPTION 'sealed target deployment plan children are immutable'
-      USING ERRCODE = '23514';
   END IF;
+
+  IF TG_OP <> 'DELETE' THEN
+    IF TG_OP = 'INSERT'
+       OR NEW.deployment_plan_id IS DISTINCT FROM OLD.deployment_plan_id
+       OR NEW.organization_id IS DISTINCT FROM OLD.organization_id THEN
+      SELECT plan_schema, sealed_at
+      INTO new_parent_schema, new_parent_sealed_at
+      FROM DeploymentPlan
+      WHERE id = NEW.deployment_plan_id
+        AND organization_id = NEW.organization_id;
+      IF new_parent_schema = 'distr.target-deployment-plan/v2'
+         AND new_parent_sealed_at IS NOT NULL THEN
+        RAISE EXCEPTION 'sealed target deployment plan children are immutable'
+          USING ERRCODE = '23514';
+      END IF;
+    END IF;
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
     RETURN OLD;
   END IF;

@@ -40,6 +40,32 @@ const deploymentPlanDraftOutputExpr = `
 
 var targetPlanChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
+const (
+	maxTargetPlanProviderRows = 4096
+	maxTargetPlanCandidates   = 8192
+)
+
+func validateTargetPlanProviderRowCount(count int) error {
+	if count > maxTargetPlanProviderRows {
+		return apierrors.NewBadRequest(
+			"target plan exceeds the provider row limit",
+		)
+	}
+	return nil
+}
+
+func appendTargetPlanCandidate(
+	candidates []types.RequirementProviderCandidate,
+	candidate types.RequirementProviderCandidate,
+) ([]types.RequirementProviderCandidate, error) {
+	if len(candidates) >= maxTargetPlanCandidates {
+		return nil, apierrors.NewBadRequest(
+			"target plan exceeds the provider candidate limit",
+		)
+	}
+	return append(candidates, candidate), nil
+}
+
 func CreateDeploymentPlanDraft(
 	ctx context.Context,
 	draft *types.PlanDraft,
@@ -944,7 +970,10 @@ func loadPlanResolutionInput(
 		Requirements: requirements, ReleasePins: pins,
 		ComponentInstances: slices.Clone(placement.Instances),
 	}
-	input.Candidates = includedAndDisabledCandidates(*input, *manifest)
+	input.Candidates, err = includedAndDisabledCandidates(*input, *manifest)
+	if err != nil {
+		return nil, err
+	}
 	observedCandidates, err := loadObservedProviderCandidates(
 		ctx,
 		draft.OrganizationID,
@@ -953,7 +982,15 @@ func loadPlanResolutionInput(
 	if err != nil {
 		return nil, err
 	}
-	input.Candidates = append(input.Candidates, observedCandidates...)
+	for _, candidate := range observedCandidates {
+		input.Candidates, err = appendTargetPlanCandidate(
+			input.Candidates,
+			candidate,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return input, nil
 }
 
@@ -1001,8 +1038,12 @@ func loadTargetConfigBinding(
 		FROM TargetConfigSnapshotObject
 		WHERE target_config_snapshot_id = @id
 		  AND organization_id = @organizationID
-		ORDER BY key`,
-		pgx.NamedArgs{"id": id, "organizationID": organizationID},
+		ORDER BY key
+		LIMIT @configObjectRowLimit`,
+		pgx.NamedArgs{
+			"id": id, "organizationID": organizationID,
+			"configObjectRowLimit": maxTargetPlanConfigObjects + 1,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not query target config object facts: %w", err)
@@ -1025,16 +1066,13 @@ func loadTargetConfigBinding(
 	if err != nil {
 		return nil, fmt.Errorf("could not collect target config object facts: %w", err)
 	}
-	binding.VerificationFacts = make(
-		[]types.ConfigVerificationFact,
-		0,
-		len(objects),
+	binding.VerificationFacts, err = verifyTargetPlanConfigObjects(
+		ctx,
+		verifier,
+		objects,
 	)
-	for _, object := range objects {
-		binding.VerificationFacts = append(
-			binding.VerificationFacts,
-			verifyTargetPlanConfigObject(ctx, verifier, object),
-		)
+	if err != nil {
+		return nil, err
 	}
 	rows, err = internalctx.GetDb(ctx).Query(ctx, `
 		SELECT definition.key,
@@ -1268,7 +1306,7 @@ func targetRequirementsFromGraph(graph types.ProductReleaseGraph) []types.Target
 func includedAndDisabledCandidates(
 	input types.PlanResolutionInput,
 	manifest types.ProductReleaseManifest,
-) []types.RequirementProviderCandidate {
+) ([]types.RequirementProviderCandidate, error) {
 	bindingByComponent := make(map[string]types.ConfigComponentBinding, len(input.Config.ComponentBindings))
 	for _, binding := range input.Config.ComponentBindings {
 		bindingByComponent[binding.ComponentKey] = binding
@@ -1292,39 +1330,53 @@ func includedAndDisabledCandidates(
 					}
 					releaseID := component.ComponentReleaseID
 					instanceID := binding.ComponentInstanceID
-					candidates = append(candidates, types.RequirementProviderCandidate{
-						RequirementKey:    requirement.Key,
-						Mode:              types.RequirementResolutionModeIncluded,
-						ProviderReleaseID: &releaseID, ProviderVersion: capability.Version,
-						ProviderPlatform: input.Config.TargetPlatform,
-						DeploymentUnitID: input.Unit.ID, ComponentInstanceID: &instanceID,
-						ExpectedStateVersion: 0, ObservedStateVersion: 0,
-						ExpectedStateChecksum:     pin.ReleaseChecksum,
-						ObservedStateChecksum:     pin.ReleaseChecksum,
-						ProviderReleaseChecksum:   pin.ReleaseChecksum,
-						ProvenanceBindingChecksum: pin.ProvenanceBindingChecksum,
-						ProvenanceVerified:        pin.ProvenanceVerified,
-						V1Compatible:              true,
-					})
+					var err error
+					candidates, err = appendTargetPlanCandidate(
+						candidates,
+						types.RequirementProviderCandidate{
+							RequirementKey:    requirement.Key,
+							Mode:              types.RequirementResolutionModeIncluded,
+							ProviderReleaseID: &releaseID, ProviderVersion: capability.Version,
+							ProviderPlatform: input.Config.TargetPlatform,
+							DeploymentUnitID: input.Unit.ID, ComponentInstanceID: &instanceID,
+							ExpectedStateVersion: 0, ObservedStateVersion: 0,
+							ExpectedStateChecksum:     pin.ReleaseChecksum,
+							ObservedStateChecksum:     pin.ReleaseChecksum,
+							ProviderReleaseChecksum:   pin.ReleaseChecksum,
+							ProvenanceBindingChecksum: pin.ProvenanceBindingChecksum,
+							ProvenanceVerified:        pin.ProvenanceVerified,
+							V1Compatible:              true,
+						},
+					)
+					if err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
 		if slices.Contains(requirement.AllowedModes, types.RequirementResolutionModeFeatureDisabled) {
 			if enabled, exists := input.Config.FeatureFlags[requirement.Capability]; exists && !enabled {
-				candidates = append(candidates, types.RequirementProviderCandidate{
-					RequirementKey:  requirement.Key,
-					Mode:            types.RequirementResolutionModeFeatureDisabled,
-					ProviderVersion: "disabled", ProviderPlatform: input.Config.TargetPlatform,
-					ExpectedStateVersion: 0, ObservedStateVersion: 0,
-					ExpectedStateChecksum: input.Config.CanonicalChecksum,
-					ObservedStateChecksum: input.Config.CanonicalChecksum,
-					FeatureFlagKey:        requirement.Capability, FeatureFlagEnabled: false,
-					ProvenanceVerified: true, V1Compatible: true,
-				})
+				var err error
+				candidates, err = appendTargetPlanCandidate(
+					candidates,
+					types.RequirementProviderCandidate{
+						RequirementKey:  requirement.Key,
+						Mode:            types.RequirementResolutionModeFeatureDisabled,
+						ProviderVersion: "disabled", ProviderPlatform: input.Config.TargetPlatform,
+						ExpectedStateVersion: 0, ObservedStateVersion: 0,
+						ExpectedStateChecksum: input.Config.CanonicalChecksum,
+						ObservedStateChecksum: input.Config.CanonicalChecksum,
+						FeatureFlagKey:        requirement.Capability, FeatureFlagEnabled: false,
+						ProvenanceVerified: true, V1Compatible: true,
+					},
+				)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
-	return candidates
+	return candidates, nil
 }
 
 func loadObservedProviderCandidates(
@@ -1507,19 +1559,27 @@ func loadObservedProviderCandidates(
 			         release.id,
 			         unit.id,
 			         instance.id,
-			         observation.id`,
+			         observation.id
+			LIMIT @providerRowLimit`,
 		pgx.NamedArgs{
 			"organizationID":         organizationID,
 			"effectiveAt":            input.EffectiveAt,
 			"capabilities":           capabilities,
 			"deploymentUnitID":       input.Unit.ID,
 			"customerOrganizationID": input.Scope.CustomerOrganizationID,
+			"providerRowLimit":       maxTargetPlanProviderRows + 1,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not batch query observed target requirement providers: %w", err)
 	}
+	defer rows.Close()
+	providerRows := 0
 	for rows.Next() {
+		providerRows++
+		if err := validateTargetPlanProviderRowCount(providerRows); err != nil {
+			return nil, err
+		}
 		var (
 			capabilityName            string
 			releaseID                 uuid.UUID
@@ -1592,7 +1652,10 @@ func loadObservedProviderCandidates(
 			if mode == types.RequirementResolutionModeSharedProvider {
 				candidate.SubscriberSetChecksum = subscriberChecksum
 			}
-			candidates = append(candidates, candidate)
+			candidates, err = appendTargetPlanCandidate(candidates, candidate)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {

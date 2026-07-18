@@ -83,6 +83,22 @@ type taskResourceLockSource struct {
 	ResourceKey  string                     `db:"resource_key"`
 }
 
+func reuseExistingDeploymentPlanTasks(
+	plan types.DeploymentPlan,
+	existing []types.Task,
+) ([]types.Task, bool, error) {
+	if plan.PlanSchema == types.TargetDeploymentPlanSchemaV2 {
+		return nil, false, validateDeploymentPlanTaskCreation(plan)
+	}
+	if len(existing) > 0 {
+		return existing, true, nil
+	}
+	if err := validateDeploymentPlanTaskCreation(plan); err != nil {
+		return nil, false, err
+	}
+	return nil, false, nil
+}
+
 func CreateTasksForDeploymentPlan(
 	ctx context.Context,
 	request types.CreateTasksForDeploymentPlanRequest,
@@ -102,12 +118,11 @@ func CreateTasksForDeploymentPlan(
 		if err != nil {
 			return err
 		}
-		if len(existing) > 0 {
-			tasks = existing
-			return nil
-		}
-		if err := validateDeploymentPlanTaskCreation(*plan); err != nil {
+		if reusable, reused, err := reuseExistingDeploymentPlanTasks(*plan, existing); err != nil {
 			return err
+		} else if reused {
+			tasks = reusable
+			return nil
 		}
 		lockGroups, err := getDeploymentPlanTaskResourceLockGroups(
 			ctx,
@@ -125,8 +140,10 @@ func CreateTasksForDeploymentPlan(
 		if err != nil {
 			return err
 		}
-		if len(existing) > 0 {
-			tasks = existing
+		if reusable, reused, err := reuseExistingDeploymentPlanTasks(*plan, existing); err != nil {
+			return err
+		} else if reused {
+			tasks = reusable
 			return nil
 		}
 		preflight, passed, err := evaluateAndPersistDeploymentPreflight(ctx, *plan, request.ActorUserAccountID)

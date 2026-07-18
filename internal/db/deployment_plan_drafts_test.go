@@ -101,6 +101,11 @@ func TestMigration145HasTenantFencesImmutabilityAndRollbackRefusal(t *testing.T)
 	g.Expect(upText).To(ContainSubstring("DeploymentPlanDraftAuditEvent_append_only"))
 	g.Expect(upText).To(ContainSubstring("status = 'BLOCKED'"))
 	g.Expect(upText).To(ContainSubstring("DeploymentPlan_v2_supersedes_unique"))
+	g.Expect(upText).To(ContainSubstring("OLD.deployment_plan_id"))
+	g.Expect(upText).To(ContainSubstring("NEW.deployment_plan_id"))
+	g.Expect(upText).To(ContainSubstring(
+		"NEW.deployment_plan_id IS DISTINCT FROM OLD.deployment_plan_id",
+	))
 	g.Expect(downText).To(ContainSubstring("LOCK TABLE"))
 	g.Expect(downText).To(ContainSubstring("ACCESS EXCLUSIVE MODE"))
 	g.Expect(
@@ -166,6 +171,70 @@ func TestTargetConfigVerificationFailsClosedWhenVerifierUnavailable(t *testing.T
 	g.Expect(fact.Verified).To(BeFalse())
 	g.Expect(fact.ObservedChecksum).To(BeEmpty())
 	g.Expect(fact.VerificationCode).To(Equal("verification_unavailable"))
+}
+
+func TestTargetConfigVerificationRejectsEmptyObjectSet(t *testing.T) {
+	g := NewWithT(t)
+
+	facts, err := verifyTargetPlanConfigObjects(
+		t.Context(),
+		NewUnavailableTargetConfigObjectVerifier(),
+		nil,
+	)
+
+	g.Expect(err).To(MatchError(ContainSubstring("at least one object")))
+	g.Expect(facts).To(BeNil())
+}
+
+func TestTargetConfigVerificationRejectsOversizedSetBeforeVerifierCalls(t *testing.T) {
+	g := NewWithT(t)
+	calls := 0
+	verifier := targetPlanConfigVerifierFunc(func(
+		_ context.Context,
+		_ types.TargetPlanConfigObject,
+	) (types.TargetPlanConfigObservation, error) {
+		calls++
+		return types.TargetPlanConfigObservation{}, nil
+	})
+	objects := make(
+		[]types.TargetPlanConfigObject,
+		maxTargetPlanConfigObjects+1,
+	)
+
+	facts, err := verifyTargetPlanConfigObjects(t.Context(), verifier, objects)
+
+	g.Expect(err).To(MatchError(ContainSubstring("object limit")))
+	g.Expect(facts).To(BeNil())
+	g.Expect(calls).To(Equal(0))
+}
+
+func TestTargetPlanProviderBoundsRejectRowsAndCandidateCrossProduct(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(validateTargetPlanProviderRowCount(maxTargetPlanProviderRows + 1)).
+		To(MatchError(ContainSubstring("provider row limit")))
+	candidates := make(
+		[]types.RequirementProviderCandidate,
+		maxTargetPlanCandidates,
+	)
+	result, err := appendTargetPlanCandidate(
+		candidates,
+		types.RequirementProviderCandidate{},
+	)
+	g.Expect(err).To(MatchError(ContainSubstring("candidate limit")))
+	g.Expect(result).To(BeNil())
+}
+
+func TestObservedProviderQueryAppliesDatabaseRowLimit(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("deployment_plan_drafts.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	g.Expect(text).To(ContainSubstring("LIMIT @providerRowLimit"))
+	g.Expect(text).To(MatchRegexp(
+		`"providerRowLimit"\s*:\s*maxTargetPlanProviderRows \+ 1`,
+	))
 }
 
 type targetPlanConfigVerifierFunc func(

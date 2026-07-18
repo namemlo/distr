@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 
+	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/types"
 )
+
+const maxTargetPlanConfigObjects = 100
 
 var ErrTargetConfigObjectVerificationUnavailable = errors.New(
 	"target config object verification is unavailable",
@@ -71,4 +74,26 @@ func verifyTargetPlanConfigObject(
 		fact.VerificationCode = "evidence_mismatch"
 	}
 	return fact
+}
+
+func verifyTargetPlanConfigObjects(
+	ctx context.Context,
+	verifier TargetConfigObjectVerifier,
+	objects []types.TargetPlanConfigObject,
+) ([]types.ConfigVerificationFact, error) {
+	if len(objects) == 0 {
+		return nil, apierrors.NewBadRequest(
+			"target config snapshot must contain at least one object",
+		)
+	}
+	if len(objects) > maxTargetPlanConfigObjects {
+		return nil, apierrors.NewBadRequest(
+			"target config snapshot exceeds the object limit",
+		)
+	}
+	facts := make([]types.ConfigVerificationFact, 0, len(objects))
+	for _, object := range objects {
+		facts = append(facts, verifyTargetPlanConfigObject(ctx, verifier, object))
+	}
+	return facts, nil
 }
