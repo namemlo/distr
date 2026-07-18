@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -342,6 +344,14 @@ func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
 	g.Expect(upSQL).To(ContainSubstring("original_release_checksum"))
 	g.Expect(upSQL).To(ContainSubstring("original_plan_checksum"))
 	g.Expect(upSQL).To(ContainSubstring("derived_snapshot_checksum"))
+	g.Expect(upSQL).To(ContainSubstring("source_after_plan_id UUID"))
+	g.Expect(upSQL).To(ContainSubstring("source_through_plan_id UUID"))
+	g.Expect(upSQL).To(ContainSubstring("actor_user_account_id UUID NOT NULL"))
+	g.Expect(upSQL).To(ContainSubstring("source_count <= batch_size"))
+	g.Expect(upSQL).To(MatchRegexp(
+		`(?s)FOREIGN KEY \(\s*organization_id,\s*actor_user_account_id\s*\)` +
+			`\s*REFERENCES Organization_UserAccount\(\s*organization_id,\s*user_account_id\s*\)`,
+	))
 	g.Expect(upSQL).To(MatchRegexp(
 		`(?s)FOREIGN KEY \(\s*original_release_bundle_id,\s*organization_id,\s*original_release_checksum\s*\)`,
 	))
@@ -363,6 +373,8 @@ func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
 func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
+	actorUserAccountID := uuid.New()
+	afterPlanID := uuid.New()
 	outcomes := []v1ExtractionOutcome{{
 		ReleaseBundleID:  uuid.New(),
 		ReleaseChecksum:  "sha256:" + strings.Repeat("a", 64),
@@ -372,20 +384,922 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 		SnapshotChecksum: "sha256:" + strings.Repeat("c", 64),
 	}}
 
-	first, err := buildV1ExtractionCheckpoint(organizationID, 100, outcomes)
+	first, err := buildV1ExtractionCheckpoint(
+		organizationID,
+		actorUserAccountID,
+		&afterPlanID,
+		false,
+		100,
+		outcomes,
+	)
 	g.Expect(err).NotTo(HaveOccurred())
-	second, err := buildV1ExtractionCheckpoint(organizationID, 25, outcomes)
+	second, err := buildV1ExtractionCheckpoint(
+		organizationID,
+		actorUserAccountID,
+		&afterPlanID,
+		false,
+		25,
+		outcomes,
+	)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	g.Expect(second.ID).To(Equal(first.ID))
 	g.Expect(second.DryRunChecksum).To(Equal(first.DryRunChecksum))
 	g.Expect(second.SourceStateChecksum).To(Equal(first.SourceStateChecksum))
 	g.Expect(second.BatchSize).To(Equal(25))
+	g.Expect(second.SourceAfterPlanID).NotTo(BeNil())
+	g.Expect(*second.SourceAfterPlanID).To(Equal(afterPlanID))
+	g.Expect(second.SourceThroughPlanID).NotTo(BeNil())
+	g.Expect(*second.SourceThroughPlanID).To(Equal(outcomes[0].PlanID))
+	g.Expect(second.HasMore).To(BeFalse())
 
 	outcomes[0].SnapshotChecksum = "sha256:" + strings.Repeat("d", 64)
-	changed, err := buildV1ExtractionCheckpoint(organizationID, 100, outcomes)
+	changed, err := buildV1ExtractionCheckpoint(
+		organizationID,
+		actorUserAccountID,
+		&afterPlanID,
+		false,
+		100,
+		outcomes,
+	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(changed.ID).NotTo(Equal(first.ID))
 	g.Expect(changed.DryRunChecksum).NotTo(Equal(first.DryRunChecksum))
 	g.Expect(changed.SourceStateChecksum).To(Equal(first.SourceStateChecksum))
+
+	hasMore, err := buildV1ExtractionCheckpoint(
+		organizationID,
+		actorUserAccountID,
+		&afterPlanID,
+		true,
+		100,
+		outcomes,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(hasMore.DryRunChecksum).NotTo(Equal(first.DryRunChecksum))
+	g.Expect(hasMore.HasMore).To(BeTrue())
+
+	differentActor, err := buildV1ExtractionCheckpoint(
+		organizationID,
+		uuid.New(),
+		&afterPlanID,
+		false,
+		100,
+		outcomes,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(differentActor.ID).NotTo(Equal(changed.ID))
+	g.Expect(differentActor.DryRunChecksum).NotTo(Equal(changed.DryRunChecksum))
+	g.Expect(differentActor.SourceStateChecksum).To(Equal(changed.SourceStateChecksum))
+}
+
+func TestTargetConfigV1ExtractionRequiresCheckpointOrganizationMemberActor(t *testing.T) {
+	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	first := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"actor-first",
+		types.ReleaseContractSchemaV1,
+	)
+	second := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"actor-second",
+		types.ReleaseContractSchemaV1,
+	)
+
+	_, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		first.organizationID,
+		uuid.Nil,
+		nil,
+		100,
+		first.verifier,
+	)
+	g.Expect(err).To(MatchError(ContainSubstring("actorUserAccountId")))
+
+	_, err = CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		first.organizationID,
+		second.actorUserAccountID,
+		nil,
+		100,
+		first.verifier,
+	)
+	g.Expect(err).To(MatchError(ContainSubstring(
+		"actorUserAccountId must be a member of the organization",
+	)))
+	var checkpointCount int
+	g.Expect(pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM BackfillCheckpoint
+		WHERE organization_id = @organizationID`,
+		pgx.NamedArgs{"organizationID": first.organizationID},
+	).Scan(&checkpointCount)).To(Succeed())
+	g.Expect(checkpointCount).To(BeZero())
+
+	dryRun, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		first.organizationID,
+		first.actorUserAccountID,
+		nil,
+		100,
+		first.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	otherMember := createTargetConfigSnapshotTestUser(t, ctx, first.organizationID)
+	_, err = ApplyTargetConfigV1Extraction(
+		ctx,
+		first.organizationID,
+		otherMember,
+		dryRun.Checkpoint.ID,
+		dryRun.Checkpoint.DryRunChecksum,
+		100,
+		first.verifier,
+	)
+	g.Expect(err).To(MatchError(ContainSubstring(
+		"v1 extraction dry-run approval does not match",
+	)))
+	var snapshotCount int
+	g.Expect(pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM TargetConfigSnapshot
+		WHERE organization_id = @organizationID`,
+		pgx.NamedArgs{"organizationID": first.organizationID},
+	).Scan(&snapshotCount)).To(Succeed())
+	g.Expect(snapshotCount).To(BeZero())
+}
+
+func TestTargetConfigV1ExtractionRepositoryDryRunApplyRestartAndNoOp(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	fixture := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"repository-flow",
+		types.ReleaseContractSchemaV1,
+	)
+	originalBundlePayload := append([]byte(nil), fixture.bundle.CanonicalPayload...)
+	originalPlanPayload := append([]byte(nil), fixture.plan.CanonicalPayload...)
+
+	dryRun, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		nil,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(dryRun.Checkpoint.SourceCount).To(Equal(1))
+	g.Expect(dryRun.Checkpoint.CandidateCount).To(Equal(1))
+	g.Expect(dryRun.Pending).To(Equal(1))
+	g.Expect(dryRun.Items).To(HaveLen(1))
+
+	applied, err := ApplyTargetConfigV1Extraction(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		dryRun.Checkpoint.ID,
+		dryRun.Checkpoint.DryRunChecksum,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(applied.Applied).To(Equal(1))
+	g.Expect(applied.Pending).To(BeZero())
+
+	restarted, err := ApplyTargetConfigV1Extraction(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		dryRun.Checkpoint.ID,
+		dryRun.Checkpoint.DryRunChecksum,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(restarted.Applied).To(Equal(1))
+	g.Expect(restarted.NoOp).To(Equal(1))
+
+	var snapshotCount, appliedLineageCount int
+	var createdByUserAccountID uuid.UUID
+	g.Expect(internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT count(*), min(created_by_user_account_id::text)::uuid
+		FROM TargetConfigSnapshot
+		WHERE organization_id = @organizationID`,
+		pgx.NamedArgs{"organizationID": fixture.organizationID},
+	).Scan(&snapshotCount, &createdByUserAccountID)).To(Succeed())
+	g.Expect(internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT count(*)
+		FROM ReleaseContractV1ExtractionLineage
+		WHERE organization_id = @organizationID
+		  AND checkpoint_id = @checkpointID
+		  AND status = 'applied'`,
+		pgx.NamedArgs{
+			"organizationID": fixture.organizationID,
+			"checkpointID":   dryRun.Checkpoint.ID,
+		},
+	).Scan(&appliedLineageCount)).To(Succeed())
+	g.Expect(snapshotCount).To(Equal(1))
+	g.Expect(createdByUserAccountID).To(Equal(fixture.actorUserAccountID))
+	g.Expect(appliedLineageCount).To(Equal(1))
+
+	reloadedBundle, err := GetReleaseBundle(
+		ctx,
+		fixture.bundle.ID,
+		fixture.organizationID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	reloadedPlan, err := GetDeploymentPlan(
+		ctx,
+		fixture.plan.ID,
+		fixture.organizationID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(reloadedBundle.CanonicalPayload).To(Equal(originalBundlePayload))
+	g.Expect(reloadedBundle.CanonicalChecksum).To(Equal(fixture.bundle.CanonicalChecksum))
+	g.Expect(reloadedPlan.CanonicalPayload).To(Equal(originalPlanPayload))
+	g.Expect(reloadedPlan.CanonicalChecksum).To(Equal(fixture.plan.CanonicalChecksum))
+	g.Expect(reloadedPlan.ReleaseContract.Schema).To(Equal(types.ReleaseContractSchemaV1))
+}
+
+func TestTargetConfigV1ExtractionConcurrentApplyCreatesOneSnapshotAndEvent(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	fixture := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"concurrent-apply",
+		types.ReleaseContractSchemaV1,
+	)
+	dryRun, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		nil,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			_, applyErr := ApplyTargetConfigV1Extraction(
+				ctx,
+				fixture.organizationID,
+				fixture.actorUserAccountID,
+				dryRun.Checkpoint.ID,
+				dryRun.Checkpoint.DryRunChecksum,
+				100,
+				fixture.verifier,
+			)
+			results <- applyErr
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	for applyErr := range results {
+		g.Expect(applyErr).NotTo(HaveOccurred())
+	}
+
+	var snapshotCount, appliedCount int
+	g.Expect(internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT count(*)
+		FROM TargetConfigSnapshot
+		WHERE organization_id = @organizationID`,
+		pgx.NamedArgs{"organizationID": fixture.organizationID},
+	).Scan(&snapshotCount)).To(Succeed())
+	g.Expect(internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT count(*)
+		FROM ReleaseContractV1ExtractionLineage
+		WHERE organization_id = @organizationID
+		  AND checkpoint_id = @checkpointID
+		  AND status = 'applied'`,
+		pgx.NamedArgs{
+			"organizationID": fixture.organizationID,
+			"checkpointID":   dryRun.Checkpoint.ID,
+		},
+	).Scan(&appliedCount)).To(Succeed())
+	g.Expect(snapshotCount).To(Equal(1))
+	g.Expect(appliedCount).To(Equal(1))
+}
+
+func TestTargetConfigV1ExtractionRejectsRegistryChangeDuringApply(t *testing.T) {
+	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	fixture := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"registry-race",
+		types.ReleaseContractSchemaV1,
+	)
+	dryRun, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		nil,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	blockingVerifier := &targetConfigV1BlockingObjectVerifier{
+		delegate: fixture.verifier,
+		entered:  entered,
+		release:  release,
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, applyErr := ApplyTargetConfigV1Extraction(
+			ctx,
+			fixture.organizationID,
+			fixture.actorUserAccountID,
+			dryRun.Checkpoint.ID,
+			dryRun.Checkpoint.DryRunChecksum,
+			100,
+			blockingVerifier,
+		)
+		result <- applyErr
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("apply did not reach object evidence barrier")
+	}
+	_, err = pool.Exec(ctx, `
+		UPDATE ComponentInstance
+		SET physical_name = @physicalName,
+		    updated_at = now()
+		WHERE id = @id
+		  AND organization_id = @organizationID`,
+		pgx.NamedArgs{
+			"physicalName":   "renamed-registry-race",
+			"id":             fixture.placement.Instances[0].ID,
+			"organizationID": fixture.organizationID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	close(release)
+	select {
+	case applyErr := <-result:
+		g.Expect(applyErr).To(HaveOccurred())
+	case <-time.After(10 * time.Second):
+		t.Fatal("apply did not finish after registry mutation")
+	}
+
+	var snapshotCount, appliedCount int
+	g.Expect(pool.QueryRow(ctx, `
+		SELECT count(*) FROM TargetConfigSnapshot
+		WHERE organization_id = @organizationID`,
+		pgx.NamedArgs{"organizationID": fixture.organizationID},
+	).Scan(&snapshotCount)).To(Succeed())
+	g.Expect(pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM ReleaseContractV1ExtractionLineage
+		WHERE organization_id = @organizationID
+		  AND checkpoint_id = @checkpointID
+		  AND status = 'applied'`,
+		pgx.NamedArgs{
+			"organizationID": fixture.organizationID,
+			"checkpointID":   dryRun.Checkpoint.ID,
+		},
+	).Scan(&appliedCount)).To(Succeed())
+	g.Expect(snapshotCount).To(BeZero())
+	g.Expect(appliedCount).To(BeZero())
+}
+
+func TestTargetConfigV1ExtractionApplyRollsBackSnapshotWhenLineageFails(t *testing.T) {
+	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	fixture := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"atomic-rollback",
+		types.ReleaseContractSchemaV1,
+	)
+	dryRun, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		nil,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = pool.Exec(ctx, `
+		CREATE FUNCTION target_config_v1_test_fail_applied_lineage()
+		RETURNS trigger
+		LANGUAGE plpgsql
+		AS $$
+		BEGIN
+		  IF NEW.status = 'applied' THEN
+		    RAISE EXCEPTION 'test interruption after snapshot';
+		  END IF;
+		  RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER TargetConfigV1_test_fail_applied_lineage
+		BEFORE INSERT ON ReleaseContractV1ExtractionLineage
+		FOR EACH ROW EXECUTE FUNCTION target_config_v1_test_fail_applied_lineage();`)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = ApplyTargetConfigV1Extraction(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		dryRun.Checkpoint.ID,
+		dryRun.Checkpoint.DryRunChecksum,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).To(HaveOccurred())
+	var snapshotCount int
+	g.Expect(pool.QueryRow(ctx, `
+		SELECT count(*) FROM TargetConfigSnapshot
+		WHERE organization_id = @organizationID`,
+		pgx.NamedArgs{"organizationID": fixture.organizationID},
+	).Scan(&snapshotCount)).To(Succeed())
+	g.Expect(snapshotCount).To(BeZero())
+
+	_, err = pool.Exec(ctx, `
+		DROP TRIGGER TargetConfigV1_test_fail_applied_lineage
+		  ON ReleaseContractV1ExtractionLineage;
+		DROP FUNCTION target_config_v1_test_fail_applied_lineage();`)
+	g.Expect(err).NotTo(HaveOccurred())
+	report, err := ApplyTargetConfigV1Extraction(
+		ctx,
+		fixture.organizationID,
+		fixture.actorUserAccountID,
+		dryRun.Checkpoint.ID,
+		dryRun.Checkpoint.DryRunChecksum,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(report.Applied).To(Equal(1))
+}
+
+func TestTargetConfigV1ExtractionTenantForeignKeysAndDowngradeGuard(t *testing.T) {
+	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	first := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"tenant-a",
+		types.ReleaseContractSchemaV1,
+	)
+	second := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"tenant-b",
+		types.ReleaseContractSchemaV1,
+	)
+	dryRun, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		first.organizationID,
+		first.actorUserAccountID,
+		nil,
+		100,
+		first.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO ReleaseContractV1ExtractionLineage (
+			organization_id,
+			checkpoint_id,
+			original_release_bundle_id,
+			original_release_checksum,
+			original_plan_id,
+			original_plan_checksum,
+			derived_snapshot_checksum,
+			extractor_version,
+			status,
+			blocked_reason_code
+		) VALUES (
+			@organizationID,
+			@checkpointID,
+			@releaseBundleID,
+			@releaseChecksum,
+			@foreignPlanID,
+			@foreignPlanChecksum,
+			@derivedChecksum,
+			@extractorVersion,
+			'candidate',
+			''
+		)`,
+		pgx.NamedArgs{
+			"organizationID":      first.organizationID,
+			"checkpointID":        dryRun.Checkpoint.ID,
+			"releaseBundleID":     first.bundle.ID,
+			"releaseChecksum":     first.bundle.CanonicalChecksum,
+			"foreignPlanID":       second.plan.ID,
+			"foreignPlanChecksum": second.plan.CanonicalChecksum,
+			"derivedChecksum":     "sha256:" + strings.Repeat("f", 64),
+			"extractorVersion":    targetConfigV1ExtractorVersion,
+		},
+	)
+	expectTargetConfigPostgreSQLCode(t, err, pgerrcode.ForeignKeyViolation)
+
+	down, err := os.ReadFile(filepath.Join(
+		"..",
+		"migrations",
+		"sql",
+		"142_release_contract_v1_extraction.down.sql",
+	))
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = pool.Exec(ctx, string(down))
+	g.Expect(err).To(MatchError(ContainSubstring(
+		"downgrade crossing 142 is forbidden while v1 extraction evidence exists",
+	)))
+	var checkpointCount int
+	g.Expect(pool.QueryRow(ctx, `
+		SELECT count(*) FROM BackfillCheckpoint
+		WHERE id = @checkpointID`,
+		pgx.NamedArgs{"checkpointID": dryRun.Checkpoint.ID},
+	).Scan(&checkpointCount)).To(Succeed())
+	g.Expect(checkpointCount).To(Equal(1))
+}
+
+func TestTargetConfigV1ExtractionIgnoresV2SourcesInMixedHistory(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	v1 := createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"mixed-v1",
+		types.ReleaseContractSchemaV1,
+	)
+	_ = createTargetConfigV1RepositoryFixtureForOrganization(
+		t,
+		ctx,
+		"mixed-v2",
+		"distr.component-release/v2",
+		v1.organizationID,
+	)
+
+	report, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		v1.organizationID,
+		v1.actorUserAccountID,
+		nil,
+		100,
+		v1.verifier,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(report.Checkpoint.SourceCount).To(Equal(1))
+	g.Expect(report.Items).To(HaveLen(1))
+	g.Expect(report.Items[0].OriginalPlanID).To(Equal(v1.plan.ID))
+}
+
+func TestTargetConfigV1ExtractionUsesStableBoundedSourceCursor(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	g := NewWithT(t)
+	fixtures := []targetConfigV1RepositoryFixture{createTargetConfigV1RepositoryFixture(
+		t,
+		ctx,
+		"cursor-a",
+		types.ReleaseContractSchemaV1,
+	)}
+	fixtures = append(
+		fixtures,
+		createTargetConfigV1RepositoryFixtureForOrganization(
+			t,
+			ctx,
+			"cursor-b",
+			types.ReleaseContractSchemaV1,
+			fixtures[0].organizationID,
+		),
+		createTargetConfigV1RepositoryFixtureForOrganization(
+			t,
+			ctx,
+			"cursor-c",
+			types.ReleaseContractSchemaV1,
+			fixtures[0].organizationID,
+		),
+	)
+	planIDs := []uuid.UUID{
+		fixtures[0].plan.ID,
+		fixtures[1].plan.ID,
+		fixtures[2].plan.ID,
+	}
+	sort.Slice(planIDs, func(left, right int) bool {
+		return planIDs[left].String() < planIDs[right].String()
+	})
+
+	first, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixtures[0].organizationID,
+		fixtures[0].actorUserAccountID,
+		nil,
+		1,
+		fixtures[0].verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first.Checkpoint.SourceCount).To(Equal(1))
+	g.Expect(first.Checkpoint.SourceAfterPlanID).To(BeNil())
+	g.Expect(first.Checkpoint.SourceThroughPlanID).NotTo(BeNil())
+	g.Expect(*first.Checkpoint.SourceThroughPlanID).To(Equal(planIDs[0]))
+	g.Expect(first.Checkpoint.HasMore).To(BeTrue())
+	g.Expect(first.Items).To(HaveLen(1))
+	g.Expect(first.Items[0].OriginalPlanID).To(Equal(planIDs[0]))
+
+	second, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixtures[0].organizationID,
+		fixtures[0].actorUserAccountID,
+		first.Checkpoint.SourceThroughPlanID,
+		1,
+		fixtures[0].verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second.Checkpoint.SourceAfterPlanID).NotTo(BeNil())
+	g.Expect(*second.Checkpoint.SourceAfterPlanID).To(Equal(planIDs[0]))
+	g.Expect(second.Checkpoint.SourceThroughPlanID).NotTo(BeNil())
+	g.Expect(*second.Checkpoint.SourceThroughPlanID).To(Equal(planIDs[1]))
+	g.Expect(second.Checkpoint.HasMore).To(BeTrue())
+	g.Expect(second.Items).To(HaveLen(1))
+	g.Expect(second.Items[0].OriginalPlanID).To(Equal(planIDs[1]))
+
+	last, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixtures[0].organizationID,
+		fixtures[0].actorUserAccountID,
+		second.Checkpoint.SourceThroughPlanID,
+		1,
+		fixtures[0].verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(last.Checkpoint.SourceThroughPlanID).NotTo(BeNil())
+	g.Expect(*last.Checkpoint.SourceThroughPlanID).To(Equal(planIDs[2]))
+	g.Expect(last.Checkpoint.HasMore).To(BeFalse())
+	g.Expect(last.Items).To(HaveLen(1))
+	g.Expect(last.Items[0].OriginalPlanID).To(Equal(planIDs[2]))
+}
+
+type targetConfigV1RepositoryFixture struct {
+	organizationID     uuid.UUID
+	actorUserAccountID uuid.UUID
+	placement          types.DeploymentRegistryPlacement
+	bundle             types.ReleaseBundle
+	plan               types.DeploymentPlan
+	verifier           targetConfigV1StaticObjectVerifier
+}
+
+type targetConfigV1BlockingObjectVerifier struct {
+	delegate targetConfigV1StaticObjectVerifier
+	entered  chan<- struct{}
+	release  <-chan struct{}
+	once     sync.Once
+}
+
+func (verifier *targetConfigV1BlockingObjectVerifier) Verify(
+	ctx context.Context,
+	object types.TargetConfigSnapshotObject,
+) (types.VerifiedTargetConfigObject, error) {
+	verifier.once.Do(func() {
+		verifier.entered <- struct{}{}
+	})
+	select {
+	case <-ctx.Done():
+		return types.VerifiedTargetConfigObject{}, ctx.Err()
+	case <-verifier.release:
+	}
+	return verifier.delegate.Verify(ctx, object)
+}
+
+type targetConfigV1StaticObjectVerifier struct {
+	evidence map[string]types.VerifiedTargetConfigObject
+}
+
+func (verifier targetConfigV1StaticObjectVerifier) Verify(
+	_ context.Context,
+	object types.TargetConfigSnapshotObject,
+) (types.VerifiedTargetConfigObject, error) {
+	evidence, exists := verifier.evidence[object.Reference]
+	if !exists {
+		return types.VerifiedTargetConfigObject{}, errors.New("test object does not exist")
+	}
+	return evidence, nil
+}
+
+func createTargetConfigV1RepositoryFixture(
+	t *testing.T,
+	ctx context.Context,
+	suffix string,
+	schema string,
+) targetConfigV1RepositoryFixture {
+	return createTargetConfigV1RepositoryFixtureForOrganization(
+		t,
+		ctx,
+		suffix,
+		schema,
+		uuid.Nil,
+	)
+}
+
+func createTargetConfigV1RepositoryFixtureForOrganization(
+	t *testing.T,
+	ctx context.Context,
+	suffix string,
+	schema string,
+	organizationID uuid.UUID,
+) targetConfigV1RepositoryFixture {
+	t.Helper()
+	g := NewWithT(t)
+	var deps deploymentRegistryDependencies
+	if organizationID == uuid.Nil {
+		deps = createDeploymentRegistryDependencies(t, ctx)
+	} else {
+		deps = deploymentRegistryDependencies{
+			organizationID:         organizationID,
+			customerOrganizationID: createDeploymentRegistryCustomer(t, ctx, organizationID),
+			environmentID:          createDeploymentRegistryEnvironment(t, ctx, organizationID),
+			deploymentTargetID:     createDeploymentRegistryTarget(t, ctx, organizationID),
+		}
+	}
+	actorUserAccountID := createTargetConfigSnapshotTestUser(
+		t,
+		ctx,
+		deps.organizationID,
+	)
+	placement := createDeploymentRegistryPlacement(t, ctx, deps, suffix, time.Now().UTC())
+	application := types.Application{
+		Name: "V1 extraction " + suffix,
+		Type: types.DeploymentTypeDocker,
+	}
+	g.Expect(CreateApplication(ctx, &application, deps.organizationID)).To(Succeed())
+	var lifecycleID uuid.UUID
+	g.Expect(internalctx.GetDb(ctx).QueryRow(ctx, `
+		INSERT INTO Lifecycle (organization_id, name)
+		VALUES (@organizationID, @name)
+		RETURNING id`,
+		pgx.NamedArgs{
+			"organizationID": deps.organizationID,
+			"name":           "V1 extraction " + suffix,
+		},
+	).Scan(&lifecycleID)).To(Succeed())
+	channel := types.Channel{
+		OrganizationID: deps.organizationID,
+		ApplicationID:  application.ID,
+		LifecycleID:    lifecycleID,
+		Name:           "Stable",
+		IsDefault:      true,
+	}
+	g.Expect(CreateChannel(ctx, &channel)).To(Succeed())
+
+	composeChecksum := "sha256:" + strings.Repeat("a", 64)
+	serviceChecksum := "sha256:" + strings.Repeat("b", 64)
+	componentDigest := "sha256:" + strings.Repeat("c", 64)
+	composeReference := "s3://config-bucket/_immutable/sha256/" +
+		strings.Repeat("a", 64) + "/config/docker-compose.yaml"
+	serviceReference := "s3://config-bucket/config/service.json"
+	componentName := placement.Definitions[0].Key
+	contract := &types.ReleaseContract{
+		Schema: schema,
+		Source: types.ReleaseContractSource{
+			Repository:   "https://git.example.invalid/emlo/config.git",
+			Branch:       "main",
+			SourceCommit: strings.Repeat("1", 40),
+			BuiltCommit:  strings.Repeat("1", 40),
+		},
+		Components: []types.ReleaseContractComponent{{
+			Name:     componentName,
+			Version:  "1.2.3",
+			Image:    "registry.example.invalid/emlo/api@" + componentDigest,
+			Platform: string(types.DeploymentTargetPlatformLinuxAMD64),
+		}},
+		Compatibility: types.ReleaseContractCompatibility{
+			AffectedComponents: []string{componentName},
+		},
+		Config: types.ReleaseContractConfig{
+			RepositoryCommit:      strings.Repeat("2", 40),
+			ComposePath:           "config/docker-compose.yaml",
+			ServiceConfigPath:     "config/service.json",
+			ComposeChecksum:       composeChecksum,
+			ServiceConfigChecksum: serviceChecksum,
+			ImmutableObjects: []types.ReleaseContractConfigObject{
+				{URI: composeReference, Checksum: composeChecksum},
+				{URI: serviceReference, VersionID: "version-7", Checksum: serviceChecksum},
+			},
+		},
+	}
+	bundle := types.ReleaseBundle{
+		OrganizationID:  deps.organizationID,
+		ApplicationID:   application.ID,
+		ChannelID:       channel.ID,
+		ReleaseNumber:   "1.2.3-" + suffix,
+		ReleaseNotes:    "v1 extraction repository fixture",
+		SourceRevision:  strings.Repeat("1", 40),
+		ReleaseContract: contract,
+		Components: []types.ReleaseBundleComponent{{
+			Key:        componentName,
+			Name:       componentName,
+			Type:       types.ReleaseBundleComponentTypeExternalArtifact,
+			Version:    "1.2.3",
+			PackageRef: "registry.example.invalid/emlo/api@" + componentDigest,
+			Digest:     componentDigest,
+			Checksum:   componentDigest,
+		}},
+	}
+	g.Expect(CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+		UPDATE ReleaseBundle
+		SET status = 'PUBLISHED'
+		WHERE id = @id
+		  AND organization_id = @organizationID`,
+		pgx.NamedArgs{"id": bundle.ID, "organizationID": deps.organizationID},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	bundle.Status = types.ReleaseBundleStatusPublished
+
+	planID := uuid.New()
+	planTargetID := uuid.New()
+	plan := types.DeploymentPlan{
+		ID:              planID,
+		OrganizationID:  deps.organizationID,
+		ApplicationID:   application.ID,
+		ReleaseBundleID: bundle.ID,
+		ChannelID:       channel.ID,
+		EnvironmentID:   deps.environmentID,
+		ReleaseContract: contract,
+		Status:          types.DeploymentPlanStatusReady,
+		Targets: []types.DeploymentPlanTarget{{
+			ID:                 planTargetID,
+			DeploymentPlanID:   planID,
+			OrganizationID:     deps.organizationID,
+			DeploymentTargetID: deps.deploymentTargetID,
+			Name:               "Target " + suffix,
+			Type:               types.DeploymentTypeDocker,
+			Platform:           types.DeploymentTargetPlatformLinuxAMD64,
+		}},
+		TargetComponents: []types.DeploymentPlanTargetComponent{{
+			ID:                     uuid.New(),
+			DeploymentPlanID:       planID,
+			DeploymentPlanTargetID: planTargetID,
+			OrganizationID:         deps.organizationID,
+			DeploymentTargetID:     deps.deploymentTargetID,
+			Component:              componentName,
+			Version:                "1.2.3",
+			Image:                  "registry.example.invalid/emlo/api@" + componentDigest,
+			Platform:               types.DeploymentTargetPlatformLinuxAMD64,
+			ConfigChecksum:         serviceChecksum,
+		}},
+		Variables: []types.DeploymentPlanVariable{},
+	}
+	g.Expect(setDeploymentPlanCanonicalFields(&plan)).To(Succeed())
+	g.Expect(RunTx(ctx, func(txCtx context.Context) error {
+		if err := insertDeploymentPlan(txCtx, &plan); err != nil {
+			return err
+		}
+		if err := insertDeploymentPlanTargets(txCtx, plan); err != nil {
+			return err
+		}
+		if err := insertDeploymentPlanTargetComponents(txCtx, plan); err != nil {
+			return err
+		}
+		if err := insertDeploymentPlanVariables(txCtx, plan); err != nil {
+			return err
+		}
+		return nil
+	})).To(Succeed())
+	loadedPlan, err := GetDeploymentPlan(ctx, plan.ID, deps.organizationID)
+	g.Expect(err).NotTo(HaveOccurred())
+	plan = *loadedPlan
+
+	return targetConfigV1RepositoryFixture{
+		organizationID:     deps.organizationID,
+		actorUserAccountID: actorUserAccountID,
+		placement:          placement,
+		bundle:             bundle,
+		plan:               plan,
+		verifier: targetConfigV1StaticObjectVerifier{
+			evidence: map[string]types.VerifiedTargetConfigObject{
+				composeReference: {
+					Reference: composeReference,
+					MediaType: "application/vnd.emlo.compose+yaml",
+					SizeBytes: 23,
+					Checksum:  composeChecksum,
+				},
+				serviceReference: {
+					Reference: serviceReference,
+					VersionID: "version-7",
+					MediaType: "application/vnd.emlo.service+json",
+					SizeBytes: 31,
+					Checksum:  serviceChecksum,
+				},
+			},
+		},
+	}
 }

@@ -14,6 +14,7 @@ CREATE TABLE BackfillCheckpoint (
   id UUID PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  actor_user_account_id UUID NOT NULL,
   extractor_version TEXT NOT NULL CHECK (
     extractor_version ~ '^[a-z0-9][a-z0-9._/-]{0,127}$'
   ),
@@ -23,6 +24,9 @@ CREATE TABLE BackfillCheckpoint (
   dry_run_checksum TEXT NOT NULL CHECK (
     dry_run_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
+  source_after_plan_id UUID,
+  source_through_plan_id UUID,
+  has_more BOOLEAN NOT NULL DEFAULT false,
   source_count INTEGER NOT NULL CHECK (source_count >= 0),
   candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
   blocked_count INTEGER NOT NULL CHECK (blocked_count >= 0),
@@ -30,8 +34,32 @@ CREATE TABLE BackfillCheckpoint (
   CONSTRAINT backfillcheckpoint_count_check CHECK (
     source_count = candidate_count + blocked_count
   ),
+  CONSTRAINT backfillcheckpoint_batch_bound_check CHECK (
+    source_count <= batch_size
+  ),
+  CONSTRAINT backfillcheckpoint_cursor_check CHECK (
+    (
+      source_count = 0
+      AND source_through_plan_id IS NULL
+      AND has_more = false
+    )
+    OR (
+      source_count > 0
+      AND source_through_plan_id IS NOT NULL
+      AND (
+        source_after_plan_id IS NULL
+        OR source_through_plan_id > source_after_plan_id
+      )
+    )
+  ),
   CONSTRAINT backfillcheckpoint_id_organization_unique
     UNIQUE (id, organization_id),
+  CONSTRAINT backfillcheckpoint_actor_organization_fk
+    FOREIGN KEY (organization_id, actor_user_account_id)
+    REFERENCES Organization_UserAccount(organization_id, user_account_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT backfillcheckpoint_dry_run_unique
     UNIQUE (organization_id, extractor_version, dry_run_checksum)
 );

@@ -20,25 +20,49 @@ const V1ExtractorVersion = "release-contract-v1/1"
 type V1ExtractionBlockedReasonCode string
 
 const (
-	V1ExtractionBlockedReasonReleaseChecksumMismatch    V1ExtractionBlockedReasonCode = "release_checksum_mismatch"
-	V1ExtractionBlockedReasonPlanChecksumMismatch       V1ExtractionBlockedReasonCode = "plan_checksum_mismatch"
-	V1ExtractionBlockedReasonHistoryContractMismatch    V1ExtractionBlockedReasonCode = "history_contract_mismatch"
-	V1ExtractionBlockedReasonUnsupportedSchema          V1ExtractionBlockedReasonCode = "unsupported_schema"
-	V1ExtractionBlockedReasonMultiComponent             V1ExtractionBlockedReasonCode = "multi_component_release"
-	V1ExtractionBlockedReasonTargetCardinality          V1ExtractionBlockedReasonCode = "multi_target_plan"
-	V1ExtractionBlockedReasonTargetComponentCardinality V1ExtractionBlockedReasonCode = "target_component_cardinality"
-	V1ExtractionBlockedReasonPlacementInvalid           V1ExtractionBlockedReasonCode = "placement_invalid"
-	V1ExtractionBlockedReasonComponentMissing           V1ExtractionBlockedReasonCode = "component_instance_missing"
-	V1ExtractionBlockedReasonComponentAmbiguous         V1ExtractionBlockedReasonCode = "component_instance_ambiguous"
-	V1ExtractionBlockedReasonComponentMismatch          V1ExtractionBlockedReasonCode = "component_history_mismatch"
-	V1ExtractionBlockedReasonConfigObjectMissing        V1ExtractionBlockedReasonCode = "config_object_missing"
-	V1ExtractionBlockedReasonConfigObjectAmbiguous      V1ExtractionBlockedReasonCode = "config_object_ambiguous"
-	V1ExtractionBlockedReasonMutableConfigObject        V1ExtractionBlockedReasonCode = "mutable_config_object"
-	V1ExtractionBlockedReasonPlaintextSecret            V1ExtractionBlockedReasonCode = "plaintext_secret"
-	V1ExtractionBlockedReasonSecretReferenceUnresolved  V1ExtractionBlockedReasonCode = "secret_reference_unresolved"
-	V1ExtractionBlockedReasonSecretReferenceUnsafe      V1ExtractionBlockedReasonCode = "secret_reference_unsafe"
-	V1ExtractionBlockedReasonDerivedSnapshotInvalid     V1ExtractionBlockedReasonCode = "derived_snapshot_invalid"
+	V1ExtractionBlockedReasonReleaseChecksumMismatch         V1ExtractionBlockedReasonCode = "release_checksum_mismatch"
+	V1ExtractionBlockedReasonPlanChecksumMismatch            V1ExtractionBlockedReasonCode = "plan_checksum_mismatch"
+	V1ExtractionBlockedReasonHistoryContractMismatch         V1ExtractionBlockedReasonCode = "history_contract_mismatch"
+	V1ExtractionBlockedReasonUnsupportedSchema               V1ExtractionBlockedReasonCode = "unsupported_schema"
+	V1ExtractionBlockedReasonMultiComponent                  V1ExtractionBlockedReasonCode = "multi_component_release"
+	V1ExtractionBlockedReasonTargetCardinality               V1ExtractionBlockedReasonCode = "multi_target_plan"
+	V1ExtractionBlockedReasonTargetComponentCardinality      V1ExtractionBlockedReasonCode = "target_component_cardinality"
+	V1ExtractionBlockedReasonPlacementInvalid                V1ExtractionBlockedReasonCode = "placement_invalid"
+	V1ExtractionBlockedReasonComponentMissing                V1ExtractionBlockedReasonCode = "component_instance_missing"
+	V1ExtractionBlockedReasonComponentAmbiguous              V1ExtractionBlockedReasonCode = "component_instance_ambiguous"
+	V1ExtractionBlockedReasonComponentMismatch               V1ExtractionBlockedReasonCode = "component_history_mismatch"
+	V1ExtractionBlockedReasonConfigObjectMissing             V1ExtractionBlockedReasonCode = "config_object_missing"
+	V1ExtractionBlockedReasonConfigObjectAmbiguous           V1ExtractionBlockedReasonCode = "config_object_ambiguous"
+	V1ExtractionBlockedReasonMutableConfigObject             V1ExtractionBlockedReasonCode = "mutable_config_object"
+	V1ExtractionBlockedReasonConfigObjectEvidenceUnavailable V1ExtractionBlockedReasonCode = "config_object_evidence_unavailable"
+	V1ExtractionBlockedReasonConfigObjectEvidenceAmbiguous   V1ExtractionBlockedReasonCode = "config_object_evidence_ambiguous"
+	V1ExtractionBlockedReasonConfigObjectEvidenceMismatch    V1ExtractionBlockedReasonCode = "config_object_evidence_mismatch"
+	V1ExtractionBlockedReasonVariableNotRepresentable        V1ExtractionBlockedReasonCode = "variable_not_representable"
+	V1ExtractionBlockedReasonRequiredVariableUnresolved      V1ExtractionBlockedReasonCode = "required_variable_unresolved"
+	V1ExtractionBlockedReasonVariableUnresolved              V1ExtractionBlockedReasonCode = "variable_unresolved"
+	V1ExtractionBlockedReasonPlaintextSecret                 V1ExtractionBlockedReasonCode = "plaintext_secret"
+	V1ExtractionBlockedReasonSecretReferenceUnresolved       V1ExtractionBlockedReasonCode = "secret_reference_unresolved"
+	V1ExtractionBlockedReasonSecretReferenceUnsafe           V1ExtractionBlockedReasonCode = "secret_reference_unsafe"
+	V1ExtractionBlockedReasonSecretReferenceUnavailable      V1ExtractionBlockedReasonCode = "secret_reference_unavailable"
+	V1ExtractionBlockedReasonSecretVersionUnavailable        V1ExtractionBlockedReasonCode = "secret_reference_version_unavailable"
+	V1ExtractionBlockedReasonDerivedSnapshotInvalid          V1ExtractionBlockedReasonCode = "derived_snapshot_invalid"
 )
+
+type V1ConfigObjectEvidence struct {
+	Reference string
+	VersionID string
+	MediaType string
+	SizeBytes int64
+	Checksum  string
+}
+
+type V1SecretReferenceEvidence struct {
+	Provider               string
+	ReferenceID            uuid.UUID
+	OrganizationID         uuid.UUID
+	CustomerOrganizationID *uuid.UUID
+	VersionFingerprint     string
+}
 
 type V1ExtractionInput struct {
 	OrganizationID  uuid.UUID
@@ -51,11 +75,15 @@ type V1ExtractionInput struct {
 	PlanChecksum         string
 	PlanCanonicalPayload []byte
 
-	ReleaseContract      *types.ReleaseContract
-	PlanTargets          []types.DeploymentPlanTarget
-	PlanTargetComponents []types.DeploymentPlanTargetComponent
-	PlanVariables        []types.DeploymentPlanVariable
-	ComponentInstances   []types.ComponentInstance
+	ReleaseContract         *types.ReleaseContract
+	PlanTargets             []types.DeploymentPlanTarget
+	PlanTargetComponents    []types.DeploymentPlanTargetComponent
+	PlanVariables           []types.DeploymentPlanVariable
+	ComponentDefinitions    []types.ComponentDefinition
+	ComponentAliases        []types.ComponentAlias
+	ComponentInstances      []types.ComponentInstance
+	ConfigObjectEvidence    []V1ConfigObjectEvidence
+	SecretReferenceEvidence []V1SecretReferenceEvidence
 
 	DeploymentUnitID              uuid.UUID
 	TargetEnvironmentAssignmentID uuid.UUID
@@ -134,19 +162,31 @@ func ExtractV1TargetConfig(input V1ExtractionInput) (V1ExtractionResult, error) 
 	if *composeObject == *serviceObject {
 		return blockedV1Extraction(V1ExtractionBlockedReasonConfigObjectAmbiguous), nil
 	}
+	if !immutableV1ConfigObjectIdentity(*composeObject) ||
+		!immutableV1ConfigObjectIdentity(*serviceObject) {
+		return blockedV1Extraction(V1ExtractionBlockedReasonMutableConfigObject), nil
+	}
+	composeEvidence, reason := matchV1ConfigObjectEvidence(input.ConfigObjectEvidence, *composeObject)
+	if reason != "" {
+		return blockedV1Extraction(reason), nil
+	}
+	serviceEvidence, reason := matchV1ConfigObjectEvidence(input.ConfigObjectEvidence, *serviceObject)
+	if reason != "" {
+		return blockedV1Extraction(reason), nil
+	}
 
 	objects := []types.TargetConfigSnapshotObjectDraft{
 		v1ConfigObjectDraft(
 			"compose",
 			types.TargetConfigObjectKindDeploymentDescriptor,
-			contract.Config.ComposePath,
 			*composeObject,
+			*composeEvidence,
 		),
 		v1ConfigObjectDraft(
 			"service-config",
 			types.TargetConfigObjectKindServiceConfig,
-			contract.Config.ServiceConfigPath,
 			*serviceObject,
+			*serviceEvidence,
 		),
 	}
 	for _, object := range objects {
@@ -155,7 +195,7 @@ func ExtractV1TargetConfig(input V1ExtractionInput) (V1ExtractionResult, error) 
 		}
 	}
 
-	secretReferences, reason := extractV1SecretReferences(input.PlanVariables)
+	secretReferences, reason := extractV1SecretReferences(input)
 	if reason != "" {
 		return blockedV1Extraction(reason), nil
 	}
@@ -191,6 +231,14 @@ func ExtractV1TargetConfig(input V1ExtractionInput) (V1ExtractionResult, error) 
 		CanonicalPayload:  payload,
 		CanonicalChecksum: checksum,
 	}, nil
+}
+
+func immutableV1ConfigObjectIdentity(object types.ReleaseContractConfigObject) bool {
+	return isImmutableTargetConfigObject(types.TargetConfigSnapshotObjectDraft{
+		Reference: object.URI,
+		VersionID: object.VersionID,
+		Checksum:  object.Checksum,
+	})
 }
 
 type v1HistoryEnvelope struct {
@@ -393,12 +441,44 @@ func matchV1ComponentInstance(
 	input V1ExtractionInput,
 	component types.DeploymentPlanTargetComponent,
 ) (*types.ComponentInstance, V1ExtractionBlockedReasonCode) {
+	logicalIdentity := strings.TrimSpace(component.Component)
+	definitionIDs := make(map[uuid.UUID]struct{})
+	for _, definition := range input.ComponentDefinitions {
+		if !activeV1ComponentDefinition(input.OrganizationID, definition) {
+			continue
+		}
+		if strings.TrimSpace(definition.Key) == logicalIdentity ||
+			strings.TrimSpace(definition.Name) == logicalIdentity {
+			definitionIDs[definition.ID] = struct{}{}
+		}
+	}
+	for _, alias := range input.ComponentAliases {
+		if alias.OrganizationID != input.OrganizationID ||
+			alias.RetiredAt != nil ||
+			!strings.EqualFold(strings.TrimSpace(alias.Alias), logicalIdentity) {
+			continue
+		}
+		for _, definition := range input.ComponentDefinitions {
+			if definition.ID == alias.ComponentDefinitionID &&
+				activeV1ComponentDefinition(input.OrganizationID, definition) {
+				definitionIDs[definition.ID] = struct{}{}
+				break
+			}
+		}
+	}
 	matches := make([]types.ComponentInstance, 0, 1)
+	seen := make(map[uuid.UUID]struct{})
 	for _, instance := range input.ComponentInstances {
+		_, logicalMatch := definitionIDs[instance.ComponentDefinitionID]
 		if instance.OrganizationID == input.OrganizationID &&
 			instance.DeploymentUnitID == input.DeploymentUnitID &&
 			instance.RetiredAt == nil &&
-			strings.TrimSpace(instance.PhysicalName) == strings.TrimSpace(component.Component) {
+			instance.ManagementState != types.RegistryManagementStateRetired &&
+			logicalMatch {
+			if _, duplicate := seen[instance.ID]; duplicate {
+				continue
+			}
+			seen[instance.ID] = struct{}{}
 			matches = append(matches, instance)
 		}
 	}
@@ -410,6 +490,16 @@ func matchV1ComponentInstance(
 	default:
 		return nil, V1ExtractionBlockedReasonComponentAmbiguous
 	}
+}
+
+func activeV1ComponentDefinition(
+	organizationID uuid.UUID,
+	definition types.ComponentDefinition,
+) bool {
+	return definition.ID != uuid.Nil &&
+		definition.OrganizationID == organizationID &&
+		definition.RetiredAt == nil &&
+		definition.ManagementState != types.RegistryManagementStateRetired
 }
 
 func matchV1ConfigObject(
@@ -433,6 +523,35 @@ func matchV1ConfigObject(
 	}
 }
 
+func matchV1ConfigObjectEvidence(
+	evidence []V1ConfigObjectEvidence,
+	object types.ReleaseContractConfigObject,
+) (*V1ConfigObjectEvidence, V1ExtractionBlockedReasonCode) {
+	matches := make([]V1ConfigObjectEvidence, 0, 1)
+	for _, candidate := range evidence {
+		if strings.TrimSpace(candidate.Reference) == strings.TrimSpace(object.URI) {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, V1ExtractionBlockedReasonConfigObjectEvidenceUnavailable
+	}
+	if len(matches) != 1 {
+		return nil, V1ExtractionBlockedReasonConfigObjectEvidenceAmbiguous
+	}
+	match := matches[0]
+	if strings.TrimSpace(match.Reference) != strings.TrimSpace(object.URI) ||
+		strings.TrimSpace(match.VersionID) != strings.TrimSpace(object.VersionID) ||
+		strings.TrimSpace(match.Checksum) != strings.TrimSpace(object.Checksum) ||
+		strings.TrimSpace(match.MediaType) == "" ||
+		!targetConfigMediaTypePattern.MatchString(strings.TrimSpace(match.MediaType)) ||
+		match.SizeBytes < 0 ||
+		match.SizeBytes > maxTargetConfigObjectSize {
+		return nil, V1ExtractionBlockedReasonConfigObjectEvidenceMismatch
+	}
+	return &match, ""
+}
+
 func v1ObjectPathMatches(reference, configPath string) bool {
 	parsed, err := url.Parse(reference)
 	if err != nil || parsed.Scheme != "s3" || parsed.Host == "" ||
@@ -449,45 +568,36 @@ func v1ObjectPathMatches(reference, configPath string) bool {
 func v1ConfigObjectDraft(
 	key string,
 	kind types.TargetConfigObjectKind,
-	configPath string,
 	object types.ReleaseContractConfigObject,
+	evidence V1ConfigObjectEvidence,
 ) types.TargetConfigSnapshotObjectDraft {
 	return types.TargetConfigSnapshotObjectDraft{
 		Key:       key,
 		Kind:      kind,
 		Reference: object.URI,
 		VersionID: object.VersionID,
-		MediaType: v1ConfigMediaType(configPath),
+		MediaType: strings.TrimSpace(evidence.MediaType),
+		SizeBytes: evidence.SizeBytes,
 		Checksum:  object.Checksum,
 	}
 }
 
-func v1ConfigMediaType(configPath string) string {
-	lower := strings.ToLower(configPath)
-	switch {
-	case strings.HasSuffix(lower, ".json"):
-		return "application/json"
-	case strings.HasSuffix(lower, ".yaml"), strings.HasSuffix(lower, ".yml"):
-		return "application/yaml"
-	case strings.HasSuffix(lower, ".toml"):
-		return "application/toml"
-	case strings.HasSuffix(lower, ".xml"):
-		return "application/xml"
-	default:
-		return "application/octet-stream"
-	}
-}
-
 func extractV1SecretReferences(
-	variables []types.DeploymentPlanVariable,
+	input V1ExtractionInput,
 ) ([]types.TargetConfigSnapshotSecretReferenceDraft, V1ExtractionBlockedReasonCode) {
 	references := make([]types.TargetConfigSnapshotSecretReferenceDraft, 0)
-	for _, variable := range variables {
+	for _, variable := range input.PlanVariables {
 		if variable.Type != types.VariableTypeSecretReference {
 			if v1PlaintextLooksSecret(variable) {
 				return nil, V1ExtractionBlockedReasonPlaintextSecret
 			}
-			continue
+			if variable.Status != types.VariableResolutionStatusResolved {
+				if variable.IsRequired {
+					return nil, V1ExtractionBlockedReasonRequiredVariableUnresolved
+				}
+				return nil, V1ExtractionBlockedReasonVariableUnresolved
+			}
+			return nil, V1ExtractionBlockedReasonVariableNotRepresentable
 		}
 		if v1RawValuePresent(variable.Value) {
 			return nil, V1ExtractionBlockedReasonPlaintextSecret
@@ -505,17 +615,58 @@ func extractV1SecretReferences(
 			return nil, V1ExtractionBlockedReasonSecretReferenceUnsafe
 		}
 		canonicalReferenceID := parsedReferenceID.String()
+		evidence, reason := matchV1SecretReferenceEvidence(
+			input,
+			parsedReferenceID,
+		)
+		if reason != "" {
+			return nil, reason
+		}
 		references = append(references, types.TargetConfigSnapshotSecretReferenceDraft{
 			Key:                key,
-			Provider:           "distr",
+			Provider:           strings.TrimSpace(evidence.Provider),
 			Reference:          canonicalReferenceID,
-			VersionFingerprint: fingerprintV1SecretReference(canonicalReferenceID),
+			VersionFingerprint: strings.TrimSpace(evidence.VersionFingerprint),
 		})
 	}
 	slices.SortFunc(references, func(a, b types.TargetConfigSnapshotSecretReferenceDraft) int {
 		return strings.Compare(a.Key, b.Key)
 	})
 	return references, ""
+}
+
+func matchV1SecretReferenceEvidence(
+	input V1ExtractionInput,
+	referenceID uuid.UUID,
+) (*V1SecretReferenceEvidence, V1ExtractionBlockedReasonCode) {
+	matches := make([]V1SecretReferenceEvidence, 0, 1)
+	expectedCustomerOrganizationID := input.PlanTargets[0].CustomerOrganizationID
+	for _, evidence := range input.SecretReferenceEvidence {
+		if evidence.ReferenceID == referenceID &&
+			evidence.OrganizationID == input.OrganizationID &&
+			v1UUIDPointersEqual(
+				evidence.CustomerOrganizationID,
+				expectedCustomerOrganizationID,
+			) {
+			matches = append(matches, evidence)
+		}
+	}
+	if len(matches) != 1 || strings.TrimSpace(matches[0].Provider) == "" {
+		return nil, V1ExtractionBlockedReasonSecretReferenceUnavailable
+	}
+	if !targetConfigChecksumPattern.MatchString(
+		strings.TrimSpace(matches[0].VersionFingerprint),
+	) {
+		return nil, V1ExtractionBlockedReasonSecretVersionUnavailable
+	}
+	return &matches[0], ""
+}
+
+func v1UUIDPointersEqual(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func v1PlaintextLooksSecret(variable types.DeploymentPlanVariable) bool {
@@ -533,11 +684,6 @@ func v1PlaintextLooksSecret(variable types.DeploymentPlanVariable) bool {
 func v1RawValuePresent(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
-}
-
-func fingerprintV1SecretReference(referenceID string) string {
-	sum := sha256.Sum256([]byte("distr.secret-reference/v1\x00" + referenceID))
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func blockedV1Extraction(reason V1ExtractionBlockedReasonCode) V1ExtractionResult {

@@ -130,17 +130,21 @@ task, callback, or agent record.
    ```sh
    distr backfill-target-config-snapshots \
      --organization-id <org-id> \
+     --actor-user-account-id <organization-member-user-id> \
      --dry-run \
      --batch-size 100
    ```
 
-5. Review every blocked reason and record the returned checkpoint ID and dry-run checksum. Do not edit a v1
-   source row to make it pass.
+5. Review every blocked reason and record the returned checkpoint ID, dry-run checksum,
+   `sourceThroughPlanId`, and `hasMore`. Do not edit a v1 source row to make it pass. Resolved ordinary
+   variables and current mutable Distr secret references are expected to block because PR-058 cannot represent
+   them losslessly.
 6. Apply the exact approved state:
 
    ```sh
    distr backfill-target-config-snapshots \
      --organization-id <org-id> \
+     --actor-user-account-id <same-organization-member-user-id> \
      --apply \
      --checkpoint-id <checkpoint-id> \
      --dry-run-checksum <sha256-checksum> \
@@ -155,9 +159,20 @@ task, callback, or agent record.
      --report <checkpoint-id>
    ```
 
-An interrupted or repeated apply is safe. The command processes stable plan IDs, reuses a matching canonical
-snapshot, and appends lineage exactly once. A changed source-state or dry-run checksum fails closed before a new
-batch.
+8. If the completed checkpoint reports `hasMore=true`, create the next independently approved source batch:
+
+   ```sh
+   distr backfill-target-config-snapshots \
+     --organization-id <org-id> \
+     --actor-user-account-id <organization-member-user-id> \
+     --dry-run \
+     --after-plan-id <source-through-plan-id> \
+     --batch-size 100
+   ```
+
+An interrupted or repeated apply is safe. The command processes stable plan IDs and creates the matching
+canonical snapshot plus applied lineage in one serializable transaction. A changed actor, object evidence,
+registry placement, source-state, or dry-run checksum fails closed.
 
 Existing v1 reads and execution remain unchanged regardless of partial extraction or the v2 process flag. Roll
 back the binary by disabling v2 admission and deploying the previous Hub; do not delete extraction evidence.

@@ -1084,22 +1084,24 @@ Use one entry per pull request:
 
 - Status: Backend and operator CLI implemented on the PR-058 backend checkpoint; live PostgreSQL and final
   integration gates remain deferred.
-- Upstream base: `4013a55d`.
+- Upstream base: `3853ae81`.
 - Feature flag: Does not switch reads or execution; existing v1 behavior remains authoritative when
   `operator_control_plane_v2` is disabled.
 - User-facing behavior: Operators can create a deterministic dry-run checkpoint, review stable blocked reasons,
-  apply an approved checksum in restartable batches, and print persisted lineage.
+  follow an explicit stable source cursor, apply an actor-bound approved checksum in atomic restartable batches,
+  and print persisted lineage.
 - Database changes: Migration 142 adds immutable `BackfillCheckpoint` and append-only
-  `ReleaseContractV1ExtractionLineage` evidence with organization-scoped source and derived-snapshot constraints
-  plus guarded downgrade.
+  `ReleaseContractV1ExtractionLineage` evidence with an organization-member actor, bounded source cursors,
+  organization-scoped source/derived-snapshot constraints, and guarded downgrade.
 - API changes: None.
 - UI changes: None.
 - Agent protocol changes: None.
 - Documentation: Added PR-059 extraction/backfill notes and an upgrade procedure.
-- Tests: Added pure deterministic extraction, secret-boundary, command-mode/approval, repository helper, and
-  migration contract checks. Live PostgreSQL remains a final integration gate.
+- Tests: Added pure deterministic extraction, exact object evidence, variable/secret boundaries, logical
+  component resolution, command cursor/approval, atomic repository restart/concurrency/rollback, mixed-history,
+  and migration contract checks. Live PostgreSQL remains a final integration gate.
 - Upstream contribution notes: Community-neutral compatibility extraction; no adopter, CI-provider, database
   product, credential, host, or client-specific behavior.
 - Compatibility notes: Original v1 release and plan IDs, exact canonical bytes, checksums, reads, and execution are
-  never changed. Ambiguous or unsafe sources remain blocked; retries reuse canonical snapshots and append lineage
-  idempotently.
+  never changed. Ambiguous, unverifiable, or unrepresentable sources remain blocked; retries create/reuse
+  canonical snapshots and append lineage idempotently in a single transaction.

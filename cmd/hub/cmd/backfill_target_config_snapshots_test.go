@@ -13,21 +13,84 @@ import (
 func TestBackfillTargetConfigSnapshotsDefaultsToDryRun(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
+	actorUserAccountID := uuid.New()
 	var gotOrganizationID uuid.UUID
 	var gotBatchSize int
+	var gotAfterPlanID *uuid.UUID
 	stdout, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
-		DryRun: func(_ context.Context, orgID uuid.UUID, batchSize int) (*types.V1ExtractionReport, error) {
+		DryRun: func(
+			_ context.Context,
+			orgID uuid.UUID,
+			_ uuid.UUID,
+			afterPlanID *uuid.UUID,
+			batchSize int,
+		) (*types.V1ExtractionReport, error) {
 			gotOrganizationID = orgID
+			gotAfterPlanID = afterPlanID
 			gotBatchSize = batchSize
 			return v1ExtractionCommandReport(orgID), nil
 		},
-	}, "--organization-id", organizationID.String())
+	},
+		"--organization-id", organizationID.String(),
+		"--actor-user-account-id", actorUserAccountID.String(),
+	)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(gotOrganizationID).To(Equal(organizationID))
+	g.Expect(gotAfterPlanID).To(BeNil())
 	g.Expect(gotBatchSize).To(Equal(100))
 	g.Expect(stdout).To(ContainSubstring("mode=dry-run"))
 	g.Expect(stdout).To(ContainSubstring("dryRunChecksum=sha256:"))
+}
+
+func TestBackfillTargetConfigSnapshotsRequiresActorForDryRun(t *testing.T) {
+	var called bool
+	_, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
+		DryRun: func(
+			context.Context,
+			uuid.UUID,
+			uuid.UUID,
+			*uuid.UUID,
+			int,
+		) (*types.V1ExtractionReport, error) {
+			called = true
+			return nil, nil
+		},
+	}, "--organization-id", uuid.NewString())
+
+	NewWithT(t).Expect(err).To(MatchError(ContainSubstring(
+		"actor-user-account-id is required",
+	)))
+	NewWithT(t).Expect(called).To(BeFalse())
+}
+
+func TestBackfillTargetConfigSnapshotsDryRunPassesStableSourceCursor(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	actorUserAccountID := uuid.New()
+	afterPlanID := uuid.New()
+	var gotAfterPlanID *uuid.UUID
+	_, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
+		DryRun: func(
+			_ context.Context,
+			_ uuid.UUID,
+			_ uuid.UUID,
+			cursor *uuid.UUID,
+			_ int,
+		) (*types.V1ExtractionReport, error) {
+			gotAfterPlanID = cursor
+			return v1ExtractionCommandReport(organizationID), nil
+		},
+	},
+		"--organization-id", organizationID.String(),
+		"--actor-user-account-id", actorUserAccountID.String(),
+		"--dry-run",
+		"--after-plan-id", afterPlanID.String(),
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(gotAfterPlanID).NotTo(BeNil())
+	g.Expect(*gotAfterPlanID).To(Equal(afterPlanID))
 }
 
 func TestBackfillTargetConfigSnapshotsApplyRequiresCheckpointAndChecksum(t *testing.T) {
@@ -37,6 +100,7 @@ func TestBackfillTargetConfigSnapshotsApplyRequiresCheckpointAndChecksum(t *test
 	_, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
 		Apply: func(
 			context.Context,
+			uuid.UUID,
 			uuid.UUID,
 			uuid.UUID,
 			string,
@@ -54,32 +118,39 @@ func TestBackfillTargetConfigSnapshotsApplyRequiresCheckpointAndChecksum(t *test
 func TestBackfillTargetConfigSnapshotsApplyPassesApprovedDryRun(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
+	actorUserAccountID := uuid.New()
 	checkpointID := uuid.New()
 	checksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var gotActorUserAccountID uuid.UUID
 	var gotCheckpointID uuid.UUID
 	var gotChecksum string
 	stdout, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
 		Apply: func(
 			_ context.Context,
 			_ uuid.UUID,
+			actor uuid.UUID,
 			checkpoint uuid.UUID,
 			dryRunChecksum string,
 			_ int,
 		) (*types.V1ExtractionReport, error) {
+			gotActorUserAccountID = actor
 			gotCheckpointID = checkpoint
 			gotChecksum = dryRunChecksum
 			report := v1ExtractionCommandReport(organizationID)
+			report.Checkpoint.ActorUserAccountID = actorUserAccountID
 			report.Applied = 1
 			return report, nil
 		},
 	},
 		"--organization-id", organizationID.String(),
+		"--actor-user-account-id", actorUserAccountID.String(),
 		"--apply",
 		"--checkpoint-id", checkpointID.String(),
 		"--dry-run-checksum", checksum,
 	)
 
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(gotActorUserAccountID).To(Equal(actorUserAccountID))
 	g.Expect(gotCheckpointID).To(Equal(checkpointID))
 	g.Expect(gotChecksum).To(Equal(checksum))
 	g.Expect(stdout).To(ContainSubstring("mode=apply"))
@@ -101,6 +172,90 @@ func TestBackfillTargetConfigSnapshotsReportIsReadOnly(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(gotCheckpointID).To(Equal(checkpointID))
 	g.Expect(stdout).To(ContainSubstring("mode=report"))
+}
+
+func TestBackfillTargetConfigSnapshotsRejectsModeExtraneousFlags(t *testing.T) {
+	organizationID := uuid.NewString()
+	checkpointID := uuid.NewString()
+	checksum := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "report with apply checksum",
+			args: []string{
+				"--organization-id", organizationID,
+				"--report", checkpointID,
+				"--dry-run-checksum", checksum,
+			},
+		},
+		{
+			name: "report with checkpoint id",
+			args: []string{
+				"--organization-id", organizationID,
+				"--report", checkpointID,
+				"--checkpoint-id", checkpointID,
+			},
+		},
+		{
+			name: "report with actor",
+			args: []string{
+				"--organization-id", organizationID,
+				"--report", checkpointID,
+				"--actor-user-account-id", uuid.NewString(),
+			},
+		},
+		{
+			name: "apply with source cursor",
+			args: []string{
+				"--organization-id", organizationID,
+				"--apply",
+				"--checkpoint-id", checkpointID,
+				"--dry-run-checksum", checksum,
+				"--after-plan-id", uuid.NewString(),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			_, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
+				DryRun: func(
+					context.Context,
+					uuid.UUID,
+					uuid.UUID,
+					*uuid.UUID,
+					int,
+				) (*types.V1ExtractionReport, error) {
+					called = true
+					return nil, nil
+				},
+				Apply: func(
+					context.Context,
+					uuid.UUID,
+					uuid.UUID,
+					uuid.UUID,
+					string,
+					int,
+				) (*types.V1ExtractionReport, error) {
+					called = true
+					return nil, nil
+				},
+				Report: func(
+					context.Context,
+					uuid.UUID,
+					uuid.UUID,
+				) (*types.V1ExtractionReport, error) {
+					called = true
+					return nil, nil
+				},
+			}, test.args...)
+
+			NewWithT(t).Expect(err).To(HaveOccurred())
+			NewWithT(t).Expect(called).To(BeFalse())
+		})
+	}
 }
 
 func TestBackfillTargetConfigSnapshotsReportPrintsBoundedBlockedItems(t *testing.T) {
@@ -128,6 +283,41 @@ func TestBackfillTargetConfigSnapshotsReportPrintsBoundedBlockedItems(t *testing
 	g.Expect(stdout).To(ContainSubstring("planId=" + planID.String()))
 	g.Expect(stdout).To(ContainSubstring("releaseBundleId=" + releaseID.String()))
 	g.Expect(stdout).To(ContainSubstring("reason=multi_target_plan"))
+}
+
+func TestBackfillTargetConfigSnapshotsReportPrintsStableBatchCursor(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	actorUserAccountID := uuid.New()
+	afterPlanID := uuid.New()
+	throughPlanID := uuid.New()
+	stdout, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
+		DryRun: func(
+			_ context.Context,
+			_ uuid.UUID,
+			_ uuid.UUID,
+			_ *uuid.UUID,
+			_ int,
+		) (*types.V1ExtractionReport, error) {
+			report := v1ExtractionCommandReport(organizationID)
+			report.Checkpoint.ActorUserAccountID = actorUserAccountID
+			report.Checkpoint.SourceAfterPlanID = &afterPlanID
+			report.Checkpoint.SourceThroughPlanID = &throughPlanID
+			report.Checkpoint.HasMore = true
+			return report, nil
+		},
+	},
+		"--organization-id", organizationID.String(),
+		"--actor-user-account-id", actorUserAccountID.String(),
+		"--dry-run",
+		"--after-plan-id", afterPlanID.String(),
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(stdout).To(ContainSubstring("sourceAfterPlanId=" + afterPlanID.String()))
+	g.Expect(stdout).To(ContainSubstring("sourceThroughPlanId=" + throughPlanID.String()))
+	g.Expect(stdout).To(ContainSubstring("actorUserAccountId=" + actorUserAccountID.String()))
+	g.Expect(stdout).To(ContainSubstring("hasMore=true"))
 }
 
 func executeBackfillTargetConfigSnapshotsForTest(

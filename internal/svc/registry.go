@@ -276,3 +276,7 @@ func prometheusCollector(recorder obsermetrics.Recorder) prometheus.Collector {
 func (r *Registry) GetS3Client() *s3.Client {
 	return r.s3Client
 }
+
+func (r *Registry) GetTargetConfigObjectVerifier() targetconfig.ObjectVerifier {
+	return r.targetConfigObjectVerifier
+}

@@ -1,9 +1,11 @@
 package targetconfig
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -40,6 +42,7 @@ func TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory
 				Kind:      types.TargetConfigObjectKindDeploymentDescriptor,
 				Reference: "s3://config-bucket/_immutable/sha256/" + strings.Repeat("a", 64) + "/config/docker-compose.yaml",
 				MediaType: "application/yaml",
+				SizeBytes: 128,
 				Checksum:  "sha256:" + strings.Repeat("a", 64),
 			},
 			{
@@ -48,11 +51,12 @@ func TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory
 				Reference: "s3://config-bucket/config/service.json",
 				VersionID: "version-7",
 				MediaType: "application/json",
+				SizeBytes: 256,
 				Checksum:  "sha256:" + strings.Repeat("b", 64),
 			},
 		},
 		Components: []types.TargetConfigSnapshotComponentDraft{{
-			PhysicalName:        "api",
+			PhysicalName:        "choice-api",
 			ComponentInstanceID: input.ComponentInstances[0].ID,
 			DeploymentUnitID:    input.DeploymentUnitID,
 		}},
@@ -60,7 +64,7 @@ func TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory
 			Key:                "api_token",
 			Provider:           "distr",
 			Reference:          input.PlanVariables[0].ReferenceID,
-			VersionFingerprint: fingerprintV1SecretReference(input.PlanVariables[0].ReferenceID),
+			VersionFingerprint: "sha256:" + strings.Repeat("d", 64),
 		}},
 		FeatureFlags: []types.TargetConfigSnapshotFeatureFlagDraft{},
 	}))
@@ -76,13 +80,364 @@ func TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory
 	reordered := validV1ExtractionInput(t)
 	reordered.ReleaseContract.Config.ImmutableObjects[0], reordered.ReleaseContract.Config.ImmutableObjects[1] =
 		reordered.ReleaseContract.Config.ImmutableObjects[1], reordered.ReleaseContract.Config.ImmutableObjects[0]
-	reordered.PlanVariables[0], reordered.PlanVariables[1] = reordered.PlanVariables[1], reordered.PlanVariables[0]
+	reordered.ConfigObjectEvidence[0], reordered.ConfigObjectEvidence[1] =
+		reordered.ConfigObjectEvidence[1], reordered.ConfigObjectEvidence[0]
 	setV1HistoryPayloads(t, &reordered)
 	reorderedResult, err := ExtractV1TargetConfig(reordered)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(reorderedResult.BlockedReasonCode).To(BeEmpty())
 	g.Expect(reorderedResult.CanonicalPayload).To(Equal(result.CanonicalPayload))
 	g.Expect(reorderedResult.CanonicalChecksum).To(Equal(result.CanonicalChecksum))
+}
+
+func TestExtractV1TargetConfigNeverOmitsUnsupportedV1VariableMaterial(t *testing.T) {
+	tests := []struct {
+		name     string
+		variable types.DeploymentPlanVariable
+		reason   V1ExtractionBlockedReasonCode
+	}{
+		{
+			name: "string",
+			variable: types.DeploymentPlanVariable{
+				Key: "PUBLIC_URL", Type: types.VariableTypeString,
+				Status: types.VariableResolutionStatusResolved,
+				Value:  json.RawMessage(`"https://api.example.invalid"`),
+			},
+			reason: V1ExtractionBlockedReasonVariableNotRepresentable,
+		},
+		{
+			name: "number",
+			variable: types.DeploymentPlanVariable{
+				Key: "WORKERS", Type: types.VariableTypeNumber,
+				Status: types.VariableResolutionStatusResolved,
+				Value:  json.RawMessage(`4`),
+			},
+			reason: V1ExtractionBlockedReasonVariableNotRepresentable,
+		},
+		{
+			name: "boolean",
+			variable: types.DeploymentPlanVariable{
+				Key: "AUDIT_ENABLED", Type: types.VariableTypeBoolean,
+				Status: types.VariableResolutionStatusResolved,
+				Value:  json.RawMessage(`true`),
+			},
+			reason: V1ExtractionBlockedReasonVariableNotRepresentable,
+		},
+		{
+			name: "json",
+			variable: types.DeploymentPlanVariable{
+				Key: "LIMITS", Type: types.VariableTypeJSON,
+				Status: types.VariableResolutionStatusResolved,
+				Value:  json.RawMessage(`{"burst":10}`),
+			},
+			reason: V1ExtractionBlockedReasonVariableNotRepresentable,
+		},
+		{
+			name: "account reference",
+			variable: types.DeploymentPlanVariable{
+				Key: "BANK_ACCOUNT", Type: types.VariableTypeAccountReference,
+				Status:      types.VariableResolutionStatusResolved,
+				ReferenceID: "account-7",
+			},
+			reason: V1ExtractionBlockedReasonVariableNotRepresentable,
+		},
+		{
+			name: "certificate reference",
+			variable: types.DeploymentPlanVariable{
+				Key: "TLS_CERT", Type: types.VariableTypeCertificateReference,
+				Status:      types.VariableResolutionStatusResolved,
+				ReferenceID: "certificate-9",
+			},
+			reason: V1ExtractionBlockedReasonVariableNotRepresentable,
+		},
+		{
+			name: "required unresolved",
+			variable: types.DeploymentPlanVariable{
+				Key: "PUBLIC_URL", Type: types.VariableTypeString, IsRequired: true,
+				Status: types.VariableResolutionStatusUnresolved,
+				Source: types.VariableResolutionSourceUnresolved,
+			},
+			reason: V1ExtractionBlockedReasonRequiredVariableUnresolved,
+		},
+		{
+			name: "optional unresolved remains fail closed",
+			variable: types.DeploymentPlanVariable{
+				Key: "OPTIONAL_URL", Type: types.VariableTypeString,
+				Status: types.VariableResolutionStatusUnresolved,
+				Source: types.VariableResolutionSourceUnresolved,
+			},
+			reason: V1ExtractionBlockedReasonVariableUnresolved,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			input := validV1ExtractionInput(t)
+			input.PlanVariables = append(input.PlanVariables, test.variable)
+			setV1HistoryPayloads(t, &input)
+
+			result, err := ExtractV1TargetConfig(input)
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.Draft).To(BeNil())
+			g.Expect(result.BlockedReasonCode).To(Equal(test.reason))
+		})
+	}
+}
+
+func TestExtractV1TargetConfigBindsExactProviderObjectEvidenceAndVerifies(t *testing.T) {
+	g := NewWithT(t)
+	input := validV1ExtractionInput(t)
+
+	result, err := ExtractV1TargetConfig(input)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.BlockedReasonCode).To(BeEmpty())
+	g.Expect(result.Draft).NotTo(BeNil())
+	snapshot := types.TargetConfigSnapshot{ID: uuid.New()}
+	for _, object := range result.Draft.Objects {
+		snapshot.Objects = append(snapshot.Objects, types.TargetConfigSnapshotObject{
+			Key:       object.Key,
+			Kind:      object.Kind,
+			Reference: object.Reference,
+			VersionID: object.VersionID,
+			MediaType: object.MediaType,
+			SizeBytes: object.SizeBytes,
+			Checksum:  object.Checksum,
+		})
+	}
+	verification, err := VerifyObjects(
+		t.Context(),
+		snapshot,
+		v1EvidenceObjectVerifier{evidence: input.ConfigObjectEvidence},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(verification.Verified).To(BeTrue())
+	g.Expect(verification.Objects).To(HaveLen(2))
+	g.Expect(verification.Objects[0].Verified).To(BeTrue())
+	g.Expect(verification.Objects[1].Verified).To(BeTrue())
+}
+
+func TestExtractV1TargetConfigBlocksUnavailableOrMismatchedObjectEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*V1ExtractionInput)
+		reason V1ExtractionBlockedReasonCode
+	}{
+		{
+			name: "missing evidence",
+			change: func(input *V1ExtractionInput) {
+				input.ConfigObjectEvidence = input.ConfigObjectEvidence[:1]
+			},
+			reason: V1ExtractionBlockedReasonConfigObjectEvidenceUnavailable,
+		},
+		{
+			name: "duplicate evidence",
+			change: func(input *V1ExtractionInput) {
+				input.ConfigObjectEvidence = append(
+					input.ConfigObjectEvidence,
+					input.ConfigObjectEvidence[0],
+				)
+			},
+			reason: V1ExtractionBlockedReasonConfigObjectEvidenceAmbiguous,
+		},
+		{
+			name: "wrong version",
+			change: func(input *V1ExtractionInput) {
+				input.ConfigObjectEvidence[1].VersionID = "version-8"
+			},
+			reason: V1ExtractionBlockedReasonConfigObjectEvidenceMismatch,
+		},
+		{
+			name: "wrong digest",
+			change: func(input *V1ExtractionInput) {
+				input.ConfigObjectEvidence[0].Checksum = "sha256:" + strings.Repeat("e", 64)
+			},
+			reason: V1ExtractionBlockedReasonConfigObjectEvidenceMismatch,
+		},
+		{
+			name: "missing media type",
+			change: func(input *V1ExtractionInput) {
+				input.ConfigObjectEvidence[0].MediaType = ""
+			},
+			reason: V1ExtractionBlockedReasonConfigObjectEvidenceMismatch,
+		},
+		{
+			name: "negative size",
+			change: func(input *V1ExtractionInput) {
+				input.ConfigObjectEvidence[0].SizeBytes = -1
+			},
+			reason: V1ExtractionBlockedReasonConfigObjectEvidenceMismatch,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			input := validV1ExtractionInput(t)
+			test.change(&input)
+
+			result, err := ExtractV1TargetConfig(input)
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.Draft).To(BeNil())
+			g.Expect(result.BlockedReasonCode).To(Equal(test.reason))
+		})
+	}
+}
+
+func TestExtractV1TargetConfigRequiresScopedImmutableSecretEvidence(t *testing.T) {
+	customerID := uuid.MustParse("10000000-0000-4000-8000-000000000099")
+	tests := []struct {
+		name   string
+		change func(*V1ExtractionInput)
+		reason V1ExtractionBlockedReasonCode
+	}{
+		{
+			name: "reference does not exist in scoped evidence",
+			change: func(input *V1ExtractionInput) {
+				input.SecretReferenceEvidence = nil
+			},
+			reason: V1ExtractionBlockedReasonSecretReferenceUnavailable,
+		},
+		{
+			name: "foreign organization is tenant safe unavailable",
+			change: func(input *V1ExtractionInput) {
+				input.SecretReferenceEvidence[0].OrganizationID = uuid.New()
+			},
+			reason: V1ExtractionBlockedReasonSecretReferenceUnavailable,
+		},
+		{
+			name: "customer scope mismatch is tenant safe unavailable",
+			change: func(input *V1ExtractionInput) {
+				input.PlanTargets[0].CustomerOrganizationID = &customerID
+				setV1HistoryPayloads(t, input)
+			},
+			reason: V1ExtractionBlockedReasonSecretReferenceUnavailable,
+		},
+		{
+			name: "mutable secret has no immutable provider version",
+			change: func(input *V1ExtractionInput) {
+				input.SecretReferenceEvidence[0].VersionFingerprint = ""
+			},
+			reason: V1ExtractionBlockedReasonSecretVersionUnavailable,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			input := validV1ExtractionInput(t)
+			test.change(&input)
+
+			result, err := ExtractV1TargetConfig(input)
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.Draft).To(BeNil())
+			g.Expect(result.BlockedReasonCode).To(Equal(test.reason))
+		})
+	}
+}
+
+func TestExtractV1TargetConfigSecretRotationChangesSnapshotChecksum(t *testing.T) {
+	g := NewWithT(t)
+	first := validV1ExtractionInput(t)
+	second := validV1ExtractionInput(t)
+	second.SecretReferenceEvidence[0].VersionFingerprint =
+		"sha256:" + strings.Repeat("e", 64)
+
+	firstResult, err := ExtractV1TargetConfig(first)
+	g.Expect(err).NotTo(HaveOccurred())
+	secondResult, err := ExtractV1TargetConfig(second)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(firstResult.BlockedReasonCode).To(BeEmpty())
+	g.Expect(secondResult.BlockedReasonCode).To(BeEmpty())
+	g.Expect(secondResult.CanonicalChecksum).NotTo(Equal(firstResult.CanonicalChecksum))
+}
+
+func TestExtractV1TargetConfigResolvesLogicalComponentIdentityAndActiveAliases(t *testing.T) {
+	tests := []struct {
+		name        string
+		component   string
+		change      func(*V1ExtractionInput)
+		wantBlocked V1ExtractionBlockedReasonCode
+	}{
+		{
+			name:      "canonical definition key",
+			component: "api",
+		},
+		{
+			name:      "canonical definition name",
+			component: "Payments API",
+		},
+		{
+			name:      "active alias",
+			component: "legacy-api",
+		},
+		{
+			name:      "retired alias",
+			component: "legacy-api",
+			change: func(input *V1ExtractionInput) {
+				retiredAt := input.ComponentAliases[0].CreatedAt.Add(1)
+				input.ComponentAliases[0].RetiredAt = &retiredAt
+			},
+			wantBlocked: V1ExtractionBlockedReasonComponentMissing,
+		},
+		{
+			name:      "retired definition",
+			component: "api",
+			change: func(input *V1ExtractionInput) {
+				retiredAt := input.ComponentDefinitions[0].CreatedAt.Add(1)
+				input.ComponentDefinitions[0].RetiredAt = &retiredAt
+				input.ComponentDefinitions[0].ManagementState = types.RegistryManagementStateRetired
+			},
+			wantBlocked: V1ExtractionBlockedReasonComponentMissing,
+		},
+		{
+			name:      "multiple logical matches",
+			component: "legacy-api",
+			change: func(input *V1ExtractionInput) {
+				secondDefinition := input.ComponentDefinitions[0]
+				secondDefinition.ID = uuid.New()
+				secondDefinition.Key = "worker"
+				secondDefinition.Name = "Worker"
+				input.ComponentDefinitions = append(input.ComponentDefinitions, secondDefinition)
+				secondAlias := input.ComponentAliases[0]
+				secondAlias.ID = uuid.New()
+				secondAlias.ComponentDefinitionID = secondDefinition.ID
+				input.ComponentAliases = append(input.ComponentAliases, secondAlias)
+				secondInstance := input.ComponentInstances[0]
+				secondInstance.ID = uuid.New()
+				secondInstance.ComponentDefinitionID = secondDefinition.ID
+				secondInstance.PhysicalName = "choice-worker"
+				input.ComponentInstances = append(input.ComponentInstances, secondInstance)
+			},
+			wantBlocked: V1ExtractionBlockedReasonComponentAmbiguous,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			input := validV1ExtractionInput(t)
+			input.PlanTargetComponents[0].Component = test.component
+			input.ReleaseContract.Components[0].Name = test.component
+			if test.change != nil {
+				test.change(&input)
+			}
+			setV1HistoryPayloads(t, &input)
+
+			result, err := ExtractV1TargetConfig(input)
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result.BlockedReasonCode).To(Equal(test.wantBlocked))
+			if test.wantBlocked == "" {
+				g.Expect(result.Draft).NotTo(BeNil())
+				g.Expect(result.Draft.Components[0].PhysicalName).To(Equal("choice-api"))
+			} else {
+				g.Expect(result.Draft).To(BeNil())
+			}
+		})
+	}
 }
 
 func TestExtractV1TargetConfigBlocksChangedHistoricalBytesOrChecksums(t *testing.T) {
@@ -115,7 +470,7 @@ func TestExtractV1TargetConfigBlocksChangedHistoricalBytesOrChecksums(t *testing
 		{
 			name: "typed plan input differs from preserved payload",
 			change: func(input *V1ExtractionInput) {
-				input.PlanVariables[1].Value = json.RawMessage(`"https://changed.example.invalid"`)
+				input.PlanVariables[0].ReferenceName = "changed-secret"
 			},
 			reason: V1ExtractionBlockedReasonHistoryContractMismatch,
 		},
@@ -274,8 +629,12 @@ func TestExtractV1TargetConfigBlocksPlaintextSecretsAndUnsafeReferences(t *testi
 		{
 			name: "plaintext non-secret variable",
 			change: func(input *V1ExtractionInput) {
-				input.PlanVariables[1].Key = "DATABASE_PASSWORD"
-				input.PlanVariables[1].Value = json.RawMessage(`"plaintext-value"`)
+				input.PlanVariables = append(input.PlanVariables, types.DeploymentPlanVariable{
+					Key:    "DATABASE_PASSWORD",
+					Type:   types.VariableTypeString,
+					Status: types.VariableResolutionStatusResolved,
+					Value:  json.RawMessage(`"plaintext-value"`),
+				})
 			},
 			reason: V1ExtractionBlockedReasonPlaintextSecret,
 		},
@@ -329,6 +688,8 @@ func validV1ExtractionInput(t *testing.T) V1ExtractionInput {
 	environmentID := uuid.MustParse("10000000-0000-4000-8000-000000000008")
 	componentInstanceID := uuid.MustParse("10000000-0000-4000-8000-000000000009")
 	secretID := uuid.MustParse("10000000-0000-4000-8000-000000000010")
+	componentDefinitionID := uuid.MustParse("10000000-0000-4000-8000-000000000011")
+	componentAliasID := uuid.MustParse("10000000-0000-4000-8000-000000000012")
 	componentDigest := "sha256:" + strings.Repeat("c", 64)
 	input := V1ExtractionInput{
 		OrganizationID:  organizationID,
@@ -397,20 +758,49 @@ func validV1ExtractionInput(t *testing.T) V1ExtractionInput {
 				ReferenceID:    secretID.String(),
 				Redacted:       true,
 			},
+		},
+		ComponentDefinitions: []types.ComponentDefinition{{
+			ID:              componentDefinitionID,
+			OrganizationID:  organizationID,
+			Key:             "api",
+			Name:            "Payments API",
+			ManagementState: types.RegistryManagementStateManaged,
+		}},
+		ComponentAliases: []types.ComponentAlias{{
+			ID:                    componentAliasID,
+			OrganizationID:        organizationID,
+			ComponentDefinitionID: componentDefinitionID,
+			Alias:                 "legacy-api",
+		}},
+		ComponentInstances: []types.ComponentInstance{{
+			ID:                    componentInstanceID,
+			OrganizationID:        organizationID,
+			DeploymentUnitID:      deploymentUnitID,
+			ComponentDefinitionID: componentDefinitionID,
+			PhysicalName:          "choice-api",
+			ManagementState:       types.RegistryManagementStateManaged,
+		}},
+		ConfigObjectEvidence: []V1ConfigObjectEvidence{
 			{
-				OrganizationID: organizationID,
-				Key:            "PUBLIC_URL",
-				Type:           types.VariableTypeString,
-				Status:         types.VariableResolutionStatusResolved,
-				Value:          json.RawMessage(`"https://api.example.invalid"`),
+				Reference: "s3://config-bucket/_immutable/sha256/" +
+					strings.Repeat("a", 64) + "/config/docker-compose.yaml",
+				MediaType: "application/yaml",
+				SizeBytes: 128,
+				Checksum:  "sha256:" + strings.Repeat("a", 64),
+			},
+			{
+				Reference: "s3://config-bucket/config/service.json",
+				VersionID: "version-7",
+				MediaType: "application/json",
+				SizeBytes: 256,
+				Checksum:  "sha256:" + strings.Repeat("b", 64),
 			},
 		},
-		ComponentInstances: []types.ComponentInstance{{
-			ID:               componentInstanceID,
-			OrganizationID:   organizationID,
-			DeploymentUnitID: deploymentUnitID,
-			PhysicalName:     "api",
-			ManagementState:  types.RegistryManagementStateManaged,
+		SecretReferenceEvidence: []V1SecretReferenceEvidence{{
+			Provider:           "distr",
+			ReferenceID:        secretID,
+			OrganizationID:     organizationID,
+			VersionFingerprint: "sha256:" + strings.Repeat("d", 64),
 		}},
 		DeploymentUnitID:              deploymentUnitID,
 		TargetEnvironmentAssignmentID: assignmentID,
@@ -455,6 +845,28 @@ func setV1HistoryPayloads(t *testing.T, input *V1ExtractionInput) {
 func v1TestChecksum(payload []byte) string {
 	sum := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+type v1EvidenceObjectVerifier struct {
+	evidence []V1ConfigObjectEvidence
+}
+
+func (verifier v1EvidenceObjectVerifier) Verify(
+	_ context.Context,
+	object types.TargetConfigSnapshotObject,
+) (types.VerifiedTargetConfigObject, error) {
+	for _, evidence := range verifier.evidence {
+		if evidence.Reference == object.Reference {
+			return types.VerifiedTargetConfigObject{
+				Reference: evidence.Reference,
+				VersionID: evidence.VersionID,
+				MediaType: evidence.MediaType,
+				SizeBytes: evidence.SizeBytes,
+				Checksum:  evidence.Checksum,
+			}, nil
+		}
+	}
+	return types.VerifiedTargetConfigObject{}, errors.New("object evidence not found")
 }
 
 type v1TestPlanTarget struct {
