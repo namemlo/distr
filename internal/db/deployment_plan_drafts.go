@@ -1030,6 +1030,7 @@ func loadTargetConfigBinding(
 	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT key,
+		       kind,
 		       reference,
 		       version_id,
 		       media_type,
@@ -1054,6 +1055,7 @@ func loadTargetConfigBinding(
 			var object types.TargetPlanConfigObject
 			scanErr := row.Scan(
 				&object.Key,
+				&object.Kind,
 				&object.Reference,
 				&object.VersionID,
 				&object.MediaType,

@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/buildconfig"
+	internaldb "github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/frontend"
 	"github.com/distr-sh/distr/internal/handlers"
@@ -214,7 +215,12 @@ func ApiRouter(
 					r.Route("/deployment-targets", handlers.DeploymentTargetsRouter)
 					r.Route("/deployment-timeline", handlers.DeploymentTimelineRouter)
 					r.Route("/deployment-plans", handlers.DeploymentPlansRouter)
-					r.Route("/deployment-plan-drafts", handlers.DeploymentPlanDraftsRouter)
+					r.Route(
+						"/deployment-plan-drafts",
+						handlers.DeploymentPlanDraftsRouterWithVerifier(
+							internaldb.NewTargetPlanConfigObjectVerifier(targetConfigObjectVerifier),
+						),
+					)
 					r.Route("/deployment-processes", handlers.DeploymentProcessesRouter)
 					r.Route("/deployment-registry", handlers.DeploymentRegistryRouter)
 					r.Route("/deployments", handlers.DeploymentsRouter)

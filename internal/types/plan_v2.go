@@ -100,12 +100,13 @@ type ConfigVerificationFact struct {
 // importing the later stack package. PR-058 supplies an adapter to the object
 // store verifier when the numbered stack is rebased.
 type TargetPlanConfigObject struct {
-	Key       string `json:"key"`
-	Reference string `json:"reference"`
-	VersionID string `json:"versionId,omitempty"`
-	MediaType string `json:"mediaType"`
-	SizeBytes int64  `json:"sizeBytes"`
-	Checksum  string `json:"checksum"`
+	Key       string                 `json:"key"`
+	Kind      TargetConfigObjectKind `json:"kind"`
+	Reference string                 `json:"reference"`
+	VersionID string                 `json:"versionId,omitempty"`
+	MediaType string                 `json:"mediaType"`
+	SizeBytes int64                  `json:"sizeBytes"`
+	Checksum  string                 `json:"checksum"`
 }
 
 type TargetPlanConfigObservation struct {

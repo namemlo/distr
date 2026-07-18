@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/targetconfig"
 	"github.com/distr-sh/distr/internal/types"
 )
 
@@ -26,8 +27,23 @@ type TargetConfigObjectVerifier interface {
 
 type unavailableTargetConfigObjectVerifier struct{}
 
+type targetPlanConfigObjectVerifier struct {
+	delegate targetconfig.ObjectVerifier
+}
+
 func NewUnavailableTargetConfigObjectVerifier() TargetConfigObjectVerifier {
 	return unavailableTargetConfigObjectVerifier{}
+}
+
+// NewTargetPlanConfigObjectVerifier adapts the PR-058 object verifier to the
+// immutable PR-063 target-plan validation seam.
+func NewTargetPlanConfigObjectVerifier(
+	delegate targetconfig.ObjectVerifier,
+) TargetConfigObjectVerifier {
+	if delegate == nil {
+		return NewUnavailableTargetConfigObjectVerifier()
+	}
+	return targetPlanConfigObjectVerifier{delegate: delegate}
 }
 
 func (unavailableTargetConfigObjectVerifier) VerifyTargetConfigObject(
@@ -35,6 +51,34 @@ func (unavailableTargetConfigObjectVerifier) VerifyTargetConfigObject(
 	types.TargetPlanConfigObject,
 ) (types.TargetPlanConfigObservation, error) {
 	return types.TargetPlanConfigObservation{}, ErrTargetConfigObjectVerificationUnavailable
+}
+
+func (verifier targetPlanConfigObjectVerifier) VerifyTargetConfigObject(
+	ctx context.Context,
+	expected types.TargetPlanConfigObject,
+) (types.TargetPlanConfigObservation, error) {
+	observed, err := verifier.delegate.Verify(ctx, types.TargetConfigSnapshotObject{
+		Key:       expected.Key,
+		Kind:      expected.Kind,
+		Reference: expected.Reference,
+		VersionID: expected.VersionID,
+		MediaType: expected.MediaType,
+		SizeBytes: expected.SizeBytes,
+		Checksum:  expected.Checksum,
+	})
+	if err != nil {
+		if errors.Is(err, targetconfig.ErrObjectVerificationUnavailable) {
+			return types.TargetPlanConfigObservation{}, ErrTargetConfigObjectVerificationUnavailable
+		}
+		return types.TargetPlanConfigObservation{}, err
+	}
+	return types.TargetPlanConfigObservation{
+		Reference: observed.Reference,
+		VersionID: observed.VersionID,
+		MediaType: observed.MediaType,
+		SizeBytes: observed.SizeBytes,
+		Checksum:  observed.Checksum,
+	}, nil
 }
 
 func verifyTargetPlanConfigObject(
