@@ -22,7 +22,7 @@ func TestGetActionDefinitionsHandler(t *testing.T) {
 	g.Expect(recorder.Code).To(Equal(http.StatusOK))
 	var actions []api.ActionDefinition
 	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &actions)).To(Succeed())
-	g.Expect(actions).To(HaveLen(7))
+	g.Expect(actions).To(HaveLen(14))
 	g.Expect(actions[0].Type).To(Equal("distr.preflight"))
 	g.Expect(actions[1].Type).To(Equal("distr.http.check"))
 	g.Expect(actions[2].Type).To(Equal("distr.wait"))
@@ -30,6 +30,13 @@ func TestGetActionDefinitionsHandler(t *testing.T) {
 	g.Expect(actions[4].Type).To(Equal("distr.oci.job"))
 	g.Expect(actions[5].Type).To(Equal("distr.file.render"))
 	g.Expect(actions[6].Type).To(Equal("distr.webhook"))
+	g.Expect(actions[7].Type).To(Equal("database.backup.create"))
+	g.Expect(actions[8].Type).To(Equal("database.backup.verify"))
+	g.Expect(actions[9].Type).To(Equal("database.migration.apply"))
+	g.Expect(actions[10].Type).To(Equal("database.migration.validate"))
+	g.Expect(actions[11].Type).To(Equal("database.migration.reverse"))
+	g.Expect(actions[12].Type).To(Equal("database.restore.execute"))
+	g.Expect(actions[13].Type).To(Equal("database.restore.verify"))
 	g.Expect(actions[1].InputSchema).To(HaveKeyWithValue("type", "object"))
 }
 

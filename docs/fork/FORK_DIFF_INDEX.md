@@ -1233,3 +1233,27 @@ Use one entry per pull request:
   infrastructure credential, client database, or application-specific behavior.
 - Compatibility notes: Existing v1 fields, rows, payloads, checksums, creation, and execution remain unchanged.
   Migration 146 stacks after the final PR-058 through PR-063 migration sequence.
+
+### PR-065 - Structured migration plans
+
+- Status: Implemented on the synthetic PR-063 base; focused pure/unit/repository checks pass. Migration lint remains
+  dependent on replaying PR-064 migration 146 before migration 147.
+- Upstream base: `ea6567b6` (PR-063 checkpoint).
+- Feature flag: Uses the existing `operator_control_plane_v2` and protocol-v2 planning boundary. No executable v2
+  route is enabled.
+- User-facing behavior: Operators can review typed backup, migration, validation, reverse, manual recovery, and
+  separately approved restore graphs with exact retry inputs, locks, probes, and retained evidence.
+- Database changes: Migration 147 adds immutable execution metadata to `DeploymentPlanStep` and append-only,
+  tenant-scoped `DeploymentPlanMigration` contract facts. Down migration refuses while evidence exists.
+- API changes: The existing action-definitions response additively lists the seven database action schemas; no new
+  route or mutation endpoint is added.
+- UI changes: None.
+- Agent protocol changes: Registers seven typed action schemas but does not enable protocol-v2 execution.
+- Documentation: Added `PR-065_STRUCTURED_MIGRATION_PLANS.md` with graph, recovery, security, compatibility, and
+  stale-base replay notes.
+- Tests: Added contract validation, graph expansion/idempotence/locking, recovery ordering/restore approval,
+  bounded/redacted action schema, preflight, persistence, migration-shape, and legacy canonical omission coverage.
+- Upstream contribution notes: Community-neutral database resource, adapter, backup, migration, and recovery
+  contracts; no adopter, database vendor, client, credential, or infrastructure-specific behavior.
+- Compatibility notes: v1 payloads omit empty additive metadata. PR-064 must supply migration 146 and its exact
+  planned-state/change facts before integration; the replay seams are documented in the PR notes.

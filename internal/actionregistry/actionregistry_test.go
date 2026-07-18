@@ -15,7 +15,7 @@ func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
 
 	actions := DefaultRegistry().List()
 
-	g.Expect(actions).To(HaveLen(7))
+	g.Expect(actions).To(HaveLen(14))
 	g.Expect(actionTypes(actions)).To(Equal([]string{
 		"distr.preflight",
 		"distr.http.check",
@@ -24,6 +24,13 @@ func TestDefaultRegistryListsBuiltInActionsInRoadmapOrder(t *testing.T) {
 		"distr.oci.job",
 		"distr.file.render",
 		"distr.webhook",
+		"database.backup.create",
+		"database.backup.verify",
+		"database.migration.apply",
+		"database.migration.validate",
+		"database.migration.reverse",
+		"database.restore.execute",
+		"database.restore.verify",
 	}))
 	g.Expect(actions[0].Name).To(Equal("Preflight checks"))
 	g.Expect(actions[0].InputSchema).To(HaveKeyWithValue("$schema", "https://json-schema.org/draft/2020-12/schema"))

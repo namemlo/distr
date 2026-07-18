@@ -68,6 +68,7 @@ type DeploymentPlan struct {
 	Changes                    []DeploymentPlanChangeEntry     `db:"-" json:"changes,omitempty"`
 	Risks                      []DeploymentPlanRiskEntry       `db:"-" json:"risks,omitempty"`
 	Bootstrap                  bool                            `db:"bootstrap" json:"bootstrap"`
+	Migrations                 []DeploymentPlanMigration       `db:"-" json:"migrations,omitempty"`
 }
 
 type BaselineProjection string
@@ -279,26 +280,82 @@ type DeploymentPlanTargetComponent struct {
 }
 
 type DeploymentPlanStep struct {
-	ID                   uuid.UUID      `db:"id" json:"id"`
-	DeploymentPlanID     uuid.UUID      `db:"deployment_plan_id" json:"deploymentPlanId"`
-	OrganizationID       uuid.UUID      `db:"organization_id" json:"organizationId"`
-	StepKey              string         `db:"step_key" json:"stepKey"`
-	Name                 string         `db:"name" json:"name"`
-	ActionType           string         `db:"action_type" json:"actionType"`
-	ActionName           string         `db:"action_name" json:"actionName"`
-	ExecutionLocation    string         `db:"execution_location" json:"executionLocation"`
-	InputBindings        map[string]any `db:"input_bindings" json:"inputBindings"`
-	Condition            string         `db:"condition" json:"condition"`
-	TargetTags           []string       `db:"target_tags" json:"targetTags"`
-	FailureMode          string         `db:"failure_mode" json:"failureMode"`
-	TimeoutSeconds       int            `db:"timeout_seconds" json:"timeoutSeconds"`
-	RetryMaxAttempts     int            `db:"retry_max_attempts" json:"retryMaxAttempts"`
-	RetryIntervalSeconds int            `db:"retry_interval_seconds" json:"retryIntervalSeconds"`
-	RequiredPermissions  []string       `db:"required_permissions" json:"requiredPermissions"`
-	SortOrder            int            `db:"sort_order" json:"sortOrder"`
-	Dependencies         []string       `db:"dependencies" json:"dependencies"`
-	Included             bool           `db:"included" json:"included"`
-	ExcludedReason       string         `db:"excluded_reason" json:"excludedReason,omitempty"`
+	ID                     uuid.UUID      `db:"id" json:"id"`
+	DeploymentPlanID       uuid.UUID      `db:"deployment_plan_id" json:"deploymentPlanId"`
+	OrganizationID         uuid.UUID      `db:"organization_id" json:"organizationId"`
+	StepKey                string         `db:"step_key" json:"stepKey"`
+	Name                   string         `db:"name" json:"name"`
+	ActionType             string         `db:"action_type" json:"actionType"`
+	ActionName             string         `db:"action_name" json:"actionName"`
+	ExecutionLocation      string         `db:"execution_location" json:"executionLocation"`
+	InputBindings          map[string]any `db:"input_bindings" json:"inputBindings"`
+	StepInputChecksum      string         `db:"step_input_checksum" json:"stepInputChecksum,omitempty"`
+	RetryClass             string         `db:"retry_class" json:"retryClass,omitempty"`
+	CancellationBehavior   string         `db:"cancellation_behavior" json:"cancellationBehavior,omitempty"`
+	ObservationRequirement string         `db:"observation_requirement" json:"observationRequirement,omitempty"`
+	TargetLockKey          string         `db:"target_lock_key" json:"targetLockKey,omitempty"`
+	DatabaseLockKey        string         `db:"database_lock_key" json:"databaseLockKey,omitempty"`
+	Condition              string         `db:"condition" json:"condition"`
+	TargetTags             []string       `db:"target_tags" json:"targetTags"`
+	FailureMode            string         `db:"failure_mode" json:"failureMode"`
+	TimeoutSeconds         int            `db:"timeout_seconds" json:"timeoutSeconds"`
+	RetryMaxAttempts       int            `db:"retry_max_attempts" json:"retryMaxAttempts"`
+	RetryIntervalSeconds   int            `db:"retry_interval_seconds" json:"retryIntervalSeconds"`
+	RequiredPermissions    []string       `db:"required_permissions" json:"requiredPermissions"`
+	SortOrder              int            `db:"sort_order" json:"sortOrder"`
+	Dependencies           []string       `db:"dependencies" json:"dependencies"`
+	Included               bool           `db:"included" json:"included"`
+	ExcludedReason         string         `db:"excluded_reason" json:"excludedReason,omitempty"`
+}
+
+type PlannedState struct {
+	ComponentInstanceID     uuid.UUID
+	ComponentKey            string
+	ReleaseBundleID         uuid.UUID
+	Version                 string
+	Image                   string
+	Platform                string
+	ConfigSnapshotID        *uuid.UUID
+	ConfigChecksum          string
+	ProviderBindingChecksum string
+	SchemaState             string
+	SchemaChecksum          string
+	TopologyChecksum        string
+	ForwardOnly             bool
+}
+
+type DeploymentPlanMigration struct {
+	ID                               uuid.UUID              `db:"id" json:"id"`
+	CreatedAt                        time.Time              `db:"created_at" json:"createdAt"`
+	DeploymentPlanID                 uuid.UUID              `db:"deployment_plan_id" json:"deploymentPlanId"`
+	OrganizationID                   uuid.UUID              `db:"organization_id" json:"organizationId"`
+	MigrationID                      string                 `db:"migration_id" json:"migrationId"`
+	ContractChecksum                 string                 `db:"contract_checksum" json:"contractChecksum"`
+	ComponentKey                     string                 `db:"component_key" json:"componentKey"`
+	DatabaseResourceKey              string                 `db:"database_resource_key" json:"databaseResourceKey"`
+	ExpectedSourceVersion            string                 `db:"expected_source_version" json:"expectedSourceVersion"`
+	ResultingVersion                 string                 `db:"resulting_version" json:"resultingVersion"`
+	Phase                            MigrationPhase         `db:"phase" json:"phase"`
+	DependsOn                        []string               `db:"depends_on" json:"dependsOn,omitempty"`
+	LockType                         string                 `db:"lock_type" json:"lockType"`
+	LockTimeoutSeconds               int                    `db:"lock_timeout_seconds" json:"lockTimeoutSeconds"`
+	OperationalImpact                string                 `db:"operational_impact" json:"operationalImpact"`
+	BackupRequired                   bool                   `db:"backup_required" json:"backupRequired"`
+	BackupVerifier                   string                 `db:"backup_verifier" json:"backupVerifier,omitempty"`
+	RetryClass                       MigrationRetryClass    `db:"retry_class" json:"retryClass"`
+	IdempotencyKey                   string                 `db:"idempotency_key" json:"idempotencyKey"`
+	Reversibility                    MigrationReversibility `db:"reversibility" json:"reversibility"`
+	PreviousApplicationCompatibility string                 `db:"previous_application_compatibility" json:"previousApplicationCompatibility"` //nolint:lll
+	RecoveryProcedureReference       string                 `db:"recovery_procedure_reference" json:"recoveryProcedureReference"`             //nolint:lll
+	RequiresForwardFix               bool                   `db:"requires_forward_fix" json:"requiresForwardFix"`
+	AdapterType                      string                 `db:"adapter_type" json:"adapterType"`
+	ArtifactDigest                   string                 `db:"artifact_digest" json:"artifactDigest"`
+	PreconditionProbes               []MigrationProbe       `db:"precondition_probes" json:"preconditionProbes"`
+	PostconditionProbes              []MigrationProbe       `db:"postcondition_probes" json:"postconditionProbes"`
+	EvidenceRetentionDays            int                    `db:"evidence_retention_days" json:"evidenceRetentionDays"`
+	ApplyStepKey                     string                 `db:"apply_step_key" json:"applyStepKey"`
+	ValidateStepKey                  string                 `db:"validate_step_key" json:"validateStepKey"`
+	SortOrder                        int                    `db:"sort_order" json:"sortOrder"`
 }
 
 type DeploymentPlanVariable struct {

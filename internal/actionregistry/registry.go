@@ -14,7 +14,7 @@ type Registry struct {
 	validators map[string]*jsonschema.Schema
 }
 
-var defaultRegistry = mustBuildRegistry(defaultActions())
+var defaultRegistry = mustBuildRegistry(allDefaultActions())
 
 const (
 	webhookResponseBuiltInOutputCount = 7
@@ -545,6 +545,11 @@ func defaultActions() []types.ActionDefinition {
 			),
 		},
 	}
+}
+
+func allDefaultActions() []types.ActionDefinition {
+	actions := defaultActions()
+	return append(actions, databaseActions()...)
 }
 
 func webhookHeaderNameSchema() map[string]any {

@@ -71,6 +71,7 @@ type canonicalDeploymentPlan struct {
 	Targets            []canonicalDeploymentPlanTarget          `json:"targets"`
 	TargetComponents   []canonicalDeploymentPlanTargetComponent `json:"targetComponents"`
 	Steps              []canonicalDeploymentPlanStep            `json:"steps"`
+	Migrations         []canonicalDeploymentPlanMigration       `json:"migrations,omitempty"`
 	Variables          []canonicalDeploymentPlanVariable        `json:"variables"`
 	Issues             []canonicalDeploymentPlanIssue           `json:"issues"`
 }
@@ -100,23 +101,59 @@ type canonicalDeploymentPlanTargetComponent struct {
 }
 
 type canonicalDeploymentPlanStep struct {
-	StepKey              string         `json:"stepKey"`
-	Name                 string         `json:"name"`
-	ActionType           string         `json:"actionType"`
-	ActionName           string         `json:"actionName"`
-	ExecutionLocation    string         `json:"executionLocation"`
-	InputBindings        map[string]any `json:"inputBindings"`
-	Condition            string         `json:"condition"`
-	TargetTags           []string       `json:"targetTags"`
-	FailureMode          string         `json:"failureMode"`
-	TimeoutSeconds       int            `json:"timeoutSeconds"`
-	RetryMaxAttempts     int            `json:"retryMaxAttempts"`
-	RetryIntervalSeconds int            `json:"retryIntervalSeconds"`
-	RequiredPermissions  []string       `json:"requiredPermissions"`
-	SortOrder            int            `json:"sortOrder"`
-	Dependencies         []string       `json:"dependencies"`
-	Included             bool           `json:"included"`
-	ExcludedReason       string         `json:"excludedReason,omitempty"`
+	StepKey                string         `json:"stepKey"`
+	Name                   string         `json:"name"`
+	ActionType             string         `json:"actionType"`
+	ActionName             string         `json:"actionName"`
+	ExecutionLocation      string         `json:"executionLocation"`
+	InputBindings          map[string]any `json:"inputBindings"`
+	StepInputChecksum      string         `json:"stepInputChecksum,omitempty"`
+	RetryClass             string         `json:"retryClass,omitempty"`
+	CancellationBehavior   string         `json:"cancellationBehavior,omitempty"`
+	ObservationRequirement string         `json:"observationRequirement,omitempty"`
+	TargetLockKey          string         `json:"targetLockKey,omitempty"`
+	DatabaseLockKey        string         `json:"databaseLockKey,omitempty"`
+	Condition              string         `json:"condition"`
+	TargetTags             []string       `json:"targetTags"`
+	FailureMode            string         `json:"failureMode"`
+	TimeoutSeconds         int            `json:"timeoutSeconds"`
+	RetryMaxAttempts       int            `json:"retryMaxAttempts"`
+	RetryIntervalSeconds   int            `json:"retryIntervalSeconds"`
+	RequiredPermissions    []string       `json:"requiredPermissions"`
+	SortOrder              int            `json:"sortOrder"`
+	Dependencies           []string       `json:"dependencies"`
+	Included               bool           `json:"included"`
+	ExcludedReason         string         `json:"excludedReason,omitempty"`
+}
+
+type canonicalDeploymentPlanMigration struct {
+	MigrationID                      string                       `json:"migrationId"`
+	ContractChecksum                 string                       `json:"contractChecksum"`
+	ComponentKey                     string                       `json:"componentKey"`
+	DatabaseResourceKey              string                       `json:"databaseResourceKey"`
+	ExpectedSourceVersion            string                       `json:"expectedSourceVersion"`
+	ResultingVersion                 string                       `json:"resultingVersion"`
+	Phase                            types.MigrationPhase         `json:"phase"`
+	DependsOn                        []string                     `json:"dependsOn,omitempty"`
+	LockType                         string                       `json:"lockType"`
+	LockTimeoutSeconds               int                          `json:"lockTimeoutSeconds"`
+	OperationalImpact                string                       `json:"operationalImpact"`
+	BackupRequired                   bool                         `json:"backupRequired"`
+	BackupVerifier                   string                       `json:"backupVerifier,omitempty"`
+	RetryClass                       types.MigrationRetryClass    `json:"retryClass"`
+	IdempotencyKey                   string                       `json:"idempotencyKey,omitempty"`
+	Reversibility                    types.MigrationReversibility `json:"reversibility"`
+	PreviousApplicationCompatibility string                       `json:"previousApplicationCompatibility"`
+	RecoveryProcedureReference       string                       `json:"recoveryProcedureReference"`
+	RequiresForwardFix               bool                         `json:"requiresForwardFix"`
+	AdapterType                      string                       `json:"adapterType"`
+	ArtifactDigest                   string                       `json:"artifactDigest"`
+	PreconditionProbes               []types.MigrationProbe       `json:"preconditionProbes"`
+	PostconditionProbes              []types.MigrationProbe       `json:"postconditionProbes"`
+	EvidenceRetentionDays            int                          `json:"evidenceRetentionDays"`
+	ApplyStepKey                     string                       `json:"applyStepKey"`
+	ValidateStepKey                  string                       `json:"validateStepKey"`
+	SortOrder                        int                          `json:"sortOrder"`
 }
 
 type canonicalDeploymentPlanVariable struct {
@@ -251,6 +288,10 @@ func hydrateDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) erro
 		return err
 	}
 	plan.Steps, err = getDeploymentPlanSteps(ctx, plan.ID, plan.OrganizationID)
+	if err != nil {
+		return err
+	}
+	plan.Migrations, err = getDeploymentPlanMigrations(ctx, plan.ID, plan.OrganizationID)
 	if err != nil {
 		return err
 	}
@@ -961,25 +1002,62 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 			inputBindings = map[string]any{}
 		}
 		steps = append(steps, canonicalDeploymentPlanStep{
-			StepKey:              step.StepKey,
-			Name:                 step.Name,
-			ActionType:           step.ActionType,
-			ActionName:           step.ActionName,
-			ExecutionLocation:    step.ExecutionLocation,
-			InputBindings:        inputBindings,
-			Condition:            step.Condition,
-			TargetTags:           slices.Clone(step.TargetTags),
-			FailureMode:          step.FailureMode,
-			TimeoutSeconds:       step.TimeoutSeconds,
-			RetryMaxAttempts:     step.RetryMaxAttempts,
-			RetryIntervalSeconds: step.RetryIntervalSeconds,
-			RequiredPermissions:  slices.Clone(step.RequiredPermissions),
-			SortOrder:            step.SortOrder,
-			Dependencies:         slices.Clone(step.Dependencies),
-			Included:             step.Included,
-			ExcludedReason:       step.ExcludedReason,
+			StepKey:                step.StepKey,
+			Name:                   step.Name,
+			ActionType:             step.ActionType,
+			ActionName:             step.ActionName,
+			ExecutionLocation:      step.ExecutionLocation,
+			InputBindings:          inputBindings,
+			StepInputChecksum:      step.StepInputChecksum,
+			RetryClass:             step.RetryClass,
+			CancellationBehavior:   step.CancellationBehavior,
+			ObservationRequirement: step.ObservationRequirement,
+			TargetLockKey:          step.TargetLockKey,
+			DatabaseLockKey:        step.DatabaseLockKey,
+			Condition:              step.Condition,
+			TargetTags:             slices.Clone(step.TargetTags),
+			FailureMode:            step.FailureMode,
+			TimeoutSeconds:         step.TimeoutSeconds,
+			RetryMaxAttempts:       step.RetryMaxAttempts,
+			RetryIntervalSeconds:   step.RetryIntervalSeconds,
+			RequiredPermissions:    slices.Clone(step.RequiredPermissions),
+			SortOrder:              step.SortOrder,
+			Dependencies:           slices.Clone(step.Dependencies),
+			Included:               step.Included,
+			ExcludedReason:         step.ExcludedReason,
 		})
 	}
+	migrations := make([]canonicalDeploymentPlanMigration, 0, len(plan.Migrations))
+	for _, migration := range plan.Migrations {
+		migrations = append(migrations, canonicalDeploymentPlanMigration{
+			MigrationID: migration.MigrationID, ContractChecksum: migration.ContractChecksum,
+			ComponentKey: migration.ComponentKey, DatabaseResourceKey: migration.DatabaseResourceKey,
+			ExpectedSourceVersion: migration.ExpectedSourceVersion,
+			ResultingVersion:      migration.ResultingVersion, Phase: migration.Phase,
+			DependsOn: slices.Clone(migration.DependsOn),
+			LockType:  migration.LockType, LockTimeoutSeconds: migration.LockTimeoutSeconds,
+			OperationalImpact: migration.OperationalImpact,
+			BackupRequired:    migration.BackupRequired, BackupVerifier: migration.BackupVerifier,
+			RetryClass:     migration.RetryClass,
+			IdempotencyKey: migration.IdempotencyKey, Reversibility: migration.Reversibility,
+			PreviousApplicationCompatibility: migration.PreviousApplicationCompatibility,
+			RecoveryProcedureReference:       migration.RecoveryProcedureReference,
+			RequiresForwardFix:               migration.RequiresForwardFix,
+			AdapterType:                      migration.AdapterType,
+			ArtifactDigest:                   migration.ArtifactDigest,
+			PreconditionProbes:               slices.Clone(migration.PreconditionProbes),
+			PostconditionProbes:              slices.Clone(migration.PostconditionProbes),
+			EvidenceRetentionDays:            migration.EvidenceRetentionDays,
+			ApplyStepKey:                     migration.ApplyStepKey, ValidateStepKey: migration.ValidateStepKey,
+			SortOrder: migration.SortOrder,
+		})
+	}
+	slices.SortFunc(migrations, func(a, b canonicalDeploymentPlanMigration) int {
+		if a.SortOrder != b.SortOrder {
+			return a.SortOrder - b.SortOrder
+		}
+		return strings.Compare(a.MigrationID, b.MigrationID)
+	})
 	variables := make([]canonicalDeploymentPlanVariable, 0, len(plan.Variables))
 	for _, variable := range plan.Variables {
 		variables = append(variables, canonicalDeploymentPlanVariable{
@@ -1026,6 +1104,7 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 		Targets:            targets,
 		TargetComponents:   targetComponents,
 		Steps:              steps,
+		Migrations:         migrations,
 		Variables:          variables,
 		Issues:             issues,
 	}
@@ -1161,65 +1240,179 @@ func insertDeploymentPlanTargetComponents(ctx context.Context, plan types.Deploy
 }
 
 func insertDeploymentPlanSteps(ctx context.Context, plan types.DeploymentPlan) error {
-	if len(plan.Steps) == 0 {
+	steps, err := deploymentPlanStepsForInsert(plan)
+	if err != nil {
+		return err
+	}
+	if len(steps) > 0 {
+		db := internalctx.GetDb(ctx)
+		_, err := db.CopyFrom(
+			ctx,
+			pgx.Identifier{"deploymentplanstep"},
+			[]string{
+				"deployment_plan_id",
+				"organization_id",
+				"step_key",
+				"name",
+				"action_type",
+				"action_name",
+				"execution_location",
+				"input_bindings",
+				"step_input_checksum",
+				"retry_class",
+				"cancellation_behavior",
+				"observation_requirement",
+				"target_lock_key",
+				"database_lock_key",
+				"condition",
+				"target_tags",
+				"failure_mode",
+				"timeout_seconds",
+				"retry_max_attempts",
+				"retry_interval_seconds",
+				"required_permissions",
+				"sort_order",
+				"dependencies",
+				"included",
+				"excluded_reason",
+			},
+			pgx.CopyFromSlice(len(steps), func(i int) ([]any, error) {
+				step := steps[i]
+				inputBindings, err := json.Marshal(step.InputBindings)
+				if err != nil {
+					return nil, err
+				}
+				return []any{
+					plan.ID,
+					plan.OrganizationID,
+					step.StepKey,
+					step.Name,
+					step.ActionType,
+					step.ActionName,
+					step.ExecutionLocation,
+					inputBindings,
+					step.StepInputChecksum,
+					step.RetryClass,
+					step.CancellationBehavior,
+					step.ObservationRequirement,
+					step.TargetLockKey,
+					step.DatabaseLockKey,
+					step.Condition,
+					step.TargetTags,
+					step.FailureMode,
+					step.TimeoutSeconds,
+					step.RetryMaxAttempts,
+					step.RetryIntervalSeconds,
+					step.RequiredPermissions,
+					step.SortOrder,
+					step.Dependencies,
+					step.Included,
+					step.ExcludedReason,
+				}, nil
+			}),
+		)
+		if err != nil {
+			return mapDeploymentPlanWriteError("insert steps", err)
+		}
+	}
+	return insertDeploymentPlanMigrations(ctx, plan)
+}
+
+func deploymentPlanStepsForInsert(
+	plan types.DeploymentPlan,
+) ([]types.DeploymentPlanStep, error) {
+	steps := slices.Clone(plan.Steps)
+	if plan.PlanSchema != types.TargetDeploymentPlanSchemaV2 {
+		return steps, nil
+	}
+	if len(plan.CanonicalPayload) == 0 {
+		return nil, fmt.Errorf("target deployment plan canonical graph is required")
+	}
+	var canonical struct {
+		Graph types.TargetPlanGraph `json:"graph"`
+	}
+	if err := json.Unmarshal(plan.CanonicalPayload, &canonical); err != nil {
+		return nil, fmt.Errorf("decode target deployment plan canonical graph: %w", err)
+	}
+	metadata := make(map[string]types.TargetPlanStep, len(canonical.Graph.Steps))
+	for _, step := range canonical.Graph.Steps {
+		if _, duplicate := metadata[step.StepKey]; duplicate {
+			return nil, fmt.Errorf(
+				"target deployment plan canonical graph has duplicate step %q",
+				step.StepKey,
+			)
+		}
+		metadata[step.StepKey] = step
+	}
+	for index := range steps {
+		source, ok := metadata[steps[index].StepKey]
+		if !ok {
+			return nil, fmt.Errorf(
+				"target deployment plan canonical graph is missing step %q",
+				steps[index].StepKey,
+			)
+		}
+		steps[index].StepInputChecksum = source.ExpectedInputChecksum
+		steps[index].RetryClass = source.RetryClass
+		steps[index].CancellationBehavior = source.CancellationBehavior
+		steps[index].ObservationRequirement = source.ObservationRequirement
+		steps[index].TargetLockKey = source.TargetLockKey
+		steps[index].DatabaseLockKey = source.DatabaseLockKey
+	}
+	return steps, nil
+}
+
+func insertDeploymentPlanMigrations(ctx context.Context, plan types.DeploymentPlan) error {
+	if len(plan.Migrations) == 0 {
 		return nil
 	}
-	db := internalctx.GetDb(ctx)
-	_, err := db.CopyFrom(
+	_, err := internalctx.GetDb(ctx).CopyFrom(
 		ctx,
-		pgx.Identifier{"deploymentplanstep"},
+		pgx.Identifier{"deploymentplanmigration"},
 		[]string{
-			"deployment_plan_id",
-			"organization_id",
-			"step_key",
-			"name",
-			"action_type",
-			"action_name",
-			"execution_location",
-			"input_bindings",
-			"condition",
-			"target_tags",
-			"failure_mode",
-			"timeout_seconds",
-			"retry_max_attempts",
-			"retry_interval_seconds",
-			"required_permissions",
-			"sort_order",
-			"dependencies",
-			"included",
-			"excluded_reason",
+			"id", "deployment_plan_id", "organization_id", "migration_id",
+			"contract_checksum", "component_key", "database_resource_key",
+			"expected_source_version", "resulting_version", "phase", "depends_on",
+			"lock_type", "lock_timeout_seconds", "operational_impact",
+			"backup_required", "backup_verifier", "retry_class", "idempotency_key", "reversibility",
+			"previous_application_compatibility",
+			"recovery_procedure_reference", "requires_forward_fix",
+			"adapter_type", "artifact_digest",
+			"precondition_probes", "postcondition_probes", "evidence_retention_days",
+			"apply_step_key", "validate_step_key", "sort_order",
 		},
-		pgx.CopyFromSlice(len(plan.Steps), func(i int) ([]any, error) {
-			step := plan.Steps[i]
-			inputBindings, err := json.Marshal(step.InputBindings)
+		pgx.CopyFromSlice(len(plan.Migrations), func(index int) ([]any, error) {
+			migration := plan.Migrations[index]
+			preconditionProbes, err := json.Marshal(migration.PreconditionProbes)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("marshal migration precondition probes: %w", err)
+			}
+			postconditionProbes, err := json.Marshal(migration.PostconditionProbes)
+			if err != nil {
+				return nil, fmt.Errorf("marshal migration postcondition probes: %w", err)
+			}
+			id := migration.ID
+			if id == uuid.Nil {
+				id = uuid.New()
 			}
 			return []any{
-				plan.ID,
-				plan.OrganizationID,
-				step.StepKey,
-				step.Name,
-				step.ActionType,
-				step.ActionName,
-				step.ExecutionLocation,
-				inputBindings,
-				step.Condition,
-				step.TargetTags,
-				step.FailureMode,
-				step.TimeoutSeconds,
-				step.RetryMaxAttempts,
-				step.RetryIntervalSeconds,
-				step.RequiredPermissions,
-				step.SortOrder,
-				step.Dependencies,
-				step.Included,
-				step.ExcludedReason,
+				id, plan.ID, plan.OrganizationID, migration.MigrationID,
+				migration.ContractChecksum, migration.ComponentKey,
+				migration.DatabaseResourceKey, migration.ExpectedSourceVersion,
+				migration.ResultingVersion, migration.Phase, migration.DependsOn,
+				migration.LockType, migration.LockTimeoutSeconds, migration.OperationalImpact,
+				migration.BackupRequired, migration.BackupVerifier,
+				migration.RetryClass, migration.IdempotencyKey, migration.Reversibility,
+				migration.PreviousApplicationCompatibility,
+				migration.RecoveryProcedureReference, migration.RequiresForwardFix,
+				migration.AdapterType, migration.ArtifactDigest,
+				preconditionProbes, postconditionProbes, migration.EvidenceRetentionDays,
+				migration.ApplyStepKey, migration.ValidateStepKey, migration.SortOrder,
 			}, nil
 		}),
 	)
 	if err != nil {
-		return mapDeploymentPlanWriteError("insert steps", err)
+		return mapDeploymentPlanWriteError("insert migrations", err)
 	}
 	return nil
 }
@@ -1397,6 +1590,12 @@ func getDeploymentPlanSteps(
 			action_name,
 			execution_location,
 			input_bindings,
+			step_input_checksum,
+			retry_class,
+			cancellation_behavior,
+			observation_requirement,
+			target_lock_key,
+			database_lock_key,
 			condition,
 			target_tags,
 			failure_mode,
@@ -1421,6 +1620,42 @@ func getDeploymentPlanSteps(
 		return nil, fmt.Errorf("could not collect DeploymentPlanStep: %w", err)
 	}
 	return steps, nil
+}
+
+func getDeploymentPlanMigrations(
+	ctx context.Context,
+	planID uuid.UUID,
+	orgID uuid.UUID,
+) ([]types.DeploymentPlanMigration, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT
+			id, created_at, deployment_plan_id, organization_id, migration_id,
+			contract_checksum, component_key, database_resource_key,
+			expected_source_version, resulting_version, phase, depends_on,
+			lock_type, lock_timeout_seconds, operational_impact,
+			backup_required, backup_verifier, retry_class, idempotency_key, reversibility,
+			previous_application_compatibility,
+			recovery_procedure_reference, requires_forward_fix,
+			adapter_type, artifact_digest,
+			precondition_probes, postcondition_probes, evidence_retention_days,
+			apply_step_key, validate_step_key, sort_order
+		FROM DeploymentPlanMigration
+		WHERE deployment_plan_id = @deploymentPlanID
+		  AND organization_id = @organizationID
+		ORDER BY sort_order, migration_id`,
+		pgx.NamedArgs{"deploymentPlanID": planID, "organizationID": orgID},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query DeploymentPlanMigration: %w", err)
+	}
+	migrations, err := pgx.CollectRows(
+		rows,
+		pgx.RowToStructByName[types.DeploymentPlanMigration],
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not collect DeploymentPlanMigration: %w", err)
+	}
+	return migrations, nil
 }
 
 func getDeploymentPlanVariables(

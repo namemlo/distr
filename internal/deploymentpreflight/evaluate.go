@@ -2,12 +2,15 @@ package deploymentpreflight
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
+
+var sha256ChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type StateKey struct {
 	DeploymentTargetID uuid.UUID
@@ -24,6 +27,7 @@ type Input struct {
 	ReleaseContractMessage    string
 	CurrentTargets            map[uuid.UUID]types.DeploymentTarget
 	CurrentStates             map[StateKey]types.TargetComponentState
+	Migrations                []types.MigrationPreflight
 }
 
 //nolint:gocyclo // The evaluator deliberately emits all independent preflight checks in one deterministic pass.
@@ -154,6 +158,50 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 			}, stateMessage))
 	}
 
+	for _, migration := range input.Migrations {
+		contract := migration.Contract
+		backupPassed := !contract.BackupRequired ||
+			(migration.Backup != nil && migration.Backup.Verified &&
+				sha256ChecksumPattern.MatchString(migration.Backup.Checksum))
+		backupActual := map[string]any{"required": contract.BackupRequired, "verified": false}
+		if migration.Backup != nil {
+			backupActual["backupId"] = migration.Backup.ID
+			backupActual["checksum"] = migration.Backup.Checksum
+			backupActual["verified"] = migration.Backup.Verified
+		}
+		add(migrationCheck(contract, "migration_backup:"+contract.ID, statusFor(backupPassed),
+			map[string]any{"required": contract.BackupRequired, "verified": contract.BackupRequired},
+			backupActual, "required backup identity and verification evidence are available"))
+
+		schemaPassed := migration.CurrentSchema.Version == contract.ExpectedSourceVersion
+		add(migrationCheck(contract, "migration_schema:"+contract.ID, statusFor(schemaPassed),
+			map[string]any{"version": contract.ExpectedSourceVersion},
+			map[string]any{
+				"version":  migration.CurrentSchema.Version,
+				"checksum": migration.CurrentSchema.Checksum,
+			}, "current schema matches the migration contract source version"))
+
+		add(migrationCheck(contract, "migration_target_lock:"+contract.ID,
+			statusFor(migration.TargetLockAvailable),
+			map[string]any{"available": true}, map[string]any{"available": migration.TargetLockAvailable},
+			"target mutation lock is available"))
+		add(migrationCheck(contract, "migration_database_lock:"+contract.ID,
+			statusFor(migration.DatabaseLockAvailable),
+			map[string]any{"resourceKey": contract.DatabaseResourceKey, "available": true},
+			map[string]any{"resourceKey": contract.DatabaseResourceKey, "available": migration.DatabaseLockAvailable},
+			"database resource lock is available"))
+		add(migrationCheck(contract, "migration_adapter:"+contract.ID,
+			statusFor(migration.AdapterAvailable),
+			map[string]any{"adapterType": contract.AdapterType, "available": true},
+			map[string]any{"adapterType": contract.AdapterType, "available": migration.AdapterAvailable},
+			"required database adapter is available"))
+		add(migrationCheck(contract, "migration_probes:"+contract.ID,
+			statusFor(migration.PreconditionProbesPassed),
+			map[string]any{"passed": true, "count": len(contract.PreconditionProbes)},
+			map[string]any{"passed": migration.PreconditionProbesPassed},
+			"migration precondition probes match their frozen expectations"))
+	}
+
 	if input.Plan.ReleaseContract == nil {
 		return checks
 	}
@@ -196,6 +244,23 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 		}
 	}
 	return checks
+}
+
+func migrationCheck(
+	contract types.MigrationContract,
+	key string,
+	status types.DeploymentPreflightCheckStatus,
+	expected, actual map[string]any,
+	message string,
+) types.DeploymentPreflightCheck {
+	return types.DeploymentPreflightCheck{
+		Component: contract.ComponentKey,
+		CheckKey:  key,
+		Status:    status,
+		Expected:  expected,
+		Actual:    actual,
+		Message:   message,
+	}
 }
 
 func componentCheck(
