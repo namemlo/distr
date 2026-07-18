@@ -98,8 +98,13 @@ const v1ExtractionCheckpointOutputExpr = `
 	extractor_version,
 	source_state_checksum,
 	dry_run_checksum,
+	predecessor_checkpoint_id,
+	source_after_created_at,
 	source_after_plan_id,
+	source_through_created_at,
 	source_through_plan_id,
+	source_high_water_created_at,
+	source_high_water_plan_id,
 	has_more,
 	source_count,
 	candidate_count,
@@ -150,6 +155,7 @@ type targetConfigLockedComponent struct {
 type v1ExtractionOutcome struct {
 	ReleaseBundleID  uuid.UUID
 	ReleaseChecksum  string
+	PlanCreatedAt    time.Time
 	PlanID           uuid.UUID
 	PlanChecksum     string
 	Status           types.V1ExtractionStatus
@@ -161,26 +167,37 @@ type v1ExtractionOutcome struct {
 type canonicalV1ExtractionSourceState struct {
 	ReleaseBundleID string `json:"releaseBundleId"`
 	ReleaseChecksum string `json:"releaseChecksum"`
+	PlanCreatedAt   string `json:"planCreatedAt"`
 	PlanID          string `json:"planId"`
 	PlanChecksum    string `json:"planChecksum"`
 }
 
 type canonicalV1ExtractionSourceBatch struct {
-	SourceAfterPlanID   string                             `json:"sourceAfterPlanId,omitempty"`
-	SourceThroughPlanID string                             `json:"sourceThroughPlanId,omitempty"`
-	HasMore             bool                               `json:"hasMore"`
-	Items               []canonicalV1ExtractionSourceState `json:"items"`
+	PredecessorCheckpointID  string                             `json:"predecessorCheckpointId,omitempty"`
+	SourceAfterCreatedAt     string                             `json:"sourceAfterCreatedAt,omitempty"`
+	SourceAfterPlanID        string                             `json:"sourceAfterPlanId,omitempty"`
+	SourceThroughCreatedAt   string                             `json:"sourceThroughCreatedAt,omitempty"`
+	SourceThroughPlanID      string                             `json:"sourceThroughPlanId,omitempty"`
+	SourceHighWaterCreatedAt string                             `json:"sourceHighWaterCreatedAt,omitempty"`
+	SourceHighWaterPlanID    string                             `json:"sourceHighWaterPlanId,omitempty"`
+	HasMore                  bool                               `json:"hasMore"`
+	Items                    []canonicalV1ExtractionSourceState `json:"items"`
 }
 
 type canonicalV1ExtractionDryRun struct {
-	ExtractorVersion    string                            `json:"extractorVersion"`
-	OrganizationID      string                            `json:"organizationId"`
-	ActorUserAccountID  string                            `json:"actorUserAccountId"`
-	SourceAfterPlanID   string                            `json:"sourceAfterPlanId,omitempty"`
-	SourceThroughPlanID string                            `json:"sourceThroughPlanId,omitempty"`
-	HasMore             bool                              `json:"hasMore"`
-	SourceStateChecksum string                            `json:"sourceStateChecksum"`
-	Items               []canonicalV1ExtractionDryRunItem `json:"items"`
+	ExtractorVersion         string                            `json:"extractorVersion"`
+	OrganizationID           string                            `json:"organizationId"`
+	ActorUserAccountID       string                            `json:"actorUserAccountId"`
+	PredecessorCheckpointID  string                            `json:"predecessorCheckpointId,omitempty"`
+	SourceAfterCreatedAt     string                            `json:"sourceAfterCreatedAt,omitempty"`
+	SourceAfterPlanID        string                            `json:"sourceAfterPlanId,omitempty"`
+	SourceThroughCreatedAt   string                            `json:"sourceThroughCreatedAt,omitempty"`
+	SourceThroughPlanID      string                            `json:"sourceThroughPlanId,omitempty"`
+	SourceHighWaterCreatedAt string                            `json:"sourceHighWaterCreatedAt,omitempty"`
+	SourceHighWaterPlanID    string                            `json:"sourceHighWaterPlanId,omitempty"`
+	HasMore                  bool                              `json:"hasMore"`
+	SourceStateChecksum      string                            `json:"sourceStateChecksum"`
+	Items                    []canonicalV1ExtractionDryRunItem `json:"items"`
 }
 
 type canonicalV1ExtractionDryRunItem struct {
@@ -196,6 +213,11 @@ type canonicalV1ExtractionDryRunItem struct {
 type v1ExtractionSource struct {
 	Bundle types.ReleaseBundle
 	Plan   types.DeploymentPlan
+}
+
+type v1ExtractionPlanCursor struct {
+	CreatedAt time.Time `db:"created_at"`
+	PlanID    uuid.UUID `db:"plan_id"`
 }
 
 type v1ExtractionPlacement struct {
@@ -287,6 +309,8 @@ func createTargetConfigSnapshot(
 			@canonicalPayload,
 			@canonicalChecksum
 		)
+		ON CONFLICT ON CONSTRAINT targetconfigsnapshot_organization_checksum_unique
+		DO NOTHING
 		RETURNING `+targetConfigSnapshotOutputExpr,
 		pgx.NamedArgs{
 			"organizationID":                normalized.OrganizationID,
@@ -322,6 +346,9 @@ func createTargetConfigSnapshot(
 		&snapshot.CanonicalPayload,
 		&snapshot.CanonicalChecksum,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrAlreadyExists
+	}
 	if err != nil {
 		return nil, mapTargetConfigWriteError("create target config snapshot", err)
 	}
@@ -878,7 +905,7 @@ func CreateTargetConfigV1ExtractionDryRun(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	actorUserAccountID uuid.UUID,
-	afterPlanID *uuid.UUID,
+	predecessorCheckpointID *uuid.UUID,
 	batchSize int,
 	objectVerifier targetconfig.ObjectVerifier,
 ) (*types.V1ExtractionReport, error) {
@@ -893,10 +920,20 @@ func CreateTargetConfigV1ExtractionDryRun(
 		if err := validateV1ExtractionActor(ctx, organizationID, actorUserAccountID); err != nil {
 			return err
 		}
+		after, highWater, err := resolveV1ExtractionWindow(
+			ctx,
+			organizationID,
+			actorUserAccountID,
+			predecessorCheckpointID,
+		)
+		if err != nil {
+			return err
+		}
 		outcomes, hasMore, err := evaluateTargetConfigV1Extraction(
 			ctx,
 			organizationID,
-			afterPlanID,
+			after,
+			highWater,
 			batchSize,
 			objectVerifier,
 		)
@@ -906,7 +943,9 @@ func CreateTargetConfigV1ExtractionDryRun(
 		checkpoint, err := buildV1ExtractionCheckpoint(
 			organizationID,
 			actorUserAccountID,
-			afterPlanID,
+			predecessorCheckpointID,
+			after,
+			highWater,
 			hasMore,
 			batchSize,
 			outcomes,
@@ -921,6 +960,98 @@ func CreateTargetConfigV1ExtractionDryRun(
 		return err
 	})
 	return report, err
+}
+
+func resolveV1ExtractionWindow(
+	ctx context.Context,
+	organizationID,
+	actorUserAccountID uuid.UUID,
+	predecessorCheckpointID *uuid.UUID,
+) (*v1ExtractionPlanCursor, *v1ExtractionPlanCursor, error) {
+	if predecessorCheckpointID == nil {
+		highWater, err := captureV1ExtractionHighWater(ctx, organizationID)
+		return nil, highWater, err
+	}
+	predecessor, err := getV1ExtractionCheckpoint(
+		ctx,
+		organizationID,
+		*predecessorCheckpointID,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if predecessor.ActorUserAccountID != actorUserAccountID ||
+		predecessor.ExtractorVersion != targetConfigV1ExtractorVersion ||
+		!predecessor.HasMore ||
+		predecessor.SourceThroughCreatedAt == nil ||
+		predecessor.SourceThroughPlanID == nil ||
+		predecessor.SourceHighWaterCreatedAt == nil ||
+		predecessor.SourceHighWaterPlanID == nil {
+		return nil, nil, fmt.Errorf(
+			"v1 extraction predecessor checkpoint is not chainable: %w",
+			apierrors.ErrConflict,
+		)
+	}
+	predecessorReport, err := GetTargetConfigV1ExtractionReport(
+		ctx,
+		organizationID,
+		predecessor.ID,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if predecessorReport.Pending != 0 {
+		return nil, nil, fmt.Errorf(
+			"v1 extraction predecessor checkpoint must be fully applied: %w",
+			apierrors.ErrConflict,
+		)
+	}
+	return &v1ExtractionPlanCursor{
+			CreatedAt: *predecessor.SourceThroughCreatedAt,
+			PlanID:    *predecessor.SourceThroughPlanID,
+		}, &v1ExtractionPlanCursor{
+			CreatedAt: *predecessor.SourceHighWaterCreatedAt,
+			PlanID:    *predecessor.SourceHighWaterPlanID,
+		}, nil
+}
+
+func captureV1ExtractionHighWater(
+	ctx context.Context,
+	organizationID uuid.UUID,
+) (*v1ExtractionPlanCursor, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT
+			dp.created_at,
+			dp.id AS plan_id
+		FROM DeploymentPlan dp
+		JOIN ReleaseBundle rb
+		  ON rb.id = dp.release_bundle_id
+		 AND rb.organization_id = dp.organization_id
+		WHERE dp.organization_id = @organizationID
+		  AND dp.release_contract ->> 'schema' = @schema
+		  AND rb.release_contract ->> 'schema' = @schema
+		  AND rb.status IN ('PUBLISHED', 'BLOCKED', 'ARCHIVED')
+		ORDER BY dp.created_at DESC, dp.id DESC
+		LIMIT 1`,
+		pgx.NamedArgs{
+			"organizationID": organizationID,
+			"schema":         types.ReleaseContractSchemaV1,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("capture v1 extraction source high-water mark: %w", err)
+	}
+	highWater, err := pgx.CollectExactlyOneRow(
+		rows,
+		pgx.RowToStructByName[v1ExtractionPlanCursor],
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read v1 extraction source high-water mark: %w", err)
+	}
+	return &highWater, nil
 }
 
 func validateV1ExtractionActor(
@@ -955,14 +1086,16 @@ func validateV1ExtractionActor(
 func evaluateTargetConfigV1Extraction(
 	ctx context.Context,
 	organizationID uuid.UUID,
-	afterPlanID *uuid.UUID,
+	after,
+	highWater *v1ExtractionPlanCursor,
 	batchSize int,
 	objectVerifier targetconfig.ObjectVerifier,
 ) ([]v1ExtractionOutcome, bool, error) {
 	sources, hasMore, err := listV1ExtractionSources(
 		ctx,
 		organizationID,
-		afterPlanID,
+		after,
+		highWater,
 		batchSize,
 	)
 	if err != nil {
@@ -973,6 +1106,7 @@ func evaluateTargetConfigV1Extraction(
 		outcome := v1ExtractionOutcome{
 			ReleaseBundleID: source.Bundle.ID,
 			ReleaseChecksum: source.Bundle.CanonicalChecksum,
+			PlanCreatedAt:   source.Plan.CreatedAt,
 			PlanID:          source.Plan.ID,
 			PlanChecksum:    source.Plan.CanonicalChecksum,
 		}
@@ -1050,11 +1184,17 @@ func evaluateTargetConfigV1Extraction(
 func listV1ExtractionSources(
 	ctx context.Context,
 	organizationID uuid.UUID,
-	afterPlanID *uuid.UUID,
+	after,
+	highWater *v1ExtractionPlanCursor,
 	batchSize int,
 ) ([]v1ExtractionSource, bool, error) {
+	if highWater == nil {
+		return []v1ExtractionSource{}, false, nil
+	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-			SELECT dp.id
+			SELECT
+				dp.created_at,
+				dp.id AS plan_id
 			FROM DeploymentPlan dp
 			JOIN ReleaseBundle rb
 			  ON rb.id = dp.release_bundle_id
@@ -1064,32 +1204,40 @@ func listV1ExtractionSources(
 			  AND rb.release_contract ->> 'schema' = @schema
 			  AND rb.status IN ('PUBLISHED', 'BLOCKED', 'ARCHIVED')
 			  AND (
-			    @afterPlanID::uuid IS NULL
-			    OR dp.id > @afterPlanID
+			    @afterCreatedAt::timestamp IS NULL
+			    OR (dp.created_at, dp.id) > (@afterCreatedAt, @afterPlanID)
 			  )
-			ORDER BY dp.id
+			  AND (dp.created_at, dp.id)
+			    <= (@highWaterCreatedAt, @highWaterPlanID)
+			ORDER BY dp.created_at, dp.id
 			LIMIT @limit`,
 		pgx.NamedArgs{
-			"organizationID": organizationID,
-			"schema":         types.ReleaseContractSchemaV1,
-			"afterPlanID":    afterPlanID,
-			"limit":          batchSize + 1,
+			"organizationID":     organizationID,
+			"schema":             types.ReleaseContractSchemaV1,
+			"afterCreatedAt":     nullableV1ExtractionCursorCreatedAt(after),
+			"afterPlanID":        nullableV1ExtractionCursorPlanID(after),
+			"highWaterCreatedAt": highWater.CreatedAt,
+			"highWaterPlanID":    highWater.PlanID,
+			"limit":              batchSize + 1,
 		},
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("list v1 extraction source plans: %w", err)
 	}
-	planIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	positions, err := pgx.CollectRows(
+		rows,
+		pgx.RowToStructByName[v1ExtractionPlanCursor],
+	)
 	if err != nil {
 		return nil, false, fmt.Errorf("read v1 extraction source plans: %w", err)
 	}
-	hasMore := len(planIDs) > batchSize
+	hasMore := len(positions) > batchSize
 	if hasMore {
-		planIDs = planIDs[:batchSize]
+		positions = positions[:batchSize]
 	}
-	sources := make([]v1ExtractionSource, 0, len(planIDs))
-	for _, planID := range planIDs {
-		plan, err := getDeploymentPlan(ctx, planID, organizationID)
+	sources := make([]v1ExtractionSource, 0, len(positions))
+	for _, position := range positions {
+		plan, err := getDeploymentPlan(ctx, position.PlanID, organizationID)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1100,6 +1248,20 @@ func listV1ExtractionSources(
 		sources = append(sources, v1ExtractionSource{Bundle: *bundle, Plan: *plan})
 	}
 	return sources, hasMore, nil
+}
+
+func nullableV1ExtractionCursorCreatedAt(cursor *v1ExtractionPlanCursor) any {
+	if cursor == nil {
+		return nil
+	}
+	return cursor.CreatedAt
+}
+
+func nullableV1ExtractionCursorPlanID(cursor *v1ExtractionPlanCursor) any {
+	if cursor == nil {
+		return nil
+	}
+	return cursor.PlanID
 }
 
 func resolveV1ConfigObjectEvidence(
@@ -1333,14 +1495,31 @@ func resolveV1ExtractionPlacements(
 func buildV1ExtractionCheckpoint(
 	organizationID uuid.UUID,
 	actorUserAccountID uuid.UUID,
-	afterPlanID *uuid.UUID,
+	predecessorCheckpointID *uuid.UUID,
+	after,
+	highWater *v1ExtractionPlanCursor,
 	hasMore bool,
 	batchSize int,
 	outcomes []v1ExtractionOutcome,
 ) (types.V1ExtractionCheckpoint, error) {
+	if (predecessorCheckpointID == nil) != (after == nil) {
+		return types.V1ExtractionCheckpoint{}, errors.New(
+			"v1 extraction predecessor and source cursor must be supplied together",
+		)
+	}
+	if highWater == nil && len(outcomes) != 0 {
+		return types.V1ExtractionCheckpoint{}, errors.New(
+			"v1 extraction outcomes require a source high-water mark",
+		)
+	}
 	outcomes = slices.Clone(outcomes)
 	slices.SortFunc(outcomes, func(left, right v1ExtractionOutcome) int {
-		return strings.Compare(left.PlanID.String(), right.PlanID.String())
+		return compareV1ExtractionPlanPosition(
+			left.PlanCreatedAt,
+			left.PlanID,
+			right.PlanCreatedAt,
+			right.PlanID,
+		)
 	})
 	sourceState := make([]canonicalV1ExtractionSourceState, 0, len(outcomes))
 	dryRunItems := make([]canonicalV1ExtractionDryRunItem, 0, len(outcomes))
@@ -1350,6 +1529,7 @@ func buildV1ExtractionCheckpoint(
 		sourceState = append(sourceState, canonicalV1ExtractionSourceState{
 			ReleaseBundleID: outcome.ReleaseBundleID.String(),
 			ReleaseChecksum: outcome.ReleaseChecksum,
+			PlanCreatedAt:   formatV1ExtractionCursorTime(outcome.PlanCreatedAt),
 			PlanID:          outcome.PlanID.String(),
 			PlanChecksum:    outcome.PlanChecksum,
 		})
@@ -1368,37 +1548,65 @@ func buildV1ExtractionCheckpoint(
 			blockedCount++
 		}
 	}
-	sourceAfterPlanID := ""
-	if afterPlanID != nil {
-		sourceAfterPlanID = afterPlanID.String()
+	predecessorCheckpointIDValue := ""
+	if predecessorCheckpointID != nil {
+		predecessorCheckpointIDValue = predecessorCheckpointID.String()
 	}
+	sourceAfterCreatedAt := ""
+	sourceAfterPlanID := ""
+	if after != nil {
+		sourceAfterCreatedAt = formatV1ExtractionCursorTime(after.CreatedAt)
+		sourceAfterPlanID = after.PlanID.String()
+	}
+	var sourceThroughCreatedAt *time.Time
 	var sourceThroughPlanID *uuid.UUID
+	sourceThroughCreatedAtValue := ""
 	sourceThroughPlanIDValue := ""
 	if len(outcomes) > 0 {
-		value := outcomes[len(outcomes)-1].PlanID
-		sourceThroughPlanID = &value
-		sourceThroughPlanIDValue = value.String()
+		last := outcomes[len(outcomes)-1]
+		createdAt := last.PlanCreatedAt
+		planID := last.PlanID
+		sourceThroughCreatedAt = &createdAt
+		sourceThroughPlanID = &planID
+		sourceThroughCreatedAtValue = formatV1ExtractionCursorTime(createdAt)
+		sourceThroughPlanIDValue = planID.String()
 	} else {
 		hasMore = false
 	}
+	sourceHighWaterCreatedAt := ""
+	sourceHighWaterPlanID := ""
+	if highWater != nil {
+		sourceHighWaterCreatedAt = formatV1ExtractionCursorTime(highWater.CreatedAt)
+		sourceHighWaterPlanID = highWater.PlanID.String()
+	}
 	sourceStateChecksum, err := checksumV1ExtractionValue(canonicalV1ExtractionSourceBatch{
-		SourceAfterPlanID:   sourceAfterPlanID,
-		SourceThroughPlanID: sourceThroughPlanIDValue,
-		HasMore:             hasMore,
-		Items:               sourceState,
+		PredecessorCheckpointID:  predecessorCheckpointIDValue,
+		SourceAfterCreatedAt:     sourceAfterCreatedAt,
+		SourceAfterPlanID:        sourceAfterPlanID,
+		SourceThroughCreatedAt:   sourceThroughCreatedAtValue,
+		SourceThroughPlanID:      sourceThroughPlanIDValue,
+		SourceHighWaterCreatedAt: sourceHighWaterCreatedAt,
+		SourceHighWaterPlanID:    sourceHighWaterPlanID,
+		HasMore:                  hasMore,
+		Items:                    sourceState,
 	})
 	if err != nil {
 		return types.V1ExtractionCheckpoint{}, err
 	}
 	dryRunChecksum, err := checksumV1ExtractionValue(canonicalV1ExtractionDryRun{
-		ExtractorVersion:    targetConfigV1ExtractorVersion,
-		OrganizationID:      organizationID.String(),
-		ActorUserAccountID:  actorUserAccountID.String(),
-		SourceAfterPlanID:   sourceAfterPlanID,
-		SourceThroughPlanID: sourceThroughPlanIDValue,
-		HasMore:             hasMore,
-		SourceStateChecksum: sourceStateChecksum,
-		Items:               dryRunItems,
+		ExtractorVersion:         targetConfigV1ExtractorVersion,
+		OrganizationID:           organizationID.String(),
+		ActorUserAccountID:       actorUserAccountID.String(),
+		PredecessorCheckpointID:  predecessorCheckpointIDValue,
+		SourceAfterCreatedAt:     sourceAfterCreatedAt,
+		SourceAfterPlanID:        sourceAfterPlanID,
+		SourceThroughCreatedAt:   sourceThroughCreatedAtValue,
+		SourceThroughPlanID:      sourceThroughPlanIDValue,
+		SourceHighWaterCreatedAt: sourceHighWaterCreatedAt,
+		SourceHighWaterPlanID:    sourceHighWaterPlanID,
+		HasMore:                  hasMore,
+		SourceStateChecksum:      sourceStateChecksum,
+		Items:                    dryRunItems,
 	})
 	if err != nil {
 		return types.V1ExtractionCheckpoint{}, err
@@ -1408,20 +1616,41 @@ func buildV1ExtractionCheckpoint(
 		[]byte("distr.target-config-v1-extraction\x00"+organizationID.String()+"\x00"+dryRunChecksum),
 	)
 	return types.V1ExtractionCheckpoint{
-		ID:                  checkpointID,
-		OrganizationID:      organizationID,
-		ActorUserAccountID:  actorUserAccountID,
-		ExtractorVersion:    targetConfigV1ExtractorVersion,
-		SourceStateChecksum: sourceStateChecksum,
-		DryRunChecksum:      dryRunChecksum,
-		SourceAfterPlanID:   cloneUUIDPointer(afterPlanID),
-		SourceThroughPlanID: sourceThroughPlanID,
-		HasMore:             hasMore,
-		SourceCount:         len(outcomes),
-		CandidateCount:      candidateCount,
-		BlockedCount:        blockedCount,
-		BatchSize:           batchSize,
+		ID:                       checkpointID,
+		OrganizationID:           organizationID,
+		ActorUserAccountID:       actorUserAccountID,
+		ExtractorVersion:         targetConfigV1ExtractorVersion,
+		SourceStateChecksum:      sourceStateChecksum,
+		DryRunChecksum:           dryRunChecksum,
+		PredecessorCheckpointID:  cloneUUIDPointer(predecessorCheckpointID),
+		SourceAfterCreatedAt:     cloneTimePointerFromCursor(after),
+		SourceAfterPlanID:        cloneUUIDPointerFromCursor(after),
+		SourceThroughCreatedAt:   sourceThroughCreatedAt,
+		SourceThroughPlanID:      sourceThroughPlanID,
+		SourceHighWaterCreatedAt: cloneTimePointerFromCursor(highWater),
+		SourceHighWaterPlanID:    cloneUUIDPointerFromCursor(highWater),
+		HasMore:                  hasMore,
+		SourceCount:              len(outcomes),
+		CandidateCount:           candidateCount,
+		BlockedCount:             blockedCount,
+		BatchSize:                batchSize,
 	}, nil
+}
+
+func compareV1ExtractionPlanPosition(
+	leftCreatedAt time.Time,
+	leftPlanID uuid.UUID,
+	rightCreatedAt time.Time,
+	rightPlanID uuid.UUID,
+) int {
+	if comparison := leftCreatedAt.Compare(rightCreatedAt); comparison != 0 {
+		return comparison
+	}
+	return strings.Compare(leftPlanID.String(), rightPlanID.String())
+}
+
+func formatV1ExtractionCursorTime(value time.Time) string {
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func cloneUUIDPointer(value *uuid.UUID) *uuid.UUID {
@@ -1430,6 +1659,29 @@ func cloneUUIDPointer(value *uuid.UUID) *uuid.UUID {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func cloneTimePointerFromCursor(cursor *v1ExtractionPlanCursor) *time.Time {
+	if cursor == nil {
+		return nil
+	}
+	value := cursor.CreatedAt
+	return &value
+}
+
+func cloneUUIDPointerFromCursor(cursor *v1ExtractionPlanCursor) *uuid.UUID {
+	if cursor == nil {
+		return nil
+	}
+	value := cursor.PlanID
+	return &value
+}
+
+func timePointersEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }
 
 func checksumV1ExtractionValue(value any) (string, error) {
@@ -1455,8 +1707,13 @@ func persistV1ExtractionDryRun(
 			extractor_version,
 			source_state_checksum,
 			dry_run_checksum,
+			predecessor_checkpoint_id,
+			source_after_created_at,
 			source_after_plan_id,
+			source_through_created_at,
 			source_through_plan_id,
+			source_high_water_created_at,
+			source_high_water_plan_id,
 			has_more,
 			source_count,
 			candidate_count,
@@ -1469,29 +1726,39 @@ func persistV1ExtractionDryRun(
 			@extractorVersion,
 			@sourceStateChecksum,
 			@dryRunChecksum,
+			@predecessorCheckpointID,
+			@sourceAfterCreatedAt,
 			@sourceAfterPlanID,
+			@sourceThroughCreatedAt,
 			@sourceThroughPlanID,
+			@sourceHighWaterCreatedAt,
+			@sourceHighWaterPlanID,
 			@hasMore,
 			@sourceCount,
 			@candidateCount,
 			@blockedCount,
 			@batchSize
 		)
-		ON CONFLICT (id) DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 		pgx.NamedArgs{
-			"id":                  checkpoint.ID,
-			"organizationID":      checkpoint.OrganizationID,
-			"actorUserAccountID":  checkpoint.ActorUserAccountID,
-			"extractorVersion":    checkpoint.ExtractorVersion,
-			"sourceStateChecksum": checkpoint.SourceStateChecksum,
-			"dryRunChecksum":      checkpoint.DryRunChecksum,
-			"sourceAfterPlanID":   checkpoint.SourceAfterPlanID,
-			"sourceThroughPlanID": checkpoint.SourceThroughPlanID,
-			"hasMore":             checkpoint.HasMore,
-			"sourceCount":         checkpoint.SourceCount,
-			"candidateCount":      checkpoint.CandidateCount,
-			"blockedCount":        checkpoint.BlockedCount,
-			"batchSize":           checkpoint.BatchSize,
+			"id":                       checkpoint.ID,
+			"organizationID":           checkpoint.OrganizationID,
+			"actorUserAccountID":       checkpoint.ActorUserAccountID,
+			"extractorVersion":         checkpoint.ExtractorVersion,
+			"sourceStateChecksum":      checkpoint.SourceStateChecksum,
+			"dryRunChecksum":           checkpoint.DryRunChecksum,
+			"predecessorCheckpointID":  checkpoint.PredecessorCheckpointID,
+			"sourceAfterCreatedAt":     checkpoint.SourceAfterCreatedAt,
+			"sourceAfterPlanID":        checkpoint.SourceAfterPlanID,
+			"sourceThroughCreatedAt":   checkpoint.SourceThroughCreatedAt,
+			"sourceThroughPlanID":      checkpoint.SourceThroughPlanID,
+			"sourceHighWaterCreatedAt": checkpoint.SourceHighWaterCreatedAt,
+			"sourceHighWaterPlanID":    checkpoint.SourceHighWaterPlanID,
+			"hasMore":                  checkpoint.HasMore,
+			"sourceCount":              checkpoint.SourceCount,
+			"candidateCount":           checkpoint.CandidateCount,
+			"blockedCount":             checkpoint.BlockedCount,
+			"batchSize":                checkpoint.BatchSize,
 		},
 	)
 	if err != nil {
@@ -1504,13 +1771,36 @@ func persistV1ExtractionDryRun(
 			checkpoint.ID,
 		)
 		if loadErr != nil {
+			if errors.Is(loadErr, apierrors.ErrNotFound) {
+				return fmt.Errorf(
+					"v1 extraction predecessor already has a different successor: %w",
+					apierrors.ErrConflict,
+				)
+			}
 			return loadErr
 		}
 		if persisted.DryRunChecksum != checkpoint.DryRunChecksum ||
 			persisted.SourceStateChecksum != checkpoint.SourceStateChecksum ||
 			persisted.ActorUserAccountID != checkpoint.ActorUserAccountID ||
+			!uuidPointersEqual(
+				persisted.PredecessorCheckpointID,
+				checkpoint.PredecessorCheckpointID,
+			) ||
+			!timePointersEqual(persisted.SourceAfterCreatedAt, checkpoint.SourceAfterCreatedAt) ||
 			!uuidPointersEqual(persisted.SourceAfterPlanID, checkpoint.SourceAfterPlanID) ||
+			!timePointersEqual(
+				persisted.SourceThroughCreatedAt,
+				checkpoint.SourceThroughCreatedAt,
+			) ||
 			!uuidPointersEqual(persisted.SourceThroughPlanID, checkpoint.SourceThroughPlanID) ||
+			!timePointersEqual(
+				persisted.SourceHighWaterCreatedAt,
+				checkpoint.SourceHighWaterCreatedAt,
+			) ||
+			!uuidPointersEqual(
+				persisted.SourceHighWaterPlanID,
+				checkpoint.SourceHighWaterPlanID,
+			) ||
 			persisted.HasMore != checkpoint.HasMore {
 			return fmt.Errorf("v1 extraction checkpoint conflict: %w", apierrors.ErrConflict)
 		}
@@ -1748,10 +2038,25 @@ func applyTargetConfigV1ExtractionInTransaction(
 		return report, nil
 	}
 
+	after, err := v1ExtractionCursorFromPointers(
+		checkpoint.SourceAfterCreatedAt,
+		checkpoint.SourceAfterPlanID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	highWater, err := v1ExtractionCursorFromPointers(
+		checkpoint.SourceHighWaterCreatedAt,
+		checkpoint.SourceHighWaterPlanID,
+	)
+	if err != nil {
+		return nil, err
+	}
 	currentOutcomes, currentHasMore, err := evaluateTargetConfigV1Extraction(
 		ctx,
 		organizationID,
-		checkpoint.SourceAfterPlanID,
+		after,
+		highWater,
 		checkpoint.BatchSize,
 		objectVerifier,
 	)
@@ -1761,7 +2066,9 @@ func applyTargetConfigV1ExtractionInTransaction(
 	currentCheckpoint, err := buildV1ExtractionCheckpoint(
 		organizationID,
 		actorUserAccountID,
-		checkpoint.SourceAfterPlanID,
+		checkpoint.PredecessorCheckpointID,
+		after,
+		highWater,
 		currentHasMore,
 		checkpoint.BatchSize,
 		currentOutcomes,
@@ -1829,6 +2136,19 @@ func applyTargetConfigV1ExtractionInTransaction(
 	}
 	report.NoOp = noOp
 	return report, nil
+}
+
+func v1ExtractionCursorFromPointers(
+	createdAt *time.Time,
+	planID *uuid.UUID,
+) (*v1ExtractionPlanCursor, error) {
+	if createdAt == nil || planID == nil {
+		if createdAt == nil && planID == nil {
+			return nil, nil
+		}
+		return nil, errors.New("v1 extraction checkpoint contains an incomplete source cursor")
+	}
+	return &v1ExtractionPlanCursor{CreatedAt: *createdAt, PlanID: *planID}, nil
 }
 
 func isTargetConfigSerializationFailure(err error) bool {

@@ -55,7 +55,8 @@ distr backfill-target-config-snapshots \
 ```
 
 The actor must be a current member of the organization. Record the returned `checkpointId`, `dryRunChecksum`,
-`sourceThroughPlanId`, and `hasMore`, review every blocked reason, then apply exactly that approved state:
+source-through cursor, source high-water cursor, and `hasMore`, review every blocked reason, then apply exactly
+that approved state:
 
 ```sh
 distr backfill-target-config-snapshots \
@@ -67,19 +68,22 @@ distr backfill-target-config-snapshots \
   --batch-size 100
 ```
 
-Each checkpoint contains at most `batch-size` source plans in stable UUID order. Each apply invocation processes
-at most `batch-size` approved candidates. Snapshot creation and applied-lineage insertion occur in one serializable
-transaction, so a failed attempt leaves neither half committed. Re-run the identical apply command until
-`pending=0`; already-applied items are no-ops.
+Each root checkpoint captures a fixed source high-water mark and contains at most `batch-size` source plans in
+stable `(created_at, plan_id)` order. Each apply invocation processes at most `batch-size` approved candidates.
+Snapshot creation and applied-lineage insertion occur in one serializable transaction, so a failed attempt leaves
+neither half committed. Re-run the identical apply command until `pending=0`; already-applied items are no-ops.
 
-When `hasMore=true`, start the next independently reviewable checkpoint at the returned exclusive cursor:
+When `hasMore=true` and `pending=0`, start the next independently reviewable checkpoint from the fully applied
+predecessor. The Hub derives the exclusive source cursor and reuses the predecessor's high-water mark; operators
+cannot skip an arbitrary plan ID, branch one predecessor into multiple successors, or pull newly created plans
+into an already approved chain:
 
 ```sh
 distr backfill-target-config-snapshots \
   --organization-id <org-id> \
-  --actor-user-account-id <organization-member-user-id> \
+  --actor-user-account-id <same-organization-member-user-id> \
   --dry-run \
-  --after-plan-id <source-through-plan-id> \
+  --predecessor-checkpoint-id <fully-applied-checkpoint-id> \
   --batch-size 100
 ```
 
@@ -91,17 +95,19 @@ distr backfill-target-config-snapshots \
   --report <checkpoint-id>
 ```
 
-Apply refuses a mismatched actor, operator checksum, organization, extractor version, object evidence, registry
-placement, or recomputed source/dry-run state.
+Dry-run chaining refuses a mismatched actor, incomplete predecessor, exhausted predecessor, changed predecessor
+state, or second successor. Apply refuses a mismatched actor, operator checksum, organization, extractor version,
+object evidence, registry placement, or recomputed source/dry-run state.
 
 ## Required Impact Report
 
 ### Database/schema impact
 
 Migration 142 adds `BackfillCheckpoint` and `ReleaseContractV1ExtractionLineage`. Both are organization-scoped and
-immutable. A checkpoint records its organization-member actor and bounded cursor. Candidate/blocked dry-run rows
-and applied rows are append-only; originals are foreign-keyed but never updated. Down migration takes exclusive
-locks and refuses while either table contains evidence.
+immutable. A checkpoint records its organization-member actor, optional predecessor, `(created_at, plan_id)`
+source bounds, and fixed high-water mark. The schema allows at most one successor per predecessor.
+Candidate/blocked dry-run rows and applied rows are append-only; originals are foreign-keyed but never updated.
+Down migration takes exclusive locks and refuses while either table contains evidence.
 
 ### Public API and UI impact
 

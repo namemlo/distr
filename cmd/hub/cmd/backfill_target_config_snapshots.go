@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"time"
 
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
@@ -28,15 +29,15 @@ type backfillTargetConfigSnapshotsRuntime struct {
 }
 
 type backfillTargetConfigSnapshotsOptions struct {
-	OrganizationID     string
-	ActorUserAccountID string
-	DryRun             bool
-	Apply              bool
-	Report             string
-	CheckpointID       string
-	DryRunChecksum     string
-	AfterPlanID        string
-	BatchSize          int
+	OrganizationID          string
+	ActorUserAccountID      string
+	DryRun                  bool
+	Apply                   bool
+	Report                  string
+	CheckpointID            string
+	DryRunChecksum          string
+	PredecessorCheckpointID string
+	BatchSize               int
 }
 
 func NewBackfillTargetConfigSnapshotsCommand() *cobra.Command {
@@ -71,7 +72,7 @@ func newBackfillTargetConfigSnapshotsCommand(
 			if options.BatchSize < 1 || options.BatchSize > 1000 {
 				return fmt.Errorf("batch-size must be between 1 and 1000")
 			}
-			mode, checkpointID, afterPlanID, err := resolveTargetConfigV1BackfillMode(options)
+			mode, checkpointID, predecessorCheckpointID, err := resolveTargetConfigV1BackfillMode(options)
 			if err != nil {
 				return err
 			}
@@ -86,7 +87,7 @@ func newBackfillTargetConfigSnapshotsCommand(
 					command.Context(),
 					organizationID,
 					actorUserAccountID,
-					afterPlanID,
+					predecessorCheckpointID,
 					options.BatchSize,
 				)
 			case "apply":
@@ -125,10 +126,10 @@ func newBackfillTargetConfigSnapshotsCommand(
 		"approved lowercase SHA-256 dry-run checksum",
 	)
 	command.Flags().StringVar(
-		&options.AfterPlanID,
-		"after-plan-id",
+		&options.PredecessorCheckpointID,
+		"predecessor-checkpoint-id",
 		"",
-		"exclusive stable source cursor for one bounded dry-run batch",
+		"fully applied predecessor checkpoint for the next bounded source batch",
 	)
 	command.Flags().IntVar(&options.BatchSize, "batch-size", options.BatchSize, "stable processing batch size")
 	return command
@@ -151,8 +152,10 @@ func resolveTargetConfigV1BackfillMode(
 		return "", uuid.Nil, nil, fmt.Errorf("dry-run, apply, and report are mutually exclusive")
 	}
 	if options.Apply {
-		if options.AfterPlanID != "" {
-			return "", uuid.Nil, nil, fmt.Errorf("after-plan-id is valid only with dry-run")
+		if options.PredecessorCheckpointID != "" {
+			return "", uuid.Nil, nil, fmt.Errorf(
+				"predecessor-checkpoint-id is valid only with dry-run",
+			)
 		}
 		checkpointID, err := uuid.Parse(options.CheckpointID)
 		if err != nil {
@@ -165,9 +168,9 @@ func resolveTargetConfigV1BackfillMode(
 	}
 	if options.Report != "" {
 		if options.CheckpointID != "" || options.DryRunChecksum != "" ||
-			options.AfterPlanID != "" {
+			options.PredecessorCheckpointID != "" {
 			return "", uuid.Nil, nil, fmt.Errorf(
-				"checkpoint-id, dry-run-checksum, and after-plan-id are invalid with report",
+				"checkpoint-id, dry-run-checksum, and predecessor-checkpoint-id are invalid with report",
 			)
 		}
 		checkpointID, err := uuid.Parse(options.Report)
@@ -179,14 +182,17 @@ func resolveTargetConfigV1BackfillMode(
 	if options.CheckpointID != "" || options.DryRunChecksum != "" {
 		return "", uuid.Nil, nil, fmt.Errorf("checkpoint-id and dry-run-checksum are valid only with apply")
 	}
-	if options.AfterPlanID == "" {
+	if options.PredecessorCheckpointID == "" {
 		return "dry-run", uuid.Nil, nil, nil
 	}
-	afterPlanID, err := uuid.Parse(options.AfterPlanID)
+	predecessorCheckpointID, err := uuid.Parse(options.PredecessorCheckpointID)
 	if err != nil {
-		return "", uuid.Nil, nil, fmt.Errorf("after-plan-id must be a UUID: %w", err)
+		return "", uuid.Nil, nil, fmt.Errorf(
+			"predecessor-checkpoint-id must be a UUID: %w",
+			err,
+		)
 	}
-	return "dry-run", uuid.Nil, &afterPlanID, nil
+	return "dry-run", uuid.Nil, &predecessorCheckpointID, nil
 }
 
 func resolveTargetConfigV1BackfillActor(
@@ -214,24 +220,49 @@ func writeTargetConfigV1BackfillReport(
 	if report == nil {
 		return fmt.Errorf("backfill returned no report")
 	}
+	predecessorCheckpointID := ""
+	if report.Checkpoint.PredecessorCheckpointID != nil {
+		predecessorCheckpointID = report.Checkpoint.PredecessorCheckpointID.String()
+	}
+	sourceAfterCreatedAt := ""
+	if report.Checkpoint.SourceAfterCreatedAt != nil {
+		sourceAfterCreatedAt = report.Checkpoint.SourceAfterCreatedAt.UTC().Format(time.RFC3339Nano)
+	}
 	sourceAfterPlanID := ""
 	if report.Checkpoint.SourceAfterPlanID != nil {
 		sourceAfterPlanID = report.Checkpoint.SourceAfterPlanID.String()
+	}
+	sourceThroughCreatedAt := ""
+	if report.Checkpoint.SourceThroughCreatedAt != nil {
+		sourceThroughCreatedAt = report.Checkpoint.SourceThroughCreatedAt.UTC().Format(time.RFC3339Nano)
 	}
 	sourceThroughPlanID := ""
 	if report.Checkpoint.SourceThroughPlanID != nil {
 		sourceThroughPlanID = report.Checkpoint.SourceThroughPlanID.String()
 	}
+	sourceHighWaterCreatedAt := ""
+	if report.Checkpoint.SourceHighWaterCreatedAt != nil {
+		sourceHighWaterCreatedAt = report.Checkpoint.SourceHighWaterCreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	sourceHighWaterPlanID := ""
+	if report.Checkpoint.SourceHighWaterPlanID != nil {
+		sourceHighWaterPlanID = report.Checkpoint.SourceHighWaterPlanID.String()
+	}
 	_, err := fmt.Fprintf(
 		writer,
-		"mode=%s checkpointId=%s actorUserAccountId=%s dryRunChecksum=%s sourceStateChecksum=%s sourceAfterPlanId=%s sourceThroughPlanId=%s hasMore=%t source=%d candidate=%d blocked=%d applied=%d pending=%d noOp=%d\n",
+		"mode=%s checkpointId=%s predecessorCheckpointId=%s actorUserAccountId=%s dryRunChecksum=%s sourceStateChecksum=%s sourceAfterCreatedAt=%s sourceAfterPlanId=%s sourceThroughCreatedAt=%s sourceThroughPlanId=%s sourceHighWaterCreatedAt=%s sourceHighWaterPlanId=%s hasMore=%t source=%d candidate=%d blocked=%d applied=%d pending=%d noOp=%d\n",
 		mode,
 		report.Checkpoint.ID,
+		predecessorCheckpointID,
 		report.Checkpoint.ActorUserAccountID,
 		report.Checkpoint.DryRunChecksum,
 		report.Checkpoint.SourceStateChecksum,
+		sourceAfterCreatedAt,
 		sourceAfterPlanID,
+		sourceThroughCreatedAt,
 		sourceThroughPlanID,
+		sourceHighWaterCreatedAt,
+		sourceHighWaterPlanID,
 		report.Checkpoint.HasMore,
 		report.Checkpoint.SourceCount,
 		report.Checkpoint.CandidateCount,
@@ -270,7 +301,7 @@ func runTargetConfigSnapshotV1DryRun(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	actorUserAccountID uuid.UUID,
-	afterPlanID *uuid.UUID,
+	predecessorCheckpointID *uuid.UUID,
 	batchSize int,
 ) (*types.V1ExtractionReport, error) {
 	return withTargetConfigSnapshotBackfillRegistry(ctx, func(
@@ -281,7 +312,7 @@ func runTargetConfigSnapshotV1DryRun(
 			ctx,
 			organizationID,
 			actorUserAccountID,
-			afterPlanID,
+			predecessorCheckpointID,
 			batchSize,
 			verifier,
 		)

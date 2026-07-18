@@ -135,8 +135,8 @@ task, callback, or agent record.
      --batch-size 100
    ```
 
-5. Review every blocked reason and record the returned checkpoint ID, dry-run checksum,
-   `sourceThroughPlanId`, and `hasMore`. Do not edit a v1 source row to make it pass. Resolved ordinary
+5. Review every blocked reason and record the returned checkpoint ID, dry-run checksum, source-through cursor,
+   source high-water cursor, and `hasMore`. Do not edit a v1 source row to make it pass. Resolved ordinary
    variables and current mutable Distr secret references are expected to block because PR-058 cannot represent
    them losslessly.
 6. Apply the exact approved state:
@@ -159,20 +159,23 @@ task, callback, or agent record.
      --report <checkpoint-id>
    ```
 
-8. If the completed checkpoint reports `hasMore=true`, create the next independently approved source batch:
+8. If the completed checkpoint reports `hasMore=true` and `pending=0`, create the next independently approved
+   source batch from that checkpoint:
 
    ```sh
    distr backfill-target-config-snapshots \
      --organization-id <org-id> \
-     --actor-user-account-id <organization-member-user-id> \
+     --actor-user-account-id <same-organization-member-user-id> \
      --dry-run \
-     --after-plan-id <source-through-plan-id> \
+     --predecessor-checkpoint-id <fully-applied-checkpoint-id> \
      --batch-size 100
    ```
 
-An interrupted or repeated apply is safe. The command processes stable plan IDs and creates the matching
-canonical snapshot plus applied lineage in one serializable transaction. A changed actor, object evidence,
-registry placement, source-state, or dry-run checksum fails closed.
+An interrupted or repeated apply is safe. A root dry run fixes a source high-water mark, and successor checkpoints
+process only that fixed window in stable `(created_at, plan_id)` order. The Hub accepts only a fully applied
+predecessor with `hasMore=true`, preserves the original actor and high-water mark, and allows one successor.
+It creates the matching canonical snapshot plus applied lineage in one serializable transaction. A changed actor,
+object evidence, registry placement, source-state, or dry-run checksum fails closed.
 
 Existing v1 reads and execution remain unchanged regardless of partial extraction or the v2 process flag. Roll
 back the binary by disabling v2 admission and deploying the previous Hub; do not delete extraction evidence.

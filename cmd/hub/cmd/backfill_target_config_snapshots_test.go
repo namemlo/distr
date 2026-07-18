@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -16,17 +17,17 @@ func TestBackfillTargetConfigSnapshotsDefaultsToDryRun(t *testing.T) {
 	actorUserAccountID := uuid.New()
 	var gotOrganizationID uuid.UUID
 	var gotBatchSize int
-	var gotAfterPlanID *uuid.UUID
+	var gotPredecessorCheckpointID *uuid.UUID
 	stdout, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
 		DryRun: func(
 			_ context.Context,
 			orgID uuid.UUID,
 			_ uuid.UUID,
-			afterPlanID *uuid.UUID,
+			predecessorCheckpointID *uuid.UUID,
 			batchSize int,
 		) (*types.V1ExtractionReport, error) {
 			gotOrganizationID = orgID
-			gotAfterPlanID = afterPlanID
+			gotPredecessorCheckpointID = predecessorCheckpointID
 			gotBatchSize = batchSize
 			return v1ExtractionCommandReport(orgID), nil
 		},
@@ -37,7 +38,7 @@ func TestBackfillTargetConfigSnapshotsDefaultsToDryRun(t *testing.T) {
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(gotOrganizationID).To(Equal(organizationID))
-	g.Expect(gotAfterPlanID).To(BeNil())
+	g.Expect(gotPredecessorCheckpointID).To(BeNil())
 	g.Expect(gotBatchSize).To(Equal(100))
 	g.Expect(stdout).To(ContainSubstring("mode=dry-run"))
 	g.Expect(stdout).To(ContainSubstring("dryRunChecksum=sha256:"))
@@ -64,33 +65,33 @@ func TestBackfillTargetConfigSnapshotsRequiresActorForDryRun(t *testing.T) {
 	NewWithT(t).Expect(called).To(BeFalse())
 }
 
-func TestBackfillTargetConfigSnapshotsDryRunPassesStableSourceCursor(t *testing.T) {
+func TestBackfillTargetConfigSnapshotsDryRunPassesCheckpointPredecessor(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
 	actorUserAccountID := uuid.New()
-	afterPlanID := uuid.New()
-	var gotAfterPlanID *uuid.UUID
+	predecessorCheckpointID := uuid.New()
+	var gotPredecessorCheckpointID *uuid.UUID
 	_, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
 		DryRun: func(
 			_ context.Context,
 			_ uuid.UUID,
 			_ uuid.UUID,
-			cursor *uuid.UUID,
+			predecessor *uuid.UUID,
 			_ int,
 		) (*types.V1ExtractionReport, error) {
-			gotAfterPlanID = cursor
+			gotPredecessorCheckpointID = predecessor
 			return v1ExtractionCommandReport(organizationID), nil
 		},
 	},
 		"--organization-id", organizationID.String(),
 		"--actor-user-account-id", actorUserAccountID.String(),
 		"--dry-run",
-		"--after-plan-id", afterPlanID.String(),
+		"--predecessor-checkpoint-id", predecessorCheckpointID.String(),
 	)
 
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(gotAfterPlanID).NotTo(BeNil())
-	g.Expect(*gotAfterPlanID).To(Equal(afterPlanID))
+	g.Expect(gotPredecessorCheckpointID).NotTo(BeNil())
+	g.Expect(*gotPredecessorCheckpointID).To(Equal(predecessorCheckpointID))
 }
 
 func TestBackfillTargetConfigSnapshotsApplyRequiresCheckpointAndChecksum(t *testing.T) {
@@ -207,13 +208,13 @@ func TestBackfillTargetConfigSnapshotsRejectsModeExtraneousFlags(t *testing.T) {
 			},
 		},
 		{
-			name: "apply with source cursor",
+			name: "apply with predecessor checkpoint",
 			args: []string{
 				"--organization-id", organizationID,
 				"--apply",
 				"--checkpoint-id", checkpointID,
 				"--dry-run-checksum", checksum,
-				"--after-plan-id", uuid.NewString(),
+				"--predecessor-checkpoint-id", uuid.NewString(),
 			},
 		},
 	}
@@ -285,12 +286,17 @@ func TestBackfillTargetConfigSnapshotsReportPrintsBoundedBlockedItems(t *testing
 	g.Expect(stdout).To(ContainSubstring("reason=multi_target_plan"))
 }
 
-func TestBackfillTargetConfigSnapshotsReportPrintsStableBatchCursor(t *testing.T) {
+func TestBackfillTargetConfigSnapshotsReportPrintsStableCheckpointWindow(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
 	actorUserAccountID := uuid.New()
+	predecessorCheckpointID := uuid.New()
 	afterPlanID := uuid.New()
 	throughPlanID := uuid.New()
+	highWaterPlanID := uuid.New()
+	afterCreatedAt := time.Date(2026, time.July, 18, 1, 2, 3, 0, time.UTC)
+	throughCreatedAt := afterCreatedAt.Add(time.Minute)
+	highWaterCreatedAt := throughCreatedAt.Add(time.Minute)
 	stdout, err := executeBackfillTargetConfigSnapshotsForTest(t, backfillTargetConfigSnapshotsRuntime{
 		DryRun: func(
 			_ context.Context,
@@ -301,8 +307,13 @@ func TestBackfillTargetConfigSnapshotsReportPrintsStableBatchCursor(t *testing.T
 		) (*types.V1ExtractionReport, error) {
 			report := v1ExtractionCommandReport(organizationID)
 			report.Checkpoint.ActorUserAccountID = actorUserAccountID
+			report.Checkpoint.PredecessorCheckpointID = &predecessorCheckpointID
+			report.Checkpoint.SourceAfterCreatedAt = &afterCreatedAt
 			report.Checkpoint.SourceAfterPlanID = &afterPlanID
+			report.Checkpoint.SourceThroughCreatedAt = &throughCreatedAt
 			report.Checkpoint.SourceThroughPlanID = &throughPlanID
+			report.Checkpoint.SourceHighWaterCreatedAt = &highWaterCreatedAt
+			report.Checkpoint.SourceHighWaterPlanID = &highWaterPlanID
 			report.Checkpoint.HasMore = true
 			return report, nil
 		},
@@ -310,12 +321,25 @@ func TestBackfillTargetConfigSnapshotsReportPrintsStableBatchCursor(t *testing.T
 		"--organization-id", organizationID.String(),
 		"--actor-user-account-id", actorUserAccountID.String(),
 		"--dry-run",
-		"--after-plan-id", afterPlanID.String(),
+		"--predecessor-checkpoint-id", predecessorCheckpointID.String(),
 	)
 
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(stdout).To(ContainSubstring(
+		"predecessorCheckpointId=" + predecessorCheckpointID.String(),
+	))
+	g.Expect(stdout).To(ContainSubstring(
+		"sourceAfterCreatedAt=" + afterCreatedAt.Format(time.RFC3339Nano),
+	))
 	g.Expect(stdout).To(ContainSubstring("sourceAfterPlanId=" + afterPlanID.String()))
+	g.Expect(stdout).To(ContainSubstring(
+		"sourceThroughCreatedAt=" + throughCreatedAt.Format(time.RFC3339Nano),
+	))
 	g.Expect(stdout).To(ContainSubstring("sourceThroughPlanId=" + throughPlanID.String()))
+	g.Expect(stdout).To(ContainSubstring(
+		"sourceHighWaterCreatedAt=" + highWaterCreatedAt.Format(time.RFC3339Nano),
+	))
+	g.Expect(stdout).To(ContainSubstring("sourceHighWaterPlanId=" + highWaterPlanID.String()))
 	g.Expect(stdout).To(ContainSubstring("actorUserAccountId=" + actorUserAccountID.String()))
 	g.Expect(stdout).To(ContainSubstring("hasMore=true"))
 }

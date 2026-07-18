@@ -24,8 +24,13 @@ CREATE TABLE BackfillCheckpoint (
   dry_run_checksum TEXT NOT NULL CHECK (
     dry_run_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
+  predecessor_checkpoint_id UUID,
+  source_after_created_at TIMESTAMP,
   source_after_plan_id UUID,
+  source_through_created_at TIMESTAMP,
   source_through_plan_id UUID,
+  source_high_water_created_at TIMESTAMP,
+  source_high_water_plan_id UUID,
   has_more BOOLEAN NOT NULL DEFAULT false,
   source_count INTEGER NOT NULL CHECK (source_count >= 0),
   candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
@@ -39,16 +44,47 @@ CREATE TABLE BackfillCheckpoint (
   ),
   CONSTRAINT backfillcheckpoint_cursor_check CHECK (
     (
-      source_count = 0
+      predecessor_checkpoint_id IS NULL
+      AND source_after_created_at IS NULL
+      AND source_after_plan_id IS NULL
+    )
+    OR (
+      predecessor_checkpoint_id IS NOT NULL
+      AND source_after_created_at IS NOT NULL
+      AND source_after_plan_id IS NOT NULL
+    )
+  ),
+  CONSTRAINT backfillcheckpoint_source_bounds_check CHECK (
+    (
+      source_high_water_created_at IS NULL
+      AND source_high_water_plan_id IS NULL
+      AND source_count = 0
+      AND source_through_created_at IS NULL
       AND source_through_plan_id IS NULL
       AND has_more = false
     )
     OR (
-      source_count > 0
-      AND source_through_plan_id IS NOT NULL
+      source_high_water_created_at IS NOT NULL
+      AND source_high_water_plan_id IS NOT NULL
       AND (
-        source_after_plan_id IS NULL
-        OR source_through_plan_id > source_after_plan_id
+        (
+          source_count = 0
+          AND source_through_created_at IS NULL
+          AND source_through_plan_id IS NULL
+          AND has_more = false
+        )
+        OR (
+          source_count > 0
+          AND source_through_created_at IS NOT NULL
+          AND source_through_plan_id IS NOT NULL
+          AND (
+            source_after_created_at IS NULL
+            OR (source_through_created_at, source_through_plan_id)
+              > (source_after_created_at, source_after_plan_id)
+          )
+          AND (source_through_created_at, source_through_plan_id)
+            <= (source_high_water_created_at, source_high_water_plan_id)
+        )
       )
     )
   ),
@@ -60,6 +96,14 @@ CREATE TABLE BackfillCheckpoint (
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT backfillcheckpoint_predecessor_organization_fk
+    FOREIGN KEY (predecessor_checkpoint_id, organization_id)
+    REFERENCES BackfillCheckpoint(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT backfillcheckpoint_predecessor_unique
+    UNIQUE (predecessor_checkpoint_id, organization_id),
   CONSTRAINT backfillcheckpoint_dry_run_unique
     UNIQUE (organization_id, extractor_version, dry_run_checksum)
 );

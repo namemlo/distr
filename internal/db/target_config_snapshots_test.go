@@ -344,13 +344,25 @@ func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
 	g.Expect(upSQL).To(ContainSubstring("original_release_checksum"))
 	g.Expect(upSQL).To(ContainSubstring("original_plan_checksum"))
 	g.Expect(upSQL).To(ContainSubstring("derived_snapshot_checksum"))
+	g.Expect(upSQL).To(ContainSubstring("predecessor_checkpoint_id UUID"))
+	g.Expect(upSQL).To(ContainSubstring("source_after_created_at TIMESTAMP"))
 	g.Expect(upSQL).To(ContainSubstring("source_after_plan_id UUID"))
+	g.Expect(upSQL).To(ContainSubstring("source_through_created_at TIMESTAMP"))
 	g.Expect(upSQL).To(ContainSubstring("source_through_plan_id UUID"))
+	g.Expect(upSQL).To(ContainSubstring("source_high_water_created_at TIMESTAMP"))
+	g.Expect(upSQL).To(ContainSubstring("source_high_water_plan_id UUID"))
 	g.Expect(upSQL).To(ContainSubstring("actor_user_account_id UUID NOT NULL"))
 	g.Expect(upSQL).To(ContainSubstring("source_count <= batch_size"))
+	g.Expect(upSQL).To(ContainSubstring(
+		"UNIQUE (predecessor_checkpoint_id, organization_id)",
+	))
 	g.Expect(upSQL).To(MatchRegexp(
 		`(?s)FOREIGN KEY \(\s*organization_id,\s*actor_user_account_id\s*\)` +
 			`\s*REFERENCES Organization_UserAccount\(\s*organization_id,\s*user_account_id\s*\)`,
+	))
+	g.Expect(upSQL).To(MatchRegexp(
+		`(?s)FOREIGN KEY \(\s*predecessor_checkpoint_id,\s*organization_id\s*\)` +
+			`\s*REFERENCES BackfillCheckpoint\(id,\s*organization_id\)`,
 	))
 	g.Expect(upSQL).To(MatchRegexp(
 		`(?s)FOREIGN KEY \(\s*original_release_bundle_id,\s*organization_id,\s*original_release_checksum\s*\)`,
@@ -374,10 +386,23 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
 	actorUserAccountID := uuid.New()
+	predecessorCheckpointID := uuid.New()
 	afterPlanID := uuid.New()
+	afterCreatedAt := time.Date(2026, time.July, 18, 1, 2, 3, 0, time.UTC)
+	highWaterPlanID := uuid.New()
+	highWaterCreatedAt := afterCreatedAt.Add(2 * time.Hour)
+	after := &v1ExtractionPlanCursor{
+		CreatedAt: afterCreatedAt,
+		PlanID:    afterPlanID,
+	}
+	highWater := &v1ExtractionPlanCursor{
+		CreatedAt: highWaterCreatedAt,
+		PlanID:    highWaterPlanID,
+	}
 	outcomes := []v1ExtractionOutcome{{
 		ReleaseBundleID:  uuid.New(),
 		ReleaseChecksum:  "sha256:" + strings.Repeat("a", 64),
+		PlanCreatedAt:    afterCreatedAt.Add(time.Hour),
 		PlanID:           uuid.New(),
 		PlanChecksum:     "sha256:" + strings.Repeat("b", 64),
 		Status:           types.V1ExtractionStatusCandidate,
@@ -387,7 +412,9 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	first, err := buildV1ExtractionCheckpoint(
 		organizationID,
 		actorUserAccountID,
-		&afterPlanID,
+		&predecessorCheckpointID,
+		after,
+		highWater,
 		false,
 		100,
 		outcomes,
@@ -396,7 +423,9 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	second, err := buildV1ExtractionCheckpoint(
 		organizationID,
 		actorUserAccountID,
-		&afterPlanID,
+		&predecessorCheckpointID,
+		after,
+		highWater,
 		false,
 		25,
 		outcomes,
@@ -407,17 +436,29 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	g.Expect(second.DryRunChecksum).To(Equal(first.DryRunChecksum))
 	g.Expect(second.SourceStateChecksum).To(Equal(first.SourceStateChecksum))
 	g.Expect(second.BatchSize).To(Equal(25))
+	g.Expect(second.PredecessorCheckpointID).NotTo(BeNil())
+	g.Expect(*second.PredecessorCheckpointID).To(Equal(predecessorCheckpointID))
+	g.Expect(second.SourceAfterCreatedAt).NotTo(BeNil())
+	g.Expect(*second.SourceAfterCreatedAt).To(BeTemporally("==", afterCreatedAt))
 	g.Expect(second.SourceAfterPlanID).NotTo(BeNil())
 	g.Expect(*second.SourceAfterPlanID).To(Equal(afterPlanID))
+	g.Expect(second.SourceThroughCreatedAt).NotTo(BeNil())
+	g.Expect(*second.SourceThroughCreatedAt).To(BeTemporally("==", outcomes[0].PlanCreatedAt))
 	g.Expect(second.SourceThroughPlanID).NotTo(BeNil())
 	g.Expect(*second.SourceThroughPlanID).To(Equal(outcomes[0].PlanID))
+	g.Expect(second.SourceHighWaterCreatedAt).NotTo(BeNil())
+	g.Expect(*second.SourceHighWaterCreatedAt).To(BeTemporally("==", highWaterCreatedAt))
+	g.Expect(second.SourceHighWaterPlanID).NotTo(BeNil())
+	g.Expect(*second.SourceHighWaterPlanID).To(Equal(highWaterPlanID))
 	g.Expect(second.HasMore).To(BeFalse())
 
 	outcomes[0].SnapshotChecksum = "sha256:" + strings.Repeat("d", 64)
 	changed, err := buildV1ExtractionCheckpoint(
 		organizationID,
 		actorUserAccountID,
-		&afterPlanID,
+		&predecessorCheckpointID,
+		after,
+		highWater,
 		false,
 		100,
 		outcomes,
@@ -430,7 +471,9 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	hasMore, err := buildV1ExtractionCheckpoint(
 		organizationID,
 		actorUserAccountID,
-		&afterPlanID,
+		&predecessorCheckpointID,
+		after,
+		highWater,
 		true,
 		100,
 		outcomes,
@@ -442,7 +485,9 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	differentActor, err := buildV1ExtractionCheckpoint(
 		organizationID,
 		uuid.New(),
-		&afterPlanID,
+		&predecessorCheckpointID,
+		after,
+		highWater,
 		false,
 		100,
 		outcomes,
@@ -451,6 +496,20 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	g.Expect(differentActor.ID).NotTo(Equal(changed.ID))
 	g.Expect(differentActor.DryRunChecksum).NotTo(Equal(changed.DryRunChecksum))
 	g.Expect(differentActor.SourceStateChecksum).To(Equal(changed.SourceStateChecksum))
+
+	outcomes[0].PlanCreatedAt = outcomes[0].PlanCreatedAt.Add(time.Nanosecond)
+	movedSource, err := buildV1ExtractionCheckpoint(
+		organizationID,
+		actorUserAccountID,
+		&predecessorCheckpointID,
+		after,
+		highWater,
+		false,
+		100,
+		outcomes,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(movedSource.SourceStateChecksum).NotTo(Equal(changed.SourceStateChecksum))
 }
 
 func TestTargetConfigV1ExtractionRequiresCheckpointOrganizationMemberActor(t *testing.T) {
@@ -963,7 +1022,7 @@ func TestTargetConfigV1ExtractionIgnoresV2SourcesInMixedHistory(t *testing.T) {
 	g.Expect(report.Items[0].OriginalPlanID).To(Equal(v1.plan.ID))
 }
 
-func TestTargetConfigV1ExtractionUsesStableBoundedSourceCursor(t *testing.T) {
+func TestTargetConfigV1ExtractionChainsAppliedCreatedAtCursorWithinHighWater(t *testing.T) {
 	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
 	g := NewWithT(t)
 	fixtures := []targetConfigV1RepositoryFixture{createTargetConfigV1RepositoryFixture(
@@ -989,14 +1048,38 @@ func TestTargetConfigV1ExtractionUsesStableBoundedSourceCursor(t *testing.T) {
 			fixtures[0].organizationID,
 		),
 	)
-	planIDs := []uuid.UUID{
-		fixtures[0].plan.ID,
-		fixtures[1].plan.ID,
-		fixtures[2].plan.ID,
-	}
-	sort.Slice(planIDs, func(left, right int) bool {
-		return planIDs[left].String() < planIDs[right].String()
+	sort.Slice(fixtures, func(left, right int) bool {
+		return fixtures[left].plan.ID.String() < fixtures[right].plan.ID.String()
 	})
+	baseCreatedAt := time.Now().UTC().Truncate(time.Microsecond).Add(-10 * time.Minute)
+	for index := range fixtures {
+		createdAt := baseCreatedAt.Add(time.Duration(len(fixtures)-index) * time.Minute)
+		_, err := internalctx.GetDb(ctx).Exec(ctx, `
+			UPDATE DeploymentPlan
+			SET created_at = @createdAt
+			WHERE id = @planID
+			  AND organization_id = @organizationID`,
+			pgx.NamedArgs{
+				"createdAt":      createdAt,
+				"planID":         fixtures[index].plan.ID,
+				"organizationID": fixtures[index].organizationID,
+			},
+		)
+		g.Expect(err).NotTo(HaveOccurred())
+		fixtures[index].plan.CreatedAt = createdAt
+	}
+	sort.Slice(fixtures, func(left, right int) bool {
+		return compareV1ExtractionPlanPosition(
+			fixtures[left].plan.CreatedAt,
+			fixtures[left].plan.ID,
+			fixtures[right].plan.CreatedAt,
+			fixtures[right].plan.ID,
+		) < 0
+	})
+	g.Expect(strings.Compare(
+		fixtures[0].plan.ID.String(),
+		fixtures[2].plan.ID.String(),
+	)).To(Equal(1))
 
 	first, err := CreateTargetConfigV1ExtractionDryRun(
 		ctx,
@@ -1008,44 +1091,126 @@ func TestTargetConfigV1ExtractionUsesStableBoundedSourceCursor(t *testing.T) {
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(first.Checkpoint.SourceCount).To(Equal(1))
+	g.Expect(first.Checkpoint.PredecessorCheckpointID).To(BeNil())
+	g.Expect(first.Checkpoint.SourceAfterCreatedAt).To(BeNil())
 	g.Expect(first.Checkpoint.SourceAfterPlanID).To(BeNil())
+	g.Expect(first.Checkpoint.SourceThroughCreatedAt).NotTo(BeNil())
+	g.Expect(*first.Checkpoint.SourceThroughCreatedAt).To(BeTemporally(
+		"==",
+		fixtures[0].plan.CreatedAt,
+	))
 	g.Expect(first.Checkpoint.SourceThroughPlanID).NotTo(BeNil())
-	g.Expect(*first.Checkpoint.SourceThroughPlanID).To(Equal(planIDs[0]))
+	g.Expect(*first.Checkpoint.SourceThroughPlanID).To(Equal(fixtures[0].plan.ID))
+	g.Expect(first.Checkpoint.SourceHighWaterCreatedAt).NotTo(BeNil())
+	g.Expect(*first.Checkpoint.SourceHighWaterCreatedAt).To(BeTemporally(
+		"==",
+		fixtures[2].plan.CreatedAt,
+	))
+	g.Expect(first.Checkpoint.SourceHighWaterPlanID).NotTo(BeNil())
+	g.Expect(*first.Checkpoint.SourceHighWaterPlanID).To(Equal(fixtures[2].plan.ID))
 	g.Expect(first.Checkpoint.HasMore).To(BeTrue())
 	g.Expect(first.Items).To(HaveLen(1))
-	g.Expect(first.Items[0].OriginalPlanID).To(Equal(planIDs[0]))
+	g.Expect(first.Items[0].OriginalPlanID).To(Equal(fixtures[0].plan.ID))
+
+	_ = createTargetConfigV1RepositoryFixtureForOrganization(
+		t,
+		ctx,
+		"cursor-after-high-water",
+		types.ReleaseContractSchemaV1,
+		fixtures[0].organizationID,
+	)
+	_, err = CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixtures[0].organizationID,
+		fixtures[0].actorUserAccountID,
+		&first.Checkpoint.ID,
+		1,
+		fixtures[0].verifier,
+	)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	g.Expect(err).To(MatchError(ContainSubstring(
+		"predecessor checkpoint must be fully applied",
+	)))
+
+	_, err = ApplyTargetConfigV1Extraction(
+		ctx,
+		fixtures[0].organizationID,
+		fixtures[0].actorUserAccountID,
+		first.Checkpoint.ID,
+		first.Checkpoint.DryRunChecksum,
+		100,
+		fixtures[0].verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
 
 	second, err := CreateTargetConfigV1ExtractionDryRun(
 		ctx,
 		fixtures[0].organizationID,
 		fixtures[0].actorUserAccountID,
-		first.Checkpoint.SourceThroughPlanID,
+		&first.Checkpoint.ID,
 		1,
 		fixtures[0].verifier,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second.Checkpoint.PredecessorCheckpointID).NotTo(BeNil())
+	g.Expect(*second.Checkpoint.PredecessorCheckpointID).To(Equal(first.Checkpoint.ID))
+	g.Expect(second.Checkpoint.SourceAfterCreatedAt).NotTo(BeNil())
+	g.Expect(*second.Checkpoint.SourceAfterCreatedAt).To(BeTemporally(
+		"==",
+		fixtures[0].plan.CreatedAt,
+	))
 	g.Expect(second.Checkpoint.SourceAfterPlanID).NotTo(BeNil())
-	g.Expect(*second.Checkpoint.SourceAfterPlanID).To(Equal(planIDs[0]))
+	g.Expect(*second.Checkpoint.SourceAfterPlanID).To(Equal(fixtures[0].plan.ID))
+	g.Expect(second.Checkpoint.SourceThroughCreatedAt).NotTo(BeNil())
+	g.Expect(*second.Checkpoint.SourceThroughCreatedAt).To(BeTemporally(
+		"==",
+		fixtures[1].plan.CreatedAt,
+	))
 	g.Expect(second.Checkpoint.SourceThroughPlanID).NotTo(BeNil())
-	g.Expect(*second.Checkpoint.SourceThroughPlanID).To(Equal(planIDs[1]))
+	g.Expect(*second.Checkpoint.SourceThroughPlanID).To(Equal(fixtures[1].plan.ID))
+	g.Expect(second.Checkpoint.SourceHighWaterCreatedAt).To(Equal(
+		first.Checkpoint.SourceHighWaterCreatedAt,
+	))
+	g.Expect(second.Checkpoint.SourceHighWaterPlanID).To(Equal(
+		first.Checkpoint.SourceHighWaterPlanID,
+	))
 	g.Expect(second.Checkpoint.HasMore).To(BeTrue())
 	g.Expect(second.Items).To(HaveLen(1))
-	g.Expect(second.Items[0].OriginalPlanID).To(Equal(planIDs[1]))
+	g.Expect(second.Items[0].OriginalPlanID).To(Equal(fixtures[1].plan.ID))
+
+	_, err = ApplyTargetConfigV1Extraction(
+		ctx,
+		fixtures[0].organizationID,
+		fixtures[0].actorUserAccountID,
+		second.Checkpoint.ID,
+		second.Checkpoint.DryRunChecksum,
+		100,
+		fixtures[0].verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
 
 	last, err := CreateTargetConfigV1ExtractionDryRun(
 		ctx,
 		fixtures[0].organizationID,
 		fixtures[0].actorUserAccountID,
-		second.Checkpoint.SourceThroughPlanID,
+		&second.Checkpoint.ID,
 		1,
 		fixtures[0].verifier,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(last.Checkpoint.PredecessorCheckpointID).NotTo(BeNil())
+	g.Expect(*last.Checkpoint.PredecessorCheckpointID).To(Equal(second.Checkpoint.ID))
 	g.Expect(last.Checkpoint.SourceThroughPlanID).NotTo(BeNil())
-	g.Expect(*last.Checkpoint.SourceThroughPlanID).To(Equal(planIDs[2]))
+	g.Expect(*last.Checkpoint.SourceThroughPlanID).To(Equal(fixtures[2].plan.ID))
+	g.Expect(last.Checkpoint.SourceHighWaterCreatedAt).To(Equal(
+		first.Checkpoint.SourceHighWaterCreatedAt,
+	))
+	g.Expect(last.Checkpoint.SourceHighWaterPlanID).To(Equal(
+		first.Checkpoint.SourceHighWaterPlanID,
+	))
 	g.Expect(last.Checkpoint.HasMore).To(BeFalse())
 	g.Expect(last.Items).To(HaveLen(1))
-	g.Expect(last.Items[0].OriginalPlanID).To(Equal(planIDs[2]))
+	g.Expect(last.Items[0].OriginalPlanID).To(Equal(fixtures[2].plan.ID))
 }
 
 type targetConfigV1RepositoryFixture struct {

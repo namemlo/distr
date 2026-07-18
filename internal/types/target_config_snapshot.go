@@ -184,20 +184,25 @@ const (
 )
 
 type V1ExtractionCheckpoint struct {
-	ID                  uuid.UUID  `db:"id" json:"id"`
-	CreatedAt           time.Time  `db:"created_at" json:"createdAt"`
-	OrganizationID      uuid.UUID  `db:"organization_id" json:"organizationId"`
-	ActorUserAccountID  uuid.UUID  `db:"actor_user_account_id" json:"actorUserAccountId"`
-	ExtractorVersion    string     `db:"extractor_version" json:"extractorVersion"`
-	SourceStateChecksum string     `db:"source_state_checksum" json:"sourceStateChecksum"`
-	DryRunChecksum      string     `db:"dry_run_checksum" json:"dryRunChecksum"`
-	SourceAfterPlanID   *uuid.UUID `db:"source_after_plan_id" json:"sourceAfterPlanId,omitempty"`
-	SourceThroughPlanID *uuid.UUID `db:"source_through_plan_id" json:"sourceThroughPlanId,omitempty"`
-	HasMore             bool       `db:"has_more" json:"hasMore"`
-	SourceCount         int        `db:"source_count" json:"sourceCount"`
-	CandidateCount      int        `db:"candidate_count" json:"candidateCount"`
-	BlockedCount        int        `db:"blocked_count" json:"blockedCount"`
-	BatchSize           int        `db:"batch_size" json:"batchSize"`
+	ID                       uuid.UUID  `db:"id" json:"id"`
+	CreatedAt                time.Time  `db:"created_at" json:"createdAt"`
+	OrganizationID           uuid.UUID  `db:"organization_id" json:"organizationId"`
+	ActorUserAccountID       uuid.UUID  `db:"actor_user_account_id" json:"actorUserAccountId"`
+	ExtractorVersion         string     `db:"extractor_version" json:"extractorVersion"`
+	SourceStateChecksum      string     `db:"source_state_checksum" json:"sourceStateChecksum"`
+	DryRunChecksum           string     `db:"dry_run_checksum" json:"dryRunChecksum"`
+	PredecessorCheckpointID  *uuid.UUID `db:"predecessor_checkpoint_id" json:"predecessorCheckpointId,omitempty"` //nolint:lll
+	SourceAfterCreatedAt     *time.Time `db:"source_after_created_at" json:"sourceAfterCreatedAt,omitempty"`
+	SourceAfterPlanID        *uuid.UUID `db:"source_after_plan_id" json:"sourceAfterPlanId,omitempty"`
+	SourceThroughCreatedAt   *time.Time `db:"source_through_created_at" json:"sourceThroughCreatedAt,omitempty"`
+	SourceThroughPlanID      *uuid.UUID `db:"source_through_plan_id" json:"sourceThroughPlanId,omitempty"`
+	SourceHighWaterCreatedAt *time.Time `db:"source_high_water_created_at" json:"sourceHighWaterCreatedAt,omitempty"` //nolint:lll
+	SourceHighWaterPlanID    *uuid.UUID `db:"source_high_water_plan_id" json:"sourceHighWaterPlanId,omitempty"`       //nolint:lll
+	HasMore                  bool       `db:"has_more" json:"hasMore"`
+	SourceCount              int        `db:"source_count" json:"sourceCount"`
+	CandidateCount           int        `db:"candidate_count" json:"candidateCount"`
+	BlockedCount             int        `db:"blocked_count" json:"blockedCount"`
+	BatchSize                int        `db:"batch_size" json:"batchSize"`
 }
 
 type V1ExtractionLineage struct {
