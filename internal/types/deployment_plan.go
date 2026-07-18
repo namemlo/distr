@@ -174,6 +174,7 @@ type PlannedState struct {
 	ConfigSnapshotID        *uuid.UUID
 	ConfigChecksum          string
 	ProviderBindingChecksum string
+	DatabaseResourceKey     string
 	SchemaState             string
 	SchemaChecksum          string
 	TopologyChecksum        string
@@ -307,23 +308,6 @@ type DeploymentPlanStep struct {
 	Dependencies           []string       `db:"dependencies" json:"dependencies"`
 	Included               bool           `db:"included" json:"included"`
 	ExcludedReason         string         `db:"excluded_reason" json:"excludedReason,omitempty"`
-}
-
-type PlannedState struct {
-	ComponentInstanceID     uuid.UUID
-	ComponentKey            string
-	ReleaseBundleID         uuid.UUID
-	Version                 string
-	Image                   string
-	Platform                string
-	ConfigSnapshotID        *uuid.UUID
-	ConfigChecksum          string
-	ProviderBindingChecksum string
-	DatabaseResourceKey     string
-	SchemaState             string
-	SchemaChecksum          string
-	TopologyChecksum        string
-	ForwardOnly             bool
 }
 
 type DeploymentPlanMigration struct {
