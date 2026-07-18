@@ -135,6 +135,8 @@ jobs:
         run: bash hack/validate-migrations.sh
       - name: Run timestamp expand migration and compatibility tests
         run: go test -p=1 ./internal/externalexecutiontimestamp ./internal/migrations ./internal/db ./internal/hubexecutor ./internal/mapping ./cmd/hub/cmd -count=1 -timeout 30m
+      - name: Run deployment registry PostgreSQL contract tests
+        run: go test -p=1 ./internal/db ./internal/handlers -run 'DeploymentRegistry|Migration139' -count=1 -timeout 15m
       - name: Retain PostgreSQL runtime evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

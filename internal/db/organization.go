@@ -399,6 +399,11 @@ func DeleteOrganizationsOlderThan(ctx context.Context, minAge time.Duration) (in
 			    'distr.external_execution_timestamp_deletion_operation_id',
 			    @operationId,
 			    true
+			  ),
+			  set_config(
+			    'distr.deployment_registry_deletion_reason',
+			    'ORGANIZATION_RETENTION',
+			    true
 			  )`,
 			pgx.NamedArgs{"operationId": uuid.NewString()},
 		); err != nil {
@@ -406,9 +411,7 @@ func DeleteOrganizationsOlderThan(ctx context.Context, minAge time.Duration) (in
 		}
 		if _, err := db.Exec(
 			ctx,
-			"SET CONSTRAINTS "+
-				"deployment_application_entitlement_id_fkey, "+
-				"deploymentrevision_application_version_id_fkey DEFERRED",
+			"SET CONSTRAINTS ALL DEFERRED",
 		); err != nil {
 			return fmt.Errorf("could not defer constraints: %w", err)
 		}

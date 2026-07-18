@@ -4,10 +4,11 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-055 are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
+PR-000 through PR-056 are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
 recovery, and operator documentation are implemented locally; final acceptance remains pending. PR-055 establishes
 default-off, layered kill switches for the operator control plane and executor protocol v2 without changing v1
-behavior.
+behavior. PR-056 adds the organization-scoped canonical deployment registry; its isolated PostgreSQL integration
+legs remain mandatory in CI.
 
 ## Tracking Template
 
@@ -979,3 +980,44 @@ Use one entry per pull request:
 - Tests: Added parsing, deterministic registry ordering, layered effectiveness, TypeScript key, label, and state coverage.
 - Upstream contribution notes: Community-neutral isolation primitives; no adopter, infrastructure provider, or CI-provider logic.
 - Compatibility notes: Historical reads and all v1 writes continue unchanged. Neither new flag may be enabled in a shared or production environment before PR-083 hardening completes.
+
+### PR-056 - Canonical deployment registry identity
+
+- Status: Implemented locally; the full serial Go suite in normal non-live mode, focused tests, the exact isolated
+  PostgreSQL 16.14 registry suite, and the operation-exact routed API integration suite pass. PostgreSQL 18 remains
+  mandatory in CI.
+- Upstream base: `6e4fdd2d`.
+- Feature flag: `operator_control_plane_v2` gates POST, PUT, and DELETE only; authenticated registry reads remain
+  available while disabled.
+- User-facing behavior: Operators and later setup/import flows receive stable identities for scopes, target
+  environment assignments, physical units, shared subscribers, component definitions, aliases, instances, and
+  aggregate placements.
+- Database changes: Migration 139 adds seven public organization-owned registry tables plus private append-only
+  `ComponentInstanceRename` evidence. Composite tenant foreign keys are deferred `NO ACTION` constraints so
+  organization retention can cascade the complete registry graph under its exact transaction-local marker while
+  ordinary subscriber/history deletion remains blocked. The schema also provides
+  non-overlapping assignment intervals, active-identity uniqueness, idempotent canonical-text normalization and
+  checks matching repository behavior, deterministic page indexes for every list resource, and immutable
+  shared-unit subscriber checksums and memberships. Initial membership is atomically sealed; later direct
+  subscriber-row mutations fail at the schema boundary. Subscriber checksums sort native UUID values rather than
+  collation-sensitive text. Down migration refuses while registry or rename-evidence rows exist.
+- API changes: Adds organization-scoped CRUD/list routes below `/api/v1/deployment-registry`; lists use a versioned
+  opaque keyset cursor with default 50 and maximum 100. Shared unit creation carries the initial subscriber customer
+  IDs and matching checksum in one request. Standalone subscriber POST/DELETE return conflict after sealing; PUT
+  succeeds only as an exact no-op and otherwise conflicts. Alias PUT, alias DELETE, and instance DELETE return
+  conflict when durable rename evidence protects the identity.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0056 and PR-056 fork notes.
+- Tests: Added pure topology/validation, migration/repository, retention of a sealed shared unit, atomic
+  shared-membership and direct SQL normalization/mutation guards, multi-hop and concurrent rename evidence,
+  native-UUID checksum ordering with an explicit text collation, runtime bounded-query placement assembly,
+  deterministic repeatable-read placement consistency, zero-row/concurrent write races, every routed resource and
+  authorization mode, protected-delete, pagination, stable subscriber compatibility, and complete generated
+  OpenAPI contract coverage.
+- Upstream contribution notes: Community-neutral deployment identity model; no adopter, cloud, database product,
+  CI provider, credential, or infrastructure-specific behavior.
+- Compatibility notes: Existing v1 APIs and execution remain unchanged. Placement roots and relations are batch
+  loaded in seven queries within one repeatable-read snapshot. Every accepted rename hop remains append-only;
+  subscriber-set changes require a new unit identity; foreign IDs and zero-row write races return 404 without
+  tenant leakage.
