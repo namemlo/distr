@@ -56,6 +56,52 @@ describe('FeatureFlagService', () => {
     ]);
   });
 
+  it('exposes operator control plane and executor protocol labels and effective states', () => {
+    service.getExperimentalFeatureFlags().subscribe((flags) => {
+      expect(flags).toEqual([
+        {
+          key: 'operator_control_plane_v2',
+          label: 'Operator Control Plane v2',
+          description: 'Gates new operator control-plane v2 writes while preserving historical reads and v1 behavior.',
+          milestone: 'Operator Control Plane',
+          enabled: true,
+        },
+        {
+          key: 'executor_protocol_v2',
+          label: 'Executor Protocol v2',
+          description: 'Gates new fenced executor protocol v2 admission and requires Operator Control Plane v2.',
+          milestone: 'Operator Control Plane',
+          enabled: false,
+        },
+      ]);
+    });
+    service.isExperimentalFeatureEnabled$('operator_control_plane_v2').subscribe((enabled) => {
+      expect(enabled).toBe(true);
+    });
+    service.isExperimentalFeatureEnabled$('executor_protocol_v2').subscribe((enabled) => {
+      expect(enabled).toBe(false);
+    });
+
+    const req = http.expectOne('/api/v1/experimental-feature-flags');
+    expect(req.request.method).toBe('GET');
+    req.flush([
+      {
+        key: 'operator_control_plane_v2',
+        label: 'Operator Control Plane v2',
+        description: 'Gates new operator control-plane v2 writes while preserving historical reads and v1 behavior.',
+        milestone: 'Operator Control Plane',
+        enabled: true,
+      },
+      {
+        key: 'executor_protocol_v2',
+        label: 'Executor Protocol v2',
+        description: 'Gates new fenced executor protocol v2 admission and requires Operator Control Plane v2.',
+        milestone: 'Operator Control Plane',
+        enabled: false,
+      },
+    ]);
+  });
+
   it('exposes release bundle, deployment process, scoped variable, deployment plan, task queue, runbook, retention policy, observability, and config as code feature flag state', () => {
     service.isReleaseBundlesEnabled$.subscribe((enabled) => {
       expect(enabled).toBe(true);

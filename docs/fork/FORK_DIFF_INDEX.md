@@ -4,8 +4,10 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-054 are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
-recovery, and operator documentation are implemented locally; final acceptance remains pending.
+PR-000 through PR-055 are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
+recovery, and operator documentation are implemented locally; final acceptance remains pending. PR-055 establishes
+default-off, layered kill switches for the operator control plane and executor protocol v2 without changing v1
+behavior.
 
 ## Tracking Template
 
@@ -962,3 +964,18 @@ Use one entry per pull request:
   organization purge-order failure at `deploymentplantarget_target_fk` remains a functional blocker outside
   PR-054A. Dirty recovery is catalog-proven marker repair only; it leaves Hub stopped and fenced and never replaces
   normal timestamp-expand finalization.
+
+### PR-055 - Operator control-plane v2 isolation boundary
+
+- Status: Implemented locally; focused backend and frontend feature-flag verification completed.
+- Upstream base: `50c0bec4`.
+- Feature flag: Adds process-wide `operator_control_plane_v2` and `executor_protocol_v2` flags. Executor protocol v2 is effective only while the operator control-plane v2 umbrella is also effective.
+- User-facing behavior: Admins can see both registered flags and their effective state in Organization Settings. Both remain disabled unless explicitly configured.
+- Database changes: None.
+- API changes: No new endpoint. The existing experimental-feature-flags response includes both keys and reports layered effective state.
+- UI changes: Extends the typed experimental-feature-flag contract; no new route or workflow is exposed.
+- Agent protocol changes: None. Existing agent and external-execution v1 behavior is unchanged.
+- Documentation: Added PR-055 notes plus feature-flag and upgrade guidance for layered kill switches and safe rollout.
+- Tests: Added parsing, deterministic registry ordering, layered effectiveness, TypeScript key, label, and state coverage.
+- Upstream contribution notes: Community-neutral isolation primitives; no adopter, infrastructure provider, or CI-provider logic.
+- Compatibility notes: Historical reads and all v1 writes continue unchanged. Neither new flag may be enabled in a shared or production environment before PR-083 hardening completes.

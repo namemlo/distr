@@ -46,6 +46,69 @@ func TestParseEnabledKeysRejectsUnknownFlags(t *testing.T) {
 	g.Expect(err).To(MatchError(ContainSubstring(`unknown experimental feature flag "not_a_flag"`)))
 }
 
+func TestParseEnabledKeysControlPlane(t *testing.T) {
+	g := NewWithT(t)
+
+	keys, err := ParseEnabledKeys("executor_protocol_v2 operator_control_plane_v2")
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(keys).To(Equal([]Key{
+		KeyOperatorControlPlaneV2,
+		KeyExecutorProtocolV2,
+	}))
+}
+
+func TestRegistryFlagsRequireControlPlaneForExecutorProtocol(t *testing.T) {
+	g := NewWithT(t)
+
+	disabled := NewRegistry(nil)
+	disabledFlags := disabled.Flags()
+
+	g.Expect(disabled.IsEnabled(KeyOperatorControlPlaneV2)).To(BeFalse())
+	g.Expect(disabled.IsEnabled(KeyExecutorProtocolV2)).To(BeFalse())
+	g.Expect(findFlag(disabledFlags, KeyOperatorControlPlaneV2).Enabled).To(BeFalse())
+	g.Expect(findFlag(disabledFlags, KeyExecutorProtocolV2).Enabled).To(BeFalse())
+
+	executorOnly := NewRegistry([]Key{KeyExecutorProtocolV2})
+	executorOnlyFlags := executorOnly.Flags()
+	executorOnlyOperator := findFlag(executorOnlyFlags, KeyOperatorControlPlaneV2)
+	executorOnlyProtocol := findFlag(executorOnlyFlags, KeyExecutorProtocolV2)
+
+	g.Expect(executorOnly.IsEnabled(KeyOperatorControlPlaneV2)).To(BeFalse())
+	g.Expect(executorOnly.IsEnabled(KeyExecutorProtocolV2)).To(BeFalse())
+	g.Expect(executorOnlyOperator.Enabled).To(BeFalse())
+	g.Expect(executorOnlyProtocol.Enabled).To(BeFalse())
+
+	operatorOnly := NewRegistry([]Key{KeyOperatorControlPlaneV2})
+	operatorOnlyFlags := operatorOnly.Flags()
+
+	g.Expect(operatorOnly.IsEnabled(KeyOperatorControlPlaneV2)).To(BeTrue())
+	g.Expect(operatorOnly.IsEnabled(KeyExecutorProtocolV2)).To(BeFalse())
+	g.Expect(findFlag(operatorOnlyFlags, KeyOperatorControlPlaneV2).Enabled).To(BeTrue())
+	g.Expect(findFlag(operatorOnlyFlags, KeyExecutorProtocolV2).Enabled).To(BeFalse())
+
+	registry := NewRegistry([]Key{KeyOperatorControlPlaneV2, KeyExecutorProtocolV2})
+	flags := registry.Flags()
+	operator := findFlag(flags, KeyOperatorControlPlaneV2)
+	protocol := findFlag(flags, KeyExecutorProtocolV2)
+
+	g.Expect(registry.IsEnabled(KeyOperatorControlPlaneV2)).To(BeTrue())
+	g.Expect(registry.IsEnabled(KeyExecutorProtocolV2)).To(BeTrue())
+	g.Expect(operator.Key).To(Equal(KeyOperatorControlPlaneV2))
+	g.Expect(operator.Label).To(Equal("Operator Control Plane v2"))
+	g.Expect(operator.Description).NotTo(BeEmpty())
+	g.Expect(operator.Enabled).To(BeTrue())
+	g.Expect(protocol.Key).To(Equal(KeyExecutorProtocolV2))
+	g.Expect(protocol.Label).To(Equal("Executor Protocol v2"))
+	g.Expect(protocol.Description).NotTo(BeEmpty())
+	g.Expect(protocol.Enabled).To(BeTrue())
+	g.Expect(AllKeys()).To(ContainElement(KeyOperatorControlPlaneV2))
+	g.Expect(AllKeys()).To(ContainElement(KeyExecutorProtocolV2))
+	g.Expect(indexOfKey(AllKeys(), KeyOperatorControlPlaneV2)).To(
+		BeNumerically("<", indexOfKey(AllKeys(), KeyExecutorProtocolV2)),
+	)
+}
+
 func TestRegistryMarksEnabledFlags(t *testing.T) {
 	g := NewWithT(t)
 
@@ -118,4 +181,13 @@ func findFlag(flags []Flag, key Key) Flag {
 		}
 	}
 	return Flag{}
+}
+
+func indexOfKey(keys []Key, key Key) int {
+	for index, candidate := range keys {
+		if candidate == key {
+			return index
+		}
+	}
+	return -1
 }

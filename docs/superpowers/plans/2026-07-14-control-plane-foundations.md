@@ -46,7 +46,7 @@ const (
 
 `executor_protocol_v2` is registered independently but may be effective only when `operator_control_plane_v2` is also effective. Both are process-wide kill switches until PR-066 adds organization/environment enrollment. Neither flag may be enabled in a shared or production environment before PR-083.
 
-- [ ] Add parsing/registry tests proving both keys are accepted, appear in deterministic registry order, and unknown keys still fail.
+- [x] Add parsing/registry tests proving both keys are accepted, appear in deterministic registry order, and unknown keys still fail.
 
 ```powershell
 go test ./internal/featureflags -run 'Test(ParseEnabledKeys|RegistryFlags).*ControlPlane' -count=1
@@ -54,10 +54,10 @@ go test ./internal/featureflags -run 'Test(ParseEnabledKeys|RegistryFlags).*Cont
 
 Expected before implementation: FAIL because the constants/definitions do not exist. Expected after implementation: PASS.
 
-- [ ] Add backend definitions and TypeScript union members; add frontend service fixture assertions for both labels and states.
-- [ ] Reconcile the stale `Current Status` paragraph in `FORK_DIFF_INDEX.md` so it recognizes implemented PR-054, then append PR-055.
-- [ ] Document layered kill switches, production-off behavior, and unchanged v1 operation.
-- [ ] Verify and commit.
+- [x] Add backend definitions and TypeScript union members; add frontend service fixture assertions for both labels and states.
+- [x] Reconcile the stale `Current Status` paragraph in `FORK_DIFF_INDEX.md` so it recognizes implemented PR-054, then append PR-055.
+- [x] Document layered kill switches, production-off behavior, and unchanged v1 operation.
+- [x] Verify and commit.
 
 ```powershell
 go test ./internal/featureflags -count=1
