@@ -27,10 +27,11 @@ const (
 )
 
 type CreateDeploymentPlanRequest struct {
-	OrganizationID  uuid.UUID
-	ReleaseBundleID uuid.UUID
-	EnvironmentID   uuid.UUID
-	TargetIDs       []uuid.UUID
+	OrganizationID   uuid.UUID
+	ReleaseBundleID  uuid.UUID
+	EnvironmentID    uuid.UUID
+	TargetIDs        []uuid.UUID
+	DeploymentUnitID *uuid.UUID
 }
 
 type DeploymentPlan struct {
@@ -49,6 +50,9 @@ type DeploymentPlan struct {
 	PlanSchema                 string                          `db:"plan_schema" json:"planSchema"`
 	DraftID                    *uuid.UUID                      `db:"draft_id" json:"draftId,omitempty"`
 	DeploymentUnitID           *uuid.UUID                      `db:"deployment_unit_id" json:"deploymentUnitId,omitempty"`
+	EffectivePolicy            *EffectivePolicy                `db:"effective_policy" json:"effectivePolicy,omitempty"`
+	EffectivePolicyChecksum    string                          `db:"effective_policy_checksum" json:"effectivePolicyChecksum,omitempty"`
+	SubscriberSetChecksum      string                          `db:"subscriber_set_checksum" json:"subscriberSetChecksum,omitempty"`
 	TargetConfigSnapshotID     *uuid.UUID                      `db:"target_config_snapshot_id" json:"targetConfigSnapshotId,omitempty"`
 	ProtocolVersion            string                          `db:"protocol_version" json:"protocolVersion"`
 	SupersedesDeploymentPlanID *uuid.UUID                      `db:"supersedes_deployment_plan_id" json:"supersedesDeploymentPlanId,omitempty"`

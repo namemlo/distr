@@ -11,6 +11,7 @@ func TestCreateDeploymentPlanRequestValidate(t *testing.T) {
 	releaseBundleID := uuid.New()
 	environmentID := uuid.New()
 	targetID := uuid.New()
+	deploymentUnitID := uuid.New()
 
 	tests := []struct {
 		name    string
@@ -20,10 +21,24 @@ func TestCreateDeploymentPlanRequestValidate(t *testing.T) {
 		{
 			name: "accepts selected targets",
 			request: CreateDeploymentPlanRequest{
+				ReleaseBundleID:  releaseBundleID,
+				EnvironmentID:    environmentID,
+				TargetIDs:        []uuid.UUID{targetID},
+				DeploymentUnitID: &deploymentUnitID,
+			},
+		},
+		{
+			name: "empty deployment unit",
+			request: CreateDeploymentPlanRequest{
 				ReleaseBundleID: releaseBundleID,
 				EnvironmentID:   environmentID,
 				TargetIDs:       []uuid.UUID{targetID},
+				DeploymentUnitID: func() *uuid.UUID {
+					id := uuid.Nil
+					return &id
+				}(),
 			},
+			wantErr: "deploymentUnitId must not be empty",
 		},
 		{
 			name: "missing release bundle",

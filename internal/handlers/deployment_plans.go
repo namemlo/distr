@@ -163,10 +163,11 @@ func createDeploymentPlanHandler() http.HandlerFunc {
 		}
 
 		plan, err := db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
-			OrganizationID:  *auth.CurrentOrgID(),
-			ReleaseBundleID: request.ReleaseBundleID,
-			EnvironmentID:   request.EnvironmentID,
-			TargetIDs:       request.TargetIDs,
+			OrganizationID:   *auth.CurrentOrgID(),
+			ReleaseBundleID:  request.ReleaseBundleID,
+			EnvironmentID:    request.EnvironmentID,
+			TargetIDs:        request.TargetIDs,
+			DeploymentUnitID: request.DeploymentUnitID,
 		})
 		if errors.Is(err, apierrors.ErrBadRequest) {
 			http.Error(w, err.Error(), http.StatusBadRequest)

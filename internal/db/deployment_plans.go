@@ -35,6 +35,10 @@ const deploymentPlanOutputExpr = `
 	dp.release_bundle_id,
 	dp.channel_id,
 	dp.environment_id,
+	dp.deployment_unit_id,
+	dp.effective_policy,
+	COALESCE(dp.effective_policy_checksum, '') AS effective_policy_checksum,
+	COALESCE(dp.subscriber_set_checksum, '') AS subscriber_set_checksum,
 	dp.process_snapshot_id,
 	dp.variable_snapshot_id,
 	dp.release_contract,
@@ -61,19 +65,23 @@ type deploymentPlanTargetSource struct {
 }
 
 type canonicalDeploymentPlan struct {
-	ReleaseBundleID    string                                   `json:"releaseBundleId"`
-	ApplicationID      string                                   `json:"applicationId"`
-	ChannelID          string                                   `json:"channelId"`
-	EnvironmentID      string                                   `json:"environmentId"`
-	ProcessSnapshotID  string                                   `json:"processSnapshotId,omitempty"`
-	VariableSnapshotID string                                   `json:"variableSnapshotId,omitempty"`
-	ReleaseContract    *types.ReleaseContract                   `json:"releaseContract,omitempty"`
-	Targets            []canonicalDeploymentPlanTarget          `json:"targets"`
-	TargetComponents   []canonicalDeploymentPlanTargetComponent `json:"targetComponents"`
-	Steps              []canonicalDeploymentPlanStep            `json:"steps"`
-	Migrations         []canonicalDeploymentPlanMigration       `json:"migrations,omitempty"`
-	Variables          []canonicalDeploymentPlanVariable        `json:"variables"`
-	Issues             []canonicalDeploymentPlanIssue           `json:"issues"`
+	ReleaseBundleID         string                                   `json:"releaseBundleId"`
+	ApplicationID           string                                   `json:"applicationId"`
+	ChannelID               string                                   `json:"channelId"`
+	EnvironmentID           string                                   `json:"environmentId"`
+	DeploymentUnitID        string                                   `json:"deploymentUnitId,omitempty"`
+	EffectivePolicy         *types.EffectivePolicy                   `json:"effectivePolicy,omitempty"`
+	EffectivePolicyChecksum string                                   `json:"effectivePolicyChecksum,omitempty"`
+	SubscriberSetChecksum   string                                   `json:"subscriberSetChecksum,omitempty"`
+	ProcessSnapshotID       string                                   `json:"processSnapshotId,omitempty"`
+	VariableSnapshotID      string                                   `json:"variableSnapshotId,omitempty"`
+	ReleaseContract         *types.ReleaseContract                   `json:"releaseContract,omitempty"`
+	Targets                 []canonicalDeploymentPlanTarget          `json:"targets"`
+	TargetComponents        []canonicalDeploymentPlanTargetComponent `json:"targetComponents"`
+	Steps                   []canonicalDeploymentPlanStep            `json:"steps"`
+	Migrations              []canonicalDeploymentPlanMigration       `json:"migrations,omitempty"`
+	Variables               []canonicalDeploymentPlanVariable        `json:"variables"`
+	Issues                  []canonicalDeploymentPlanIssue           `json:"issues"`
 }
 
 type canonicalDeploymentPlanTarget struct {
@@ -357,6 +365,9 @@ func validateDeploymentPlanRequest(request types.CreateDeploymentPlanRequest) er
 	if request.EnvironmentID == uuid.Nil {
 		return apierrors.NewBadRequest("environmentId is required")
 	}
+	if request.DeploymentUnitID != nil && *request.DeploymentUnitID == uuid.Nil {
+		return apierrors.NewBadRequest("deploymentUnitId must not be empty")
+	}
 	if len(request.TargetIDs) == 0 {
 		return apierrors.NewBadRequest("at least one targetId is required")
 	}
@@ -400,6 +411,42 @@ func resolveDeploymentPlan(
 		ReleaseContract:    releasebundles.NormalizedReleaseContract(bundle.ReleaseContract),
 		Targets:            targets,
 	}
+	if request.DeploymentUnitID != nil {
+		targetSelected, targetErr := deploymentUnitTargetIsSelected(
+			ctx,
+			request.OrganizationID,
+			*request.DeploymentUnitID,
+			request.TargetIDs,
+		)
+		if targetErr != nil {
+			return nil, targetErr
+		}
+		if !targetSelected {
+			return nil, apierrors.ErrNotFound
+		}
+		effectivePolicy, policyIssues, policyErr := ResolveEffectivePolicyForDeploymentUnit(
+			ctx,
+			request.OrganizationID,
+			*request.DeploymentUnitID,
+			request.EnvironmentID,
+		)
+		if policyErr != nil {
+			return nil, policyErr
+		}
+		plan.DeploymentUnitID = request.DeploymentUnitID
+		plan.EffectivePolicy = &effectivePolicy
+		plan.EffectivePolicyChecksum = effectivePolicy.Checksum
+		plan.SubscriberSetChecksum = effectivePolicy.SubscriberSetChecksum
+		for _, issue := range policyIssues {
+			addDeploymentPlanIssue(
+				plan,
+				types.DeploymentPlanIssueSeverityBlocker,
+				"effective_"+strings.ReplaceAll(issue.Code, ".", "_"),
+				"effectivePolicy."+issue.Field,
+				issue.Message,
+			)
+		}
+	}
 	if err := resolveDeploymentPlanTargetComponents(ctx, plan); err != nil {
 		return nil, err
 	}
@@ -421,6 +468,34 @@ func resolveDeploymentPlan(
 		plan.Status = types.DeploymentPlanStatusReady
 	}
 	return plan, nil
+}
+
+func deploymentUnitTargetIsSelected(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	deploymentUnitID uuid.UUID,
+	targetIDs []uuid.UUID,
+) (bool, error) {
+	var deploymentTargetID uuid.UUID
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT deployment_target_id
+		FROM DeploymentUnit
+		WHERE id = @deploymentUnitID
+		  AND organization_id = @organizationID
+		  AND retired_at IS NULL
+	`,
+		pgx.NamedArgs{
+			"deploymentUnitID": deploymentUnitID,
+			"organizationID":   organizationID,
+		},
+	).Scan(&deploymentTargetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("resolve deployment unit target: %w", err)
+	}
+	return slices.Contains(targetIDs, deploymentTargetID), nil
 }
 
 func addDeploymentPlanReleaseContractIssues(plan *types.DeploymentPlan, bundle types.ReleaseBundle) {
@@ -1098,20 +1173,28 @@ func canonicalizeDeploymentPlan(plan types.DeploymentPlan) ([]byte, error) {
 	if plan.VariableSnapshotID != nil {
 		variableSnapshotID = plan.VariableSnapshotID.String()
 	}
+	deploymentUnitID := ""
+	if plan.DeploymentUnitID != nil {
+		deploymentUnitID = plan.DeploymentUnitID.String()
+	}
 	canonical := canonicalDeploymentPlan{
-		ReleaseBundleID:    plan.ReleaseBundleID.String(),
-		ApplicationID:      plan.ApplicationID.String(),
-		ChannelID:          plan.ChannelID.String(),
-		EnvironmentID:      plan.EnvironmentID.String(),
-		ProcessSnapshotID:  processSnapshotID,
-		VariableSnapshotID: variableSnapshotID,
-		ReleaseContract:    releasebundles.NormalizedReleaseContract(plan.ReleaseContract),
-		Targets:            targets,
-		TargetComponents:   targetComponents,
-		Steps:              steps,
-		Migrations:         migrations,
-		Variables:          variables,
-		Issues:             issues,
+		ReleaseBundleID:         plan.ReleaseBundleID.String(),
+		ApplicationID:           plan.ApplicationID.String(),
+		ChannelID:               plan.ChannelID.String(),
+		EnvironmentID:           plan.EnvironmentID.String(),
+		DeploymentUnitID:        deploymentUnitID,
+		EffectivePolicy:         plan.EffectivePolicy,
+		EffectivePolicyChecksum: plan.EffectivePolicyChecksum,
+		SubscriberSetChecksum:   plan.SubscriberSetChecksum,
+		ProcessSnapshotID:       processSnapshotID,
+		VariableSnapshotID:      variableSnapshotID,
+		ReleaseContract:         releasebundles.NormalizedReleaseContract(plan.ReleaseContract),
+		Targets:                 targets,
+		TargetComponents:        targetComponents,
+		Steps:                   steps,
+		Migrations:              migrations,
+		Variables:               variables,
+		Issues:                  issues,
 	}
 	return json.Marshal(canonical)
 }
@@ -1126,6 +1209,10 @@ func insertDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) error
 			application_id,
 			channel_id,
 			environment_id,
+			deployment_unit_id,
+			effective_policy,
+			effective_policy_checksum,
+			subscriber_set_checksum,
 			process_snapshot_id,
 			variable_snapshot_id,
 			release_contract,
@@ -1139,6 +1226,10 @@ func insertDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) error
 			@applicationId,
 			@channelId,
 			@environmentId,
+			@deploymentUnitId,
+			@effectivePolicy,
+			@effectivePolicyChecksum,
+			@subscriberSetChecksum,
 			@processSnapshotId,
 			@variableSnapshotId,
 			@releaseContract,
@@ -1148,12 +1239,22 @@ func insertDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) error
 		)
 		RETURNING `+deploymentPlanOutputExpr,
 		pgx.NamedArgs{
-			"id":                 plan.ID,
-			"organizationId":     plan.OrganizationID,
-			"releaseBundleId":    plan.ReleaseBundleID,
-			"applicationId":      plan.ApplicationID,
-			"channelId":          plan.ChannelID,
-			"environmentId":      plan.EnvironmentID,
+			"id":               plan.ID,
+			"organizationId":   plan.OrganizationID,
+			"releaseBundleId":  plan.ReleaseBundleID,
+			"applicationId":    plan.ApplicationID,
+			"channelId":        plan.ChannelID,
+			"environmentId":    plan.EnvironmentID,
+			"deploymentUnitId": plan.DeploymentUnitID,
+			"effectivePolicy":  plan.EffectivePolicy,
+			"effectivePolicyChecksum": nullableDeploymentPlanPolicyEvidence(
+				plan.DeploymentUnitID,
+				plan.EffectivePolicyChecksum,
+			),
+			"subscriberSetChecksum": nullableDeploymentPlanPolicyEvidence(
+				plan.DeploymentUnitID,
+				plan.SubscriberSetChecksum,
+			),
 			"processSnapshotId":  plan.ProcessSnapshotID,
 			"variableSnapshotId": plan.VariableSnapshotID,
 			"releaseContract":    plan.ReleaseContract,
@@ -1171,6 +1272,16 @@ func insertDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) error
 	}
 	plan.CreatedAt = inserted.CreatedAt
 	return nil
+}
+
+func nullableDeploymentPlanPolicyEvidence(
+	deploymentUnitID *uuid.UUID,
+	value string,
+) any {
+	if deploymentUnitID == nil {
+		return nil
+	}
+	return value
 }
 
 func insertDeploymentPlanTargets(ctx context.Context, plan types.DeploymentPlan) error {

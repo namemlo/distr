@@ -1286,3 +1286,25 @@ Use one entry per pull request:
 - Compatibility notes: Existing v1 middleware and `Organization_UserAccount.user_role` remain unchanged.
   Legacy roles are dual-read fallback and are backfilled without rewriting membership rows. Foreign scoped IDs
   remain indistinguishable from missing IDs.
+### PR-067 - Versioned deployment policies
+
+- Status: Implemented on the speculative PR-057 base; live stacked PostgreSQL verification is deferred to the
+  final integration gate.
+- Upstream base: `8cdf1a72`.
+- Feature flag: `operator_control_plane_v2` gates mutations; authenticated organization-scoped reads remain
+  available while disabled.
+- User-facing behavior: Operators can author, validate, publish, and bind immutable policy versions. Plan
+  publication can freeze a deterministic owner/subscriber effective policy for a selected deployment unit.
+- Database changes: Migration 149 adds policy, version, and binding resources plus optional deployment-plan
+  policy snapshot, effective checksum, unit identity, and subscriber-set checksum.
+- API changes: Adds CRUD/version/validate/publish/binding routes under `/api/v1/deployment-policies`; plan creation
+  accepts optional `deploymentUnitId` and plan responses expose frozen policy evidence.
+- UI changes: None in this slice.
+- Agent protocol changes: None.
+- Documentation: Added PR-067 fork notes.
+- Tests: Added strict schema/composition, subscriber invalidation, migration, repository contract, API, mapping,
+  handler guard/decoder, and plan canonical-snapshot coverage.
+- Upstream contribution notes: Community-neutral policy primitives with no adopter, provider, host, credential,
+  or application-database behavior.
+- Compatibility notes: Existing v1 plan requests and canonical payloads remain unchanged. Approval decisions and
+  execution enforcement are intentionally deferred to later governance slices.

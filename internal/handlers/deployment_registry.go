@@ -503,26 +503,7 @@ func deploymentRegistryPlacementRoutes(r chiopenapi.Router) {
 func deploymentRegistryMutationAccessMiddlewareWithFlags(
 	enabledFlags []featureflags.Key,
 ) func(http.Handler) http.Handler {
-	return func(handler http.Handler) http.Handler {
-		flaggedMutation := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !featureflags.NewRegistry(enabledFlags).IsEnabled(featureflags.KeyOperatorControlPlaneV2) {
-				http.NotFound(w, r)
-				return
-			}
-			handler.ServeHTTP(w, r)
-		})
-		flaggedMutationHandler := middleware.RequireReadWriteOrAdmin(
-			middleware.BlockSuperAdmin(flaggedMutation),
-		)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.Method {
-			case http.MethodGet, http.MethodHead, http.MethodOptions:
-				handler.ServeHTTP(w, r)
-			default:
-				flaggedMutationHandler.ServeHTTP(w, r)
-			}
-		})
-	}
+	return operatorControlPlaneMutationAccessMiddlewareWithFlags(enabledFlags)
 }
 
 type deploymentRegistryValidatedRequest interface {

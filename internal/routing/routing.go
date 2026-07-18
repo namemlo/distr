@@ -227,6 +227,7 @@ func ApiRouter(
 							internaldb.NewTargetPlanConfigObjectVerifier(targetConfigObjectVerifier),
 						),
 					)
+					r.Route("/deployment-policies", handlers.DeploymentPoliciesRouter)
 					r.Route("/deployment-processes", handlers.DeploymentProcessesRouter)
 					r.Route("/deployment-registry", handlers.DeploymentRegistryRouter)
 					r.Route("/deployments", handlers.DeploymentsRouter)

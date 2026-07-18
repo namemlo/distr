@@ -19,19 +19,29 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 	preflightRunID := uuid.New()
 	variableSetID := uuid.New()
 	variableID := uuid.New()
+	deploymentUnitID := uuid.New()
+	effectivePolicy := types.EffectivePolicy{
+		VersionIDs:            []uuid.UUID{uuid.New()},
+		Checksum:              "sha256:policy",
+		SubscriberSetChecksum: "sha256:subscribers",
+	}
 	createdAt := time.Now().UTC()
 	plan := types.DeploymentPlan{
-		ID:                 uuid.New(),
-		CreatedAt:          createdAt,
-		ApplicationID:      uuid.New(),
-		ReleaseBundleID:    uuid.New(),
-		ChannelID:          uuid.New(),
-		EnvironmentID:      uuid.New(),
-		ProcessSnapshotID:  &processSnapshotID,
-		VariableSnapshotID: &variableSnapshotID,
-		Status:             types.DeploymentPlanStatusReady,
-		CanonicalChecksum:  "sha256:abc",
-		Bootstrap:          true,
+		ID:                      uuid.New(),
+		CreatedAt:               createdAt,
+		ApplicationID:           uuid.New(),
+		ReleaseBundleID:         uuid.New(),
+		ChannelID:               uuid.New(),
+		EnvironmentID:           uuid.New(),
+		DeploymentUnitID:        &deploymentUnitID,
+		EffectivePolicy:         &effectivePolicy,
+		EffectivePolicyChecksum: effectivePolicy.Checksum,
+		SubscriberSetChecksum:   effectivePolicy.SubscriberSetChecksum,
+		ProcessSnapshotID:       &processSnapshotID,
+		VariableSnapshotID:      &variableSnapshotID,
+		Status:                  types.DeploymentPlanStatusReady,
+		CanonicalChecksum:       "sha256:abc",
+		Bootstrap:               true,
 		Baselines: []types.DeploymentPlanBaseline{{
 			ComponentInstanceID: uuid.New(),
 			ComponentKey:        "loyalty-api",
@@ -121,6 +131,10 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 	g.Expect(response.CreatedAt).To(Equal(createdAt))
 	g.Expect(response.ProcessSnapshotID).To(Equal(&processSnapshotID))
 	g.Expect(response.VariableSnapshotID).To(Equal(&variableSnapshotID))
+	g.Expect(response.DeploymentUnitID).To(Equal(&deploymentUnitID))
+	g.Expect(response.EffectivePolicy).To(Equal(&effectivePolicy))
+	g.Expect(response.EffectivePolicyChecksum).To(Equal(effectivePolicy.Checksum))
+	g.Expect(response.SubscriberSetChecksum).To(Equal(effectivePolicy.SubscriberSetChecksum))
 	g.Expect(response.Status).To(Equal(types.DeploymentPlanStatusReady))
 	g.Expect(response.Targets).To(HaveLen(1))
 	g.Expect(response.Targets[0].DeploymentTargetID).To(Equal(targetID))

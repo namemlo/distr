@@ -11,9 +11,10 @@ import (
 )
 
 type CreateDeploymentPlanRequest struct {
-	ReleaseBundleID uuid.UUID   `json:"releaseBundleId"`
-	EnvironmentID   uuid.UUID   `json:"environmentId"`
-	TargetIDs       []uuid.UUID `json:"targetIds"`
+	ReleaseBundleID  uuid.UUID   `json:"releaseBundleId"`
+	EnvironmentID    uuid.UUID   `json:"environmentId"`
+	TargetIDs        []uuid.UUID `json:"targetIds"`
+	DeploymentUnitID *uuid.UUID  `json:"deploymentUnitId,omitempty"`
 }
 
 func (r CreateDeploymentPlanRequest) Validate() error {
@@ -25,6 +26,9 @@ func (r CreateDeploymentPlanRequest) Validate() error {
 	}
 	if len(r.TargetIDs) == 0 {
 		return validation.NewValidationFailedError("at least one targetId is required")
+	}
+	if r.DeploymentUnitID != nil && *r.DeploymentUnitID == uuid.Nil {
+		return validation.NewValidationFailedError("deploymentUnitId must not be empty")
 	}
 	seen := map[uuid.UUID]struct{}{}
 	for _, targetID := range r.TargetIDs {
@@ -54,6 +58,9 @@ type DeploymentPlan struct {
 	PlanSchema                 string                            `json:"planSchema"`
 	DraftID                    *uuid.UUID                        `json:"draftId,omitempty"`
 	DeploymentUnitID           *uuid.UUID                        `json:"deploymentUnitId,omitempty"`
+	EffectivePolicy            *types.EffectivePolicy            `json:"effectivePolicy,omitempty"`
+	EffectivePolicyChecksum    string                            `json:"effectivePolicyChecksum,omitempty"`
+	SubscriberSetChecksum      string                            `json:"subscriberSetChecksum,omitempty"`
 	TargetConfigSnapshotID     *uuid.UUID                        `json:"targetConfigSnapshotId,omitempty"`
 	ProtocolVersion            string                            `json:"protocolVersion"`
 	SupersedesDeploymentPlanID *uuid.UUID                        `json:"supersedesDeploymentPlanId,omitempty"`

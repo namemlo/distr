@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -93,5 +94,55 @@ func TestDeploymentPlanCanonicalStateValidComparesLegacyPayload(t *testing.T) {
 	}
 	if valid {
 		t.Fatal("expected legacy immutable state drift to fail validation")
+	}
+}
+
+func TestDeploymentPlanCanonicalPayloadFreezesEffectivePolicy(t *testing.T) {
+	deploymentUnitID := uuid.New()
+	policyVersionID := uuid.New()
+	plan := types.DeploymentPlan{
+		ReleaseBundleID:  uuid.New(),
+		ApplicationID:    uuid.New(),
+		ChannelID:        uuid.New(),
+		EnvironmentID:    uuid.New(),
+		DeploymentUnitID: &deploymentUnitID,
+		EffectivePolicy: &types.EffectivePolicy{
+			VersionIDs:            []uuid.UUID{policyVersionID},
+			Checksum:              "sha256:policy",
+			SubscriberSetChecksum: "sha256:subscribers-a",
+		},
+		EffectivePolicyChecksum: "sha256:policy",
+		SubscriberSetChecksum:   "sha256:subscribers-a",
+	}
+
+	first, err := canonicalizeDeploymentPlan(plan)
+	if err != nil {
+		t.Fatalf("canonicalize deployment plan: %v", err)
+	}
+	plan.EffectivePolicy.SubscriberSetChecksum = "sha256:subscribers-b"
+	plan.SubscriberSetChecksum = "sha256:subscribers-b"
+	second, err := canonicalizeDeploymentPlan(plan)
+	if err != nil {
+		t.Fatalf("canonicalize changed deployment plan: %v", err)
+	}
+
+	if string(first) == string(second) {
+		t.Fatal("expected subscriber membership evidence to change canonical payload")
+	}
+	if !bytes.Contains(first, []byte(policyVersionID.String())) {
+		t.Fatal("expected effective policy version evidence in canonical payload")
+	}
+}
+
+func TestDeploymentPlanV1PolicyEvidencePersistsAsNull(t *testing.T) {
+	if value := nullableDeploymentPlanPolicyEvidence(nil, ""); value != nil {
+		t.Fatalf("expected v1 policy evidence to remain null, got %#v", value)
+	}
+	deploymentUnitID := uuid.New()
+	if value := nullableDeploymentPlanPolicyEvidence(
+		&deploymentUnitID,
+		"sha256:policy",
+	); value != "sha256:policy" {
+		t.Fatalf("expected v2 policy evidence, got %#v", value)
 	}
 }
