@@ -184,3 +184,22 @@ The blocking correctness review was addressed in a follow-up local commit:
 - Executable previous-state guard tests failed before cross-tenant, stale,
   forward-only, idempotent-existing, and B-to-A helper paths were exposed and
   used by the repository, then passed.
+
+## Component Identity Ambiguity Follow-up
+
+- Root cause: observation insertion used one scalar subquery with
+  `component_key = component OR physical_name = component`. Those names are
+  unique only within separate namespaces, so one token could match two
+  different physical Component Instances.
+- RED:
+  `go test ./internal/db -run 'TestResolveObservationComponentInstance' -count=1`
+  failed because the repository had no independently testable identity
+  resolution boundary.
+- GREEN: the repository now queries distinct candidate Component Instance IDs
+  before insertion. Legacy plans retain a null projection; protocol-v2 plans
+  require exactly one candidate, and zero or multiple candidates fail with a
+  conflict before writing the observation.
+- Executable query-boundary tests cover two-candidate collision rejection,
+  exact-one resolution with tenant/plan/component arguments, and legacy
+  nullability. An insertion-path regression also proves an ambiguous identity
+  returns before the observation write is executed.

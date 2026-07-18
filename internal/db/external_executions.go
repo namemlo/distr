@@ -806,8 +806,17 @@ func insertTargetComponentObservation(
 	externalExecutionID uuid.UUID,
 	deploymentPlanID uuid.UUID,
 ) error {
+	componentInstanceID, err := resolveObservationComponentInstanceID(
+		ctx,
+		state.OrganizationID,
+		deploymentPlanID,
+		state.Component,
+	)
+	if err != nil {
+		return err
+	}
 	database := internalctx.GetDb(ctx)
-	_, err := database.Exec(ctx,
+	_, err = database.Exec(ctx,
 		`INSERT INTO TargetComponentObservation (
 			organization_id, target_component_state_id, deployment_target_id, application_id,
 			component_instance_id, component, state_version, state_checksum,
@@ -815,19 +824,7 @@ func insertTargetComponentObservation(
 			contracts, config_reference, config_checksum, health, observed_at, external_execution_id
 		) VALUES (
 			@organizationId, @targetComponentStateId, @deploymentTargetId, @applicationId,
-			(
-			  SELECT baseline.component_instance_id
-			  FROM DeploymentPlanBaseline baseline
-			  JOIN ComponentInstance instance
-			    ON instance.id = baseline.component_instance_id
-			   AND instance.organization_id = baseline.organization_id
-			  WHERE baseline.organization_id = @organizationId
-			    AND baseline.deployment_plan_id = @deploymentPlanId
-			    AND (
-			      baseline.component_key = @component
-			      OR instance.physical_name = @component
-			    )
-			),
+			@componentInstanceId,
 			@component, @stateVersion, @stateChecksum,
 			@releaseBundleId, @version, @image, @platform,
 			@contracts, @configReference, @configChecksum, @health, @observedAt, @externalExecutionId
@@ -841,13 +838,72 @@ func insertTargetComponentObservation(
 			"contracts": state.Contracts, "configReference": state.ConfigReference,
 			"configChecksum": state.ConfigChecksum, "health": state.Health,
 			"observedAt": state.ObservedAt, "externalExecutionId": externalExecutionID,
-			"deploymentPlanId": deploymentPlanID,
+			"componentInstanceId": componentInstanceID,
 		},
 	)
 	if err != nil {
 		return fmt.Errorf("could not insert TargetComponentObservation: %w", err)
 	}
 	return nil
+}
+
+func resolveObservationComponentInstanceID(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	deploymentPlanID uuid.UUID,
+	component string,
+) (*uuid.UUID, error) {
+	var planSchema string
+	var candidateCount int
+	var candidateID string
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		WITH candidate AS (
+		  SELECT DISTINCT baseline.component_instance_id
+		  FROM DeploymentPlanBaseline baseline
+		  JOIN ComponentInstance instance
+		    ON instance.id = baseline.component_instance_id
+		   AND instance.organization_id = baseline.organization_id
+		  WHERE baseline.organization_id = @organizationId
+		    AND baseline.deployment_plan_id = @deploymentPlanId
+		    AND (
+		      baseline.component_key = @component
+		      OR instance.physical_name = @component
+		    )
+		)
+		SELECT plan.plan_schema,
+		       COUNT(candidate.component_instance_id),
+		       COALESCE(MIN(candidate.component_instance_id::TEXT), '')
+		FROM DeploymentPlan plan
+		LEFT JOIN candidate ON true
+		WHERE plan.id = @deploymentPlanId
+		  AND plan.organization_id = @organizationId
+		GROUP BY plan.plan_schema`,
+		pgx.NamedArgs{
+			"organizationId": organizationID, "deploymentPlanId": deploymentPlanID,
+			"component": component,
+		},
+	).Scan(&planSchema, &candidateCount, &candidateID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve observed component instance: %w", err)
+	}
+	if planSchema != types.TargetDeploymentPlanSchemaV2 {
+		return nil, nil
+	}
+	if candidateCount != 1 {
+		return nil, apierrors.NewConflict(
+			"observed component does not resolve to exactly one physical component instance",
+		)
+	}
+	id, err := uuid.Parse(candidateID)
+	if err != nil {
+		return nil, apierrors.NewConflict(
+			"observed component instance identity is invalid",
+		)
+	}
+	return &id, nil
 }
 
 func mapExternalObservedStateWriteError(err error) error {
