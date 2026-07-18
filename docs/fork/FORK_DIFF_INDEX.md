@@ -1021,3 +1021,13 @@ Use one entry per pull request:
   loaded in seven queries within one repeatable-read snapshot. Every accepted rename hop remains append-only;
   subscriber-set changes require a new unit identity; foreign IDs and zero-row write races return 404 without
   tenant leakage.
+
+### Operations checkpoint - Jenkins Hub image publication
+
+- Status: Implemented locally with mocked publication-boundary verification.
+- User-facing behavior: A Pipeline-from-SCM job builds one exact reviewed Hub commit for Linux AMD64, publishes one immutable ECR candidate, and archives a checksummed digest handoff.
+- Database, API, UI, and agent changes: None.
+- Documentation: Added the generic Jenkins job configuration, immutable publication guarantees, handoff contract, and separate deployment gate.
+- Tests: Added commit, tag, checkout, collision, repository-immutability, OCI identity, platform, credential-redaction, handoff, checksum, and publish-only pipeline checks.
+- Upstream contribution notes: Generic release engineering only; no adopter, server, credential, deployment, or runtime assumptions are embedded in product behavior.
+- Compatibility notes: Reuses the existing `image-check`, `build`, and `push` helper commands. Publication never invokes `deploy` or `release`.

@@ -1,0 +1,97 @@
+pipeline {
+  agent { label 'linux-amd64-docker' }
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timeout(time: 90, unit: 'MINUTES')
+    timestamps()
+  }
+
+  parameters {
+    string(
+      name: 'RELEASE_COMMIT',
+      defaultValue: '',
+      description: 'Reviewed Distr source commit: exactly 40 lowercase hexadecimal characters',
+      trim: true
+    )
+  }
+
+  stages {
+    stage('Exact checkout') {
+      steps {
+        deleteDir()
+        checkout scm
+        sh(
+          label: 'Detach reviewed commit',
+          script: '''
+            set -eu
+            case "$RELEASE_COMMIT" in
+              ''|*[!0-9a-f]*)
+                printf 'RELEASE_COMMIT must be exactly 40 lowercase hexadecimal characters\n' >&2
+                exit 2
+                ;;
+            esac
+            [ "${#RELEASE_COMMIT}" -eq 40 ] || {
+              printf 'RELEASE_COMMIT must be exactly 40 lowercase hexadecimal characters\n' >&2
+              exit 2
+            }
+            git cat-file -e "${RELEASE_COMMIT}^{commit}"
+            git checkout --detach "$RELEASE_COMMIT"
+            git reset --hard "$RELEASE_COMMIT"
+            git clean -ffdx
+            test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+            test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          '''
+        )
+      }
+    }
+
+    stage('Candidate identity') {
+      steps {
+        script {
+          env.DISTR_IMAGE_TAG = sh(
+            label: 'Generate immutable candidate tag',
+            returnStdout: true,
+            script: './deploy/jenkins/publish-hub-image.sh candidate-tag "$RELEASE_COMMIT"'
+          ).trim()
+        }
+      }
+    }
+
+    stage('Build once and publish') {
+      steps {
+        withCredentials([
+          [
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: env.AWS_CREDENTIALS_ID
+          ]
+        ]) {
+          sh(
+            label: 'Publish immutable Hub image',
+            script: '''
+              set +x
+              ./deploy/jenkins/publish-hub-image.sh publish
+            '''
+          )
+        }
+      }
+    }
+
+    stage('Archive release identity') {
+      steps {
+        archiveArtifacts(
+          artifacts: "dist/release-${env.DISTR_IMAGE_TAG}.env,dist/release-${env.DISTR_IMAGE_TAG}.env.sha256",
+          fingerprint: true,
+          onlyIfSuccessful: true
+        )
+      }
+    }
+  }
+
+  post {
+    always {
+      deleteDir()
+    }
+  }
+}
