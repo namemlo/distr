@@ -9,9 +9,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
-	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -187,8 +185,7 @@ func DeletePartnerOrganizationWithID(ctx context.Context, id uuid.UUID, organiza
 		pgx.NamedArgs{"id": id, "organizationId": organizationID},
 	)
 	if err != nil {
-		var pgError *pgconn.PgError
-		if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+		if isProtectedReferenceViolation(err) {
 			err = fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 		}
 		return err

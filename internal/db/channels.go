@@ -294,8 +294,7 @@ func DeleteChannelWithID(ctx context.Context, id, organizationID uuid.UUID) erro
 			pgx.NamedArgs{"id": id, "organizationId": organizationID},
 		)
 		if err != nil {
-			var pgError *pgconn.PgError
-			if errors.As(err, &pgError) && pgError.Code == pgerrcode.ForeignKeyViolation {
+			if isProtectedReferenceViolation(err) {
 				return fmt.Errorf("%w: %w", apierrors.ErrConflict, err)
 			}
 			return fmt.Errorf("could not delete Channel: %w", err)
@@ -434,13 +433,14 @@ func defaultChannelExists(ctx context.Context, orgID, applicationID, exceptID uu
 }
 
 func mapChannelWriteError(action string, err error) error {
+	if isProtectedReferenceViolation(err) {
+		return fmt.Errorf("could not %s Channel: %w", action, apierrors.ErrConflict)
+	}
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
 		switch pgError.Code {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("could not %s Channel: %w", action, apierrors.ErrAlreadyExists)
-		case pgerrcode.ForeignKeyViolation:
-			return fmt.Errorf("could not %s Channel: %w", action, apierrors.ErrConflict)
 		}
 	}
 	return fmt.Errorf("could not %s Channel: %w", action, err)

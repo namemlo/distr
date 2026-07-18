@@ -35,6 +35,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
       - name: Setup Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -44,10 +46,48 @@ jobs:
             go.sum
       - name: Run go tests
         run: go test ./...
+      - name: Resolve Go lint baseline
+        id: lint-baseline
+        if: github.ref_type != 'tag'
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_HEAD_SHA: ${{ github.sha }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -Eeuo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          [[ "$head_sha" == "$EXPECTED_HEAD_SHA" ]] || {
+            printf 'checked-out HEAD does not match the workflow SHA\n' >&2
+            exit 1
+          }
+          case "$EVENT_NAME" in
+            pull_request) base="$PULL_REQUEST_BASE_SHA" ;;
+            push) base="$PUSH_BEFORE_SHA" ;;
+            *)
+              printf 'unsupported Go lint event: %s\n' "$EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          if [[ "$EVENT_NAME" == push &&
+                "$base" == 0000000000000000000000000000000000000000 ]]; then
+            printf 'args=\n' >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]] || {
+            printf 'Go lint baseline is not a lowercase 40-hex SHA\n' >&2
+            exit 1
+          }
+          git cat-file -e "${base}^{commit}"
+          git merge-base --is-ancestor "$base" HEAD
+          printf 'args=--new-from-rev=%s\n' "$base" >>"$GITHUB_OUTPUT"
       - name: Lint with golangci-lint
+        if: github.ref_type != 'tag'
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: 'v2.12.2' # renovate: datasource=github-releases depName=golangci/golangci-lint
+          args: ${{ steps.lint-baseline.outputs.args }}
 
   lint-and-test-node:
     name: Lint and test (Node)

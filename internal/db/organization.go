@@ -368,6 +368,42 @@ func DeleteOrganizationsOlderThan(ctx context.Context, minAge time.Duration) (in
 	var rowsAffected int64
 	err := RunTx(ctx, func(ctx context.Context) error {
 		db := internalctx.GetDb(ctx)
+		rows, err := db.Query(
+			ctx,
+			`SELECT id
+			FROM Organization
+			WHERE deleted_at IS NOT NULL AND now() - deleted_at > @minAge
+			ORDER BY id
+			FOR UPDATE`,
+			pgx.NamedArgs{"minAge": minAge},
+		)
+		if err != nil {
+			return fmt.Errorf("could not lock organizations for deletion: %w", err)
+		}
+		organizationIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return fmt.Errorf("could not collect organizations for deletion: %w", err)
+		}
+		if len(organizationIDs) == 0 {
+			return nil
+		}
+		if _, err := db.Exec(
+			ctx,
+			`SELECT
+			  set_config(
+			    'distr.external_execution_timestamp_deletion_reason',
+			    'ORGANIZATION_RETENTION',
+			    true
+			  ),
+			  set_config(
+			    'distr.external_execution_timestamp_deletion_operation_id',
+			    @operationId,
+			    true
+			  )`,
+			pgx.NamedArgs{"operationId": uuid.NewString()},
+		); err != nil {
+			return fmt.Errorf("could not authorize organization retention: %w", err)
+		}
 		if _, err := db.Exec(
 			ctx,
 			"SET CONSTRAINTS "+
@@ -376,10 +412,24 @@ func DeleteOrganizationsOlderThan(ctx context.Context, minAge time.Duration) (in
 		); err != nil {
 			return fmt.Errorf("could not defer constraints: %w", err)
 		}
+		if _, err := db.Exec(
+			ctx,
+			"DELETE FROM Task WHERE organization_id = ANY(@organizationIds)",
+			pgx.NamedArgs{"organizationIds": organizationIDs},
+		); err != nil {
+			return fmt.Errorf("could not delete organization tasks: %w", err)
+		}
+		if _, err := db.Exec(
+			ctx,
+			"DELETE FROM DeploymentPlan WHERE organization_id = ANY(@organizationIds)",
+			pgx.NamedArgs{"organizationIds": organizationIDs},
+		); err != nil {
+			return fmt.Errorf("could not delete organization deployment plans: %w", err)
+		}
 		result, err := db.Exec(
 			ctx,
-			"DELETE FROM Organization WHERE deleted_at IS NOT NULL AND now() - deleted_at > @minAge",
-			pgx.NamedArgs{"minAge": minAge},
+			"DELETE FROM Organization WHERE id = ANY(@organizationIds)",
+			pgx.NamedArgs{"organizationIds": organizationIDs},
 		)
 		if err != nil {
 			return fmt.Errorf("could not delete organizations: %w", err)

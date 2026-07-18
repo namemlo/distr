@@ -65,4 +65,3 @@ Focused tests cover:
 - agent concurrency slots release after completion
 - endpoint failure limit blocks later requests
 - action registry accepts optional `corridor` and `priority`
-

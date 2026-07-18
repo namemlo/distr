@@ -922,6 +922,8 @@ func mapRunbookWriteError(action string, err error) error {
 		switch pgError.Code {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("could not %s Runbook: %w", action, apierrors.ErrAlreadyExists)
+		case pgerrcode.RestrictViolation:
+			return fmt.Errorf("could not %s Runbook: %w", action, apierrors.ErrConflict)
 		case pgerrcode.ForeignKeyViolation:
 			return fmt.Errorf("could not %s Runbook: %w", action, apierrors.ErrNotFound)
 		case pgerrcode.CheckViolation:

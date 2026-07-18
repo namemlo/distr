@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os/signal"
 	"syscall"
 	"time"
@@ -20,6 +21,28 @@ import (
 )
 
 type ServeOptions struct{ Migrate bool }
+
+type serveDatabaseStartupHooks struct {
+	requireTimestampReadiness func(context.Context) error
+	createAgentVersion        func(context.Context) error
+	reconcileEditionFeatures  func(context.Context) error
+}
+
+func runServeDatabaseStartup(
+	ctx context.Context,
+	hooks serveDatabaseStartupHooks,
+) error {
+	if err := hooks.requireTimestampReadiness(ctx); err != nil {
+		return fmt.Errorf("external-execution timestamp readiness: %w", err)
+	}
+	if err := hooks.createAgentVersion(ctx); err != nil {
+		return fmt.Errorf("create agent version: %w", err)
+	}
+	if err := hooks.reconcileEditionFeatures(ctx); err != nil {
+		return fmt.Errorf("reconcile edition features: %w", err)
+	}
+	return nil
+}
 
 var serveOpts = ServeOptions{Migrate: true}
 
@@ -70,8 +93,11 @@ func runServe(ctx context.Context, opts ServeOptions) {
 
 	dbCtx := internalctx.WithDb(ctx, registry.GetDbPool())
 	dbLogCtx := internalctx.WithLogger(dbCtx, registry.GetLogger())
-	util.Must(db.CreateAgentVersion(dbLogCtx))
-	util.Must(subscription.ReconcileEditionFeatures(dbLogCtx))
+	util.Must(runServeDatabaseStartup(dbLogCtx, serveDatabaseStartupHooks{
+		requireTimestampReadiness: db.RequireExternalExecutionTimestampExpandReadiness,
+		createAgentVersion:        db.CreateAgentVersion,
+		reconcileEditionFeatures:  subscription.ReconcileEditionFeatures,
+	}))
 
 	if env.MetricsEnabled() {
 		util.Must(registry.GetPrometheusCollector().Initialize(dbCtx, db.QueryableInitDataSource{}))

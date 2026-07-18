@@ -62,7 +62,10 @@ None. Existing experimental flags remain documented and unchanged.
 
 Positive documentation and validation impact. The PR-050 security review records the release gates and maps
 them to existing regression tests for organization isolation, RBAC, leases, redaction, path safety, webhook
-hardening, Config as Code validation, and compatibility metadata.
+hardening, Config as Code validation, and compatibility metadata. The Go vulnerability gate remains mandatory and
+uses an exact, reviewed, expiring fail-closed policy for five Moby findings that are reachable only through two
+dependency initialization chains. Runtime and static validators seal the complete canonical policy with SHA-256;
+every new or changed policy field or reachable finding fails until an explicit reviewed code update.
 
 ### Backward-compatibility impact
 
@@ -96,6 +99,8 @@ Primary deterministic validation:
 DISTR_DEMO_DISPOSABLE_HUB=true node examples/community-e2e/live-demo.mjs --require-running-hub
 node examples/community-e2e/run-demo.mjs
 pnpm install --frozen-lockfile
+node --test hack/pr050-govulncheck.test.mjs
+node hack/pr050-govulncheck.mjs
 node hack/pr050-license-scan.mjs
 node hack/pr050-validate-release-hardening.mjs
 ```
@@ -128,6 +133,14 @@ The live community demo uses public Hub and agent APIs only after the Hub is run
 ## Known Limitations
 
 - The deterministic fixture verifier is credential-free and supplements, but does not replace, the live Hub smoke test and API-only live release-to-task journey.
-- Security and dependency scans depend on the scanner installed by the operator or CI environment.
+- Security and dependency scans depend on the scanner installed by the operator or CI environment. CI pins
+  `govulncheck` version `v1.6.0`; `docs/security/govulncheck-reviewed-findings.json` accepts only the five exact reviewed
+  Moby initialization-trace findings through 2026-08-17T00:00:00Z and otherwise fails closed. The policy records
+  the submitted Go VulnDB feedback for
+  [GO-2026-4883](https://github.com/golang/vulndb/issues/4922#issuecomment-4976353536),
+  [GO-2026-4887](https://github.com/golang/vulndb/issues/4921#issuecomment-4976353689),
+  [GO-2026-5617](https://github.com/golang/vulndb/issues/5993),
+  [GO-2026-5668](https://github.com/golang/vulndb/issues/5994), and
+  [GO-2026-5746](https://github.com/golang/vulndb/issues/5995).
 - Feature flags remain experimental until a later stabilization release removes them with a documented
   migration path.

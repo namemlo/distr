@@ -1,20 +1,50 @@
 #!/usr/bin/env node
 
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {existsSync, readdirSync, readFileSync, statSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const localJwtSecret = 'bG9jYWwtand0LXNlY3JldC1wbGFjZWhvbGRlci0zMi1ieXRlcw==';
+const expectedVulnerabilityPolicySha256 = '62c1514dbec86a68c77ece7893e5e7aa41c2f30d68126671efde30a3abbb159a';
+const expectedVulnerabilityIds = ['GO-2026-4883', 'GO-2026-4887', 'GO-2026-5617', 'GO-2026-5668', 'GO-2026-5746'];
+const expectedFeedback = {
+  'GO-2026-4883': 'https://github.com/golang/vulndb/issues/4922#issuecomment-4976353536',
+  'GO-2026-4887': 'https://github.com/golang/vulndb/issues/4921#issuecomment-4976353689',
+  'GO-2026-5617': 'https://github.com/golang/vulndb/issues/5993',
+  'GO-2026-5668': 'https://github.com/golang/vulndb/issues/5994',
+  'GO-2026-5746': 'https://github.com/golang/vulndb/issues/5995',
+};
+const expectedDependencyPrefixes = [
+  'github.com/docker/docker/plugin',
+  'github.com/docker/docker/api/server/router/plugin',
+  'github.com/docker/docker/pkg/authorization',
+  'github.com/docker/docker/api/server/middleware',
+  'github.com/docker/docker/container',
+  'github.com/docker/docker/api/server/router/container',
+  'github.com/docker/docker/daemon/archive',
+  'github.com/docker/docker/pkg/archive',
+  'github.com/docker/docker/pkg/chrootarchive',
+];
+const expectedVulnerabilityStep = [
+  '      - name: Run Go vulnerability scan',
+  '        run: |',
+  '          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0',
+  '          node hack/pr050-govulncheck.mjs',
+].join('\n');
 
 const requiredFiles = [
   '.github/workflows/community-release-hardening.yaml',
   '.golangci.release.yml',
+  'Dockerfile.docker-agent',
+  'Dockerfile.kubernetes-agent',
   'docs/adr/0050-community-release-hardening.md',
   'docs/fork/PR-050_COMMUNITY_RELEASE_HARDENING.md',
   'docs/fork/FORK_DIFF_INDEX.md',
   'docs/release/community-release-readiness.md',
+  'docs/security/govulncheck-reviewed-findings.json',
   'docs/security/release-hardening-checklist.md',
   'docs/operations/operator-smoke-test.md',
   'docs/upgrade/community-release-upgrade-checklist.md',
@@ -27,8 +57,12 @@ const requiredFiles = [
   'examples/community-e2e/live-demo.mjs',
   'examples/community-e2e/compose.yaml',
   'hack/e2e-smoke-test.mjs',
+  'hack/pr050-govulncheck.mjs',
+  'hack/pr050-govulncheck.test.mjs',
   'hack/pr050-license-scan.mjs',
   'internal/handlers/pr050_community_live_demo_test.go',
+  'go.mod',
+  'mise.toml',
 ];
 
 const secretScanFiles = requiredFiles.filter(
@@ -37,6 +71,103 @@ const secretScanFiles = requiredFiles.filter(
 
 function fail(message) {
   throw new Error(message);
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonical).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function validateVulnerabilityWorkflow(workflowText) {
+  const lines = workflowText.replace(/\r\n/gu, '\n').split('\n');
+  const starts = lines
+    .map((line, index) => (line === '      - name: Run Go vulnerability scan' ? index : -1))
+    .filter((index) => index >= 0);
+  if (starts.length !== 1) {
+    fail(`vulnerability step must exactly contain the reviewed commands; found ${starts.length} named steps`);
+  }
+  const start = starts[0];
+  let jobStart = start - 1;
+  while (jobStart >= 0 && !/^  [A-Za-z0-9_-]+:\s*$/u.test(lines[jobStart])) {
+    jobStart -= 1;
+  }
+  if (jobStart < 0 || lines[jobStart] !== '  release-gates:') {
+    fail('vulnerability step must be inside the full release-gates job');
+  }
+  let jobEnd = jobStart + 1;
+  while (jobEnd < lines.length && !/^  [A-Za-z0-9_-]+:\s*$/u.test(lines[jobEnd])) {
+    jobEnd += 1;
+  }
+  const forbiddenJobControl =
+    /^    (?:"(?:if|continue-on-error)"|'(?:if|continue-on-error)'|(?:if|continue-on-error))\s*:/u;
+  if (lines.slice(jobStart + 1, jobEnd).some((line) => forbiddenJobControl.test(line))) {
+    fail('release job must not define if or continue-on-error');
+  }
+  let end = start + 1;
+  while (end < lines.length && !lines[end].startsWith('      - ')) {
+    end += 1;
+  }
+  while (end > start && lines[end - 1] === '') {
+    end -= 1;
+  }
+  if (lines.slice(start, end).join('\n') !== expectedVulnerabilityStep) {
+    fail('vulnerability step must exactly contain the pinned install and reviewed wrapper with no conditions');
+  }
+}
+
+export function validateVulnerabilityPolicy(policy) {
+  if (
+    policy.schemaVersion !== 1 ||
+    policy.reviewedAt !== '2026-07-17' ||
+    policy.expiresAt !== '2026-08-17T00:00:00Z' ||
+    policy.owner !== 'EMLO Platform' ||
+    policy.reviewer !== 'EMLO Platform Owner'
+  ) {
+    fail('Go vulnerability policy review, expiry, owner, or reviewer metadata changed');
+  }
+  if (
+    policy.scanner?.protocolVersion !== 'v1.0.0' ||
+    policy.scanner?.name !== 'govulncheck' ||
+    policy.scanner?.version !== 'v1.6.0' ||
+    policy.scanner?.database !== 'https://vuln.go.dev' ||
+    policy.module?.path !== 'github.com/docker/docker' ||
+    policy.module?.version !== 'v28.5.2+incompatible'
+  ) {
+    fail('Go vulnerability policy scanner or Docker module contract changed');
+  }
+  const policyIds = policy.findings?.map((finding) => finding.id);
+  if (
+    !Array.isArray(policyIds) ||
+    new Set(policyIds).size !== expectedVulnerabilityIds.length ||
+    canonical(policyIds) !== canonical(expectedVulnerabilityIds)
+  ) {
+    fail('Go vulnerability policy must contain the five reviewed IDs in exact order');
+  }
+  for (const finding of policy.findings) {
+    if (finding.goAdvisory !== `https://pkg.go.dev/vuln/${finding.id}`) {
+      fail(`Go vulnerability policy advisory URL changed for ${finding.id}`);
+    }
+    if (finding.feedback !== expectedFeedback[finding.id]) {
+      fail(`Go vulnerability policy submitted feedback URL changed for ${finding.id}`);
+    }
+  }
+  if (canonical(policy.dependencyDefense?.rejectedPackagePrefixes) !== canonical(expectedDependencyPrefixes)) {
+    fail('Go vulnerability policy dependency-family set changed');
+  }
+  const policySha256 = createHash('sha256').update(canonical(policy)).digest('hex');
+  if (policySha256 !== expectedVulnerabilityPolicySha256) {
+    fail(
+      `Go vulnerability policy integrity SHA-256 mismatch: expected ${expectedVulnerabilityPolicySha256}, got ${policySha256}`
+    );
+  }
 }
 
 function readRel(relPath) {
@@ -51,6 +182,34 @@ function assertFile(relPath) {
 
 for (const file of requiredFiles) {
   assertFile(file);
+}
+
+const goVersionSources = new Map([
+  ['go.mod', /^go\s+(\d+\.\d+\.\d+)$/m],
+  ['mise.toml', /^go\s*=\s*"(\d+\.\d+\.\d+)"$/m],
+  ['Dockerfile.docker-agent', /^FROM\s+golang:(\d+\.\d+\.\d+)-/m],
+  ['Dockerfile.kubernetes-agent', /^FROM\s+golang:(\d+\.\d+\.\d+)-/m],
+]);
+const goVersions = new Map(
+  [...goVersionSources].map(([file, pattern]) => {
+    const match = readRel(file).match(pattern);
+    if (!match) {
+      fail(`could not read pinned Go version from ${file}`);
+    }
+    return [file, match[1]];
+  })
+);
+if (new Set(goVersions.values()).size !== 1) {
+  fail(`Go version pins must match: ${[...goVersions].map(([file, version]) => `${file}=${version}`).join(', ')}`);
+}
+const requiredGoVersion = '1.26.5';
+if ([...goVersions.values()].some((version) => version !== requiredGoVersion)) {
+  fail(`Go version pins must remain at the patched baseline ${requiredGoVersion}`);
+}
+
+const requiredContainerdVersion = 'v2.2.5';
+if (!readRel('go.mod').includes(`github.com/containerd/containerd/v2 ${requiredContainerdVersion}`)) {
+  fail(`containerd/v2 must remain at the patched baseline ${requiredContainerdVersion}`);
 }
 
 const prDoc = readRel('docs/fork/PR-050_COMMUNITY_RELEASE_HARDENING.md');
@@ -76,13 +235,18 @@ if (!index.includes('### PR-050 - Community release hardening')) {
 
 const workflow = readRel('.github/workflows/community-release-hardening.yaml');
 if (/^\s+paths:\s*$/m.test(workflow)) {
-  fail('release workflow must not path-filter pull_request or push runs; release gates need to run for runtime, migration, and dependency-manifest changes');
+  fail(
+    'release workflow must not path-filter pull_request or push runs; release gates need to run for runtime, migration, and dependency-manifest changes'
+  );
 }
+validateVulnerabilityWorkflow(workflow);
 
 for (const requiredWorkflowText of [
   'DISTR_TARGET_ID',
   'agent_capabilities,agent_task_leases,step_events',
   'go vet ./...',
+  'go install golang.org/x/vuln/cmd/govulncheck@v1.6.0',
+  'node hack/pr050-govulncheck.mjs',
   'golangci/golangci-lint-action',
   "version: 'v2.12.2'",
   'args: --config=.golangci.release.yml ./...',
@@ -95,6 +259,28 @@ for (const requiredWorkflowText of [
     fail(`release workflow missing required gate text: ${requiredWorkflowText}`);
   }
 }
+
+const vulnerabilityWrapper = readRel('hack/pr050-govulncheck.mjs');
+for (const requiredWrapperText of [
+  "runner('govulncheck', ['-format=json', './...'])",
+  "'https://vuln.go.dev'",
+  "'v1.6.0'",
+  "'github.com/docker/docker'",
+  "'v28.5.2+incompatible'",
+  'accepted reviewed risk',
+  "['./cmd/hub', './cmd/agent/docker', './cmd/agent/kubernetes']",
+  expectedVulnerabilityPolicySha256,
+]) {
+  if (!vulnerabilityWrapper.includes(requiredWrapperText)) {
+    fail(`Go vulnerability wrapper missing fail-closed contract: ${requiredWrapperText}`);
+  }
+}
+if (/process\.env|zero vulnerabilities|--(?:ignore|exclude)/iu.test(vulnerabilityWrapper)) {
+  fail('Go vulnerability wrapper must not provide runtime bypasses, exclusions, or a zero-vulnerability claim');
+}
+
+const vulnerabilityPolicy = JSON.parse(readRel('docs/security/govulncheck-reviewed-findings.json'));
+validateVulnerabilityPolicy(vulnerabilityPolicy);
 
 const releaseLintConfig = readRel('.golangci.release.yml');
 for (const requiredReleaseLintText of [
@@ -177,10 +363,7 @@ for (const requiredDemoText of [
 }
 
 const smokeTest = readRel('hack/e2e-smoke-test.mjs');
-for (const forbiddenSmokeText of [
-  'E2eSmoke123!',
-  'Math.random().toString(16)',
-]) {
+for (const forbiddenSmokeText of ['E2eSmoke123!', 'Math.random().toString(16)']) {
   if (smokeTest.includes(forbiddenSmokeText)) {
     fail(`smoke test still contains fixed or weak credential text: ${forbiddenSmokeText}`);
   }
@@ -191,10 +374,49 @@ for (const requiredSmokeText of [
   'cleanupDemoOrganization',
   '/api/v1/organization',
   "method: 'DELETE'",
-  "organizationName: `E2E Smoke ${RUN_ID}`",
+  'organizationName: `E2E Smoke ${RUN_ID}`',
 ]) {
   if (!smokeTest.includes(requiredSmokeText)) {
     fail(`smoke test missing random credential or cleanup text: ${requiredSmokeText}`);
+  }
+}
+
+for (const requiredSmokeCleanupCapture of [
+  'deploymentTargetId = tutorialEvent.value.deploymentTargetId;',
+  'applicationId = helloApp.id;',
+]) {
+  if (!smokeTest.includes(requiredSmokeCleanupCapture)) {
+    fail(`smoke test cleanup must use an ID captured during the same smoke run: ${requiredSmokeCleanupCapture}`);
+  }
+}
+
+const smokeCleanupStart = smokeTest.lastIndexOf('} finally {');
+if (smokeCleanupStart === -1) {
+  fail('smoke test missing deterministic finally cleanup');
+}
+const smokeCleanup = smokeTest.slice(smokeCleanupStart);
+const targetCleanup = "await request('DELETE', `/api/v1/deployment-targets/${deploymentTargetId}`, {token});";
+const applicationCleanup = "await request('DELETE', `/api/v1/applications/${applicationId}`, {token});";
+const organizationCleanup = 'await cleanupDemoOrganization(token);';
+for (const requiredCleanup of [targetCleanup, applicationCleanup, organizationCleanup]) {
+  if (!smokeCleanup.includes(requiredCleanup)) {
+    fail(`smoke test cleanup missing exact-ID teardown step: ${requiredCleanup}`);
+  }
+}
+if (
+  !(
+    smokeCleanup.indexOf(targetCleanup) < smokeCleanup.indexOf(applicationCleanup) &&
+    smokeCleanup.indexOf(applicationCleanup) < smokeCleanup.indexOf(organizationCleanup)
+  )
+) {
+  fail('smoke test teardown must run sequentially: deployment target, application, then organization');
+}
+for (const broadCleanup of [
+  "request('DELETE', '/api/v1/deployment-targets'",
+  "request('DELETE', '/api/v1/applications'",
+]) {
+  if (smokeCleanup.includes(broadCleanup)) {
+    fail(`smoke test teardown must not use a collection-wide delete: ${broadCleanup}`);
   }
 }
 
@@ -229,10 +451,9 @@ function markdownFiles(relDir) {
   return out;
 }
 
-const mdFiles = [
-  ...markdownFiles('docs'),
-  ...markdownFiles('examples/community-e2e'),
-].filter((file) => /PR-050|release|community-e2e|operator|upstream|security|upgrade|architecture|api/.test(file));
+const mdFiles = [...markdownFiles('docs'), ...markdownFiles('examples/community-e2e')].filter((file) =>
+  /PR-050|release|community-e2e|operator|upstream|security|upgrade|architecture|api/.test(file)
+);
 
 for (const file of mdFiles) {
   const text = readRel(file);

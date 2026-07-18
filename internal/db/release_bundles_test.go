@@ -970,35 +970,7 @@ func TestReleaseBundleDowngradeRepairsProcessSnapshotCanonicalPayload(t *testing
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(expectedPayload)).NotTo(ContainSubstring("processSnapshotId"))
 
-	stepEventsDown, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "125_step_events.down.sql"))
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = internalctx.GetDb(ctx).Exec(ctx, string(stepEventsDown))
-	g.Expect(err).NotTo(HaveOccurred())
-
-	taskLeasesDown, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "124_task_leases.down.sql"))
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = internalctx.GetDb(ctx).Exec(ctx, string(taskLeasesDown))
-	g.Expect(err).NotTo(HaveOccurred())
-
-	taskLocksDown, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "122_task_locks.down.sql"))
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = internalctx.GetDb(ctx).Exec(ctx, string(taskLocksDown))
-	g.Expect(err).NotTo(HaveOccurred())
-
-	taskQueueDown, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "121_task_queue.down.sql"))
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = internalctx.GetDb(ctx).Exec(ctx, string(taskQueueDown))
-	g.Expect(err).NotTo(HaveOccurred())
-
-	planDown, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "120_deployment_plans.down.sql"))
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = internalctx.GetDb(ctx).Exec(ctx, string(planDown))
-	g.Expect(err).NotTo(HaveOccurred())
-
-	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "116_process_snapshots.down.sql"))
-	g.Expect(err).NotTo(HaveOccurred())
-	_, err = internalctx.GetDb(ctx).Exec(ctx, string(down))
-	g.Expect(err).NotTo(HaveOccurred())
+	runReleaseBundleTestDownMigrationsAfter(t, ctx, 115)
 
 	var repairedPayload []byte
 	var repairedChecksum string
@@ -1073,6 +1045,29 @@ func runReleaseBundleTestMigrations(t testing.TB, ctx context.Context, pool *pgx
 		}
 		if _, err := pool.Exec(ctx, string(data)); err != nil {
 			t.Fatalf("run migration %s: %v", file, err)
+		}
+	}
+}
+
+func runReleaseBundleTestDownMigrationsAfter(t testing.TB, ctx context.Context, targetVersion int) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join("..", "migrations", "sql", "*.down.sql"))
+	if err != nil {
+		t.Fatalf("list down migration files: %v", err)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return releaseBundleMigrationVersion(t, files[i]) > releaseBundleMigrationVersion(t, files[j])
+	})
+	for _, file := range files {
+		if releaseBundleMigrationVersion(t, file) <= targetVersion {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read down migration %s: %v", file, err)
+		}
+		if _, err := internalctx.GetDb(ctx).Exec(ctx, string(data)); err != nil {
+			t.Fatalf("run down migration %s: %v", file, err)
 		}
 	}
 }
