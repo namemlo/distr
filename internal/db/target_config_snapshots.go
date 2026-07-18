@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,9 +24,10 @@ import (
 )
 
 const (
-	targetConfigDefaultPageLimit = 50
-	targetConfigMaximumPageLimit = 100
-	targetConfigCursorVersion    = 1
+	targetConfigDefaultPageLimit   = 50
+	targetConfigMaximumPageLimit   = 100
+	targetConfigCursorVersion      = 1
+	targetConfigV1ExtractorVersion = targetconfig.V1ExtractorVersion
 )
 
 const targetConfigSnapshotOutputExpr = `
@@ -86,6 +89,35 @@ const targetConfigSnapshotFeatureFlagOutputExpr = `
 	enabled
 `
 
+const v1ExtractionCheckpointOutputExpr = `
+	id,
+	created_at,
+	organization_id,
+	extractor_version,
+	source_state_checksum,
+	dry_run_checksum,
+	source_count,
+	candidate_count,
+	blocked_count,
+	batch_size
+`
+
+const v1ExtractionLineageOutputExpr = `
+	id,
+	created_at,
+	organization_id,
+	checkpoint_id,
+	original_release_bundle_id,
+	original_release_checksum,
+	original_plan_id,
+	original_plan_checksum,
+	derived_snapshot_id,
+	derived_snapshot_checksum,
+	extractor_version,
+	status,
+	blocked_reason_code
+`
+
 type targetConfigCursor struct {
 	Version   int       `json:"v"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -108,6 +140,53 @@ type targetConfigLockedComponent struct {
 	ID               uuid.UUID `db:"id"`
 	DeploymentUnitID uuid.UUID `db:"deployment_unit_id"`
 	PhysicalName     string    `db:"physical_name"`
+}
+
+type v1ExtractionOutcome struct {
+	ReleaseBundleID  uuid.UUID
+	ReleaseChecksum  string
+	PlanID           uuid.UUID
+	PlanChecksum     string
+	Status           types.V1ExtractionStatus
+	BlockedReason    string
+	SnapshotDraft    *types.TargetConfigSnapshotDraft
+	SnapshotChecksum string
+}
+
+type canonicalV1ExtractionSourceState struct {
+	ReleaseBundleID string `json:"releaseBundleId"`
+	ReleaseChecksum string `json:"releaseChecksum"`
+	PlanID          string `json:"planId"`
+	PlanChecksum    string `json:"planChecksum"`
+}
+
+type canonicalV1ExtractionDryRun struct {
+	ExtractorVersion    string                            `json:"extractorVersion"`
+	OrganizationID      string                            `json:"organizationId"`
+	SourceStateChecksum string                            `json:"sourceStateChecksum"`
+	Items               []canonicalV1ExtractionDryRunItem `json:"items"`
+}
+
+type canonicalV1ExtractionDryRunItem struct {
+	ReleaseBundleID  string `json:"releaseBundleId"`
+	ReleaseChecksum  string `json:"releaseChecksum"`
+	PlanID           string `json:"planId"`
+	PlanChecksum     string `json:"planChecksum"`
+	Status           string `json:"status"`
+	BlockedReason    string `json:"blockedReason,omitempty"`
+	SnapshotChecksum string `json:"snapshotChecksum,omitempty"`
+}
+
+type v1ExtractionSource struct {
+	Bundle types.ReleaseBundle
+	Plan   types.DeploymentPlan
+}
+
+type v1ExtractionPlacement struct {
+	DeploymentUnitID              uuid.UUID                 `db:"deployment_unit_id"`
+	TargetEnvironmentAssignmentID uuid.UUID                 `db:"target_environment_assignment_id"`
+	EnvironmentID                 uuid.UUID                 `db:"environment_id"`
+	ComponentInstances            []types.ComponentInstance `db:"-"`
 }
 
 func CreateTargetConfigSnapshot(
@@ -760,4 +839,730 @@ func nullableTargetConfigCursorID(cursor *targetConfigCursor) any {
 		return nil
 	}
 	return cursor.ID
+}
+
+func CreateTargetConfigV1ExtractionDryRun(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	batchSize int,
+) (*types.V1ExtractionReport, error) {
+	if organizationID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("organizationId is required")
+	}
+	if batchSize < 1 || batchSize > 1000 {
+		return nil, apierrors.NewBadRequest("batchSize must be between 1 and 1000")
+	}
+	var report *types.V1ExtractionReport
+	err := RunTxRR(ctx, func(ctx context.Context) error {
+		outcomes, err := evaluateTargetConfigV1Extraction(ctx, organizationID, batchSize)
+		if err != nil {
+			return err
+		}
+		checkpoint, err := buildV1ExtractionCheckpoint(organizationID, batchSize, outcomes)
+		if err != nil {
+			return err
+		}
+		if err := persistV1ExtractionDryRun(ctx, checkpoint, outcomes); err != nil {
+			return err
+		}
+		report, err = GetTargetConfigV1ExtractionReport(ctx, organizationID, checkpoint.ID)
+		return err
+	})
+	return report, err
+}
+
+func evaluateTargetConfigV1Extraction(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	batchSize int,
+) ([]v1ExtractionOutcome, error) {
+	sources, err := listV1ExtractionSources(ctx, organizationID, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	outcomes := make([]v1ExtractionOutcome, 0, len(sources))
+	for _, source := range sources {
+		outcome := v1ExtractionOutcome{
+			ReleaseBundleID: source.Bundle.ID,
+			ReleaseChecksum: source.Bundle.CanonicalChecksum,
+			PlanID:          source.Plan.ID,
+			PlanChecksum:    source.Plan.CanonicalChecksum,
+		}
+		placements, err := resolveV1ExtractionPlacements(ctx, source.Plan)
+		if err != nil {
+			return nil, err
+		}
+		if len(placements) == 0 {
+			outcome.Status = types.V1ExtractionStatusBlocked
+			outcome.BlockedReason = "placement_not_found"
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		if len(placements) != 1 {
+			outcome.Status = types.V1ExtractionStatusBlocked
+			outcome.BlockedReason = "ambiguous_placement"
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		placement := placements[0]
+		result, err := targetconfig.ExtractV1TargetConfig(targetconfig.V1ExtractionInput{
+			OrganizationID:                organizationID,
+			ReleaseBundleID:               source.Bundle.ID,
+			ReleaseChecksum:               source.Bundle.CanonicalChecksum,
+			ReleaseCanonicalPayload:       slices.Clone(source.Bundle.CanonicalPayload),
+			PlanID:                        source.Plan.ID,
+			PlanChecksum:                  source.Plan.CanonicalChecksum,
+			PlanCanonicalPayload:          slices.Clone(source.Plan.CanonicalPayload),
+			ReleaseContract:               source.Plan.ReleaseContract,
+			PlanTargets:                   slices.Clone(source.Plan.Targets),
+			PlanTargetComponents:          slices.Clone(source.Plan.TargetComponents),
+			PlanVariables:                 slices.Clone(source.Plan.Variables),
+			ComponentInstances:            slices.Clone(placement.ComponentInstances),
+			DeploymentUnitID:              placement.DeploymentUnitID,
+			TargetEnvironmentAssignmentID: placement.TargetEnvironmentAssignmentID,
+			EnvironmentID:                 placement.EnvironmentID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("extract v1 target config for plan %s: %w", source.Plan.ID, err)
+		}
+		if result.BlockedReasonCode != "" {
+			outcome.Status = types.V1ExtractionStatusBlocked
+			outcome.BlockedReason = string(result.BlockedReasonCode)
+		} else {
+			outcome.Status = types.V1ExtractionStatusCandidate
+			outcome.SnapshotDraft = result.Draft
+			outcome.SnapshotChecksum = result.CanonicalChecksum
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	return outcomes, nil
+}
+
+func listV1ExtractionSources(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	batchSize int,
+) ([]v1ExtractionSource, error) {
+	sources := []v1ExtractionSource{}
+	var afterID any
+	for {
+		rows, err := internalctx.GetDb(ctx).Query(ctx, `
+			SELECT dp.id
+			FROM DeploymentPlan dp
+			JOIN ReleaseBundle rb
+			  ON rb.id = dp.release_bundle_id
+			 AND rb.organization_id = dp.organization_id
+			WHERE dp.organization_id = @organizationID
+			  AND dp.release_contract ->> 'schema' = @schema
+			  AND rb.release_contract ->> 'schema' = @schema
+			  AND rb.status IN ('PUBLISHED', 'BLOCKED', 'ARCHIVED')
+			  AND (
+			    @afterID::uuid IS NULL
+			    OR dp.id > @afterID
+			  )
+			ORDER BY dp.id
+			LIMIT @batchSize`,
+			pgx.NamedArgs{
+				"organizationID": organizationID,
+				"schema":         types.ReleaseContractSchemaV1,
+				"afterID":        afterID,
+				"batchSize":      batchSize,
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("list v1 extraction source plans: %w", err)
+		}
+		planIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return nil, fmt.Errorf("read v1 extraction source plans: %w", err)
+		}
+		if len(planIDs) == 0 {
+			break
+		}
+		for _, planID := range planIDs {
+			plan, err := getDeploymentPlan(ctx, planID, organizationID)
+			if err != nil {
+				return nil, err
+			}
+			bundle, err := GetReleaseBundle(ctx, plan.ReleaseBundleID, organizationID)
+			if err != nil {
+				return nil, err
+			}
+			sources = append(sources, v1ExtractionSource{Bundle: *bundle, Plan: *plan})
+		}
+		afterID = planIDs[len(planIDs)-1]
+	}
+	return sources, nil
+}
+
+func resolveV1ExtractionPlacements(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+) ([]v1ExtractionPlacement, error) {
+	if len(plan.Targets) != 1 {
+		return []v1ExtractionPlacement{{}}, nil
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT
+			du.id AS deployment_unit_id,
+			tea.id AS target_environment_assignment_id,
+			tea.environment_id
+		FROM TargetEnvironmentAssignment tea
+		JOIN DeploymentUnit du
+		  ON du.target_environment_assignment_id = tea.id
+		 AND du.organization_id = tea.organization_id
+		WHERE tea.organization_id = @organizationID
+		  AND tea.deployment_target_id = @deploymentTargetID
+		  AND tea.environment_id = @environmentID
+		  AND tea.active_from <= now()
+		  AND (
+		    tea.active_until IS NULL
+		    OR tea.active_until > now()
+		  )
+		  AND du.retired_at IS NULL
+		ORDER BY du.id`,
+		pgx.NamedArgs{
+			"organizationID":     plan.OrganizationID,
+			"deploymentTargetID": plan.Targets[0].DeploymentTargetID,
+			"environmentID":      plan.EnvironmentID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve v1 extraction placement: %w", err)
+	}
+	placements, err := pgx.CollectRows(
+		rows,
+		pgx.RowToStructByName[v1ExtractionPlacement],
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read v1 extraction placements: %w", err)
+	}
+	if len(placements) != 1 {
+		return placements, nil
+	}
+	rows, err = internalctx.GetDb(ctx).Query(ctx, `
+		SELECT
+			ci.id,
+			ci.created_at,
+			ci.updated_at,
+			ci.organization_id,
+			ci.deployment_unit_id,
+			ci.component_definition_id,
+			ci.physical_name,
+			ci.config_namespace,
+			ci.database_boundary,
+			ci.health_adapter,
+			ci.management_state,
+			ci.retired_at
+		FROM ComponentInstance ci
+		WHERE ci.organization_id = @organizationID
+		  AND ci.deployment_unit_id = @deploymentUnitID
+		  AND ci.retired_at IS NULL
+		ORDER BY ci.physical_name, ci.id`,
+		pgx.NamedArgs{
+			"organizationID":   plan.OrganizationID,
+			"deploymentUnitID": placements[0].DeploymentUnitID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve v1 extraction component instances: %w", err)
+	}
+	placements[0].ComponentInstances, err = pgx.CollectRows(
+		rows,
+		pgx.RowToStructByName[types.ComponentInstance],
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read v1 extraction component instances: %w", err)
+	}
+	return placements, nil
+}
+
+func buildV1ExtractionCheckpoint(
+	organizationID uuid.UUID,
+	batchSize int,
+	outcomes []v1ExtractionOutcome,
+) (types.V1ExtractionCheckpoint, error) {
+	sourceState := make([]canonicalV1ExtractionSourceState, 0, len(outcomes))
+	dryRunItems := make([]canonicalV1ExtractionDryRunItem, 0, len(outcomes))
+	candidateCount := 0
+	blockedCount := 0
+	for _, outcome := range outcomes {
+		sourceState = append(sourceState, canonicalV1ExtractionSourceState{
+			ReleaseBundleID: outcome.ReleaseBundleID.String(),
+			ReleaseChecksum: outcome.ReleaseChecksum,
+			PlanID:          outcome.PlanID.String(),
+			PlanChecksum:    outcome.PlanChecksum,
+		})
+		dryRunItems = append(dryRunItems, canonicalV1ExtractionDryRunItem{
+			ReleaseBundleID:  outcome.ReleaseBundleID.String(),
+			ReleaseChecksum:  outcome.ReleaseChecksum,
+			PlanID:           outcome.PlanID.String(),
+			PlanChecksum:     outcome.PlanChecksum,
+			Status:           string(outcome.Status),
+			BlockedReason:    outcome.BlockedReason,
+			SnapshotChecksum: outcome.SnapshotChecksum,
+		})
+		if outcome.Status == types.V1ExtractionStatusCandidate {
+			candidateCount++
+		} else {
+			blockedCount++
+		}
+	}
+	sourceStateChecksum, err := checksumV1ExtractionValue(sourceState)
+	if err != nil {
+		return types.V1ExtractionCheckpoint{}, err
+	}
+	dryRunChecksum, err := checksumV1ExtractionValue(canonicalV1ExtractionDryRun{
+		ExtractorVersion:    targetConfigV1ExtractorVersion,
+		OrganizationID:      organizationID.String(),
+		SourceStateChecksum: sourceStateChecksum,
+		Items:               dryRunItems,
+	})
+	if err != nil {
+		return types.V1ExtractionCheckpoint{}, err
+	}
+	checkpointID := uuid.NewSHA1(
+		uuid.NameSpaceOID,
+		[]byte("distr.target-config-v1-extraction\x00"+organizationID.String()+"\x00"+dryRunChecksum),
+	)
+	return types.V1ExtractionCheckpoint{
+		ID:                  checkpointID,
+		OrganizationID:      organizationID,
+		ExtractorVersion:    targetConfigV1ExtractorVersion,
+		SourceStateChecksum: sourceStateChecksum,
+		DryRunChecksum:      dryRunChecksum,
+		SourceCount:         len(outcomes),
+		CandidateCount:      candidateCount,
+		BlockedCount:        blockedCount,
+		BatchSize:           batchSize,
+	}, nil
+}
+
+func checksumV1ExtractionValue(value any) (string, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("marshal v1 extraction checksum input: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func persistV1ExtractionDryRun(
+	ctx context.Context,
+	checkpoint types.V1ExtractionCheckpoint,
+	outcomes []v1ExtractionOutcome,
+) error {
+	database := internalctx.GetDb(ctx)
+	commandTag, err := database.Exec(ctx, `
+		INSERT INTO BackfillCheckpoint (
+			id,
+			organization_id,
+			extractor_version,
+			source_state_checksum,
+			dry_run_checksum,
+			source_count,
+			candidate_count,
+			blocked_count,
+			batch_size
+		) VALUES (
+			@id,
+			@organizationID,
+			@extractorVersion,
+			@sourceStateChecksum,
+			@dryRunChecksum,
+			@sourceCount,
+			@candidateCount,
+			@blockedCount,
+			@batchSize
+		)
+		ON CONFLICT (id) DO NOTHING`,
+		pgx.NamedArgs{
+			"id":                  checkpoint.ID,
+			"organizationID":      checkpoint.OrganizationID,
+			"extractorVersion":    checkpoint.ExtractorVersion,
+			"sourceStateChecksum": checkpoint.SourceStateChecksum,
+			"dryRunChecksum":      checkpoint.DryRunChecksum,
+			"sourceCount":         checkpoint.SourceCount,
+			"candidateCount":      checkpoint.CandidateCount,
+			"blockedCount":        checkpoint.BlockedCount,
+			"batchSize":           checkpoint.BatchSize,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("create v1 extraction checkpoint: %w", err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		persisted, loadErr := getV1ExtractionCheckpoint(
+			ctx,
+			checkpoint.OrganizationID,
+			checkpoint.ID,
+		)
+		if loadErr != nil {
+			return loadErr
+		}
+		if persisted.DryRunChecksum != checkpoint.DryRunChecksum ||
+			persisted.SourceStateChecksum != checkpoint.SourceStateChecksum {
+			return fmt.Errorf("v1 extraction checkpoint conflict: %w", apierrors.ErrConflict)
+		}
+		return nil
+	}
+	if len(outcomes) == 0 {
+		return nil
+	}
+	_, err = database.CopyFrom(
+		ctx,
+		pgx.Identifier{"releasecontractv1extractionlineage"},
+		[]string{
+			"organization_id",
+			"checkpoint_id",
+			"original_release_bundle_id",
+			"original_release_checksum",
+			"original_plan_id",
+			"original_plan_checksum",
+			"derived_snapshot_checksum",
+			"extractor_version",
+			"status",
+			"blocked_reason_code",
+		},
+		pgx.CopyFromSlice(len(outcomes), func(index int) ([]any, error) {
+			outcome := outcomes[index]
+			return []any{
+				checkpoint.OrganizationID,
+				checkpoint.ID,
+				outcome.ReleaseBundleID,
+				outcome.ReleaseChecksum,
+				outcome.PlanID,
+				outcome.PlanChecksum,
+				outcome.SnapshotChecksum,
+				checkpoint.ExtractorVersion,
+				outcome.Status,
+				outcome.BlockedReason,
+			}, nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("create v1 extraction lineage: %w", err)
+	}
+	return nil
+}
+
+func getV1ExtractionCheckpoint(
+	ctx context.Context,
+	organizationID,
+	checkpointID uuid.UUID,
+) (*types.V1ExtractionCheckpoint, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+v1ExtractionCheckpointOutputExpr+`
+		FROM BackfillCheckpoint
+		WHERE id = @checkpointID
+		  AND organization_id = @organizationID`,
+		pgx.NamedArgs{
+			"checkpointID":   checkpointID,
+			"organizationID": organizationID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get v1 extraction checkpoint: %w", err)
+	}
+	checkpoint, err := pgx.CollectExactlyOneRow(
+		rows,
+		pgx.RowToStructByName[types.V1ExtractionCheckpoint],
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read v1 extraction checkpoint: %w", err)
+	}
+	return &checkpoint, nil
+}
+
+func GetTargetConfigV1ExtractionReport(
+	ctx context.Context,
+	organizationID,
+	checkpointID uuid.UUID,
+) (*types.V1ExtractionReport, error) {
+	checkpoint, err := getV1ExtractionCheckpoint(ctx, organizationID, checkpointID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+v1ExtractionLineageOutputExpr+`
+		FROM ReleaseContractV1ExtractionLineage
+		WHERE organization_id = @organizationID
+		  AND checkpoint_id = @checkpointID
+		ORDER BY original_plan_id, status, id`,
+		pgx.NamedArgs{
+			"organizationID": organizationID,
+			"checkpointID":   checkpointID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list v1 extraction lineage: %w", err)
+	}
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[types.V1ExtractionLineage])
+	if err != nil {
+		return nil, fmt.Errorf("read v1 extraction lineage: %w", err)
+	}
+	report := &types.V1ExtractionReport{
+		Checkpoint: *checkpoint,
+		Items:      items,
+	}
+	appliedPlans := make(map[uuid.UUID]struct{}, checkpoint.CandidateCount)
+	candidateRows := 0
+	for _, item := range items {
+		switch item.Status {
+		case types.V1ExtractionStatusApplied:
+			appliedPlans[item.OriginalPlanID] = struct{}{}
+		case types.V1ExtractionStatusCandidate:
+			candidateRows++
+		case types.V1ExtractionStatusBlocked:
+			report.Blocked++
+		}
+	}
+	if candidateRows != checkpoint.CandidateCount ||
+		report.Blocked != checkpoint.BlockedCount {
+		return nil, fmt.Errorf("v1 extraction checkpoint contains incomplete lineage")
+	}
+	report.Applied = len(appliedPlans)
+	report.Pending = checkpoint.CandidateCount - report.Applied
+	if report.Pending < 0 {
+		return nil, fmt.Errorf("v1 extraction checkpoint contains inconsistent lineage")
+	}
+	return report, nil
+}
+
+func ApplyTargetConfigV1Extraction(
+	ctx context.Context,
+	organizationID,
+	checkpointID uuid.UUID,
+	approvedDryRunChecksum string,
+	batchSize int,
+) (*types.V1ExtractionReport, error) {
+	if organizationID == uuid.Nil || checkpointID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("organizationId and checkpointId are required")
+	}
+	if batchSize < 1 || batchSize > 1000 {
+		return nil, apierrors.NewBadRequest("batchSize must be between 1 and 1000")
+	}
+	checkpoint, err := getV1ExtractionCheckpoint(ctx, organizationID, checkpointID)
+	if err != nil {
+		return nil, err
+	}
+	if checkpoint.ExtractorVersion != targetConfigV1ExtractorVersion ||
+		checkpoint.DryRunChecksum != approvedDryRunChecksum {
+		return nil, fmt.Errorf("v1 extraction dry-run approval does not match: %w", apierrors.ErrConflict)
+	}
+	report, err := GetTargetConfigV1ExtractionReport(ctx, organizationID, checkpointID)
+	if err != nil {
+		return nil, err
+	}
+	if report.Pending == 0 {
+		report.NoOp = report.Applied
+		return report, nil
+	}
+
+	currentOutcomes, err := evaluateTargetConfigV1Extraction(
+		ctx,
+		organizationID,
+		checkpoint.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	currentCheckpoint, err := buildV1ExtractionCheckpoint(
+		organizationID,
+		checkpoint.BatchSize,
+		currentOutcomes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if currentCheckpoint.SourceStateChecksum != checkpoint.SourceStateChecksum ||
+		currentCheckpoint.DryRunChecksum != checkpoint.DryRunChecksum {
+		return nil, fmt.Errorf("v1 extraction source state changed after dry run: %w", apierrors.ErrConflict)
+	}
+
+	outcomeByPlanID := make(map[uuid.UUID]v1ExtractionOutcome, len(currentOutcomes))
+	for _, outcome := range currentOutcomes {
+		outcomeByPlanID[outcome.PlanID] = outcome
+	}
+	appliedPlans := make(map[uuid.UUID]struct{}, report.Applied)
+	candidates := make([]types.V1ExtractionLineage, 0, checkpoint.CandidateCount)
+	for _, item := range report.Items {
+		switch item.Status {
+		case types.V1ExtractionStatusApplied:
+			appliedPlans[item.OriginalPlanID] = struct{}{}
+		case types.V1ExtractionStatusCandidate:
+			candidates = append(candidates, item)
+		}
+	}
+	slices.SortFunc(candidates, func(left, right types.V1ExtractionLineage) int {
+		return strings.Compare(left.OriginalPlanID.String(), right.OriginalPlanID.String())
+	})
+
+	noOp := len(appliedPlans)
+	processed := 0
+	for _, candidate := range candidates {
+		if _, alreadyApplied := appliedPlans[candidate.OriginalPlanID]; alreadyApplied {
+			continue
+		}
+		if processed >= batchSize {
+			break
+		}
+		outcome, exists := outcomeByPlanID[candidate.OriginalPlanID]
+		if !exists ||
+			outcome.Status != types.V1ExtractionStatusCandidate ||
+			outcome.SnapshotDraft == nil ||
+			outcome.SnapshotChecksum != candidate.DerivedSnapshotChecksum {
+			return nil, fmt.Errorf("v1 extraction candidate no longer matches checkpoint: %w", apierrors.ErrConflict)
+		}
+		snapshot, err := createOrGetV1ExtractionSnapshot(ctx, *outcome.SnapshotDraft, outcome.SnapshotChecksum)
+		if err != nil {
+			return nil, err
+		}
+		inserted, err := insertV1ExtractionAppliedLineage(ctx, candidate, snapshot)
+		if err != nil {
+			return nil, err
+		}
+		if !inserted {
+			noOp++
+		}
+		processed++
+	}
+	report, err = GetTargetConfigV1ExtractionReport(ctx, organizationID, checkpointID)
+	if err != nil {
+		return nil, err
+	}
+	report.NoOp = noOp
+	return report, nil
+}
+
+func createOrGetV1ExtractionSnapshot(
+	ctx context.Context,
+	draft types.TargetConfigSnapshotDraft,
+	expectedChecksum string,
+) (*types.TargetConfigSnapshot, error) {
+	snapshot, err := CreateTargetConfigSnapshot(ctx, &draft)
+	if err == nil {
+		if snapshot.CanonicalChecksum != expectedChecksum {
+			return nil, fmt.Errorf("created target config snapshot checksum mismatch")
+		}
+		return snapshot, nil
+	}
+	if !errors.Is(err, apierrors.ErrAlreadyExists) {
+		return nil, err
+	}
+	return getTargetConfigSnapshotByChecksum(ctx, draft.OrganizationID, expectedChecksum)
+}
+
+func getTargetConfigSnapshotByChecksum(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	checksum string,
+) (*types.TargetConfigSnapshot, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+targetConfigSnapshotOutputExpr+`
+		FROM TargetConfigSnapshot
+		WHERE organization_id = @organizationID
+		  AND canonical_checksum = @checksum`,
+		pgx.NamedArgs{
+			"organizationID": organizationID,
+			"checksum":       checksum,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get target config snapshot by checksum: %w", err)
+	}
+	snapshot, err := pgx.CollectExactlyOneRow(
+		rows,
+		pgx.RowToStructByName[types.TargetConfigSnapshot],
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read target config snapshot by checksum: %w", err)
+	}
+	return &snapshot, nil
+}
+
+func insertV1ExtractionAppliedLineage(
+	ctx context.Context,
+	candidate types.V1ExtractionLineage,
+	snapshot *types.TargetConfigSnapshot,
+) (bool, error) {
+	commandTag, err := internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO ReleaseContractV1ExtractionLineage (
+			organization_id,
+			checkpoint_id,
+			original_release_bundle_id,
+			original_release_checksum,
+			original_plan_id,
+			original_plan_checksum,
+			derived_snapshot_id,
+			derived_snapshot_checksum,
+			extractor_version,
+			status,
+			blocked_reason_code
+		) VALUES (
+			@organizationID,
+			@checkpointID,
+			@releaseBundleID,
+			@releaseChecksum,
+			@planID,
+			@planChecksum,
+			@snapshotID,
+			@snapshotChecksum,
+			@extractorVersion,
+			@status,
+			''
+		)
+		ON CONFLICT (
+			checkpoint_id,
+			organization_id,
+			original_plan_id,
+			status
+		) DO NOTHING`,
+		pgx.NamedArgs{
+			"organizationID":   candidate.OrganizationID,
+			"checkpointID":     candidate.CheckpointID,
+			"releaseBundleID":  candidate.OriginalReleaseBundleID,
+			"releaseChecksum":  candidate.OriginalReleaseChecksum,
+			"planID":           candidate.OriginalPlanID,
+			"planChecksum":     candidate.OriginalPlanChecksum,
+			"snapshotID":       snapshot.ID,
+			"snapshotChecksum": snapshot.CanonicalChecksum,
+			"extractorVersion": candidate.ExtractorVersion,
+			"status":           types.V1ExtractionStatusApplied,
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf("append applied v1 extraction lineage: %w", err)
+	}
+	if commandTag.RowsAffected() == 1 {
+		return true, nil
+	}
+	var persistedSnapshotID uuid.UUID
+	var persistedChecksum string
+	err = internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT derived_snapshot_id, derived_snapshot_checksum
+		FROM ReleaseContractV1ExtractionLineage
+		WHERE organization_id = @organizationID
+		  AND checkpoint_id = @checkpointID
+		  AND original_plan_id = @planID
+		  AND status = 'applied'`,
+		pgx.NamedArgs{
+			"organizationID": candidate.OrganizationID,
+			"checkpointID":   candidate.CheckpointID,
+			"planID":         candidate.OriginalPlanID,
+		},
+	).Scan(&persistedSnapshotID, &persistedChecksum)
+	if err != nil {
+		return false, fmt.Errorf("verify applied v1 extraction lineage: %w", err)
+	}
+	if persistedSnapshotID != snapshot.ID || persistedChecksum != snapshot.CanonicalChecksum {
+		return false, fmt.Errorf("applied v1 extraction lineage conflict: %w", apierrors.ErrConflict)
+	}
+	return false, nil
 }

@@ -174,3 +174,49 @@ type ObjectVerificationResult struct {
 	Verified   bool                     `json:"verified"`
 	Objects    []ObjectVerificationFact `json:"objects"`
 }
+
+type V1ExtractionStatus string
+
+const (
+	V1ExtractionStatusCandidate V1ExtractionStatus = "candidate"
+	V1ExtractionStatusApplied   V1ExtractionStatus = "applied"
+	V1ExtractionStatusBlocked   V1ExtractionStatus = "blocked"
+)
+
+type V1ExtractionCheckpoint struct {
+	ID                  uuid.UUID `db:"id" json:"id"`
+	CreatedAt           time.Time `db:"created_at" json:"createdAt"`
+	OrganizationID      uuid.UUID `db:"organization_id" json:"organizationId"`
+	ExtractorVersion    string    `db:"extractor_version" json:"extractorVersion"`
+	SourceStateChecksum string    `db:"source_state_checksum" json:"sourceStateChecksum"`
+	DryRunChecksum      string    `db:"dry_run_checksum" json:"dryRunChecksum"`
+	SourceCount         int       `db:"source_count" json:"sourceCount"`
+	CandidateCount      int       `db:"candidate_count" json:"candidateCount"`
+	BlockedCount        int       `db:"blocked_count" json:"blockedCount"`
+	BatchSize           int       `db:"batch_size" json:"batchSize"`
+}
+
+type V1ExtractionLineage struct {
+	ID                      uuid.UUID          `db:"id" json:"id"`
+	CreatedAt               time.Time          `db:"created_at" json:"createdAt"`
+	OrganizationID          uuid.UUID          `db:"organization_id" json:"organizationId"`
+	CheckpointID            uuid.UUID          `db:"checkpoint_id" json:"checkpointId"`
+	OriginalReleaseBundleID uuid.UUID          `db:"original_release_bundle_id" json:"originalReleaseBundleId"`
+	OriginalReleaseChecksum string             `db:"original_release_checksum" json:"originalReleaseChecksum"`
+	OriginalPlanID          uuid.UUID          `db:"original_plan_id" json:"originalPlanId"`
+	OriginalPlanChecksum    string             `db:"original_plan_checksum" json:"originalPlanChecksum"`
+	DerivedSnapshotID       *uuid.UUID         `db:"derived_snapshot_id" json:"derivedSnapshotId,omitempty"`
+	DerivedSnapshotChecksum string             `db:"derived_snapshot_checksum" json:"derivedSnapshotChecksum,omitempty"`
+	ExtractorVersion        string             `db:"extractor_version" json:"extractorVersion"`
+	Status                  V1ExtractionStatus `db:"status" json:"status"`
+	BlockedReasonCode       string             `db:"blocked_reason_code" json:"blockedReasonCode,omitempty"`
+}
+
+type V1ExtractionReport struct {
+	Checkpoint V1ExtractionCheckpoint `json:"checkpoint"`
+	Items      []V1ExtractionLineage  `json:"items"`
+	Applied    int                    `json:"applied"`
+	Pending    int                    `json:"pending"`
+	Blocked    int                    `json:"blocked"`
+	NoOp       int                    `json:"noOp"`
+}

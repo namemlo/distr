@@ -318,3 +318,74 @@ func TestTargetConfigSnapshotMigration141DowngradeGuard(t *testing.T) {
 	).Scan(&count)).To(Succeed())
 	g.Expect(count).To(Equal(1))
 }
+
+func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join(
+		"..",
+		"migrations",
+		"sql",
+		"142_release_contract_v1_extraction.up.sql",
+	))
+	g.Expect(err).NotTo(HaveOccurred())
+	down, err := os.ReadFile(filepath.Join(
+		"..",
+		"migrations",
+		"sql",
+		"142_release_contract_v1_extraction.down.sql",
+	))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	upSQL := string(up)
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE BackfillCheckpoint"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE ReleaseContractV1ExtractionLineage"))
+	g.Expect(upSQL).To(ContainSubstring("original_release_checksum"))
+	g.Expect(upSQL).To(ContainSubstring("original_plan_checksum"))
+	g.Expect(upSQL).To(ContainSubstring("derived_snapshot_checksum"))
+	g.Expect(upSQL).To(MatchRegexp(
+		`(?s)FOREIGN KEY \(\s*original_release_bundle_id,\s*organization_id,\s*original_release_checksum\s*\)`,
+	))
+	g.Expect(upSQL).To(MatchRegexp(
+		`(?s)FOREIGN KEY \(\s*original_plan_id,\s*organization_id,\s*original_plan_checksum\s*\)`,
+	))
+	g.Expect(upSQL).To(MatchRegexp(
+		`(?s)FOREIGN KEY \(\s*derived_snapshot_id,\s*organization_id,\s*derived_snapshot_checksum\s*\)`,
+	))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER BackfillCheckpoint_immutable"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER ReleaseContractV1ExtractionLineage_immutable"))
+	g.Expect(upSQL).NotTo(ContainSubstring("secret_value"))
+	g.Expect(upSQL).NotTo(ContainSubstring("canonical_payload"))
+	g.Expect(string(down)).To(ContainSubstring(
+		"downgrade crossing 142 is forbidden while v1 extraction evidence exists",
+	))
+}
+
+func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	outcomes := []v1ExtractionOutcome{{
+		ReleaseBundleID:  uuid.New(),
+		ReleaseChecksum:  "sha256:" + strings.Repeat("a", 64),
+		PlanID:           uuid.New(),
+		PlanChecksum:     "sha256:" + strings.Repeat("b", 64),
+		Status:           types.V1ExtractionStatusCandidate,
+		SnapshotChecksum: "sha256:" + strings.Repeat("c", 64),
+	}}
+
+	first, err := buildV1ExtractionCheckpoint(organizationID, 100, outcomes)
+	g.Expect(err).NotTo(HaveOccurred())
+	second, err := buildV1ExtractionCheckpoint(organizationID, 25, outcomes)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(second.ID).To(Equal(first.ID))
+	g.Expect(second.DryRunChecksum).To(Equal(first.DryRunChecksum))
+	g.Expect(second.SourceStateChecksum).To(Equal(first.SourceStateChecksum))
+	g.Expect(second.BatchSize).To(Equal(25))
+
+	outcomes[0].SnapshotChecksum = "sha256:" + strings.Repeat("d", 64)
+	changed, err := buildV1ExtractionCheckpoint(organizationID, 100, outcomes)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(changed.ID).NotTo(Equal(first.ID))
+	g.Expect(changed.DryRunChecksum).NotTo(Equal(first.DryRunChecksum))
+	g.Expect(changed.SourceStateChecksum).To(Equal(first.SourceStateChecksum))
+}

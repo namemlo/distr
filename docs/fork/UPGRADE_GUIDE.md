@@ -116,3 +116,50 @@ behavior unchanged.
 - Removing both keys and restarting the Hub restores the default-off state without a database rollback.
 - Downgrading the binary requires no schema action because PR-055 adds no tables or columns.
 - Do not use `all` in shared or production environments before PR-083 because it includes both new keys.
+
+## PR-059 v1 Target Config Extraction
+
+Migration 142 is additive and does not rewrite a release bundle, deployment plan, canonical payload, checksum,
+task, callback, or agent record.
+
+1. Back up and restore-verify the Hub database.
+2. Deploy the PR-059 Hub binary and migrate through schema 142.
+3. Keep `operator_control_plane_v2` disabled for ordinary environments.
+4. Create a dry-run checkpoint:
+
+   ```sh
+   distr backfill-target-config-snapshots \
+     --organization-id <org-id> \
+     --dry-run \
+     --batch-size 100
+   ```
+
+5. Review every blocked reason and record the returned checkpoint ID and dry-run checksum. Do not edit a v1
+   source row to make it pass.
+6. Apply the exact approved state:
+
+   ```sh
+   distr backfill-target-config-snapshots \
+     --organization-id <org-id> \
+     --apply \
+     --checkpoint-id <checkpoint-id> \
+     --dry-run-checksum <sha256-checksum> \
+     --batch-size 100
+   ```
+
+7. Re-run the identical apply command until `pending=0`, then retain the report:
+
+   ```sh
+   distr backfill-target-config-snapshots \
+     --organization-id <org-id> \
+     --report <checkpoint-id>
+   ```
+
+An interrupted or repeated apply is safe. The command processes stable plan IDs, reuses a matching canonical
+snapshot, and appends lineage exactly once. A changed source-state or dry-run checksum fails closed before a new
+batch.
+
+Existing v1 reads and execution remain unchanged regardless of partial extraction or the v2 process flag. Roll
+back the binary by disabling v2 admission and deploying the previous Hub; do not delete extraction evidence.
+Migration 142 down refuses while checkpoints or lineage exist, and migration 141 down separately refuses while
+snapshots exist.
