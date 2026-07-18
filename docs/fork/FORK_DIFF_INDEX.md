@@ -1088,12 +1088,13 @@ Use one entry per pull request:
 - Feature flag: Does not switch reads or execution; existing v1 behavior remains authoritative when
   `operator_control_plane_v2` is disabled.
 - User-facing behavior: Operators can create a deterministic dry-run checkpoint, review stable blocked reasons,
-  follow an applied predecessor checkpoint through a fixed high-water window, apply an actor-bound approved
-  checksum in atomic restartable batches, and print persisted lineage.
-- Database changes: Migration 142 adds immutable `BackfillCheckpoint` and append-only
-  `ReleaseContractV1ExtractionLineage` evidence with an organization-member actor, one-successor predecessor
-  chains, `(created_at, plan_id)` source bounds, a fixed high-water mark, organization-scoped
-  source/derived-snapshot constraints, and guarded downgrade.
+  follow an applied predecessor checkpoint through an immutable root source membership, apply an actor-bound
+  approved checksum in atomic restartable batches, and print persisted lineage.
+- Database changes: Migration 142 adds immutable `BackfillCheckpoint`, immutable
+  `BackfillCheckpointSourceMembership`, and append-only `ReleaseContractV1ExtractionLineage` evidence with an
+  organization-member actor, one-successor predecessor chains, checksum-bound root source membership,
+  `(created_at, plan_id)` source bounds, organization-scoped source/derived-snapshot constraints, and guarded
+  downgrade.
 - API changes: None.
 - UI changes: None.
 - Agent protocol changes: None.

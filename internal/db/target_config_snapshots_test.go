@@ -340,11 +340,14 @@ func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
 
 	upSQL := string(up)
 	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE BackfillCheckpoint"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE BackfillCheckpointSourceMembership"))
 	g.Expect(upSQL).To(ContainSubstring("CREATE TABLE ReleaseContractV1ExtractionLineage"))
 	g.Expect(upSQL).To(ContainSubstring("original_release_checksum"))
 	g.Expect(upSQL).To(ContainSubstring("original_plan_checksum"))
 	g.Expect(upSQL).To(ContainSubstring("derived_snapshot_checksum"))
 	g.Expect(upSQL).To(ContainSubstring("predecessor_checkpoint_id UUID"))
+	g.Expect(upSQL).To(ContainSubstring("source_membership_checkpoint_id UUID"))
+	g.Expect(upSQL).To(ContainSubstring("source_membership_checksum TEXT NOT NULL"))
 	g.Expect(upSQL).To(ContainSubstring("source_after_created_at TIMESTAMP"))
 	g.Expect(upSQL).To(ContainSubstring("source_after_plan_id UUID"))
 	g.Expect(upSQL).To(ContainSubstring("source_through_created_at TIMESTAMP"))
@@ -374,6 +377,7 @@ func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
 		`(?s)FOREIGN KEY \(\s*derived_snapshot_id,\s*organization_id,\s*derived_snapshot_checksum\s*\)`,
 	))
 	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER BackfillCheckpoint_immutable"))
+	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER BackfillCheckpointSourceMembership_immutable"))
 	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER ReleaseContractV1ExtractionLineage_immutable"))
 	g.Expect(upSQL).NotTo(ContainSubstring("secret_value"))
 	g.Expect(upSQL).NotTo(ContainSubstring("canonical_payload"))
@@ -387,6 +391,8 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	organizationID := uuid.New()
 	actorUserAccountID := uuid.New()
 	predecessorCheckpointID := uuid.New()
+	sourceMembershipCheckpointID := uuid.New()
+	sourceMembershipChecksum := "sha256:" + strings.Repeat("e", 64)
 	afterPlanID := uuid.New()
 	afterCreatedAt := time.Date(2026, time.July, 18, 1, 2, 3, 0, time.UTC)
 	highWaterPlanID := uuid.New()
@@ -413,6 +419,8 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 		organizationID,
 		actorUserAccountID,
 		&predecessorCheckpointID,
+		&sourceMembershipCheckpointID,
+		sourceMembershipChecksum,
 		after,
 		highWater,
 		false,
@@ -424,6 +432,8 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 		organizationID,
 		actorUserAccountID,
 		&predecessorCheckpointID,
+		&sourceMembershipCheckpointID,
+		sourceMembershipChecksum,
 		after,
 		highWater,
 		false,
@@ -435,9 +445,13 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	g.Expect(second.ID).To(Equal(first.ID))
 	g.Expect(second.DryRunChecksum).To(Equal(first.DryRunChecksum))
 	g.Expect(second.SourceStateChecksum).To(Equal(first.SourceStateChecksum))
+	g.Expect(second.SourceMembershipChecksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
 	g.Expect(second.BatchSize).To(Equal(25))
 	g.Expect(second.PredecessorCheckpointID).NotTo(BeNil())
 	g.Expect(*second.PredecessorCheckpointID).To(Equal(predecessorCheckpointID))
+	g.Expect(second.SourceMembershipCheckpointID).NotTo(BeNil())
+	g.Expect(*second.SourceMembershipCheckpointID).To(Equal(sourceMembershipCheckpointID))
+	g.Expect(second.SourceMembershipChecksum).To(Equal(sourceMembershipChecksum))
 	g.Expect(second.SourceAfterCreatedAt).NotTo(BeNil())
 	g.Expect(*second.SourceAfterCreatedAt).To(BeTemporally("==", afterCreatedAt))
 	g.Expect(second.SourceAfterPlanID).NotTo(BeNil())
@@ -457,6 +471,8 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 		organizationID,
 		actorUserAccountID,
 		&predecessorCheckpointID,
+		&sourceMembershipCheckpointID,
+		sourceMembershipChecksum,
 		after,
 		highWater,
 		false,
@@ -472,6 +488,8 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 		organizationID,
 		actorUserAccountID,
 		&predecessorCheckpointID,
+		&sourceMembershipCheckpointID,
+		sourceMembershipChecksum,
 		after,
 		highWater,
 		true,
@@ -486,6 +504,8 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 		organizationID,
 		uuid.New(),
 		&predecessorCheckpointID,
+		&sourceMembershipCheckpointID,
+		sourceMembershipChecksum,
 		after,
 		highWater,
 		false,
@@ -502,6 +522,8 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 		organizationID,
 		actorUserAccountID,
 		&predecessorCheckpointID,
+		&sourceMembershipCheckpointID,
+		sourceMembershipChecksum,
 		after,
 		highWater,
 		false,
@@ -510,6 +532,39 @@ func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(movedSource.SourceStateChecksum).NotTo(Equal(changed.SourceStateChecksum))
+}
+
+func TestV1ExtractionMembershipChecksumAndPagingUseCapturedRowsOnly(t *testing.T) {
+	g := NewWithT(t)
+	baseCreatedAt := time.Date(2026, time.July, 18, 1, 2, 3, 0, time.UTC)
+	first := v1ExtractionPlanCursor{
+		CreatedAt: baseCreatedAt,
+		PlanID:    uuid.MustParse("10000000-0000-0000-0000-000000000000"),
+	}
+	last := v1ExtractionPlanCursor{
+		CreatedAt: baseCreatedAt.Add(2 * time.Minute),
+		PlanID:    uuid.MustParse("30000000-0000-0000-0000-000000000000"),
+	}
+	captured := []v1ExtractionPlanCursor{first, last}
+	checksum, err := checksumV1ExtractionMembership(captured)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	lateVisibleInsideBounds := v1ExtractionPlanCursor{
+		CreatedAt: baseCreatedAt.Add(time.Minute),
+		PlanID:    uuid.MustParse("20000000-0000-0000-0000-000000000000"),
+	}
+	changedChecksum, err := checksumV1ExtractionMembership([]v1ExtractionPlanCursor{
+		first,
+		lateVisibleInsideBounds,
+		last,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(changedChecksum).NotTo(Equal(checksum))
+
+	page, hasMore := pageV1ExtractionMembership(captured, &first, 100)
+	g.Expect(hasMore).To(BeFalse())
+	g.Expect(page).To(Equal([]v1ExtractionPlanCursor{last}))
+	g.Expect(page).NotTo(ContainElement(lateVisibleInsideBounds))
 }
 
 func TestTargetConfigV1ExtractionRequiresCheckpointOrganizationMemberActor(t *testing.T) {
@@ -684,7 +739,7 @@ func TestTargetConfigV1ExtractionRepositoryDryRunApplyRestartAndNoOp(t *testing.
 	g.Expect(reloadedPlan.ReleaseContract.Schema).To(Equal(types.ReleaseContractSchemaV1))
 }
 
-func TestTargetConfigV1ExtractionConcurrentApplyCreatesOneSnapshotAndEvent(t *testing.T) {
+func TestTargetConfigV1ExtractionDistinctCheckpointsConcurrentlyReuseSnapshotChecksum(t *testing.T) {
 	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
 	g := NewWithT(t)
 	fixture := createTargetConfigV1RepositoryFixture(
@@ -693,7 +748,12 @@ func TestTargetConfigV1ExtractionConcurrentApplyCreatesOneSnapshotAndEvent(t *te
 		"concurrent-apply",
 		types.ReleaseContractSchemaV1,
 	)
-	dryRun, err := CreateTargetConfigV1ExtractionDryRun(
+	secondActorUserAccountID := createTargetConfigSnapshotTestUser(
+		t,
+		ctx,
+		fixture.organizationID,
+	)
+	firstDryRun, err := CreateTargetConfigV1ExtractionDryRun(
 		ctx,
 		fixture.organizationID,
 		fixture.actorUserAccountID,
@@ -702,28 +762,81 @@ func TestTargetConfigV1ExtractionConcurrentApplyCreatesOneSnapshotAndEvent(t *te
 		fixture.verifier,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
+	secondDryRun, err := CreateTargetConfigV1ExtractionDryRun(
+		ctx,
+		fixture.organizationID,
+		secondActorUserAccountID,
+		nil,
+		100,
+		fixture.verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(secondDryRun.Checkpoint.ID).NotTo(Equal(firstDryRun.Checkpoint.ID))
+	g.Expect(secondDryRun.Items).To(HaveLen(1))
+	g.Expect(firstDryRun.Items).To(HaveLen(1))
+	g.Expect(secondDryRun.Items[0].DerivedSnapshotChecksum).To(Equal(
+		firstDryRun.Items[0].DerivedSnapshotChecksum,
+	))
 
 	start := make(chan struct{})
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
 	results := make(chan error, 2)
 	var workers sync.WaitGroup
-	for range 2 {
+	checkpoints := []struct {
+		actorUserAccountID uuid.UUID
+		dryRun             *types.V1ExtractionReport
+		verifier           *targetConfigV1BlockingObjectVerifier
+	}{
+		{
+			actorUserAccountID: fixture.actorUserAccountID,
+			dryRun:             firstDryRun,
+			verifier: &targetConfigV1BlockingObjectVerifier{
+				delegate: fixture.verifier,
+				entered:  entered,
+				release:  release,
+			},
+		},
+		{
+			actorUserAccountID: secondActorUserAccountID,
+			dryRun:             secondDryRun,
+			verifier: &targetConfigV1BlockingObjectVerifier{
+				delegate: fixture.verifier,
+				entered:  entered,
+				release:  release,
+			},
+		},
+	}
+	for _, checkpoint := range checkpoints {
 		workers.Add(1)
-		go func() {
+		go func(checkpoint struct {
+			actorUserAccountID uuid.UUID
+			dryRun             *types.V1ExtractionReport
+			verifier           *targetConfigV1BlockingObjectVerifier
+		}) {
 			defer workers.Done()
 			<-start
 			_, applyErr := ApplyTargetConfigV1Extraction(
 				ctx,
 				fixture.organizationID,
-				fixture.actorUserAccountID,
-				dryRun.Checkpoint.ID,
-				dryRun.Checkpoint.DryRunChecksum,
+				checkpoint.actorUserAccountID,
+				checkpoint.dryRun.Checkpoint.ID,
+				checkpoint.dryRun.Checkpoint.DryRunChecksum,
 				100,
-				fixture.verifier,
+				checkpoint.verifier,
 			)
 			results <- applyErr
-		}()
+		}(checkpoint)
 	}
 	close(start)
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("distinct checkpoint applies did not reach the shared insertion barrier")
+		}
+	}
+	close(release)
 	workers.Wait()
 	close(results)
 	for applyErr := range results {
@@ -741,15 +854,13 @@ func TestTargetConfigV1ExtractionConcurrentApplyCreatesOneSnapshotAndEvent(t *te
 		SELECT count(*)
 		FROM ReleaseContractV1ExtractionLineage
 		WHERE organization_id = @organizationID
-		  AND checkpoint_id = @checkpointID
 		  AND status = 'applied'`,
 		pgx.NamedArgs{
 			"organizationID": fixture.organizationID,
-			"checkpointID":   dryRun.Checkpoint.ID,
 		},
 	).Scan(&appliedCount)).To(Succeed())
 	g.Expect(snapshotCount).To(Equal(1))
-	g.Expect(appliedCount).To(Equal(1))
+	g.Expect(appliedCount).To(Equal(2))
 }
 
 func TestTargetConfigV1ExtractionRejectsRegistryChangeDuringApply(t *testing.T) {
@@ -1112,13 +1223,26 @@ func TestTargetConfigV1ExtractionChainsAppliedCreatedAtCursorWithinHighWater(t *
 	g.Expect(first.Items).To(HaveLen(1))
 	g.Expect(first.Items[0].OriginalPlanID).To(Equal(fixtures[0].plan.ID))
 
-	_ = createTargetConfigV1RepositoryFixtureForOrganization(
+	lateFixture := createTargetConfigV1RepositoryFixtureForOrganization(
 		t,
 		ctx,
-		"cursor-after-high-water",
+		"cursor-late-visible-inside-window",
 		types.ReleaseContractSchemaV1,
 		fixtures[0].organizationID,
 	)
+	lateCreatedAt := fixtures[1].plan.CreatedAt.Add(30 * time.Second)
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		UPDATE DeploymentPlan
+		SET created_at = @createdAt
+		WHERE id = @planID
+		  AND organization_id = @organizationID`,
+		pgx.NamedArgs{
+			"createdAt":      lateCreatedAt,
+			"planID":         lateFixture.plan.ID,
+			"organizationID": lateFixture.organizationID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
 	_, err = CreateTargetConfigV1ExtractionDryRun(
 		ctx,
 		fixtures[0].organizationID,

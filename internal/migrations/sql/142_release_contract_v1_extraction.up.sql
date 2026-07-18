@@ -25,6 +25,10 @@ CREATE TABLE BackfillCheckpoint (
     dry_run_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
   predecessor_checkpoint_id UUID,
+  source_membership_checkpoint_id UUID,
+  source_membership_checksum TEXT NOT NULL CHECK (
+    source_membership_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
   source_after_created_at TIMESTAMP,
   source_after_plan_id UUID,
   source_through_created_at TIMESTAMP,
@@ -45,11 +49,13 @@ CREATE TABLE BackfillCheckpoint (
   CONSTRAINT backfillcheckpoint_cursor_check CHECK (
     (
       predecessor_checkpoint_id IS NULL
+      AND source_membership_checkpoint_id IS NULL
       AND source_after_created_at IS NULL
       AND source_after_plan_id IS NULL
     )
     OR (
       predecessor_checkpoint_id IS NOT NULL
+      AND source_membership_checkpoint_id IS NOT NULL
       AND source_after_created_at IS NOT NULL
       AND source_after_plan_id IS NOT NULL
     )
@@ -102,6 +108,12 @@ CREATE TABLE BackfillCheckpoint (
     ON UPDATE NO ACTION
     ON DELETE NO ACTION
     DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT backfillcheckpoint_membership_organization_fk
+    FOREIGN KEY (source_membership_checkpoint_id, organization_id)
+    REFERENCES BackfillCheckpoint(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT backfillcheckpoint_predecessor_unique
     UNIQUE (predecessor_checkpoint_id, organization_id),
   CONSTRAINT backfillcheckpoint_dry_run_unique
@@ -110,6 +122,41 @@ CREATE TABLE BackfillCheckpoint (
 
 CREATE INDEX BackfillCheckpoint_organization_created
   ON BackfillCheckpoint (organization_id, created_at DESC, id DESC);
+
+CREATE TABLE BackfillCheckpointSourceMembership (
+  organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  source_membership_checkpoint_id UUID NOT NULL,
+  plan_created_at TIMESTAMP NOT NULL,
+  plan_id UUID NOT NULL,
+  CONSTRAINT backfillcheckpointsourcemembership_checkpoint_fk
+    FOREIGN KEY (source_membership_checkpoint_id, organization_id)
+    REFERENCES BackfillCheckpoint(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE CASCADE,
+  CONSTRAINT backfillcheckpointsourcemembership_plan_fk
+    FOREIGN KEY (plan_id, organization_id)
+    REFERENCES DeploymentPlan(id, organization_id)
+    ON UPDATE NO ACTION
+    ON DELETE NO ACTION
+    DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT backfillcheckpointsourcemembership_plan_unique
+    UNIQUE (source_membership_checkpoint_id, organization_id, plan_id),
+  CONSTRAINT backfillcheckpointsourcemembership_position_unique
+    UNIQUE (
+      source_membership_checkpoint_id,
+      organization_id,
+      plan_created_at,
+      plan_id
+    )
+);
+
+CREATE INDEX BackfillCheckpointSourceMembership_order
+  ON BackfillCheckpointSourceMembership (
+    organization_id,
+    source_membership_checkpoint_id,
+    plan_created_at,
+    plan_id
+  );
 
 CREATE TABLE ReleaseContractV1ExtractionLineage (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -242,6 +289,10 @@ $$;
 
 CREATE TRIGGER BackfillCheckpoint_immutable
 BEFORE UPDATE OR DELETE ON BackfillCheckpoint
+FOR EACH ROW EXECUTE FUNCTION release_contract_v1_extraction_reject_mutation();
+
+CREATE TRIGGER BackfillCheckpointSourceMembership_immutable
+BEFORE UPDATE OR DELETE ON BackfillCheckpointSourceMembership
 FOR EACH ROW EXECUTE FUNCTION release_contract_v1_extraction_reject_mutation();
 
 CREATE TRIGGER ReleaseContractV1ExtractionLineage_immutable

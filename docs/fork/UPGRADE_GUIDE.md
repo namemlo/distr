@@ -135,10 +135,10 @@ task, callback, or agent record.
      --batch-size 100
    ```
 
-5. Review every blocked reason and record the returned checkpoint ID, dry-run checksum, source-through cursor,
-   source high-water cursor, and `hasMore`. Do not edit a v1 source row to make it pass. Resolved ordinary
-   variables and current mutable Distr secret references are expected to block because PR-058 cannot represent
-   them losslessly.
+5. Review every blocked reason and record the returned checkpoint ID, source-membership checkpoint ID and
+   checksum, dry-run checksum, source-through cursor, source high-water cursor, and `hasMore`. Do not edit a v1
+   source row to make it pass. Resolved ordinary variables and current mutable Distr secret references are
+   expected to block because PR-058 cannot represent them losslessly.
 6. Apply the exact approved state:
 
    ```sh
@@ -171,13 +171,15 @@ task, callback, or agent record.
      --batch-size 100
    ```
 
-An interrupted or repeated apply is safe. A root dry run fixes a source high-water mark, and successor checkpoints
-process only that fixed window in stable `(created_at, plan_id)` order. The Hub accepts only a fully applied
-predecessor with `hasMore=true`, preserves the original actor and high-water mark, and allows one successor.
-It creates the matching canonical snapshot plus applied lineage in one serializable transaction. A changed actor,
-object evidence, registry placement, source-state, or dry-run checksum fails closed.
+An interrupted or repeated apply is safe. A root dry run persists the exact eligible plan membership visible in
+its repeatable-read transaction and checksums the ordered `(created_at, plan_id)` list. Successor checkpoints page
+only those immutable membership rows, so later commits or eligibility changes cannot alter an approved chain even
+inside its high-water tuple. The Hub accepts only a fully applied predecessor with `hasMore=true`, preserves the
+original actor and membership root, and allows one successor. It creates the matching canonical snapshot plus
+applied lineage in one serializable transaction. A changed actor, object evidence, registry placement,
+source-state, membership checksum, or dry-run checksum fails closed.
 
 Existing v1 reads and execution remain unchanged regardless of partial extraction or the v2 process flag. Roll
 back the binary by disabling v2 admission and deploying the previous Hub; do not delete extraction evidence.
-Migration 142 down refuses while checkpoints or lineage exist, and migration 141 down separately refuses while
-snapshots exist.
+Migration 142 down refuses while checkpoints, membership, or lineage exist, and migration 141 down separately
+refuses while snapshots exist.

@@ -224,6 +224,10 @@ func writeTargetConfigV1BackfillReport(
 	if report.Checkpoint.PredecessorCheckpointID != nil {
 		predecessorCheckpointID = report.Checkpoint.PredecessorCheckpointID.String()
 	}
+	sourceMembershipCheckpointID := report.Checkpoint.ID.String()
+	if report.Checkpoint.SourceMembershipCheckpointID != nil {
+		sourceMembershipCheckpointID = report.Checkpoint.SourceMembershipCheckpointID.String()
+	}
 	sourceAfterCreatedAt := ""
 	if report.Checkpoint.SourceAfterCreatedAt != nil {
 		sourceAfterCreatedAt = report.Checkpoint.SourceAfterCreatedAt.UTC().Format(time.RFC3339Nano)
@@ -250,10 +254,12 @@ func writeTargetConfigV1BackfillReport(
 	}
 	_, err := fmt.Fprintf(
 		writer,
-		"mode=%s checkpointId=%s predecessorCheckpointId=%s actorUserAccountId=%s dryRunChecksum=%s sourceStateChecksum=%s sourceAfterCreatedAt=%s sourceAfterPlanId=%s sourceThroughCreatedAt=%s sourceThroughPlanId=%s sourceHighWaterCreatedAt=%s sourceHighWaterPlanId=%s hasMore=%t source=%d candidate=%d blocked=%d applied=%d pending=%d noOp=%d\n",
+		"mode=%s checkpointId=%s predecessorCheckpointId=%s sourceMembershipCheckpointId=%s sourceMembershipChecksum=%s actorUserAccountId=%s dryRunChecksum=%s sourceStateChecksum=%s sourceAfterCreatedAt=%s sourceAfterPlanId=%s sourceThroughCreatedAt=%s sourceThroughPlanId=%s sourceHighWaterCreatedAt=%s sourceHighWaterPlanId=%s hasMore=%t source=%d candidate=%d blocked=%d applied=%d pending=%d noOp=%d\n",
 		mode,
 		report.Checkpoint.ID,
 		predecessorCheckpointID,
+		sourceMembershipCheckpointID,
+		report.Checkpoint.SourceMembershipChecksum,
 		report.Checkpoint.ActorUserAccountID,
 		report.Checkpoint.DryRunChecksum,
 		report.Checkpoint.SourceStateChecksum,

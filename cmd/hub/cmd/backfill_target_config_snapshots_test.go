@@ -308,6 +308,9 @@ func TestBackfillTargetConfigSnapshotsReportPrintsStableCheckpointWindow(t *test
 			report := v1ExtractionCommandReport(organizationID)
 			report.Checkpoint.ActorUserAccountID = actorUserAccountID
 			report.Checkpoint.PredecessorCheckpointID = &predecessorCheckpointID
+			report.Checkpoint.SourceMembershipCheckpointID = &predecessorCheckpointID
+			report.Checkpoint.SourceMembershipChecksum =
+				"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 			report.Checkpoint.SourceAfterCreatedAt = &afterCreatedAt
 			report.Checkpoint.SourceAfterPlanID = &afterPlanID
 			report.Checkpoint.SourceThroughCreatedAt = &throughCreatedAt
@@ -328,6 +331,10 @@ func TestBackfillTargetConfigSnapshotsReportPrintsStableCheckpointWindow(t *test
 	g.Expect(stdout).To(ContainSubstring(
 		"predecessorCheckpointId=" + predecessorCheckpointID.String(),
 	))
+	g.Expect(stdout).To(ContainSubstring(
+		"sourceMembershipCheckpointId=" + predecessorCheckpointID.String(),
+	))
+	g.Expect(stdout).To(ContainSubstring("sourceMembershipChecksum=sha256:cccc"))
 	g.Expect(stdout).To(ContainSubstring(
 		"sourceAfterCreatedAt=" + afterCreatedAt.Format(time.RFC3339Nano),
 	))
@@ -365,13 +372,14 @@ func executeBackfillTargetConfigSnapshotsForTest(
 func v1ExtractionCommandReport(organizationID uuid.UUID) *types.V1ExtractionReport {
 	return &types.V1ExtractionReport{
 		Checkpoint: types.V1ExtractionCheckpoint{
-			ID:                  uuid.New(),
-			OrganizationID:      organizationID,
-			DryRunChecksum:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			SourceStateChecksum: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-			SourceCount:         1,
-			CandidateCount:      1,
-			BatchSize:           100,
+			ID:                       uuid.New(),
+			OrganizationID:           organizationID,
+			DryRunChecksum:           "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			SourceStateChecksum:      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			SourceMembershipChecksum: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			SourceCount:              1,
+			CandidateCount:           1,
+			BatchSize:                100,
 		},
 		Pending: 1,
 	}
