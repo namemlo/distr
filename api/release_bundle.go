@@ -71,6 +71,12 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 		})
 	}
 	if r.ReleaseContract != nil {
+		if r.ReleaseContract.ComponentV2 != nil {
+			issues := releasebundles.ValidateComponentReleaseContractV2(*r.ReleaseContract.ComponentV2)
+			if len(issues) > 0 {
+				return validation.NewValidationFailedError(issues[0].Message)
+			}
+		}
 		r.ReleaseContract = releasebundles.NormalizedReleaseContract(r.ReleaseContract)
 		if r.ReleaseContract.ComponentV2 != nil {
 			result := releasebundles.ValidateBundleContent(types.ReleaseBundle{

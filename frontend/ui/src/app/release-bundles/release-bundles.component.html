@@ -494,9 +494,12 @@
           <section class="border-t border-gray-200 pt-5 dark:border-gray-700 space-y-5">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <h3 class="text-base font-semibold text-gray-900 dark:text-white">Release Contract</h3>
-              <span class="font-mono text-xs text-gray-500 dark:text-gray-400">
-                {{ bundle.kind || 'legacy' }} · {{ bundle.releaseContractSchema || contract.schema }}
-              </span>
+              <div class="text-right font-mono text-xs text-gray-500 dark:text-gray-400">
+                <div>Contract schema: {{ contract.schema }}</div>
+                <div>
+                  Storage: {{ bundle.kind || 'legacy' }} · {{ bundle.releaseContractSchema || 'not classified' }}
+                </div>
+              </div>
             </div>
 
             @if (contract.schema === 'distr.component-release/v2') {

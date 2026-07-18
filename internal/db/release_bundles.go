@@ -101,6 +101,9 @@ func CreateReleaseBundleWithIdempotency(ctx context.Context, bundle *types.Relea
 		if err := setReleaseBundleContractMetadata(bundle); err != nil {
 			return err
 		}
+		if err := validateComponentReleaseForPersistence(*bundle); err != nil {
+			return err
+		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
 			return err
 		}
@@ -148,6 +151,9 @@ func createReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 		return err
 	}
 	if err := setReleaseBundleContractMetadata(bundle); err != nil {
+		return err
+	}
+	if err := validateComponentReleaseForPersistence(*bundle); err != nil {
 		return err
 	}
 	if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -427,6 +433,9 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			return err
 		}
 		if err := setReleaseBundleContractMetadata(bundle); err != nil {
+			return err
+		}
+		if err := validateComponentReleaseForPersistence(*bundle); err != nil {
 			return err
 		}
 		if err := setReleaseBundleCanonicalFields(bundle); err != nil {
@@ -1317,6 +1326,22 @@ func setReleaseBundleCanonicalFields(bundle *types.ReleaseBundle) error {
 	}
 	bundle.CanonicalPayload = payload
 	bundle.CanonicalChecksum = checksum
+	return nil
+}
+
+func validateComponentReleaseForPersistence(bundle types.ReleaseBundle) error {
+	if bundle.ReleaseContract == nil || bundle.ReleaseContract.ComponentV2 == nil {
+		return nil
+	}
+	if issues := releasebundles.ValidateComponentReleaseContractV2(*bundle.ReleaseContract.ComponentV2); len(issues) > 0 {
+		return apierrors.NewBadRequest(issues[0].Message)
+	}
+	bundle.CanonicalChecksum = ""
+	bundle.CanonicalPayload = nil
+	result := releasebundles.ValidateBundleContent(bundle)
+	if !result.Valid {
+		return apierrors.NewBadRequest(result.Errors[0].Message)
+	}
 	return nil
 }
 

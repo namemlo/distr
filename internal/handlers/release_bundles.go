@@ -567,6 +567,8 @@ func handleReleaseBundleWriteError(w http.ResponseWriter, r *http.Request, log *
 		})
 	} else if errors.Is(err, apierrors.ErrAlreadyExists) {
 		http.Error(w, "a release bundle with this release number already exists for this application", http.StatusBadRequest)
+	} else if errors.Is(err, apierrors.ErrBadRequest) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	} else if errors.Is(err, apierrors.ErrNotFound) {
 		http.NotFound(w, r)
 	} else if errors.Is(err, apierrors.ErrConflict) {

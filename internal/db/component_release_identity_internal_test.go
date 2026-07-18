@@ -1,10 +1,12 @@
 package db
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/types"
 	. "github.com/onsi/gomega"
 )
@@ -109,3 +111,26 @@ func cloneComponentReleaseArtifacts(
 	}
 	return result
 }
+
+func TestValidateComponentReleaseForPersistenceRejectsOversizedContract(t *testing.T) {
+	g := NewWithT(t)
+	contract := types.ComponentReleaseContractV2{
+		Schema:    types.ReleaseContractSchemaV2,
+		Artifacts: make([]types.ComponentReleaseArtifact, maxReleaseContractItemsForPersistenceTest),
+	}
+	bundle := types.ReleaseBundle{
+		Kind:                  types.ReleaseBundleKindComponent,
+		ReleaseContractSchema: types.ReleaseContractSchemaV2,
+		ReleaseContract: &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &contract,
+		},
+	}
+
+	err := validateComponentReleaseForPersistence(bundle)
+
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+	g.Expect(err).To(MatchError(ContainSubstring("artifacts contains too many entries")))
+}
+
+const maxReleaseContractItemsForPersistenceTest = 257

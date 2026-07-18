@@ -1122,13 +1122,13 @@ Use one entry per pull request:
   and migration facts without rewriting historical payloads or checksums.
 - API changes: Existing `/api/v1/release-bundles` accepts discriminated v1/v2 contracts and returns additive
   `kind` and `releaseContractSchema` fields.
-- UI changes: Release Bundle detail retains v1 content and adds v2 artifact/platform, capability, migration, and
-  evidence summaries.
+- UI changes: Release Bundle detail retains v1 content, labels embedded contract schema separately from storage
+  classification, and adds v2 artifact/platform, capability, migration, and evidence summaries.
 - Agent protocol changes: None.
 - Documentation: Added ADR-0058 and PR-060 fork notes.
-- Tests: Added strict parser, target-neutral validation, type-preserving artifact/component bijection, deterministic
-  non-null collection canonicalization, API/gate, migration, and deferred PostgreSQL
-  publication/idempotency/full-lineage conflict coverage.
+- Tests: Added strict parser, bounded credential/userinfo/PEM detection, collection/string/payload limits,
+  type-preserving artifact/component bijection, deterministic non-null collection canonicalization, legacy schema
+  rendering, API/gate, migration, and deferred PostgreSQL publication/idempotency/full-lineage conflict coverage.
 - Upstream contribution notes: Community-neutral release identity; no adopter, CI provider, registry, target,
   credential, or infrastructure-specific core behavior.
 - Compatibility notes: Embedded v1 remains `distr.release-contract/v1`; additive row metadata classifies it as

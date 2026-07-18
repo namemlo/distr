@@ -10,16 +10,35 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/distr-sh/distr/internal/stepredaction"
 	"github.com/distr-sh/distr/internal/types"
 )
 
-const maxReleaseContractItems = 256
+const (
+	maxReleaseContractItems                     = 256
+	maxComponentReleasePlatforms                = 2
+	maxComponentReleaseAllowedModes             = 5
+	maxComponentReleaseContractPayloadBytes     = 512 * 1024
+	maxComponentReleaseKeyLength                = 256
+	maxComponentReleaseVersionLength            = 128
+	maxComponentReleaseSourceFieldLength        = 512
+	maxComponentReleaseBuildFieldLength         = 512
+	maxComponentReleaseReferenceLength          = 2048
+	maxComponentReleaseSummaryLength            = 4096
+	maxComponentReleaseDescriptionLength        = 4096
+	maxComponentReleaseConstraintLength         = 512
+	maxComponentReleaseDiscriminatorFieldLength = 256
+)
 
 var commitPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
 var componentCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var componentKeyPattern = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
 var componentDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var windowsAbsolutePathPattern = regexp.MustCompile(`(?i)(^|[\s"'(])[a-z]:\\`)
+var componentSensitiveAssignmentPattern = regexp.MustCompile(
+	`(?i)\b(password|passwd|client[\s_-]?secret|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|token)\b\s*[:=]`,
+)
+var privateKeyMarkerPattern = regexp.MustCompile(`(?i)\bBEGIN(?: [A-Z0-9]+)* PRIVATE KEY\b`)
 
 func normalizeReleaseContractV1(contract *types.ReleaseContract) {
 	if contract == nil {
@@ -307,6 +326,9 @@ func ValidateReleaseContractV1(
 }
 
 func ValidateComponentReleaseContractV2(contract types.ComponentReleaseContractV2) []ValidationIssue {
+	if issues := validateComponentReleaseContractV2Bounds(contract); len(issues) > 0 {
+		return issues
+	}
 	contract = normalizedComponentReleaseContractV2(contract)
 	issues := make([]ValidationIssue, 0)
 	add := func(field, rule, message string) {
@@ -586,6 +608,11 @@ func containsTargetSpecificValue(value string, allowReference bool) bool {
 	if normalized == "" {
 		return false
 	}
+	if _, changed := stepredaction.RedactString(value); changed ||
+		componentSensitiveAssignmentPattern.MatchString(value) ||
+		privateKeyMarkerPattern.MatchString(value) {
+		return true
+	}
 	for _, marker := range []string{
 		"authorization:", "bearer ", "password=", "secret=", "token=", "api_key=", "access_token=",
 		"clientsecret", "privatekey",
@@ -600,10 +627,156 @@ func containsTargetSpecificValue(value string, allowReference bool) bool {
 	if !allowReference && (strings.Contains(normalized, "://") || strings.HasPrefix(normalized, "/")) {
 		return true
 	}
+	if parsed, err := url.Parse(strings.TrimSpace(value)); err == nil && parsed.Scheme != "" && parsed.User != nil {
+		return true
+	}
 	if allowReference && strings.ContainsAny(value, "?#") {
 		return true
 	}
 	return strings.ContainsAny(value, "\r\n")
+}
+
+func validateComponentReleaseContractV2Bounds(
+	contract types.ComponentReleaseContractV2,
+) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	addLimit := func(field, message string) {
+		issues = append(issues, ValidationIssue{Field: field, Rule: "limit", Message: message})
+	}
+	checkString := func(field, value string, limit int) {
+		if len(value) > limit {
+			addLimit(field, field+" is too long")
+		}
+	}
+	checkCollection := func(field string, length, limit int) {
+		if length > limit {
+			addLimit(field, field+" contains too many entries")
+		}
+	}
+
+	checkString("schema", contract.Schema, maxComponentReleaseDiscriminatorFieldLength)
+	checkString("componentKey", contract.ComponentKey, maxComponentReleaseKeyLength)
+	checkString("version", contract.Version, maxComponentReleaseVersionLength)
+	checkString("source.repository", contract.Source.Repository, maxComponentReleaseSourceFieldLength)
+	checkString("source.requestedRef", contract.Source.RequestedRef, maxComponentReleaseSourceFieldLength)
+	checkString("source.commit", contract.Source.Commit, maxComponentReleaseDiscriminatorFieldLength)
+	checkString("build.id", contract.Build.ID, maxComponentReleaseBuildFieldLength)
+	checkString("build.builder", contract.Build.Builder, maxComponentReleaseBuildFieldLength)
+
+	checkCollection("artifacts", len(contract.Artifacts), maxReleaseContractItems)
+	for i := range min(len(contract.Artifacts), maxReleaseContractItems) {
+		artifact := contract.Artifacts[i]
+		field := boundedComponentReleaseItemField("artifacts", artifact.Key, i)
+		checkString(field+".key", artifact.Key, maxComponentReleaseKeyLength)
+		checkString(field+".type", artifact.Type, maxComponentReleaseDiscriminatorFieldLength)
+		checkString(field+".mediaType", artifact.MediaType, maxComponentReleaseDiscriminatorFieldLength)
+		checkString(field+".digest", artifact.Digest, maxComponentReleaseDiscriminatorFieldLength)
+		checkCollection(field+".platforms", len(artifact.Platforms), maxComponentReleasePlatforms)
+		for j := range min(len(artifact.Platforms), maxComponentReleasePlatforms) {
+			platform := artifact.Platforms[j]
+			platformField := boundedComponentReleaseItemField(field+".platforms", platform.Platform, j)
+			checkString(
+				platformField+".platform",
+				platform.Platform,
+				maxComponentReleaseDiscriminatorFieldLength,
+			)
+			checkString(
+				platformField+".digest",
+				platform.Digest,
+				maxComponentReleaseDiscriminatorFieldLength,
+			)
+		}
+	}
+
+	checkCollection("provides", len(contract.Provides), maxReleaseContractItems)
+	for i := range min(len(contract.Provides), maxReleaseContractItems) {
+		capability := contract.Provides[i]
+		field := boundedComponentReleaseItemField("provides", capability.Name, i)
+		checkString(field+".name", capability.Name, maxComponentReleaseKeyLength)
+		checkString(field+".version", capability.Version, maxComponentReleaseVersionLength)
+	}
+
+	checkCollection("requires", len(contract.Requires), maxReleaseContractItems)
+	for i := range min(len(contract.Requires), maxReleaseContractItems) {
+		requirement := contract.Requires[i]
+		field := boundedComponentReleaseItemField("requires", requirement.Name, i)
+		checkString(field+".name", requirement.Name, maxComponentReleaseKeyLength)
+		checkString(field+".range", requirement.Range, maxComponentReleaseConstraintLength)
+		checkString(
+			field+".resolutionStage",
+			requirement.ResolutionStage,
+			maxComponentReleaseDiscriminatorFieldLength,
+		)
+		checkCollection(field+".allowedModes", len(requirement.AllowedModes), maxComponentReleaseAllowedModes)
+		for j := range min(len(requirement.AllowedModes), maxComponentReleaseAllowedModes) {
+			checkString(
+				fmt.Sprintf("%s.allowedModes[%d]", field, j),
+				requirement.AllowedModes[j],
+				maxComponentReleaseDiscriminatorFieldLength,
+			)
+		}
+	}
+
+	checkCollection("migrations", len(contract.Migrations), maxReleaseContractItems)
+	for i := range min(len(contract.Migrations), maxReleaseContractItems) {
+		migration := contract.Migrations[i]
+		field := boundedComponentReleaseItemField("migrations", migration.Key, i)
+		checkString(field+".key", migration.Key, maxComponentReleaseKeyLength)
+		checkString(field+".type", migration.Type, maxComponentReleaseDiscriminatorFieldLength)
+		checkString(
+			field+".compatibility",
+			migration.Compatibility,
+			maxComponentReleaseDiscriminatorFieldLength,
+		)
+		checkString(
+			field+".failurePolicy",
+			migration.FailurePolicy,
+			maxComponentReleaseDiscriminatorFieldLength,
+		)
+		checkString(field+".description", migration.Description, maxComponentReleaseDescriptionLength)
+	}
+
+	checkString("changes.summary", contract.Changes.Summary, maxComponentReleaseSummaryLength)
+	checkCollection("changes.commits", len(contract.Changes.Commits), maxReleaseContractItems)
+	for i := range min(len(contract.Changes.Commits), maxReleaseContractItems) {
+		checkString(
+			fmt.Sprintf("changes.commits[%d]", i),
+			contract.Changes.Commits[i],
+			maxComponentReleaseDiscriminatorFieldLength,
+		)
+	}
+
+	for _, group := range []struct {
+		field      string
+		references []string
+	}{
+		{field: "evidence.provenance", references: contract.Evidence.Provenance},
+		{field: "evidence.sbom", references: contract.Evidence.SBOM},
+		{field: "evidence.signatures", references: contract.Evidence.Signatures},
+		{field: "evidence.tests", references: contract.Evidence.Tests},
+	} {
+		checkCollection(group.field, len(group.references), maxReleaseContractItems)
+		for i := range min(len(group.references), maxReleaseContractItems) {
+			checkString(group.field, group.references[i], maxComponentReleaseReferenceLength)
+		}
+	}
+
+	if len(issues) > 0 {
+		return issues
+	}
+	payload, err := NormalizeReleaseContract(contract)
+	if err == nil && len(payload) > maxComponentReleaseContractPayloadBytes {
+		addLimit("payload", "component release contract payload is too large")
+	}
+	return issues
+}
+
+func boundedComponentReleaseItemField(prefix, key string, index int) string {
+	key = strings.TrimSpace(key)
+	if key == "" || len(key) > maxComponentReleaseKeyLength {
+		return fmt.Sprintf("%s[%d]", prefix, index)
+	}
+	return prefix + "." + key
 }
 
 func validateReleaseContractComponents(

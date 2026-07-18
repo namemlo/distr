@@ -2,6 +2,7 @@ package releasebundles
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -265,6 +266,260 @@ func TestNormalizeReleaseContractV2TreatsNestedNullAndEmptyCollectionsEqually(t 
 	g.Expect(nilBytes).To(Equal(emptyBytes))
 	g.Expect(string(nilBytes)).To(ContainSubstring(`"platforms":[]`))
 	g.Expect(string(nilBytes)).To(ContainSubstring(`"allowedModes":[]`))
+}
+
+func TestValidateComponentReleaseContractV2RejectsCredentialBearingTextAndReferences(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutate   func(*types.ComponentReleaseContractV2)
+		wantRule string
+	}{
+		{
+			name: "URL userinfo",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Evidence.Provenance = []string{"https://user:pass@evidence.example/provenance"}
+			},
+			wantRule: "evidence.provenance:targetNeutral",
+		},
+		{
+			name: "PEM private key",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = "-----BEGIN PRIVATE KEY-----"
+			},
+			wantRule: "changes.summary:targetNeutral",
+		},
+		{
+			name: "password assignment",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = "password: release-secret"
+			},
+			wantRule: "changes.summary:targetNeutral",
+		},
+		{
+			name: "client secret assignment",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Migrations[0].Description = "client_secret: release-secret"
+			},
+			wantRule: "migrations.schema-v2.description:targetNeutral",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			contract := validComponentReleaseContract()
+			tt.mutate(&contract)
+
+			issues := ValidateComponentReleaseContractV2(contract)
+
+			g.Expect(issueKeys(issues)).To(ContainElement(tt.wantRule))
+		})
+	}
+}
+
+func TestValidateComponentReleaseContractV2AcceptsCredentialFreeImmutableReferences(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	contract.Evidence.Provenance = []string{
+		"https://evidence.example/provenance/sha256/" + strings.Repeat("a", 64),
+		"oci://evidence/provenance@sha256:" + strings.Repeat("b", 64),
+	}
+	contract.Changes.Summary = "Rotate credential provider metadata without embedding credentials"
+
+	issues := ValidateComponentReleaseContractV2(contract)
+
+	g.Expect(issueKeys(issues)).NotTo(ContainElement("evidence.provenance:targetNeutral"))
+	g.Expect(issueKeys(issues)).NotTo(ContainElement("changes.summary:targetNeutral"))
+}
+
+func TestValidateComponentReleaseContractV2BoundsEveryCollection(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutate   func(*types.ComponentReleaseContractV2)
+		wantRule string
+	}{
+		{
+			name: "artifacts",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Artifacts = make([]types.ComponentReleaseArtifact, maxReleaseContractItems+1)
+			},
+			wantRule: "artifacts:limit",
+		},
+		{
+			name: "platforms",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Artifacts[0].Platforms = make(
+					[]types.ComponentReleasePlatform,
+					maxComponentReleasePlatforms+1,
+				)
+			},
+			wantRule: "artifacts.image.platforms:limit",
+		},
+		{
+			name: "provides",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Provides = make([]types.CapabilityDeclaration, maxReleaseContractItems+1)
+			},
+			wantRule: "provides:limit",
+		},
+		{
+			name: "requires",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Requires = make([]types.CapabilityRequirement, maxReleaseContractItems+1)
+			},
+			wantRule: "requires:limit",
+		},
+		{
+			name: "allowed modes",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Requires[0].AllowedModes = make([]string, maxComponentReleaseAllowedModes+1)
+			},
+			wantRule: "requires.identity.verify.allowedModes:limit",
+		},
+		{
+			name: "migrations",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Migrations = make([]types.MigrationDeclaration, maxReleaseContractItems+1)
+			},
+			wantRule: "migrations:limit",
+		},
+		{
+			name: "commits",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Commits = make([]string, maxReleaseContractItems+1)
+			},
+			wantRule: "changes.commits:limit",
+		},
+		{
+			name: "provenance evidence",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Evidence.Provenance = make([]string, maxReleaseContractItems+1)
+			},
+			wantRule: "evidence.provenance:limit",
+		},
+		{
+			name: "SBOM evidence",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Evidence.SBOM = make([]string, maxReleaseContractItems+1)
+			},
+			wantRule: "evidence.sbom:limit",
+		},
+		{
+			name: "signature evidence",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Evidence.Signatures = make([]string, maxReleaseContractItems+1)
+			},
+			wantRule: "evidence.signatures:limit",
+		},
+		{
+			name: "test evidence",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Evidence.Tests = make([]string, maxReleaseContractItems+1)
+			},
+			wantRule: "evidence.tests:limit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			contract := validComponentReleaseContract()
+			tt.mutate(&contract)
+
+			issues := ValidateComponentReleaseContractV2(contract)
+
+			g.Expect(issueKeys(issues)).To(ContainElement(tt.wantRule))
+		})
+	}
+}
+
+func TestValidateComponentReleaseContractV2BoundsFreeTextAndReferences(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutate   func(*types.ComponentReleaseContractV2)
+		wantRule string
+	}{
+		{
+			name: "source repository",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Source.Repository = strings.Repeat("a", maxComponentReleaseSourceFieldLength+1)
+			},
+			wantRule: "source.repository:limit",
+		},
+		{
+			name: "source requested ref",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Source.RequestedRef = strings.Repeat("a", maxComponentReleaseSourceFieldLength+1)
+			},
+			wantRule: "source.requestedRef:limit",
+		},
+		{
+			name: "build id",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Build.ID = strings.Repeat("a", maxComponentReleaseBuildFieldLength+1)
+			},
+			wantRule: "build.id:limit",
+		},
+		{
+			name: "build builder",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Build.Builder = strings.Repeat("a", maxComponentReleaseBuildFieldLength+1)
+			},
+			wantRule: "build.builder:limit",
+		},
+		{
+			name: "change summary",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Changes.Summary = strings.Repeat("a", maxComponentReleaseSummaryLength+1)
+			},
+			wantRule: "changes.summary:limit",
+		},
+		{
+			name: "migration description",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Migrations[0].Description = strings.Repeat(
+					"a",
+					maxComponentReleaseDescriptionLength+1,
+				)
+			},
+			wantRule: "migrations.schema-v2.description:limit",
+		},
+		{
+			name: "evidence reference",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.Evidence.Provenance = []string{
+					strings.Repeat("a", maxComponentReleaseReferenceLength+1),
+				}
+			},
+			wantRule: "evidence.provenance:limit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			contract := validComponentReleaseContract()
+			tt.mutate(&contract)
+
+			issues := ValidateComponentReleaseContractV2(contract)
+
+			g.Expect(issueKeys(issues)).To(ContainElement(tt.wantRule))
+		})
+	}
+}
+
+func TestValidateComponentReleaseContractV2BoundsCanonicalPayload(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	reference := strings.Repeat("a", maxComponentReleaseReferenceLength)
+	contract.Evidence.Provenance = make([]string, maxReleaseContractItems)
+	for i := range contract.Evidence.Provenance {
+		contract.Evidence.Provenance[i] = fmt.Sprintf("%03d-%s", i, reference[4:])
+	}
+
+	issues := ValidateComponentReleaseContractV2(contract)
+
+	g.Expect(issueKeys(issues)).To(ContainElement("payload:limit"))
 }
 
 func validComponentReleaseJSON(t *testing.T) []byte {

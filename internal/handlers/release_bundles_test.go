@@ -160,6 +160,7 @@ func TestHandleReleaseBundleWriteError(t *testing.T) {
 		want int
 	}{
 		{name: "duplicate release number", err: apierrors.ErrAlreadyExists, want: http.StatusBadRequest},
+		{name: "invalid component release", err: apierrors.NewBadRequest("component release is too large"), want: http.StatusBadRequest},
 		{name: "missing scoped reference", err: apierrors.ErrNotFound, want: http.StatusNotFound},
 		{name: "non-draft mutation", err: apierrors.ErrConflict, want: http.StatusConflict},
 	}

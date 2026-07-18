@@ -45,6 +45,17 @@ Variable Snapshot. Required capability ranges are explicit and non-empty. Produc
 resolution modes; target-stage requirements declare at least one supported mode. New component writes require
 `operator_control_plane_v2`; when the flag is off, an update is rejected if either its stored or incoming contract
 is v2, while historical reads and v1 writes remain available.
+
+Validation runs before normalization or database persistence. Every collection is bounded to 256 entries, with the
+supported platform set bounded to two and target resolution modes bounded to five. Source and build fields are at
+most 512 bytes, evidence references at most 2,048 bytes, change summaries and migration descriptions at most 4,096
+bytes, and the normalized contract payload at most 512 KiB. Sensitive-text validation runs only after those bounds
+are established and rejects credential-bearing URI userinfo, authorization/secret assignments, and PEM private-key
+markers while preserving credential-free immutable evidence references.
+
+The Release Bundle detail view labels the embedded contract schema and outer row storage classification separately.
+For a historical release, `distr.release-contract/v1` remains the audit contract schema while `legacy` and
+`distr.release/v1` describe its additive storage metadata.
 The existing `/api/v1/release-bundles` route family remains the only release-bundle API.
 
 Migration 143 adds `kind` and `release_contract_schema` to `ReleaseBundle`, and normalized artifact, evidence,

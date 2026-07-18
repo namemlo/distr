@@ -296,6 +296,10 @@ func TestCreateUpdateReleaseBundleRequestAcceptsStrictComponentReleaseV2(t *test
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring(
 		"component release artifact type must exactly match the release bundle component type",
 	)))
+
+	request.Components[0].Type = types.ReleaseBundleComponentTypeOCIImage
+	request.ReleaseContract.ComponentV2.Artifacts = make([]types.ComponentReleaseArtifact, 257)
+	g.Expect(request.Validate()).To(MatchError(ContainSubstring("artifacts contains too many entries")))
 }
 
 func TestCreateUpdateReleaseBundleRequestValidateRejectsInvalidPayloads(t *testing.T) {

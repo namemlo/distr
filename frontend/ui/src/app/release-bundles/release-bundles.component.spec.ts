@@ -297,6 +297,52 @@ describe('ReleaseBundlesComponent', () => {
     expect(overlay.showModal).toHaveBeenCalled();
   });
 
+  it('renders the embedded legacy contract schema separately from storage metadata', () => {
+    const legacyRelease: ReleaseBundle = {
+      ...bundles[1],
+      id: 'legacy-release',
+      kind: 'legacy',
+      releaseContractSchema: 'distr.release/v1',
+      releaseContract: {
+        schema: 'distr.release-contract/v1',
+        source: {
+          repository: 'payments-api',
+          branch: 'main',
+          sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+          builtCommit: '0123456789abcdef0123456789abcdef01234567',
+        },
+        build: {externalId: '42', externalUrl: 'https://ci.example/build/42'},
+        components: [],
+        compatibility: {requires: [], affectedComponents: []},
+        operations: {migrationRequired: false, configChangeRequired: false},
+        config: {
+          repositoryCommit: '0123456789abcdef0123456789abcdef01234567',
+          composePath: 'compose.yaml',
+          serviceConfigPath: 'service.json',
+          composeChecksum: `sha256:${'a'.repeat(64)}`,
+          serviceConfigChecksum: `sha256:${'b'.repeat(64)}`,
+          immutableObjects: [],
+        },
+        changes: {summary: 'Legacy release', commits: []},
+      },
+    };
+    releaseBundlesService.list.mockReturnValue(of([legacyRelease]));
+    const {component} = createComponent();
+
+    (component as any).showDetailDialog((component as any).releaseBundles()[0]);
+    const template = overlay.showModal.mock.calls.at(-1)?.[0];
+    const view = template.createEmbeddedView({});
+    view.detectChanges();
+    const text = view.rootNodes
+      .map((node: Node) => node.textContent ?? '')
+      .join(' ')
+      .replace(/\s+/g, ' ');
+
+    expect(text).toContain('Contract schema: distr.release-contract/v1');
+    expect(text).toContain('Storage: legacy · distr.release/v1');
+    view.destroy();
+  });
+
   it('normalizes null legacy and v2 collections before rendering details', () => {
     const legacyWithNullCollections = {
       ...bundles[1],

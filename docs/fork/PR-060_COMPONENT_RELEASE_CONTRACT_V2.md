@@ -52,6 +52,8 @@ lookups retain 404 behavior and expected errors do not expose database details.
 
 The existing detail panel retains the complete v1 view. V2 details add schema/kind, requested and resolved source,
 artifact manifest and platform digests, capability requirements, migrations, evidence counts, and changes.
+Embedded contract schema is displayed separately from outer storage kind/schema so historical v1 audit evidence is
+not relabeled as `distr.release/v1`.
 
 ### Agent/protocol impact
 
@@ -70,7 +72,10 @@ and its normalized facts cannot be removed. V1 writes and all historical release
 Strict unknown-field decoding and target-neutral validation reject undeclared target fields, credentials,
 secret-looking values (including in change summaries), mutable digests, unsafe paths, duplicate platform
 identities, and media types that do not match their artifact type. Artifact and outer bundle component collections
-must form an exact type-preserving bijection. Every normalized fact carries the owning organization boundary.
+must form an exact type-preserving bijection. URI userinfo, PEM private-key markers, and common password,
+client-secret, API-key, and token assignments are rejected without blocking credential-free immutable references.
+Every collection and string/reference field is conservatively bounded before normalization and persistence; the
+normalized v2 contract is limited to 512 KiB. Every normalized fact carries the owning organization boundary.
 
 ### Backward-compatibility impact
 
