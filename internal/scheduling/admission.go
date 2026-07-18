@@ -70,16 +70,14 @@ func EvaluateAdmission(
 	}
 
 	if !approvalEvidenceValid(request) {
-		if overrideActive && accelerations[types.AdmissionGateApprovalWait] {
-			accelerated = true
+		// Approval completion has no trusted, bounded remaining duration. It must
+		// never be shortened merely because a caller supplied a maximum.
+		blocked = true
+		if request.Approval.RequestID == uuid.Nil ||
+			request.Approval.Evaluation.State == types.ApprovalRequestStatePending {
+			appendAdmissionReason(&evaluation, types.AdmissionReasonApprovalMissing)
 		} else {
-			blocked = true
-			if request.Approval.RequestID == uuid.Nil ||
-				request.Approval.Evaluation.State == types.ApprovalRequestStatePending {
-				appendAdmissionReason(&evaluation, types.AdmissionReasonApprovalMissing)
-			} else {
-				appendAdmissionReason(&evaluation, types.AdmissionReasonApprovalInvalid)
-			}
+			appendAdmissionReason(&evaluation, types.AdmissionReasonApprovalInvalid)
 		}
 	}
 
@@ -87,7 +85,11 @@ func EvaluateAdmission(
 		if evidence.Evaluation.Allowed {
 			continue
 		}
-		if overrideActive && accelerations[types.AdmissionGateMaintenanceWait] {
+		if overrideActive && accelerationCoversRemainingWait(
+			accelerations,
+			types.AdmissionGateMaintenanceWait,
+			evidence.RemainingWaitSeconds,
+		) {
 			accelerated = true
 			continue
 		}
@@ -98,7 +100,12 @@ func EvaluateAdmission(
 		if evidence.Evaluation.Allowed && !evidence.Evaluation.Blocked {
 			continue
 		}
-		if overrideActive && accelerations[types.AdmissionGateMaintenanceWait] {
+		if evidence.Evaluation.ReasonCode == types.CalendarReasonFreezeActive &&
+			overrideActive && accelerationCoversRemainingWait(
+			accelerations,
+			types.AdmissionGateMaintenanceWait,
+			evidence.RemainingWaitSeconds,
+		) {
 			accelerated = true
 			continue
 		}
@@ -244,6 +251,7 @@ func validateCalendarEvidence(request types.AdmissionRequest) error {
 	for _, evidence := range request.CalendarEvidence {
 		if evidence.VersionID == uuid.Nil ||
 			!validAdmissionChecksum(evidence.Checksum) ||
+			evidence.RemainingWaitSeconds < 0 ||
 			evidence.Evaluation.CalendarVersionID == nil ||
 			*evidence.Evaluation.CalendarVersionID != evidence.VersionID ||
 			!evidence.Evaluation.UTCInstant.Equal(request.EvaluatedAt) ||
@@ -261,6 +269,7 @@ func validateCalendarEvidence(request types.AdmissionRequest) error {
 	for _, evidence := range request.FreezeEvidence {
 		if evidence.RevisionID == uuid.Nil ||
 			!validAdmissionChecksum(evidence.Checksum) ||
+			evidence.RemainingWaitSeconds < 0 ||
 			!evidence.Evaluation.UTCInstant.Equal(request.EvaluatedAt) ||
 			strings.TrimSpace(evidence.Evaluation.EvaluationIdentity) == "" {
 			return errors.New("admission freeze evidence is invalid")
@@ -290,8 +299,8 @@ func validateGateEvidence(evidence []types.AdmissionGateEvidence) error {
 
 func effectiveAccelerations(
 	request types.AdmissionRequest,
-) (map[types.AdmissionGateKey]bool, bool, error) {
-	result := map[types.AdmissionGateKey]bool{}
+) (map[types.AdmissionGateKey]int64, bool, error) {
+	result := map[types.AdmissionGateKey]int64{}
 	override := request.EmergencyOverride
 	if override == nil {
 		return result, false, nil
@@ -325,7 +334,8 @@ func effectiveAccelerations(
 		if approval.RequestID == uuid.Nil ||
 			approval.RequestRevision < 1 ||
 			!validAdmissionChecksum(approval.RequestChecksum) ||
-			!approval.Eligible {
+			!approval.Eligible ||
+			approval.State != types.ApprovalRequestStateApproved {
 			return nil, false, errors.New("emergency override approval evidence is invalid")
 		}
 	}
@@ -355,12 +365,21 @@ func effectiveAccelerations(
 			acceleration.MaxAccelerationSeconds > maxEmergencyAccelerationSeconds {
 			return nil, false, errors.New("emergency acceleration duration is invalid")
 		}
-		if result[acceleration.GateKey] {
+		if _, exists := result[acceleration.GateKey]; exists {
 			return nil, false, errors.New("emergency acceleration gate keys must be unique")
 		}
-		result[acceleration.GateKey] = true
+		result[acceleration.GateKey] = acceleration.MaxAccelerationSeconds
 	}
 	return result, true, nil
+}
+
+func accelerationCoversRemainingWait(
+	accelerations map[types.AdmissionGateKey]int64,
+	gate types.AdmissionGateKey,
+	remainingWaitSeconds int64,
+) bool {
+	maximum, exists := accelerations[gate]
+	return exists && remainingWaitSeconds > 0 && remainingWaitSeconds <= maximum
 }
 
 func strictOverridePolicy(

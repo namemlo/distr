@@ -73,15 +73,17 @@ type AdmissionCampaignEvidence struct {
 }
 
 type AdmissionCalendarEvidence struct {
-	VersionID  uuid.UUID          `json:"versionId"`
-	Checksum   string             `json:"checksum"`
-	Evaluation CalendarEvaluation `json:"evaluation"`
+	VersionID            uuid.UUID          `json:"versionId"`
+	Checksum             string             `json:"checksum"`
+	Evaluation           CalendarEvaluation `json:"evaluation"`
+	RemainingWaitSeconds int64              `json:"remainingWaitSeconds"`
 }
 
 type AdmissionFreezeEvidence struct {
-	RevisionID uuid.UUID        `json:"revisionId"`
-	Checksum   string           `json:"checksum"`
-	Evaluation FreezeEvaluation `json:"evaluation"`
+	RevisionID           uuid.UUID        `json:"revisionId"`
+	Checksum             string           `json:"checksum"`
+	Evaluation           FreezeEvaluation `json:"evaluation"`
+	RemainingWaitSeconds int64            `json:"remainingWaitSeconds"`
 }
 
 type AdmissionApprovalEvidence struct {
@@ -106,10 +108,11 @@ type EmergencyAcceleration struct {
 }
 
 type EmergencyOverrideApprovalEvidence struct {
-	RequestID       uuid.UUID `json:"requestId"`
-	RequestRevision int64     `json:"requestRevision"`
-	RequestChecksum string    `json:"requestChecksum"`
-	Eligible        bool      `json:"eligible"`
+	RequestID       uuid.UUID            `json:"requestId"`
+	RequestRevision int64                `json:"requestRevision"`
+	RequestChecksum string               `json:"requestChecksum"`
+	Eligible        bool                 `json:"eligible"`
+	State           ApprovalRequestState `json:"state"`
 }
 
 type EmergencyOverride struct {
@@ -195,9 +198,7 @@ type AdmitDeploymentPlanRequest struct {
 	OrganizationID          uuid.UUID
 	DeploymentPlanID        uuid.UUID
 	ActorUserAccountID      uuid.UUID
-	EvaluatedAt             time.Time
 	SchedulerIdempotencyKey string
-	GateEvidence            []AdmissionGateEvidence
 	Campaign                *AdmissionCampaignEvidence
 	Authorize               AdmissionAuthorizer
 }
@@ -221,7 +222,6 @@ type CreateTasksForAdmittedV2PlanRequest struct {
 	SchedulerIdempotencyKey string
 	ConcurrencyPolicy       TaskConcurrencyPolicy
 	AdditionalResources     []TaskLockResourceRequest
-	GateEvidence            []AdmissionGateEvidence
 	Campaign                *AdmissionCampaignEvidence
 	Authorize               AdmissionAuthorizer
 }
@@ -233,14 +233,6 @@ type AdmissionPlanSnapshot struct {
 	ProtocolVersion  string
 	EnvironmentID    uuid.UUID
 	DeploymentUnitID *uuid.UUID
-}
-
-type PersistAdmissionEvaluationRequest struct {
-	Evaluation             AdmissionEvaluation
-	ExpectedPlanChecksum   string
-	ExpectedPolicyChecksum string
-	Authorize              AdmissionAuthorizer
-	Authorization          AdmissionAuthorizationContext
 }
 
 type EmergencyOverrideRecord struct {

@@ -13,24 +13,12 @@ func TestAdmissionRequestValidate(t *testing.T) {
 	g := NewWithT(t)
 	request := AdmitDeploymentPlanRequest{
 		SchedulerIdempotencyKey: "scheduler:plan:revision-1",
-		EvaluatedAt: time.Date(
-			2026, time.July, 18, 12, 0, 0, 0, time.UTC,
-		),
-		GateEvidence: []types.AdmissionGateEvidence{{
-			Key:       types.AdmissionGateIntegrity,
-			Mandatory: true,
-			Satisfied: true,
-			Checksum:  admissionAPITestChecksum(),
-		}},
 	}
 
 	g.Expect(request.Validate()).To(Succeed())
 
-	request.EvaluatedAt = time.Time{}
-	g.Expect(request.Validate()).To(MatchError(ContainSubstring("evaluatedAt")))
-	request.EvaluatedAt = time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
-	request.GateEvidence = append(request.GateEvidence, request.GateEvidence[0])
-	g.Expect(request.Validate()).To(MatchError(ContainSubstring("duplicate gate")))
+	request.SchedulerIdempotencyKey = ""
+	g.Expect(request.Validate()).To(MatchError(ContainSubstring("schedulerIdempotencyKey")))
 }
 
 func TestCreateEmergencyOverrideRequestRejectsProtectedAndUnapprovedAccelerations(t *testing.T) {

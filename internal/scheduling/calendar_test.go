@@ -50,6 +50,25 @@ func TestEvaluateCalendarOrdinaryAllowAndDeny(t *testing.T) {
 	g.Expect(denied.WindowRuleID).To(BeNil())
 }
 
+func TestRemainingCalendarWaitSecondsUsesNextTrustedOpenMinute(t *testing.T) {
+	g := NewWithT(t)
+	version := calendarVersion("UTC", types.MaintenanceWindowRule{
+		ID:          uuid.New(),
+		Name:        "monday morning",
+		Weekdays:    []int32{int32(time.Monday)},
+		StartMinute: 9 * 60,
+		EndMinute:   11 * 60,
+	})
+
+	remaining, err := RemainingCalendarWaitSeconds(
+		version,
+		mustTime(t, "2026-07-20T08:54:30Z"),
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(remaining).To(Equal(int64(330)))
+}
+
 func TestEvaluateCalendarEvidenceUsesImmutableVersionRuleIdentity(t *testing.T) {
 	g := NewWithT(t)
 	logicalID := uuid.New()

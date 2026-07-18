@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/scheduling"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -88,37 +89,139 @@ func TestCreateEmergencyOverrideRepositoryValidationRejectsDuplicateApprovals(t 
 	g.Expect(err).To(MatchError(ContainSubstring("duplicate approval")))
 }
 
-func TestPersistAdmissionEvaluationRejectsMismatchedAuthorizationScopeBeforeDatabase(t *testing.T) {
+func TestAdmitDeploymentPlanRequiresTrustedGateEvidenceRepository(t *testing.T) {
 	g := NewWithT(t)
-	evaluation := types.AdmissionEvaluation{
+	err := validateAdmitDeploymentPlanRequest(types.AdmitDeploymentPlanRequest{
 		OrganizationID:          uuid.New(),
 		DeploymentPlanID:        uuid.New(),
 		ActorUserAccountID:      uuid.New(),
-		Decision:                types.AdmissionDecisionAdmit,
 		SchedulerIdempotencyKey: "scheduler:1",
-	}
+		Authorize: func(
+			context.Context,
+			types.AdmissionAuthorizationContext,
+		) error {
+			return nil
+		},
+	}, nil)
 
-	_, err := PersistAdmissionEvaluation(
+	g.Expect(err).To(MatchError(ContainSubstring("trusted gate evidence")))
+}
+
+func TestSealedAdmissionEvaluationRejectsForgedAdmit(t *testing.T) {
+	g := NewWithT(t)
+	request := sealedAdmissionTestRequest()
+	evaluation, err := scheduling.EvaluateAdmission(context.Background(), request)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(evaluation.Decision).To(Equal(types.AdmissionDecisionBlock))
+	evaluation.Decision = types.AdmissionDecisionAdmit
+
+	_, err = verifySealedAdmissionEvaluation(
 		context.Background(),
-		types.PersistAdmissionEvaluationRequest{
-			Evaluation: evaluation,
-			Authorize: func(
-				context.Context,
-				types.AdmissionAuthorizationContext,
-			) error {
-				return nil
-			},
-			Authorization: types.AdmissionAuthorizationContext{
-				OrganizationID:     evaluation.OrganizationID,
-				ActorUserAccountID: evaluation.ActorUserAccountID,
-				DeploymentPlanID:   uuid.New(),
-				Action:             "plan.execute",
-				DecisionAt:         time.Now().UTC(),
-			},
+		sealedAdmissionEvaluation{
+			AdmissionRequest: request,
+			Evaluation:       evaluation,
 		},
 	)
 
-	g.Expect(err).To(MatchError(ContainSubstring("authorization scope")))
+	g.Expect(err).To(MatchError(ContainSubstring("recomputed material and decision checksums")))
+}
+
+func TestEmergencyOverrideReplayPinsApprovalIDsAndEvidence(t *testing.T) {
+	g := NewWithT(t)
+	approvalID := uuid.New()
+	planID := uuid.New()
+	organizationID := uuid.New()
+	actorID := uuid.New()
+	snapshot := types.AdmissionPlanSnapshot{
+		PlanRevision: 1,
+		Plan: types.DeploymentPlan{
+			ID:                      planID,
+			CanonicalChecksum:       admissionTestChecksum("plan"),
+			EffectivePolicyChecksum: admissionTestChecksum("policy"),
+		},
+	}
+	request := types.CreateEmergencyOverrideRequest{
+		OrganizationID:     organizationID,
+		DeploymentPlanID:   planID,
+		ActorUserAccountID: actorID,
+		Accelerations: []types.EmergencyAcceleration{{
+			GateKey:                types.AdmissionGateMaintenanceWait,
+			MaxAccelerationSeconds: 300,
+		}},
+		Reason:             "critical customer recovery",
+		ApprovalRequestIDs: []uuid.UUID{approvalID},
+		ExpiresAt:          time.Now().UTC().Add(time.Hour),
+		IdempotencyKey:     "incident:42",
+	}
+	evidence := []types.EmergencyOverrideApprovalEvidence{{
+		RequestID:       approvalID,
+		RequestRevision: 2,
+		RequestChecksum: admissionTestChecksum("approval"),
+		Eligible:        true,
+		State:           types.ApprovalRequestStateApproved,
+	}}
+	override := types.EmergencyOverride{
+		ID:                      uuid.New(),
+		CreatedAt:               time.Now().UTC(),
+		OrganizationID:          organizationID,
+		DeploymentPlanID:        planID,
+		PlanRevision:            snapshot.PlanRevision,
+		PlanChecksum:            snapshot.Plan.CanonicalChecksum,
+		EffectivePolicyChecksum: snapshot.Plan.EffectivePolicyChecksum,
+		Accelerations:           request.Accelerations,
+		Reason:                  request.Reason,
+		ActorUserAccountID:      actorID,
+		ApprovalEvidence:        evidence,
+		ExpiresAt:               request.ExpiresAt,
+		IdempotencyKey:          request.IdempotencyKey,
+	}
+	override.Checksum = scheduling.EmergencyOverrideChecksum(override)
+
+	g.Expect(emergencyOverrideMatchesRequest(override, request, snapshot, evidence)).To(BeTrue())
+
+	changedEvidence := append([]types.EmergencyOverrideApprovalEvidence(nil), evidence...)
+	changedEvidence[0].RequestRevision++
+	g.Expect(emergencyOverrideMatchesRequest(
+		override,
+		request,
+		snapshot,
+		changedEvidence,
+	)).To(BeFalse())
+
+	request.ApprovalRequestIDs = []uuid.UUID{uuid.New()}
+	g.Expect(emergencyOverrideMatchesRequest(override, request, snapshot, evidence)).To(BeFalse())
+}
+
+func sealedAdmissionTestRequest() types.AdmissionRequest {
+	approvalID := uuid.New()
+	return types.AdmissionRequest{
+		OrganizationID: uuid.New(),
+		Plan: types.AdmissionPlanEvidence{
+			ID:              uuid.New(),
+			Revision:        1,
+			Checksum:        admissionTestChecksum("plan"),
+			Schema:          types.AdmissionRequiredPlanSchemaV2,
+			ProtocolVersion: types.AdmissionRequiredProtocolV2,
+		},
+		EffectivePolicy: types.EffectivePolicy{
+			VersionIDs:            []uuid.UUID{uuid.New()},
+			Checksum:              admissionTestChecksum("policy"),
+			SubscriberSetChecksum: admissionTestChecksum("subscribers"),
+		},
+		Approval: types.AdmissionApprovalEvidence{
+			RequestID:               approvalID,
+			RequestRevision:         1,
+			SubjectChecksum:         admissionTestChecksum("plan"),
+			EffectivePolicyChecksum: admissionTestChecksum("policy"),
+			SubscriberSetChecksum:   admissionTestChecksum("subscribers"),
+			Evaluation: types.ApprovalEvaluation{
+				RequestID: approvalID,
+				State:     types.ApprovalRequestStatePending,
+				Eligible:  false,
+			},
+		},
+		EvaluatedAt: time.Now().UTC(),
+	}
 }
 
 func readAdmissionMigration(t *testing.T, name string) string {

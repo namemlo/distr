@@ -85,6 +85,7 @@ func TestEmergencyOverrideAcceleratesOnlyWhitelistedWaits(t *testing.T) {
 	request := validAdmissionRequest()
 	request.CalendarEvidence[0].Evaluation.Allowed = false
 	request.CalendarEvidence[0].Evaluation.ReasonCode = types.CalendarReasonWindowClosed
+	request.CalendarEvidence[0].RemainingWaitSeconds = 900
 	override := validEmergencyOverride(request)
 	override.Accelerations = []types.EmergencyAcceleration{{
 		GateKey:                types.AdmissionGateMaintenanceWait,
@@ -107,6 +108,106 @@ func TestEmergencyOverrideAcceleratesOnlyWhitelistedWaits(t *testing.T) {
 	request.EmergencyOverride = &override
 	_, err = EvaluateAdmission(context.Background(), request)
 	g.Expect(err).To(MatchError(ContainSubstring("protected admission gate")))
+}
+
+func TestEmergencyOverrideRequiresApprovedApprovalEvidence(t *testing.T) {
+	g := NewWithT(t)
+	request := validAdmissionRequest()
+	override := validEmergencyOverride(request)
+	override.Accelerations = []types.EmergencyAcceleration{{
+		GateKey:                types.AdmissionGateMaintenanceWait,
+		MaxAccelerationSeconds: 900,
+	}}
+	override.ApprovalEvidence[0].State = types.ApprovalRequestStatePending
+	override.Checksum = EmergencyOverrideChecksum(override)
+	request.EmergencyOverride = &override
+
+	_, err := EvaluateAdmission(context.Background(), request)
+
+	g.Expect(err).To(MatchError(ContainSubstring("approval evidence is invalid")))
+
+	override.ApprovalEvidence[0].State = types.ApprovalRequestStateApproved
+	override.Checksum = EmergencyOverrideChecksum(override)
+	request.EmergencyOverride = &override
+	_, err = EvaluateAdmission(context.Background(), request)
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func TestEmergencyOverrideCannotExceedRemainingWait(t *testing.T) {
+	g := NewWithT(t)
+	request := validAdmissionRequest()
+	request.CalendarEvidence[0].Evaluation.Allowed = false
+	request.CalendarEvidence[0].Evaluation.ReasonCode = types.CalendarReasonWindowClosed
+	request.CalendarEvidence[0].RemainingWaitSeconds = 301
+	override := validEmergencyOverride(request)
+	override.Accelerations = []types.EmergencyAcceleration{{
+		GateKey:                types.AdmissionGateMaintenanceWait,
+		MaxAccelerationSeconds: 300,
+	}}
+	override.Checksum = EmergencyOverrideChecksum(override)
+	request.EmergencyOverride = &override
+
+	evaluation, err := EvaluateAdmission(context.Background(), request)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(evaluation.Decision).To(Equal(types.AdmissionDecisionWait))
+
+	request.CalendarEvidence[0].RemainingWaitSeconds = 300
+	evaluation, err = EvaluateAdmission(context.Background(), request)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(evaluation.Decision).To(Equal(types.AdmissionDecisionAdmit))
+}
+
+func TestEmergencyOverrideCannotExceedRemainingFreeze(t *testing.T) {
+	g := NewWithT(t)
+	request := validAdmissionRequest()
+	request.FreezeEvidence[0].Evaluation.Allowed = false
+	request.FreezeEvidence[0].Evaluation.Blocked = true
+	request.FreezeEvidence[0].Evaluation.ReasonCode = types.CalendarReasonFreezeActive
+	request.FreezeEvidence[0].Evaluation.ActiveRevisionIDs = []uuid.UUID{
+		request.FreezeEvidence[0].RevisionID,
+	}
+	request.FreezeEvidence[0].RemainingWaitSeconds = 301
+	override := validEmergencyOverride(request)
+	override.Accelerations = []types.EmergencyAcceleration{{
+		GateKey:                types.AdmissionGateMaintenanceWait,
+		MaxAccelerationSeconds: 300,
+	}}
+	override.Checksum = EmergencyOverrideChecksum(override)
+	request.EmergencyOverride = &override
+
+	evaluation, err := EvaluateAdmission(context.Background(), request)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(evaluation.Decision).To(Equal(types.AdmissionDecisionWait))
+
+	request.FreezeEvidence[0].RemainingWaitSeconds = 300
+	evaluation, err = EvaluateAdmission(context.Background(), request)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(evaluation.Decision).To(Equal(types.AdmissionDecisionAdmit))
+}
+
+func TestEmergencyOverrideCannotAccelerateApprovalWithoutTrustedRemainingWait(t *testing.T) {
+	g := NewWithT(t)
+	request := validAdmissionRequest()
+	request.Approval.Evaluation.Eligible = false
+	request.Approval.Evaluation.State = types.ApprovalRequestStatePending
+	request.EffectivePolicy.OverrideRules[0].ShortenableGateKeys = append(
+		request.EffectivePolicy.OverrideRules[0].ShortenableGateKeys,
+		string(types.AdmissionGateApprovalWait),
+	)
+	override := validEmergencyOverride(request)
+	override.Accelerations = []types.EmergencyAcceleration{{
+		GateKey:                types.AdmissionGateApprovalWait,
+		MaxAccelerationSeconds: 300,
+	}}
+	override.Checksum = EmergencyOverrideChecksum(override)
+	request.EmergencyOverride = &override
+
+	evaluation, err := EvaluateAdmission(context.Background(), request)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(evaluation.Decision).To(Equal(types.AdmissionDecisionBlock))
 }
 
 func TestEvaluateAdmissionNeverOverridesMandatoryGateEvidence(t *testing.T) {
@@ -264,6 +365,7 @@ func validEmergencyOverride(request types.AdmissionRequest) types.EmergencyOverr
 			RequestRevision: request.Approval.RequestRevision,
 			RequestChecksum: testChecksum("override-approval"),
 			Eligible:        true,
+			State:           types.ApprovalRequestStateApproved,
 		}},
 		ExpiresAt: request.EvaluatedAt.Add(time.Hour),
 	}

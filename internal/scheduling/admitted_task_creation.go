@@ -3,7 +3,6 @@ package scheduling
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/types"
@@ -24,7 +23,6 @@ type AdmittedTaskCreationDependencies struct {
 		context.Context,
 		types.CreateTasksForDeploymentPlanRequest,
 	) ([]types.Task, error)
-	Clock func() time.Time
 }
 
 func CreateTasksForAdmittedV2Plan(
@@ -61,19 +59,13 @@ func CreateTasksForAdmittedV2Plan(
 			"task admission requires frozen plan_schema v2 and protocol_version v2",
 		)
 	}
-	clock := dependencies.Clock
-	if clock == nil {
-		clock = func() time.Time { return time.Now().UTC() }
-	}
 	evaluation, err := dependencies.AdmitDeploymentPlan(
 		ctx,
 		types.AdmitDeploymentPlanRequest{
 			OrganizationID:          request.OrganizationID,
 			DeploymentPlanID:        request.DeploymentPlanID,
 			ActorUserAccountID:      request.ActorUserAccountID,
-			EvaluatedAt:             clock().UTC(),
 			SchedulerIdempotencyKey: request.SchedulerIdempotencyKey,
-			GateEvidence:            request.GateEvidence,
 			Campaign:                request.Campaign,
 			Authorize:               request.Authorize,
 		},

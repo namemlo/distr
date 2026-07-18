@@ -202,6 +202,41 @@ func EvaluateCalendar(
 	return EvaluateCalendarWithZoneRules(zonerules.Production(), version, input)
 }
 
+// RemainingCalendarWaitSeconds returns the trusted wall-clock wait until the
+// next open minute for an immutable calendar version.
+func RemainingCalendarWaitSeconds(
+	version types.MaintenanceCalendarVersion,
+	evaluatedAt time.Time,
+) (int64, error) {
+	input := types.CalendarEvaluationInput{
+		UTCInstant:  evaluatedAt.UTC(),
+		IANAZone:    version.IANAZone,
+		RuleVersion: version.RuleVersion,
+	}
+	current, err := EvaluateCalendar(version, input)
+	if err != nil {
+		return 0, err
+	}
+	if current.Allowed {
+		return 0, nil
+	}
+	candidate := evaluatedAt.UTC().Truncate(time.Minute).Add(time.Minute)
+	const maximumSearchMinutes = 8 * 24 * 60
+	for range maximumSearchMinutes {
+		input.UTCInstant = candidate
+		next, evaluationErr := EvaluateCalendar(version, input)
+		if evaluationErr != nil {
+			return 0, evaluationErr
+		}
+		if next.Allowed {
+			wait := candidate.Sub(evaluatedAt.UTC())
+			return int64((wait + time.Second - 1) / time.Second), nil
+		}
+		candidate = candidate.Add(time.Minute)
+	}
+	return 0, errors.New("maintenance calendar has no open minute in the next eight days")
+}
+
 func EvaluateCalendarWithZoneRules(
 	provider zonerules.Provider,
 	version types.MaintenanceCalendarVersion,

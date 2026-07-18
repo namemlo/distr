@@ -20,13 +20,17 @@ override are material and must produce new checksum-bound evidence.
 - Evaluate admission as a pure function over immutable plan, policy, calendar, freeze, approval, gate, campaign,
   and optional override evidence.
 - Persist every scheduler decision in append-only `AdmissionEvaluation` rows. A scheduler idempotency key may replay
-  only the exact same decision checksum.
+  only the exact same decision checksum. Persistence reevaluates internal sealed material and verifies both
+  checksums before writing the recomputed decision.
 - Separate `material_checksum` from `decision_checksum`. The material checksum omits the evaluation clock and exact
   temporal result, while the decision checksum includes them.
 - Persist emergency accelerations in append-only `EmergencyOverride` rows bound to the exact plan and effective
-  policy checksums, actor, current approval evidence, expiry, and canonical override checksum.
+  policy checksums, actor, current approved-and-eligible approval evidence, expiry, and canonical override checksum.
+  Idempotent replay includes the current approval IDs, revisions, states, evidence checksums, and override checksum.
 - Allow acceleration only for gate keys present in every applicable override rule. Integrity, required evidence,
-  backup, provenance, observation, and mandatory health gates are permanently protected.
+  backup, provenance, observation, and mandatory health gates are permanently protected. A calendar or freeze wait
+  is shortened only when its trusted remaining duration is no greater than the requested maximum; an unbounded
+  approval wait cannot be accelerated.
 - Require both `operator_control_plane_v2` and `executor_protocol_v2`, scoped `plan.execute` or
   `emergency.override` authorization, and effective enrollment before mutation. Until the PR-066 adapter is present,
   the authorization seam fails closed.
@@ -34,8 +38,10 @@ override are material and must produce new checksum-bound evidence.
   `CreateTasksForAdmittedV2Plan`, which requires frozen v2 schema/protocol identity, records an `ADMIT` decision, and
   then delegates to the existing creator.
 
-Exact evaluation, creation, and expiry instants use `TIMESTAMPTZ`. Temporal evidence also retains the IANA zone,
-timezone rule version, local time, UTC offset, immutable rule IDs, and evaluator identity supplied by ADR-0062.
+Exact evaluation, creation, and expiry instants use `TIMESTAMPTZ`. Admission evaluation uses the database clock,
+not a caller-supplied instant. Mandatory gate evidence comes from a trusted producer bound to the frozen plan and
+policy checksums, not from the API body. Temporal evidence also retains the IANA zone, timezone rule version, local
+time, UTC offset, immutable rule IDs, evaluator identity, and trusted remaining wait supplied by ADR-0062.
 
 ## Consequences
 

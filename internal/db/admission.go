@@ -69,14 +69,46 @@ const emergencyOverrideOutputExpr = `
 	o.idempotency_key
 `
 
+type admissionGateEvidenceContext struct {
+	OrganizationID          uuid.UUID
+	DeploymentPlanID        uuid.UUID
+	PlanRevision            int64
+	PlanChecksum            string
+	EffectivePolicyChecksum string
+	EvaluatedAt             time.Time
+}
+
+type admissionGateEvidenceRepository interface {
+	ResolveAdmissionGateEvidence(
+		context.Context,
+		admissionGateEvidenceContext,
+	) ([]types.AdmissionGateEvidence, error)
+}
+
+type unavailableAdmissionGateEvidenceRepository struct{}
+
+func (unavailableAdmissionGateEvidenceRepository) ResolveAdmissionGateEvidence(
+	context.Context,
+	admissionGateEvidenceContext,
+) ([]types.AdmissionGateEvidence, error) {
+	return nil, apierrors.NewConflict("trusted gate evidence repository is unavailable")
+}
+
+var trustedAdmissionGateEvidenceRepository admissionGateEvidenceRepository = unavailableAdmissionGateEvidenceRepository{}
+
+type sealedAdmissionEvaluation struct {
+	AdmissionRequest        types.AdmissionRequest
+	Evaluation              types.AdmissionEvaluation
+	ExpectedPlanChecksum    string
+	ExpectedPolicyChecksum  string
+	ActorUserAccountID      uuid.UUID
+	SchedulerIdempotencyKey string
+}
+
 func CreateTasksForAdmittedV2Plan(
 	ctx context.Context,
 	request types.CreateTasksForAdmittedV2PlanRequest,
 ) ([]types.Task, error) {
-	evaluatedAt, err := admissionDatabaseTime(ctx)
-	if err != nil {
-		return nil, err
-	}
 	return scheduling.CreateTasksForAdmittedV2Plan(
 		ctx,
 		request,
@@ -89,9 +121,6 @@ func CreateTasksForAdmittedV2Plan(
 			},
 			AdmitDeploymentPlan: AdmitDeploymentPlan,
 			CreateTasks:         CreateTasksForDeploymentPlan,
-			Clock: func() time.Time {
-				return evaluatedAt
-			},
 		},
 	)
 }
@@ -100,12 +129,24 @@ func AdmitDeploymentPlan(
 	ctx context.Context,
 	request types.AdmitDeploymentPlanRequest,
 ) (*types.AdmissionEvaluation, error) {
-	if err := validateAdmitDeploymentPlanRequest(request); err != nil {
+	return admitDeploymentPlan(ctx, request, trustedAdmissionGateEvidenceRepository)
+}
+
+func admitDeploymentPlan(
+	ctx context.Context,
+	request types.AdmitDeploymentPlanRequest,
+	gateEvidenceRepository admissionGateEvidenceRepository,
+) (*types.AdmissionEvaluation, error) {
+	if err := validateAdmitDeploymentPlanRequest(request, gateEvidenceRepository); err != nil {
 		return nil, err
 	}
 	var result *types.AdmissionEvaluation
 	err := RunTx(ctx, func(txCtx context.Context) error {
 		snapshot, err := getAdmissionPlanSnapshot(txCtx, request.DeploymentPlanID, request.OrganizationID)
+		if err != nil {
+			return err
+		}
+		decisionAt, err := admissionDatabaseTime(txCtx)
 		if err != nil {
 			return err
 		}
@@ -119,12 +160,18 @@ func AdmitDeploymentPlan(
 				EnvironmentID:      snapshot.EnvironmentID,
 				DeploymentUnitID:   snapshot.DeploymentUnitID,
 				Action:             "plan.execute",
-				DecisionAt:         request.EvaluatedAt.UTC(),
+				DecisionAt:         decisionAt,
 			},
 		); err != nil {
 			return err
 		}
-		admissionRequest, err := buildAdmissionRequest(txCtx, snapshot, request)
+		admissionRequest, err := buildAdmissionRequest(
+			txCtx,
+			snapshot,
+			request,
+			decisionAt,
+			gateEvidenceRepository,
+		)
 		if err != nil {
 			return err
 		}
@@ -132,14 +179,13 @@ func AdmitDeploymentPlan(
 		if err != nil {
 			return apierrors.NewConflict(err.Error())
 		}
-		evaluation.SchedulerIdempotencyKey = strings.TrimSpace(
-			request.SchedulerIdempotencyKey,
-		)
-		evaluation.ActorUserAccountID = request.ActorUserAccountID
-		result, err = persistAdmissionEvaluation(txCtx, types.PersistAdmissionEvaluationRequest{
-			Evaluation:             evaluation,
-			ExpectedPlanChecksum:   snapshot.Plan.CanonicalChecksum,
-			ExpectedPolicyChecksum: snapshot.Plan.EffectivePolicyChecksum,
+		result, err = persistAdmissionEvaluation(txCtx, sealedAdmissionEvaluation{
+			AdmissionRequest:        admissionRequest,
+			Evaluation:              evaluation,
+			ExpectedPlanChecksum:    snapshot.Plan.CanonicalChecksum,
+			ExpectedPolicyChecksum:  snapshot.Plan.EffectivePolicyChecksum,
+			ActorUserAccountID:      request.ActorUserAccountID,
+			SchedulerIdempotencyKey: strings.TrimSpace(request.SchedulerIdempotencyKey),
 		})
 		return err
 	})
@@ -147,55 +193,6 @@ func AdmitDeploymentPlan(
 		return nil, err
 	}
 	return result, nil
-}
-
-func PersistAdmissionEvaluation(
-	ctx context.Context,
-	request types.PersistAdmissionEvaluationRequest,
-) (*types.AdmissionEvaluation, error) {
-	if err := validatePersistAdmissionAuthorization(request); err != nil {
-		return nil, err
-	}
-	var result *types.AdmissionEvaluation
-	err := RunTx(ctx, func(txCtx context.Context) error {
-		snapshot, err := getAdmissionPlanSnapshot(
-			txCtx,
-			request.Evaluation.DeploymentPlanID,
-			request.Evaluation.OrganizationID,
-		)
-		if err != nil {
-			return err
-		}
-		authorization := request.Authorization
-		authorization.EnvironmentID = snapshot.EnvironmentID
-		authorization.DeploymentUnitID = snapshot.DeploymentUnitID
-		if err := authorizeAdmission(txCtx, request.Authorize, authorization); err != nil {
-			return err
-		}
-		result, err = persistAdmissionEvaluation(txCtx, request)
-		return err
-	})
-	return result, err
-}
-
-func validatePersistAdmissionAuthorization(
-	request types.PersistAdmissionEvaluationRequest,
-) error {
-	authorization := request.Authorization
-	evaluation := request.Evaluation
-	if request.Authorize == nil {
-		return apierrors.NewForbidden("scoped admission authorization is required")
-	}
-	if authorization.OrganizationID != evaluation.OrganizationID ||
-		authorization.DeploymentPlanID != evaluation.DeploymentPlanID ||
-		authorization.ActorUserAccountID != evaluation.ActorUserAccountID ||
-		authorization.Action != "plan.execute" ||
-		authorization.DecisionAt.IsZero() {
-		return apierrors.NewForbidden(
-			"admission persistence authorization scope does not match the evaluation",
-		)
-	}
-	return nil
 }
 
 func CreateEmergencyOverride(
@@ -230,13 +227,25 @@ func CreateEmergencyOverride(
 		); err != nil {
 			return err
 		}
+		approvalEvidence, err := emergencyOverrideApprovalEvidence(
+			txCtx,
+			request,
+		)
+		if err != nil {
+			return err
+		}
 		if replay, err := getEmergencyOverrideByIdempotencyKey(
 			txCtx,
 			request.OrganizationID,
 			request.DeploymentPlanID,
 			request.IdempotencyKey,
 		); err == nil {
-			if emergencyOverrideMatchesRequest(*replay, request, snapshot) {
+			if emergencyOverrideMatchesRequest(
+				*replay,
+				request,
+				snapshot,
+				approvalEvidence,
+			) {
 				result = replay
 				return nil
 			}
@@ -244,13 +253,6 @@ func CreateEmergencyOverride(
 				"emergency override idempotency key was already used for different material",
 			)
 		} else if !errors.Is(err, apierrors.ErrNotFound) {
-			return err
-		}
-		approvalEvidence, err := emergencyOverrideApprovalEvidence(
-			txCtx,
-			request,
-		)
-		if err != nil {
 			return err
 		}
 		override := types.EmergencyOverride{
@@ -287,7 +289,10 @@ func CreateEmergencyOverride(
 	return result, err
 }
 
-func validateAdmitDeploymentPlanRequest(request types.AdmitDeploymentPlanRequest) error {
+func validateAdmitDeploymentPlanRequest(
+	request types.AdmitDeploymentPlanRequest,
+	gateEvidenceRepository admissionGateEvidenceRepository,
+) error {
 	if request.OrganizationID == uuid.Nil ||
 		request.DeploymentPlanID == uuid.Nil ||
 		request.ActorUserAccountID == uuid.Nil {
@@ -295,14 +300,14 @@ func validateAdmitDeploymentPlanRequest(request types.AdmitDeploymentPlanRequest
 			"organizationId, deploymentPlanId, and actorUserAccountId are required",
 		)
 	}
-	if request.EvaluatedAt.IsZero() {
-		return apierrors.NewBadRequest("evaluatedAt is required")
-	}
 	if !admissionIdempotencyKeyValid(request.SchedulerIdempotencyKey) {
 		return apierrors.NewBadRequest("schedulerIdempotencyKey is invalid")
 	}
 	if request.Authorize == nil {
 		return apierrors.NewForbidden("scoped admission authorization is required")
+	}
+	if gateEvidenceRepository == nil {
+		return apierrors.NewConflict("trusted gate evidence repository is required")
 	}
 	return nil
 }
@@ -455,6 +460,8 @@ func buildAdmissionRequest(
 	ctx context.Context,
 	snapshot types.AdmissionPlanSnapshot,
 	request types.AdmitDeploymentPlanRequest,
+	evaluatedAt time.Time,
+	gateEvidenceRepository admissionGateEvidenceRepository,
 ) (types.AdmissionRequest, error) {
 	if snapshot.PlanSchema != types.AdmissionRequiredPlanSchemaV2 ||
 		snapshot.ProtocolVersion != types.AdmissionRequiredProtocolV2 {
@@ -478,7 +485,7 @@ func buildAdmissionRequest(
 		ctx,
 		snapshot.Plan.OrganizationID,
 		snapshot.Plan.EffectivePolicy.AdmissionRules.MaintenanceWindowVersionIDs,
-		request.EvaluatedAt,
+		evaluatedAt,
 	)
 	if err != nil {
 		return types.AdmissionRequest{}, err
@@ -487,7 +494,7 @@ func buildAdmissionRequest(
 		ctx,
 		snapshot.Plan.OrganizationID,
 		snapshot.Plan.EffectivePolicy.AdmissionRules.FreezeRuleVersionIDs,
-		request.EvaluatedAt,
+		evaluatedAt,
 	)
 	if err != nil {
 		return types.AdmissionRequest{}, err
@@ -506,13 +513,27 @@ func buildAdmissionRequest(
 		snapshot.Plan.ID,
 		snapshot.Plan.CanonicalChecksum,
 		snapshot.Plan.EffectivePolicyChecksum,
-		request.EvaluatedAt,
+		evaluatedAt,
 	)
 	if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
 		return types.AdmissionRequest{}, err
 	}
 	if errors.Is(err, apierrors.ErrNotFound) {
 		override = nil
+	}
+	gateEvidence, err := gateEvidenceRepository.ResolveAdmissionGateEvidence(
+		ctx,
+		admissionGateEvidenceContext{
+			OrganizationID:          snapshot.Plan.OrganizationID,
+			DeploymentPlanID:        snapshot.Plan.ID,
+			PlanRevision:            snapshot.PlanRevision,
+			PlanChecksum:            snapshot.Plan.CanonicalChecksum,
+			EffectivePolicyChecksum: snapshot.Plan.EffectivePolicyChecksum,
+			EvaluatedAt:             evaluatedAt.UTC(),
+		},
+	)
+	if err != nil {
+		return types.AdmissionRequest{}, err
 	}
 	return types.AdmissionRequest{
 		OrganizationID:    snapshot.Plan.OrganizationID,
@@ -522,9 +543,9 @@ func buildAdmissionRequest(
 		CalendarEvidence:  calendars,
 		FreezeEvidence:    freezes,
 		Approval:          approval,
-		GateEvidence:      slices.Clone(request.GateEvidence),
+		GateEvidence:      slices.Clone(gateEvidence),
 		EmergencyOverride: override,
-		EvaluatedAt:       request.EvaluatedAt.UTC(),
+		EvaluatedAt:       evaluatedAt.UTC(),
 	}, nil
 }
 
@@ -592,10 +613,22 @@ func admissionCalendarEvidence(
 		if err != nil {
 			return nil, fmt.Errorf("evaluate maintenance calendar %s: %w", versionID, err)
 		}
+		remainingWaitSeconds, err := scheduling.RemainingCalendarWaitSeconds(
+			*version,
+			evaluatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"calculate maintenance calendar wait %s: %w",
+				versionID,
+				err,
+			)
+		}
 		result = append(result, types.AdmissionCalendarEvidence{
-			VersionID:  version.ID,
-			Checksum:   version.Checksum,
-			Evaluation: evaluation,
+			VersionID:            version.ID,
+			Checksum:             version.Checksum,
+			Evaluation:           evaluation,
+			RemainingWaitSeconds: remainingWaitSeconds,
 		})
 	}
 	return result, nil
@@ -621,10 +654,17 @@ func admissionFreezeEvidence(
 				RuleVersion: revision.RuleVersion,
 			},
 		)
+		remainingWaitSeconds := int64(0)
+		if evaluation.ReasonCode == types.CalendarReasonFreezeActive &&
+			revision.EndAt.After(evaluatedAt.UTC()) {
+			remaining := revision.EndAt.UTC().Sub(evaluatedAt.UTC())
+			remainingWaitSeconds = int64((remaining + time.Second - 1) / time.Second)
+		}
 		result = append(result, types.AdmissionFreezeEvidence{
-			RevisionID: revision.ID,
-			Checksum:   revision.Checksum,
-			Evaluation: evaluation,
+			RevisionID:           revision.ID,
+			Checksum:             revision.Checksum,
+			Evaluation:           evaluation,
+			RemainingWaitSeconds: remainingWaitSeconds,
 		})
 	}
 	return result, nil
@@ -688,16 +728,20 @@ func getDeploymentFreezeRevisionByID(
 
 func persistAdmissionEvaluation(
 	ctx context.Context,
-	request types.PersistAdmissionEvaluationRequest,
+	request sealedAdmissionEvaluation,
 ) (*types.AdmissionEvaluation, error) {
-	evaluation := request.Evaluation
+	evaluation, err := verifySealedAdmissionEvaluation(ctx, request)
+	if err != nil {
+		return nil, err
+	}
 	if evaluation.OrganizationID == uuid.Nil ||
 		evaluation.DeploymentPlanID == uuid.Nil ||
-		evaluation.ActorUserAccountID == uuid.Nil ||
-		!evaluation.Decision.IsValid() ||
-		!admissionIdempotencyKeyValid(evaluation.SchedulerIdempotencyKey) {
+		request.ActorUserAccountID == uuid.Nil ||
+		!admissionIdempotencyKeyValid(request.SchedulerIdempotencyKey) {
 		return nil, apierrors.NewBadRequest("admission evaluation persistence input is invalid")
 	}
+	evaluation.ActorUserAccountID = request.ActorUserAccountID
+	evaluation.SchedulerIdempotencyKey = strings.TrimSpace(request.SchedulerIdempotencyKey)
 	if err := assertAdmissionMaterialCurrent(ctx, request); err != nil {
 		return nil, err
 	}
@@ -829,7 +873,7 @@ func persistAdmissionEvaluation(
 
 func assertAdmissionMaterialCurrent(
 	ctx context.Context,
-	request types.PersistAdmissionEvaluationRequest,
+	request sealedAdmissionEvaluation,
 ) error {
 	var planChecksum, policyChecksum string
 	err := internalctx.GetDb(ctx).QueryRow(ctx, `
@@ -857,6 +901,26 @@ func assertAdmissionMaterialCurrent(
 		)
 	}
 	return nil
+}
+
+func verifySealedAdmissionEvaluation(
+	ctx context.Context,
+	request sealedAdmissionEvaluation,
+) (types.AdmissionEvaluation, error) {
+	recomputed, err := scheduling.EvaluateAdmission(ctx, request.AdmissionRequest)
+	if err != nil {
+		return types.AdmissionEvaluation{}, apierrors.NewConflict(
+			"sealed admission material cannot be reevaluated: " + err.Error(),
+		)
+	}
+	if request.Evaluation.MaterialChecksum != recomputed.MaterialChecksum ||
+		request.Evaluation.DecisionChecksum != recomputed.DecisionChecksum ||
+		request.Evaluation.Decision != recomputed.Decision {
+		return types.AdmissionEvaluation{}, apierrors.NewConflict(
+			"sealed admission evaluation does not match recomputed material and decision checksums",
+		)
+	}
+	return recomputed, nil
 }
 
 func getAdmissionEvaluationByIdempotencyKey(
@@ -969,9 +1033,10 @@ func emergencyOverrideApprovalEvidence(
 		if err != nil {
 			return nil, err
 		}
-		if !evaluation.Eligible {
+		if !evaluation.Eligible ||
+			evaluation.State != types.ApprovalRequestStateApproved {
 			return nil, apierrors.NewConflict(
-				"every emergency override approval must be current and eligible",
+				"every emergency override approval must be current, eligible, and approved",
 			)
 		}
 		result = append(result, types.EmergencyOverrideApprovalEvidence{
@@ -979,6 +1044,7 @@ func emergencyOverrideApprovalEvidence(
 			RequestRevision: approval.Revision,
 			RequestChecksum: approvalEvidenceChecksum(*approval),
 			Eligible:        true,
+			State:           evaluation.State,
 		})
 	}
 	slices.SortFunc(result, func(left, right types.EmergencyOverrideApprovalEvidence) int {
@@ -1172,17 +1238,34 @@ func emergencyOverrideMatchesRequest(
 	override types.EmergencyOverride,
 	request types.CreateEmergencyOverrideRequest,
 	snapshot types.AdmissionPlanSnapshot,
+	approvalEvidence []types.EmergencyOverrideApprovalEvidence,
 ) bool {
-	left, _ := json.Marshal(override.Accelerations)
-	right, _ := json.Marshal(request.Accelerations)
-	return override.OrganizationID == request.OrganizationID &&
-		override.DeploymentPlanID == request.DeploymentPlanID &&
-		override.PlanChecksum == snapshot.Plan.CanonicalChecksum &&
-		override.EffectivePolicyChecksum == snapshot.Plan.EffectivePolicyChecksum &&
-		string(left) == string(right) &&
-		override.Reason == strings.TrimSpace(request.Reason) &&
-		override.ActorUserAccountID == request.ActorUserAccountID &&
-		override.ExpiresAt.Equal(request.ExpiresAt.UTC())
+	if len(request.ApprovalRequestIDs) != len(approvalEvidence) {
+		return false
+	}
+	requestedApprovals := make(map[uuid.UUID]struct{}, len(request.ApprovalRequestIDs))
+	for _, requestID := range request.ApprovalRequestIDs {
+		requestedApprovals[requestID] = struct{}{}
+	}
+	for _, evidence := range approvalEvidence {
+		if _, exists := requestedApprovals[evidence.RequestID]; !exists {
+			return false
+		}
+	}
+	candidate := override
+	candidate.OrganizationID = request.OrganizationID
+	candidate.DeploymentPlanID = request.DeploymentPlanID
+	candidate.PlanRevision = snapshot.PlanRevision
+	candidate.PlanChecksum = snapshot.Plan.CanonicalChecksum
+	candidate.EffectivePolicyChecksum = snapshot.Plan.EffectivePolicyChecksum
+	candidate.Accelerations = slices.Clone(request.Accelerations)
+	candidate.Reason = strings.TrimSpace(request.Reason)
+	candidate.ActorUserAccountID = request.ActorUserAccountID
+	candidate.ApprovalEvidence = slices.Clone(approvalEvidence)
+	candidate.ExpiresAt = request.ExpiresAt.UTC()
+	candidate.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	return override.Checksum == scheduling.EmergencyOverrideChecksum(override) &&
+		override.Checksum == scheduling.EmergencyOverrideChecksum(candidate)
 }
 
 func admissionDatabaseTime(ctx context.Context) (time.Time, error) {

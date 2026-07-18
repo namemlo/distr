@@ -41,7 +41,7 @@ func TestAdmissionScopeDenialStopsBeforePersistence(t *testing.T) {
 				EnvironmentID:      uuid.New(),
 				DeploymentUnitID:   new(uuid.UUID),
 				Action:             "plan.execute",
-				DecisionAt:         request.EvaluatedAt,
+				DecisionAt:         time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC),
 			}); err != nil {
 				return nil, err
 			}
@@ -54,8 +54,7 @@ func TestAdmissionScopeDenialStopsBeforePersistence(t *testing.T) {
 		http.MethodPost,
 		"/api/v1/deployment-plans/"+planID.String()+"/admission",
 		strings.NewReader(
-			`{"schedulerIdempotencyKey":"scheduler:1",`+
-				`"evaluatedAt":"2026-07-18T12:00:00Z","gateEvidence":[]}`,
+			`{"schedulerIdempotencyKey":"scheduler:1"}`,
 		),
 	)
 	request.SetPathValue("deploymentPlanId", planID.String())
@@ -68,6 +67,39 @@ func TestAdmissionScopeDenialStopsBeforePersistence(t *testing.T) {
 
 	g.Expect(response.Code).To(Equal(http.StatusForbidden))
 	g.Expect(persisted).To(BeFalse())
+}
+
+func TestAdmissionRejectsCallerSuppliedClockAndGateEvidence(t *testing.T) {
+	g := NewWithT(t)
+	planID := uuid.New()
+	admitCalls := 0
+	dependencies := admissionHandlerDependencies{
+		admit: func(
+			context.Context,
+			types.AdmitDeploymentPlanRequest,
+		) (*types.AdmissionEvaluation, error) {
+			admitCalls++
+			return &types.AdmissionEvaluation{}, nil
+		},
+	}
+	handler := admitDeploymentPlanHandlerWithDependencies(dependencies)
+	for _, body := range []string{
+		`{"schedulerIdempotencyKey":"scheduler:1","evaluatedAt":"2026-07-18T12:00:00Z"}`,
+		`{"schedulerIdempotencyKey":"scheduler:1","gateEvidence":[]}`,
+	} {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v1/deployment-plans/"+planID.String()+"/admission",
+			strings.NewReader(body),
+		)
+		request.SetPathValue("deploymentPlanId", planID.String())
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		g.Expect(response.Code).To(Equal(http.StatusBadRequest))
+	}
+	g.Expect(admitCalls).To(Equal(0))
 }
 
 func TestEmergencyOverrideScopeDenialStopsBeforePersistence(t *testing.T) {

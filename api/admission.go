@@ -25,8 +25,6 @@ var (
 
 type AdmitDeploymentPlanRequest struct {
 	SchedulerIdempotencyKey string                           `json:"schedulerIdempotencyKey"`
-	EvaluatedAt             time.Time                        `json:"evaluatedAt"`
-	GateEvidence            []types.AdmissionGateEvidence    `json:"gateEvidence"`
 	Campaign                *types.AdmissionCampaignEvidence `json:"campaign,omitempty"`
 }
 
@@ -36,31 +34,6 @@ func (request *AdmitDeploymentPlanRequest) Validate() error {
 		return validation.NewValidationFailedError(
 			"schedulerIdempotencyKey must be 1-128 URL-safe characters",
 		)
-	}
-	if request.EvaluatedAt.IsZero() {
-		return validation.NewValidationFailedError("evaluatedAt is required")
-	}
-	request.EvaluatedAt = request.EvaluatedAt.UTC()
-	if len(request.GateEvidence) > admissionMaximumEvidenceItems {
-		return validation.NewValidationFailedError("gateEvidence contains too many items")
-	}
-	seen := make(map[types.AdmissionGateKey]struct{}, len(request.GateEvidence))
-	for index, evidence := range request.GateEvidence {
-		if strings.TrimSpace(string(evidence.Key)) == "" {
-			return validation.NewValidationFailedError(
-				fmt.Sprintf("gateEvidence[%d].key is required", index),
-			)
-		}
-		if !admissionChecksumPattern.MatchString(strings.TrimSpace(evidence.Checksum)) {
-			return validation.NewValidationFailedError(fmt.Sprintf(
-				"gateEvidence[%d].checksum is invalid",
-				index,
-			))
-		}
-		if _, exists := seen[evidence.Key]; exists {
-			return validation.NewValidationFailedError("gateEvidence contains duplicate gate keys")
-		}
-		seen[evidence.Key] = struct{}{}
 	}
 	if request.Campaign != nil {
 		if request.Campaign.ID == uuid.Nil ||
