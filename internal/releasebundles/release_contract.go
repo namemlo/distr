@@ -503,7 +503,7 @@ func validateComponentCapabilities(contract types.ComponentReleaseContractV2) []
 			}
 			modes[mode] = struct{}{}
 			switch mode {
-			case "included", "pinned-existing", "shared-provider", "approved-external", "feature-disabled":
+			case "included", "pinned_existing", "shared_provider", "approved_external", "feature_disabled":
 			default:
 				add(field+".allowedModes", "supported", "capability resolution mode is not supported")
 			}

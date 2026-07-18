@@ -226,6 +226,7 @@ func ApiRouter(
 					r.Route("/observability", handlers.ObservabilityRouter)
 					r.Route("/organization", handlers.OrganizationRouter)
 					r.Route("/organizations", handlers.OrganizationsRouter)
+					r.Route("/product-releases", handlers.ProductReleasesRouter)
 					r.Route("/release-bundles", handlers.ReleaseBundlesRouter)
 					r.Route("/retention-policies", handlers.RetentionPoliciesRouter)
 					r.Route("/runbooks", handlers.RunbooksRouter)

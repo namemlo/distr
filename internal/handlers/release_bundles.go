@@ -232,6 +232,8 @@ func validateReleaseBundleHandler() http.HandlerFunc {
 		result, err := db.ValidateReleaseBundle(ctx, id, *auth.CurrentOrgID())
 		if errors.Is(err, apierrors.ErrNotFound) {
 			http.NotFound(w, r)
+		} else if errors.Is(err, apierrors.ErrConflict) {
+			http.Error(w, "Product Releases must use the product-releases endpoint", http.StatusConflict)
 		} else if err != nil {
 			log.Error("failed to validate release bundle", zap.Error(err))
 			sentry.GetHubFromContext(ctx).CaptureException(err)

@@ -46,3 +46,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0056: Canonical Deployment Registry Identity](0056-canonical-deployment-registry-identity.md)
 - [ADR-0057: Immutable Target Config Snapshots](0057-immutable-target-config-snapshots.md)
 - [ADR-0058: Component Release Contract v2](0058-component-release-contract-v2.md)
+- [ADR-0059: Product Release Capability Graph](0059-product-release-capability-graph.md)

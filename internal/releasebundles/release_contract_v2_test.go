@@ -679,7 +679,7 @@ func validComponentReleaseContract() types.ComponentReleaseContractV2 {
 			Name:            "identity.verify",
 			Range:           ">=1.5.0 <3.0.0",
 			ResolutionStage: "target",
-			AllowedModes:    []string{"included", "pinned-existing"},
+			AllowedModes:    []string{"included", "pinned_existing"},
 		}},
 		Migrations: []types.MigrationDeclaration{{
 			Key:           "schema-v2",

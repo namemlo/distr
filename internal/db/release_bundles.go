@@ -425,6 +425,12 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 		if existing.Status != types.ReleaseBundleStatusDraft {
 			return fmt.Errorf("could not update ReleaseBundle: %w", apierrors.ErrConflict)
 		}
+		if existing.Kind == types.ReleaseBundleKindProduct {
+			return fmt.Errorf(
+				"could not update Product Release through generic ReleaseBundle API: %w",
+				apierrors.ErrConflict,
+			)
+		}
 		bundle.Status = existing.Status
 		if bundle.DeploymentProcessRevisionID == nil {
 			bundle.ProcessSnapshotID = existing.ProcessSnapshotID
@@ -527,6 +533,12 @@ func DeleteReleaseBundleWithID(ctx context.Context, id, organizationID uuid.UUID
 		if bundle.Status != types.ReleaseBundleStatusDraft {
 			return fmt.Errorf("could not delete ReleaseBundle: %w", apierrors.ErrConflict)
 		}
+		if bundle.Kind == types.ReleaseBundleKindProduct {
+			return fmt.Errorf(
+				"could not delete Product Release through generic ReleaseBundle API: %w",
+				apierrors.ErrConflict,
+			)
+		}
 
 		db := internalctx.GetDb(ctx)
 		cmd, err := db.Exec(
@@ -552,6 +564,12 @@ func ValidateReleaseBundle(
 	bundle, err := GetReleaseBundle(ctx, id, organizationID)
 	if err != nil {
 		return releasebundles.ValidationResult{}, err
+	}
+	if bundle.Kind == types.ReleaseBundleKindProduct {
+		return releasebundles.ValidationResult{}, fmt.Errorf(
+			"could not validate Product Release through generic ReleaseBundle API: %w",
+			apierrors.ErrConflict,
+		)
 	}
 	return validateReleaseBundle(ctx, *bundle)
 }
@@ -587,6 +605,13 @@ func PublishReleaseBundleWithProvenance(
 		bundle, err := getReleaseBundle(ctx, id, organizationID, true)
 		if err != nil {
 			return err
+		}
+		if bundle.Kind == types.ReleaseBundleKindProduct {
+			operationErr = fmt.Errorf(
+				"could not publish Product Release through generic ReleaseBundle API: %w",
+				apierrors.ErrConflict,
+			)
+			return nil
 		}
 		toStatus := types.ReleaseBundleStatusPublished
 		if bundle.Status == types.ReleaseBundleStatusPublished &&
@@ -1429,6 +1454,9 @@ func setReleaseBundleContractMetadata(bundle *types.ReleaseBundle) error {
 		bundle.Kind = types.ReleaseBundleKindComponent
 		bundle.ReleaseContractSchema = types.ReleaseContractSchemaV2
 		return nil
+	}
+	if bundle.ReleaseContract != nil && bundle.ReleaseContract.ProductV1 != nil {
+		return apierrors.NewBadRequest("Product Release manifests require the Product Release repository")
 	}
 	if bundle.Kind == "" {
 		bundle.Kind = types.ReleaseBundleKindLegacy

@@ -27,6 +27,7 @@ type ReleaseContract struct {
 	Config        ReleaseContractConfig        `json:"config"`
 	Changes       ReleaseContractChanges       `json:"changes"`
 	ComponentV2   *ComponentReleaseContractV2  `json:"-"`
+	ProductV1     *ProductReleaseManifest      `json:"-"`
 }
 
 type ReleaseContractV1 = ReleaseContract
@@ -165,6 +166,11 @@ func (c ReleaseContract) MarshalJSON() ([]byte, error) {
 		component.Schema = ReleaseContractSchemaV2
 		return json.Marshal(component)
 	}
+	if c.ProductV1 != nil {
+		product := *c.ProductV1
+		product.Schema = ProductReleaseSchemaV1
+		return json.Marshal(product)
+	}
 	type v1 ReleaseContract
 	return json.Marshal(v1(c))
 }
@@ -182,6 +188,14 @@ func (c *ReleaseContract) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		*c = ReleaseContract{Schema: ReleaseContractSchemaV2, ComponentV2: &component}
+		return nil
+	}
+	if discriminator.Schema == ProductReleaseSchemaV1 {
+		var product ProductReleaseManifest
+		if err := decodeReleaseContractStrict(data, &product); err != nil {
+			return err
+		}
+		*c = ReleaseContract{Schema: ProductReleaseSchemaV1, ProductV1: &product}
 		return nil
 	}
 	type v1 ReleaseContract

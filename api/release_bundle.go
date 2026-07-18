@@ -79,13 +79,18 @@ func (r *CreateUpdateReleaseBundleRequest) Validate() error {
 		})
 	}
 	if r.ReleaseContract != nil {
+		if r.ReleaseContract.ProductV1 != nil {
+			return validation.NewValidationFailedError(
+				"Product Release manifests must use the product-releases endpoint",
+			)
+		}
+		r.ReleaseContract = releasebundles.NormalizedReleaseContract(r.ReleaseContract)
 		if r.ReleaseContract.ComponentV2 != nil {
 			issues := releasebundles.ValidateComponentReleaseContractV2(*r.ReleaseContract.ComponentV2)
 			if len(issues) > 0 {
 				return validation.NewValidationFailedError(issues[0].Message)
 			}
 		}
-		r.ReleaseContract = releasebundles.NormalizedReleaseContract(r.ReleaseContract)
 		if r.ReleaseContract.ComponentV2 != nil {
 			bundle := types.ReleaseBundle{
 				Kind:                  types.ReleaseBundleKindComponent,
