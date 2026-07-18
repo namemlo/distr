@@ -4,11 +4,12 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-056 are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
+PR-000 through PR-056 and the speculative PR-058 backend slice are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
 recovery, and operator documentation are implemented locally; final acceptance remains pending. PR-055 establishes
 default-off, layered kill switches for the operator control plane and executor protocol v2 without changing v1
 behavior. PR-056 adds the organization-scoped canonical deployment registry; its isolated PostgreSQL integration
-legs remain mandatory in CI.
+legs remain mandatory in CI. PR-058 adds immutable target configuration snapshots and bounded object verification;
+it remains based directly on the PR-056 checkpoint until PR-057 is accepted and migration 140 is available.
 
 ## Tracking Template
 
@@ -1053,3 +1054,27 @@ Use one entry per pull request:
   credential, or raw report data.
 - Compatibility notes: Existing registry identities, v1 APIs, deployment execution, agents, and historical
   checksums remain unchanged. Apply is blocked by unresolved decisions, conflicts, or omissions.
+
+### PR-058 - Immutable target config snapshots
+
+- Status: Backend implemented on the prepared speculative PR-056 checkpoint; live PostgreSQL and final integration
+  gates remain deferred.
+- Upstream base: `2ca41ab8`.
+- Feature flag: Uses `operator_control_plane_v2` for create and verify; authenticated reads remain available while
+  disabled.
+- User-facing behavior: Environment owners can create, list, inspect, and verify immutable target configuration
+  evidence without exposing secret values.
+- Database changes: Migration 141 adds one immutable snapshot parent and four immutable child tables, exact
+  canonical bytes/checksum, composite tenant/placement constraints, mutation guards, retention exception, and
+  guarded downgrade.
+- API changes: Adds create/list/get/verify below `/api/v1/target-config-snapshots`; no update/delete route exists.
+- UI changes: Separate UI slice consumes the non-secret API contract.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0057 and PR-058 fork notes.
+- Tests: Added deterministic canonicalization, validation, S3 verification, migration/repository, API, mapping,
+  handler, authorization, routing, and redaction coverage. Live PostgreSQL cases require
+  `DISTR_TEST_DATABASE_URL`.
+- Upstream contribution notes: Provider-neutral immutable configuration evidence; no adopter, CI provider,
+  credential, host, or client-specific behavior.
+- Compatibility notes: Existing v1 reads and execution remain unchanged. PR-059 owns restartable v1 extraction;
+  PR-058 does not rewrite history.

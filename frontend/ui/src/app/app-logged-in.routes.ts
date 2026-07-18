@@ -41,6 +41,7 @@ import {AuthService} from './services/auth.service';
 import {FeatureFlagService} from './services/feature-flag.service';
 import {OrganizationService} from './services/organization.service';
 import {ToastService} from './services/toast.service';
+import {TargetConfigSnapshotsComponent} from './setup/config-snapshots/target-config-snapshots.component';
 import {deploymentRegistryMutationGuard} from './setup/registry/deployment-registry-access';
 import {DeploymentRegistryComponent} from './setup/registry/deployment-registry.component';
 import {SidebarLinksPageComponent} from './sidebar-links/sidebar-links-page.component';
@@ -318,6 +319,11 @@ export const routes: Routes = [
           deploymentRegistryMutationGuard,
           experimentalFeatureEnabledGuard('operator_control_plane_v2'),
         ],
+      },
+      {
+        path: 'setup/config-snapshots',
+        component: TargetConfigSnapshotsComponent,
+        canActivate: [requireVendor],
       },
       {
         path: 'artifacts',

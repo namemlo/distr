@@ -1,0 +1,176 @@
+package types
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+const TargetConfigSnapshotSchema = "distr.target-config/v1"
+
+type TargetConfigObjectKind string
+
+const (
+	TargetConfigObjectKindDeploymentDescriptor TargetConfigObjectKind = "deployment_descriptor"
+	TargetConfigObjectKindServiceConfig        TargetConfigObjectKind = "service_config"
+	TargetConfigObjectKindAdapterInput         TargetConfigObjectKind = "adapter_input"
+)
+
+func (kind TargetConfigObjectKind) IsValid() bool {
+	switch kind {
+	case TargetConfigObjectKindDeploymentDescriptor,
+		TargetConfigObjectKindServiceConfig,
+		TargetConfigObjectKindAdapterInput:
+		return true
+	default:
+		return false
+	}
+}
+
+type TargetConfigSnapshotObjectDraft struct {
+	Key       string                 `json:"key"`
+	Kind      TargetConfigObjectKind `json:"kind"`
+	Reference string                 `json:"reference"`
+	VersionID string                 `json:"versionId,omitempty"`
+	MediaType string                 `json:"mediaType"`
+	SizeBytes int64                  `json:"sizeBytes"`
+	Checksum  string                 `json:"checksum"`
+}
+
+type TargetConfigSnapshotComponentDraft struct {
+	PhysicalName        string    `json:"physicalName"`
+	ComponentInstanceID uuid.UUID `json:"componentInstanceId"`
+	DeploymentUnitID    uuid.UUID `json:"deploymentUnitId"`
+}
+
+type TargetConfigSnapshotSecretReferenceDraft struct {
+	Key                string `json:"key"`
+	Provider           string `json:"provider"`
+	Reference          string `json:"reference"`
+	VersionFingerprint string `json:"versionFingerprint"`
+}
+
+type TargetConfigSnapshotFeatureFlagDraft struct {
+	Key     string `json:"key"`
+	Enabled bool   `json:"enabled"`
+}
+
+type TargetConfigSnapshotDraft struct {
+	OrganizationID                uuid.UUID `json:"-"`
+	CreatedByUserAccountID        uuid.UUID `json:"-"`
+	DeploymentUnitID              uuid.UUID `json:"deploymentUnitId"`
+	TargetEnvironmentAssignmentID uuid.UUID `json:"targetEnvironmentAssignmentId"`
+	EnvironmentID                 uuid.UUID `json:"environmentId"`
+
+	SourceRepository   string            `json:"sourceRepository"`
+	SourceCommit       string            `json:"sourceCommit"`
+	SourceAdapter      string            `json:"sourceAdapter"`
+	AdapterVersion     string            `json:"adapterVersion"`
+	TargetPlatform     string            `json:"targetPlatform"`
+	RuntimeConstraints map[string]string `json:"runtimeConstraints"`
+
+	Objects          []TargetConfigSnapshotObjectDraft          `json:"objects"`
+	Components       []TargetConfigSnapshotComponentDraft       `json:"components"`
+	SecretReferences []TargetConfigSnapshotSecretReferenceDraft `json:"secretReferences"`
+	FeatureFlags     []TargetConfigSnapshotFeatureFlagDraft     `json:"featureFlags"`
+}
+
+type TargetConfigSnapshot struct {
+	ID                     uuid.UUID `db:"id" json:"id"`
+	CreatedAt              time.Time `db:"created_at" json:"createdAt"`
+	CreatedByUserAccountID uuid.UUID `db:"created_by_user_account_id" json:"createdByUserAccountId"`
+
+	OrganizationID                uuid.UUID `db:"organization_id" json:"organizationId"`
+	DeploymentUnitID              uuid.UUID `db:"deployment_unit_id" json:"deploymentUnitId"`
+	TargetEnvironmentAssignmentID uuid.UUID `db:"target_environment_assignment_id" json:"targetEnvironmentAssignmentId"`
+	EnvironmentID                 uuid.UUID `db:"environment_id" json:"environmentId"`
+
+	SourceRepository   string          `db:"source_repository" json:"sourceRepository"`
+	SourceCommit       string          `db:"source_commit" json:"sourceCommit"`
+	SourceAdapter      string          `db:"source_adapter" json:"sourceAdapter"`
+	AdapterVersion     string          `db:"adapter_version" json:"adapterVersion"`
+	TargetPlatform     string          `db:"target_platform" json:"targetPlatform"`
+	RuntimeConstraints json.RawMessage `db:"runtime_constraints" json:"runtimeConstraints"`
+	Schema             string          `db:"schema" json:"-"`
+	CanonicalPayload   []byte          `db:"canonical_payload" json:"canonicalPayload"`
+	CanonicalChecksum  string          `db:"canonical_checksum" json:"canonicalChecksum"`
+
+	Objects          []TargetConfigSnapshotObject          `json:"objects"`
+	Components       []TargetConfigSnapshotComponent       `json:"components"`
+	SecretReferences []TargetConfigSnapshotSecretReference `json:"secretReferences"`
+	FeatureFlags     []TargetConfigSnapshotFeatureFlag     `json:"featureFlags"`
+}
+
+type TargetConfigSnapshotObject struct {
+	ID                     uuid.UUID              `db:"id" json:"id"`
+	TargetConfigSnapshotID uuid.UUID              `db:"target_config_snapshot_id" json:"targetConfigSnapshotId"`
+	OrganizationID         uuid.UUID              `db:"organization_id" json:"organizationId"`
+	Key                    string                 `db:"key" json:"key"`
+	Kind                   TargetConfigObjectKind `db:"kind" json:"kind"`
+	Reference              string                 `db:"reference" json:"reference"`
+	VersionID              string                 `db:"version_id" json:"versionId,omitempty"`
+	MediaType              string                 `db:"media_type" json:"mediaType"`
+	SizeBytes              int64                  `db:"size_bytes" json:"sizeBytes"`
+	Checksum               string                 `db:"checksum" json:"checksum"`
+}
+
+type TargetConfigSnapshotComponent struct {
+	ID                     uuid.UUID `db:"id" json:"id"`
+	TargetConfigSnapshotID uuid.UUID `db:"target_config_snapshot_id" json:"targetConfigSnapshotId"`
+	OrganizationID         uuid.UUID `db:"organization_id" json:"organizationId"`
+	DeploymentUnitID       uuid.UUID `db:"deployment_unit_id" json:"deploymentUnitId"`
+	ComponentInstanceID    uuid.UUID `db:"component_instance_id" json:"componentInstanceId"`
+	PhysicalName           string    `db:"physical_name" json:"physicalName"`
+}
+
+type TargetConfigSnapshotSecretReference struct {
+	ID                     uuid.UUID `db:"id" json:"id"`
+	TargetConfigSnapshotID uuid.UUID `db:"target_config_snapshot_id" json:"targetConfigSnapshotId"`
+	OrganizationID         uuid.UUID `db:"organization_id" json:"organizationId"`
+	Key                    string    `db:"key" json:"key"`
+	Provider               string    `db:"provider" json:"provider"`
+	Reference              string    `db:"reference" json:"reference"`
+	VersionFingerprint     string    `db:"version_fingerprint" json:"versionFingerprint"`
+}
+
+type TargetConfigSnapshotFeatureFlag struct {
+	ID                     uuid.UUID `db:"id" json:"id"`
+	TargetConfigSnapshotID uuid.UUID `db:"target_config_snapshot_id" json:"targetConfigSnapshotId"`
+	OrganizationID         uuid.UUID `db:"organization_id" json:"organizationId"`
+	Key                    string    `db:"key" json:"key"`
+	Enabled                bool      `db:"enabled" json:"enabled"`
+}
+
+type TargetConfigListFilter struct {
+	OrganizationID                uuid.UUID
+	DeploymentUnitID              *uuid.UUID
+	TargetEnvironmentAssignmentID *uuid.UUID
+	Cursor                        string
+	Limit                         int
+}
+
+type VerifiedTargetConfigObject struct {
+	Reference string
+	VersionID string
+	MediaType string
+	SizeBytes int64
+	Checksum  string
+}
+
+type ObjectVerificationFact struct {
+	Key               string `json:"key"`
+	Verified          bool   `json:"verified"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	ObservedVersionID string `json:"observedVersionId,omitempty"`
+	ObservedMediaType string `json:"observedMediaType,omitempty"`
+	ObservedSizeBytes *int64 `json:"observedSizeBytes,omitempty"`
+	ObservedChecksum  string `json:"observedChecksum,omitempty"`
+}
+
+type ObjectVerificationResult struct {
+	SnapshotID uuid.UUID                `json:"snapshotId"`
+	Verified   bool                     `json:"verified"`
+	Objects    []ObjectVerificationFact `json:"objects"`
+}

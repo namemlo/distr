@@ -24,6 +24,7 @@ import (
 	"github.com/distr-sh/distr/internal/registry"
 	"github.com/distr-sh/distr/internal/routing"
 	"github.com/distr-sh/distr/internal/server"
+	"github.com/distr-sh/distr/internal/targetconfig"
 	"github.com/distr-sh/distr/internal/tracers"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-mailx/mailx"
@@ -50,6 +51,7 @@ type Registry struct {
 	observabilityMetricsEnabled bool
 	observabilityTracingEnabled bool
 	s3Client                    *s3.Client
+	targetConfigObjectVerifier  targetconfig.ObjectVerifier
 }
 
 func New(ctx context.Context, options ...RegistryOption) (*Registry, error) {
@@ -118,6 +120,7 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 	if env.RegistryEnabled() {
 		reg.s3Client = newS3Client(ctx)
 	}
+	reg.targetConfigObjectVerifier = newTargetConfigObjectVerifier(ctx)
 
 	if scheduler, err := reg.createJobsScheduler(); err != nil {
 		return nil, err
@@ -183,6 +186,8 @@ func (r *Registry) GetRouter() http.Handler {
 		r.GetPrometheusCollector(),
 		r.GetObservabilityMetricsRecorder(),
 		r.GetObservabilityTracers(),
+		r.GetS3Client(),
+		r.targetConfigObjectVerifier,
 	)
 }
 

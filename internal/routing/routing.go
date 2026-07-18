@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/buildconfig"
 	"github.com/distr-sh/distr/internal/env"
@@ -14,6 +15,7 @@ import (
 	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/oidc"
 	"github.com/distr-sh/distr/internal/prometheus"
+	"github.com/distr-sh/distr/internal/targetconfig"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
@@ -66,6 +68,8 @@ func NewRouter(
 	prometheusCollector *prometheus.DistrCollector,
 	metricsRecorder obsermetrics.Recorder,
 	tracingTracers obsertracing.Tracers,
+	s3Client *s3.Client,
+	targetConfigObjectVerifier targetconfig.ObjectVerifier,
 ) http.Handler {
 	baseRouter := chi.NewRouter()
 	baseRouter.Use(
@@ -96,7 +100,20 @@ func NewRouter(
 			Layout:      "responsive",
 		}),
 	)
-	openapiRouter.Route("/api", ApiRouter(logger, db, mailer, oidcer, prometheusCollector, metricsRecorder, tracingTracers))
+	openapiRouter.Route(
+		"/api",
+		ApiRouter(
+			logger,
+			db,
+			mailer,
+			oidcer,
+			prometheusCollector,
+			metricsRecorder,
+			tracingTracers,
+			s3Client,
+			targetConfigObjectVerifier,
+		),
+	)
 
 	baseRouter.Mount("/internal", InternalRouter())
 	baseRouter.Mount("/status", StatusRouter())
@@ -115,6 +132,8 @@ func ApiRouter(
 	prometheusCollector *prometheus.DistrCollector,
 	metricsRecorder obsermetrics.Recorder,
 	tracingTracers obsertracing.Tracers,
+	s3Client *s3.Client,
+	targetConfigObjectVerifier targetconfig.ObjectVerifier,
 ) func(r chiopenapi.Router) {
 	requestSize1MiB := chimiddleware.RequestSize(1024 * 1024)
 	requestSize50MiB := chimiddleware.RequestSize(50 * 1024 * 1024)
@@ -127,7 +146,15 @@ func ApiRouter(
 			middleware.Sentry,
 			middleware.LoggerCtxMiddleware(logger),
 			middleware.LoggingMiddleware,
-			middleware.ContextInjectorMiddleware(db, mailer, oidcer, prometheusCollector, metricsRecorder, tracingTracers.Default),
+			middleware.ContextInjectorMiddleware(
+				db,
+				mailer,
+				oidcer,
+				prometheusCollector,
+				metricsRecorder,
+				tracingTracers.Default,
+				s3Client,
+			),
 		}
 		if metricsRecorder != nil {
 			baseMiddleware = append(baseMiddleware, obsermetrics.HTTPMiddleware(metricsRecorder))
@@ -206,6 +233,10 @@ func ApiRouter(
 					r.Route("/settings", handlers.SettingsRouter)
 					r.Route("/step-templates", handlers.StepTemplatesRouter)
 					r.With(middleware.ProFeature).Route("/support-bundles", handlers.SupportBundlesRouter)
+					r.Route(
+						"/target-config-snapshots",
+						handlers.TargetConfigSnapshotsRouterWithVerifier(targetConfigObjectVerifier),
+					)
 					r.Route("/tasks", handlers.TasksRouter)
 					r.Route("/tutorial-progress", handlers.TutorialsRouter)
 					r.Route("/variable-sets", handlers.VariableSetsRouter)

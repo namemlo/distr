@@ -150,6 +150,11 @@ func GetS3Client(ctx context.Context) *s3.Client {
 	panic("s3 client not contained in context")
 }
 
+func GetOptionalS3Client(ctx context.Context) *s3.Client {
+	client, _ := ctx.Value(ctxKeyS3Client).(*s3.Client)
+	return client
+}
+
 func WithS3Client(ctx context.Context, client *s3.Client) context.Context {
 	return context.WithValue(ctx, ctxKeyS3Client, client)
 }
