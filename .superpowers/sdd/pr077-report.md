@@ -40,6 +40,20 @@ performed.
   Observer tokens use the separate `Observer` authorization scheme and only
   SHA-256 fingerprints are stored.
 - Added ADR-0065, PR-077 fork documentation, and the fork diff index entry.
+- Hardened gate evaluation so evidence must be accepted, captured after
+  admission and by the deadline, and still within its persisted freshness
+  window. Promotion now re-reads all eligible observers and the execution-bound
+  executor report inside its serializable transaction.
+- Bound every non-timeout terminal result to trusted observation identity,
+  exact replay to the full envelope and component scope, component instances to
+  their Deployment Units, executor reports to pending executions, and drift
+  cases to one active/observed placement.
+- Wired observation ingestion and executor-report recording into production
+  reconciliation. `CREATE_PLAN` now assigns work; restore/close resolves only
+  after current trusted evidence proves the active desired material.
+- Added retention-safe dependency deletion under the existing authorized
+  organization-retention transaction setting and hardened evidence triggers
+  against identity/timestamp mutation.
 
 ## TDD Evidence
 
@@ -63,6 +77,18 @@ Observed RED failures before implementation included:
    terminal desired-state outcome.
 9. Missing frozen-prerequisite resolver and campaign-evidence tenant foreign
    key coverage.
+10. Gate tests proving stale or pre-admission evidence was incorrectly
+    eligible, while eligible pre-deadline evidence needed to survive a later
+    post-deadline sample.
+11. Promotion tests proving caller hints could omit changed repository state
+    and independent-observer conflicts.
+12. Terminal-state tests proving non-timeout outcomes could be recorded
+    without observation identity.
+13. Replay tests proving sequence/evidence-only equality did not cover the
+    full persisted material or component scope.
+14. Repository boundary tests for component/Deployment Unit lineage,
+    execution-bound reports, per-component sequence reuse, retention ordering,
+    drift placement, and evidence-proven reconciliation.
 
 Each red failure was followed by the minimal implementation and a focused
 green rerun.
@@ -71,10 +97,15 @@ green rerun.
 
 - Focused non-race domain/repository/API/mapping/handler/routing suite: pass.
 - `go vet` over all changed Go package surfaces: pass.
-- `golangci-lint run --new-from-rev=HEAD` over all changed Go package
-  surfaces: pass with `0 issues`.
+- `golangci-lint run --new-from-rev=HEAD`: pass with `0 issues` (the runner
+  emitted one non-fatal generated-file-filter warning for a removed temporary
+  copy of an unrelated blue-green test).
 - `git diff --check`: pass.
 - Migration 159 contract/pair tests: pass.
+- Five behavioral PostgreSQL repository tests compile and cover lifecycle
+  promotion, observer conflict re-evaluation, placement/execution/replay
+  boundaries, retention deletion, and drift reconciliation. They skip locally
+  because `DISTR_TEST_DATABASE_URL` is not set.
 - Required race command: blocked before package compilation because the
   repository sets `CGO_ENABLED=0`; overriding it reaches `cgo: C compiler
   "gcc" not found`.
@@ -82,39 +113,38 @@ green rerun.
   the same validator directly with Git Bash correctly recognized migration
   159 but failed global continuity because this synthetic base intentionally
   lacks predecessor migrations 140-142 and 146-158.
-- Full `go test ./... -run '^$' -count=1`: attempted, but Windows exhausted
-  virtual memory while compiling the repository in parallel. The PR-077
-  packages compiled successfully in that run; this is not claimed as a full
-  repository pass.
-- Live PostgreSQL migration/repository/handler verification was not run because
-  no client/external database operation is authorized and the ordered
-  predecessor migration stack is absent.
+- Full serial `go test -p 1 ./... -count=1`: exceeded the five-minute command
+  bound without emitting a test failure. The focused PR-077 packages pass; this
+  is not claimed as a full repository pass.
+- Live PostgreSQL migration/repository verification was not run because
+  `DISTR_TEST_DATABASE_URL` is absent. No external/client database was used.
 
 ## Commit
 
 Feature commit subject: `feat: verify independent observed state`.
+Review-hardening commit subject: `fix: harden observed state verification`.
 
 The immutable commit SHA is reported in the agent handoff after the commit is
 created; a commit cannot include its own final SHA in its contents.
 
 ## Integration Seams and Concerns
 
-- Ordered integration must include PR-072 commit `8b88db20` and wire
+- Ordered integration must include the canonical campaign lineage changes and wire
   `observation.CampaignVerifier{Store: db.CampaignObservationRepository{}}`
   into the scheduler's `campaigns.CampaignObservationVerifier` dependency.
   No synthetic-base import of the future package was added.
 - Wire `observation.CampaignResolver{Store:
   db.CampaignObservationRepository{}}` into the resolver seam and fence its
-  returned ID/checksum with `CampaignVerifier`. PR-071's current
-  `provider_placement_id` is `DeploymentPlanTargetComponent.id`, while this
-  resolver intentionally requires canonical `ComponentInstance.id`; ordered
-  integration must freeze that canonical ID or add an immutable bridge.
+  returned ID/checksum with `CampaignVerifier`. The resolver requires canonical
+  `ComponentInstance.id`; it does not accept a plan-local target-component
+  projection.
 - Migration 159 must be applied only after migrations 146-158 are integrated.
   The global migration linter is expected to fail on this isolated synthetic
   branch and must pass after ordered integration.
-- Migration 159 and repository SQL have contract/source coverage but still
-  require live PostgreSQL 16/18 upgrade, rollback-refusal, concurrency,
-  replay/conflict, tenant-isolation, and handler integration proof.
+- Migration 159 and repository SQL have contract/source plus compiled
+  behavioral coverage but still require live PostgreSQL 16/18 upgrade,
+  rollback-refusal, concurrency, replay/conflict, tenant-isolation, retention,
+  and handler integration execution.
 - The race suite requires a Windows C compiler or a Linux CI runner with CGO
   enabled.
 - Existing `TargetComponentState` and `TargetComponentObservation` remain

@@ -52,10 +52,18 @@ DROP TABLE IF EXISTS DriftCase;
 
 DROP TABLE IF EXISTS ComponentObservationHead;
 
-ALTER TABLE CampaignPrerequisiteEvaluation
-  DROP CONSTRAINT IF EXISTS campaignprerequisiteevaluation_observation_fk;
+DO $$
+BEGIN
+  IF to_regclass('CampaignPrerequisiteEvaluation') IS NOT NULL THEN
+    ALTER TABLE CampaignPrerequisiteEvaluation
+      DROP CONSTRAINT IF EXISTS campaignprerequisiteevaluation_observation_fk;
+  END IF;
+END;
+$$;
 ALTER TABLE ActiveDesiredRevision
   DROP CONSTRAINT IF EXISTS activedesiredrevision_verified_observation_fk;
+ALTER TABLE PendingDesiredRevision
+  DROP CONSTRAINT IF EXISTS pendingdesiredrevision_terminal_observation_fk;
 ALTER TABLE PendingDesiredRevision
   DROP CONSTRAINT IF EXISTS pendingdesiredrevision_verified_observation_fk;
 
@@ -76,3 +84,6 @@ DROP TABLE IF EXISTS ActiveDesiredRevision;
 
 DROP INDEX IF EXISTS PendingDesiredRevision_component_status;
 DROP TABLE IF EXISTS PendingDesiredRevision;
+
+ALTER TABLE ComponentInstance
+  DROP CONSTRAINT IF EXISTS componentinstance_id_unit_organization_unique;

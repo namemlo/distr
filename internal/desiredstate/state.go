@@ -69,22 +69,50 @@ func Advance(
 		}
 		return next, pending, nil
 	case types.ObservationGateStatusPartial:
+		if err := requireTerminalEvidence(gate); err != nil {
+			return active, pending, err
+		}
 		pending.Status = types.PendingDesiredStatusPartial
 	case types.ObservationGateStatusFailed:
+		if err := requireTerminalEvidence(gate); err != nil {
+			return active, pending, err
+		}
 		pending.Status = types.PendingDesiredStatusFailed
 	case types.ObservationGateStatusCancelled:
+		if err := requireTerminalEvidence(gate); err != nil {
+			return active, pending, err
+		}
 		pending.Status = types.PendingDesiredStatusCancelled
 	case types.ObservationGateStatusUnknown:
+		if err := requireTerminalEvidence(gate); err != nil {
+			return active, pending, err
+		}
 		pending.Status = types.PendingDesiredStatusUnknown
 	case types.ObservationGateStatusTimedOut:
 		pending.Status = types.PendingDesiredStatusTimedOut
 	case types.ObservationGateStatusConflict:
+		if err := requireTerminalEvidence(gate); err != nil {
+			return active, pending, err
+		}
 		pending.Status = types.PendingDesiredStatusConflict
 	default:
 		pending.TerminalAt = nil
 		return active, pending, nil
 	}
+	if gate.Status != types.ObservationGateStatusTimedOut {
+		pending.TerminalObservationID = gate.ObservationID
+	}
 	return active, pending, nil
+}
+
+func requireTerminalEvidence(gate types.ObservationGateResult) error {
+	if gate.ObservationID == uuid.Nil ||
+		!checksumPattern.MatchString(gate.ObservationChecksum) {
+		return errors.New(
+			"non-timeout terminal gate requires trusted observation identity and checksum",
+		)
+	}
+	return nil
 }
 
 func validateInput(input types.PendingDesiredRevisionInput, now time.Time) error {

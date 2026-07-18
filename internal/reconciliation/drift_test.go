@@ -76,6 +76,30 @@ func TestAcceptedDeviationIsTimeBoundAndDoesNotRewriteDesiredState(t *testing.T)
 	g.Expect(active.ArtifactDigest).To(Equal(originalDigest))
 }
 
+func TestReconciliationDecisionStatusRequiresPlanOrOutcomeEvidence(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 7, 0, 0, 0, time.UTC)
+	base := types.ReconciliationDecision{Reason: "reviewed", ActorID: uuid.New()}
+
+	createPlan := base
+	createPlan.Action = types.ReconciliationActionCreatePlan
+	_, err := DecisionTargetStatus(createPlan, now)
+	g.Expect(err).To(HaveOccurred())
+	createPlan.DeploymentPlanID = new(uuid.New())
+	status, err := DecisionTargetStatus(createPlan, now)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(status).To(Equal(types.DriftCaseStatusAssigned))
+
+	closeWithEvidence := base
+	closeWithEvidence.Action = types.ReconciliationActionCloseWithEvidence
+	_, err = DecisionTargetStatus(closeWithEvidence, now)
+	g.Expect(err).To(HaveOccurred())
+	closeWithEvidence.OutcomeObservationID = new(uuid.New())
+	status, err = DecisionTargetStatus(closeWithEvidence, now)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(status).To(Equal(types.DriftCaseStatusResolved))
+}
+
 func matchingState() (types.ActiveDesiredRevision, types.ObservedComponentState) {
 	active := types.ActiveDesiredRevision{
 		ID:                  uuid.New(),

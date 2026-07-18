@@ -35,3 +35,14 @@ func TestReconciliationPlanActionRequiresPlanIdentity(t *testing.T) {
 	request.DeploymentPlanID = new(uuid.New())
 	g.Expect(request.Validate(time.Now().UTC())).To(Succeed())
 }
+
+func TestReconciliationResolutionRequiresOutcomeObservation(t *testing.T) {
+	g := NewWithT(t)
+	request := ReconciliationDecisionRequest{
+		Action: types.ReconciliationActionCloseWithEvidence,
+		Reason: "verified restored runtime",
+	}
+	g.Expect(request.Validate(time.Now().UTC())).To(HaveOccurred())
+	request.OutcomeObservationID = new(uuid.New())
+	g.Expect(request.Validate(time.Now().UTC())).To(Succeed())
+}

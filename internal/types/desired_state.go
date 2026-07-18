@@ -56,6 +56,7 @@ type PendingDesiredRevision struct {
 	Status                PendingDesiredStatus `db:"status" json:"status"`
 	TerminalReason        string               `db:"terminal_reason" json:"terminalReason,omitempty"`
 	VerifiedObservationID uuid.UUID            `db:"verified_observation_id" json:"verifiedObservationId,omitempty"`
+	TerminalObservationID uuid.UUID            `db:"terminal_observation_id" json:"terminalObservationId,omitempty"`
 	TerminalAt            *time.Time           `db:"terminal_at" json:"terminalAt,omitempty"`
 }
 

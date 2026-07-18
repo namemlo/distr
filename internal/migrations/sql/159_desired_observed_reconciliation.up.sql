@@ -1,3 +1,7 @@
+ALTER TABLE ComponentInstance
+  ADD CONSTRAINT componentinstance_id_unit_organization_unique
+  UNIQUE (id, deployment_unit_id, organization_id);
+
 CREATE TABLE PendingDesiredRevision (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -41,9 +45,12 @@ CREATE TABLE PendingDesiredRevision (
     AND terminal_reason !~ E'[\\r\\n]'
   ),
   verified_observation_id UUID,
+  terminal_observation_id UUID,
   terminal_at TIMESTAMPTZ,
   CONSTRAINT pendingdesiredrevision_id_organization_unique
     UNIQUE (id, organization_id),
+  CONSTRAINT pendingdesiredrevision_execution_unique
+    UNIQUE (id, execution_id, organization_id),
   CONSTRAINT pendingdesiredrevision_component_revision_unique
     UNIQUE (
       organization_id, deployment_unit_id, component_instance_id, revision
@@ -59,25 +66,36 @@ CREATE TABLE PendingDesiredRevision (
     FOREIGN KEY (deployment_unit_id, organization_id)
     REFERENCES DeploymentUnit(id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION,
-  CONSTRAINT pendingdesiredrevision_instance_fk
-    FOREIGN KEY (component_instance_id, organization_id)
-    REFERENCES ComponentInstance(id, organization_id)
+  CONSTRAINT pendingdesiredrevision_instance_placement_fk
+    FOREIGN KEY (
+      component_instance_id, deployment_unit_id, organization_id
+    )
+    REFERENCES ComponentInstance(id, deployment_unit_id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION,
   CONSTRAINT pendingdesiredrevision_terminal_shape_check CHECK (
     (
       status = 'PENDING'
       AND terminal_at IS NULL
       AND verified_observation_id IS NULL
+      AND terminal_observation_id IS NULL
     )
     OR (
       status = 'VERIFIED'
       AND terminal_at IS NOT NULL
       AND verified_observation_id IS NOT NULL
+      AND terminal_observation_id IS NULL
     )
     OR (
-      status NOT IN ('PENDING', 'VERIFIED')
+      status = 'TIMED_OUT'
       AND terminal_at IS NOT NULL
       AND verified_observation_id IS NULL
+      AND terminal_observation_id IS NULL
+    )
+    OR (
+      status NOT IN ('PENDING', 'VERIFIED', 'TIMED_OUT')
+      AND terminal_at IS NOT NULL
+      AND verified_observation_id IS NULL
+      AND terminal_observation_id IS NOT NULL
     )
   )
 );
@@ -122,6 +140,10 @@ CREATE TABLE ActiveDesiredRevision (
   verified_observation_id UUID NOT NULL,
   CONSTRAINT activedesiredrevision_id_organization_unique
     UNIQUE (id, organization_id),
+  CONSTRAINT activedesiredrevision_placement_unique
+    UNIQUE (
+      id, deployment_unit_id, component_instance_id, organization_id
+    ),
   CONSTRAINT activedesiredrevision_pending_unique
     UNIQUE (pending_revision_id),
   CONSTRAINT activedesiredrevision_organization_fk
@@ -139,9 +161,11 @@ CREATE TABLE ActiveDesiredRevision (
     FOREIGN KEY (deployment_unit_id, organization_id)
     REFERENCES DeploymentUnit(id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION,
-  CONSTRAINT activedesiredrevision_instance_fk
-    FOREIGN KEY (component_instance_id, organization_id)
-    REFERENCES ComponentInstance(id, organization_id)
+  CONSTRAINT activedesiredrevision_instance_placement_fk
+    FOREIGN KEY (
+      component_instance_id, deployment_unit_id, organization_id
+    )
+    REFERENCES ComponentInstance(id, deployment_unit_id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION
 );
 
@@ -176,9 +200,11 @@ CREATE TABLE ComponentDesiredStateHead (
     FOREIGN KEY (deployment_unit_id, organization_id)
     REFERENCES DeploymentUnit(id, organization_id)
     ON UPDATE NO ACTION ON DELETE CASCADE,
-  CONSTRAINT componentdesiredstatehead_instance_fk
-    FOREIGN KEY (component_instance_id, organization_id)
-    REFERENCES ComponentInstance(id, organization_id)
+  CONSTRAINT componentdesiredstatehead_instance_placement_fk
+    FOREIGN KEY (
+      component_instance_id, deployment_unit_id, organization_id
+    )
+    REFERENCES ComponentInstance(id, deployment_unit_id, organization_id)
     ON UPDATE NO ACTION ON DELETE CASCADE,
   CONSTRAINT componentdesiredstatehead_pending_fk
     FOREIGN KEY (pending_revision_id, organization_id)
@@ -215,9 +241,9 @@ CREATE TABLE ExecutorReport (
   CONSTRAINT executorreport_organization_fk
     FOREIGN KEY (organization_id)
     REFERENCES Organization(id) ON DELETE CASCADE,
-  CONSTRAINT executorreport_pending_fk
-    FOREIGN KEY (pending_revision_id, organization_id)
-    REFERENCES PendingDesiredRevision(id, organization_id)
+  CONSTRAINT executorreport_pending_execution_fk
+    FOREIGN KEY (pending_revision_id, execution_id, organization_id)
+    REFERENCES PendingDesiredRevision(id, execution_id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION
 );
 
@@ -266,9 +292,11 @@ CREATE TABLE ObserverRegistration (
     FOREIGN KEY (deployment_unit_id, organization_id)
     REFERENCES DeploymentUnit(id, organization_id)
     ON UPDATE NO ACTION ON DELETE CASCADE,
-  CONSTRAINT observerregistration_instance_fk
-    FOREIGN KEY (component_instance_id, organization_id)
-    REFERENCES ComponentInstance(id, organization_id)
+  CONSTRAINT observerregistration_instance_placement_fk
+    FOREIGN KEY (
+      component_instance_id, deployment_unit_id, organization_id
+    )
+    REFERENCES ComponentInstance(id, deployment_unit_id, organization_id)
     ON UPDATE NO ACTION ON DELETE CASCADE
 );
 
@@ -290,6 +318,7 @@ CREATE TABLE ObservedComponentState (
   source_sequence BIGINT NOT NULL CHECK (source_sequence > 0),
   captured_at TIMESTAMPTZ NOT NULL,
   received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  fresh_until TIMESTAMPTZ NOT NULL CHECK (fresh_until >= captured_at),
   evidence_checksum TEXT NOT NULL CHECK (
     evidence_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
@@ -335,8 +364,15 @@ CREATE TABLE ObservedComponentState (
   ),
   CONSTRAINT observedcomponentstate_id_organization_unique
     UNIQUE (id, organization_id),
+  CONSTRAINT observedcomponentstate_placement_unique
+    UNIQUE (
+      id, deployment_unit_id, component_instance_id, organization_id
+    ),
   CONSTRAINT observedcomponentstate_replay_unique
-    UNIQUE (observer_id, source_sequence, evidence_checksum),
+    UNIQUE (
+      organization_id, observer_id, deployment_unit_id,
+      component_instance_id, source_sequence, state_checksum
+    ),
   CONSTRAINT observedcomponentstate_organization_fk
     FOREIGN KEY (organization_id)
     REFERENCES Organization(id) ON DELETE CASCADE,
@@ -348,9 +384,11 @@ CREATE TABLE ObservedComponentState (
     FOREIGN KEY (deployment_unit_id, organization_id)
     REFERENCES DeploymentUnit(id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION,
-  CONSTRAINT observedcomponentstate_instance_fk
-    FOREIGN KEY (component_instance_id, organization_id)
-    REFERENCES ComponentInstance(id, organization_id)
+  CONSTRAINT observedcomponentstate_instance_placement_fk
+    FOREIGN KEY (
+      component_instance_id, deployment_unit_id, organization_id
+    )
+    REFERENCES ComponentInstance(id, deployment_unit_id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION,
   CONSTRAINT observedcomponentstate_current_shape_check CHECK (
     NOT is_current OR (trusted AND disposition = 'ACCEPTED')
@@ -375,17 +413,29 @@ ALTER TABLE PendingDesiredRevision
   REFERENCES ObservedComponentState(id, organization_id)
   ON UPDATE NO ACTION ON DELETE NO ACTION;
 
+ALTER TABLE PendingDesiredRevision
+  ADD CONSTRAINT pendingdesiredrevision_terminal_observation_fk
+  FOREIGN KEY (terminal_observation_id, organization_id)
+  REFERENCES ObservedComponentState(id, organization_id)
+  ON UPDATE NO ACTION ON DELETE NO ACTION;
+
 ALTER TABLE ActiveDesiredRevision
   ADD CONSTRAINT activedesiredrevision_verified_observation_fk
   FOREIGN KEY (verified_observation_id, organization_id)
   REFERENCES ObservedComponentState(id, organization_id)
   ON UPDATE NO ACTION ON DELETE NO ACTION;
 
-ALTER TABLE CampaignPrerequisiteEvaluation
-  ADD CONSTRAINT campaignprerequisiteevaluation_observation_fk
-  FOREIGN KEY (actual_observation_id, organization_id)
-  REFERENCES ObservedComponentState(id, organization_id)
-  ON UPDATE NO ACTION ON DELETE NO ACTION;
+DO $$
+BEGIN
+  IF to_regclass('CampaignPrerequisiteEvaluation') IS NOT NULL THEN
+    ALTER TABLE CampaignPrerequisiteEvaluation
+      ADD CONSTRAINT campaignprerequisiteevaluation_observation_fk
+      FOREIGN KEY (actual_observation_id, organization_id)
+      REFERENCES ObservedComponentState(id, organization_id)
+      ON UPDATE NO ACTION ON DELETE NO ACTION;
+  END IF;
+END;
+$$;
 
 CREATE TABLE ComponentObservationHead (
   organization_id UUID NOT NULL,
@@ -421,6 +471,8 @@ CREATE TABLE DriftCase (
   organization_id UUID NOT NULL,
   active_desired_revision_id UUID NOT NULL,
   observation_id UUID NOT NULL,
+  deployment_unit_id UUID NOT NULL,
+  component_instance_id UUID NOT NULL,
   status TEXT NOT NULL CHECK (
     status IN ('OPEN', 'ASSIGNED', 'EXCEPTION', 'RESOLVED')
   ),
@@ -436,13 +488,23 @@ CREATE TABLE DriftCase (
   CONSTRAINT driftcase_organization_fk
     FOREIGN KEY (organization_id)
     REFERENCES Organization(id) ON DELETE CASCADE,
-  CONSTRAINT driftcase_active_fk
-    FOREIGN KEY (active_desired_revision_id, organization_id)
-    REFERENCES ActiveDesiredRevision(id, organization_id)
+  CONSTRAINT driftcase_active_placement_fk
+    FOREIGN KEY (
+      active_desired_revision_id, deployment_unit_id,
+      component_instance_id, organization_id
+    )
+    REFERENCES ActiveDesiredRevision(
+      id, deployment_unit_id, component_instance_id, organization_id
+    )
     ON UPDATE NO ACTION ON DELETE NO ACTION,
-  CONSTRAINT driftcase_observation_fk
-    FOREIGN KEY (observation_id, organization_id)
-    REFERENCES ObservedComponentState(id, organization_id)
+  CONSTRAINT driftcase_observation_placement_fk
+    FOREIGN KEY (
+      observation_id, deployment_unit_id,
+      component_instance_id, organization_id
+    )
+    REFERENCES ObservedComponentState(
+      id, deployment_unit_id, component_instance_id, organization_id
+    )
     ON UPDATE NO ACTION ON DELETE NO ACTION,
   CONSTRAINT driftcase_resolution_shape_check CHECK (
     (status = 'RESOLVED' AND resolved_at IS NOT NULL)
@@ -504,6 +566,7 @@ CREATE TABLE ReconciliationAction (
   ),
   actor_id UUID NOT NULL,
   deployment_plan_id UUID,
+  outcome_observation_id UUID,
   accepted_until TIMESTAMPTZ,
   CONSTRAINT reconciliationaction_id_organization_unique
     UNIQUE (id, organization_id),
@@ -518,14 +581,28 @@ CREATE TABLE ReconciliationAction (
     FOREIGN KEY (deployment_plan_id, organization_id)
     REFERENCES DeploymentPlan(id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION,
+  CONSTRAINT reconciliationaction_outcome_observation_fk
+    FOREIGN KEY (outcome_observation_id, organization_id)
+    REFERENCES ObservedComponentState(id, organization_id)
+    ON UPDATE NO ACTION ON DELETE NO ACTION,
   CONSTRAINT reconciliationaction_shape_check CHECK (
     (
       action = 'ACCEPT_DEVIATION'
+      AND deployment_plan_id IS NULL
+      AND outcome_observation_id IS NULL
       AND accepted_until IS NOT NULL
       AND accepted_until > created_at
     )
     OR (
-      action <> 'ACCEPT_DEVIATION'
+      action = 'CREATE_PLAN'
+      AND deployment_plan_id IS NOT NULL
+      AND outcome_observation_id IS NULL
+      AND accepted_until IS NULL
+    )
+    OR (
+      action IN ('RESTORE_DESIRED', 'CLOSE_WITH_EVIDENCE')
+      AND deployment_plan_id IS NULL
+      AND outcome_observation_id IS NOT NULL
       AND accepted_until IS NULL
     )
   )
@@ -605,6 +682,7 @@ BEGIN
      AND NEW.source_sequence = OLD.source_sequence
      AND NEW.captured_at = OLD.captured_at
      AND NEW.received_at = OLD.received_at
+     AND NEW.fresh_until = OLD.fresh_until
      AND NEW.evidence_checksum = OLD.evidence_checksum
      AND NEW.evidence_reference = OLD.evidence_reference
      AND NEW.artifact_digest = OLD.artifact_digest
@@ -636,10 +714,18 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
+    IF current_setting(
+         'distr.deployment_registry_deletion_reason',
+         true
+       ) = 'ORGANIZATION_RETENTION' THEN
+      RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'pending desired revision evidence is append-only'
       USING ERRCODE = '23514';
   END IF;
-  IF NEW.organization_id IS DISTINCT FROM OLD.organization_id
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR NEW.organization_id IS DISTINCT FROM OLD.organization_id
      OR NEW.deployment_plan_id IS DISTINCT FROM OLD.deployment_plan_id
      OR NEW.execution_id IS DISTINCT FROM OLD.execution_id
      OR NEW.deployment_unit_id IS DISTINCT FROM OLD.deployment_unit_id

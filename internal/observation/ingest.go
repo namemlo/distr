@@ -18,9 +18,33 @@ var (
 	observationChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
+func SameObservationMaterial(
+	envelope types.ObservationEnvelope,
+	retained types.ObservedComponentState,
+) bool {
+	return envelope.OrganizationID == retained.OrganizationID &&
+		envelope.ObserverID == retained.ObserverID &&
+		envelope.DeploymentUnitID == retained.DeploymentUnitID &&
+		envelope.ComponentInstanceID == retained.ComponentInstanceID &&
+		strings.TrimSpace(envelope.ComponentKey) == retained.ComponentKey &&
+		envelope.SourceSequence == retained.SourceSequence &&
+		envelope.CapturedAt.Equal(retained.CapturedAt) &&
+		envelope.EvidenceChecksum == retained.EvidenceChecksum &&
+		envelope.EvidenceReference == retained.EvidenceReference &&
+		envelope.ArtifactDigest == retained.ArtifactDigest &&
+		envelope.ConfigChecksum == retained.ConfigChecksum &&
+		envelope.SchemaVersion == retained.SchemaVersion &&
+		envelope.CapabilityChecksum == retained.CapabilityChecksum &&
+		envelope.Platform == retained.Platform &&
+		envelope.TopologyChecksum == retained.TopologyChecksum &&
+		envelope.Health == retained.Health &&
+		envelope.Outcome == retained.Outcome
+}
+
 func EvaluateAdmission(
 	registration types.ObserverRegistration,
 	head *types.ComponentObservationHead,
+	retained *types.ObservedComponentState,
 	envelope types.ObservationEnvelope,
 	receivedAt time.Time,
 ) (types.ObservationAdmissionDecision, error) {
@@ -59,7 +83,8 @@ func EvaluateAdmission(
 	if head != nil && head.ObserverID == envelope.ObserverID {
 		switch {
 		case envelope.SourceSequence == head.SourceSequence &&
-			envelope.EvidenceChecksum == head.EvidenceChecksum:
+			retained != nil &&
+			SameObservationMaterial(envelope, *retained):
 			return types.ObservationAdmissionDecision{
 				Disposition: types.ObservationDispositionReplay,
 				Trusted:     true, RetainEvidence: true,

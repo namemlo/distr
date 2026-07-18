@@ -31,6 +31,10 @@ const pendingDesiredOutputExpr = `
 		p.verified_observation_id,
 		'00000000-0000-0000-0000-000000000000'::UUID
 	) AS verified_observation_id,
+	COALESCE(
+		p.terminal_observation_id,
+		'00000000-0000-0000-0000-000000000000'::UUID
+	) AS terminal_observation_id,
 	p.terminal_at
 `
 
@@ -46,7 +50,7 @@ const activeDesiredOutputExpr = `
 const observedStateOutputExpr = `
 	o.id, o.created_at, o.organization_id, o.observer_id,
 	o.deployment_unit_id, o.component_instance_id, o.component_key,
-	o.source_sequence, o.captured_at, o.received_at,
+	o.source_sequence, o.captured_at, o.received_at, o.fresh_until,
 	o.evidence_checksum, o.evidence_reference, o.artifact_digest,
 	o.config_checksum, o.schema_version, o.capability_checksum,
 	o.platform, o.topology_checksum, o.health, o.outcome,
@@ -219,6 +223,12 @@ func RecordExecutorReport(
 	if err != nil {
 		return nil, fmt.Errorf("could not collect ExecutorReport: %w", err)
 	}
+	if err := ReconcilePendingDesiredRevision(ctx, value.PendingRevisionID); err != nil {
+		return &value, fmt.Errorf(
+			"could not reconcile desired state after executor report: %w",
+			err,
+		)
+	}
 	return &value, nil
 }
 
@@ -337,34 +347,18 @@ func AdvanceActiveDesiredRevision(
 		if err != nil {
 			return err
 		}
-		if gate.Status == types.ObservationGateStatusVerified {
-			observed, err := getObservedComponentState(
-				txCtx,
-				pending.OrganizationID,
-				gate.ObservationID,
-			)
-			if err != nil {
-				return err
-			}
-			executorOutcome, err := getLatestExecutorOutcome(
-				txCtx,
-				pending.OrganizationID,
-				pending.ID,
-			)
-			if err != nil {
-				return err
-			}
-			observed.ExecutorOutcome = executorOutcome
-			gate, err = validateVerifiedGate(
-				*pending,
-				*observed,
-				gate,
-				time.Now().UTC(),
-			)
-			if err != nil {
-				return err
-			}
+		evaluated, err := evaluateObservationGate(
+			txCtx,
+			*pending,
+			time.Now().UTC(),
+		)
+		if err != nil {
+			return err
 		}
+		if err := validatePromotionGateHint(gate, evaluated); err != nil {
+			return err
+		}
+		gate = evaluated
 		head, err := getDesiredHeadForUpdate(
 			txCtx, pending.OrganizationID, pending.DeploymentUnitID,
 			pending.ComponentInstanceID,
@@ -395,6 +389,7 @@ func AdvanceActiveDesiredRevision(
 			SET updated_at = @updatedAt, status = @status,
 				terminal_reason = @terminalReason,
 				verified_observation_id = NULLIF(@verifiedObservationID, @nilUUID),
+				terminal_observation_id = NULLIF(@terminalObservationID, @nilUUID),
 				terminal_at = @terminalAt
 			WHERE id = @pendingRevisionID
 			  AND organization_id = @organizationID`,
@@ -402,6 +397,7 @@ func AdvanceActiveDesiredRevision(
 				"updatedAt": terminal.UpdatedAt, "status": terminal.Status,
 				"terminalReason":        terminal.TerminalReason,
 				"verifiedObservationID": terminal.VerifiedObservationID,
+				"terminalObservationID": terminal.TerminalObservationID,
 				"nilUUID":               uuid.Nil, "terminalAt": terminal.TerminalAt,
 				"pendingRevisionID": terminal.ID, "organizationID": terminal.OrganizationID,
 			},
@@ -486,6 +482,20 @@ func validateVerifiedGate(
 	return verified, nil
 }
 
+func validatePromotionGateHint(
+	supplied types.ObservationGateResult,
+	evaluated types.ObservationGateResult,
+) error {
+	if supplied.Status != evaluated.Status ||
+		supplied.ObservationID != evaluated.ObservationID ||
+		supplied.ObservationChecksum != evaluated.ObservationChecksum {
+		return apierrors.NewConflict(
+			"observation gate changed before desired-state promotion",
+		)
+	}
+	return nil
+}
+
 func IngestObservation(
 	ctx context.Context,
 	envelope types.ObservationEnvelope,
@@ -508,9 +518,20 @@ func IngestObservation(
 		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
 			return err
 		}
+		var retained *types.ObservedComponentState
+		if head != nil {
+			retained, err = getObservedComponentState(
+				txCtx,
+				envelope.OrganizationID,
+				head.ObservationID,
+			)
+			if err != nil {
+				return err
+			}
+		}
 		receivedAt := time.Now().UTC()
 		decision, admissionErr := observation.EvaluateAdmission(
-			*registration, head, envelope, receivedAt,
+			*registration, head, retained, envelope, receivedAt,
 		)
 		if admissionErr != nil && !decision.RetainEvidence {
 			if errors.Is(admissionErr, observation.ErrUntrustedObservation) ||
@@ -520,11 +541,7 @@ func IngestObservation(
 			return apierrors.NewBadRequest(admissionErr.Error())
 		}
 		if decision.Disposition == types.ObservationDispositionReplay {
-			replay, err := getObservationReplay(txCtx, envelope)
-			if err != nil {
-				return err
-			}
-			ingested = replay
+			ingested = retained
 			return nil
 		}
 		stateChecksum, err := observationStateChecksum(envelope)
@@ -554,14 +571,16 @@ func IngestObservation(
 			INSERT INTO ObservedComponentState AS o (
 				id, organization_id, observer_id, deployment_unit_id,
 				component_instance_id, component_key, source_sequence,
-				captured_at, received_at, evidence_checksum, evidence_reference,
+				captured_at, received_at, fresh_until,
+				evidence_checksum, evidence_reference,
 				artifact_digest, config_checksum, schema_version,
 				capability_checksum, platform, topology_checksum, health,
 				outcome, disposition, trusted, is_current, state_checksum
 			) VALUES (
 				@id, @organizationID, @observerID, @deploymentUnitID,
 				@componentInstanceID, @componentKey, @sourceSequence,
-				@capturedAt, @receivedAt, @evidenceChecksum, @evidenceReference,
+				@capturedAt, @receivedAt, @freshUntil,
+				@evidenceChecksum, @evidenceReference,
 				@artifactDigest, @configChecksum, @schemaVersion,
 				@capabilityChecksum, @platform, @topologyChecksum, @health,
 				@outcome, @disposition, @trusted, @isCurrent, @stateChecksum
@@ -573,7 +592,9 @@ func IngestObservation(
 				"componentInstanceID": envelope.ComponentInstanceID,
 				"componentKey":        strings.TrimSpace(envelope.ComponentKey),
 				"sourceSequence":      envelope.SourceSequence, "capturedAt": envelope.CapturedAt,
-				"receivedAt": receivedAt, "evidenceChecksum": envelope.EvidenceChecksum,
+				"receivedAt":        receivedAt,
+				"freshUntil":        envelope.CapturedAt.Add(registration.MaxFreshness),
+				"evidenceChecksum":  envelope.EvidenceChecksum,
 				"evidenceReference": envelope.EvidenceReference,
 				"artifactDigest":    envelope.ArtifactDigest,
 				"configChecksum":    envelope.ConfigChecksum, "schemaVersion": envelope.SchemaVersion,
@@ -642,7 +663,60 @@ func IngestObservation(
 		ingested = &value
 		return nil
 	})
-	return ingested, err
+	if err != nil || ingested == nil {
+		return ingested, err
+	}
+	if err := ReconcilePendingDesiredRevisionForComponent(
+		ctx,
+		ingested.OrganizationID,
+		ingested.DeploymentUnitID,
+		ingested.ComponentInstanceID,
+	); err != nil {
+		return ingested, fmt.Errorf(
+			"could not reconcile desired state after observation ingestion: %w",
+			err,
+		)
+	}
+	return ingested, nil
+}
+
+func ReconcilePendingDesiredRevision(
+	ctx context.Context,
+	pendingRevisionID uuid.UUID,
+) error {
+	gate, err := EvaluateObservationGate(ctx, pendingRevisionID)
+	if err != nil {
+		return err
+	}
+	if gate.Status == types.ObservationGateStatusPending {
+		return nil
+	}
+	return AdvanceActiveDesiredRevision(ctx, pendingRevisionID, gate)
+}
+
+func ReconcilePendingDesiredRevisionForComponent(
+	ctx context.Context,
+	organizationID, deploymentUnitID, componentInstanceID uuid.UUID,
+) error {
+	var pendingRevisionID *uuid.UUID
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT pending_revision_id
+		FROM ComponentDesiredStateHead
+		WHERE organization_id = @organizationID
+		  AND deployment_unit_id = @deploymentUnitID
+		  AND component_instance_id = @componentInstanceID`,
+		pgx.NamedArgs{
+			"organizationID": organizationID, "deploymentUnitID": deploymentUnitID,
+			"componentInstanceID": componentInstanceID,
+		},
+	).Scan(&pendingRevisionID)
+	if errors.Is(err, pgx.ErrNoRows) || pendingRevisionID == nil {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("could not query component pending desired revision: %w", err)
+	}
+	return ReconcilePendingDesiredRevision(ctx, *pendingRevisionID)
 }
 
 func EvaluateObservationGate(
@@ -653,19 +727,33 @@ func EvaluateObservationGate(
 	if err != nil {
 		return types.ObservationGateResult{}, err
 	}
+	return evaluateObservationGate(ctx, *pending, time.Now().UTC())
+}
+
+func evaluateObservationGate(
+	ctx context.Context,
+	pending types.PendingDesiredRevision,
+	now time.Time,
+) (types.ObservationGateResult, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT `+observedStateOutputExpr+`
+		SELECT DISTINCT ON (o.observer_id) `+observedStateOutputExpr+`
 		FROM ObservedComponentState o
+		JOIN ObserverRegistration r
+		  ON r.id = o.observer_id
+		 AND r.organization_id = o.organization_id
 		WHERE o.organization_id = @organizationID
 		  AND o.deployment_unit_id = @deploymentUnitID
 		  AND o.component_instance_id = @componentInstanceID
 		  AND o.trusted = TRUE
-		  AND o.is_current = TRUE
-		ORDER BY o.captured_at DESC, o.id DESC`,
+		  AND o.disposition = 'ACCEPTED'
+		  AND r.enabled = TRUE
+		  AND o.captured_at >= @admittedAt
+		  AND o.captured_at <= @observationDeadline
+		ORDER BY o.observer_id, o.captured_at DESC, o.id DESC`,
 		pgx.NamedArgs{
-			"organizationID":      pending.OrganizationID,
-			"deploymentUnitID":    pending.DeploymentUnitID,
-			"componentInstanceID": pending.ComponentInstanceID,
+			"organizationID": pending.OrganizationID, "deploymentUnitID": pending.DeploymentUnitID,
+			"componentInstanceID": pending.ComponentInstanceID, "admittedAt": pending.CreatedAt,
+			"observationDeadline": pending.ObservationDeadline,
 		},
 	)
 	if err != nil {
@@ -685,6 +773,7 @@ func EvaluateObservationGate(
 		ctx,
 		pending.OrganizationID,
 		pending.ID,
+		pending.ExecutionID,
 	)
 	if err != nil {
 		return types.ObservationGateResult{}, err
@@ -692,12 +781,12 @@ func EvaluateObservationGate(
 	for i := range observations {
 		observations[i].ExecutorOutcome = executorOutcome
 	}
-	return observation.EvaluateGate(*pending, observations, time.Now().UTC()), nil
+	return observation.EvaluateGate(pending, observations, now), nil
 }
 
 func getLatestExecutorOutcome(
 	ctx context.Context,
-	organizationID, pendingRevisionID uuid.UUID,
+	organizationID, pendingRevisionID, executionID uuid.UUID,
 ) (types.ExecutorOutcome, error) {
 	var outcome types.ExecutorOutcome
 	err := internalctx.GetDb(ctx).QueryRow(ctx, `
@@ -705,11 +794,13 @@ func getLatestExecutorOutcome(
 		FROM ExecutorReport
 		WHERE organization_id = @organizationID
 		  AND pending_revision_id = @pendingRevisionID
+		  AND execution_id = @executionID
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1`,
 		pgx.NamedArgs{
 			"organizationID":    organizationID,
 			"pendingRevisionID": pendingRevisionID,
+			"executionID":       executionID,
 		},
 	).Scan(&outcome)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -963,6 +1054,7 @@ func observationStateChecksum(envelope types.ObservationEnvelope) (string, error
 		SourceSequence      int64                    `json:"sourceSequence"`
 		CapturedAt          time.Time                `json:"capturedAt"`
 		EvidenceChecksum    string                   `json:"evidenceChecksum"`
+		EvidenceReference   string                   `json:"evidenceReference"`
 		ArtifactDigest      string                   `json:"artifactDigest"`
 		ConfigChecksum      string                   `json:"configChecksum"`
 		SchemaVersion       string                   `json:"schemaVersion"`
@@ -974,9 +1066,10 @@ func observationStateChecksum(envelope types.ObservationEnvelope) (string, error
 	}{
 		envelope.OrganizationID, envelope.ObserverID, envelope.DeploymentUnitID,
 		envelope.ComponentInstanceID, envelope.ComponentKey, envelope.SourceSequence,
-		envelope.CapturedAt.UTC(), envelope.EvidenceChecksum, envelope.ArtifactDigest,
-		envelope.ConfigChecksum, envelope.SchemaVersion, envelope.CapabilityChecksum,
-		envelope.Platform, envelope.TopologyChecksum, envelope.Health, envelope.Outcome,
+		envelope.CapturedAt.UTC(), envelope.EvidenceChecksum, envelope.EvidenceReference,
+		envelope.ArtifactDigest, envelope.ConfigChecksum, envelope.SchemaVersion,
+		envelope.CapabilityChecksum, envelope.Platform, envelope.TopologyChecksum,
+		envelope.Health, envelope.Outcome,
 	})
 	if err != nil {
 		return "", fmt.Errorf("could not canonicalize observed state: %w", err)
@@ -1102,6 +1195,8 @@ type driftCaseRow struct {
 	OrganizationID          uuid.UUID             `db:"organization_id"`
 	ActiveDesiredRevisionID uuid.UUID             `db:"active_desired_revision_id"`
 	ObservationID           uuid.UUID             `db:"observation_id"`
+	DeploymentUnitID        uuid.UUID             `db:"deployment_unit_id"`
+	ComponentInstanceID     uuid.UUID             `db:"component_instance_id"`
 	Status                  types.DriftCaseStatus `db:"status"`
 	Classes                 []string              `db:"classes"`
 	Summary                 string                `db:"summary"`
@@ -1118,14 +1213,16 @@ func (row driftCaseRow) toType() types.DriftCase {
 		ID: row.ID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		OrganizationID:          row.OrganizationID,
 		ActiveDesiredRevisionID: row.ActiveDesiredRevisionID,
-		ObservationID:           row.ObservationID, Status: row.Status, Classes: classes,
+		ObservationID:           row.ObservationID, DeploymentUnitID: row.DeploymentUnitID,
+		ComponentInstanceID: row.ComponentInstanceID, Status: row.Status, Classes: classes,
 		Summary: row.Summary, AssignedTo: row.AssignedTo, ResolvedAt: row.ResolvedAt,
 	}
 }
 
 const driftCaseOutputExpr = `
 	d.id, d.created_at, d.updated_at, d.organization_id,
-	d.active_desired_revision_id, d.observation_id, d.status,
+	d.active_desired_revision_id, d.observation_id,
+	d.deployment_unit_id, d.component_instance_id, d.status,
 	d.classes, d.summary, d.assigned_to, d.resolved_at
 `
 
@@ -1147,11 +1244,21 @@ func OpenDriftCase(
 		rows, err := internalctx.GetDb(txCtx).Query(txCtx, `
 			INSERT INTO DriftCase AS d (
 				id, organization_id, active_desired_revision_id,
-				observation_id, status, classes, summary
-			) VALUES (
-				@id, @organizationID, @activeDesiredRevisionID,
-				@observationID, @status, @classes, @summary
+				observation_id, deployment_unit_id, component_instance_id,
+				status, classes, summary
 			)
+			SELECT
+				@id, @organizationID, @activeDesiredRevisionID,
+				@observationID, a.deployment_unit_id, a.component_instance_id,
+				@status, @classes, @summary
+			FROM ActiveDesiredRevision a
+			JOIN ObservedComponentState o
+			  ON o.id = @observationID
+			 AND o.organization_id = a.organization_id
+			 AND o.deployment_unit_id = a.deployment_unit_id
+			 AND o.component_instance_id = a.component_instance_id
+			WHERE a.id = @activeDesiredRevisionID
+			  AND a.organization_id = @organizationID
 			ON CONFLICT (
 				organization_id, active_desired_revision_id, observation_id
 			) WHERE status IN ('OPEN', 'ASSIGNED', 'EXCEPTION')
@@ -1171,6 +1278,11 @@ func OpenDriftCase(
 		row, err := pgx.CollectExactlyOneRow(
 			rows, pgx.RowToStructByName[driftCaseRow],
 		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierrors.NewConflict(
+				"drift desired and observed state do not share a placement",
+			)
+		}
 		if err != nil {
 			return fmt.Errorf("could not collect DriftCase: %w", err)
 		}
@@ -1201,17 +1313,19 @@ func ResolveDriftCase(
 	decision types.ReconciliationDecision,
 ) error {
 	if decision.OrganizationID == uuid.Nil || decision.DriftCaseID == uuid.Nil ||
-		decision.ActorID == uuid.Nil || strings.TrimSpace(decision.Reason) == "" {
+		decision.ActorID == uuid.Nil {
 		return apierrors.NewBadRequest("reconciliation decision is invalid")
 	}
-	if decision.Action == types.ReconciliationActionAcceptDeviation &&
-		(decision.AcceptedUntil == nil || !decision.AcceptedUntil.After(time.Now().UTC())) {
-		return apierrors.NewBadRequest("accepted deviation must expire in the future")
+	now := time.Now().UTC()
+	nextStatus, err := reconciliation.DecisionTargetStatus(decision, now)
+	if err != nil {
+		return apierrors.NewBadRequest(err.Error())
 	}
 	return RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
 		var status types.DriftCaseStatus
+		var activeDesiredRevisionID uuid.UUID
 		err := internalctx.GetDb(txCtx).QueryRow(txCtx, `
-			SELECT status
+			SELECT status, active_desired_revision_id
 			FROM DriftCase
 			WHERE organization_id = @organizationID
 			  AND id = @driftCaseID
@@ -1220,7 +1334,7 @@ func ResolveDriftCase(
 				"organizationID": decision.OrganizationID,
 				"driftCaseID":    decision.DriftCaseID,
 			},
-		).Scan(&status)
+		).Scan(&status, &activeDesiredRevisionID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apierrors.ErrNotFound
 		}
@@ -1230,24 +1344,51 @@ func ResolveDriftCase(
 		if status == types.DriftCaseStatusResolved {
 			return apierrors.NewConflict("drift case is already resolved")
 		}
-		nextStatus := types.DriftCaseStatusResolved
-		if decision.Action == types.ReconciliationActionAcceptDeviation {
-			nextStatus = types.DriftCaseStatusException
+		if nextStatus == types.DriftCaseStatusResolved {
+			active, err := getActiveDesiredRevision(
+				txCtx,
+				decision.OrganizationID,
+				activeDesiredRevisionID,
+			)
+			if err != nil {
+				return err
+			}
+			observed, err := getObservedComponentState(
+				txCtx,
+				decision.OrganizationID,
+				*decision.OutcomeObservationID,
+			)
+			if err != nil {
+				return err
+			}
+			if observed.DeploymentUnitID != active.DeploymentUnitID ||
+				observed.ComponentInstanceID != active.ComponentInstanceID ||
+				observed.Disposition != types.ObservationDispositionAccepted ||
+				observed.Outcome != types.ObservationOutcomeComplete ||
+				observed.Health != types.ObservedHealthHealthy ||
+				reconciliation.ClassifyDrift(*active, *observed).Drifted {
+				return apierrors.NewConflict(
+					"reconciliation outcome does not prove restored active desired state",
+				)
+			}
 		}
 		_, err = internalctx.GetDb(txCtx).Exec(txCtx, `
 			INSERT INTO ReconciliationAction (
 				id, organization_id, drift_case_id, action, reason,
-				actor_id, deployment_plan_id, accepted_until
+				actor_id, deployment_plan_id, outcome_observation_id,
+				accepted_until
 			) VALUES (
 				@id, @organizationID, @driftCaseID, @action, @reason,
-				@actorID, @deploymentPlanID, @acceptedUntil
+				@actorID, @deploymentPlanID, @outcomeObservationID,
+				@acceptedUntil
 			)`,
 			pgx.NamedArgs{
 				"id": uuid.New(), "organizationID": decision.OrganizationID,
 				"driftCaseID": decision.DriftCaseID, "action": decision.Action,
 				"reason": strings.TrimSpace(decision.Reason), "actorID": decision.ActorID,
-				"deploymentPlanID": decision.DeploymentPlanID,
-				"acceptedUntil":    decision.AcceptedUntil,
+				"deploymentPlanID":     decision.DeploymentPlanID,
+				"outcomeObservationID": decision.OutcomeObservationID,
+				"acceptedUntil":        decision.AcceptedUntil,
 			},
 		)
 		if err != nil {
@@ -1256,12 +1397,16 @@ func ResolveDriftCase(
 		_, err = internalctx.GetDb(txCtx).Exec(txCtx, `
 			UPDATE DriftCase
 			SET status = @status, updated_at = now(),
+				assigned_to = CASE
+					WHEN @status = 'ASSIGNED' THEN @actorID
+					ELSE assigned_to
+				END,
 				resolved_at = CASE WHEN @status = 'RESOLVED' THEN now() ELSE NULL END
 			WHERE organization_id = @organizationID
 			  AND id = @driftCaseID`,
 			pgx.NamedArgs{
 				"status": nextStatus, "organizationID": decision.OrganizationID,
-				"driftCaseID": decision.DriftCaseID,
+				"driftCaseID": decision.DriftCaseID, "actorID": decision.ActorID,
 			},
 		)
 		if err != nil {
@@ -1315,7 +1460,8 @@ func ListReconciliationActions(
 ) ([]types.ReconciliationAction, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT id, created_at, organization_id, drift_case_id,
-			action, reason, actor_id, deployment_plan_id, accepted_until
+			action, reason, actor_id, deployment_plan_id,
+			outcome_observation_id, accepted_until
 		FROM ReconciliationAction
 		WHERE organization_id = @organizationID
 		ORDER BY created_at DESC, id DESC

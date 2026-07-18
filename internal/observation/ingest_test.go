@@ -17,7 +17,7 @@ func TestObservationAdmissionAcceptsTrustedFreshInScopeEnvelope(t *testing.T) {
 	now := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	registration, envelope := validObservation(now)
 
-	decision, err := EvaluateAdmission(registration, nil, envelope, now)
+	decision, err := EvaluateAdmission(registration, nil, nil, envelope, now)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(decision.Disposition).To(Equal(types.ObservationDispositionAccepted))
@@ -31,12 +31,12 @@ func TestObservationAdmissionRejectsObserverMismatchAndUntrustedCredential(t *te
 	registration, envelope := validObservation(now)
 	envelope.ObserverID = uuid.New()
 
-	_, err := EvaluateAdmission(registration, nil, envelope, now)
+	_, err := EvaluateAdmission(registration, nil, nil, envelope, now)
 	g.Expect(errors.Is(err, ErrObserverMismatch)).To(BeTrue())
 
 	envelope.ObserverID = registration.ID
 	envelope.CredentialFingerprint = digest("wrong")
-	_, err = EvaluateAdmission(registration, nil, envelope, now)
+	_, err = EvaluateAdmission(registration, nil, nil, envelope, now)
 	g.Expect(errors.Is(err, ErrUntrustedObservation)).To(BeTrue())
 }
 
@@ -46,7 +46,7 @@ func TestObservationAdmissionRejectsStaleEvidenceByCapturedTime(t *testing.T) {
 	registration, envelope := validObservation(now)
 	envelope.CapturedAt = now.Add(-registration.MaxFreshness - time.Second)
 
-	decision, err := EvaluateAdmission(registration, nil, envelope, now)
+	decision, err := EvaluateAdmission(registration, nil, nil, envelope, now)
 
 	g.Expect(errors.Is(err, ErrStaleObservation)).To(BeTrue())
 	g.Expect(decision.Disposition).To(Equal(types.ObservationDispositionRejected))
@@ -63,15 +63,16 @@ func TestObservationAdmissionMakesReplayIdempotentAndRetainsOutOfOrderEvidence(t
 		EvidenceChecksum: envelope.EvidenceChecksum,
 		CapturedAt:       envelope.CapturedAt,
 	}
+	retained := retainedObservation(envelope)
 
-	replay, err := EvaluateAdmission(registration, head, envelope, now)
+	replay, err := EvaluateAdmission(registration, head, &retained, envelope, now)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(replay.Disposition).To(Equal(types.ObservationDispositionReplay))
 	g.Expect(replay.AdvanceHead).To(BeFalse())
 
 	envelope.SourceSequence--
 	envelope.EvidenceChecksum = digest("older")
-	outOfOrder, err := EvaluateAdmission(registration, head, envelope, now)
+	outOfOrder, err := EvaluateAdmission(registration, head, &retained, envelope, now)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(outOfOrder.Disposition).To(Equal(types.ObservationDispositionOutOfOrder))
 	g.Expect(outOfOrder.RetainEvidence).To(BeTrue())
@@ -88,13 +89,48 @@ func TestObservationAdmissionRetainsConflictingReplayForReconciliation(t *testin
 		EvidenceChecksum: digest("different"),
 		CapturedAt:       envelope.CapturedAt,
 	}
+	retained := retainedObservation(envelope)
+	retained.EvidenceChecksum = head.EvidenceChecksum
 
-	decision, err := EvaluateAdmission(registration, head, envelope, now)
+	decision, err := EvaluateAdmission(registration, head, &retained, envelope, now)
 
 	g.Expect(errors.Is(err, ErrConflictingReplay)).To(BeTrue())
 	g.Expect(decision.Disposition).To(Equal(types.ObservationDispositionConflict))
 	g.Expect(decision.RetainEvidence).To(BeTrue())
 	g.Expect(decision.Quarantine).To(BeTrue())
+}
+
+func TestObservationReplayRequiresExactMaterialAndComponentScope(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
+	_, envelope := validObservation(now)
+	retained := retainedObservation(envelope)
+
+	g.Expect(SameObservationMaterial(envelope, retained)).To(BeTrue())
+
+	mutated := envelope
+	mutated.EvidenceReference = "different-evidence"
+	g.Expect(SameObservationMaterial(mutated, retained)).To(BeFalse())
+
+	mutated = envelope
+	mutated.ComponentInstanceID = uuid.New()
+	g.Expect(SameObservationMaterial(mutated, retained)).To(BeFalse())
+}
+
+func retainedObservation(envelope types.ObservationEnvelope) types.ObservedComponentState {
+	return types.ObservedComponentState{
+		OrganizationID: envelope.OrganizationID, ObserverID: envelope.ObserverID,
+		DeploymentUnitID:    envelope.DeploymentUnitID,
+		ComponentInstanceID: envelope.ComponentInstanceID,
+		ComponentKey:        envelope.ComponentKey, SourceSequence: envelope.SourceSequence,
+		CapturedAt: envelope.CapturedAt, EvidenceChecksum: envelope.EvidenceChecksum,
+		EvidenceReference: envelope.EvidenceReference,
+		ArtifactDigest:    envelope.ArtifactDigest, ConfigChecksum: envelope.ConfigChecksum,
+		SchemaVersion:      envelope.SchemaVersion,
+		CapabilityChecksum: envelope.CapabilityChecksum, Platform: envelope.Platform,
+		TopologyChecksum: envelope.TopologyChecksum, Health: envelope.Health,
+		Outcome: envelope.Outcome,
+	}
 }
 
 func validObservation(now time.Time) (types.ObserverRegistration, types.ObservationEnvelope) {

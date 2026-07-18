@@ -16,17 +16,24 @@ func EvaluateGate(
 ) types.ObservationGateResult {
 	trusted := make([]types.ObservedComponentState, 0, len(observations))
 	for _, observed := range observations {
-		if observed.Trusted && observed.Current &&
+		if observed.Trusted &&
+			observed.Disposition == types.ObservationDispositionAccepted &&
 			observed.OrganizationID == pending.OrganizationID &&
 			observed.DeploymentUnitID == pending.DeploymentUnitID &&
 			observed.ComponentInstanceID == pending.ComponentInstanceID &&
-			!observed.CapturedAt.After(pending.ObservationDeadline) {
+			!observed.CapturedAt.Before(pending.CreatedAt) &&
+			!observed.CapturedAt.After(pending.ObservationDeadline) &&
+			!observed.FreshUntil.IsZero() &&
+			!now.After(observed.FreshUntil) {
 			trusted = append(trusted, observed)
 		}
 	}
 	if hasObserverConflict(trusted) {
-		return terminalGate(types.ObservationGateStatusConflict,
-			"trusted observers report conflicting runtime state")
+		return terminalObservationGate(
+			types.ObservationGateStatusConflict,
+			"trusted observers report conflicting runtime state",
+			newestObservation(trusted),
+		)
 	}
 	if len(trusted) == 0 {
 		if !now.Before(pending.ObservationDeadline) {
@@ -38,19 +45,22 @@ func EvaluateGate(
 	observed := newestObservation(trusted)
 	switch observed.ExecutorOutcome {
 	case types.ExecutorOutcomeFailed:
-		return terminalGate(
+		return terminalObservationGate(
 			types.ObservationGateStatusFailed,
 			"executor reported terminal failure before independent verification",
+			observed,
 		)
 	case types.ExecutorOutcomeCancelled:
-		return terminalGate(
+		return terminalObservationGate(
 			types.ObservationGateStatusCancelled,
 			"executor was cancelled before independent verification",
+			observed,
 		)
 	case types.ExecutorOutcomeUnknown:
-		return terminalGate(
+		return terminalObservationGate(
 			types.ObservationGateStatusUnknown,
 			"executor outcome remains unknown",
+			observed,
 		)
 	case "":
 		if !now.Before(pending.ObservationDeadline) {
@@ -66,27 +76,43 @@ func EvaluateGate(
 	}
 	switch observed.Outcome {
 	case types.ObservationOutcomePartial:
-		return terminalGate(types.ObservationGateStatusPartial,
-			"observer returned partial state")
+		return terminalObservationGate(
+			types.ObservationGateStatusPartial,
+			"observer returned partial state",
+			observed,
+		)
 	case types.ObservationOutcomeUnknown:
-		return terminalGate(types.ObservationGateStatusUnknown,
-			"observer could not determine runtime state")
+		return terminalObservationGate(
+			types.ObservationGateStatusUnknown,
+			"observer could not determine runtime state",
+			observed,
+		)
 	case types.ObservationOutcomeCancelled:
-		return terminalGate(types.ObservationGateStatusCancelled,
-			"observation was cancelled")
+		return terminalObservationGate(
+			types.ObservationGateStatusCancelled,
+			"observation was cancelled",
+			observed,
+		)
 	case types.ObservationOutcomeFailed:
-		return terminalGate(types.ObservationGateStatusFailed,
-			"observer reported failure")
+		return terminalObservationGate(
+			types.ObservationGateStatusFailed,
+			"observer reported failure",
+			observed,
+		)
 	}
 	if !matchesPending(pending, observed) || observed.Health != types.ObservedHealthHealthy {
 		if observed.ExecutorOutcome == types.ExecutorOutcomeSucceeded {
-			return terminalGate(
+			return terminalObservationGate(
 				types.ObservationGateStatusFailed,
 				"executor reported success but independent runtime observation does not match",
+				observed,
 			)
 		}
-		return terminalGate(types.ObservationGateStatusFailed,
-			"independent runtime observation does not match pending desired state")
+		return terminalObservationGate(
+			types.ObservationGateStatusFailed,
+			"independent runtime observation does not match pending desired state",
+			observed,
+		)
 	}
 	return types.ObservationGateResult{
 		Status:        types.ObservationGateStatusVerified,
@@ -149,6 +175,17 @@ func terminalGate(
 	return types.ObservationGateResult{
 		Status: status, Reason: reason, Quarantine: true, ReleaseMutationLock: true,
 	}
+}
+
+func terminalObservationGate(
+	status types.ObservationGateStatus,
+	reason string,
+	observed types.ObservedComponentState,
+) types.ObservationGateResult {
+	result := terminalGate(status, reason)
+	result.ObservationID = observed.ID
+	result.ObservationChecksum = observed.StateChecksum
+	return result
 }
 
 type CampaignObservationStore interface {

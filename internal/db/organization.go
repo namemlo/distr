@@ -452,6 +452,12 @@ func DeleteOrganizationsOlderThan(ctx context.Context, minAge time.Duration) (in
 		); err != nil {
 			return fmt.Errorf("could not delete organization tasks: %w", err)
 		}
+		if err := deleteDesiredObservedStateForOrganizations(
+			ctx,
+			organizationIDs,
+		); err != nil {
+			return err
+		}
 		if _, err := db.Exec(
 			ctx,
 			"DELETE FROM DeploymentPlan WHERE organization_id = ANY(@organizationIds)",
@@ -471,6 +477,49 @@ func DeleteOrganizationsOlderThan(ctx context.Context, minAge time.Duration) (in
 		return nil
 	})
 	return rowsAffected, err
+}
+
+func deleteDesiredObservedStateForOrganizations(
+	ctx context.Context,
+	organizationIDs []uuid.UUID,
+) error {
+	tables := []string{
+		"ReconciliationAction",
+		"DriftCaseEvent",
+		"DriftCase",
+		"CampaignPrerequisiteEvaluation",
+		"ComponentDesiredStateHead",
+		"ActiveDesiredRevision",
+		"ExecutorReport",
+		"PendingDesiredRevision",
+		"ComponentObservationHead",
+		"ObservedComponentState",
+		"ObserverRegistration",
+	}
+	database := internalctx.GetDb(ctx)
+	for _, table := range tables {
+		var exists bool
+		if err := database.QueryRow(
+			ctx,
+			"SELECT to_regclass(@tableName) IS NOT NULL",
+			pgx.NamedArgs{"tableName": table},
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("could not inspect retention table %s: %w", table, err)
+		}
+		if !exists {
+			continue
+		}
+		statement := "DELETE FROM " + pgx.Identifier{table}.Sanitize() +
+			" WHERE organization_id = ANY(@organizationIds)"
+		if _, err := database.Exec(
+			ctx,
+			statement,
+			pgx.NamedArgs{"organizationIds": organizationIDs},
+		); err != nil {
+			return fmt.Errorf("could not delete organization %s rows: %w", table, err)
+		}
+	}
+	return nil
 }
 
 func SetOrganizationDeletedAtNow(ctx context.Context, orgID uuid.UUID) error {

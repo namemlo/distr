@@ -95,9 +95,10 @@ func resolveDriftCaseHandler() http.HandlerFunc {
 		err = db.ResolveDriftCase(r.Context(), types.ReconciliationDecision{
 			OrganizationID: *authentication.CurrentOrgID(), DriftCaseID: driftCaseID,
 			Action: request.Action, Reason: request.Reason,
-			ActorID:          authentication.CurrentUserID(),
-			DeploymentPlanID: request.DeploymentPlanID,
-			AcceptedUntil:    request.AcceptedUntil,
+			ActorID:              authentication.CurrentUserID(),
+			DeploymentPlanID:     request.DeploymentPlanID,
+			OutcomeObservationID: request.OutcomeObservationID,
+			AcceptedUntil:        request.AcceptedUntil,
 		})
 		if err != nil {
 			handleReconciliationError(w, r, "resolve drift case", err)

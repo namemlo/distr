@@ -53,14 +53,17 @@ func TestDesiredStateTerminalFailurePreservesPriorActive(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 
 	active, updatedPending, err := Advance(&previous, *pending, types.ObservationGateResult{
-		Status: types.ObservationGateStatusFailed,
-		Reason: "executor failed before independent verification",
+		Status:              types.ObservationGateStatusFailed,
+		Reason:              "executor failed before independent verification",
+		ObservationID:       uuid.New(),
+		ObservationChecksum: digest("failed-observation"),
 	}, now)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(active).To(Equal(&previous))
 	g.Expect(updatedPending.Status).To(Equal(types.PendingDesiredStatusFailed))
 	g.Expect(updatedPending.TerminalReason).To(Equal("executor failed before independent verification"))
+	g.Expect(updatedPending.TerminalObservationID).NotTo(Equal(uuid.Nil))
 }
 
 func TestDesiredStateCancellationPreservesPriorActive(t *testing.T) {
@@ -76,8 +79,10 @@ func TestDesiredStateCancellationPreservesPriorActive(t *testing.T) {
 		&previous,
 		*pending,
 		types.ObservationGateResult{
-			Status: types.ObservationGateStatusCancelled,
-			Reason: "executor cancellation acknowledged",
+			Status:              types.ObservationGateStatusCancelled,
+			Reason:              "executor cancellation acknowledged",
+			ObservationID:       uuid.New(),
+			ObservationChecksum: digest("cancelled-observation"),
 		},
 		now,
 	)
@@ -85,6 +90,28 @@ func TestDesiredStateCancellationPreservesPriorActive(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(active).To(Equal(&previous))
 	g.Expect(updatedPending.Status).To(Equal(types.PendingDesiredStatusCancelled))
+}
+
+func TestDesiredStateRejectsUnprovenNonTimeoutTerminalOutcome(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
+	previous := types.ActiveDesiredRevision{ID: uuid.New(), Revision: 7}
+	pending, _, err := Admit(validPendingInput(), &previous, now.Add(-time.Minute))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	active, updated, err := Advance(
+		&previous,
+		*pending,
+		types.ObservationGateResult{
+			Status: types.ObservationGateStatusFailed,
+			Reason: "caller supplied an unproven terminal outcome",
+		},
+		now,
+	)
+
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(active).To(Equal(&previous))
+	g.Expect(updated.Status).To(Equal(types.PendingDesiredStatusPending))
 }
 
 func validPendingInput() types.PendingDesiredRevisionInput {

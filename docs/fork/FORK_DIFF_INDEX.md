@@ -1556,18 +1556,20 @@ Use one entry per pull request:
   unknown evidence remains explicit and cannot be projected as success.
 ### PR-077 - Desired state, independent observation, and drift
 
-- Status: Implemented on the prepared synthetic branch; focused backend, vet, new-diff lint, and
-  migration-contract verification completed. The race suite is environment-blocked by the missing Windows C
-  compiler; ordered migration-stack and live PostgreSQL verification remain integration gates.
+- Status: Implemented and review-hardened on the prepared synthetic branch; focused backend, vet, new-diff lint,
+  and migration-contract verification completed. Behavioral PostgreSQL tests compile but require
+  `DISTR_TEST_DATABASE_URL`. The race suite is environment-blocked by the missing Windows C compiler; ordered
+  migration-stack and live PostgreSQL verification remain integration gates.
 - Upstream base: `ea6567b6` (PR-063 synthetic checkpoint).
 - Feature flag: `operator_control_plane_v2` gates observer ingestion and all management routes.
 - User-facing behavior: An admitted component becomes active desired state only after fresh, trusted, independently
   measured runtime state exactly matches. Failure, cancellation, partial/unknown evidence, mismatch, conflict, and
   timeout retain the prior active revision and create visible quarantine/reconciliation state.
 - Database changes: Migration 159 adds pending/active desired revisions, desired/observation heads, executor reports,
-  observer registrations, independent observed state, drift cases/events, and reconciliation actions. Existing
-  executor-projected target state/history is unchanged. Campaign prerequisite evidence is tenant-FK-bound to the
-  independent observation once the earlier campaign table exists.
+  observer registrations, independent observed state, drift cases/events, and reconciliation actions. Composite
+  constraints bind component placement, pending execution, drift evidence, and reconciliation outcome evidence.
+  Existing executor-projected target state/history is unchanged. Campaign prerequisite evidence is tenant-FK-bound
+  to the independent observation once the earlier campaign table exists.
 - API changes: Adds authenticated `/api/observer/v1/observations` ingestion plus organization-scoped observer
   registration, observation, drift-case, and reconciliation-action management routes.
 - UI changes: None.
@@ -1575,7 +1577,8 @@ Use one entry per pull request:
   credential and ordered evidence envelope.
 - Documentation: Added ADR-0065 and PR-077 fork notes.
 - Tests: Added desired-state, observer trust/freshness/sequence, gate, drift, reconciliation, campaign
-  resolver/verifier, API/mapping/handler, migration, tenant-fence, and route coverage.
+  resolver/verifier, API/mapping/handler, migration, tenant-fence, route, lifecycle, replay, retention, and
+  placement/execution repository boundary coverage.
 - Upstream contribution notes: Community-neutral desired/observed state and reconciliation contracts; no adopter,
   infrastructure, CI-provider, cloud, credential value, or workload-specific core behavior.
 - Compatibility notes: v1 execution, `TargetComponentState`, and `TargetComponentObservation` remain unchanged.

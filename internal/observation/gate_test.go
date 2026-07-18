@@ -137,6 +137,82 @@ func TestObservationGateDoesNotVerifyEvidenceCapturedAfterDeadline(t *testing.T)
 	g.Expect(result.Quarantine).To(BeTrue())
 }
 
+func TestObservationGateRequiresFreshEvidenceCapturedAfterAdmission(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	pending := gatePending(now)
+
+	beforeAdmission := matchingObserved(pending, now)
+	beforeAdmission.CapturedAt = pending.CreatedAt.Add(-time.Nanosecond)
+	result := EvaluateGate(
+		pending,
+		[]types.ObservedComponentState{beforeAdmission},
+		now,
+	)
+	g.Expect(result.Status).To(Equal(types.ObservationGateStatusPending))
+
+	stale := matchingObserved(pending, now)
+	stale.FreshUntil = now.Add(-time.Nanosecond)
+	result = EvaluateGate(pending, []types.ObservedComponentState{stale}, now)
+	g.Expect(result.Status).To(Equal(types.ObservationGateStatusPending))
+}
+
+func TestObservationGatePreservesEligiblePreDeadlineEvidenceAfterLaterSample(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	pending := gatePending(now)
+	eligible := matchingObserved(pending, now)
+	later := eligible
+	later.ID = uuid.New()
+	later.CapturedAt = pending.ObservationDeadline.Add(time.Second)
+	later.ArtifactDigest = digest("later-runtime")
+
+	result := EvaluateGate(
+		pending,
+		[]types.ObservedComponentState{later, eligible},
+		now,
+	)
+
+	g.Expect(result.Status).To(Equal(types.ObservationGateStatusVerified))
+	g.Expect(result.ObservationID).To(Equal(eligible.ID))
+}
+
+func TestObservationGateRequiresAcceptedTrustedEvidenceForTerminalOutcome(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	pending := gatePending(now)
+	rejected := matchingObserved(pending, now)
+	rejected.Outcome = types.ObservationOutcomeFailed
+	rejected.Disposition = types.ObservationDispositionRejected
+
+	result := EvaluateGate(
+		pending,
+		[]types.ObservedComponentState{rejected},
+		now,
+	)
+
+	g.Expect(result.Status).To(Equal(types.ObservationGateStatusPending))
+	g.Expect(result.ObservationID).To(Equal(uuid.Nil))
+}
+
+func TestObservationGateTerminalEvidenceRetainsTrustedObservationIdentity(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	pending := gatePending(now)
+	failed := matchingObserved(pending, now)
+	failed.Outcome = types.ObservationOutcomeFailed
+
+	result := EvaluateGate(
+		pending,
+		[]types.ObservedComponentState{failed},
+		now,
+	)
+
+	g.Expect(result.Status).To(Equal(types.ObservationGateStatusFailed))
+	g.Expect(result.ObservationID).To(Equal(failed.ID))
+	g.Expect(result.ObservationChecksum).To(Equal(failed.StateChecksum))
+}
+
 func TestObservationGateRejectsExecutorSuccessWhenRuntimeIsWrong(t *testing.T) {
 	g := NewWithT(t)
 	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
@@ -234,6 +310,7 @@ func TestCampaignObservationResolverUsesCanonicalComponentPlacement(t *testing.T
 func gatePending(now time.Time) types.PendingDesiredRevision {
 	return types.PendingDesiredRevision{
 		ID:                  uuid.New(),
+		CreatedAt:           now.Add(-30 * time.Second),
 		OrganizationID:      uuid.New(),
 		DeploymentUnitID:    uuid.New(),
 		ComponentInstanceID: uuid.New(),
@@ -265,9 +342,11 @@ func matchingObserved(pending types.PendingDesiredRevision, now time.Time) types
 		TopologyChecksum:    pending.TopologyChecksum,
 		Health:              types.ObservedHealthHealthy,
 		Outcome:             types.ObservationOutcomeComplete,
+		Disposition:         types.ObservationDispositionAccepted,
 		Trusted:             true,
 		Current:             true,
 		CapturedAt:          now.Add(-time.Second),
+		FreshUntil:          now.Add(time.Minute),
 		StateChecksum:       digest("state"),
 		ExecutorOutcome:     types.ExecutorOutcomeSucceeded,
 	}

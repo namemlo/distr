@@ -46,8 +46,26 @@ func TestMigration159CreatesIndependentAppendOnlyStateAndMutableHeads(t *testing
 		"campaignprerequisiteevaluation_observation_fk",
 	))
 	g.Expect(upText).To(ContainSubstring("source_sequence"))
+	g.Expect(upText).To(ContainSubstring(
+		"UNIQUE (id, deployment_unit_id, organization_id)",
+	))
+	g.Expect(upText).To(ContainSubstring(
+		"component_instance_id, deployment_unit_id, organization_id\n    )\n    REFERENCES ComponentInstance",
+	))
+	g.Expect(upText).To(ContainSubstring(
+		"FOREIGN KEY (pending_revision_id, execution_id, organization_id)",
+	))
+	g.Expect(upText).To(ContainSubstring(
+		"organization_id, observer_id, deployment_unit_id,\n      component_instance_id, source_sequence, state_checksum",
+	))
 	g.Expect(upText).To(ContainSubstring("credential_fingerprint"))
 	g.Expect(upText).To(ContainSubstring("accepted_until"))
+	g.Expect(upText).To(ContainSubstring(
+		"NEW.id IS DISTINCT FROM OLD.id",
+	))
+	g.Expect(upText).To(ContainSubstring(
+		"NEW.created_at IS DISTINCT FROM OLD.created_at",
+	))
 	g.Expect(upText).NotTo(ContainSubstring("ALTER TABLE TargetComponentState"))
 	g.Expect(downText).To(ContainSubstring("refusing migration 159 rollback"))
 }
@@ -121,6 +139,71 @@ func TestExecutorReportRejectsMissingImmutableLineage(t *testing.T) {
 		ReportedStateChecksum: "sha256:" + strings.Repeat("A", 64),
 	})
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+}
+
+func TestPromotionRejectsCallerGateWithoutMatchingRepositoryEvidence(t *testing.T) {
+	g := NewWithT(t)
+	observationID := uuid.New()
+	checksum := desiredObservedDigest("terminal-evidence")
+
+	err := validatePromotionGateHint(
+		types.ObservationGateResult{Status: types.ObservationGateStatusFailed},
+		types.ObservationGateResult{Status: types.ObservationGateStatusPending},
+	)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+
+	err = validatePromotionGateHint(
+		types.ObservationGateResult{
+			Status: types.ObservationGateStatusFailed, ObservationID: uuid.New(),
+		},
+		types.ObservationGateResult{
+			Status:        types.ObservationGateStatusFailed,
+			ObservationID: observationID, ObservationChecksum: checksum,
+		},
+	)
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+
+	err = validatePromotionGateHint(
+		types.ObservationGateResult{
+			Status:        types.ObservationGateStatusFailed,
+			ObservationID: observationID, ObservationChecksum: checksum,
+		},
+		types.ObservationGateResult{
+			Status:        types.ObservationGateStatusFailed,
+			ObservationID: observationID, ObservationChecksum: checksum,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func TestObservationStateChecksumCoversEvidenceReferenceAndComponentScope(t *testing.T) {
+	g := NewWithT(t)
+	envelope := types.ObservationEnvelope{
+		OrganizationID: uuid.New(), ObserverID: uuid.New(),
+		DeploymentUnitID: uuid.New(), ComponentInstanceID: uuid.New(),
+		ComponentKey: "api", SourceSequence: 1, CapturedAt: time.Now().UTC(),
+		EvidenceChecksum:  desiredObservedDigest("evidence"),
+		EvidenceReference: "probe://one",
+		ArtifactDigest:    desiredObservedDigest("artifact"),
+		ConfigChecksum:    desiredObservedDigest("config"), SchemaVersion: "1",
+		CapabilityChecksum: desiredObservedDigest("capability"),
+		Platform:           "linux/amd64", TopologyChecksum: desiredObservedDigest("topology"),
+		Health: types.ObservedHealthHealthy, Outcome: types.ObservationOutcomeComplete,
+	}
+	original, err := observationStateChecksum(envelope)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	changedReference := envelope
+	changedReference.EvidenceReference = "probe://two"
+	referenceChecksum, err := observationStateChecksum(changedReference)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(referenceChecksum).NotTo(Equal(original))
+
+	changedComponent := envelope
+	changedComponent.ComponentInstanceID = uuid.New()
+	componentChecksum, err := observationStateChecksum(changedComponent)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(componentChecksum).NotTo(Equal(original))
 }
 
 func desiredObservedDigest(value string) string {

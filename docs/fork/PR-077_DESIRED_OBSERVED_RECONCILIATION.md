@@ -19,7 +19,8 @@ not silently replace the last known-good desired state.
 1. An admitted component execution appends a pending desired revision.
 2. The previous active desired revision remains authoritative.
 3. An independently authenticated observer submits ordered captured evidence.
-4. The gate verifies only exact, fresh, healthy, complete evidence.
+4. The gate verifies only exact, fresh, healthy, complete evidence captured
+   after admission and no later than the pending deadline.
 5. A verified component appends a new active revision and advances its head.
 6. A failed, cancelled, partial, unknown, conflicting, or timed-out component
    terminalizes its pending revision and retains its prior active revision.
@@ -32,13 +33,18 @@ failed components as successful.
 
 - registration, enabled state, organization, Deployment Unit, optional
   Component Instance, and credential fingerprint must match;
-- freshness uses the capture timestamp plus configured clock skew;
+- freshness uses a persisted capture timestamp plus configured maximum
+  freshness; clock skew is an ingestion boundary;
 - source sequence is monotonically increasing per observer/component;
-- exact replay is idempotent;
+- exact replay is idempotent only when all envelope material, evidence
+  reference, and component scope match;
 - out-of-order evidence is retained but cannot replace the current head;
 - conflicting replay is retained and quarantines;
 - independent observers conflict only when their measured runtime state
   differs, not merely because their envelope/evidence checksums differ;
+- promotion re-evaluates every current observer and executor report inside the
+  serializable transaction instead of trusting the caller's gate result;
+- every non-timeout terminal outcome retains its trusted observation evidence;
 - executor success is provisional and never wins over runtime evidence;
 - timeout releases the completed mutation lock and quarantines the placement,
   avoiding both deadlock and unsafe new exposure.
@@ -52,10 +58,14 @@ Migration 159 adds pending and active desired revisions, mutable desired and
 observation heads, executor reports, observer registration, append-only
 observed state, drift cases/events, and reconciliation actions.
 
-All durable identities are organization-scoped. Immutable evidence tables
-reject update/delete/truncate outside the existing explicit organization
-retention boundary. Pending intent fields cannot change when its terminal
-outcome is recorded. Downgrade refuses while evidence exists.
+All durable identities are organization-scoped and placement-fenced. Composite
+foreign keys prove component membership in its Deployment Unit, bind executor
+reports to the pending execution, and bind drift to one active/observed
+placement. Immutable evidence tables reject update/delete/truncate outside the
+existing explicit organization-retention transaction setting. Retention
+deletes dependent reconciliation and head rows before desired/observed evidence
+and deployment plans. Pending and observed identities, including `id` and
+`created_at`, cannot change. Downgrade refuses while evidence exists.
 
 The existing `TargetComponentState` and `TargetComponentObservation` tables
 are not altered; they remain legacy/executor projections.
@@ -122,9 +132,10 @@ health, platform, topology, stale/missing evidence, and
 executor/observer mismatch.
 
 Accepted deviations require a reason and future expiry. They link to the
-unchanged active desired revision and observation. Restoring desired state or
-accepting a new desired state must use a new reviewed immutable deployment
-plan; desired history is never rewritten.
+unchanged active desired revision and observation. `CREATE_PLAN` requires a
+reviewed immutable deployment plan and leaves the case assigned. Restore or
+close resolves only with a current trusted observation on the same placement
+that proves the active desired state. Desired history is never rewritten.
 
 ## Compatibility and security impact
 
@@ -146,14 +157,18 @@ separate observer route.
 
 ## Verification scope
 
-Focused tests cover trust, scope, freshness, clock skew, sequence, replay,
+Focused tests cover trust, scope, freshness, admission/deadline capture,
+clock skew, per-component sequence, full-material replay,
 out-of-order and conflict retention, agreeing and disagreeing independent
 observers, timeout quarantine, executor-success/runtime-wrong, manual
 artifact/config/schema drift, partial/unknown/cancel/failure, independent
 active advancement, prior-active preservation, accepted-deviation expiry,
 campaign evidence binding, API validation/mapping, authorization/error
-redaction, schema guards, rollback refusal, and route registration.
+redaction, schema guards, rollback refusal, route registration, lifecycle
+wiring, placement/execution foreign-key boundaries, retention ordering, and
+evidence-proven reconciliation.
 
-Live PostgreSQL migration execution and ordered PR-072/PR-076 integration are
-final stack-integration gates because this branch intentionally uses the
-synthetic PR-063 base.
+The PostgreSQL behavioral suites require `DISTR_TEST_DATABASE_URL`; they
+compile and skip explicitly when it is absent. Live migration execution and
+ordered PR-072/PR-076 integration remain final stack-integration gates because
+this branch intentionally uses the synthetic PR-063 base.

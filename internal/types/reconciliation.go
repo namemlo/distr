@@ -53,6 +53,8 @@ type DriftCase struct {
 	OrganizationID          uuid.UUID       `db:"organization_id" json:"organizationId"`
 	ActiveDesiredRevisionID uuid.UUID       `db:"active_desired_revision_id" json:"activeDesiredRevisionId"`
 	ObservationID           uuid.UUID       `db:"observation_id" json:"observationId"`
+	DeploymentUnitID        uuid.UUID       `db:"deployment_unit_id" json:"deploymentUnitId"`
+	ComponentInstanceID     uuid.UUID       `db:"component_instance_id" json:"componentInstanceId"`
 	Status                  DriftCaseStatus `db:"status" json:"status"`
 	Classes                 []DriftClass    `db:"-" json:"classes"`
 	Summary                 string          `db:"summary" json:"summary"`
@@ -80,25 +82,27 @@ const (
 )
 
 type ReconciliationDecision struct {
-	OrganizationID   uuid.UUID                `json:"organizationId"`
-	DriftCaseID      uuid.UUID                `json:"driftCaseId"`
-	Action           ReconciliationActionType `json:"action"`
-	Reason           string                   `json:"reason"`
-	ActorID          uuid.UUID                `json:"actorId"`
-	DeploymentPlanID *uuid.UUID               `json:"deploymentPlanId,omitempty"`
-	AcceptedUntil    *time.Time               `json:"acceptedUntil,omitempty"`
+	OrganizationID       uuid.UUID                `json:"organizationId"`
+	DriftCaseID          uuid.UUID                `json:"driftCaseId"`
+	Action               ReconciliationActionType `json:"action"`
+	Reason               string                   `json:"reason"`
+	ActorID              uuid.UUID                `json:"actorId"`
+	DeploymentPlanID     *uuid.UUID               `json:"deploymentPlanId,omitempty"`
+	OutcomeObservationID *uuid.UUID               `json:"outcomeObservationId,omitempty"`
+	AcceptedUntil        *time.Time               `json:"acceptedUntil,omitempty"`
 }
 
 type ReconciliationAction struct {
-	ID               uuid.UUID                `db:"id" json:"id"`
-	CreatedAt        time.Time                `db:"created_at" json:"createdAt"`
-	OrganizationID   uuid.UUID                `db:"organization_id" json:"organizationId"`
-	DriftCaseID      uuid.UUID                `db:"drift_case_id" json:"driftCaseId"`
-	Action           ReconciliationActionType `db:"action" json:"action"`
-	Reason           string                   `db:"reason" json:"reason"`
-	ActorID          uuid.UUID                `db:"actor_id" json:"actorId"`
-	DeploymentPlanID *uuid.UUID               `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
-	AcceptedUntil    *time.Time               `db:"accepted_until" json:"acceptedUntil,omitempty"`
+	ID                   uuid.UUID                `db:"id" json:"id"`
+	CreatedAt            time.Time                `db:"created_at" json:"createdAt"`
+	OrganizationID       uuid.UUID                `db:"organization_id" json:"organizationId"`
+	DriftCaseID          uuid.UUID                `db:"drift_case_id" json:"driftCaseId"`
+	Action               ReconciliationActionType `db:"action" json:"action"`
+	Reason               string                   `db:"reason" json:"reason"`
+	ActorID              uuid.UUID                `db:"actor_id" json:"actorId"`
+	DeploymentPlanID     *uuid.UUID               `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
+	OutcomeObservationID *uuid.UUID               `db:"outcome_observation_id" json:"outcomeObservationId,omitempty"`
+	AcceptedUntil        *time.Time               `db:"accepted_until" json:"acceptedUntil,omitempty"`
 }
 
 type AcceptedDeviation struct {

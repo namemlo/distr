@@ -83,6 +83,7 @@ type ObservedComponentState struct {
 	SourceSequence      int64                  `db:"source_sequence" json:"sourceSequence"`
 	CapturedAt          time.Time              `db:"captured_at" json:"capturedAt"`
 	ReceivedAt          time.Time              `db:"received_at" json:"receivedAt"`
+	FreshUntil          time.Time              `db:"fresh_until" json:"freshUntil"`
 	EvidenceChecksum    string                 `db:"evidence_checksum" json:"evidenceChecksum"`
 	EvidenceReference   string                 `db:"evidence_reference" json:"evidenceReference,omitempty"`
 	ArtifactDigest      string                 `db:"artifact_digest" json:"artifactDigest"`

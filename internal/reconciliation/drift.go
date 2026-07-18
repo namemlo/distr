@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 )
 
 func ClassifyDrift(
@@ -74,4 +75,37 @@ func AcceptDeviation(
 		Reason:            strings.TrimSpace(decision.Reason),
 		ExpiresAt:         *decision.AcceptedUntil,
 	}, nil
+}
+
+func DecisionTargetStatus(
+	decision types.ReconciliationDecision,
+	now time.Time,
+) (types.DriftCaseStatus, error) {
+	if strings.TrimSpace(decision.Reason) == "" || decision.ActorID == uuid.Nil {
+		return "", errors.New("reconciliation decision requires actor and reason")
+	}
+	switch decision.Action {
+	case types.ReconciliationActionCreatePlan:
+		if decision.DeploymentPlanID == nil ||
+			*decision.DeploymentPlanID == uuid.Nil {
+			return "", errors.New("create-plan reconciliation requires a deployment plan")
+		}
+		return types.DriftCaseStatusAssigned, nil
+	case types.ReconciliationActionAcceptDeviation:
+		if decision.AcceptedUntil == nil || !decision.AcceptedUntil.After(now) {
+			return "", errors.New("accepted deviation must expire in the future")
+		}
+		return types.DriftCaseStatusException, nil
+	case types.ReconciliationActionRestoreDesired,
+		types.ReconciliationActionCloseWithEvidence:
+		if decision.OutcomeObservationID == nil ||
+			*decision.OutcomeObservationID == uuid.Nil {
+			return "", errors.New(
+				"resolved reconciliation requires an outcome observation",
+			)
+		}
+		return types.DriftCaseStatusResolved, nil
+	default:
+		return "", errors.New("reconciliation action is invalid")
+	}
 }

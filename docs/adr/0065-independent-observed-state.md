@@ -31,12 +31,16 @@ last verified active desired revision.
 Execution admission appends one `PendingDesiredRevision` per component. It
 does not change `ActiveDesiredRevision`.
 
-Only a fresh, trusted, in-scope, complete, healthy observation that exactly
-matches artifact digest, configuration checksum, schema version, capability
-binding checksum, platform, and topology may create the next active revision.
-Components advance independently. A terminal non-verified pending revision
-retains its outcome while the component head continues to reference the prior
-active revision.
+Only a trusted, accepted, in-scope, complete, healthy observation captured
+after pending admission and before its deadline, and still inside its persisted
+freshness window, may create the next active revision. It must exactly match
+artifact digest, configuration checksum, schema version, capability binding
+checksum, platform, and topology. Promotion re-evaluates the repository state
+for every current observer inside the serializable promotion transaction; a
+caller-supplied result is only a concurrency hint. Components advance
+independently. Every non-timeout terminal outcome retains the trusted
+observation identity that proved it, while the component head continues to
+reference the prior active revision.
 
 ### Observer trust boundary
 
@@ -58,11 +62,16 @@ Registration identity, organization and component scope, credential
 fingerprint, capture time, evidence checksum, and source sequence are checked
 inside a serializable database transaction.
 
-An exact sequence/evidence replay is idempotent. Older evidence is retained
-without replacing the head. A reused sequence with different evidence is
-retained as conflict evidence and quarantines the component. Unregistered,
-disabled, wrongly scoped, or unauthenticated submissions are rejected.
-Freshness is based on `capturedAt`, not receipt time.
+An exact replay is idempotent only when the full persisted envelope, component
+scope, and evidence reference match. Sequence ordering is scoped per
+observer/component, so equal sequence numbers on different components do not
+collide. Older evidence is retained without replacing the head. A reused
+sequence with different material is retained as conflict evidence and
+quarantines the component. Unregistered, disabled, wrongly scoped, or
+unauthenticated submissions are rejected. Freshness is persisted as
+`fresh_until = captured_at + max_freshness`; it is not extended by replay or
+receipt time. A later post-deadline sample does not erase otherwise eligible
+pre-deadline evidence.
 
 ### Gate and campaign binding
 
@@ -114,8 +123,12 @@ platform, topology, missing/stale evidence, and executor/observer mismatch.
 
 A reconciliation action may restore desired state, create an approved plan,
 close with evidence, or accept a deviation until an explicit future instant.
-Accepting a deviation references the existing desired revision and observation;
-it does not rewrite desired history.
+Creating work requires a concrete deployment plan and moves the case to
+assigned, not resolved. Restore/close resolves only when a current trusted,
+accepted, complete, healthy observation on the same Deployment Unit and
+Component Instance proves the active desired material. Accepting a deviation
+references the existing desired revision and observation; it does not rewrite
+desired history.
 
 ### Persistence
 
@@ -132,10 +145,14 @@ Migration 159 creates:
 - `DriftCaseEvent`
 - `ReconciliationAction`
 
-Organization IDs are carried through composite foreign keys. Evidence is
-append-only. Mutable heads may advance atomically; the observation read-model
-flag may only transition from current to historical while all evidence fields
-remain unchanged. Rollback refuses while evidence exists.
+Organization, Deployment Unit, Component Instance, pending execution, active
+revision, observation, and drift placement lineage are carried through
+composite foreign keys. Evidence is append-only. Mutable heads may advance
+atomically; the observation read-model flag may only transition from current
+to historical while every identity, timestamp, and evidence field remains
+unchanged. Organization retention uses the existing authorized transaction
+setting and deletes dependents before immutable evidence and deployment plans.
+Rollback refuses while evidence exists.
 
 Because migration 159 follows campaign migration 154, it also adds the tenant
 composite foreign key from
