@@ -15,10 +15,13 @@ import (
 )
 
 type AdmissionRequest struct {
-	OrganizationID uuid.UUID
-	EnvironmentID  uuid.UUID
-	PlanID         uuid.UUID
-	StepKey        string
+	OrganizationID     uuid.UUID
+	DeploymentTargetID uuid.UUID
+	EnvironmentID      uuid.UUID
+	PlanID             uuid.UUID
+	TaskID             uuid.UUID
+	StepRunID          uuid.UUID
+	StepKey            string
 }
 
 type AdmissionDecision struct {
@@ -62,6 +65,7 @@ type CreateAttemptRequest struct {
 	TaskID             uuid.UUID
 	StepRunID          uuid.UUID
 	StepKey            string
+	Retry              bool
 }
 
 type AttemptCreator interface {
@@ -77,6 +81,7 @@ type DispatchRequest struct {
 	TaskID             uuid.UUID
 	StepRunID          uuid.UUID
 	StepKey            string
+	Retry              bool
 }
 
 type Dispatcher struct {
@@ -101,8 +106,10 @@ func (d *Dispatcher) Dispatch(
 		return nil, errors.New("execution v2 dispatch request is invalid")
 	}
 	decision, err := d.gate.EvaluateExecutionV2Admission(ctx, AdmissionRequest{
-		OrganizationID: request.OrganizationID, EnvironmentID: request.EnvironmentID,
-		PlanID: request.PlanID, StepKey: strings.TrimSpace(request.StepKey),
+		OrganizationID: request.OrganizationID, DeploymentTargetID: request.DeploymentTargetID,
+		EnvironmentID: request.EnvironmentID, PlanID: request.PlanID,
+		TaskID: request.TaskID, StepRunID: request.StepRunID,
+		StepKey: strings.TrimSpace(request.StepKey),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("evaluate execution v2 admission: %w", err)
@@ -114,7 +121,7 @@ func (d *Dispatcher) Dispatch(
 		OrganizationID: request.OrganizationID, DeploymentTargetID: request.DeploymentTargetID,
 		ExecutionID: request.ExecutionID,
 		PlanID:      request.PlanID, TaskID: request.TaskID, StepRunID: request.StepRunID,
-		StepKey: strings.TrimSpace(request.StepKey),
+		StepKey: strings.TrimSpace(request.StepKey), Retry: request.Retry,
 	})
 }
 
@@ -141,32 +148,42 @@ func DispatchCreatedTasks(ctx context.Context, tasks []types.Task) error {
 		if task.ProtocolVersion == types.ExecutionProtocolVersionV1 {
 			continue
 		}
-		dispatcher, ok := ctx.Value(protocolDispatcherContextKey{}).(*ProtocolDispatcher)
-		if !ok || dispatcher == nil {
-			return errors.New("execution protocol dispatcher is not configured")
-		}
-		var step *types.StepRun
-		for i := range task.StepRuns {
-			if task.StepRuns[i].Status == types.StepRunStatusPending {
-				step = &task.StepRuns[i]
-				break
-			}
-		}
-		if step == nil {
-			return errors.New("execution v2 task has no pending step")
-		}
-		_, err := dispatcher.Dispatch(ctx, task.ProtocolVersion, DispatchRequest{
-			OrganizationID:     task.OrganizationID,
-			DeploymentTargetID: task.DeploymentTargetID,
-			EnvironmentID:      task.EnvironmentID, ExecutionID: task.ID,
-			PlanID: task.DeploymentPlanID, TaskID: task.ID,
-			StepRunID: step.ID, StepKey: step.StepKey,
-		})
-		if err != nil {
+		if err := dispatchTask(ctx, task, false); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func DispatchTaskRetry(ctx context.Context, task types.Task) error {
+	if task.ProtocolVersion != types.ExecutionProtocolVersionV2 {
+		return errors.New("execution retry requires protocol v2")
+	}
+	return dispatchTask(ctx, task, true)
+}
+
+func dispatchTask(ctx context.Context, task types.Task, retry bool) error {
+	dispatcher, ok := ctx.Value(protocolDispatcherContextKey{}).(*ProtocolDispatcher)
+	if !ok || dispatcher == nil {
+		return errors.New("execution protocol dispatcher is not configured")
+	}
+	var step *types.StepRun
+	for i := range task.StepRuns {
+		if task.StepRuns[i].Status == types.StepRunStatusPending {
+			step = &task.StepRuns[i]
+			break
+		}
+	}
+	if step == nil {
+		return errors.New("execution v2 task has no pending step")
+	}
+	_, err := dispatcher.Dispatch(ctx, task.ProtocolVersion, DispatchRequest{
+		OrganizationID: task.OrganizationID, DeploymentTargetID: task.DeploymentTargetID,
+		EnvironmentID: task.EnvironmentID, ExecutionID: task.ID,
+		PlanID: task.DeploymentPlanID, TaskID: task.ID,
+		StepRunID: step.ID, StepKey: step.StepKey, Retry: retry,
+	})
+	return err
 }
 
 func NewProtocolDispatcher(v1 V1Dispatcher, v2 *Dispatcher) *ProtocolDispatcher {

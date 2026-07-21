@@ -1486,8 +1486,8 @@ Use one entry per pull request:
 
 ### PR-075 - Fenced executor protocol v2
 
-- Status: Implemented on the prepared synthetic branch; predecessor integration
-  seams remain explicit.
+- Status: Implemented on the prepared branch with production service-registry
+  and router binding.
 - Upstream base: `ea6567b6` (PR-063 checkpoint).
 - Feature flag: Requires both `operator_control_plane_v2` and
   `executor_protocol_v2`; missing scoped enrollment, approval, admission or
@@ -1497,8 +1497,8 @@ Use one entry per pull request:
   attempts while the owning lease and intent remain live.
 - Database changes: Migration 157 adds `ExecutionAttempt`, `ExecutionFence`,
   append-only `ExecutionIntent`, append-only `ExecutionEvent`, and frozen
-  `Task.protocol_version`; downgrade locks and checks every owned evidence table
-  before destructive rollback.
+  `Task.protocol_version`; downgrade locks `Task` and every owned evidence table
+  and refuses retained v2 tasks/evidence before destructive rollback.
 - API changes: Adds `/api/executor/v2` claim, acknowledgement, heartbeat, event
   and completion routes scoped to the authenticated organization and deployment
   target.
@@ -1519,8 +1519,8 @@ Use one entry per pull request:
 
 ### PR-076 - Execution cancel, status and reconciliation
 
-- Status: Implemented on the prepared synthetic branch; campaign predecessor
-  binding remains an explicit interface seam.
+- Status: Implemented on the prepared branch with organization-scoped durable
+  task cancel/retry handoff.
 - Upstream base: `4f77d6c2` (PR-075 checkpoint).
 - Feature flag: Operator and executor controls require both
   `operator_control_plane_v2` and `executor_protocol_v2`.

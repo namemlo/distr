@@ -35,7 +35,7 @@ func TestExecutionV2DowngradesLockAllOwnedEvidenceBeforeRefusalChecks(t *testing
 		{
 			path: "sql/157_external_execution_protocol_v2.down.sql",
 			tables: []string{
-				"ExecutionAttempt", "ExecutionFence", "ExecutionIntent", "ExecutionEvent",
+				"Task", "ExecutionAttempt", "ExecutionFence", "ExecutionIntent", "ExecutionEvent",
 			},
 		},
 		{
@@ -70,5 +70,19 @@ func TestExecutionV2DowngradesLockAllOwnedEvidenceBeforeRefusalChecks(t *testing
 				}
 			}
 		})
+	}
+}
+
+func TestExecutionV2DowngradeRefusesRetainedV2Tasks(t *testing.T) {
+	content, err := os.ReadFile("sql/157_external_execution_protocol_v2.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(content)
+	lockAt := strings.Index(sql, "LOCK TABLE")
+	checkAt := strings.Index(sql, "protocol_version = 'v2'")
+	dropAt := strings.Index(sql, "DROP COLUMN IF EXISTS protocol_version")
+	if lockAt < 0 || checkAt < 0 || dropAt < 0 || !(lockAt < checkAt && checkAt < dropAt) {
+		t.Fatal("downgrade must lock Task and reject retained v2 tasks before dropping protocol_version")
 	}
 }

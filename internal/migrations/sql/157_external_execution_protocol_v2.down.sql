@@ -1,18 +1,20 @@
 DO $$
 BEGIN
   LOCK TABLE
+    Task,
     ExecutionAttempt,
     ExecutionFence,
     ExecutionIntent,
     ExecutionEvent
   IN ACCESS EXCLUSIVE MODE;
 
-  IF EXISTS (SELECT 1 FROM ExecutionAttempt)
+  IF EXISTS (SELECT 1 FROM Task WHERE protocol_version = 'v2')
+     OR EXISTS (SELECT 1 FROM ExecutionAttempt)
      OR EXISTS (SELECT 1 FROM ExecutionFence)
      OR EXISTS (SELECT 1 FROM ExecutionIntent)
      OR EXISTS (SELECT 1 FROM ExecutionEvent) THEN
     RAISE EXCEPTION
-      'refusing migration 157 rollback while execution v2 evidence exists';
+      'refusing migration 157 rollback while execution v2 tasks or evidence exist';
   END IF;
 END;
 $$;

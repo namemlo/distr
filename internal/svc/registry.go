@@ -13,6 +13,7 @@ import (
 	"github.com/distr-sh/distr/internal/buildconfig"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/env"
+	"github.com/distr-sh/distr/internal/executionruntime"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/hubexecutor"
 	"github.com/distr-sh/distr/internal/jobs"
@@ -51,7 +52,11 @@ type Registry struct {
 	observabilityMetricsEnabled bool
 	observabilityTracingEnabled bool
 	s3Client                    *s3.Client
+<<<<<<< HEAD
 	targetConfigObjectVerifier  targetconfig.ObjectVerifier
+=======
+	executionRuntime            executionruntime.Dependencies
+>>>>>>> 1fbda05a (fix: bind executor v2 production runtime)
 }
 
 func New(ctx context.Context, options ...RegistryOption) (*Registry, error) {
@@ -79,6 +84,11 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		zap.Bool("release", buildconfig.IsRelease()))
 
 	experimentalFeatures := featureflags.NewRegistry(env.ExperimentalFeatureFlags())
+	executionRuntime, err := newExecutionRuntimeDependencies(env.JWTSecret(), experimentalFeatures)
+	if err != nil {
+		return nil, err
+	}
+	reg.executionRuntime = executionRuntime
 	reg.promCollector = distrprometheus.NewDistrCollector()
 	reg.observabilityMetricsEnabled = experimentalFeatures.IsEnabled(featureflags.KeyObservabilityMetrics)
 	reg.observabilityTracingEnabled = experimentalFeatures.IsEnabled(featureflags.KeyObservabilityTracing)
@@ -188,6 +198,7 @@ func (r *Registry) GetRouter() http.Handler {
 		r.GetObservabilityTracers(),
 		r.GetS3Client(),
 		r.targetConfigObjectVerifier,
+		r.executionRuntime,
 	)
 }
 

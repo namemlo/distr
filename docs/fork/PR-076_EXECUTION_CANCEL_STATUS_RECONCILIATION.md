@@ -63,10 +63,11 @@ acknowledgement use the credential-derived organization and current fence.
   control handoff to retry after the evidence transaction has committed;
   conflicting reuse of the event identity remains rejected.
 
-## Synthetic-base campaign seam
+## Production campaign handoff
 
-The prepared branch does not include PR-071 through PR-073 campaign storage or
-handlers. `CampaignExecutionControlBridge` therefore defines the cancel/retry
-binding without copying those predecessor implementations. Integration must
-connect campaign member controls to the stored cancel/status/reconciliation
-facts after those commits are present.
+`CampaignExecutionControlBridge` is bound in the service registry to the
+organization-scoped durable task that owns the execution. Cancel verifies the
+execution/task scope after the cancel fact commits. An allowed reconciliation
+retry reloads that task and enters the explicit protocol-v2 retry dispatch,
+which advances the attempt identity and fence generation; ordinary request
+replay continues returning the existing attempt.

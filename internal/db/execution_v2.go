@@ -736,6 +736,31 @@ func GetExecutionAttemptByIdentity(
 	return getExecutionAttemptByIdentity(ctx, orgID, identity, false)
 }
 
+func GetLatestExecutionAttemptForTaskStep(
+	ctx context.Context,
+	orgID, taskID, stepRunID uuid.UUID,
+) (*types.ExecutionAttempt, error) {
+	attempt, err := scanExecutionAttempt(internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		executionAttemptSelect+`
+		WHERE ea.organization_id = @organizationId
+			AND ea.task_id = @taskId
+			AND ea.step_run_id = @stepRunId
+		ORDER BY ea.attempt_number DESC
+		LIMIT 1`,
+		pgx.NamedArgs{
+			"organizationId": orgID, "taskId": taskID, "stepRunId": stepRunID,
+		},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest ExecutionAttempt for task step: %w", err)
+	}
+	return attempt, nil
+}
+
 func getExecutionAttemptByIdentity(
 	ctx context.Context,
 	orgID uuid.UUID,

@@ -55,6 +55,13 @@ an approved and admitted immutable plan, and successful adapter preflight.
 Those dependencies are narrow interfaces so their evidence remains owned by
 PR-066 through PR-074.
 
+The Hub service registry binds those interfaces into the production router.
+The repository reads the exact v2 task, executed immutable plan and attached
+passing preflight snapshot, while intent creation reloads the frozen plan,
+release, target configuration, step adapter identity and resource lock. An
+ordinary replay reuses the stored attempt inputs; only an explicit authorized
+retry advances attempt and fence generation.
+
 ## Compatibility boundary
 
 This decision supersedes only v1 delivery semantics for plans already frozen to

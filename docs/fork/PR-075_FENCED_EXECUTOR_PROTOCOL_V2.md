@@ -14,10 +14,10 @@ Migration 157 adds `ExecutionAttempt`, `ExecutionFence`, append-only
 `Task.protocol_version`. It does not modify `ExternalExecution` or
 `ExternalExecutionEvent`.
 
-Rollback takes an access-exclusive lock over every protocol-v2 evidence table
-before checking retained data, then refuses while any attempt, fence, intent or
-event exists. A concurrent writer therefore cannot race the refusal check and
-the destructive downgrade.
+Rollback takes an access-exclusive lock over `Task` and every protocol-v2
+evidence table before checking retained data. It refuses while any task remains
+frozen to v2 or any attempt, fence, intent or event exists, so a concurrent
+writer cannot race the refusal check and destructive downgrade.
 
 ## API and authentication
 
@@ -51,11 +51,12 @@ process flags. Organization scope comes only from the authenticated credential.
 - V1 task/external-execution statuses, events and retry semantics remain
   unchanged when v2 flags are disabled.
 
-## Synthetic-base seam
+## Production runtime binding
 
-The prepared PR-075 worktree includes PR-063 but not final PR-066 through
-PR-074. This change therefore defines the admission and attempt-creation
-interfaces without copying speculative authorization, campaign or adapter
-storage into PR-075. `executionruntime.Dependencies` is the production router
-injection seam; integration must bind it to those predecessor implementations
-after the numbered commits are present. Missing dependencies remain fail-closed.
+The service registry now creates and injects `executionruntime.Dependencies`
+into the real API router. The binding includes the signed protocol dispatcher,
+durable task/plan/preflight admission repository, frozen-input loader,
+authenticated reconciliation observer gate and campaign-control coordinator.
+Normal dispatch reuses the latest matching frozen attempt; an explicit,
+retry-authorized campaign handoff alone advances the attempt and fence
+generation. Missing or mismatched durable evidence remains fail-closed.
