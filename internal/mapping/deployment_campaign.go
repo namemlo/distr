@@ -141,6 +141,7 @@ func DeploymentCampaignRunToAPI(run types.CampaignRun) api.DeploymentCampaignRun
 		CurrentWaveOrder:       run.CurrentWaveOrder,
 		CurrentMemberOrder:     run.CurrentMemberOrder,
 		AdmissionsBlocked:      run.AdmissionsBlocked,
+		ResumeState:            run.ResumeState,
 		PauseRequested:         run.PauseRequested,
 		ReconciliationRequired: run.ReconciliationRequired,
 		FencingToken:           run.FencingToken,

@@ -9,6 +9,9 @@ import (
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/auth"
+	"github.com/distr-sh/distr/internal/campaigns"
+	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
 	"github.com/distr-sh/distr/internal/types"
@@ -16,6 +19,27 @@ import (
 	"github.com/oaswrap/spec/adapter/chiopenapi"
 	"github.com/oaswrap/spec/option"
 )
+
+// DeploymentCampaignControlRoutes registers the production campaign-control
+// endpoints. The scoped authorization adapter intentionally fails closed once
+// the PR-066 schema is present; the integration stack replaces that adapter
+// with RequireEffectiveControlPlaneAction(ActionCampaignControl,
+// OrganizationResourceRef).
+func DeploymentCampaignControlRoutes(r chiopenapi.Router) {
+	repository := db.CampaignRepository{}
+	service := campaigns.NewCampaignControlService(repository, repository)
+	featureGate := middleware.ExperimentalFeatureFlagMiddleware(
+		featureflags.KeyOperatorControlPlaneV2,
+	)
+	r.With(
+		middleware.RequireVendor,
+		middleware.RequireOrgAndRole,
+		featureGate,
+		requireIntegratedCampaignControlAuthorization,
+	).Group(func(r chiopenapi.Router) {
+		DeploymentCampaignControlsRouter(r, service)
+	})
+}
 
 type CampaignControlService interface {
 	ApplyCampaignControl(
@@ -192,6 +216,8 @@ func writeCampaignControlError(
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, apierrors.ErrConflict):
 		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, campaigns.ErrCampaignV2RetryUnavailable):
+		http.Error(w, err.Error(), http.StatusNotImplemented)
 	case errors.Is(err, apierrors.ErrForbidden):
 		http.Error(w, err.Error(), http.StatusForbidden)
 	default:

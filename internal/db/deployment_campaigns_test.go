@@ -393,10 +393,10 @@ func TestCampaignRunMigrationPersistsFencingAndExactPrerequisiteEvidence(t *test
 		"CampaignPrerequisiteEvaluation",
 		"CampaignThresholdEvaluation",
 		"fencing_token",
-		"expected_checksum",
+		"expected_runtime_state_checksum",
 		"actual_observation_id",
 		"actual_observation_organization_id",
-		"actual_checksum",
+		"actual_runtime_state_checksum",
 		"UNIQUE (campaign_run_id, wave_order, member_order, deployment_plan_id)",
 		"REFERENCES DeploymentCampaignWave(\n      campaign_revision_id,\n      wave_order,\n      organization_id",
 		"REFERENCES DeploymentCampaignMember(\n      campaign_revision_id,\n      deployment_plan_id,\n      organization_id",
@@ -410,8 +410,10 @@ func TestCampaignRunMigrationPersistsFencingAndExactPrerequisiteEvidence(t *test
 func TestCampaignRepositoryUsesOptimisticTransitionsAndFencedAdmissions(t *testing.T) {
 	g := NewWithT(t)
 	g.Expect(transitionCampaignSQL).To(ContainSubstring("version = @expected_version"))
+	g.Expect(transitionCampaignSQL).To(ContainSubstring("state = @from_state"))
 	g.Expect(transitionCampaignSQL).To(ContainSubstring("transition_evidence"))
 	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("fencing_token = @fencing_token"))
+	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("lease_expires_at > clock_timestamp()"))
 	g.Expect(admitCampaignMemberSQL).To(ContainSubstring("status = 'PENDING'"))
 	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("fencing_token = @fencing_token"))
 	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("risk_policy"))
@@ -428,13 +430,21 @@ func TestCampaignRepositoryUsesOptimisticTransitionsAndFencedAdmissions(t *testi
 	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("provider_placement_id"))
 	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("provider_deployment_unit_id"))
 	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("provider_component_instance_id"))
-	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("expected_observed_state_checksum"))
+	g.Expect(loadCandidatePrerequisitesSQL).To(ContainSubstring("expected_runtime_state_checksum"))
+	g.Expect(instantiateCampaignRunSQL).To(ContainSubstring("DeploymentCampaignWaveRun"))
+	g.Expect(instantiateCampaignRunSQL).To(ContainSubstring("DeploymentCampaignMemberRun"))
+	g.Expect(recordPrerequisitesAndAdmitSQL).To(ContainSubstring("CampaignPrerequisiteEvaluation"))
+	g.Expect(recordPrerequisitesAndAdmitSQL).To(ContainSubstring("DeploymentCampaignMemberRun"))
+	g.Expect(recordThresholdAndMaybePauseSQL).To(ContainSubstring("CampaignThresholdEvaluation"))
+	g.Expect(recordThresholdAndMaybePauseSQL).To(ContainSubstring("DeploymentCampaignRun"))
+	g.Expect(recordPrerequisitesAndAdmitSQL).To(ContainSubstring("lease_expires_at > clock_timestamp()"))
+	g.Expect(recordThresholdAndMaybePauseSQL).To(ContainSubstring("lease_expires_at > clock_timestamp()"))
 }
 
 func TestCampaignControlsMigrationIsAppendOnlyIdempotentAndScoped(t *testing.T) {
-	g := gomega.NewWithT(t)
+	g := NewWithT(t)
 	sql, err := os.ReadFile("../migrations/sql/155_campaign_controls.up.sql")
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(err).NotTo(HaveOccurred())
 	contents := string(sql)
 	for _, required := range []string{
 		"CampaignControlRequest",
@@ -443,24 +453,58 @@ func TestCampaignControlsMigrationIsAppendOnlyIdempotentAndScoped(t *testing.T) 
 		"organization_id",
 		"expected_run_version",
 		"UNIQUE (organization_id, request_id)",
-		"campaign_control_append_only",
+		"deploymentcampaign_published_immutable",
 		"visible_incomplete",
 		"drift_reason",
 		"UNIQUE (id, organization_id, campaign_run_id)",
 		"FOREIGN KEY (control_request_id, organization_id, campaign_run_id)",
 		"REFERENCES CampaignControlRequest(id, organization_id, campaign_run_id)",
+		"CampaignControlRequest_no_truncate",
+		"CampaignExclusion_no_truncate",
 	} {
-		g.Expect(contents).To(gomega.ContainSubstring(required))
+		g.Expect(contents).To(ContainSubstring(required))
+	}
+}
+
+func TestCampaignControlsDowngradeRejectsAnyRetainedRuntimeState(t *testing.T) {
+	g := NewWithT(t)
+	sql, err := os.ReadFile("../migrations/sql/155_campaign_controls.down.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	contents := string(sql)
+	for _, required := range []string{
+		"LOCK TABLE", "ACCESS EXCLUSIVE MODE", "pause_requested",
+		"reconciliation_required", "resume_state", "execution_uncertain",
+		"active_steps_cancellable",
+	} {
+		g.Expect(contents).To(ContainSubstring(required))
+	}
+}
+
+func TestCampaignRuntimeMigrationProtectsEvidenceAndStateDeletion(t *testing.T) {
+	g := NewWithT(t)
+	sql, err := os.ReadFile("../migrations/sql/154_deployment_campaign_runs.up.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	contents := string(sql)
+	for _, required := range []string{
+		"deploymentcampaign_published_immutable", "CampaignPrerequisiteEvaluation_immutable",
+		"CampaignThresholdEvaluation_immutable", "CampaignPrerequisiteEvaluation_no_truncate",
+		"CampaignThresholdEvaluation_no_truncate", "DeploymentCampaignRun_delete_guard",
+		"DeploymentCampaignWaveRun_delete_guard", "DeploymentCampaignMemberRun_delete_guard",
+		"DeploymentCampaignRun_no_truncate", "DeploymentCampaignWaveRun_no_truncate",
+		"DeploymentCampaignMemberRun_no_truncate",
+	} {
+		g.Expect(contents).To(ContainSubstring(required))
 	}
 }
 
 func TestCampaignControlSQLDeduplicatesAndSerializesConflicts(t *testing.T) {
-	g := gomega.NewWithT(t)
-	g.Expect(insertCampaignControlSQL).To(gomega.ContainSubstring("ON CONFLICT (organization_id, request_id)"))
-	g.Expect(lookupCampaignControlReplaySQL).To(gomega.ContainSubstring("organization_id = @organization_id"))
-	g.Expect(lookupCampaignControlReplaySQL).To(gomega.ContainSubstring("request_id = @request_id"))
-	g.Expect(lockCampaignRunForControlSQL).To(gomega.ContainSubstring("FOR UPDATE"))
-	g.Expect(applyCampaignControlSQL).To(gomega.ContainSubstring("version = @expected_version"))
-	g.Expect(applyCampaignControlSQL).To(gomega.ContainSubstring("admissions_blocked"))
-	g.Expect(applyCampaignExclusionVersionSQL).To(gomega.ContainSubstring("version = version + 1"))
+	g := NewWithT(t)
+	g.Expect(insertCampaignControlSQL).To(ContainSubstring("ON CONFLICT (organization_id, request_id)"))
+	g.Expect(lookupCampaignControlReplaySQL).To(ContainSubstring("organization_id = @organization_id"))
+	g.Expect(lookupCampaignControlReplaySQL).To(ContainSubstring("request_id = @request_id"))
+	g.Expect(lockCampaignRunForControlSQL).To(ContainSubstring("FOR UPDATE"))
+	g.Expect(applyCampaignControlSQL).To(ContainSubstring("version = @expected_version"))
+	g.Expect(applyCampaignControlSQL).To(ContainSubstring("admissions_blocked"))
+	g.Expect(applyCampaignExclusionVersionSQL).To(ContainSubstring("version = version + 1"))
+	g.Expect(lockCampaignControlRequestSQL).To(ContainSubstring("pg_advisory_xact_lock"))
 }

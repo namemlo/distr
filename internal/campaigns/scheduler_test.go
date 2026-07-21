@@ -51,37 +51,74 @@ func (s *schedulerStoreFake) LoadCampaignSchedule(
 	return s.schedule, nil
 }
 
-func (s *schedulerStoreFake) RecordCampaignPrerequisiteEvaluation(
-	_ context.Context,
-	evaluation types.CampaignPrerequisiteEvaluation,
-	_ int64,
-) error {
-	s.prerequisites = append(s.prerequisites, evaluation)
-	return nil
-}
-
-func (s *schedulerStoreFake) RecordCampaignThresholdEvaluation(
+func (s *schedulerStoreFake) RecordThresholdAndMaybePause(
 	_ context.Context,
 	evaluation types.CampaignThresholdEvaluation,
 	_ int64,
-) error {
+) (bool, error) {
 	s.thresholds = append(s.thresholds, evaluation)
-	return nil
+	if evaluation.Breached {
+		s.pausedReason = "campaign threshold breached"
+	}
+	return evaluation.Breached, nil
 }
 
-func (s *schedulerStoreFake) AdmitCampaignMember(
-	_ context.Context,
+func (s *schedulerStoreFake) RecordPrerequisitesAndAdmit(
+	ctx context.Context,
+	candidate types.CampaignMemberCandidate,
 	admission types.CampaignMemberAdmission,
+	resolver CampaignObservationResolver,
+	verifier CampaignObservationVerifier,
 	_ int64,
-) (bool, error) {
+) (bool, bool, error) {
+	for _, requirement := range candidate.Prerequisites {
+		observationID := requirement.ObservationID
+		runtimeChecksum := requirement.RuntimeStateChecksum
+		var verifyErr error
+		if observationID == uuid.Nil || runtimeChecksum == "" {
+			observationID, runtimeChecksum, verifyErr = resolver.ResolveCampaignObservation(
+				ctx, requirement.OrganizationID, requirement.ProviderComponentInstanceID,
+				requirement.ExpectedRuntimeStateChecksum,
+			)
+		}
+		if verifyErr == nil {
+			verifyErr = verifier.VerifyCampaignObservation(
+				ctx, requirement.OrganizationID, observationID, runtimeChecksum,
+			)
+		}
+		matched := verifyErr == nil && observationID != uuid.Nil &&
+			runtimeChecksum == requirement.ExpectedRuntimeStateChecksum
+		evaluation := types.CampaignPrerequisiteEvaluation{
+			CampaignRunID: admission.RunID, MemberRunID: candidate.MemberRunID,
+			UpstreamPlanID: requirement.UpstreamPlanID, StepKey: requirement.StepKey,
+			ExpectedRuntimeStateChecksum: requirement.ExpectedRuntimeStateChecksum,
+			ActualObservationID:          observationID, ActualRuntimeStateChecksum: runtimeChecksum,
+			Matched: matched,
+		}
+		if verifyErr != nil {
+			evaluation.ActualObservationID = uuid.Nil
+			evaluation.ActualRuntimeStateChecksum = ""
+			evaluation.Reason = verifyErr.Error()
+		}
+		s.prerequisites = append(s.prerequisites, evaluation)
+		if !matched {
+			if errors.Is(verifyErr, ErrCampaignObservationVerifierUnavailable) ||
+				errors.Is(verifyErr, ErrCampaignObservationResolverUnavailable) {
+				s.pausedReason = "trusted observation unavailable"
+			} else {
+				s.pausedReason = "campaign prerequisite mismatch"
+			}
+			return false, true, nil
+		}
+	}
 	if s.loseLeaseOnAdmit {
-		return false, ErrCampaignLeaseLost
+		return false, false, ErrCampaignLeaseLost
 	}
 	if s.duplicateAdmission {
-		return false, nil
+		return false, false, nil
 	}
 	s.admitted = append(s.admitted, admission)
-	return true, nil
+	return true, false, nil
 }
 
 func (s *schedulerStoreFake) PauseCampaignAdmission(
@@ -198,12 +235,12 @@ func TestSchedulerFailsClosedWhenObservationVerifierIsUnwired(t *testing.T) {
 				MemberOrder: 1,
 				PlanID:      uuid.New(),
 				Prerequisites: []types.CampaignObservationRequirement{{
-					OrganizationID:      uuid.New(),
-					UpstreamPlanID:      uuid.New(),
-					StepKey:             "verify-ledger",
-					ObservationID:       uuid.New(),
-					ObservationChecksum: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-					ExpectedChecksum:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					OrganizationID:               uuid.New(),
+					UpstreamPlanID:               uuid.New(),
+					StepKey:                      "verify-ledger",
+					ObservationID:                uuid.New(),
+					RuntimeStateChecksum:         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					ExpectedRuntimeStateChecksum: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				}},
 			}},
 		},
@@ -220,9 +257,9 @@ func TestSchedulerFailsClosedWhenObservationVerifierIsUnwired(t *testing.T) {
 	g.Expect(store.admitted).To(gomega.BeEmpty())
 	g.Expect(store.pausedReason).To(gomega.ContainSubstring("trusted observation unavailable"))
 	g.Expect(store.prerequisites).To(gomega.HaveLen(1))
-	g.Expect(store.prerequisites[0].ExpectedChecksum).NotTo(gomega.BeEmpty())
+	g.Expect(store.prerequisites[0].ExpectedRuntimeStateChecksum).NotTo(gomega.BeEmpty())
 	g.Expect(store.prerequisites[0].ActualObservationID).To(gomega.Equal(uuid.Nil))
-	g.Expect(store.prerequisites[0].ActualChecksum).To(gomega.BeEmpty())
+	g.Expect(store.prerequisites[0].ActualRuntimeStateChecksum).To(gomega.BeEmpty())
 	g.Expect(store.prerequisites[0].Matched).To(gomega.BeFalse())
 }
 
@@ -241,12 +278,12 @@ func TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch(t *testing.
 				MemberRunID: uuid.New(),
 				PlanID:      uuid.New(),
 				Prerequisites: []types.CampaignObservationRequirement{{
-					OrganizationID:      uuid.New(),
-					UpstreamPlanID:      uuid.New(),
-					StepKey:             "health",
-					ObservationID:       observationID,
-					ObservationChecksum: actual,
-					ExpectedChecksum:    expected,
+					OrganizationID:               uuid.New(),
+					UpstreamPlanID:               uuid.New(),
+					StepKey:                      "health",
+					ObservationID:                observationID,
+					RuntimeStateChecksum:         actual,
+					ExpectedRuntimeStateChecksum: expected,
 				}},
 			}},
 		},
@@ -257,9 +294,9 @@ func TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch(t *testing.
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(result.Admitted).To(gomega.BeFalse())
 	g.Expect(store.prerequisites).To(gomega.HaveLen(1))
-	g.Expect(store.prerequisites[0].ExpectedChecksum).To(gomega.Equal(expected))
+	g.Expect(store.prerequisites[0].ExpectedRuntimeStateChecksum).To(gomega.Equal(expected))
 	g.Expect(store.prerequisites[0].ActualObservationID).To(gomega.Equal(observationID))
-	g.Expect(store.prerequisites[0].ActualChecksum).To(gomega.Equal(actual))
+	g.Expect(store.prerequisites[0].ActualRuntimeStateChecksum).To(gomega.Equal(actual))
 	g.Expect(store.prerequisites[0].Matched).To(gomega.BeFalse())
 	g.Expect(store.pausedReason).To(gomega.ContainSubstring("prerequisite mismatch"))
 }
@@ -281,10 +318,10 @@ func TestSchedulerResolvesFrozenPrerequisiteByCanonicalProviderIdentity(t *testi
 				MemberRunID: uuid.New(),
 				PlanID:      uuid.New(),
 				Prerequisites: []types.CampaignObservationRequirement{{
-					OrganizationID:              organizationID,
-					ProviderPlacementID:         placementID,
-					ProviderComponentInstanceID: componentInstanceID,
-					ExpectedChecksum:            checksum,
+					OrganizationID:               organizationID,
+					ProviderPlacementID:          placementID,
+					ProviderComponentInstanceID:  componentInstanceID,
+					ExpectedRuntimeStateChecksum: checksum,
 				}},
 			}},
 		},

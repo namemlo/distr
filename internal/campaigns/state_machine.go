@@ -44,6 +44,21 @@ var allowedCampaignTransitions = map[types.CampaignRunState]map[types.CampaignRu
 	},
 }
 
+func IsCampaignPreRunTransition(from, to types.CampaignRunState) bool {
+	switch from {
+	case types.CampaignRunStateDraft:
+		return to == types.CampaignRunStateValidated
+	case types.CampaignRunStateValidated:
+		return to == types.CampaignRunStateAwaitingApproval
+	case types.CampaignRunStateAwaitingApproval:
+		return to == types.CampaignRunStateScheduled
+	case types.CampaignRunStateScheduled:
+		return to == types.CampaignRunStateRunning
+	default:
+		return false
+	}
+}
+
 func NextCampaignRun(
 	run types.CampaignRun,
 	transition types.CampaignTransition,

@@ -16,10 +16,13 @@ The API surface is:
 - `POST /api/v1/deployment-campaigns/{id}/exclude`
 - `POST /api/v1/deployment-campaigns/{id}/cancel`
 
-The route group requires an authenticated read-write or administrator role and
-blocks super-admin mutation. The final PR-071 replay must register the route
-group behind `operator_control_plane_v2` and the PR-066 scoped authorization
-adapter.
+The route group is registered behind `operator_control_plane_v2`, requires an
+authenticated read-write or administrator role, and blocks super-admin
+mutation. This synthetic branch denies campaign mutations unconditionally
+rather than approximating scoped authorization with legacy roles. Stack
+integration replaces that explicit stop with
+`RequireEffectiveControlPlaneAction(ActionCampaignControl,
+OrganizationResourceRef)`.
 
 ## Safe controls
 
@@ -27,7 +30,8 @@ Pause blocks admissions in the same optimistic update that appends the control
 request. If work is active, the run records `pause_requested` and remains
 running until the fenced scheduler observes a safe point. The scheduler then
 persists `PAUSED`; a process restart does not lose the request. Resume clears
-the persisted pause and admission block.
+the persisted pause and admission block and restores the exact pre-pause state
+(`SCHEDULED` or `RUNNING`).
 
 Cancel stops all new admission. It completes immediately only when active work
 is cancellable. An uncertain execution produces
@@ -43,15 +47,17 @@ complete.
 
 The campaign controller preserves the protocol split:
 
-- v1 delegates to a `SupersedingPlanCreator`, retaining ADR-0052's new-plan
-  requirement after unprovable delivery;
+- v1 creates a fresh plan from the frozen source plan through a
+  `SupersedingPlanCreator`, persists the retry request and response in the same
+  transaction, permits only failed or canceled members, and returns the exact
+  stored plan on duplicate replay;
 - v2 returns `ErrCampaignV2RetryUnavailable` until PR-075 provides fenced,
   retry-safe incomplete-step attempts.
 
-The synthetic base does not contain PR-063's final superseding-plan columns or
-repository. Therefore the database adapter deliberately fails closed while the
-controller seam and its v1/v2 tests are complete. Stack replay must bind the
-final PR-063 creator; it must not clone or mutate a frozen plan locally.
+The v1 compatibility creator uses the existing immutable v1 plan inputs. When
+the PR-063 v2 lineage model is replayed, the creator must be adapted to its
+explicit superseding-plan fields without changing the control request's
+idempotency contract.
 
 ## Concurrency and evidence
 
@@ -68,9 +74,9 @@ This change was built on the synthetic base and must be replayed after PR-071:
 
 - combine the feature-local campaign API, mapping, types, repository, and
   handler files with PR-071's campaign revision files;
-- bind PR-063's superseding-plan creator for v1 retry;
-- register the operational routes through PR-071's campaign router, the
-  experimental flag, and PR-066 scoped action authorization;
+- adapt the compatibility creator to PR-063's explicit superseding lineage;
+- replace the fail-closed compatibility authorization adapter with PR-066's
+  effective `campaign.control` action middleware;
 - reconcile migration 155 composite foreign keys with final migration 153
   campaign identity names;
 - later PR-075 supplies v2 retry, and PR-076 supplies executor cancel/status
@@ -78,6 +84,7 @@ This change was built on the synthetic base and must be replayed after PR-071:
 
 ## Compatibility
 
-Existing v1 deployment routes and callback semantics do not change. Campaign
-controls are unavailable without the preceding campaign stack and feature
-enrollment. Every unresolved dependency fails closed.
+Existing v1 deployment routes and callback semantics do not change. Migration
+155 refuses downgrade while any control/exclusion row or non-default retained
+runtime control state exists. Campaign controls remain unavailable without the
+preceding campaign stack and feature enrollment.

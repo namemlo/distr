@@ -2,6 +2,8 @@ package campaignworker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -26,10 +28,11 @@ func (w *Worker) RunOnce(ctx context.Context, runIDs []uuid.UUID, now time.Time)
 	slices.SortFunc(ordered, func(a, b uuid.UUID) int {
 		return slices.Compare(a[:], b[:])
 	})
+	var runErrors []error
 	for _, runID := range ordered {
 		if _, err := w.ticker.Tick(ctx, runID, now); err != nil {
-			return err
+			runErrors = append(runErrors, fmt.Errorf("campaign run %s: %w", runID, err))
 		}
 	}
-	return nil
+	return errors.Join(runErrors...)
 }

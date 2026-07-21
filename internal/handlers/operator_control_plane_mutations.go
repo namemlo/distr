@@ -166,6 +166,17 @@ func requireControlPlaneOrganizationActionWithDependencies(
 	}
 }
 
+// requireIntegratedCampaignControlAuthorization is an explicit synthetic-stack
+// stop. PR-066 owns the effective enrollment and scoped-action resolver, so a
+// branch that does not contain PR-066 must not approximate campaign.control
+// with legacy organization roles. Ordered integration replaces this function
+// at the call sites with RequireEffectiveControlPlaneAction.
+func requireIntegratedCampaignControlAuthorization(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "campaign.control authorization is not integrated", http.StatusForbidden)
+	})
+}
+
 func operatorControlPlaneMutationAccessMiddlewareWithFlags(
 	enabledFlags []featureflags.Key,
 ) func(http.Handler) http.Handler {

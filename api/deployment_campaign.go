@@ -259,10 +259,41 @@ type DeploymentCampaignRun struct {
 	CurrentWaveOrder       int                    `json:"currentWaveOrder"`
 	CurrentMemberOrder     int                    `json:"currentMemberOrder"`
 	AdmissionsBlocked      bool                   `json:"admissionsBlocked"`
+	ResumeState            types.CampaignRunState `json:"resumeState,omitempty"`
 	PauseRequested         bool                   `json:"pauseRequested"`
 	ReconciliationRequired bool                   `json:"reconciliationRequired"`
 	FencingToken           int64                  `json:"fencingToken"`
 	LeaseExpiresAt         *time.Time             `json:"leaseExpiresAt,omitempty"`
+}
+
+type StartDeploymentCampaignRunRequest struct {
+	CampaignRevisionID uuid.UUID `json:"campaignRevisionId"`
+}
+
+type TransitionDeploymentCampaignRunRequest struct {
+	ExpectedVersion int64                  `json:"expectedVersion"`
+	To              types.CampaignRunState `json:"to"`
+	Reason          string                 `json:"reason"`
+}
+
+func (request TransitionDeploymentCampaignRunRequest) Validate() error {
+	if request.ExpectedVersion < 1 {
+		return errors.New("expectedVersion must be positive")
+	}
+	if strings.TrimSpace(request.Reason) == "" || request.Reason != strings.TrimSpace(request.Reason) {
+		return errors.New("reason is required and must be trimmed")
+	}
+	if len(request.Reason) > 4000 {
+		return errors.New("reason must be at most 4000 characters")
+	}
+	return nil
+}
+
+func (request StartDeploymentCampaignRunRequest) Validate() error {
+	if request.CampaignRevisionID == uuid.Nil {
+		return errors.New("campaignRevisionId is required")
+	}
+	return nil
 }
 
 type CampaignControlRequest struct {
@@ -280,6 +311,9 @@ func (request CampaignControlRequest) Validate() error {
 	}
 	if strings.TrimSpace(request.Reason) == "" {
 		return errors.New("reason is required")
+	}
+	if request.Reason != strings.TrimSpace(request.Reason) {
+		return errors.New("reason must be trimmed")
 	}
 	if len(request.Reason) > 4000 {
 		return errors.New("reason must be at most 4000 characters")

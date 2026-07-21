@@ -65,19 +65,17 @@ type SchedulerStore interface {
 		time.Duration,
 	) (types.CampaignLease, bool, error)
 	LoadCampaignSchedule(context.Context, uuid.UUID, int64) (types.CampaignSchedule, error)
-	RecordCampaignPrerequisiteEvaluation(
+	RecordPrerequisitesAndAdmit(
 		context.Context,
-		types.CampaignPrerequisiteEvaluation,
+		types.CampaignMemberCandidate,
+		types.CampaignMemberAdmission,
+		CampaignObservationResolver,
+		CampaignObservationVerifier,
 		int64,
-	) error
-	RecordCampaignThresholdEvaluation(
+	) (bool, bool, error)
+	RecordThresholdAndMaybePause(
 		context.Context,
 		types.CampaignThresholdEvaluation,
-		int64,
-	) error
-	AdmitCampaignMember(
-		context.Context,
-		types.CampaignMemberAdmission,
 		int64,
 	) (bool, error)
 	PauseCampaignAdmission(context.Context, uuid.UUID, string, int64) error
@@ -188,25 +186,18 @@ func (s *Scheduler) Tick(
 			EvaluatedAt:        now,
 			FencingToken:       lease.FencingToken,
 		}
-		if err := s.store.RecordCampaignThresholdEvaluation(
+		paused, err := s.store.RecordThresholdAndMaybePause(
 			ctx,
 			evaluation,
 			lease.FencingToken,
-		); err != nil {
+		)
+		if err != nil {
 			return result, err
 		}
-	}
-	if threshold.Breached {
-		if err := s.store.PauseCampaignAdmission(
-			ctx,
-			runID,
-			"campaign threshold breached",
-			lease.FencingToken,
-		); err != nil {
-			return result, err
+		if paused {
+			result.Paused = true
+			return result, nil
 		}
-		result.Paused = true
-		return result, nil
 	}
 
 	candidates := slices.Clone(schedule.Candidates)
@@ -215,84 +206,6 @@ func (s *Scheduler) Tick(
 		return result, nil
 	}
 	candidate := candidates[0]
-
-	for _, requirement := range candidate.Prerequisites {
-		observationID := requirement.ObservationID
-		observationChecksum := requirement.ObservationChecksum
-		var resolvedErr error
-		if observationID == uuid.Nil || observationChecksum == "" {
-			observationID, observationChecksum, resolvedErr =
-				s.resolver.ResolveCampaignObservation(
-					ctx,
-					requirement.OrganizationID,
-					requirement.ProviderComponentInstanceID,
-					requirement.ExpectedChecksum,
-				)
-		}
-		verifiedErr := resolvedErr
-		if verifiedErr == nil {
-			verifiedErr = s.observations.VerifyCampaignObservation(
-				ctx,
-				requirement.OrganizationID,
-				observationID,
-				observationChecksum,
-			)
-		}
-		matched := resolvedErr == nil && verifiedErr == nil &&
-			observationID != uuid.Nil &&
-			requirement.ExpectedChecksum != "" &&
-			observationChecksum == requirement.ExpectedChecksum
-		reason := ""
-		if verifiedErr != nil {
-			reason = verifiedErr.Error()
-		} else if !matched {
-			reason = "prerequisite observation checksum does not match frozen expectation"
-		}
-		actualObservationID := observationID
-		actualChecksum := observationChecksum
-		if verifiedErr != nil {
-			actualObservationID = uuid.Nil
-			actualChecksum = ""
-		}
-		evaluation := types.CampaignPrerequisiteEvaluation{
-			ID:                  uuid.New(),
-			CampaignRunID:       runID,
-			MemberRunID:         candidate.MemberRunID,
-			UpstreamPlanID:      requirement.UpstreamPlanID,
-			StepKey:             requirement.StepKey,
-			ExpectedChecksum:    requirement.ExpectedChecksum,
-			ActualObservationID: actualObservationID,
-			ActualChecksum:      actualChecksum,
-			Matched:             matched,
-			Reason:              reason,
-			EvaluatedAt:         now,
-			FencingToken:        lease.FencingToken,
-		}
-		if err := s.store.RecordCampaignPrerequisiteEvaluation(
-			ctx,
-			evaluation,
-			lease.FencingToken,
-		); err != nil {
-			return result, err
-		}
-		if !matched {
-			pauseReason := "campaign prerequisite mismatch"
-			if errors.Is(verifiedErr, ErrCampaignObservationVerifierUnavailable) ||
-				errors.Is(verifiedErr, ErrCampaignObservationResolverUnavailable) {
-				pauseReason = "trusted observation unavailable"
-			}
-			if err := s.store.PauseCampaignAdmission(
-				ctx,
-				runID,
-				pauseReason,
-				lease.FencingToken,
-			); err != nil {
-				return result, err
-			}
-			result.Paused = true
-			return result, nil
-		}
-	}
 
 	admission := types.CampaignMemberAdmission{
 		RunID:        runID,
@@ -304,10 +217,13 @@ func (s *Scheduler) Tick(
 		AdmittedAt:   now,
 		FencingToken: lease.FencingToken,
 	}
-	admitted, err := s.store.AdmitCampaignMember(ctx, admission, lease.FencingToken)
+	admitted, paused, err := s.store.RecordPrerequisitesAndAdmit(
+		ctx, candidate, admission, s.resolver, s.observations, lease.FencingToken,
+	)
 	if err != nil {
 		return result, err
 	}
+	result.Paused = paused
 	result.Admitted = admitted
 	if admitted {
 		result.MemberRunID = candidate.MemberRunID

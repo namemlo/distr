@@ -34,6 +34,9 @@ func DecideCampaignControl(
 	if strings.TrimSpace(input.Reason) == "" {
 		return types.CampaignControlDecision{}, errors.New("campaign control reason is required")
 	}
+	if input.Reason != strings.TrimSpace(input.Reason) {
+		return types.CampaignControlDecision{}, errors.New("campaign control reason must be trimmed")
+	}
 
 	decision := types.CampaignControlDecision{
 		Run:    run,
@@ -50,6 +53,7 @@ func DecideCampaignControl(
 			)
 		}
 		decision.Run.AdmissionsBlocked = true
+		decision.Run.ResumeState = run.State
 		if facts.AtSafePoint {
 			decision.Run.State = types.CampaignRunStatePaused
 		} else {
@@ -64,7 +68,11 @@ func DecideCampaignControl(
 				run.State,
 			)
 		}
-		decision.Run.State = types.CampaignRunStateRunning
+		if run.ResumeState != types.CampaignRunStateScheduled && run.ResumeState != types.CampaignRunStateRunning {
+			return types.CampaignControlDecision{}, errors.New("paused campaign has no valid resume state")
+		}
+		decision.Run.State = run.ResumeState
+		decision.Run.ResumeState = ""
 		decision.Run.AdmissionsBlocked = false
 		decision.Run.PauseRequested = false
 	case types.CampaignControlKindCancel:
@@ -87,6 +95,8 @@ func DecideCampaignControl(
 			)
 		} else {
 			decision.Run.State = types.CampaignRunStateCanceled
+			decision.Run.ResumeState = ""
+			decision.Run.PauseRequested = false
 		}
 	default:
 		return types.CampaignControlDecision{}, fmt.Errorf(
@@ -110,12 +120,15 @@ func BuildCampaignExclusion(
 	if strings.TrimSpace(input.Reason) == "" {
 		return types.CampaignExclusion{}, errors.New("campaign exclusion reason is required")
 	}
+	if input.Reason != strings.TrimSpace(input.Reason) {
+		return types.CampaignExclusion{}, errors.New("campaign exclusion reason must be trimmed")
+	}
 	exclusion := types.CampaignExclusion{
-		ID:                input.RequestID,
+		ID:                uuid.New(),
 		OrganizationID:    input.OrganizationID,
 		CampaignRunID:     input.RunID,
 		MemberRunID:       input.MemberRunID,
-		ControlRequestID:  input.RequestID,
+		ControlRequestID:  uuid.Nil,
 		Reason:            strings.TrimSpace(input.Reason),
 		VisibleIncomplete: facts.WasAdmitted,
 		ExcludedAt:        input.RequestedAt,
@@ -155,6 +168,13 @@ func DecideCampaignMemberMutation(
 	return run, nil
 }
 
+func ValidateCampaignMemberRetryStatus(status string) error {
+	if status != "FAILED" && status != "CANCELED" {
+		return fmt.Errorf("campaign member in state %s is not retryable", status)
+	}
+	return nil
+}
+
 type CampaignControlStore interface {
 	ApplyCampaignControl(
 		context.Context,
@@ -170,6 +190,14 @@ type SupersedingPlanCreator interface {
 	CreateSupersedingPlan(
 		context.Context,
 		types.CampaignMemberControlInput,
+	) (*types.DeploymentPlan, error)
+}
+
+type CampaignRetryStore interface {
+	PersistCampaignMemberRetry(
+		context.Context,
+		types.CampaignMemberControlInput,
+		SupersedingPlanCreator,
 	) (*types.DeploymentPlan, error)
 }
 
@@ -261,10 +289,20 @@ func (c *CampaignController) RetryCampaignMember(
 	ctx context.Context,
 	input types.CampaignMemberControlInput,
 ) (*types.DeploymentPlan, error) {
+	input.Kind = types.CampaignControlKindRetry
+	if input.RequestID == uuid.Nil || input.MemberRunID == uuid.Nil {
+		return nil, errors.New("campaign retry request and member run IDs are required")
+	}
+	if strings.TrimSpace(input.Reason) == "" || input.Reason != strings.TrimSpace(input.Reason) {
+		return nil, errors.New("campaign retry reason is required and must be trimmed")
+	}
 	switch input.ProtocolVersion {
 	case "v1":
 		if c.planCreator == nil {
 			return nil, errors.New("campaign v1 superseding plan creator is not wired")
+		}
+		if retryStore, ok := c.store.(CampaignRetryStore); ok {
+			return retryStore.PersistCampaignMemberRetry(ctx, input, c.planCreator)
 		}
 		return c.planCreator.CreateSupersedingPlan(ctx, input)
 	case "v2":

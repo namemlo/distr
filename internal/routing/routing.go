@@ -229,6 +229,8 @@ func ApiRouter(
 						),
 					)
 					r.Route("/deployment-campaign-drafts", handlers.DeploymentCampaignDraftsRouter)
+					r.Route("/deployment-campaign-runs", handlers.DeploymentCampaignRunsRouter)
+					handlers.DeploymentCampaignControlRoutes(r)
 					r.Route("/deployment-policies", handlers.DeploymentPoliciesRouter)
 					r.Route("/deployment-processes", handlers.DeploymentProcessesRouter)
 					r.Route("/deployment-registry", handlers.DeploymentRegistryRouter)

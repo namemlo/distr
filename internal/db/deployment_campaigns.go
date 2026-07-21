@@ -1149,6 +1149,7 @@ SET state = @to_state,
     )
 WHERE id = @run_id
   AND organization_id = @organization_id
+  AND state = @from_state
   AND version = @expected_version
 RETURNING
   id,
@@ -1161,6 +1162,7 @@ RETURNING
   current_wave_order,
   current_member_order,
   admissions_blocked,
+  COALESCE(resume_state, ''),
   fencing_token,
   COALESCE(lease_holder, ''),
   lease_expires_at`
@@ -1176,7 +1178,7 @@ WITH updated_run AS (
     AND campaign_run.state = 'RUNNING'
     AND campaign_run.admissions_blocked = FALSE
     AND campaign_run.fencing_token = @fencing_token
-    AND campaign_run.lease_expires_at > @admitted_at
+    AND campaign_run.lease_expires_at > clock_timestamp()
     AND EXISTS (
       SELECT 1
       FROM DeploymentCampaignMemberRun AS pending_member
@@ -1291,6 +1293,7 @@ SELECT
   campaign_run.current_wave_order,
   campaign_run.current_member_order,
   campaign_run.admissions_blocked,
+  COALESCE(campaign_run.resume_state, ''),
   campaign_run.fencing_token,
   COALESCE(campaign_run.lease_holder, ''),
   campaign_run.lease_expires_at,
@@ -1394,7 +1397,7 @@ SELECT
   frozen_prerequisite.provider_placement_id,
   frozen_prerequisite.provider_deployment_unit_id,
   frozen_prerequisite.provider_component_instance_id,
-  frozen_prerequisite.expected_observed_state_checksum
+  frozen_prerequisite.expected_runtime_state_checksum
 FROM DeploymentCampaignPrerequisite AS frozen_prerequisite
 JOIN DeploymentCampaignRun AS campaign_run
   ON campaign_run.campaign_revision_id = frozen_prerequisite.campaign_revision_id
@@ -1420,6 +1423,7 @@ SELECT
   current_wave_order,
   current_member_order,
   admissions_blocked,
+  COALESCE(resume_state, ''),
   fencing_token,
   COALESCE(lease_holder, ''),
   lease_expires_at
@@ -1467,12 +1471,19 @@ FROM CampaignControlRequest
 WHERE organization_id = @organization_id
   AND request_id = @request_id`
 
+const lockCampaignControlRequestSQL = `
+SELECT pg_advisory_xact_lock(hashtextextended(
+  CAST(@organization_id AS text) || ':' || CAST(@request_id AS text),
+  0
+))`
+
 const applyCampaignControlSQL = `
 UPDATE DeploymentCampaignRun
 SET state = @state,
     version = @resulting_version,
     updated_at = @updated_at,
     admissions_blocked = @admissions_blocked,
+    resume_state = NULLIF(@resume_state, ''),
     pause_requested = @pause_requested,
     reconciliation_required = @reconciliation_required,
     transition_evidence = transition_evidence || jsonb_build_array(
@@ -1505,7 +1516,188 @@ WHERE id = @run_id
   AND version = @expected_version
   AND state NOT IN ('FAILED', 'COMPLETED', 'CANCELED')`
 
+const instantiateCampaignRunSQL = `
+WITH selected_revision AS (
+  SELECT id, organization_id
+  FROM DeploymentCampaignRevision
+  WHERE id = @campaign_revision_id AND organization_id = @organization_id
+), inserted_run AS (
+  INSERT INTO DeploymentCampaignRun (
+    id, created_at, updated_at, organization_id, campaign_revision_id,
+    state, version, transition_evidence
+  )
+  SELECT
+    @run_id, @started_at, @started_at, organization_id, id,
+    'DRAFT', 1, '[]'::jsonb
+  FROM selected_revision
+  RETURNING *
+), inserted_waves AS (
+  INSERT INTO DeploymentCampaignWaveRun (
+    id, created_at, campaign_run_id, organization_id, campaign_wave_id,
+    campaign_revision_id, wave_order, maximum_concurrency, bake_duration_seconds
+  )
+  SELECT gen_random_uuid(), @started_at, run.id, wave.organization_id, wave.id,
+    wave.campaign_revision_id, wave.wave_order, wave.maximum_concurrency, wave.bake_seconds
+  FROM inserted_run run
+  JOIN DeploymentCampaignWave wave
+    ON wave.campaign_revision_id = run.campaign_revision_id
+   AND wave.organization_id = run.organization_id
+  RETURNING *
+), inserted_members AS (
+  INSERT INTO DeploymentCampaignMemberRun (
+    id, created_at, campaign_run_id, wave_run_id, organization_id,
+    campaign_member_id, campaign_revision_id, deployment_plan_id,
+    deployment_unit_id, wave_order, member_order
+  )
+  SELECT gen_random_uuid(), @started_at, run.id, wave_run.id, member.organization_id,
+    member.id, member.campaign_revision_id, member.deployment_plan_id,
+    member.deployment_unit_id, member.wave_order, member.member_order
+  FROM inserted_run run
+  JOIN DeploymentCampaignMember member
+    ON member.campaign_revision_id = run.campaign_revision_id
+   AND member.organization_id = run.organization_id
+  JOIN inserted_waves wave_run
+    ON wave_run.campaign_run_id = run.id
+   AND wave_run.wave_order = member.wave_order
+  RETURNING id
+)
+SELECT
+  run.id, run.created_at, run.updated_at, run.organization_id,
+  run.campaign_revision_id, run.state, run.version,
+  run.current_wave_order, run.current_member_order, run.admissions_blocked,
+  '', run.fencing_token, COALESCE(run.lease_holder, ''), run.lease_expires_at,
+  (SELECT count(*) FROM inserted_waves),
+  (SELECT count(*) FROM inserted_members),
+  (SELECT count(*) FROM DeploymentCampaignWave wave
+    WHERE wave.campaign_revision_id = run.campaign_revision_id
+      AND wave.organization_id = run.organization_id),
+  (SELECT count(*) FROM DeploymentCampaignMember member
+    WHERE member.campaign_revision_id = run.campaign_revision_id
+      AND member.organization_id = run.organization_id)
+FROM inserted_run run`
+
+const recordPrerequisitesAndAdmitSQL = `
+WITH inserted_evidence AS (
+  INSERT INTO CampaignPrerequisiteEvaluation (
+    id, evaluated_at, campaign_run_id, member_run_id, organization_id,
+    upstream_plan_id, step_key, expected_runtime_state_checksum,
+    actual_observation_id, actual_observation_organization_id,
+    actual_runtime_state_checksum, matched, reason, fencing_token
+  )
+  SELECT
+    evidence.id, @evaluated_at, @run_id, @member_run_id, run.organization_id,
+    evidence.upstream_plan_id, evidence.step_key,
+    evidence.expected_runtime_state_checksum,
+    NULLIF(evidence.actual_observation_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    CASE WHEN evidence.actual_observation_id = '00000000-0000-0000-0000-000000000000'::uuid
+      THEN NULL ELSE run.organization_id END,
+    NULLIF(evidence.actual_runtime_state_checksum, ''), evidence.matched,
+    evidence.reason, @fencing_token
+  FROM DeploymentCampaignRun run
+  CROSS JOIN jsonb_to_recordset(@evaluations::jsonb) AS evidence(
+    id uuid, upstream_plan_id uuid, step_key text,
+    expected_runtime_state_checksum text, actual_observation_id uuid,
+    actual_runtime_state_checksum text, matched boolean, reason text
+  )
+  WHERE run.id = @run_id AND run.fencing_token = @fencing_token
+    AND run.lease_expires_at > clock_timestamp()
+  RETURNING matched
+), updated_run AS (
+  UPDATE DeploymentCampaignRun run
+  SET state = CASE WHEN EXISTS (SELECT 1 FROM inserted_evidence WHERE NOT matched)
+      THEN 'PAUSED' ELSE run.state END,
+      admissions_blocked = EXISTS (SELECT 1 FROM inserted_evidence WHERE NOT matched),
+      version = CASE WHEN EXISTS (SELECT 1 FROM inserted_evidence WHERE NOT matched)
+        THEN version + 1 ELSE version END,
+      updated_at = @evaluated_at
+  WHERE run.id = @run_id AND run.fencing_token = @fencing_token
+  RETURNING run.id
+)
+UPDATE DeploymentCampaignMemberRun member_run
+SET status = 'ADMITTED', admitted_at = @evaluated_at,
+    admitted_fencing_token = @fencing_token
+FROM updated_run
+WHERE member_run.id = @member_run_id AND member_run.campaign_run_id = @run_id
+  AND member_run.wave_run_id = @wave_run_id AND member_run.status = 'PENDING'
+  AND NOT EXISTS (SELECT 1 FROM inserted_evidence WHERE NOT matched)`
+
+const recordThresholdAndMaybePauseSQL = `
+WITH inserted_evaluation AS (
+  INSERT INTO CampaignThresholdEvaluation (
+    id, evaluated_at, campaign_run_id, organization_id, samples,
+    successful, failed, failure_rate, maximum_failure_rate, breached, fencing_token
+  )
+  SELECT @id, @evaluated_at, @campaign_run_id, run.organization_id, @samples,
+    @successful, @failed, @failure_rate, @maximum_failure_rate, @breached, @fencing_token
+  FROM DeploymentCampaignRun run
+  WHERE run.id = @campaign_run_id AND run.fencing_token = @fencing_token
+    AND run.lease_expires_at > clock_timestamp()
+  RETURNING breached
+)
+UPDATE DeploymentCampaignRun run
+SET state = CASE WHEN evaluation.breached THEN 'PAUSED' ELSE run.state END,
+    admissions_blocked = run.admissions_blocked OR evaluation.breached,
+    version = CASE WHEN evaluation.breached THEN version + 1 ELSE version END,
+    updated_at = @evaluated_at
+FROM inserted_evaluation evaluation
+WHERE run.id = @campaign_run_id AND run.fencing_token = @fencing_token`
+
 type CampaignRepository struct{}
+
+func (CampaignRepository) GetCampaignRun(
+	ctx context.Context,
+	runID uuid.UUID,
+	organizationID uuid.UUID,
+) (*types.CampaignRun, error) {
+	return GetDeploymentCampaignRun(ctx, runID, organizationID)
+}
+
+func (CampaignRepository) StartCampaignRun(
+	ctx context.Context,
+	input types.CampaignRunStartInput,
+) (*types.CampaignRun, error) {
+	if input.StartedAt.IsZero() {
+		input.StartedAt = time.Now().UTC()
+	}
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	runID := uuid.New()
+	var run types.CampaignRun
+	var waveCount, memberCount, expectedWaves, expectedMembers int
+	err = tx.QueryRow(ctx, instantiateCampaignRunSQL, pgx.NamedArgs{
+		"run_id": runID, "started_at": input.StartedAt, "organization_id": input.OrganizationID,
+		"campaign_revision_id": input.CampaignRevisionID,
+	}).Scan(
+		&run.ID, &run.CreatedAt, &run.UpdatedAt, &run.OrganizationID,
+		&run.CampaignRevisionID, &run.State, &run.Version,
+		&run.CurrentWaveOrder, &run.CurrentMemberOrder, &run.AdmissionsBlocked,
+		&run.ResumeState, &run.FencingToken, &run.LeaseHolder, &run.LeaseExpiresAt,
+		&waveCount, &memberCount, &expectedWaves, &expectedMembers,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if waveCount == 0 || memberCount == 0 || waveCount != expectedWaves || memberCount != expectedMembers {
+		return nil, apierrors.NewConflict("campaign runtime instantiation was incomplete")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (CampaignRepository) TransitionCampaignRun(
+	ctx context.Context,
+	transition types.CampaignTransition,
+) (*types.CampaignRun, error) {
+	return transitionCampaignWithGuard(ctx, transition, campaigns.IsCampaignPreRunTransition)
+}
 
 func PauseCampaign(ctx context.Context, input types.CampaignControlInput) error {
 	input.Kind = types.CampaignControlKindPause
@@ -1535,12 +1727,12 @@ func ExcludeCampaignMember(
 }
 
 func RetryCampaignMember(
-	context.Context,
-	types.CampaignMemberControlInput,
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
 ) (*types.DeploymentPlan, error) {
-	return nil, errors.New(
-		"campaign retry plan creation requires the final PR-063 superseding-plan repository seam",
-	)
+	repository := CampaignRepository{}
+	return campaigns.NewCampaignController(repository, repository).
+		RetryCampaignMember(ctx, input)
 }
 
 func (CampaignRepository) RetryCampaignMember(
@@ -1548,6 +1740,144 @@ func (CampaignRepository) RetryCampaignMember(
 	input types.CampaignMemberControlInput,
 ) (*types.DeploymentPlan, error) {
 	return RetryCampaignMember(ctx, input)
+}
+
+func (CampaignRepository) CreateSupersedingPlan(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+) (*types.DeploymentPlan, error) {
+	var sourcePlanID uuid.UUID
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT deployment_plan_id
+FROM DeploymentCampaignMemberRun
+WHERE id = @member_run_id
+  AND campaign_run_id = @run_id
+  AND organization_id = @organization_id`, pgx.NamedArgs{
+		"member_run_id": input.MemberRunID, "run_id": input.RunID,
+		"organization_id": input.OrganizationID,
+	}).Scan(&sourcePlanID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	source, err := getDeploymentPlan(ctx, sourcePlanID, input.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	targetIDs := make([]uuid.UUID, 0, len(source.Targets))
+	for _, target := range source.Targets {
+		targetIDs = append(targetIDs, target.DeploymentTargetID)
+	}
+	return CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID: input.OrganizationID, ReleaseBundleID: source.ReleaseBundleID,
+		EnvironmentID: source.EnvironmentID, TargetIDs: targetIDs,
+		DeploymentUnitID: source.DeploymentUnitID,
+	})
+}
+
+func (CampaignRepository) PersistCampaignMemberRetry(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+	creator campaigns.SupersedingPlanCreator,
+) (*types.DeploymentPlan, error) {
+	if creator == nil {
+		return nil, errors.New("campaign v1 superseding plan creator is not wired")
+	}
+	if input.RequestedAt.IsZero() {
+		input.RequestedAt = time.Now().UTC()
+	}
+	input.Kind = types.CampaignControlKindRetry
+	checksum := campaignRetryChecksum(input)
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txCtx := internalctx.WithDb(ctx, tx)
+	if _, err := tx.Exec(ctx, lockCampaignControlRequestSQL, pgx.NamedArgs{
+		"organization_id": input.OrganizationID,
+		"request_id":      input.RequestID,
+	}); err != nil {
+		return nil, err
+	}
+	if plan, found, err := lookupCampaignRetryReplay(ctx, tx, input, checksum); err != nil {
+		return nil, err
+	} else if found {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return plan, nil
+	}
+	run, err := scanCampaignRun(tx.QueryRow(ctx, lockCampaignRunForControlSQL, pgx.NamedArgs{
+		"run_id": input.RunID, "organization_id": input.OrganizationID,
+	}))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	updatedRun, err := campaigns.DecideCampaignMemberMutation(*run, input)
+	if err != nil {
+		return nil, apierrors.NewConflict(err.Error())
+	}
+	var memberStatus string
+	if err := tx.QueryRow(ctx, `
+SELECT status
+FROM DeploymentCampaignMemberRun
+WHERE id = @member_run_id
+  AND campaign_run_id = @run_id
+  AND organization_id = @organization_id
+FOR UPDATE`, pgx.NamedArgs{
+		"member_run_id": input.MemberRunID, "run_id": input.RunID,
+		"organization_id": input.OrganizationID,
+	}).Scan(&memberStatus); errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	if err := campaigns.ValidateCampaignMemberRetryStatus(memberStatus); err != nil {
+		return nil, apierrors.NewConflict(err.Error())
+	}
+	plan, err := creator.CreateSupersedingPlan(txCtx, input)
+	if err != nil {
+		return nil, err
+	}
+	response, err := json.Marshal(plan)
+	if err != nil {
+		return nil, err
+	}
+	result := types.CampaignControlResult{
+		RequestID: input.RequestID, Status: types.CampaignControlStatusApplied, Run: updatedRun,
+	}
+	controlID := uuid.New()
+	tag, err := tx.Exec(ctx, insertCampaignControlSQL, campaignControlArgs(
+		controlID, input.CampaignControlInput, input.MemberRunID, checksum, result, response,
+	))
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, apierrors.NewConflict("campaign retry idempotency serialization failed")
+	}
+	tag, err = tx.Exec(ctx, applyCampaignExclusionVersionSQL, pgx.NamedArgs{
+		"updated_at": input.RequestedAt, "request_id": input.RequestID,
+		"control_kind": input.Kind, "member_run_id": input.MemberRunID,
+		"reason": input.Reason, "run_id": input.RunID,
+		"organization_id": input.OrganizationID, "expected_version": input.ExpectedVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, apierrors.NewConflict("campaign retry lost optimistic update")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 func (CampaignRepository) ApplyCampaignControl(
@@ -1654,6 +1984,7 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 		"resulting_version":       decision.Run.Version,
 		"updated_at":              input.RequestedAt,
 		"admissions_blocked":      decision.Run.AdmissionsBlocked,
+		"resume_state":            decision.Run.ResumeState,
 		"pause_requested":         decision.PausePending,
 		"reconciliation_required": decision.ReconciliationRequired,
 		"request_id":              input.RequestID,
@@ -1786,6 +2117,13 @@ FOR UPDATE`, pgx.NamedArgs{
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
+		if _, found, replayErr := lookupCampaignControlReplay(
+			ctx, tx, input.CampaignControlInput, checksum,
+		); replayErr != nil {
+			return nil, replayErr
+		} else if !found {
+			return nil, apierrors.NewConflict("campaign exclusion idempotency serialization failed")
+		}
 		existing, err := getCampaignExclusionReplay(ctx, tx, input)
 		if err != nil {
 			return nil, err
@@ -1864,6 +2202,14 @@ func TransitionCampaign(
 	ctx context.Context,
 	transition types.CampaignTransition,
 ) (*types.CampaignRun, error) {
+	return transitionCampaignWithGuard(ctx, transition, nil)
+}
+
+func transitionCampaignWithGuard(
+	ctx context.Context,
+	transition types.CampaignTransition,
+	guard func(types.CampaignRunState, types.CampaignRunState) bool,
+) (*types.CampaignRun, error) {
 	var current types.CampaignRun
 	err := internalctx.GetDb(ctx).QueryRow(ctx, `
 SELECT state, version
@@ -1879,6 +2225,11 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 	}
 	if err != nil {
 		return nil, err
+	}
+	if guard != nil && !guard(current.State, transition.To) {
+		return nil, apierrors.NewConflict(
+			"public campaign transitions are limited to the pre-run lifecycle; use operational controls after start",
+		)
 	}
 	if _, err := campaigns.NextCampaignRun(current, transition); err != nil {
 		return nil, apierrors.NewConflict(err.Error())
@@ -1896,6 +2247,7 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 		"run_id":             transition.RunID,
 		"organization_id":    transition.OrganizationID,
 		"expected_version":   transition.ExpectedVersion,
+		"from_state":         current.State,
 		"to_state":           transition.To,
 		"reason":             transition.Reason,
 		"actor_id":           transition.ActorID,
@@ -1929,7 +2281,7 @@ WHERE member_run.campaign_run_id = @run_id
   AND campaign_run.admissions_blocked = FALSE
   AND (
     campaign_run.lease_expires_at IS NULL
-    OR campaign_run.lease_expires_at > @evaluated_at
+    OR campaign_run.lease_expires_at > clock_timestamp()
   )
 ORDER BY
   member_run.wave_order,
@@ -1970,10 +2322,10 @@ INSERT INTO CampaignPrerequisiteEvaluation (
   organization_id,
   upstream_plan_id,
   step_key,
-  expected_checksum,
+  expected_runtime_state_checksum,
   actual_observation_id,
   actual_observation_organization_id,
-  actual_checksum,
+  actual_runtime_state_checksum,
   matched,
   reason,
   fencing_token
@@ -1986,21 +2338,21 @@ SELECT
   campaign_run.organization_id,
   @upstream_plan_id,
   @step_key,
-  @expected_checksum,
+  @expected_runtime_state_checksum,
   NULLIF(@actual_observation_id, '00000000-0000-0000-0000-000000000000'::uuid),
   CASE
     WHEN @actual_observation_id = '00000000-0000-0000-0000-000000000000'::uuid
       THEN NULL
     ELSE campaign_run.organization_id
   END,
-  NULLIF(@actual_checksum, ''),
+  NULLIF(@actual_runtime_state_checksum, ''),
   @matched,
   @reason,
   @fencing_token
 FROM DeploymentCampaignRun AS campaign_run
 WHERE campaign_run.id = @campaign_run_id
   AND campaign_run.fencing_token = @fencing_token
-  AND campaign_run.lease_expires_at > @evaluated_at`, prerequisiteEvaluationArgs(evaluation))
+  AND campaign_run.lease_expires_at > clock_timestamp()`, prerequisiteEvaluationArgs(evaluation))
 	if err != nil {
 		return err
 	}
@@ -2040,7 +2392,7 @@ SELECT
 FROM DeploymentCampaignRun AS campaign_run
 WHERE campaign_run.id = @campaign_run_id
   AND campaign_run.fencing_token = @fencing_token
-  AND campaign_run.lease_expires_at > @evaluated_at`, thresholdEvaluationArgs(evaluation))
+  AND campaign_run.lease_expires_at > clock_timestamp()`, thresholdEvaluationArgs(evaluation))
 	if err != nil {
 		return err
 	}
@@ -2052,7 +2404,8 @@ func GetDeploymentCampaignRun(
 	runID uuid.UUID,
 	organizationID uuid.UUID,
 ) (*types.CampaignRun, error) {
-	run, err := scanCampaignRun(internalctx.GetDb(ctx).QueryRow(ctx, `
+	var run types.CampaignRun
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
 SELECT
   id,
   created_at,
@@ -2064,25 +2417,26 @@ SELECT
   current_wave_order,
   current_member_order,
   admissions_blocked,
+  COALESCE(resume_state, ''),
   fencing_token,
   COALESCE(lease_holder, ''),
-  lease_expires_at
+  lease_expires_at,
+  pause_requested,
+  reconciliation_required
 FROM DeploymentCampaignRun
 WHERE id = @run_id AND organization_id = @organization_id`,
 		pgx.NamedArgs{"run_id": runID, "organization_id": organizationID},
-	))
+	).Scan(
+		&run.ID, &run.CreatedAt, &run.UpdatedAt, &run.OrganizationID,
+		&run.CampaignRevisionID, &run.State, &run.Version,
+		&run.CurrentWaveOrder, &run.CurrentMemberOrder, &run.AdmissionsBlocked,
+		&run.ResumeState, &run.FencingToken, &run.LeaseHolder, &run.LeaseExpiresAt,
+		&run.PauseRequested, &run.ReconciliationRequired,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apierrors.ErrNotFound
 	}
-	if err == nil {
-		err = internalctx.GetDb(ctx).QueryRow(ctx, `
-SELECT pause_requested, reconciliation_required
-FROM DeploymentCampaignRun
-WHERE id = @run_id AND organization_id = @organization_id`,
-			pgx.NamedArgs{"run_id": runID, "organization_id": organizationID},
-		).Scan(&run.PauseRequested, &run.ReconciliationRequired)
-	}
-	return run, err
+	return &run, err
 }
 
 func (CampaignRepository) AcquireCampaignLease(
@@ -2154,6 +2508,7 @@ func (CampaignRepository) LoadCampaignSchedule(
 		&schedule.Run.CurrentWaveOrder,
 		&schedule.Run.CurrentMemberOrder,
 		&schedule.Run.AdmissionsBlocked,
+		&schedule.Run.ResumeState,
 		&schedule.Run.FencingToken,
 		&schedule.Run.LeaseHolder,
 		&schedule.Run.LeaseExpiresAt,
@@ -2254,7 +2609,7 @@ func (CampaignRepository) LoadCampaignSchedule(
 				&requirement.ProviderPlacementID,
 				&requirement.ProviderDeploymentUnitID,
 				&requirement.ProviderComponentInstanceID,
-				&requirement.ExpectedChecksum,
+				&requirement.ExpectedRuntimeStateChecksum,
 			); err != nil {
 				prerequisiteRows.Close()
 				return types.CampaignSchedule{}, err
@@ -2293,6 +2648,7 @@ SET state = 'PAUSED',
     )
 WHERE campaign_run.id = @run_id
   AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.lease_expires_at > clock_timestamp()
   AND campaign_run.pause_requested = TRUE
   AND campaign_run.state = 'RUNNING'
   AND NOT EXISTS (
@@ -2316,6 +2672,88 @@ func (CampaignRepository) RecordCampaignPrerequisiteEvaluation(
 	return RecordCampaignPrerequisiteEvaluation(ctx, evaluation)
 }
 
+func (CampaignRepository) RecordPrerequisitesAndAdmit(
+	ctx context.Context,
+	candidate types.CampaignMemberCandidate,
+	admission types.CampaignMemberAdmission,
+	resolver campaigns.CampaignObservationResolver,
+	verifier campaigns.CampaignObservationVerifier,
+	fencingToken int64,
+) (bool, bool, error) {
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txCtx := internalctx.WithDb(ctx, tx)
+	paused := false
+	pauseReason := "campaign prerequisite mismatch"
+	for _, requirement := range candidate.Prerequisites {
+		observationID := requirement.ObservationID
+		runtimeChecksum := requirement.RuntimeStateChecksum
+		var verifyErr error
+		if observationID == uuid.Nil || runtimeChecksum == "" {
+			observationID, runtimeChecksum, verifyErr = resolver.ResolveCampaignObservation(
+				txCtx, requirement.OrganizationID, requirement.ProviderComponentInstanceID,
+				requirement.ExpectedRuntimeStateChecksum,
+			)
+		}
+		if verifyErr == nil {
+			verifyErr = verifier.VerifyCampaignObservation(
+				txCtx, requirement.OrganizationID, observationID, runtimeChecksum,
+			)
+		}
+		matched := verifyErr == nil && observationID != uuid.Nil &&
+			runtimeChecksum == requirement.ExpectedRuntimeStateChecksum
+		evaluation := types.CampaignPrerequisiteEvaluation{
+			ID: uuid.New(), CampaignRunID: admission.RunID, MemberRunID: candidate.MemberRunID,
+			UpstreamPlanID: requirement.UpstreamPlanID, StepKey: requirement.StepKey,
+			ExpectedRuntimeStateChecksum: requirement.ExpectedRuntimeStateChecksum,
+			ActualObservationID:          observationID, ActualRuntimeStateChecksum: runtimeChecksum,
+			Matched: matched, EvaluatedAt: admission.AdmittedAt, FencingToken: fencingToken,
+		}
+		if verifyErr != nil {
+			evaluation.ActualObservationID = uuid.Nil
+			evaluation.ActualRuntimeStateChecksum = ""
+			evaluation.Reason = verifyErr.Error()
+			if errors.Is(verifyErr, campaigns.ErrCampaignObservationVerifierUnavailable) ||
+				errors.Is(verifyErr, campaigns.ErrCampaignObservationResolverUnavailable) {
+				pauseReason = "trusted observation unavailable"
+			}
+		} else if !matched {
+			evaluation.Reason = "prerequisite runtime state does not match frozen expectation"
+		}
+		if err := RecordCampaignPrerequisiteEvaluation(txCtx, evaluation); err != nil {
+			return false, false, err
+		}
+		paused = paused || !matched
+	}
+	if paused {
+		if err := (CampaignRepository{}).PauseCampaignAdmission(
+			txCtx, admission.RunID, pauseReason, fencingToken,
+		); err != nil {
+			return false, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, false, err
+		}
+		return false, true, nil
+	}
+	admitted, err := (CampaignRepository{}).AdmitCampaignMember(txCtx, admission, fencingToken)
+	if err != nil {
+		return false, false, err
+	}
+	if !admitted {
+		// The deferred rollback also removes the prerequisite evidence. Evidence
+		// is retained only for the admission decision it atomically governed.
+		return false, false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, false, err
+	}
+	return admitted, false, nil
+}
+
 func (CampaignRepository) RecordCampaignThresholdEvaluation(
 	ctx context.Context,
 	evaluation types.CampaignThresholdEvaluation,
@@ -2323,6 +2761,34 @@ func (CampaignRepository) RecordCampaignThresholdEvaluation(
 ) error {
 	evaluation.FencingToken = fencingToken
 	return RecordThresholdEvaluation(ctx, evaluation)
+}
+
+func (CampaignRepository) RecordThresholdAndMaybePause(
+	ctx context.Context,
+	evaluation types.CampaignThresholdEvaluation,
+	fencingToken int64,
+) (bool, error) {
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txCtx := internalctx.WithDb(ctx, tx)
+	evaluation.FencingToken = fencingToken
+	if err := RecordThresholdEvaluation(txCtx, evaluation); err != nil {
+		return false, err
+	}
+	if evaluation.Breached {
+		if err := (CampaignRepository{}).PauseCampaignAdmission(
+			txCtx, evaluation.CampaignRunID, "campaign threshold breached", fencingToken,
+		); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return evaluation.Breached, nil
 }
 
 func (CampaignRepository) AdmitCampaignMember(
@@ -2365,6 +2831,10 @@ func (CampaignRepository) PauseCampaignAdmission(
 	tag, err := internalctx.GetDb(ctx).Exec(ctx, `
 UPDATE DeploymentCampaignRun
 SET state = 'PAUSED',
+    resume_state = CASE
+      WHEN state IN ('SCHEDULED', 'RUNNING') THEN state
+      ELSE resume_state
+    END,
     admissions_blocked = TRUE,
     version = version + 1,
     updated_at = now(),
@@ -2373,6 +2843,7 @@ SET state = 'PAUSED',
     )
 WHERE id = @run_id
   AND fencing_token = @fencing_token
+  AND lease_expires_at > clock_timestamp()
   AND state IN ('SCHEDULED', 'RUNNING', 'PAUSED')`,
 		pgx.NamedArgs{"run_id": runID, "reason": reason, "fencing_token": fencingToken},
 	)
@@ -2398,6 +2869,7 @@ func scanCampaignRun(row pgx.Row) (*types.CampaignRun, error) {
 		&run.CurrentWaveOrder,
 		&run.CurrentMemberOrder,
 		&run.AdmissionsBlocked,
+		&run.ResumeState,
 		&run.FencingToken,
 		&run.LeaseHolder,
 		&run.LeaseExpiresAt,
@@ -2409,18 +2881,18 @@ func prerequisiteEvaluationArgs(
 	evaluation types.CampaignPrerequisiteEvaluation,
 ) pgx.NamedArgs {
 	return pgx.NamedArgs{
-		"id":                    evaluation.ID,
-		"evaluated_at":          evaluation.EvaluatedAt,
-		"campaign_run_id":       evaluation.CampaignRunID,
-		"member_run_id":         evaluation.MemberRunID,
-		"upstream_plan_id":      evaluation.UpstreamPlanID,
-		"step_key":              evaluation.StepKey,
-		"expected_checksum":     evaluation.ExpectedChecksum,
-		"actual_observation_id": evaluation.ActualObservationID,
-		"actual_checksum":       evaluation.ActualChecksum,
-		"matched":               evaluation.Matched,
-		"reason":                evaluation.Reason,
-		"fencing_token":         evaluation.FencingToken,
+		"id":                              evaluation.ID,
+		"evaluated_at":                    evaluation.EvaluatedAt,
+		"campaign_run_id":                 evaluation.CampaignRunID,
+		"member_run_id":                   evaluation.MemberRunID,
+		"upstream_plan_id":                evaluation.UpstreamPlanID,
+		"step_key":                        evaluation.StepKey,
+		"expected_runtime_state_checksum": evaluation.ExpectedRuntimeStateChecksum,
+		"actual_observation_id":           evaluation.ActualObservationID,
+		"actual_runtime_state_checksum":   evaluation.ActualRuntimeStateChecksum,
+		"matched":                         evaluation.Matched,
+		"reason":                          evaluation.Reason,
+		"fencing_token":                   evaluation.FencingToken,
 	}
 }
 
@@ -2479,6 +2951,13 @@ func campaignControlChecksum(
 		input.Reason,
 		input.ActorID,
 	)
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func campaignRetryChecksum(input types.CampaignMemberControlInput) string {
+	value := campaignControlChecksum(input.CampaignControlInput, input.MemberRunID) +
+		"\x00" + input.ProtocolVersion
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -2559,6 +3038,36 @@ func lookupCampaignControlReplay(
 		return nil, false, err
 	}
 	return &result, true, nil
+}
+
+func lookupCampaignRetryReplay(
+	ctx context.Context,
+	tx pgx.Tx,
+	input types.CampaignMemberControlInput,
+	checksum string,
+) (*types.DeploymentPlan, bool, error) {
+	var existingChecksum string
+	var response []byte
+	err := tx.QueryRow(ctx, lookupCampaignControlReplaySQL, pgx.NamedArgs{
+		"organization_id": input.OrganizationID,
+		"request_id":      input.RequestID,
+	}).Scan(&existingChecksum, &response)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if existingChecksum != checksum {
+		return nil, false, apierrors.NewConflict(
+			"campaign control request ID reused with different input",
+		)
+	}
+	var plan types.DeploymentPlan
+	if err := json.Unmarshal(response, &plan); err != nil {
+		return nil, false, err
+	}
+	return &plan, true, nil
 }
 
 func getCampaignExclusionReplay(

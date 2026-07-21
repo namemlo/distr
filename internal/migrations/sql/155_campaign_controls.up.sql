@@ -1,29 +1,13 @@
 ALTER TABLE DeploymentCampaignRun
   ADD COLUMN pause_requested BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE;
+  ADD COLUMN reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN resume_state TEXT CHECK (resume_state IN ('SCHEDULED', 'RUNNING'));
 
 ALTER TABLE DeploymentCampaignMemberRun
   ADD COLUMN execution_uncertain BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN active_steps_cancellable BOOLEAN NOT NULL DEFAULT FALSE,
   ADD CONSTRAINT deploymentcampaignmemberrun_control_identity_unique
     UNIQUE (id, organization_id, campaign_run_id);
-
-CREATE FUNCTION campaign_control_append_only()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  IF TG_OP = 'DELETE'
-     AND current_setting(
-       'distr.deployment_registry_deletion_reason',
-       true
-     ) = 'ORGANIZATION_RETENTION' THEN
-    RETURN OLD;
-  END IF;
-  RAISE EXCEPTION '% rows are append-only', TG_TABLE_NAME
-    USING ERRCODE = '23514';
-END;
-$$;
 
 CREATE TABLE CampaignControlRequest (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -72,7 +56,11 @@ CREATE INDEX CampaignControlRequest_run_history
 
 CREATE TRIGGER CampaignControlRequest_append_only
 BEFORE UPDATE OR DELETE ON CampaignControlRequest
-FOR EACH ROW EXECUTE FUNCTION campaign_control_append_only();
+FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+
+CREATE TRIGGER CampaignControlRequest_no_truncate
+BEFORE TRUNCATE ON CampaignControlRequest
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
 
 CREATE TABLE CampaignExclusion (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -110,4 +98,8 @@ CREATE INDEX CampaignExclusion_visible
 
 CREATE TRIGGER CampaignExclusion_append_only
 BEFORE UPDATE OR DELETE ON CampaignExclusion
-FOR EACH ROW EXECUTE FUNCTION campaign_control_append_only();
+FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+
+CREATE TRIGGER CampaignExclusion_no_truncate
+BEFORE TRUNCATE ON CampaignExclusion
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();

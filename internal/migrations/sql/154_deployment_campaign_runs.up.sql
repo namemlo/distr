@@ -167,11 +167,14 @@ CREATE TABLE CampaignPrerequisiteEvaluation (
   organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
   upstream_plan_id UUID NOT NULL,
   step_key TEXT NOT NULL CHECK (step_key = btrim(step_key) AND length(step_key) BETWEEN 1 AND 200),
-  expected_checksum TEXT NOT NULL CHECK (expected_checksum ~ '^sha256:[0-9a-f]{64}$'),
+  expected_runtime_state_checksum TEXT NOT NULL CHECK (
+    expected_runtime_state_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
   actual_observation_id UUID,
   actual_observation_organization_id UUID,
-  actual_checksum TEXT CHECK (
-    actual_checksum IS NULL OR actual_checksum ~ '^sha256:[0-9a-f]{64}$'
+  actual_runtime_state_checksum TEXT CHECK (
+    actual_runtime_state_checksum IS NULL
+    OR actual_runtime_state_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
   matched BOOLEAN NOT NULL,
   reason TEXT NOT NULL DEFAULT '' CHECK (length(reason) <= 4000),
@@ -230,3 +233,35 @@ CREATE TABLE CampaignThresholdEvaluation (
 
 CREATE INDEX CampaignThresholdEvaluation_evidence
   ON CampaignThresholdEvaluation (campaign_run_id, evaluated_at, id);
+
+CREATE TRIGGER DeploymentCampaignRun_delete_guard
+BEFORE DELETE ON DeploymentCampaignRun
+FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+CREATE TRIGGER DeploymentCampaignRun_no_truncate
+BEFORE TRUNCATE ON DeploymentCampaignRun
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
+CREATE TRIGGER DeploymentCampaignWaveRun_delete_guard
+BEFORE DELETE ON DeploymentCampaignWaveRun
+FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+CREATE TRIGGER DeploymentCampaignWaveRun_no_truncate
+BEFORE TRUNCATE ON DeploymentCampaignWaveRun
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
+CREATE TRIGGER DeploymentCampaignMemberRun_delete_guard
+BEFORE DELETE ON DeploymentCampaignMemberRun
+FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+CREATE TRIGGER DeploymentCampaignMemberRun_no_truncate
+BEFORE TRUNCATE ON DeploymentCampaignMemberRun
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
+
+CREATE TRIGGER CampaignPrerequisiteEvaluation_immutable
+BEFORE UPDATE OR DELETE ON CampaignPrerequisiteEvaluation
+FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+CREATE TRIGGER CampaignPrerequisiteEvaluation_no_truncate
+BEFORE TRUNCATE ON CampaignPrerequisiteEvaluation
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();
+CREATE TRIGGER CampaignThresholdEvaluation_immutable
+BEFORE UPDATE OR DELETE ON CampaignThresholdEvaluation
+FOR EACH ROW EXECUTE FUNCTION deploymentcampaign_published_immutable();
+CREATE TRIGGER CampaignThresholdEvaluation_no_truncate
+BEFORE TRUNCATE ON CampaignThresholdEvaluation
+FOR EACH STATEMENT EXECUTE FUNCTION deploymentcampaign_published_no_truncate();

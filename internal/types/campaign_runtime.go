@@ -31,6 +31,7 @@ type CampaignRun struct {
 	CurrentWaveOrder       int              `db:"current_wave_order" json:"currentWaveOrder"`
 	CurrentMemberOrder     int              `db:"current_member_order" json:"currentMemberOrder"`
 	AdmissionsBlocked      bool             `db:"admissions_blocked" json:"admissionsBlocked"`
+	ResumeState            CampaignRunState `db:"resume_state" json:"resumeState,omitempty"`
 	PauseRequested         bool             `db:"pause_requested" json:"pauseRequested"`
 	ReconciliationRequired bool             `db:"reconciliation_required" json:"reconciliationRequired"`
 	FencingToken           int64            `db:"fencing_token" json:"fencingToken"`
@@ -73,15 +74,15 @@ type CampaignThresholdDecision struct {
 }
 
 type CampaignObservationRequirement struct {
-	OrganizationID              uuid.UUID
-	UpstreamPlanID              uuid.UUID
-	StepKey                     string
-	ProviderPlacementID         uuid.UUID
-	ProviderDeploymentUnitID    uuid.UUID
-	ProviderComponentInstanceID uuid.UUID
-	ObservationID               uuid.UUID
-	ObservationChecksum         string
-	ExpectedChecksum            string
+	OrganizationID               uuid.UUID
+	UpstreamPlanID               uuid.UUID
+	StepKey                      string
+	ProviderPlacementID          uuid.UUID
+	ProviderDeploymentUnitID     uuid.UUID
+	ProviderComponentInstanceID  uuid.UUID
+	ObservationID                uuid.UUID
+	RuntimeStateChecksum         string
+	ExpectedRuntimeStateChecksum string
 }
 
 type CampaignMemberCandidate struct {
@@ -120,18 +121,25 @@ type CampaignMemberAdmission struct {
 }
 
 type CampaignPrerequisiteEvaluation struct {
-	ID                  uuid.UUID
-	CampaignRunID       uuid.UUID
-	MemberRunID         uuid.UUID
-	UpstreamPlanID      uuid.UUID
-	StepKey             string
-	ExpectedChecksum    string
-	ActualObservationID uuid.UUID
-	ActualChecksum      string
-	Matched             bool
-	Reason              string
-	EvaluatedAt         time.Time
-	FencingToken        int64
+	ID                           uuid.UUID
+	CampaignRunID                uuid.UUID
+	MemberRunID                  uuid.UUID
+	UpstreamPlanID               uuid.UUID
+	StepKey                      string
+	ExpectedRuntimeStateChecksum string
+	ActualObservationID          uuid.UUID
+	ActualRuntimeStateChecksum   string
+	Matched                      bool
+	Reason                       string
+	EvaluatedAt                  time.Time
+	FencingToken                 int64
+}
+
+type CampaignRunStartInput struct {
+	OrganizationID     uuid.UUID
+	CampaignRevisionID uuid.UUID
+	ActorID            uuid.UUID
+	StartedAt          time.Time
 }
 
 type CampaignThresholdEvaluation struct {

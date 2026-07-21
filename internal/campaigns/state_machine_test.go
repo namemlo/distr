@@ -66,3 +66,17 @@ func TestCampaignRunRejectsIllegalAndStaleTransitions(t *testing.T) {
 	})
 	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("campaign version conflict")))
 }
+
+func TestPublicCampaignLifecycleOnlyAllowsExactPreRunChain(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(IsCampaignPreRunTransition(types.CampaignRunStateDraft, types.CampaignRunStateValidated)).To(gomega.BeTrue())
+	g.Expect(IsCampaignPreRunTransition(types.CampaignRunStateScheduled, types.CampaignRunStateRunning)).To(gomega.BeTrue())
+	for _, transition := range [][2]types.CampaignRunState{
+		{types.CampaignRunStateRunning, types.CampaignRunStatePaused},
+		{types.CampaignRunStateRunning, types.CampaignRunStateCanceled},
+		{types.CampaignRunStateRunning, types.CampaignRunStateCompleted},
+		{types.CampaignRunStatePaused, types.CampaignRunStateRunning},
+	} {
+		g.Expect(IsCampaignPreRunTransition(transition[0], transition[1])).To(gomega.BeFalse())
+	}
+}

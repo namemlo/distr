@@ -17,13 +17,20 @@ The state machine accepts the validated path:
 
 `DRAFT -> VALIDATED -> AWAITING_APPROVAL -> SCHEDULED -> RUNNING -> COMPLETED`
 
+Creating a run only instantiates the immutable run/wave/member snapshot in
+`DRAFT`. Each later state is an explicit optimistic transition through the
+registered `/{campaignRunId}/transitions` route with actor, reason, expected
+version, and timestamp evidence. Run creation never manufactures validation,
+approval, scheduling, or start evidence.
+
 Running campaigns can pause, fail, or cancel. Paused campaigns can resume,
 fail, or cancel. State changes use an expected version and append evidence to
 the run. Paused or terminal runs block new admission.
 
-Wave bake durations must be positive and non-decreasing. Threshold evaluation
-is recorded before admission; a breached failure-rate threshold atomically
-blocks exposure and pauses the run.
+Wave bake durations must be non-negative and non-decreasing. Threshold
+evaluation and a breached-threshold pause share one transaction. Likewise,
+the exact observation evidence for every prerequisite and the resulting member
+admission or fail-closed pause share one transaction.
 
 ## Trusted observation seam
 
@@ -36,16 +43,18 @@ type CampaignObservationVerifier interface {
 }
 ```
 
-The arguments are organization ID, observation ID, and checksum. The default
+The arguments are organization ID, observation ID, and runtime-state checksum. The default
 `UnwiredCampaignObservationVerifier` returns
 `ErrCampaignObservationVerifierUnavailable`. The scheduler records an
 unmatched prerequisite evaluation with no trusted actual binding, pauses the
 campaign, and admits nothing. It never substitutes a newer observation or
 rebinds the frozen expected checksum.
 
-PR-077 must provide the organization-scoped implementation and populate the
-candidate's observation ID/checksum. Until then every prerequisite requiring a
-trusted observation fails closed.
+PR-077 must provide the organization-scoped implementation. The scheduler
+persists the stable runtime-state checksum used for comparison together with
+the exact observation ID; it does not use the observation evidence-envelope
+checksum as runtime state. Until the resolver/verifier is available, every
+trusted-observation prerequisite fails closed.
 
 ## Replay seams
 
@@ -57,10 +66,13 @@ replay:
   names must be checked against the final PR-071 schema;
 - PR-071's campaign API and type files must be combined with the feature-local
   runtime representations in this change;
-- PR-071 must create run, wave-run, and member-run rows from a published
-  revision and populate prerequisite candidates;
-- the authenticated campaign-run route must be registered behind
-  `operator_control_plane_v2`.
+- run, wave-run, and member-run rows are instantiated atomically from the
+  immutable revision through the registered campaign-run route;
+- the authenticated route is registered behind `operator_control_plane_v2`;
+- migration 154 protects runtime rows from direct deletion/truncation and
+  protects evaluation evidence from update/delete/truncate by reusing PR-071's
+  hardened organization-retention proof (reason, operation ID, cascade depth,
+  and deleted organization).
 
 ## Compatibility
 

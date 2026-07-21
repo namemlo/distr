@@ -76,6 +76,28 @@ func TestCampaignControlRequestValidation(t *testing.T) {
 	invalid = valid
 	invalid.Reason = " "
 	g.Expect(invalid.Validate()).To(gomega.MatchError(gomega.ContainSubstring("reason")))
+	invalid = valid
+	invalid.Reason = " padded reason "
+	g.Expect(invalid.Validate()).To(gomega.MatchError(gomega.ContainSubstring("trimmed")))
+}
+
+func TestStartDeploymentCampaignRunRequestRequiresRevision(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect((StartDeploymentCampaignRunRequest{}).Validate()).To(
+		gomega.MatchError(gomega.ContainSubstring("campaignRevisionId")),
+	)
+	g.Expect((StartDeploymentCampaignRunRequest{CampaignRevisionID: uuid.New()}).Validate()).To(gomega.Succeed())
+}
+
+func TestTransitionDeploymentCampaignRunRequestRequiresVersionAndTrimmedReason(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect((TransitionDeploymentCampaignRunRequest{}).Validate()).To(gomega.HaveOccurred())
+	g.Expect((TransitionDeploymentCampaignRunRequest{
+		ExpectedVersion: 1, To: types.CampaignRunStateValidated, Reason: " validate ",
+	}).Validate()).To(gomega.HaveOccurred())
+	g.Expect((TransitionDeploymentCampaignRunRequest{
+		ExpectedVersion: 1, To: types.CampaignRunStateValidated, Reason: "validated frozen inputs",
+	}).Validate()).To(gomega.Succeed())
 }
 
 func TestCampaignMemberControlRequiresMemberAndProtocolForRetry(t *testing.T) {

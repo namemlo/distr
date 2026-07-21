@@ -1409,10 +1409,10 @@ Use one entry per pull request:
   immutable revision and its stable runtime expectation contract.
 ### PR-072 - Campaign scheduler and thresholds
 
-- Status: Implemented on the synthetic PR-069 base; sequential migration and PR-071 replay verification are
-  deferred to the integration gate.
+- Status: Implemented on the synthetic PR-069 base, including run instantiation, registered runtime routes,
+  atomic evidence/admission and threshold/pause transactions, and immutable runtime evidence protections.
 - Upstream base: `43a57716`.
-- Feature flag: Runtime route registration remains a PR-071 replay seam behind `operator_control_plane_v2`.
+- Feature flag: Runtime route registration is behind `operator_control_plane_v2`.
 - User-facing behavior: Campaign runs advance through an optimistic persisted state machine and admit members in
   deterministic wave/member/plan order.
 - Database changes: Migration 154 adds campaign, wave, and member runs, fenced scheduler leases, append-only
@@ -1430,10 +1430,11 @@ Use one entry per pull request:
 
 ### PR-073 - Campaign operational controls
 
-- Status: Implemented on PR-072's synthetic stack; final PR-063/PR-071 route and retry replay is deferred to the
-  integration gate.
+- Status: Implemented on PR-072's synthetic stack, including registered control routes and persisted v1 retry
+  replay. PR-063 lineage and PR-066 effective action middleware remain explicit ordered-stack adaptations.
 - Upstream base: `8b88db20`.
-- Feature flag: Route registration remains a PR-071 replay seam behind `operator_control_plane_v2`.
+- Feature flag: Control route registration is behind `operator_control_plane_v2`; the synthetic branch denies
+  mutations unconditionally until effective PR-066 `campaign.control` middleware is wired during replay.
 - User-facing behavior: Operators can issue reasoned pause, resume, retry, exclude, and cancel requests with stable
   idempotency keys and visible pending-safe-point or reconciliation states.
 - Database changes: Migration 155 adds append-only control requests and exclusions, persisted pause/reconciliation

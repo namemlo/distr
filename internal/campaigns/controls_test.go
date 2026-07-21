@@ -43,6 +43,24 @@ func TestPauseCampaignBlocksAdmissionsBeforeSafePointAndResumeSurvivesRestart(t 
 	g.Expect(resume.PausePending).To(gomega.BeFalse())
 }
 
+func TestScheduledCampaignPauseResumesToScheduled(t *testing.T) {
+	g := gomega.NewWithT(t)
+	run := types.CampaignRun{ID: uuid.New(), State: types.CampaignRunStateScheduled, Version: 1}
+	pause, err := DecideCampaignControl(run, types.CampaignControlInput{
+		RequestID: uuid.New(), ExpectedVersion: 1, Kind: types.CampaignControlKindPause, Reason: "operator hold",
+	}, types.CampaignControlFacts{AtSafePoint: true})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(pause.Run.State).To(gomega.Equal(types.CampaignRunStatePaused))
+	g.Expect(pause.Run.ResumeState).To(gomega.Equal(types.CampaignRunStateScheduled))
+
+	resume, err := DecideCampaignControl(pause.Run, types.CampaignControlInput{
+		RequestID: uuid.New(), ExpectedVersion: pause.Run.Version, Kind: types.CampaignControlKindResume, Reason: "hold cleared",
+	}, types.CampaignControlFacts{AtSafePoint: true})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(resume.Run.State).To(gomega.Equal(types.CampaignRunStateScheduled))
+	g.Expect(resume.Run.ResumeState).To(gomega.Equal(types.CampaignRunState("")))
+}
+
 func TestCancelCampaignOnlyCancellableWorkAndReconcilesUncertainState(t *testing.T) {
 	g := gomega.NewWithT(t)
 	run := types.CampaignRun{
@@ -118,8 +136,20 @@ func TestExcludeCampaignMemberIsAuthorizedAndVisibleAsIncompleteDrift(t *testing
 		WasAdmitted: true,
 	})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(exclusion.ID).NotTo(gomega.Equal(input.RequestID))
+	g.Expect(exclusion.ID).NotTo(gomega.Equal(uuid.Nil))
 	g.Expect(exclusion.VisibleIncomplete).To(gomega.BeTrue())
 	g.Expect(exclusion.DriftReason).To(gomega.ContainSubstring("admitted member excluded"))
+}
+
+func TestCampaignControlsRejectWhitespacePaddedReason(t *testing.T) {
+	g := gomega.NewWithT(t)
+	_, err := DecideCampaignControl(
+		types.CampaignRun{ID: uuid.New(), State: types.CampaignRunStateRunning, Version: 1},
+		types.CampaignControlInput{RequestID: uuid.New(), ExpectedVersion: 1, Kind: types.CampaignControlKindPause, Reason: " padded "},
+		types.CampaignControlFacts{AtSafePoint: true},
+	)
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("trimmed")))
 }
 
 func TestCampaignMemberMutationRejectsTerminalRunAndAdvancesVersion(t *testing.T) {
@@ -164,6 +194,15 @@ type campaignControlStoreFake struct {
 	retryPrepared int
 }
 
+func (s *campaignControlStoreFake) PersistCampaignMemberRetry(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+	creator SupersedingPlanCreator,
+) (*types.DeploymentPlan, error) {
+	s.retryPrepared++
+	return creator.CreateSupersedingPlan(ctx, input)
+}
+
 func (s *campaignControlStoreFake) ApplyCampaignControl(
 	context.Context,
 	types.CampaignControlInput,
@@ -199,11 +238,15 @@ func TestCompositeCampaignControlServiceIsRouteCompatible(t *testing.T) {
 	_, err = routeService.ExcludeCampaignMember(context.Background(), types.CampaignMemberControlInput{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	_, err = routeService.RetryCampaignMember(context.Background(), types.CampaignMemberControlInput{
-		ProtocolVersion: "v1",
+		CampaignControlInput: types.CampaignControlInput{
+			RequestID: uuid.New(), RunID: uuid.New(), Reason: "retry incomplete delivery",
+		},
+		MemberRunID: uuid.New(), ProtocolVersion: "v1",
 	})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(store.applied).To(gomega.Equal(1))
 	g.Expect(store.excluded).To(gomega.Equal(1))
+	g.Expect(store.retryPrepared).To(gomega.Equal(1))
 }
 
 type supersedingPlanCreatorFake struct {
@@ -239,4 +282,13 @@ func TestRetryCampaignSplitKeepsV1SupersedingPlanAndBlocksV2(t *testing.T) {
 	plan, err = controller.RetryCampaignMember(context.Background(), input)
 	g.Expect(plan).To(gomega.BeNil())
 	g.Expect(errors.Is(err, ErrCampaignV2RetryUnavailable)).To(gomega.BeTrue())
+}
+
+func TestCampaignMemberRetryOnlyAllowsFailedMember(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(ValidateCampaignMemberRetryStatus("FAILED")).To(gomega.Succeed())
+	g.Expect(ValidateCampaignMemberRetryStatus("CANCELED")).To(gomega.Succeed())
+	for _, status := range []string{"PENDING", "ADMITTED", "RUNNING", "SUCCEEDED", "EXCLUDED"} {
+		g.Expect(ValidateCampaignMemberRetryStatus(status)).To(gomega.HaveOccurred(), status)
+	}
 }
