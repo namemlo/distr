@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,7 +161,12 @@ func TestAddPreviousStateEvidenceCreatesNewBToALineage(t *testing.T) {
 		OrganizationID:  uuid.New(),
 		ResolutionInput: input,
 	}
-	validation := &types.PlanDraftValidation{Draft: *draft}
+	validation := &types.PlanDraftValidation{
+		Draft: *draft,
+		StepAdapters: []types.ResolvedPlanStepAdapter{{
+			StepKey: "component.deploy",
+		}},
+	}
 
 	err := addPreviousStateEvidence(
 		draft,
@@ -178,6 +184,9 @@ func TestAddPreviousStateEvidenceCreatesNewBToALineage(t *testing.T) {
 		HaveField("After", successfulPlanID.String()),
 	)))
 	g.Expect(validation.PreviewChecksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
+	var canonical types.TargetDeploymentPlanCanonical
+	g.Expect(json.Unmarshal(validation.Draft.PreviewPayload, &canonical)).To(Succeed())
+	g.Expect(canonical.StepAdapters).To(Equal(validation.StepAdapters))
 }
 
 func TestPreviousStateGuardsRejectStaleAndForwardOnlyPlans(t *testing.T) {

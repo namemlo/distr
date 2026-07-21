@@ -1054,6 +1054,7 @@ func addPreviousStateEvidence(
 		*draft,
 		*draft.ResolutionInput,
 		validation.Resolutions,
+		validation.StepAdapters,
 		validation.Graph,
 		validation.Baselines,
 		validation.Changes,
