@@ -66,9 +66,9 @@ together with matching checksums. Down migration takes exclusive locks and refus
 plan-policy evidence exists.
 
 Scoped principal-group validation is activated automatically when the PR-066 `PrincipalGroup` relation is
-present. Campaign bindings remain rejected until the campaign resource exists. Owner/subscriber resolution uses
-the PR-056 registry identity and frozen subscriber checksum; later rebasing onto PR-063 and PR-066 supplies the
-full ownership and action-authorization surfaces without weakening this contract.
+present. Migration 153 enables owner bindings to tenant-owned deployment campaign draft identities and updates
+the database binding guard in the same migration; unknown and cross-organization campaign IDs fail closed.
+Owner/subscriber resolution uses the PR-056 registry identity and frozen subscriber checksum.
 
 ## Compatibility and Scope
 

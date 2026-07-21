@@ -1301,11 +1301,6 @@ func validatePolicyBindingRequest(request types.PolicyBindingRequest) error {
 			"subscriber bindings require customer scope",
 		)
 	}
-	if request.ScopeKind == types.DeploymentPolicyBindingScopeCampaign {
-		return apierrors.NewBadRequest(
-			"campaign bindings are unavailable until campaign resources are present",
-		)
-	}
 	if request.CreatedByUserAccountID == uuid.Nil {
 		return apierrors.NewBadRequest("createdByUserAccountId is required")
 	}
@@ -1373,6 +1368,11 @@ func ensureDeploymentPolicyBindingScope(
 	case types.DeploymentPolicyBindingScopeComponent:
 		query = `SELECT EXISTS (
 		  SELECT 1 FROM ComponentDefinition
+		  WHERE id = @scopeID AND organization_id = @organizationID
+		)`
+	case types.DeploymentPolicyBindingScopeCampaign:
+		query = `SELECT EXISTS (
+		  SELECT 1 FROM DeploymentCampaignDraft
 		  WHERE id = @scopeID AND organization_id = @organizationID
 		)`
 	default:

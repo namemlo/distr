@@ -42,6 +42,12 @@ The API and route are additive and default-off for writes. There is no UI, sched
 pause/resume, executor protocol, observer write, client database, or deployment mutation in this slice. Existing
 v1 deployment behavior and historical checksums are unchanged.
 
+Migration 153 activates the campaign scope reserved by PR-066, PR-067, and PR-069. Authorization resource
+resolution, role-binding creation, deployment-policy owner bindings, and deployment-freeze scopes all require an
+existing deployment campaign draft with the same `organization_id`; there is no organization-only or
+unknown-resource fallback. Migration 153 also upgrades the deployment-policy binding trigger and restores its
+pre-campaign behavior on downgrade.
+
 ## Verification
 
 Test-first coverage includes stable member resolution/order/checksum, checksum materiality, tag changes after

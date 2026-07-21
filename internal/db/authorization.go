@@ -354,9 +354,14 @@ func ResolveAuthorizationResourceScopes(
 			{Kind: types.PermissionScopeComponent, ID: ref.ID},
 		}, nil
 	case types.PermissionScopeCampaign:
-		// Campaign storage is introduced by PR-071. Until then, the authenticated
-		// organization boundary and the campaign UUID form the authorization key;
-		// the campaign repository still performs the tenant-scoped existence check.
+		if err := authorizationResourceExists(
+			ctx,
+			"DeploymentCampaignDraft",
+			ref.OrganizationID,
+			ref.ID,
+		); err != nil {
+			return nil, err
+		}
 		return []types.ScopeRef{
 			organizationScope,
 			{Kind: types.PermissionScopeCampaign, ID: ref.ID},
@@ -1886,7 +1891,7 @@ func ensureAuthorizationScopeExists(
 	case types.PermissionScopeComponent:
 		return authorizationResourceExists(ctx, "ComponentDefinition", organizationID, scope.ID)
 	case types.PermissionScopeCampaign:
-		return nil
+		return authorizationResourceExists(ctx, "DeploymentCampaignDraft", organizationID, scope.ID)
 	default:
 		return apierrors.ErrNotFound
 	}

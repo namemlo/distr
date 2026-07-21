@@ -153,9 +153,32 @@ func TestValidatePolicyBindingRequestEnforcesExactScopeRoleContract(t *testing.T
 
 	request.Role = types.DeploymentPolicyBindingRoleOwner
 	request.ScopeKind = types.DeploymentPolicyBindingScopeCampaign
-	g.Expect(validatePolicyBindingRequest(request)).To(MatchError(ContainSubstring(
-		"campaign bindings are unavailable until campaign resources are present",
-	)))
+	g.Expect(validatePolicyBindingRequest(request)).To(Succeed())
+}
+
+func TestCampaignPolicyBindingMigrationRequiresTenantOwnedDraft(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile("../migrations/sql/153_deployment_campaign_revisions.up.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	upSource := string(up)
+	g.Expect(upSource).To(ContainSubstring(
+		"CREATE OR REPLACE FUNCTION deployment_policy_binding_guard()",
+	))
+	g.Expect(upSource).To(ContainSubstring("WHEN 'campaign' THEN"))
+	g.Expect(upSource).To(ContainSubstring("FROM DeploymentCampaignDraft campaign"))
+	g.Expect(upSource).To(ContainSubstring(
+		"campaign.organization_id = NEW.organization_id",
+	))
+
+	down, err := os.ReadFile("../migrations/sql/153_deployment_campaign_revisions.down.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	downSource := string(down)
+	g.Expect(downSource).To(ContainSubstring(
+		"CREATE OR REPLACE FUNCTION deployment_policy_binding_guard()",
+	))
+	g.Expect(downSource).To(ContainSubstring(
+		"-- Migration 149 rejects campaign bindings after migration 153 is removed.",
+	))
 }
 
 func TestDeploymentPolicyCursorIsOpaqueBoundedAndResourceScoped(t *testing.T) {

@@ -250,11 +250,6 @@ func (request CreateDeploymentFreezeRequest) Validate() error {
 	if !request.ScopeKind.IsValid() || request.ScopeID == uuid.Nil {
 		return validation.NewValidationFailedError("scope is invalid")
 	}
-	if request.ScopeKind == types.CalendarScopeCampaign {
-		return validation.NewValidationFailedError(
-			"campaign scope is unavailable until immutable campaign revisions exist",
-		)
-	}
 	if request.Priority < 0 {
 		return validation.NewValidationFailedError("priority must not be negative")
 	}

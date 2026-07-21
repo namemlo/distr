@@ -124,8 +124,8 @@ The compatibility fallback is intentionally temporary and additive. It prevents 
 but adopters must create narrower bindings before a separately approved future removal of legacy dual-read. A
 custom role cannot relax organization ownership or make a disabled enrollment effective.
 
-Campaign scope existence remains delegated to the future campaign repository until migration 153 introduces the
-campaign table. All other supported scope kinds are validated immediately by migration-139 identities.
+Migration 153 completes campaign-scope validation against the tenant-owned deployment campaign draft identity.
+All supported scope kinds now require an existing resource in the authenticated organization.
 
 ## Alternatives Considered
 

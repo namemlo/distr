@@ -43,10 +43,10 @@ production fallback. Freeze updates
 authorize both the exact expected current scope and any destination scope. Freeze publication authorizes the
 locked revision scope inside the publication transaction.
 
-Freeze scopes support organization, customer, environment, deployment unit, and component-definition identities.
-Campaign scope is part of the forward-compatible enum but cannot be written until immutable campaign revisions
-exist. Emergency override, admission-record persistence, planner visibility, and in-flight execution behavior are
-separate later slices.
+Freeze scopes support organization, customer, environment, deployment unit, component-definition, and campaign
+identities. Migration 153 enables campaign scope through the tenant-owned deployment campaign draft identity;
+unknown and cross-organization campaign IDs remain indistinguishable. Emergency override, admission-record
+persistence, planner visibility, and in-flight execution behavior are separate later slices.
 
 Published rows reject ordinary update or delete. The existing transaction-local organization-retention marker
 permits cascaded deletion during the authorized organization purge path. Downgrade refuses while any calendar or

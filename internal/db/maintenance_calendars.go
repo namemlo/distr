@@ -1789,9 +1789,7 @@ func ensureCalendarScopeBelongsToOrganization(
 	case types.CalendarScopeComponent:
 		table = "ComponentDefinition"
 	case types.CalendarScopeCampaign:
-		return apierrors.NewBadRequest(
-			"campaign scope becomes available with immutable campaign revisions",
-		)
+		table = "DeploymentCampaignDraft"
 	default:
 		return apierrors.NewBadRequest("calendar scope is invalid")
 	}

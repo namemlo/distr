@@ -40,8 +40,9 @@ UUID, so publishing an edited draft never reuses a child primary key and does no
 semantics. Version pages hydrate all child rules with one bounded batch query.
 
 The API and routing changes are additive and default-off. There is no UI, scheduler admission write, override,
-campaign, deployment execution, agent-protocol, or client-database change in this slice. Campaign scope remains
-unwritable until immutable campaign revisions land. Existing v1 behavior and historical checksums are unchanged.
+deployment execution, agent-protocol, or client-database change in this slice. Migration 153 activates campaign
+scope through tenant-owned deployment campaign draft identities. Existing v1 behavior and historical checksums
+are unchanged.
 
 ## Verification
 

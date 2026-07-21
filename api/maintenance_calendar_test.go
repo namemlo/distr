@@ -126,7 +126,7 @@ func TestDeploymentFreezeDraftRequestsValidateScopeAndInterval(t *testing.T) {
 
 	campaignScope := valid
 	campaignScope.ScopeKind = types.CalendarScopeCampaign
-	g.Expect(campaignScope.Validate()).To(MatchError(ContainSubstring("campaign")))
+	g.Expect(campaignScope.Validate()).To(Succeed())
 
 	badPriority := valid
 	badPriority.Priority = -1
