@@ -1,6 +1,12 @@
+LOCK TABLE ObserverRegistration, PendingDesiredRevision,
+  ActiveDesiredRevision, ExecutorReport, ObservedComponentState,
+  DriftCase, DriftCaseEvent, ReconciliationAction
+IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM PendingDesiredRevision)
+  IF EXISTS (SELECT 1 FROM ObserverRegistration)
+     OR EXISTS (SELECT 1 FROM PendingDesiredRevision)
      OR EXISTS (SELECT 1 FROM ActiveDesiredRevision)
      OR EXISTS (SELECT 1 FROM ExecutorReport)
      OR EXISTS (SELECT 1 FROM ObservedComponentState)
@@ -83,6 +89,7 @@ DROP INDEX IF EXISTS ActiveDesiredRevision_component_history;
 DROP TABLE IF EXISTS ActiveDesiredRevision;
 
 DROP INDEX IF EXISTS PendingDesiredRevision_component_status;
+DROP INDEX IF EXISTS PendingDesiredRevision_pending_deadline;
 DROP TABLE IF EXISTS PendingDesiredRevision;
 
 ALTER TABLE ComponentInstance

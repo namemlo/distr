@@ -59,6 +59,17 @@ func (r *Registry) createJobsScheduler() (*jobs.Scheduler, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = scheduler.RegisterCronJob(
+		"* * * * *",
+		jobs.NewJob(
+			"DesiredObservationDeadlineSweep",
+			db.RunDesiredObservationDeadlineSweep,
+			50*time.Second,
+		),
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	if cron := env.CleanupDeploymenRevisionStatusCron(); cron != nil {
 		err = scheduler.RegisterCronJob(

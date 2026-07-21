@@ -56,6 +56,27 @@ func TestClassifyDriftFlagsExecutorSuccessRuntimeWrong(t *testing.T) {
 	g.Expect(classification.Classes).To(ContainElement(types.DriftClassExecutorMismatch))
 }
 
+func TestClassifyDriftUsesFreshUntilBoundary(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 7, 0, 0, 0, time.UTC)
+	active, observed := matchingState()
+
+	observed.FreshUntil = now
+	g.Expect(ClassifyDriftAt(active, observed, now).Classes).NotTo(
+		ContainElement(types.DriftClassStale),
+	)
+
+	observed.FreshUntil = now.Add(-time.Nanosecond)
+	g.Expect(ClassifyDriftAt(active, observed, now).Classes).To(
+		ContainElement(types.DriftClassStale),
+	)
+
+	observed.FreshUntil = time.Time{}
+	g.Expect(ClassifyDriftAt(active, observed, now).Classes).To(
+		ContainElement(types.DriftClassStale),
+	)
+}
+
 func TestAcceptedDeviationIsTimeBoundAndDoesNotRewriteDesiredState(t *testing.T) {
 	g := NewWithT(t)
 	active, observed := matchingState()
@@ -130,6 +151,7 @@ func matchingState() (types.ActiveDesiredRevision, types.ObservedComponentState)
 		Outcome:             types.ObservationOutcomeComplete,
 		Trusted:             true,
 		Current:             true,
+		FreshUntil:          time.Now().UTC().Add(time.Hour),
 	}
 	return active, observed
 }

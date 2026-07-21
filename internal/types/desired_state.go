@@ -23,6 +23,7 @@ type PendingDesiredRevisionInput struct {
 	OrganizationID      uuid.UUID `json:"organizationId"`
 	DeploymentPlanID    uuid.UUID `json:"deploymentPlanId"`
 	ExecutionID         uuid.UUID `json:"executionId"`
+	ExecutionAttemptID  uuid.UUID `json:"executionAttemptId"`
 	DeploymentUnitID    uuid.UUID `json:"deploymentUnitId"`
 	ComponentInstanceID uuid.UUID `json:"componentInstanceId"`
 	ComponentKey        string    `json:"componentKey"`
@@ -42,6 +43,7 @@ type PendingDesiredRevision struct {
 	OrganizationID        uuid.UUID            `db:"organization_id" json:"organizationId"`
 	DeploymentPlanID      uuid.UUID            `db:"deployment_plan_id" json:"deploymentPlanId"`
 	ExecutionID           uuid.UUID            `db:"execution_id" json:"executionId"`
+	ExecutionAttemptID    uuid.UUID            `db:"execution_attempt_id" json:"executionAttemptId"`
 	DeploymentUnitID      uuid.UUID            `db:"deployment_unit_id" json:"deploymentUnitId"`
 	ComponentInstanceID   uuid.UUID            `db:"component_instance_id" json:"componentInstanceId"`
 	ComponentKey          string               `db:"component_key" json:"componentKey"`

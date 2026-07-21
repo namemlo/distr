@@ -9,6 +9,7 @@ CREATE TABLE PendingDesiredRevision (
   organization_id UUID NOT NULL,
   deployment_plan_id UUID NOT NULL,
   execution_id UUID NOT NULL,
+  execution_attempt_id UUID NOT NULL,
   deployment_unit_id UUID NOT NULL,
   component_instance_id UUID NOT NULL,
   component_key TEXT NOT NULL CHECK (
@@ -62,6 +63,10 @@ CREATE TABLE PendingDesiredRevision (
     FOREIGN KEY (deployment_plan_id, organization_id)
     REFERENCES DeploymentPlan(id, organization_id)
     ON UPDATE NO ACTION ON DELETE NO ACTION,
+  CONSTRAINT pendingdesiredrevision_execution_attempt_fk
+    FOREIGN KEY (execution_attempt_id, organization_id, execution_id)
+    REFERENCES ExecutionAttempt(id, organization_id, execution_id)
+    ON UPDATE NO ACTION ON DELETE NO ACTION,
   CONSTRAINT pendingdesiredrevision_unit_fk
     FOREIGN KEY (deployment_unit_id, organization_id)
     REFERENCES DeploymentUnit(id, organization_id)
@@ -105,6 +110,10 @@ CREATE INDEX PendingDesiredRevision_component_status
     organization_id, deployment_unit_id, component_instance_id,
     status, created_at DESC
   );
+
+CREATE INDEX PendingDesiredRevision_pending_deadline
+  ON PendingDesiredRevision (observation_deadline, id)
+  WHERE status = 'PENDING';
 
 CREATE TABLE ActiveDesiredRevision (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -358,6 +367,9 @@ CREATE TABLE ObservedComponentState (
   is_current BOOLEAN NOT NULL DEFAULT FALSE,
   state_checksum TEXT NOT NULL CHECK (
     state_checksum ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  runtime_state_checksum TEXT NOT NULL CHECK (
+    runtime_state_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
   executor_outcome TEXT NOT NULL DEFAULT '' CHECK (
     executor_outcome IN ('', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'UNKNOWN')
@@ -696,6 +708,7 @@ BEGIN
      AND NEW.disposition = OLD.disposition
      AND NEW.trusted = OLD.trusted
      AND NEW.state_checksum = OLD.state_checksum
+     AND NEW.runtime_state_checksum = OLD.runtime_state_checksum
      AND NEW.executor_outcome = OLD.executor_outcome THEN
     RETURN NEW;
   END IF;
@@ -728,6 +741,7 @@ BEGIN
      OR NEW.organization_id IS DISTINCT FROM OLD.organization_id
      OR NEW.deployment_plan_id IS DISTINCT FROM OLD.deployment_plan_id
      OR NEW.execution_id IS DISTINCT FROM OLD.execution_id
+     OR NEW.execution_attempt_id IS DISTINCT FROM OLD.execution_attempt_id
      OR NEW.deployment_unit_id IS DISTINCT FROM OLD.deployment_unit_id
      OR NEW.component_instance_id IS DISTINCT FROM OLD.component_instance_id
      OR NEW.component_key IS DISTINCT FROM OLD.component_key

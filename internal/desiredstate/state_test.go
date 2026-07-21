@@ -119,6 +119,7 @@ func validPendingInput() types.PendingDesiredRevisionInput {
 		OrganizationID:      uuid.New(),
 		DeploymentPlanID:    uuid.New(),
 		ExecutionID:         uuid.New(),
+		ExecutionAttemptID:  uuid.New(),
 		DeploymentUnitID:    uuid.New(),
 		ComponentInstanceID: uuid.New(),
 		ComponentKey:        "api",

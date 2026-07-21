@@ -29,12 +29,14 @@ func ObservedComponentStateToAPI(
 		DeploymentUnitID:    state.DeploymentUnitID,
 		ComponentInstanceID: state.ComponentInstanceID, ComponentKey: state.ComponentKey,
 		SourceSequence: state.SourceSequence, CapturedAt: state.CapturedAt,
-		ReceivedAt: state.ReceivedAt, EvidenceChecksum: state.EvidenceChecksum,
+		ReceivedAt: state.ReceivedAt, FreshUntil: state.FreshUntil,
+		EvidenceChecksum:  state.EvidenceChecksum,
 		EvidenceReference: state.EvidenceReference, ArtifactDigest: state.ArtifactDigest,
 		ConfigChecksum: state.ConfigChecksum, SchemaVersion: state.SchemaVersion,
 		CapabilityChecksum: state.CapabilityChecksum, Platform: state.Platform,
 		TopologyChecksum: state.TopologyChecksum, Health: state.Health,
 		Outcome: state.Outcome, Disposition: state.Disposition, Trusted: state.Trusted,
 		Current: state.Current, StateChecksum: state.StateChecksum,
+		RuntimeStateChecksum: state.RuntimeStateChecksum,
 	}
 }

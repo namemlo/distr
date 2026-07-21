@@ -44,6 +44,25 @@ performed.
   admission and by the deadline, and still within its persisted freshness
   window. Promotion now re-reads all eligible observers and the execution-bound
   executor report inside its serializable transaction.
+- Added a campaign-compatible stable runtime checksum that excludes mutable
+  observer/evidence metadata while preserving the full envelope checksum for
+  replay fencing. Campaign resolution now also requires complete, healthy,
+  current, trusted evidence with a non-empty evidence reference inside its
+  persisted freshness window.
+- Bound pending desired revisions to a concrete execution-protocol-v2 attempt
+  and its task, plan, target, organization, and execution lineage. Terminal
+  observation gates fence unresolved attempts, release execution fences, and
+  release task leases/resource locks only after all sibling component gates
+  are terminal.
+- Added the always-registered, indexed, multi-replica-safe deadline sweep using
+  bounded batches and `FOR UPDATE SKIP LOCKED`.
+- Fenced retained same-sequence conflict evidence without changing exact replay
+  idempotence, and automatically opens drift or executor/observer mismatch
+  cases from newly accepted and terminal evidence.
+- Drift freshness is now classified directly from `FreshUntil`, with an exact
+  boundary remaining fresh.
+- Hardened migration rollback refusal by locking all evidence tables before
+  checking them and including standalone observer registrations.
 - Bound every non-timeout terminal result to trusted observation identity,
   exact replay to the full envelope and component scope, component instances to
   their Deployment Units, executor reports to pending executions, and drift
@@ -89,6 +108,9 @@ Observed RED failures before implementation included:
 14. Repository boundary tests for component/Deployment Unit lineage,
     execution-bound reports, per-component sequence reuse, retention ordering,
     drift placement, and evidence-proven reconciliation.
+15. Stable runtime-checksum compatibility with the frozen PR-071 checksum,
+    conflict fencing, `FreshUntil` boundaries, execution-v2 lineage, deadline
+    sweep/lock release, automatic drift cases, and rollback TOCTOU coverage.
 
 Each red failure was followed by the minimal implementation and a focused
 green rerun.

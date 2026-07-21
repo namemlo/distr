@@ -46,6 +46,13 @@ func TestMigration159CreatesIndependentAppendOnlyStateAndMutableHeads(t *testing
 		"campaignprerequisiteevaluation_observation_fk",
 	))
 	g.Expect(upText).To(ContainSubstring("source_sequence"))
+	g.Expect(upText).To(ContainSubstring("runtime_state_checksum TEXT NOT NULL CHECK"))
+	g.Expect(upText).To(ContainSubstring("NEW.runtime_state_checksum = OLD.runtime_state_checksum"))
+	g.Expect(upText).To(ContainSubstring("execution_attempt_id UUID NOT NULL"))
+	g.Expect(upText).To(ContainSubstring(
+		"FOREIGN KEY (execution_attempt_id, organization_id, execution_id)",
+	))
+	g.Expect(upText).To(ContainSubstring("PendingDesiredRevision_pending_deadline"))
 	g.Expect(upText).To(ContainSubstring(
 		"UNIQUE (id, deployment_unit_id, organization_id)",
 	))
@@ -68,6 +75,8 @@ func TestMigration159CreatesIndependentAppendOnlyStateAndMutableHeads(t *testing
 	))
 	g.Expect(upText).NotTo(ContainSubstring("ALTER TABLE TargetComponentState"))
 	g.Expect(downText).To(ContainSubstring("refusing migration 159 rollback"))
+	g.Expect(downText).To(ContainSubstring("LOCK TABLE ObserverRegistration"))
+	g.Expect(downText).To(ContainSubstring("EXISTS (SELECT 1 FROM ObserverRegistration)"))
 }
 
 func TestDesiredObservedRepositoryUsesTenantFencesAndSerializedHeadUpdates(t *testing.T) {
@@ -86,9 +95,16 @@ func TestDesiredObservedRepositoryUsesTenantFencesAndSerializedHeadUpdates(t *te
 	g.Expect(text).To(ContainSubstring("VerifyTrustedObservation"))
 	g.Expect(text).To(ContainSubstring("ResolveTrustedCampaignObservation"))
 	g.Expect(text).To(ContainSubstring("component_instance_id = @componentInstanceID"))
-	g.Expect(text).To(ContainSubstring("state_checksum = @checksum"))
+	g.Expect(text).To(ContainSubstring("runtime_state_checksum = @checksum"))
+	g.Expect(text).To(ContainSubstring("SELECT id, runtime_state_checksum"))
+	g.Expect(text).To(ContainSubstring("runtime_state_checksum = @expectedChecksum"))
 	g.Expect(text).To(ContainSubstring("trusted = TRUE"))
 	g.Expect(text).To(ContainSubstring("is_current = TRUE"))
+	g.Expect(text).To(ContainSubstring("health = 'HEALTHY'"))
+	g.Expect(text).To(ContainSubstring("fresh_until >= now()"))
+	g.Expect(text).To(ContainSubstring("length(btrim(evidence_reference)) > 0"))
+	g.Expect(text).To(ContainSubstring("o.disposition IN ('ACCEPTED', 'CONFLICT')"))
+	g.Expect(text).NotTo(ContainSubstring("SELECT DISTINCT ON (o.observer_id)"))
 }
 
 func TestDesiredStateAdvanceRevalidatesSuppliedVerifiedGate(t *testing.T) {
@@ -204,6 +220,34 @@ func TestObservationStateChecksumCoversEvidenceReferenceAndComponentScope(t *tes
 	componentChecksum, err := observationStateChecksum(changedComponent)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(componentChecksum).NotTo(Equal(original))
+}
+
+func TestDesiredObservationDeadlineSweepIsFencedAndReleasesTaskLocks(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("desired_observed_state.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	g.Expect(text).To(ContainSubstring("func SweepExpiredPendingDesiredRevisions("))
+	g.Expect(text).To(ContainSubstring("observation_deadline <= clock_timestamp()"))
+	g.Expect(text).To(ContainSubstring("FOR UPDATE SKIP LOCKED"))
+	g.Expect(text).To(ContainSubstring("UPDATE ExecutionAttempt"))
+	g.Expect(text).To(ContainSubstring("SET status = 'FENCED'"))
+	g.Expect(text).To(ContainSubstring("UPDATE ExecutionFence"))
+	g.Expect(text).To(ContainSubstring("generation = generation + 1"))
+	g.Expect(text).To(ContainSubstring("updateTaskStatus("))
+}
+
+func TestObservationIngestionAutomaticallyOpensDriftAndMismatchCases(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("desired_observed_state.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	g.Expect(text).To(ContainSubstring("openAutomaticDriftCaseForObservation"))
+	g.Expect(text).To(ContainSubstring("reconciliation.ClassifyDriftAt"))
+	g.Expect(text).To(ContainSubstring("types.DriftClassExecutorMismatch"))
+	g.Expect(text).To(ContainSubstring("types.DriftClassConflict"))
 }
 
 func desiredObservedDigest(value string) string {

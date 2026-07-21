@@ -120,6 +120,29 @@ func TestObservationGateAcceptsIndependentObserversThatAgree(t *testing.T) {
 	g.Expect(result.Quarantine).To(BeFalse())
 }
 
+func TestObservationGateFencesTrustedSameSequenceConflictEvidence(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	pending := gatePending(now)
+	accepted := matchingObserved(pending, now)
+	conflict := accepted
+	conflict.ID = uuid.New()
+	conflict.Disposition = types.ObservationDispositionConflict
+	conflict.Current = false
+	conflict.StateChecksum = digest("conflicting-replay")
+	conflict.ArtifactDigest = digest("tampered-runtime")
+
+	result := EvaluateGate(
+		pending,
+		[]types.ObservedComponentState{accepted, conflict},
+		now,
+	)
+
+	g.Expect(result.Status).To(Equal(types.ObservationGateStatusConflict))
+	g.Expect(result.ObservationID).To(Equal(conflict.ID))
+	g.Expect(result.Quarantine).To(BeTrue())
+}
+
 func TestObservationGateDoesNotVerifyEvidenceCapturedAfterDeadline(t *testing.T) {
 	g := NewWithT(t)
 	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)

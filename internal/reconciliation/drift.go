@@ -13,11 +13,20 @@ func ClassifyDrift(
 	desired types.ActiveDesiredRevision,
 	observed types.ObservedComponentState,
 ) types.DriftClassification {
+	return ClassifyDriftAt(desired, observed, time.Now().UTC())
+}
+
+func ClassifyDriftAt(
+	desired types.ActiveDesiredRevision,
+	observed types.ObservedComponentState,
+	now time.Time,
+) types.DriftClassification {
 	classes := make([]types.DriftClass, 0, 8)
 	if observed.ID == [16]byte{} {
 		classes = append(classes, types.DriftClassMissing)
 	}
-	if !observed.Trusted || !observed.Current {
+	if !observed.Trusted || !observed.Current || observed.FreshUntil.IsZero() ||
+		now.After(observed.FreshUntil) {
 		classes = append(classes, types.DriftClassStale)
 	}
 	if observed.ArtifactDigest != desired.ArtifactDigest {
@@ -66,7 +75,7 @@ func AcceptDeviation(
 	if decision.AcceptedUntil == nil || !decision.AcceptedUntil.After(now) {
 		return nil, errors.New("accepted deviation must expire in the future")
 	}
-	if !ClassifyDrift(desired, observed).Drifted {
+	if !ClassifyDriftAt(desired, observed, now).Drifted {
 		return nil, errors.New("matching state does not require a deviation")
 	}
 	return &types.AcceptedDeviation{

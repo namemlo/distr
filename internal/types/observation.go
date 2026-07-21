@@ -73,32 +73,33 @@ type ObservationEnvelope struct {
 }
 
 type ObservedComponentState struct {
-	ID                  uuid.UUID              `db:"id" json:"id"`
-	CreatedAt           time.Time              `db:"created_at" json:"createdAt"`
-	OrganizationID      uuid.UUID              `db:"organization_id" json:"organizationId"`
-	ObserverID          uuid.UUID              `db:"observer_id" json:"observerId"`
-	DeploymentUnitID    uuid.UUID              `db:"deployment_unit_id" json:"deploymentUnitId"`
-	ComponentInstanceID uuid.UUID              `db:"component_instance_id" json:"componentInstanceId"`
-	ComponentKey        string                 `db:"component_key" json:"componentKey"`
-	SourceSequence      int64                  `db:"source_sequence" json:"sourceSequence"`
-	CapturedAt          time.Time              `db:"captured_at" json:"capturedAt"`
-	ReceivedAt          time.Time              `db:"received_at" json:"receivedAt"`
-	FreshUntil          time.Time              `db:"fresh_until" json:"freshUntil"`
-	EvidenceChecksum    string                 `db:"evidence_checksum" json:"evidenceChecksum"`
-	EvidenceReference   string                 `db:"evidence_reference" json:"evidenceReference,omitempty"`
-	ArtifactDigest      string                 `db:"artifact_digest" json:"artifactDigest"`
-	ConfigChecksum      string                 `db:"config_checksum" json:"configChecksum"`
-	SchemaVersion       string                 `db:"schema_version" json:"schemaVersion"`
-	CapabilityChecksum  string                 `db:"capability_checksum" json:"capabilityChecksum"`
-	Platform            string                 `db:"platform" json:"platform"`
-	TopologyChecksum    string                 `db:"topology_checksum" json:"topologyChecksum"`
-	Health              ObservedHealth         `db:"health" json:"health"`
-	Outcome             ObservationOutcome     `db:"outcome" json:"outcome"`
-	Disposition         ObservationDisposition `db:"disposition" json:"disposition"`
-	Trusted             bool                   `db:"trusted" json:"trusted"`
-	Current             bool                   `db:"is_current" json:"current"`
-	StateChecksum       string                 `db:"state_checksum" json:"stateChecksum"`
-	ExecutorOutcome     ExecutorOutcome        `db:"executor_outcome" json:"executorOutcome,omitempty"`
+	ID                   uuid.UUID              `db:"id" json:"id"`
+	CreatedAt            time.Time              `db:"created_at" json:"createdAt"`
+	OrganizationID       uuid.UUID              `db:"organization_id" json:"organizationId"`
+	ObserverID           uuid.UUID              `db:"observer_id" json:"observerId"`
+	DeploymentUnitID     uuid.UUID              `db:"deployment_unit_id" json:"deploymentUnitId"`
+	ComponentInstanceID  uuid.UUID              `db:"component_instance_id" json:"componentInstanceId"`
+	ComponentKey         string                 `db:"component_key" json:"componentKey"`
+	SourceSequence       int64                  `db:"source_sequence" json:"sourceSequence"`
+	CapturedAt           time.Time              `db:"captured_at" json:"capturedAt"`
+	ReceivedAt           time.Time              `db:"received_at" json:"receivedAt"`
+	FreshUntil           time.Time              `db:"fresh_until" json:"freshUntil"`
+	EvidenceChecksum     string                 `db:"evidence_checksum" json:"evidenceChecksum"`
+	EvidenceReference    string                 `db:"evidence_reference" json:"evidenceReference,omitempty"`
+	ArtifactDigest       string                 `db:"artifact_digest" json:"artifactDigest"`
+	ConfigChecksum       string                 `db:"config_checksum" json:"configChecksum"`
+	SchemaVersion        string                 `db:"schema_version" json:"schemaVersion"`
+	CapabilityChecksum   string                 `db:"capability_checksum" json:"capabilityChecksum"`
+	Platform             string                 `db:"platform" json:"platform"`
+	TopologyChecksum     string                 `db:"topology_checksum" json:"topologyChecksum"`
+	Health               ObservedHealth         `db:"health" json:"health"`
+	Outcome              ObservationOutcome     `db:"outcome" json:"outcome"`
+	Disposition          ObservationDisposition `db:"disposition" json:"disposition"`
+	Trusted              bool                   `db:"trusted" json:"trusted"`
+	Current              bool                   `db:"is_current" json:"current"`
+	StateChecksum        string                 `db:"state_checksum" json:"stateChecksum"`
+	RuntimeStateChecksum string                 `db:"runtime_state_checksum" json:"runtimeStateChecksum"`
+	ExecutorOutcome      ExecutorOutcome        `db:"executor_outcome" json:"executorOutcome,omitempty"`
 }
 
 type ComponentObservationHead struct {

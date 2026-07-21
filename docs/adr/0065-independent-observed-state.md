@@ -28,7 +28,9 @@ last verified active desired revision.
 
 ### Pending and active desired revisions
 
-Execution admission appends one `PendingDesiredRevision` per component. It
+Execution-v2 admission appends one `PendingDesiredRevision` per component and
+binds it to a concrete `ExecutionAttempt`, task, plan, target, organization,
+and execution identity. It
 does not change `ActiveDesiredRevision`.
 
 Only a trusted, accepted, in-scope, complete, healthy observation captured
@@ -79,9 +81,12 @@ The observation gate never treats executor success as verification. Complete
 matching evidence verifies; partial, failed, cancelled, unknown, mismatching,
 conflicting, or timed-out evidence cannot verify.
 
-Timeout and conflict quarantine new mutation but release the completed
-mutation lock. The quarantine is therefore explicit state, not an indefinitely
-held lock.
+Timeout and conflict quarantine new mutation, fence any unresolved execution
+attempt, release its execution fence, and release the task lease/resource lock
+after every sibling component gate for that task is terminal. An always-on,
+bounded deadline sweep uses the database deadline, a partial index, and
+`FOR UPDATE SKIP LOCKED`, so expired work is recovered after restart and across
+multiple Hub replicas.
 
 `internal/observation.CampaignVerifier` structurally implements the PR-072
 `campaigns.CampaignObservationVerifier` method:
@@ -90,9 +95,13 @@ held lock.
 VerifyCampaignObservation(context.Context, uuid.UUID, uuid.UUID, string) error
 ```
 
-The arguments are organization ID, observation ID, and exact state checksum.
+The arguments are organization ID, observation ID, and exact stable runtime
+checksum. The runtime checksum matches the campaign expectation contract and
+excludes observer identity, sequence, timestamps, and evidence transport
+metadata; the separate full state checksum continues to fence replay material.
 The concrete repository accepts only a current, trusted, accepted, complete
-observation with that exact identity and checksum. It fails closed when the
+healthy observation with non-empty evidence reference, inside its freshness
+window, with that exact identity and checksum. It fails closed when the
 repository is not wired. Ordered integration wires this adapter into the
 campaign scheduler; this synthetic-base PR does not import a future-only
 campaign package.
@@ -106,8 +115,8 @@ ResolveCampaignObservation(context.Context, uuid.UUID, uuid.UUID, string) (uuid.
 
 Its arguments are organization ID, canonical provider placement
 (`ComponentInstance.id`), and expected checksum. The repository returns the
-newest current, trusted, accepted, complete observation with that exact state
-checksum; the scheduler must then fence the returned observation ID/checksum
+newest current, trusted, accepted, complete, healthy, fresh observation with
+that exact runtime checksum; the scheduler must then fence the returned observation ID/checksum
 through `CampaignVerifier` before admission.
 
 `DeploymentPlanTargetComponent.id` is a plan-local projection and is not
@@ -117,7 +126,8 @@ from the plan-local provider placement before calling this resolver.
 
 ### Drift and reconciliation
 
-Drift compares the active desired revision with independent measured state.
+Drift compares the active desired revision with independent measured state and
+uses persisted `FreshUntil` as the deterministic stale boundary.
 Classes cover artifact, configuration, schema, capability provider, health,
 platform, topology, missing/stale evidence, and executor/observer mismatch.
 
@@ -152,7 +162,9 @@ atomically; the observation read-model flag may only transition from current
 to historical while every identity, timestamp, and evidence field remains
 unchanged. Organization retention uses the existing authorized transaction
 setting and deletes dependents before immutable evidence and deployment plans.
-Rollback refuses while evidence exists.
+Rollback locks the evidence tables before checking and refuses while evidence
+or even a standalone observer registration exists, avoiding a rollback TOCTOU
+window.
 
 Because migration 159 follows campaign migration 154, it also adds the tenant
 composite foreign key from

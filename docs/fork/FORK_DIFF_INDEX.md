@@ -1567,7 +1567,9 @@ Use one entry per pull request:
   timeout retain the prior active revision and create visible quarantine/reconciliation state.
 - Database changes: Migration 159 adds pending/active desired revisions, desired/observation heads, executor reports,
   observer registrations, independent observed state, drift cases/events, and reconciliation actions. Composite
-  constraints bind component placement, pending execution, drift evidence, and reconciliation outcome evidence.
+  constraints bind component placement, execution-v2 attempt/task lineage, drift evidence, and reconciliation outcome evidence.
+  A stable campaign-compatible runtime checksum is stored separately from the full replay checksum; an indexed,
+  multi-replica-safe deadline sweep fences unresolved attempts and releases task locks after sibling gates finish.
   Existing executor-projected target state/history is unchanged. Campaign prerequisite evidence is tenant-FK-bound
   to the independent observation once the earlier campaign table exists.
 - API changes: Adds authenticated `/api/observer/v1/observations` ingestion plus organization-scoped observer
@@ -1578,7 +1580,8 @@ Use one entry per pull request:
 - Documentation: Added ADR-0065 and PR-077 fork notes.
 - Tests: Added desired-state, observer trust/freshness/sequence, gate, drift, reconciliation, campaign
   resolver/verifier, API/mapping/handler, migration, tenant-fence, route, lifecycle, replay, retention, and
-  placement/execution repository boundary coverage.
+  placement/execution repository boundary coverage, including runtime checksum compatibility, retained-conflict
+  fencing, `FreshUntil`, automatic drift cases, deadline sweep, lock release, and rollback refusal.
 - Upstream contribution notes: Community-neutral desired/observed state and reconciliation contracts; no adopter,
   infrastructure, CI-provider, cloud, credential value, or workload-specific core behavior.
 - Compatibility notes: v1 execution, `TargetComponentState`, and `TargetComponentObservation` remain unchanged.

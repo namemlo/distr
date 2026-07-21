@@ -26,10 +26,13 @@ func TestObservationMappingOmitsObserverCredentialFingerprint(t *testing.T) {
 
 func TestObservedStateMappingRetainsTrustSequenceAndDisposition(t *testing.T) {
 	g := NewWithT(t)
+	freshUntil := time.Now().UTC().Add(time.Minute)
 	state := types.ObservedComponentState{
 		ID: uuid.New(), ObserverID: uuid.New(), SourceSequence: 42,
 		Trusted: true, Current: false,
-		Disposition: types.ObservationDispositionOutOfOrder,
+		Disposition:          types.ObservationDispositionOutOfOrder,
+		FreshUntil:           freshUntil,
+		RuntimeStateChecksum: "sha256:runtime",
 	}
 
 	mapped := ObservedComponentStateToAPI(state)
@@ -39,4 +42,6 @@ func TestObservedStateMappingRetainsTrustSequenceAndDisposition(t *testing.T) {
 	g.Expect(mapped.Trusted).To(BeTrue())
 	g.Expect(mapped.Current).To(BeFalse())
 	g.Expect(mapped.Disposition).To(Equal(types.ObservationDispositionOutOfOrder))
+	g.Expect(mapped.FreshUntil).To(Equal(freshUntil))
+	g.Expect(mapped.RuntimeStateChecksum).To(Equal("sha256:runtime"))
 }

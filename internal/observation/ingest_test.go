@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,6 +116,50 @@ func TestObservationReplayRequiresExactMaterialAndComponentScope(t *testing.T) {
 	mutated = envelope
 	mutated.ComponentInstanceID = uuid.New()
 	g.Expect(SameObservationMaterial(mutated, retained)).To(BeFalse())
+}
+
+func TestRuntimeStateChecksumMatchesCampaignExpectationAndIgnoresEvidenceMetadata(t *testing.T) {
+	g := NewWithT(t)
+	envelope := types.ObservationEnvelope{
+		OrganizationID: uuid.New(), ObserverID: uuid.New(),
+		DeploymentUnitID:    uuid.MustParse("40000000-0000-0000-0000-000000000001"),
+		ComponentInstanceID: uuid.MustParse("90000000-0000-0000-0000-000000000001"),
+		ComponentKey:        " database ", SourceSequence: 1,
+		CapturedAt:       time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
+		EvidenceChecksum: digest("evidence-one"), EvidenceReference: "probe://one",
+		ArtifactDigest: "sha256:" + strings.Repeat("1", 64),
+		ConfigChecksum: "sha256:" + strings.Repeat("2", 64),
+		Platform:       "linux/amd64", SchemaVersion: "one",
+		CapabilityChecksum: digest("capability"), TopologyChecksum: digest("topology"),
+		Health: types.ObservedHealthHealthy, Outcome: types.ObservationOutcomeComplete,
+	}
+
+	first, err := RuntimeStateChecksum(envelope)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first).To(Equal(
+		"sha256:5485fd6e45b5ad107574e0a67028f27d669cf13d117633c9ddb2a2682b174bba",
+	))
+
+	changedEvidence := envelope
+	changedEvidence.OrganizationID = uuid.New()
+	changedEvidence.ObserverID = uuid.New()
+	changedEvidence.SourceSequence = 99
+	changedEvidence.CapturedAt = changedEvidence.CapturedAt.Add(time.Hour)
+	changedEvidence.EvidenceChecksum = digest("evidence-two")
+	changedEvidence.EvidenceReference = "probe://two"
+	changedEvidence.SchemaVersion = "two"
+	changedEvidence.CapabilityChecksum = digest("other-capability")
+	changedEvidence.TopologyChecksum = digest("other-topology")
+	changedEvidence.Health = types.ObservedHealthUnhealthy
+	changedEvidence.Outcome = types.ObservationOutcomePartial
+	second, err := RuntimeStateChecksum(changedEvidence)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(second).To(Equal(first))
+
+	invalid := envelope
+	invalid.Platform = "Linux AMD64"
+	_, err = RuntimeStateChecksum(invalid)
+	g.Expect(err).To(HaveOccurred())
 }
 
 func retainedObservation(envelope types.ObservationEnvelope) types.ObservedComponentState {

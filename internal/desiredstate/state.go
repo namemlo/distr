@@ -27,7 +27,8 @@ func Admit(
 	pending := &types.PendingDesiredRevision{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now,
 		OrganizationID: input.OrganizationID, DeploymentPlanID: input.DeploymentPlanID,
-		ExecutionID: input.ExecutionID, DeploymentUnitID: input.DeploymentUnitID,
+		ExecutionID: input.ExecutionID, ExecutionAttemptID: input.ExecutionAttemptID,
+		DeploymentUnitID:    input.DeploymentUnitID,
 		ComponentInstanceID: input.ComponentInstanceID, ComponentKey: strings.TrimSpace(input.ComponentKey),
 		Revision: revision, ArtifactDigest: input.ArtifactDigest,
 		ConfigChecksum: input.ConfigChecksum, SchemaVersion: strings.TrimSpace(input.SchemaVersion),
@@ -117,7 +118,8 @@ func requireTerminalEvidence(gate types.ObservationGateResult) error {
 
 func validateInput(input types.PendingDesiredRevisionInput, now time.Time) error {
 	if input.OrganizationID == uuid.Nil || input.DeploymentPlanID == uuid.Nil ||
-		input.ExecutionID == uuid.Nil || input.DeploymentUnitID == uuid.Nil ||
+		input.ExecutionID == uuid.Nil || input.ExecutionAttemptID == uuid.Nil ||
+		input.DeploymentUnitID == uuid.Nil ||
 		input.ComponentInstanceID == uuid.Nil {
 		return errors.New("desired state identities are required")
 	}

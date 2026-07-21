@@ -14,6 +14,21 @@ func EvaluateGate(
 	observations []types.ObservedComponentState,
 	now time.Time,
 ) types.ObservationGateResult {
+	for _, observed := range observations {
+		if observed.Trusted &&
+			observed.Disposition == types.ObservationDispositionConflict &&
+			observed.OrganizationID == pending.OrganizationID &&
+			observed.DeploymentUnitID == pending.DeploymentUnitID &&
+			observed.ComponentInstanceID == pending.ComponentInstanceID &&
+			!observed.CapturedAt.Before(pending.CreatedAt) &&
+			!observed.CapturedAt.After(pending.ObservationDeadline) {
+			return terminalObservationGate(
+				types.ObservationGateStatusConflict,
+				"trusted observer sequence conflicts with retained evidence",
+				observed,
+			)
+		}
+	}
 	trusted := make([]types.ObservedComponentState, 0, len(observations))
 	for _, observed := range observations {
 		if observed.Trusted &&
