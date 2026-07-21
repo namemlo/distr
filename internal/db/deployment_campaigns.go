@@ -1959,6 +1959,11 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 		PausePending:           decision.PausePending,
 		ReconciliationRequired: decision.ReconciliationRequired,
 	}
+	if shouldFanoutCampaignCancel(input, decision) {
+		if err := applyCampaignCancelFanout(txCtx, input); err != nil {
+			return nil, err
+		}
+	}
 	response, err := json.Marshal(result)
 	if err != nil {
 		return nil, err
