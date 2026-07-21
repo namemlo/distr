@@ -26,6 +26,26 @@ type schedulerStoreFake struct {
 	materializedTasks  []types.Task
 	authorizer         types.AdmissionAuthorizer
 	recoveryLoads      int
+	completed          bool
+	completionRunID    uuid.UUID
+	completionFence    int64
+	completionEvalID   uuid.UUID
+	completionAt       time.Time
+}
+
+func (s *schedulerStoreFake) CompleteCampaignRun(
+	_ context.Context,
+	runID uuid.UUID,
+	fencingToken int64,
+	thresholdEvaluationID uuid.UUID,
+	completedAt time.Time,
+) (bool, error) {
+	s.completionRunID = runID
+	s.completionFence = fencingToken
+	s.completionEvalID = thresholdEvaluationID
+	s.completionAt = completedAt
+	s.completed = true
+	return true, nil
 }
 
 func (s *schedulerStoreFake) LoadPendingCampaignDispatchTasks(
@@ -494,6 +514,129 @@ func TestSchedulerStopsForThresholdPauseAndLeaseLoss(t *testing.T) {
 		Tick(context.Background(), runID, time.Now())
 	g.Expect(errors.Is(err, ErrCampaignLeaseLost)).To(gomega.BeTrue())
 	g.Expect(store.admitted).To(gomega.BeEmpty())
+}
+
+func TestSchedulerCompletesFinalCampaignAfterThresholdAndBake(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	now := time.Now().UTC()
+	bakeUntil := now
+	store := &schedulerStoreFake{
+		acquired: true,
+		lease:    types.CampaignLease{RunID: runID, FencingToken: 91},
+		schedule: types.CampaignSchedule{
+			Run:                types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			AllMembersTerminal: true,
+			CurrentWaveOrder:   2,
+			BakeUntil:          &bakeUntil,
+			ThresholdPolicy: types.CampaignThresholdPolicy{
+				MinimumSamples: 1, MaximumFailureRate: 0.25,
+			},
+			ThresholdSnapshot: types.CampaignThresholdSnapshot{Successful: 3, Failed: 1},
+		},
+	}
+
+	result, err := newSchedulerForTest(
+		store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute,
+	).Tick(context.Background(), runID, now)
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Completed).To(gomega.BeTrue())
+	g.Expect(result.Admitted).To(gomega.BeFalse())
+	g.Expect(store.thresholds).To(gomega.HaveLen(1))
+	g.Expect(store.thresholds[0].Breached).To(gomega.BeFalse())
+	g.Expect(store.completionRunID).To(gomega.Equal(runID))
+	g.Expect(store.completionFence).To(gomega.Equal(int64(91)))
+	g.Expect(store.completionEvalID).To(gomega.Equal(store.thresholds[0].ID))
+	g.Expect(store.completionAt).To(gomega.Equal(now))
+}
+
+func TestSchedulerCompletesAllExcludedFinalWaveWithZeroSampleEvidence(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	now := time.Now().UTC()
+	bakeUntil := now
+	store := &schedulerStoreFake{
+		acquired: true,
+		lease:    types.CampaignLease{RunID: runID, FencingToken: 94},
+		schedule: types.CampaignSchedule{
+			Run:                types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			AllMembersTerminal: true,
+			CurrentWaveOrder:   1,
+			BakeUntil:          &bakeUntil,
+		},
+	}
+
+	result, err := newSchedulerForTest(
+		store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute,
+	).Tick(context.Background(), runID, now)
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Completed).To(gomega.BeTrue())
+	g.Expect(store.thresholds).To(gomega.HaveLen(1))
+	g.Expect(store.thresholds[0].Samples).To(gomega.Equal(0))
+	g.Expect(store.thresholds[0].Breached).To(gomega.BeFalse())
+	g.Expect(store.completionEvalID).To(gomega.Equal(store.thresholds[0].ID))
+}
+
+func TestSchedulerDoesNotCompleteFinalCampaignBeforeBake(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	now := time.Now().UTC()
+	bakeUntil := now.Add(time.Second)
+	store := &schedulerStoreFake{
+		acquired: true,
+		lease:    types.CampaignLease{RunID: runID, FencingToken: 92},
+		schedule: types.CampaignSchedule{
+			Run:                types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			AllMembersTerminal: true,
+			CurrentWaveOrder:   1,
+			BakeUntil:          &bakeUntil,
+			ThresholdPolicy:    types.CampaignThresholdPolicy{MinimumSamples: 1},
+			ThresholdSnapshot:  types.CampaignThresholdSnapshot{Successful: 1},
+		},
+	}
+
+	result, err := newSchedulerForTest(
+		store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute,
+	).Tick(context.Background(), runID, now)
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Completed).To(gomega.BeFalse())
+	g.Expect(store.thresholds).To(gomega.BeEmpty())
+	g.Expect(store.completed).To(gomega.BeFalse())
+}
+
+func TestSchedulerPausesUnhealthyFinalCampaignInsteadOfLeavingItRunning(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	now := time.Now().UTC()
+	store := &schedulerStoreFake{
+		acquired: true,
+		lease:    types.CampaignLease{RunID: runID, FencingToken: 93},
+		schedule: types.CampaignSchedule{
+			Run:                       types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			AllMembersTerminal:        true,
+			CurrentWaveOrder:          1,
+			MinimumHealthyBasisPoints: 9000,
+			ThresholdPolicy: types.CampaignThresholdPolicy{
+				MinimumSamples: 1, MaximumFailureRate: 0.50,
+			},
+			ThresholdSnapshot: types.CampaignThresholdSnapshot{Successful: 8, Failed: 2},
+		},
+	}
+
+	result, err := newSchedulerForTest(
+		store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute,
+	).Tick(context.Background(), runID, now)
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Paused).To(gomega.BeTrue())
+	g.Expect(result.Completed).To(gomega.BeFalse())
+	g.Expect(store.thresholds).To(gomega.HaveLen(1))
+	g.Expect(store.thresholds[0].MaximumFailureRate).To(gomega.Equal(0.10))
+	g.Expect(store.thresholds[0].Breached).To(gomega.BeTrue())
+	g.Expect(store.completed).To(gomega.BeFalse())
 }
 
 func TestSchedulerDoesNotExposeWhilePausedOrLeaseUnavailable(t *testing.T) {

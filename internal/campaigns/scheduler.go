@@ -81,6 +81,7 @@ type SchedulerStore interface {
 		types.CampaignThresholdEvaluation,
 		int64,
 	) (bool, error)
+	CompleteCampaignRun(context.Context, uuid.UUID, int64, uuid.UUID, time.Time) (bool, error)
 	PauseCampaignAdmission(context.Context, uuid.UUID, string, int64) error
 }
 
@@ -243,8 +244,10 @@ func (s *Scheduler) Tick(
 		return result, nil
 	}
 
-	threshold := EvaluateThreshold(schedule.ThresholdPolicy, schedule.ThresholdSnapshot)
-	if schedule.ThresholdPolicy.MinimumSamples > 0 {
+	thresholdPolicy := effectiveThresholdPolicy(schedule)
+	threshold := EvaluateThreshold(thresholdPolicy, schedule.ThresholdSnapshot)
+	var thresholdEvaluationID uuid.UUID
+	if thresholdPolicy.MinimumSamples > 0 {
 		evaluation := types.CampaignThresholdEvaluation{
 			ID:                 uuid.New(),
 			CampaignRunID:      runID,
@@ -252,7 +255,7 @@ func (s *Scheduler) Tick(
 			Successful:         schedule.ThresholdSnapshot.Successful,
 			Failed:             schedule.ThresholdSnapshot.Failed,
 			FailureRate:        threshold.FailureRate,
-			MaximumFailureRate: schedule.ThresholdPolicy.MaximumFailureRate,
+			MaximumFailureRate: thresholdPolicy.MaximumFailureRate,
 			Breached:           threshold.Breached,
 			EvaluatedAt:        now,
 			FencingToken:       lease.FencingToken,
@@ -269,6 +272,17 @@ func (s *Scheduler) Tick(
 			result.Paused = true
 			return result, nil
 		}
+		thresholdEvaluationID = evaluation.ID
+	}
+	if schedule.AllMembersTerminal {
+		completed, err := s.store.CompleteCampaignRun(
+			ctx, runID, lease.FencingToken, thresholdEvaluationID, now,
+		)
+		if err != nil {
+			return result, err
+		}
+		result.Completed = completed
+		return result, nil
 	}
 
 	candidates := slices.Clone(schedule.Candidates)
@@ -321,14 +335,24 @@ func campaignAdmissionBlocked(schedule types.CampaignSchedule, now time.Time) bo
 		schedule.CampaignActive >= schedule.CampaignMaximumConcurrency {
 		return true
 	}
-	samples := schedule.ThresholdSnapshot.Successful + schedule.ThresholdSnapshot.Failed
-	if schedule.MinimumHealthyBasisPoints > 0 && samples > 0 {
-		healthyBasisPoints := schedule.ThresholdSnapshot.Successful * 10000 / samples
-		if healthyBasisPoints < schedule.MinimumHealthyBasisPoints {
-			return true
+	return false
+}
+
+func effectiveThresholdPolicy(schedule types.CampaignSchedule) types.CampaignThresholdPolicy {
+	policy := schedule.ThresholdPolicy
+	if schedule.MinimumHealthyBasisPoints > 0 {
+		healthFailureRate := float64(10000-schedule.MinimumHealthyBasisPoints) / 10000
+		if healthFailureRate < policy.MaximumFailureRate {
+			policy.MaximumFailureRate = healthFailureRate
+		}
+		if policy.MinimumSamples == 0 {
+			policy.MinimumSamples = 1
 		}
 	}
-	return false
+	if schedule.AllMembersTerminal && policy.MinimumSamples == 0 {
+		policy.MinimumSamples = 1
+	}
+	return policy
 }
 
 func compareCampaignCandidates(a, b types.CampaignMemberCandidate) int {

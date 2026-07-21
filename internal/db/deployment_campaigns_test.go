@@ -419,6 +419,9 @@ func TestCampaignRepositoryUsesOptimisticTransitionsAndFencedAdmissions(t *testi
 	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("risk_policy"))
 	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("assessment_wave"))
 	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("assessment_counts"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("member_frontier"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("all_members_terminal"))
+	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("COALESCE(member_frontier.open_wave_order, member_frontier.final_wave_order)"))
 	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("wave_run.campaign_wave_id = frozen_wave.id"))
 	g.Expect(loadCampaignScheduleSQL).To(ContainSubstring("frozen_wave.bake_seconds = wave_run.bake_duration_seconds"))
 	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring("DeploymentCampaignMember AS frozen_member"))
@@ -439,6 +442,40 @@ func TestCampaignRepositoryUsesOptimisticTransitionsAndFencedAdmissions(t *testi
 	g.Expect(recordThresholdAndMaybePauseSQL).To(ContainSubstring("DeploymentCampaignRun"))
 	g.Expect(recordPrerequisitesAndAdmitSQL).To(ContainSubstring("lease_expires_at > clock_timestamp()"))
 	g.Expect(recordThresholdAndMaybePauseSQL).To(ContainSubstring("lease_expires_at > clock_timestamp()"))
+}
+
+func TestCompleteCampaignRunIsFencedToExactHealthyFinalEvidence(t *testing.T) {
+	g := NewWithT(t)
+	for _, required := range []string{
+		"campaign_run.state = 'RUNNING'",
+		"campaign_run.admissions_blocked = FALSE",
+		"campaign_run.pause_requested = FALSE",
+		"campaign_run.reconciliation_required = FALSE",
+		"campaign_run.fencing_token = @fencing_token",
+		"campaign_run.lease_expires_at > clock_timestamp()",
+		"threshold.id = @threshold_evaluation_id",
+		"threshold.breached = FALSE",
+		"threshold.successful = final_member_counts.successful",
+		"threshold.failed = final_member_counts.failed",
+		"member_frontier.all_terminal",
+		"member_frontier.any_uncertain = FALSE",
+		"wave_run.completed_at + make_interval(secs => frozen_wave.bake_seconds) <= @completed_at",
+		"state = 'COMPLETED'",
+		"admissions_blocked = TRUE",
+		"version = campaign_run.version + 1",
+		"thresholdEvaluationId",
+		"'from', 'RUNNING'",
+		"'fencingToken', @fencing_token",
+	} {
+		g.Expect(completeCampaignRunSQL).To(ContainSubstring(required))
+	}
+}
+
+func TestPendingCampaignExclusionCompletesMemberAndProjectsWave(t *testing.T) {
+	g := NewWithT(t)
+	g.Expect(excludePendingCampaignMemberSQL).To(ContainSubstring("status = 'EXCLUDED'"))
+	g.Expect(excludePendingCampaignMemberSQL).To(ContainSubstring("completed_at = COALESCE(completed_at, @completed_at)"))
+	g.Expect(excludePendingCampaignMemberSQL).To(ContainSubstring("RETURNING wave_run_id"))
 }
 
 func TestCampaignControlsMigrationIsAppendOnlyIdempotentAndScoped(t *testing.T) {

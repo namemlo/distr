@@ -1209,11 +1209,23 @@ WHERE member_run.id = @member_run_id
   AND updated_wave.id = member_run.wave_run_id`
 
 const loadCampaignScheduleSQL = `
-WITH current_wave AS (
-  SELECT min(member_run.wave_order) AS wave_order
+WITH member_frontier AS (
+  SELECT
+    min(member_run.wave_order) FILTER (
+      WHERE member_run.status IN ('PENDING', 'ADMITTED', 'RUNNING')
+    ) AS open_wave_order,
+    max(member_run.wave_order) AS final_wave_order,
+    count(*) > 0
+      AND bool_and(member_run.status IN ('SUCCEEDED', 'FAILED', 'EXCLUDED', 'CANCELED'))
+      AND NOT bool_or(member_run.execution_uncertain) AS all_members_terminal
   FROM DeploymentCampaignMemberRun AS member_run
   WHERE member_run.campaign_run_id = @run_id
-    AND member_run.status IN ('PENDING', 'ADMITTED', 'RUNNING')
+),
+current_wave AS (
+  SELECT
+    COALESCE(member_frontier.open_wave_order, member_frontier.final_wave_order) AS wave_order,
+    member_frontier.all_members_terminal
+  FROM member_frontier
 ),
 campaign_counts AS (
   SELECT
@@ -1223,6 +1235,7 @@ campaign_counts AS (
 ),
 assessment_wave AS (
   SELECT CASE
+    WHEN current_wave.all_members_terminal THEN current_wave.wave_order
     WHEN EXISTS (
       SELECT 1
       FROM DeploymentCampaignMemberRun AS member_run
@@ -1255,7 +1268,7 @@ assessment_counts AS (
   WHERE member_run.campaign_run_id = @run_id
     AND member_run.wave_order = assessment_wave.wave_order
 ),
-previous_bake AS (
+applicable_bake AS (
   SELECT
     wave_run.completed_at + make_interval(secs => frozen_wave.bake_seconds)
       AS bake_until
@@ -1269,17 +1282,23 @@ previous_bake AS (
    AND frozen_wave.bake_seconds = wave_run.bake_duration_seconds
    AND frozen_wave.maximum_concurrency = wave_run.maximum_concurrency
   WHERE wave_run.campaign_run_id = @run_id
-    AND wave_run.wave_order < current_wave.wave_order
+    AND (
+      (current_wave.all_members_terminal AND wave_run.wave_order = current_wave.wave_order)
+      OR (NOT current_wave.all_members_terminal AND wave_run.wave_order < current_wave.wave_order)
+    )
   ORDER BY wave_run.wave_order DESC
   LIMIT 1
 ),
-prior_wave AS (
+applicable_bake_wave AS (
   SELECT EXISTS (
     SELECT 1
     FROM DeploymentCampaignWaveRun AS wave_run
     JOIN current_wave ON TRUE
     WHERE wave_run.campaign_run_id = @run_id
-      AND wave_run.wave_order < current_wave.wave_order
+      AND (
+        (current_wave.all_members_terminal AND wave_run.wave_order = current_wave.wave_order)
+        OR (NOT current_wave.all_members_terminal AND wave_run.wave_order < current_wave.wave_order)
+      )
   ) AS present
 )
 SELECT
@@ -1304,8 +1323,9 @@ SELECT
     WHERE active_member.campaign_run_id = campaign_run.id
       AND active_member.status IN ('ADMITTED', 'RUNNING')
   ) AS at_safe_point,
+  COALESCE(current_wave.all_members_terminal, FALSE),
   COALESCE(current_wave.wave_order, 0),
-  previous_bake.bake_until,
+  applicable_bake.bake_until,
   COALESCE(frozen_wave.maximum_concurrency, 0),
   COALESCE(current_wave_counts.active, 0),
   COALESCE((revision.risk_policy->>'maximumConcurrency')::int, 0),
@@ -1323,7 +1343,7 @@ SELECT
     AND wave_run.bake_duration_seconds = frozen_wave.bake_seconds,
     FALSE
   ) AS frozen_wave_matches,
-  prior_wave.present
+  applicable_bake_wave.present
 FROM DeploymentCampaignRun AS campaign_run
 JOIN DeploymentCampaignRevision AS revision
   ON revision.id = campaign_run.campaign_revision_id
@@ -1340,8 +1360,8 @@ LEFT JOIN DeploymentCampaignWaveRun AS wave_run
 LEFT JOIN current_wave_counts ON TRUE
 LEFT JOIN assessment_counts ON TRUE
 LEFT JOIN campaign_counts ON TRUE
-LEFT JOIN previous_bake ON TRUE
-JOIN prior_wave ON TRUE
+LEFT JOIN applicable_bake ON TRUE
+JOIN applicable_bake_wave ON TRUE
 WHERE campaign_run.id = @run_id
   AND campaign_run.fencing_token = @fencing_token
   AND campaign_run.lease_expires_at > now()`
@@ -1396,6 +1416,91 @@ ORDER BY
   member_run.wave_order,
   member_run.member_order,
   member_run.deployment_plan_id`
+
+const completeCampaignRunSQL = `
+WITH member_frontier AS (
+  SELECT
+    count(*) > 0 AS has_members,
+    bool_and(member.status IN ('SUCCEEDED', 'FAILED', 'EXCLUDED', 'CANCELED')) AS all_terminal,
+    bool_or(member.execution_uncertain) AS any_uncertain,
+    max(member.wave_order) AS final_wave_order
+  FROM DeploymentCampaignMemberRun AS member
+  WHERE member.campaign_run_id = @run_id
+), final_member_counts AS (
+  SELECT
+    count(*) FILTER (WHERE member.status = 'SUCCEEDED')::int AS successful,
+    count(*) FILTER (WHERE member.status = 'FAILED')::int AS failed
+  FROM DeploymentCampaignMemberRun AS member
+  JOIN member_frontier ON member.wave_order = member_frontier.final_wave_order
+  WHERE member.campaign_run_id = @run_id
+), final_wave AS (
+  SELECT wave_run.*, frozen_wave.bake_seconds
+  FROM DeploymentCampaignWaveRun AS wave_run
+  JOIN member_frontier ON TRUE
+  JOIN DeploymentCampaignRun AS final_run
+    ON final_run.id = wave_run.campaign_run_id
+  JOIN DeploymentCampaignWave AS frozen_wave
+    ON frozen_wave.id = wave_run.campaign_wave_id
+   AND frozen_wave.campaign_revision_id = final_run.campaign_revision_id
+   AND frozen_wave.organization_id = final_run.organization_id
+   AND frozen_wave.wave_order = wave_run.wave_order
+   AND frozen_wave.maximum_concurrency = wave_run.maximum_concurrency
+   AND frozen_wave.bake_seconds = wave_run.bake_duration_seconds
+  WHERE wave_run.campaign_run_id = @run_id
+    AND wave_run.wave_order = member_frontier.final_wave_order
+)
+UPDATE DeploymentCampaignRun AS campaign_run
+SET state = 'COMPLETED',
+    admissions_blocked = TRUE,
+    version = campaign_run.version + 1,
+    updated_at = @completed_at,
+    transition_evidence = campaign_run.transition_evidence || jsonb_build_array(
+      jsonb_build_object(
+		'from', 'RUNNING',
+        'to', 'COMPLETED',
+        'reason', 'all campaign members reached a healthy terminal state',
+        'thresholdEvaluationId', @threshold_evaluation_id,
+		'fencingToken', @fencing_token,
+        'at', @completed_at
+      )
+    )
+FROM CampaignThresholdEvaluation AS threshold, member_frontier, final_member_counts,
+     final_wave AS wave_run
+JOIN DeploymentCampaignWave AS frozen_wave
+  ON frozen_wave.id = wave_run.campaign_wave_id
+ AND frozen_wave.campaign_revision_id = wave_run.campaign_revision_id
+ AND frozen_wave.organization_id = wave_run.organization_id
+ AND frozen_wave.wave_order = wave_run.wave_order
+WHERE campaign_run.id = @run_id
+  AND campaign_run.state = 'RUNNING'
+  AND campaign_run.admissions_blocked = FALSE
+  AND campaign_run.pause_requested = FALSE
+  AND campaign_run.reconciliation_required = FALSE
+  AND campaign_run.fencing_token = @fencing_token
+  AND campaign_run.lease_expires_at > clock_timestamp()
+  AND threshold.id = @threshold_evaluation_id
+  AND threshold.campaign_run_id = campaign_run.id
+  AND threshold.organization_id = campaign_run.organization_id
+  AND threshold.fencing_token = @fencing_token
+  AND threshold.breached = FALSE
+  AND threshold.samples = final_member_counts.successful + final_member_counts.failed
+  AND threshold.successful = final_member_counts.successful
+  AND threshold.failed = final_member_counts.failed
+  AND member_frontier.has_members
+  AND member_frontier.all_terminal
+  AND member_frontier.any_uncertain = FALSE
+  AND wave_run.completed_at IS NOT NULL
+  AND wave_run.completed_at + make_interval(secs => frozen_wave.bake_seconds) <= @completed_at`
+
+const excludePendingCampaignMemberSQL = `
+UPDATE DeploymentCampaignMemberRun
+SET status = 'EXCLUDED',
+    completed_at = COALESCE(completed_at, @completed_at)
+WHERE id = @member_run_id
+  AND campaign_run_id = @run_id
+  AND organization_id = @organization_id
+  AND status = 'PENDING'
+RETURNING wave_run_id`
 
 const loadCandidatePrerequisitesSQL = `
 SELECT
@@ -2084,8 +2189,9 @@ func (CampaignRepository) ExcludeCampaignMember(
 	}
 
 	var memberStatus string
+	var memberWaveRunID uuid.UUID
 	err = tx.QueryRow(ctx, `
-SELECT status
+SELECT status, wave_run_id
 FROM DeploymentCampaignMemberRun
 WHERE id = @member_run_id
   AND campaign_run_id = @run_id
@@ -2094,7 +2200,7 @@ FOR UPDATE`, pgx.NamedArgs{
 		"member_run_id":   input.MemberRunID,
 		"run_id":          input.RunID,
 		"organization_id": input.OrganizationID,
-	}).Scan(&memberStatus)
+	}).Scan(&memberStatus, &memberWaveRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apierrors.ErrNotFound
 	}
@@ -2172,20 +2278,18 @@ INSERT INTO CampaignExclusion (
 		return nil, err
 	}
 	if memberStatus == "PENDING" {
-		_, err = tx.Exec(ctx, `
-UPDATE DeploymentCampaignMemberRun
-SET status = 'EXCLUDED'
-WHERE id = @member_run_id
-  AND campaign_run_id = @run_id
-  AND organization_id = @organization_id
-  AND status = 'PENDING'`,
-			pgx.NamedArgs{
-				"member_run_id":   input.MemberRunID,
-				"run_id":          input.RunID,
-				"organization_id": input.OrganizationID,
-			},
-		)
+		err = tx.QueryRow(ctx, excludePendingCampaignMemberSQL, pgx.NamedArgs{
+			"member_run_id":   input.MemberRunID,
+			"run_id":          input.RunID,
+			"organization_id": input.OrganizationID,
+			"completed_at":    input.RequestedAt,
+		}).Scan(&memberWaveRunID)
 		if err != nil {
+			return nil, err
+		}
+		if err := projectCampaignWaveExecution(
+			internalctx.WithDb(ctx, tx), input.OrganizationID, memberWaveRunID,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -2506,7 +2610,7 @@ func (CampaignRepository) LoadCampaignSchedule(
 	var schedule types.CampaignSchedule
 	var failureToleranceBasisPoints int
 	var frozenWaveMatches bool
-	var priorWavePresent bool
+	var applicableBakeWavePresent bool
 	err = tx.QueryRow(ctx, loadCampaignScheduleSQL, pgx.NamedArgs{
 		"run_id":        runID,
 		"fencing_token": fencingToken,
@@ -2528,6 +2632,7 @@ func (CampaignRepository) LoadCampaignSchedule(
 		&schedule.Run.PauseRequested,
 		&schedule.Run.ReconciliationRequired,
 		&schedule.AtSafePoint,
+		&schedule.AllMembersTerminal,
 		&schedule.CurrentWaveOrder,
 		&schedule.BakeUntil,
 		&schedule.WaveMaximumConcurrency,
@@ -2539,7 +2644,7 @@ func (CampaignRepository) LoadCampaignSchedule(
 		&schedule.ThresholdSnapshot.Successful,
 		&schedule.ThresholdSnapshot.Failed,
 		&frozenWaveMatches,
-		&priorWavePresent,
+		&applicableBakeWavePresent,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return types.CampaignSchedule{}, campaigns.ErrCampaignLeaseLost
@@ -2552,9 +2657,9 @@ func (CampaignRepository) LoadCampaignSchedule(
 			"campaign wave runtime no longer matches frozen wave",
 		)
 	}
-	if priorWavePresent && schedule.BakeUntil == nil {
+	if applicableBakeWavePresent && schedule.BakeUntil == nil {
 		return types.CampaignSchedule{}, apierrors.NewConflict(
-			"campaign prior wave runtime no longer matches frozen wave",
+			"campaign applicable bake wave no longer matches frozen wave",
 		)
 	}
 	if schedule.CurrentWaveOrder > 0 {
@@ -2675,6 +2780,28 @@ WHERE campaign_run.id = @run_id
     WHERE member_run.campaign_run_id = campaign_run.id
       AND member_run.status IN ('ADMITTED', 'RUNNING')
   )`, pgx.NamedArgs{"run_id": runID, "fencing_token": fencingToken})
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (CampaignRepository) CompleteCampaignRun(
+	ctx context.Context,
+	runID uuid.UUID,
+	fencingToken int64,
+	thresholdEvaluationID uuid.UUID,
+	completedAt time.Time,
+) (bool, error) {
+	if thresholdEvaluationID == uuid.Nil {
+		return false, apierrors.NewConflict("campaign completion requires threshold evidence")
+	}
+	tag, err := internalctx.GetDb(ctx).Exec(ctx, completeCampaignRunSQL, pgx.NamedArgs{
+		"run_id":                  runID,
+		"fencing_token":           fencingToken,
+		"threshold_evaluation_id": thresholdEvaluationID,
+		"completed_at":            completedAt,
+	})
 	if err != nil {
 		return false, err
 	}

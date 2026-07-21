@@ -103,6 +103,7 @@ type CampaignSchedule struct {
 	ThresholdPolicy            CampaignThresholdPolicy
 	ThresholdSnapshot          CampaignThresholdSnapshot
 	AtSafePoint                bool
+	AllMembersTerminal         bool
 	CurrentWaveOrder           int
 	BakeUntil                  *time.Time
 	WaveMaximumConcurrency     int
@@ -162,6 +163,7 @@ type CampaignSchedulerResult struct {
 	LeaseAcquired bool
 	Admitted      bool
 	Paused        bool
+	Completed     bool
 	MemberRunID   uuid.UUID
 }
 
