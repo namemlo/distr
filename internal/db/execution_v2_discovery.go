@@ -30,6 +30,22 @@ const executionV2LeaseCandidateQuery = executionAttemptSelect + `
 	LIMIT 1
 	FOR UPDATE OF ea, ef SKIP LOCKED`
 
+const executionV2ExpiredPendingCandidateQuery = `
+	SELECT ea.id, ea.task_id
+	FROM ExecutionAttempt ea
+	JOIN ExecutionFence ef
+		ON ef.execution_attempt_id = ea.id
+		AND ef.organization_id = ea.organization_id
+	WHERE ea.organization_id = @organizationId
+		AND ea.deployment_target_id = @deploymentTargetId
+		AND ea.status = 'PENDING'
+		AND ea.intent_expires_at <= clock_timestamp()
+		AND ef.lease_expires_at IS NULL
+		AND ef.released_at IS NULL
+	ORDER BY ea.intent_expires_at, ea.created_at, ea.id
+	LIMIT 1
+	FOR UPDATE OF ea, ef SKIP LOCKED`
+
 func LeaseExecutionV2Attempt(
 	ctx context.Context,
 	request types.LeaseExecutionV2Request,
@@ -40,6 +56,11 @@ func LeaseExecutionV2Attempt(
 	var result *types.ExecutionV2Lease
 	err := RunTx(ctx, func(ctx context.Context) error {
 		database := internalctx.GetDb(ctx)
+		if err := reapExpiredPendingExecutionV2Attempts(
+			ctx, request.OrganizationID, request.DeploymentTargetID,
+		); err != nil {
+			return err
+		}
 		attempt, err := scanExecutionAttempt(database.QueryRow(
 			ctx,
 			executionV2LeaseCandidateQuery,
@@ -122,6 +143,39 @@ func LeaseExecutionV2Attempt(
 		return nil
 	})
 	return result, err
+}
+
+func reapExpiredPendingExecutionV2Attempts(
+	ctx context.Context,
+	organizationID, deploymentTargetID uuid.UUID,
+) error {
+	database := internalctx.GetDb(ctx)
+	for {
+		var attemptID, taskID uuid.UUID
+		err := database.QueryRow(
+			ctx,
+			executionV2ExpiredPendingCandidateQuery,
+			pgx.NamedArgs{
+				"organizationId":     organizationID,
+				"deploymentTargetId": deploymentTargetID,
+			},
+		).Scan(&attemptID, &taskID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("get expired pending ExecutionAttempt: %w", err)
+		}
+		if err := fenceExecutionAttemptTx(
+			ctx, organizationID, deploymentTargetID, attemptID,
+			"execution intent expired before lease discovery",
+		); err != nil {
+			return fmt.Errorf("fence expired pending ExecutionAttempt: %w", err)
+		}
+		if err := releaseTaskResourceLocks(ctx, taskID, organizationID); err != nil {
+			return fmt.Errorf("release expired execution task resource locks: %w", err)
+		}
+	}
 }
 
 func validateLeaseExecutionV2Request(request types.LeaseExecutionV2Request) error {
