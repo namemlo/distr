@@ -28,6 +28,25 @@ func TestDefaultCapabilityReportDescribesRuntimeWithoutExecutionActions(t *testi
 	}
 }
 
+func TestProtocolV2CapabilityReportOptsInWithoutChangingDefault(t *testing.T) {
+	defaultReport := DefaultCapabilityReport("docker", []string{"docker"}, []string{"compose"})
+	v2Report := ProtocolV2CapabilityReport(
+		"docker",
+		[]string{"docker"},
+		[]string{"compose"},
+	)
+
+	if defaultReport.ProtocolVersion != types.AgentCapabilityProtocolV1 {
+		t.Fatalf("expected default protocol %q, got %q", types.AgentCapabilityProtocolV1, defaultReport.ProtocolVersion)
+	}
+	if v2Report.ProtocolVersion != types.AgentCapabilityProtocolV2 {
+		t.Fatalf("expected opt-in protocol %q, got %q", types.AgentCapabilityProtocolV2, v2Report.ProtocolVersion)
+	}
+	if err := v2Report.Validate(); err != nil {
+		t.Fatalf("expected opt-in v2 report to validate: %v", err)
+	}
+}
+
 func TestReportCapabilitiesPostsAuthenticatedPayload(t *testing.T) {
 	var received api.AgentCapabilitiesRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

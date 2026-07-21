@@ -8,6 +8,7 @@ import (
 
 const (
 	AgentCapabilityProtocolV1 = "v1"
+	AgentCapabilityProtocolV2 = "v2"
 	AgentActionVersionV1      = "1"
 )
 

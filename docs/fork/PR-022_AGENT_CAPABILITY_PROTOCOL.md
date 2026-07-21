@@ -76,6 +76,12 @@ Request:
 
 Validation trims string fields, rejects empty values, rejects duplicate runtimes/action types/action versions, rejects unknown action types, and rejects unsupported protocol versions.
 
+PR-075 extends this endpoint to accept capability protocol `v2`. Existing
+agents still build `v1` reports through `DefaultCapabilityReport`; an executor
+that has implemented the fenced v2 contract must opt in explicitly through
+`ProtocolV2CapabilityReport`. Advertising v2 therefore cannot be caused by an
+upgrade of the shared agent client alone.
+
 The path `{id}` must match the authenticated deployment target. Malformed IDs, path mismatches, and cross-organization targets return not found or unauthorized through the existing agent authentication flow.
 
 ## Agent behavior

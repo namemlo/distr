@@ -32,7 +32,8 @@ func (r *AgentCapabilitiesRequest) Validate() error {
 	if r.ProtocolVersion == "" {
 		return validation.NewValidationFailedError("protocolVersion is required")
 	}
-	if r.ProtocolVersion != types.AgentCapabilityProtocolV1 {
+	if r.ProtocolVersion != types.AgentCapabilityProtocolV1 &&
+		r.ProtocolVersion != types.AgentCapabilityProtocolV2 {
 		return validation.NewValidationFailedError("protocolVersion is unsupported")
 	}
 	r.AgentVersion = strings.TrimSpace(r.AgentVersion)

@@ -18,8 +18,35 @@ func DefaultCapabilityReport(
 	availableTooling []string,
 	strategyCapabilities []string,
 ) api.AgentCapabilitiesRequest {
+	return capabilityReport(
+		types.AgentCapabilityProtocolV1,
+		runtimeName,
+		availableTooling,
+		strategyCapabilities,
+	)
+}
+
+func ProtocolV2CapabilityReport(
+	runtimeName string,
+	availableTooling []string,
+	strategyCapabilities []string,
+) api.AgentCapabilitiesRequest {
+	return capabilityReport(
+		types.AgentCapabilityProtocolV2,
+		runtimeName,
+		availableTooling,
+		strategyCapabilities,
+	)
+}
+
+func capabilityReport(
+	protocolVersion string,
+	runtimeName string,
+	availableTooling []string,
+	strategyCapabilities []string,
+) api.AgentCapabilitiesRequest {
 	return api.AgentCapabilitiesRequest{
-		ProtocolVersion:      types.AgentCapabilityProtocolV1,
+		ProtocolVersion:      protocolVersion,
 		AgentVersion:         buildconfig.Version(),
 		SupportedRuntimes:    []string{runtimeName},
 		SupportedActions:     []api.AgentActionCapabilityRequest{},

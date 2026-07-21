@@ -60,6 +60,22 @@ func TestAgentCapabilitiesRequestValidateAllowsNoSupportedActions(t *testing.T) 
 	g.Expect(request.SupportedActions).To(BeNil())
 }
 
+func TestAgentCapabilitiesRequestValidateAcceptsProtocolV2(t *testing.T) {
+	g := NewWithT(t)
+	request := AgentCapabilitiesRequest{
+		ProtocolVersion:   " v2 ",
+		AgentVersion:      "1.2.3",
+		SupportedRuntimes: []string{"docker"},
+		OperatingSystem:   "linux",
+		Architecture:      "amd64",
+	}
+
+	err := request.Validate()
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(request.ProtocolVersion).To(Equal(types.AgentCapabilityProtocolV2))
+}
+
 func TestAgentCapabilitiesRequestValidateRejectsInvalidPayloads(t *testing.T) {
 	base := func() AgentCapabilitiesRequest {
 		return AgentCapabilitiesRequest{
@@ -80,7 +96,7 @@ func TestAgentCapabilitiesRequestValidateRejectsInvalidPayloads(t *testing.T) {
 	}{
 		{
 			name:    "unsupported protocol",
-			mutate:  func(r *AgentCapabilitiesRequest) { r.ProtocolVersion = "v2" },
+			mutate:  func(r *AgentCapabilitiesRequest) { r.ProtocolVersion = "v3" },
 			message: "protocolVersion is unsupported",
 		},
 		{
