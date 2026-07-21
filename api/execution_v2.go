@@ -263,7 +263,8 @@ func (r ExecutionStatusRequest) ToTypes(
 	return types.StatusRequest{
 		OrganizationID: orgID, ExecutionID: executionID, RequestedBy: actorID,
 		IdempotencyKey: r.IdempotencyKey, Reason: r.Reason, RequestedAt: now.UTC(),
-		ExpiresAt: now.UTC().Add(time.Duration(r.ExpiresInSeconds) * time.Second),
+		ExpiresAt:           now.UTC().Add(time.Duration(r.ExpiresInSeconds) * time.Second),
+		RequestedTTLSeconds: r.ExpiresInSeconds,
 	}
 }
 
@@ -287,6 +288,7 @@ func ReconciliationEvidenceToTypes(
 ) types.ReconciliationStatusInput {
 	return types.ReconciliationStatusInput{
 		OrganizationID: evidence.OrganizationID, ExecutionID: evidence.ExecutionID,
+		AttemptID:     evidence.AttemptID,
 		StatusQueryID: evidence.StatusQueryID, EventIdentity: evidence.EventIdentity,
 		Outcome: evidence.Outcome, EvidenceChecksum: evidence.EvidenceChecksum,
 		ObservedAt:          evidence.ObservedAt.UTC(),

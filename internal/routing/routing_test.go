@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/executionruntime"
 	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
@@ -82,6 +83,7 @@ func TestDeploymentRegistryRoutesArePublishedInOpenAPI(t *testing.T) {
 		obsertracing.Tracers{Default: tracer, Agent: tracer},
 		nil,
 		nil,
+		executionruntime.Dependencies{},
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/docs/openapi.json", nil)

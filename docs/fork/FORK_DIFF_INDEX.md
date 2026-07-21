@@ -1497,7 +1497,8 @@ Use one entry per pull request:
   attempts while the owning lease and intent remain live.
 - Database changes: Migration 157 adds `ExecutionAttempt`, `ExecutionFence`,
   append-only `ExecutionIntent`, append-only `ExecutionEvent`, and frozen
-  `Task.protocol_version`.
+  `Task.protocol_version`; downgrade locks and checks every owned evidence table
+  before destructive rollback.
 - API changes: Adds `/api/executor/v2` claim, acknowledgement, heartbeat, event
   and completion routes scoped to the authenticated organization and deployment
   target.
@@ -1505,7 +1506,8 @@ Use one entry per pull request:
 - Agent protocol changes: Adds canonical Ed25519-signed intent v2, public-key
   fingerprint identity, exact tenant/target/task/step/plan/adapter/resource
   binding, database-time leases, monotonically increasing fencing and
-  conflict-secure exact event replay.
+  conflict-secure exact event replay. Expired authorization cannot be extended
+  by heartbeat, and exact dispatch replay reuses matching frozen attempts.
 - Documentation: Added ADR-0064 and PR-075 fork notes.
 - Tests: Added golden/tamper/wrong-key/expiry/input-mismatch signing coverage,
   fencing/idempotency/restart/timeout state coverage, dispatcher admission,
@@ -1528,7 +1530,9 @@ Use one entry per pull request:
 - Database changes: Migration 158 adds `ExecutionCancelRequest`,
   `ExecutionStatusQuery`, append-only signed
   `ExecutionReconciliationEvent`, attempt-scoped control idempotency, and the
-  explicit completion-consistent `UNKNOWN` attempt outcome.
+  explicit completion-consistent `UNKNOWN` attempt outcome. Status-query TTL
+  participates in idempotency, reconciliation is foreign-key bound to the exact
+  attempt/query tuple, and downgrade locks every owned evidence table.
 - API changes: Adds operator execution-control routes and executor cancel/status
   polling plus cancel acknowledgement routes.
 - UI changes: None.
@@ -1537,7 +1541,8 @@ Use one entry per pull request:
 - Documentation: Added PR-076 fork notes.
 - Tests: Added cancellability, duplicate cancel, acknowledged-delivery status
   query, proven/unknown callback loss, callback expiry, event identity and
-  retry-safety coverage.
+  retry-safety coverage, plus exact replay delivery, attempt binding, TTL and
+  rollback race regressions.
 - Upstream contribution notes: Community-neutral execution controls; no
   provider or adopter semantics.
 - Compatibility notes: V1 callbacks and retry rules remain unchanged. V2

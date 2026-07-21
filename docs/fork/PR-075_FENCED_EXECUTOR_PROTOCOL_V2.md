@@ -14,7 +14,10 @@ Migration 157 adds `ExecutionAttempt`, `ExecutionFence`, append-only
 `Task.protocol_version`. It does not modify `ExternalExecution` or
 `ExternalExecutionEvent`.
 
-Rollback is refused while protocol-v2 execution evidence exists.
+Rollback takes an access-exclusive lock over every protocol-v2 evidence table
+before checking retained data, then refuses while any attempt, fence, intent or
+event exists. A concurrent writer therefore cannot race the refusal check and
+the destructive downgrade.
 
 ## API and authentication
 
@@ -36,6 +39,13 @@ process flags. Organization scope comes only from the authenticated credential.
   secret-provider interface.
 - Payloads pin immutable plan, artifact, config and adapter revision evidence.
 - Ordered event identity rejects conflicting duplicates and stale fences.
+- Exact event delivery replays return the stored fact even after the attempt
+  becomes terminal or its delivery window closes; they never append progress.
+- Duplicate task dispatch returns the existing attempt only when every frozen
+  target/task/step/plan/artifact/config/adapter/resource input matches.
+- Claiming an expired lease or intent fences the attempt, increments the
+  generation and releases the resource. Heartbeats cannot extend an expired
+  signed intent.
 - Admission requires explicit interfaces for scoped enrollment, approval,
   admission and adapter preflight. A missing dependency denies dispatch.
 - V1 task/external-execution statuses, events and retry semantics remain
@@ -46,5 +56,6 @@ process flags. Organization scope comes only from the authenticated credential.
 The prepared PR-075 worktree includes PR-063 but not final PR-066 through
 PR-074. This change therefore defines the admission and attempt-creation
 interfaces without copying speculative authorization, campaign or adapter
-storage into PR-075. Integration must bind those interfaces after the numbered
-predecessors are present.
+storage into PR-075. `executionruntime.Dependencies` is the production router
+injection seam; integration must bind it to those predecessor implementations
+after the numbered commits are present. Missing dependencies remain fail-closed.

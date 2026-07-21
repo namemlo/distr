@@ -218,13 +218,14 @@ type CancelAcknowledgement struct {
 }
 
 type StatusRequest struct {
-	OrganizationID uuid.UUID
-	ExecutionID    uuid.UUID
-	RequestedBy    uuid.UUID
-	IdempotencyKey string
-	Reason         string
-	RequestedAt    time.Time
-	ExpiresAt      time.Time
+	OrganizationID      uuid.UUID
+	ExecutionID         uuid.UUID
+	RequestedBy         uuid.UUID
+	IdempotencyKey      string
+	Reason              string
+	RequestedAt         time.Time
+	ExpiresAt           time.Time
+	RequestedTTLSeconds int
 }
 
 type StatusQueryStatus string
@@ -236,17 +237,18 @@ const (
 )
 
 type ExecutionStatusQuery struct {
-	ID                 uuid.UUID         `db:"id" json:"id"`
-	CreatedAt          time.Time         `db:"created_at" json:"createdAt"`
-	OrganizationID     uuid.UUID         `db:"organization_id" json:"organizationId"`
-	ExecutionID        uuid.UUID         `db:"execution_id" json:"executionId"`
-	ExecutionAttemptID uuid.UUID         `db:"execution_attempt_id" json:"executionAttemptId"`
-	RequestedBy        uuid.UUID         `db:"requested_by" json:"requestedBy"`
-	IdempotencyKey     string            `db:"idempotency_key" json:"idempotencyKey"`
-	Reason             string            `db:"reason" json:"reason"`
-	Status             StatusQueryStatus `db:"status" json:"status"`
-	ExpiresAt          time.Time         `db:"expires_at" json:"expiresAt"`
-	ReportedAt         *time.Time        `db:"reported_at" json:"reportedAt,omitempty"`
+	ID                  uuid.UUID         `db:"id" json:"id"`
+	CreatedAt           time.Time         `db:"created_at" json:"createdAt"`
+	OrganizationID      uuid.UUID         `db:"organization_id" json:"organizationId"`
+	ExecutionID         uuid.UUID         `db:"execution_id" json:"executionId"`
+	ExecutionAttemptID  uuid.UUID         `db:"execution_attempt_id" json:"executionAttemptId"`
+	RequestedBy         uuid.UUID         `db:"requested_by" json:"requestedBy"`
+	IdempotencyKey      string            `db:"idempotency_key" json:"idempotencyKey"`
+	Reason              string            `db:"reason" json:"reason"`
+	Status              StatusQueryStatus `db:"status" json:"status"`
+	ExpiresAt           time.Time         `db:"expires_at" json:"expiresAt"`
+	RequestedTTLSeconds int               `db:"requested_ttl_seconds" json:"requestedTtlSeconds"`
+	ReportedAt          *time.Time        `db:"reported_at" json:"reportedAt,omitempty"`
 }
 
 type ReconciliationOutcome string
@@ -274,6 +276,7 @@ const (
 type ReconciliationStatusInput struct {
 	OrganizationID      uuid.UUID
 	ExecutionID         uuid.UUID
+	AttemptID           uuid.UUID
 	StatusQueryID       uuid.UUID
 	EventIdentity       uuid.UUID
 	Outcome             ReconciliationOutcome

@@ -25,8 +25,9 @@ releases its lease/resource claim.
 
 `ExecutionEvent` is append-only. Its idempotency identity is
 `(execution_id, attempt_number, step_key, event_sequence)`. An exact replay
-returns the original fact; a conflicting duplicate or out-of-order sequence is
-rejected.
+returns the original fact even after terminal completion or delivery-window
+expiry; it does not append progress. A conflicting duplicate or out-of-order
+sequence is rejected.
 
 The Hub signs these exact canonical intent bytes:
 
@@ -63,6 +64,10 @@ transition functions, v1 callback routes, or ADR-0052 retry rules.
 ## Consequences
 
 - A stale generation can never commit progress or a terminal outcome.
+- An expired intent cannot be extended by heartbeat. Expiry recovery fences the
+  attempt, advances the generation and releases the active resource claim.
+- Repeated task dispatch reuses only an existing attempt with the same immutable
+  execution identity and frozen inputs.
 - Exact duplicate delivery and callbacks are safe; conflicting duplicates fail
   securely.
 - Terminal completion and fencing release leases for restart/retry.

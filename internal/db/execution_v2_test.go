@@ -72,7 +72,8 @@ func TestCancelStatusAndReconciliationRepositoryValidation(t *testing.T) {
 	g.Expect(validateCancelRequest(cancel)).To(MatchError(ContainSubstring("idempotency")))
 
 	reconciliation := types.ReconciliationStatusInput{
-		OrganizationID: uuid.New(), ExecutionID: uuid.New(), StatusQueryID: uuid.New(),
+		OrganizationID: uuid.New(), ExecutionID: uuid.New(), AttemptID: uuid.New(),
+		StatusQueryID: uuid.New(),
 		EventIdentity: uuid.New(), Outcome: types.ReconciliationOutcomeUnknown,
 		EvidenceChecksum: "sha256:" + repeatDBHex("dd"), ObservedAt: time.Now().UTC(),
 		SignedEvidence: types.SignedReconciliationEvidence{

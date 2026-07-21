@@ -9,6 +9,7 @@ import (
 	"github.com/distr-sh/distr/internal/buildconfig"
 	internaldb "github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/env"
+	"github.com/distr-sh/distr/internal/executionruntime"
 	"github.com/distr-sh/distr/internal/frontend"
 	"github.com/distr-sh/distr/internal/handlers"
 	"github.com/distr-sh/distr/internal/middleware"
@@ -71,7 +72,12 @@ func NewRouter(
 	tracingTracers obsertracing.Tracers,
 	s3Client *s3.Client,
 	targetConfigObjectVerifier targetconfig.ObjectVerifier,
+	executionV2Dependencies ...executionruntime.Dependencies,
 ) http.Handler {
+	var executionDependencies executionruntime.Dependencies
+	if len(executionV2Dependencies) > 0 {
+		executionDependencies = executionV2Dependencies[0]
+	}
 	baseRouter := chi.NewRouter()
 	baseRouter.Use(
 		// Handles panics
@@ -113,6 +119,7 @@ func NewRouter(
 			tracingTracers,
 			s3Client,
 			targetConfigObjectVerifier,
+			executionDependencies,
 		),
 	)
 
@@ -135,6 +142,7 @@ func ApiRouter(
 	tracingTracers obsertracing.Tracers,
 	s3Client *s3.Client,
 	targetConfigObjectVerifier targetconfig.ObjectVerifier,
+	executionDependencies executionruntime.Dependencies,
 ) func(r chiopenapi.Router) {
 	requestSize1MiB := chimiddleware.RequestSize(1024 * 1024)
 	requestSize50MiB := chimiddleware.RequestSize(50 * 1024 * 1024)
@@ -156,6 +164,7 @@ func ApiRouter(
 				tracingTracers.Default,
 				s3Client,
 			),
+			executionruntime.ContextMiddleware(executionDependencies),
 		}
 		if metricsRecorder != nil {
 			baseMiddleware = append(baseMiddleware, obsermetrics.HTTPMiddleware(metricsRecorder))

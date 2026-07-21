@@ -71,7 +71,20 @@ func CreateExecutionAttempt(
 		if err := executionprotocol.VerifyExecutionIntent(intent, trustPolicy); err != nil {
 			return apierrors.NewBadRequest(err.Error())
 		}
-		_, err := db.Exec(ctx, `
+		existing, err := getExecutionAttemptByIdentity(
+			ctx, attempt.OrganizationID, attempt.Identity, true,
+		)
+		if err == nil {
+			if !executionprotocol.MatchesExecutionDispatch(*existing, attempt) {
+				return apierrors.NewConflict("conflicting duplicate execution attempt")
+			}
+			result = existing
+			return nil
+		}
+		if !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
+		_, err = db.Exec(ctx, `
 			INSERT INTO ExecutionAttempt (
 				id, organization_id, deployment_target_id, task_id, step_run_id, execution_id,
 				attempt_number, step_key, status, plan_checksum, artifact_digest,
@@ -133,6 +146,20 @@ func CreateExecutionAttempt(
 		result, err = getExecutionAttemptForUpdate(ctx, attempt.ID, attempt.OrganizationID)
 		return err
 	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+			existing, getErr := GetExecutionAttemptByIdentity(
+				ctx, attempt.OrganizationID, attempt.Identity,
+			)
+			if getErr == nil && executionprotocol.MatchesExecutionDispatch(*existing, attempt) {
+				return existing, nil
+			}
+			if getErr != nil && !errors.Is(getErr, apierrors.ErrNotFound) {
+				return nil, getErr
+			}
+		}
+	}
 	return result, err
 }
 
@@ -183,6 +210,7 @@ func ClaimExecutionAttempt(
 		return nil, err
 	}
 	var result *types.ExecutionAttempt
+	var committedConflict error
 	err := RunTx(ctx, func(ctx context.Context) error {
 		current, err := getExecutionAttemptForTargetUpdate(
 			ctx, request.AttemptID, request.OrganizationID, request.DeploymentTargetID,
@@ -193,25 +221,28 @@ func ClaimExecutionAttempt(
 		if current.Fence.Generation != request.ExpectedGeneration {
 			return apierrors.NewConflict("stale execution fence generation")
 		}
+		db := internalctx.GetDb(ctx)
+		var trustedNow time.Time
+		if err := db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&trustedNow); err != nil {
+			return fmt.Errorf("read trusted database time: %w", err)
+		}
+		if executionprotocol.ShouldFenceExpiredAttempt(*current, trustedNow) {
+			if err := fenceExecutionAttemptTx(
+				ctx, current.OrganizationID, current.DeploymentTargetID,
+				current.ID, "execution lease or intent expired",
+			); err != nil {
+				return err
+			}
+			committedConflict = apierrors.NewConflict("execution attempt was fenced after lease or intent expiry")
+			return nil
+		}
 		if current.Status == types.ExecutionAttemptStatusClaimed && current.ClaimedBy == request.ExecutorID {
-			var trustedNow time.Time
-			if err := internalctx.GetDb(ctx).QueryRow(
-				ctx, `SELECT clock_timestamp()`,
-			).Scan(&trustedNow); err != nil {
-				return fmt.Errorf("read trusted database time: %w", err)
-			}
-			if current.Fence.LeaseExpiresAt.IsZero() ||
-				!current.Fence.LeaseExpiresAt.After(trustedNow) ||
-				!current.IntentExpiresAt.After(trustedNow) {
-				return apierrors.NewConflict("execution claim lease or intent is expired")
-			}
 			result = current
 			return nil
 		}
 		if current.Status != types.ExecutionAttemptStatusPending {
 			return apierrors.NewConflict("execution attempt is not claimable")
 		}
-		db := internalctx.GetDb(ctx)
 		command, err := db.Exec(ctx, `
 			UPDATE ExecutionAttempt
 			SET status = 'CLAIMED', claimed_by = @executorId,
@@ -253,6 +284,9 @@ func ClaimExecutionAttempt(
 		)
 		return err
 	})
+	if err == nil && committedConflict != nil {
+		return nil, committedConflict
+	}
 	return result, err
 }
 
@@ -341,6 +375,7 @@ func HeartbeatExecutionAttempt(ctx context.Context, request types.HeartbeatReque
 			AND ea.organization_id = ef.organization_id
 			AND ea.deployment_target_id = @deploymentTargetId
 			AND ea.claimed_by = @executorId
+			AND ea.intent_expires_at > clock_timestamp()
 			AND ea.status IN ('CLAIMED', 'RUNNING')`,
 		pgx.NamedArgs{
 			"attemptId": request.AttemptID, "organizationId": request.OrganizationID,
@@ -376,6 +411,20 @@ func RecordExecutionEvent(
 		if attempt.Identity != input.Identity {
 			return apierrors.NewConflict("execution event identity mismatch")
 		}
+		existing, err := getExecutionEvent(
+			ctx, input.AttemptID, input.OrganizationID,
+			input.DeploymentTargetID, input.EventSequence,
+		)
+		if err == nil {
+			if !executionprotocol.IsExactExecutionEventReplay(*existing, input) {
+				return apierrors.NewConflict("conflicting duplicate execution event")
+			}
+			result = existing
+			return nil
+		}
+		if !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
 		if attempt.Fence.Generation != input.FenceGeneration {
 			return apierrors.NewConflict("stale execution fence generation")
 		}
@@ -395,24 +444,6 @@ func RecordExecutionEvent(
 		}
 		if err := executionprotocol.ValidateCallbackWindow(*attempt, trustedNow); err != nil {
 			return apierrors.NewConflict(err.Error())
-		}
-		existing, err := getExecutionEvent(
-			ctx, input.AttemptID, input.OrganizationID,
-			input.DeploymentTargetID, input.EventSequence,
-		)
-		if err == nil {
-			if existing.PayloadChecksum != input.PayloadChecksum ||
-				existing.Status != input.Status || existing.Message != input.Message ||
-				!existing.OccurredAt.Equal(input.OccurredAt.UTC()) ||
-				existing.Identity != input.Identity ||
-				existing.FenceGeneration != input.FenceGeneration {
-				return apierrors.NewConflict("conflicting duplicate execution event")
-			}
-			result = existing
-			return nil
-		}
-		if !errors.Is(err, apierrors.ErrNotFound) {
-			return err
 		}
 		if input.EventSequence != attempt.LastEventSequence+1 {
 			return apierrors.NewConflict("execution events must be ordered")
@@ -535,8 +566,17 @@ func FenceExecutionAttempt(
 		return apierrors.NewBadRequest("organizationId, deploymentTargetId, attemptId and reason are required")
 	}
 	return RunTx(ctx, func(ctx context.Context) error {
-		db := internalctx.GetDb(ctx)
-		command, err := db.Exec(ctx, `
+		return fenceExecutionAttemptTx(ctx, orgID, deploymentTargetID, attemptID, reason)
+	})
+}
+
+func fenceExecutionAttemptTx(
+	ctx context.Context,
+	orgID, deploymentTargetID, attemptID uuid.UUID,
+	reason string,
+) error {
+	db := internalctx.GetDb(ctx)
+	command, err := db.Exec(ctx, `
 			UPDATE ExecutionAttempt
 			SET status = 'FENCED', claimed_by = '', completed_at = now(),
 				updated_at = now(), failure_reason = @reason
@@ -544,27 +584,26 @@ func FenceExecutionAttempt(
 				AND organization_id = @organizationId
 				AND deployment_target_id = @deploymentTargetId
 				AND status IN ('PENDING', 'CLAIMED', 'RUNNING')`,
-			pgx.NamedArgs{
-				"attemptId": attemptID, "organizationId": orgID,
-				"deploymentTargetId": deploymentTargetID,
-				"reason":             strings.TrimSpace(reason),
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("fence ExecutionAttempt: %w", err)
-		}
-		if command.RowsAffected() != 1 {
-			return apierrors.NewConflict("execution attempt cannot be fenced")
-		}
-		_, err = db.Exec(ctx, `
+		pgx.NamedArgs{
+			"attemptId": attemptID, "organizationId": orgID,
+			"deploymentTargetId": deploymentTargetID,
+			"reason":             strings.TrimSpace(reason),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("fence ExecutionAttempt: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return apierrors.NewConflict("execution attempt cannot be fenced")
+	}
+	_, err = db.Exec(ctx, `
 			UPDATE ExecutionFence
 			SET generation = generation + 1, lease_expires_at = NULL, released_at = now()
 			WHERE execution_attempt_id = @attemptId
 				AND organization_id = @organizationId`,
-			pgx.NamedArgs{"attemptId": attemptID, "organizationId": orgID},
-		)
-		return err
-	})
+		pgx.NamedArgs{"attemptId": attemptID, "organizationId": orgID},
+	)
+	return err
 }
 
 func validateExecutionV2ClaimRequest(request types.ClaimRequest) error {
@@ -685,6 +724,45 @@ func getExecutionAttemptForTargetUpdate(
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get target-scoped ExecutionAttempt: %w", err)
+	}
+	return attempt, nil
+}
+
+func GetExecutionAttemptByIdentity(
+	ctx context.Context,
+	orgID uuid.UUID,
+	identity types.ExecutionIdentity,
+) (*types.ExecutionAttempt, error) {
+	return getExecutionAttemptByIdentity(ctx, orgID, identity, false)
+}
+
+func getExecutionAttemptByIdentity(
+	ctx context.Context,
+	orgID uuid.UUID,
+	identity types.ExecutionIdentity,
+	forUpdate bool,
+) (*types.ExecutionAttempt, error) {
+	query := executionAttemptSelect + `
+		WHERE ea.organization_id = @organizationId
+			AND ea.execution_id = @executionId
+			AND ea.attempt_number = @attemptNumber
+			AND ea.step_key = @stepKey`
+	if forUpdate {
+		query += ` FOR UPDATE OF ea, ef`
+	}
+	attempt, err := scanExecutionAttempt(internalctx.GetDb(ctx).QueryRow(
+		ctx,
+		query,
+		pgx.NamedArgs{
+			"organizationId": orgID, "executionId": identity.ExecutionID,
+			"attemptNumber": identity.AttemptNumber, "stepKey": identity.StepKey,
+		},
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get ExecutionAttempt by identity: %w", err)
 	}
 	return attempt, nil
 }
@@ -884,11 +962,13 @@ func RequestExecutionStatus(
 		command, err := db.Exec(ctx, `
 			INSERT INTO ExecutionStatusQuery (
 				organization_id, execution_id, execution_attempt_id,
-				requested_by, idempotency_key, reason, created_at, expires_at
+				requested_by, idempotency_key, reason, created_at, expires_at,
+				requested_ttl_seconds
 			) VALUES (
 				@organizationId, @executionId, @attemptId,
 				@requestedBy, @idempotencyKey, @reason, clock_timestamp(),
-				clock_timestamp() + @ttl
+				clock_timestamp() + make_interval(secs => @ttlSeconds),
+				@ttlSeconds
 			)
 			ON CONFLICT (
 				organization_id, execution_attempt_id, idempotency_key
@@ -897,7 +977,7 @@ func RequestExecutionStatus(
 				"organizationId": request.OrganizationID, "executionId": request.ExecutionID,
 				"attemptId": attempt.ID, "requestedBy": request.RequestedBy,
 				"idempotencyKey": request.IdempotencyKey, "reason": request.Reason,
-				"ttl": request.ExpiresAt.Sub(request.RequestedAt),
+				"ttlSeconds": request.RequestedTTLSeconds,
 			},
 		)
 		if err != nil {
@@ -910,7 +990,7 @@ func RequestExecutionStatus(
 			return err
 		}
 		if command.RowsAffected() == 0 &&
-			(result.RequestedBy != request.RequestedBy || result.Reason != request.Reason) {
+			!executionprotocol.IsExactDuplicateStatus(*result, request) {
 			return apierrors.NewConflict("conflicting duplicate execution status query")
 		}
 		return nil
@@ -926,6 +1006,22 @@ func ImportReconciliationStatus(
 		return err
 	}
 	return RunTx(ctx, func(ctx context.Context) error {
+		existing, err := getExecutionReconciliationEventByIdentity(
+			ctx, input.OrganizationID, input.EventIdentity,
+		)
+		if err == nil {
+			if !executionprotocol.IsExactReconciliationReplay(
+				*existing,
+				input,
+				types.ReconciliationDecision{RetryDisposition: existing.RetryDisposition},
+			) {
+				return apierrors.NewConflict("conflicting duplicate reconciliation event")
+			}
+			return nil
+		}
+		if !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
 		query, err := getExecutionStatusQueryByIDForUpdate(
 			ctx, input.StatusQueryID, input.OrganizationID,
 		)
@@ -934,6 +1030,9 @@ func ImportReconciliationStatus(
 		}
 		if query.ExecutionID != input.ExecutionID {
 			return apierrors.NewConflict("reconciliation status query identity mismatch")
+		}
+		if query.ExecutionAttemptID != input.AttemptID {
+			return apierrors.NewConflict("reconciliation attempt identity mismatch")
 		}
 		db := internalctx.GetDb(ctx)
 		var trustedNow time.Time
@@ -1076,7 +1175,7 @@ func GetPendingExecutionStatusQuery(
 	query, err := scanExecutionStatusQuery(db.QueryRow(ctx, `
 		SELECT esq.id, esq.created_at, esq.organization_id, esq.execution_id,
 			esq.execution_attempt_id, esq.requested_by, esq.idempotency_key, esq.reason,
-			esq.status, esq.expires_at, esq.reported_at
+			esq.status, esq.expires_at, esq.requested_ttl_seconds, esq.reported_at
 		FROM ExecutionStatusQuery esq
 		JOIN ExecutionAttempt ea
 			ON ea.id = esq.execution_attempt_id
@@ -1120,7 +1219,9 @@ func validateStatusRequest(request types.StatusRequest) error {
 	if request.OrganizationID == uuid.Nil || request.ExecutionID == uuid.Nil ||
 		request.RequestedBy == uuid.Nil || strings.TrimSpace(request.IdempotencyKey) == "" ||
 		strings.TrimSpace(request.Reason) == "" || request.RequestedAt.IsZero() ||
-		ttl < 30*time.Second || ttl > time.Hour {
+		ttl < 30*time.Second || ttl > time.Hour ||
+		request.RequestedTTLSeconds < 30 || request.RequestedTTLSeconds > 3600 ||
+		ttl != time.Duration(request.RequestedTTLSeconds)*time.Second {
 		return apierrors.NewBadRequest("execution status request is invalid")
 	}
 	return nil
@@ -1128,7 +1229,8 @@ func validateStatusRequest(request types.StatusRequest) error {
 
 func validateReconciliationStatusInput(input types.ReconciliationStatusInput) error {
 	if input.OrganizationID == uuid.Nil || input.ExecutionID == uuid.Nil ||
-		input.StatusQueryID == uuid.Nil || input.EventIdentity == uuid.Nil ||
+		input.AttemptID == uuid.Nil || input.StatusQueryID == uuid.Nil ||
+		input.EventIdentity == uuid.Nil ||
 		!input.Outcome.IsValid() || !intentChecksumPatternDB.MatchString(input.EvidenceChecksum) ||
 		input.ObservedAt.IsZero() || len(input.SignedEvidence.Payload) == 0 ||
 		!intentChecksumPatternDB.MatchString(input.SignedEvidence.Checksum) ||
@@ -1209,7 +1311,7 @@ func getExecutionStatusQueryByIdempotency(
 	query := `
 		SELECT id, created_at, organization_id, execution_id,
 			execution_attempt_id, requested_by, idempotency_key, reason,
-			status, expires_at, reported_at
+			status, expires_at, requested_ttl_seconds, reported_at
 		FROM ExecutionStatusQuery
 		WHERE organization_id = @organizationId
 			AND execution_attempt_id = @attemptId
@@ -1236,7 +1338,7 @@ func getExecutionStatusQueryByIDForUpdate(
 	result, err := scanExecutionStatusQuery(db.QueryRow(ctx, `
 		SELECT id, created_at, organization_id, execution_id,
 			execution_attempt_id, requested_by, idempotency_key, reason,
-			status, expires_at, reported_at
+			status, expires_at, requested_ttl_seconds, reported_at
 		FROM ExecutionStatusQuery
 		WHERE id = @id AND organization_id = @organizationId
 		FOR UPDATE`,
@@ -1256,7 +1358,41 @@ func scanExecutionStatusQuery(row rowScanner) (*types.ExecutionStatusQuery, erro
 	err := row.Scan(
 		&query.ID, &query.CreatedAt, &query.OrganizationID, &query.ExecutionID,
 		&query.ExecutionAttemptID, &query.RequestedBy, &query.IdempotencyKey,
-		&query.Reason, &query.Status, &query.ExpiresAt, &query.ReportedAt,
+		&query.Reason, &query.Status, &query.ExpiresAt, &query.RequestedTTLSeconds,
+		&query.ReportedAt,
 	)
 	return &query, err
+}
+
+func getExecutionReconciliationEventByIdentity(
+	ctx context.Context,
+	orgID, eventIdentity uuid.UUID,
+) (*types.ExecutionReconciliationEvent, error) {
+	db := internalctx.GetDb(ctx)
+	var event types.ExecutionReconciliationEvent
+	err := db.QueryRow(ctx, `
+		SELECT id, created_at, organization_id, execution_id,
+			execution_attempt_id, status_query_id, event_identity, outcome,
+			evidence_checksum, evidence_payload, evidence_envelope_checksum,
+			evidence_key_id, evidence_signature, observed_at,
+			operation_incomplete, retry_requested, retry_disposition
+		FROM ExecutionReconciliationEvent
+		WHERE organization_id = @organizationId
+			AND event_identity = @eventIdentity`,
+		pgx.NamedArgs{"organizationId": orgID, "eventIdentity": eventIdentity},
+	).Scan(
+		&event.ID, &event.CreatedAt, &event.OrganizationID, &event.ExecutionID,
+		&event.ExecutionAttemptID, &event.StatusQueryID, &event.EventIdentity,
+		&event.Outcome, &event.EvidenceChecksum, &event.EvidencePayload,
+		&event.EvidenceEnvelopeChecksum, &event.EvidenceKeyID, &event.EvidenceSignature,
+		&event.ObservedAt, &event.OperationIncomplete, &event.RetryRequested,
+		&event.RetryDisposition,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get ExecutionReconciliationEvent: %w", err)
+	}
+	return &event, nil
 }

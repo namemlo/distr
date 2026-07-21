@@ -59,6 +59,27 @@ func TestCancelStatusAndReconciliationRequests(t *testing.T) {
 	g.Expect(reconciliation.Validate()).To(MatchError(ContainSubstring("signed reconciliation")))
 }
 
+func TestReconciliationEvidenceConversionPreservesAttemptBinding(t *testing.T) {
+	g := NewWithT(t)
+	evidence := types.ReconciliationEvidence{
+		OrganizationID: uuid.New(), ExecutionID: uuid.New(), AttemptID: uuid.New(),
+		StatusQueryID: uuid.New(), EventIdentity: uuid.New(),
+		Outcome: types.ReconciliationOutcomeUnknown,
+	}
+	input := ReconciliationEvidenceToTypes(evidence, types.SignedReconciliationEvidence{})
+	g.Expect(input.AttemptID).To(Equal(evidence.AttemptID))
+}
+
+func TestExecutionStatusRequestPreservesRequestedTTL(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	request := ExecutionStatusRequest{
+		IdempotencyKey: "status-1", Reason: "callback missing", ExpiresInSeconds: 75,
+	}
+	input := request.ToTypes(uuid.New(), uuid.New(), uuid.New(), now)
+	g.Expect(input.RequestedTTLSeconds).To(Equal(75))
+}
+
 func repeatAPIHex(pair string) string {
 	result := ""
 	for range 32 {

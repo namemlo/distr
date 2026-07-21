@@ -99,3 +99,40 @@ func TestReconciliationRequiresNewEventIdentity(t *testing.T) {
 	g.Expect(ValidateReconciliationEventIdentity(uuid.New(), []types.ExecutionReconciliationEvent{existing})).
 		To(Succeed())
 }
+
+func TestStatusQueryDuplicateRequiresSameRequestedTTL(t *testing.T) {
+	g := NewWithT(t)
+	existing := types.ExecutionStatusQuery{
+		ExecutionID: uuid.New(), RequestedBy: uuid.New(), IdempotencyKey: "status-1",
+		Reason: "callback missing", RequestedTTLSeconds: 60,
+	}
+	request := types.StatusRequest{
+		ExecutionID: existing.ExecutionID, RequestedBy: existing.RequestedBy,
+		IdempotencyKey: existing.IdempotencyKey, Reason: existing.Reason,
+		RequestedTTLSeconds: 60,
+	}
+	g.Expect(IsExactDuplicateStatus(existing, request)).To(BeTrue())
+	request.RequestedTTLSeconds = 90
+	g.Expect(IsExactDuplicateStatus(existing, request)).To(BeFalse())
+}
+
+func TestExpiredAttemptRecoveryDecisionUsesLeaseAndIntent(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 7, 0, 0, 0, time.UTC)
+	active := types.ExecutionAttempt{
+		Status:          types.ExecutionAttemptStatusRunning,
+		IntentExpiresAt: now.Add(time.Minute),
+		Fence:           types.ExecutionFence{LeaseExpiresAt: now.Add(time.Minute)},
+	}
+	g.Expect(ShouldFenceExpiredAttempt(active, now)).To(BeFalse())
+
+	leaseExpired := active
+	leaseExpired.Fence.LeaseExpiresAt = now.Add(-time.Second)
+	g.Expect(ShouldFenceExpiredAttempt(leaseExpired, now)).To(BeTrue())
+
+	pendingIntentExpired := active
+	pendingIntentExpired.Status = types.ExecutionAttemptStatusPending
+	pendingIntentExpired.Fence.LeaseExpiresAt = time.Time{}
+	pendingIntentExpired.IntentExpiresAt = now.Add(-time.Second)
+	g.Expect(ShouldFenceExpiredAttempt(pendingIntentExpired, now)).To(BeTrue())
+}

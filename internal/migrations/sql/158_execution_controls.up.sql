@@ -95,6 +95,9 @@ CREATE TABLE ExecutionStatusQuery (
     status IN ('PENDING', 'REPORTED', 'EXPIRED')
   ),
   expires_at TIMESTAMPTZ NOT NULL,
+  requested_ttl_seconds INTEGER NOT NULL CHECK (
+    requested_ttl_seconds BETWEEN 30 AND 3600
+  ),
   reported_at TIMESTAMPTZ,
   CONSTRAINT executionstatusquery_attempt_fk
     FOREIGN KEY (
@@ -128,7 +131,9 @@ CREATE TABLE ExecutionStatusQuery (
 
 ALTER TABLE ExecutionStatusQuery
   ADD CONSTRAINT executionstatusquery_id_org_execution_unique
-    UNIQUE (id, organization_id, execution_id);
+    UNIQUE (id, organization_id, execution_id),
+  ADD CONSTRAINT executionstatusquery_id_org_execution_attempt_unique
+    UNIQUE (id, organization_id, execution_id, execution_attempt_id);
 
 CREATE TABLE ExecutionReconciliationEvent (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -178,16 +183,18 @@ CREATE TABLE ExecutionReconciliationEvent (
     )
     ON UPDATE NO ACTION
     ON DELETE CASCADE,
-  CONSTRAINT executionreconciliationevent_query_fk
+  CONSTRAINT executionreconciliationevent_query_attempt_fk
     FOREIGN KEY (
       status_query_id,
       organization_id,
-      execution_id
+      execution_id,
+      execution_attempt_id
     )
     REFERENCES ExecutionStatusQuery(
       id,
       organization_id,
-      execution_id
+      execution_id,
+      execution_attempt_id
     )
     ON UPDATE NO ACTION
     ON DELETE CASCADE,

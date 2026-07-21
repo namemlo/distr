@@ -64,6 +64,10 @@ func (m *StateMachine) Heartbeat(request types.HeartbeatRequest) error {
 	if request.ExecutorID != m.attempt.ClaimedBy {
 		return errors.New("execution attempt is owned by another executor")
 	}
+	if !m.attempt.IntentExpiresAt.IsZero() &&
+		!m.attempt.IntentExpiresAt.After(request.Now.UTC()) {
+		return errors.New("execution attempt intent is expired")
+	}
 	if m.attempt.Status != types.ExecutionAttemptStatusClaimed &&
 		m.attempt.Status != types.ExecutionAttemptStatusRunning {
 		return errors.New("execution attempt does not accept heartbeats")
@@ -106,6 +110,12 @@ func (m *StateMachine) RecordEvent(
 	if input.AttemptID != m.attempt.ID || input.Identity != m.attempt.Identity {
 		return types.ExecutionEvent{}, false, errors.New("execution event identity mismatch")
 	}
+	if existing, ok := m.events[input.EventSequence]; ok {
+		if !IsExactExecutionEventReplay(existing, input) {
+			return types.ExecutionEvent{}, false, errors.New("conflicting duplicate execution event")
+		}
+		return existing, true, nil
+	}
 	if input.FenceGeneration != m.attempt.Fence.Generation {
 		return types.ExecutionEvent{}, false, errors.New("stale fence generation")
 	}
@@ -116,16 +126,6 @@ func (m *StateMachine) RecordEvent(
 	}
 	if !m.attempt.Fence.LeaseExpiresAt.After(input.OccurredAt.UTC()) {
 		return types.ExecutionEvent{}, false, errors.New("execution attempt lease is lost")
-	}
-	if existing, ok := m.events[input.EventSequence]; ok {
-		if existing.PayloadChecksum != input.PayloadChecksum ||
-			existing.Status != input.Status || existing.Message != input.Message ||
-			!existing.OccurredAt.Equal(input.OccurredAt.UTC()) ||
-			existing.Identity != input.Identity ||
-			existing.FenceGeneration != input.FenceGeneration {
-			return types.ExecutionEvent{}, false, errors.New("conflicting duplicate execution event")
-		}
-		return existing, true, nil
 	}
 	if input.EventSequence != m.attempt.LastEventSequence+1 {
 		return types.ExecutionEvent{}, false, errors.New("execution events must be ordered")

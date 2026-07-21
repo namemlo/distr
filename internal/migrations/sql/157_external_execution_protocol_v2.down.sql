@@ -1,6 +1,16 @@
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM ExecutionAttempt) THEN
+  LOCK TABLE
+    ExecutionAttempt,
+    ExecutionFence,
+    ExecutionIntent,
+    ExecutionEvent
+  IN ACCESS EXCLUSIVE MODE;
+
+  IF EXISTS (SELECT 1 FROM ExecutionAttempt)
+     OR EXISTS (SELECT 1 FROM ExecutionFence)
+     OR EXISTS (SELECT 1 FROM ExecutionIntent)
+     OR EXISTS (SELECT 1 FROM ExecutionEvent) THEN
     RAISE EXCEPTION
       'refusing migration 157 rollback while execution v2 evidence exists';
   END IF;

@@ -17,11 +17,15 @@ Migration 158 adds:
 
 It extends the protocol-v2 attempt status constraint with `UNKNOWN`. Every
 control row is organization- and execution-scoped. Cancel and status duplicate
-keys are idempotent only when their immutable request fields match. Every
-reconciliation import requires a new event identity.
+keys are idempotent only when their immutable request fields, including the
+requested status-query TTL, match. Reconciliation evidence is bound to the
+exact status query and attempt in both repository checks and foreign keys.
+Every new reconciliation fact requires a new event identity; an exact signed
+request replay returns the stored fact so interrupted campaign delivery can be
+resumed safely.
 
-Rollback is refused while control/reconciliation evidence or unknown attempts
-exist.
+Rollback locks the attempt and all control/evidence tables before checking and
+is refused while control/reconciliation evidence or unknown attempts exist.
 
 ## API
 
@@ -55,6 +59,9 @@ acknowledgement use the credential-derived organization and current fence.
   operation is proven incomplete, the reconciliation outcome is `UNKNOWN`, and
   retry was explicitly requested.
 - Reconciliation terminalizes the attempt and releases its fence lease.
+- An exact reconciliation replay is idempotent. This allows a failed campaign
+  control handoff to retry after the evidence transaction has committed;
+  conflicting reuse of the event identity remains rejected.
 
 ## Synthetic-base campaign seam
 

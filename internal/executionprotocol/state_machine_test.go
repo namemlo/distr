@@ -162,3 +162,91 @@ func TestExecutionV2CrashRecoveryTimeoutAndRestart(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(restarted.Attempt().Status).To(Equal(types.ExecutionAttemptStatusTimedOut))
 }
+
+func TestExecutionV2HeartbeatRejectsExpiredIntent(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
+	attempt := types.ExecutionAttempt{
+		ID: uuid.New(), Identity: types.ExecutionIdentity{
+			ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy",
+		},
+		Status:          types.ExecutionAttemptStatusRunning,
+		ClaimedBy:       "executor-a",
+		IntentExpiresAt: now.Add(-time.Second),
+		Fence: types.ExecutionFence{
+			ResourceKey: "target:1", Generation: 1, LeaseExpiresAt: now.Add(time.Minute),
+		},
+	}
+	machine, err := NewStateMachine(attempt)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	err = machine.Heartbeat(types.HeartbeatRequest{
+		AttemptID: attempt.ID, ExecutorID: "executor-a", FenceGeneration: 1,
+		Now: now, LeaseDuration: time.Minute,
+	})
+	g.Expect(err).To(MatchError(ContainSubstring("intent")))
+}
+
+func TestExecutionV2ExactEventReplaySurvivesTerminalCompletion(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
+	attempt := types.ExecutionAttempt{
+		ID: uuid.New(), Identity: types.ExecutionIdentity{
+			ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy",
+		},
+		Status: types.ExecutionAttemptStatusRunning, ClaimedBy: "executor-a",
+		IntentExpiresAt: now.Add(time.Minute),
+		Fence: types.ExecutionFence{
+			ResourceKey: "target:1", Generation: 1, LeaseExpiresAt: now.Add(time.Minute),
+		},
+	}
+	machine, err := NewStateMachine(attempt)
+	g.Expect(err).NotTo(HaveOccurred())
+	eventInput := types.ExecutionEventInput{
+		AttemptID: attempt.ID, ExecutorID: "executor-a", Identity: attempt.Identity,
+		FenceGeneration: 1, EventSequence: 1, Status: types.ExecutionEventStatusRunning,
+		PayloadChecksum: "sha256:" + repeatHex("ab"), OccurredAt: now,
+	}
+	first, duplicate, err := machine.RecordEvent(eventInput)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(duplicate).To(BeFalse())
+	g.Expect(machine.Complete(types.CompletionInput{
+		AttemptID: attempt.ID, ExecutorID: "executor-a", FenceGeneration: 1,
+		Status: types.ExecutionAttemptStatusSucceeded, CompletedAt: now.Add(time.Second),
+	})).To(Succeed())
+
+	replayed, duplicate, err := machine.RecordEvent(eventInput)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(duplicate).To(BeTrue())
+	g.Expect(replayed.ID).To(Equal(first.ID))
+}
+
+func TestExecutionV2ExactEventReplaySurvivesFenceGenerationAdvance(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 18, 5, 30, 0, 0, time.UTC)
+	attempt := types.ExecutionAttempt{
+		ID: uuid.New(), Identity: types.ExecutionIdentity{
+			ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy",
+		},
+		Status: types.ExecutionAttemptStatusRunning, ClaimedBy: "executor-a",
+		Fence: types.ExecutionFence{
+			ResourceKey: "target:1", Generation: 3, LeaseExpiresAt: now.Add(time.Minute),
+		},
+	}
+	machine, err := NewStateMachine(attempt)
+	g.Expect(err).NotTo(HaveOccurred())
+	eventInput := types.ExecutionEventInput{
+		AttemptID: attempt.ID, ExecutorID: "executor-a", Identity: attempt.Identity,
+		FenceGeneration: 3, EventSequence: 1, Status: types.ExecutionEventStatusRunning,
+		PayloadChecksum: "sha256:" + repeatHex("cd"), OccurredAt: now,
+	}
+	first, _, err := machine.RecordEvent(eventInput)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = machine.Fence("lease expired", now.Add(time.Minute))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	replayed, duplicate, err := machine.RecordEvent(eventInput)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(duplicate).To(BeTrue())
+	g.Expect(replayed.ID).To(Equal(first.ID))
+}

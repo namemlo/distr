@@ -1,5 +1,12 @@
 DO $$
 BEGIN
+  LOCK TABLE
+    ExecutionAttempt,
+    ExecutionCancelRequest,
+    ExecutionStatusQuery,
+    ExecutionReconciliationEvent
+  IN ACCESS EXCLUSIVE MODE;
+
   IF EXISTS (SELECT 1 FROM ExecutionCancelRequest)
      OR EXISTS (SELECT 1 FROM ExecutionStatusQuery)
      OR EXISTS (SELECT 1 FROM ExecutionReconciliationEvent)

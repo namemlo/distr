@@ -1,6 +1,7 @@
 package executionprotocol
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -9,6 +10,82 @@ import (
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
+
+func MatchesExecutionDispatch(existing, candidate types.ExecutionAttempt) bool {
+	return existing.OrganizationID == candidate.OrganizationID &&
+		existing.DeploymentTargetID == candidate.DeploymentTargetID &&
+		existing.TaskID == candidate.TaskID &&
+		existing.StepRunID == candidate.StepRunID &&
+		existing.Identity == candidate.Identity &&
+		existing.PlanChecksum == candidate.PlanChecksum &&
+		existing.ArtifactDigest == candidate.ArtifactDigest &&
+		existing.ConfigChecksum == candidate.ConfigChecksum &&
+		existing.AdapterRevision == candidate.AdapterRevision &&
+		existing.Cancellable == candidate.Cancellable &&
+		existing.RetrySafe == candidate.RetrySafe &&
+		existing.Fence.ResourceKey == candidate.Fence.ResourceKey
+}
+
+func IsExactExecutionEventReplay(
+	existing types.ExecutionEvent,
+	input types.ExecutionEventInput,
+) bool {
+	return existing.PayloadChecksum == input.PayloadChecksum &&
+		existing.Status == input.Status && existing.Message == input.Message &&
+		existing.OccurredAt.Equal(input.OccurredAt.UTC()) &&
+		existing.Identity == input.Identity &&
+		existing.FenceGeneration == input.FenceGeneration
+}
+
+func IsExactReconciliationReplay(
+	existing types.ExecutionReconciliationEvent,
+	input types.ReconciliationStatusInput,
+	decision types.ReconciliationDecision,
+) bool {
+	return existing.OrganizationID == input.OrganizationID &&
+		existing.ExecutionID == input.ExecutionID &&
+		existing.ExecutionAttemptID == input.AttemptID &&
+		existing.StatusQueryID == input.StatusQueryID &&
+		existing.EventIdentity == input.EventIdentity &&
+		existing.Outcome == input.Outcome &&
+		existing.EvidenceChecksum == input.EvidenceChecksum &&
+		bytes.Equal(existing.EvidencePayload, input.SignedEvidence.Payload) &&
+		existing.EvidenceEnvelopeChecksum == input.SignedEvidence.Checksum &&
+		existing.EvidenceKeyID == input.SignedEvidence.KeyID &&
+		existing.EvidenceSignature == input.SignedEvidence.Signature &&
+		existing.ObservedAt.Equal(input.ObservedAt.UTC()) &&
+		existing.OperationIncomplete == input.OperationIncomplete &&
+		existing.RetryRequested == input.RetryRequested &&
+		existing.RetryDisposition == decision.RetryDisposition
+}
+
+func IsExactDuplicateStatus(
+	existing types.ExecutionStatusQuery,
+	request types.StatusRequest,
+) bool {
+	return existing.OrganizationID == request.OrganizationID &&
+		existing.ExecutionID == request.ExecutionID &&
+		existing.RequestedBy == request.RequestedBy &&
+		existing.IdempotencyKey == request.IdempotencyKey &&
+		existing.Reason == request.Reason &&
+		existing.RequestedTTLSeconds == request.RequestedTTLSeconds
+}
+
+func ShouldFenceExpiredAttempt(attempt types.ExecutionAttempt, now time.Time) bool {
+	if attempt.Status.IsTerminal() {
+		return false
+	}
+	now = now.UTC()
+	if !attempt.IntentExpiresAt.IsZero() && !attempt.IntentExpiresAt.After(now) {
+		return true
+	}
+	if attempt.Status == types.ExecutionAttemptStatusClaimed ||
+		attempt.Status == types.ExecutionAttemptStatusRunning {
+		return attempt.Fence.LeaseExpiresAt.IsZero() ||
+			!attempt.Fence.LeaseExpiresAt.After(now)
+	}
+	return false
+}
 
 var ErrObserverNotAuthorized = errors.New("reconciliation observer is not authorized")
 
@@ -33,6 +110,7 @@ func ReconcileVerifiedEvidence(
 	}
 	return ReconcileCallbackLoss(attempt, types.ReconciliationStatusInput{
 		OrganizationID: evidence.OrganizationID, ExecutionID: evidence.ExecutionID,
+		AttemptID:     evidence.AttemptID,
 		StatusQueryID: evidence.StatusQueryID, EventIdentity: evidence.EventIdentity,
 		Outcome: evidence.Outcome, EvidenceChecksum: evidence.EvidenceChecksum,
 		ObservedAt: evidence.ObservedAt, OperationIncomplete: evidence.OperationIncomplete,
@@ -166,7 +244,7 @@ func WithCampaignControlCoordinator(
 func BridgeCampaignCancelIfConfigured(ctx context.Context, executionID uuid.UUID) error {
 	coordinator, _ := ctx.Value(campaignControlCoordinatorContextKey{}).(*CampaignControlCoordinator)
 	if coordinator == nil {
-		return nil
+		return errors.New("campaign execution control bridge is not configured")
 	}
 	return coordinator.Cancel(ctx, executionID)
 }
@@ -178,7 +256,7 @@ func BridgeCampaignRetryIfConfigured(
 ) error {
 	coordinator, _ := ctx.Value(campaignControlCoordinatorContextKey{}).(*CampaignControlCoordinator)
 	if coordinator == nil {
-		return nil
+		return errors.New("campaign execution control bridge is not configured")
 	}
 	return coordinator.Retry(ctx, executionID, disposition)
 }

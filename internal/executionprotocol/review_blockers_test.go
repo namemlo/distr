@@ -112,3 +112,66 @@ func TestCampaignControlCoordinatorInvokesBridge(t *testing.T) {
 	g.Expect(bridge.cancelled).To(Equal(executionID))
 	g.Expect(bridge.retried).To(Equal(executionID))
 }
+
+func TestCampaignControlSeamFailsClosedWhenNotBound(t *testing.T) {
+	g := NewWithT(t)
+	executionID := uuid.New()
+	g.Expect(BridgeCampaignCancelIfConfigured(context.Background(), executionID)).
+		To(MatchError(ContainSubstring("not configured")))
+	g.Expect(BridgeCampaignRetryIfConfigured(
+		context.Background(), executionID, types.RetryDispositionAllowed,
+	)).To(MatchError(ContainSubstring("not configured")))
+}
+
+func TestExecutionDispatchReplayMatchesFrozenInputsNotEnvelopeIdentity(t *testing.T) {
+	g := NewWithT(t)
+	existing := types.ExecutionAttempt{
+		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		TaskID: uuid.New(), StepRunID: uuid.New(), Identity: types.ExecutionIdentity{
+			ExecutionID: uuid.New(), AttemptNumber: 2, StepKey: "deploy",
+		},
+		PlanChecksum:   "sha256:" + repeatHex("11"),
+		ArtifactDigest: "sha256:" + repeatHex("22"),
+		ConfigChecksum: "sha256:" + repeatHex("33"), AdapterRevision: "compose@2",
+		Cancellable: true, RetrySafe: true,
+		Fence: types.ExecutionFence{ResourceKey: "target:1", Generation: 4},
+	}
+	replay := existing
+	replay.ID = uuid.New()
+	replay.IntentIssuedAt = time.Now().UTC()
+	replay.IntentExpiresAt = replay.IntentIssuedAt.Add(time.Minute)
+	replay.Fence.Generation = 1
+	g.Expect(MatchesExecutionDispatch(existing, replay)).To(BeTrue())
+
+	replay.ConfigChecksum = "sha256:" + repeatHex("44")
+	g.Expect(MatchesExecutionDispatch(existing, replay)).To(BeFalse())
+}
+
+func TestExactReconciliationReplayCanResumeCampaignDelivery(t *testing.T) {
+	g := NewWithT(t)
+	input := types.ReconciliationStatusInput{
+		OrganizationID: uuid.New(), ExecutionID: uuid.New(), AttemptID: uuid.New(),
+		StatusQueryID: uuid.New(), EventIdentity: uuid.New(),
+		Outcome:          types.ReconciliationOutcomeUnknown,
+		EvidenceChecksum: "sha256:" + repeatHex("55"), ObservedAt: time.Now().UTC(),
+		OperationIncomplete: true, RetryRequested: true,
+		SignedEvidence: types.SignedReconciliationEvidence{
+			Payload:  []byte(`{"outcome":"UNKNOWN"}`),
+			Checksum: "sha256:" + repeatHex("66"), KeyID: "sha256:" + repeatHex("77"),
+			Signature: "signature",
+		},
+	}
+	existing := types.ExecutionReconciliationEvent{
+		OrganizationID: input.OrganizationID, ExecutionID: input.ExecutionID,
+		ExecutionAttemptID: input.AttemptID, StatusQueryID: input.StatusQueryID,
+		EventIdentity: input.EventIdentity, Outcome: input.Outcome,
+		EvidenceChecksum: input.EvidenceChecksum, EvidencePayload: input.SignedEvidence.Payload,
+		EvidenceEnvelopeChecksum: input.SignedEvidence.Checksum,
+		EvidenceKeyID:            input.SignedEvidence.KeyID, EvidenceSignature: input.SignedEvidence.Signature,
+		ObservedAt: input.ObservedAt, OperationIncomplete: true, RetryRequested: true,
+		RetryDisposition: types.RetryDispositionAllowed,
+	}
+	g.Expect(IsExactReconciliationReplay(existing, input, types.ReconciliationDecision{
+		Status: types.ExecutionAttemptStatusUnknown, RetryDisposition: types.RetryDispositionAllowed,
+	})).To(BeTrue())
+}
