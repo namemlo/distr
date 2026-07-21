@@ -1464,7 +1464,9 @@ Use one entry per pull request:
   scope references and immutable Target Config Snapshots, and inspect the adapter version/config/key fingerprints
   frozen per plan step. Unsupported backup requirements fail closed.
 - Database changes: Migration 156 adds `AdapterImplementation`, `AdapterCapability`, `AdapterAssignment`, and
-  append-only `DeploymentPlanStepAdapter`. Rollback refuses while frozen plan adapter evidence exists.
+  append-only `DeploymentPlanStepAdapter`. Rollback takes an exclusive lock across the adapter catalog, assignments,
+  plan-step bindings, and affected plan steps, then refuses while any adapter implementation, capability, assignment,
+  or frozen plan-step adapter data exists.
 - API changes: Adds cursor-paginated `GET|POST /api/v1/adapter-implementations`,
   `GET|POST /api/v1/adapter-assignments`, and additive read-only `stepAdapters` on Deployment Plan responses.
 - UI changes: None.

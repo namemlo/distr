@@ -3,6 +3,7 @@ package db
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -28,6 +29,48 @@ func TestAdapterAssignmentMigrationFreezesVersionConfigAndKeyFingerprints(t *tes
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "156_adapter_assignments.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(down)).To(ContainSubstring("refusing migration 156 rollback"))
+}
+
+func TestAdapterAssignmentDowngradeLocksBeforeRetainedDataCheck(t *testing.T) {
+	g := NewWithT(t)
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "156_adapter_assignments.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	sql := string(down)
+	lockIndex := strings.Index(sql, "LOCK TABLE")
+	guardIndex := strings.Index(sql, "DO $$")
+	g.Expect(lockIndex).To(BeNumerically(">=", 0))
+	g.Expect(guardIndex).To(BeNumerically(">", lockIndex))
+	for _, table := range []string{
+		"DeploymentPlanStepAdapter",
+		"AdapterAssignment",
+		"AdapterCapability",
+		"AdapterImplementation",
+		"DeploymentPlanStep",
+	} {
+		g.Expect(sql[lockIndex:guardIndex]).To(ContainSubstring(table))
+	}
+}
+
+func TestAdapterAssignmentDowngradeRefusesAnyAdapterData(t *testing.T) {
+	g := NewWithT(t)
+	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "156_adapter_assignments.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	sql := string(down)
+	guardStart := strings.Index(sql, "DO $$")
+	guardEnd := strings.Index(sql[guardStart:], "$$;")
+	g.Expect(guardStart).To(BeNumerically(">=", 0))
+	g.Expect(guardEnd).To(BeNumerically(">", 0))
+	guard := sql[guardStart : guardStart+guardEnd]
+	for _, table := range []string{
+		"DeploymentPlanStepAdapter",
+		"AdapterAssignment",
+		"AdapterCapability",
+		"AdapterImplementation",
+	} {
+		g.Expect(guard).To(ContainSubstring("SELECT 1 FROM " + table))
+	}
 }
 
 func TestAdapterAssignmentRepositoryValidatesOrganizationScopedTargets(t *testing.T) {

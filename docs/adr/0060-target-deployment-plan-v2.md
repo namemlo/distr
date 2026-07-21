@@ -105,6 +105,13 @@ Missing typed bindings fail closed. Backup adapter requirements are not
 accepted until a structured backup step can retain them. Private key bytes
 remain exclusively in the configured secret provider.
 
+Migration 156 rollback is intentionally empty-state only. It first locks the
+adapter catalog, assignments, plan-step bindings, and affected plan steps so a
+concurrent writer cannot pass the retained-data check and then lose data. Any
+adapter implementation, capability, assignment, or frozen plan-step adapter
+row refuses the schema downgrade; operators must retain the forward schema or
+restore an explicitly verified backup instead of deleting adapter history.
+
 ### Protocol boundary
 
 `protocolVersion=v1` is publishable only when every generated step and

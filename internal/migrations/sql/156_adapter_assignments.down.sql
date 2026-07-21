@@ -1,8 +1,19 @@
+LOCK TABLE
+  DeploymentPlanStep,
+  AdapterImplementation,
+  AdapterCapability,
+  AdapterAssignment,
+  DeploymentPlanStepAdapter
+IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM DeploymentPlanStepAdapter) THEN
+  IF EXISTS (SELECT 1 FROM DeploymentPlanStepAdapter)
+     OR EXISTS (SELECT 1 FROM AdapterAssignment)
+     OR EXISTS (SELECT 1 FROM AdapterCapability)
+     OR EXISTS (SELECT 1 FROM AdapterImplementation) THEN
     RAISE EXCEPTION
-      'refusing migration 156 rollback while frozen plan adapter evidence exists';
+      'refusing migration 156 rollback while adapter catalog, assignment, or frozen plan evidence exists';
   END IF;
 END;
 $$;
