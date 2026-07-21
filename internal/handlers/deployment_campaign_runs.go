@@ -36,13 +36,13 @@ func deploymentCampaignRunsRouterWithFlags(
 	enabledFlags []featureflags.Key,
 ) {
 	featureGate := middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyOperatorControlPlaneV2)
+	runtimeAuthorizer := newCampaignRuntimeAuthorizer()
 	_ = enabledFlags // production middleware reads the configured registry; tests exercise handlers directly.
 	r.With(middleware.RequireVendor, middleware.RequireOrgAndRole, featureGate).Group(func(r chiopenapi.Router) {
 		r.With(
 			middleware.RequireReadWriteOrAdmin,
 			middleware.BlockSuperAdmin,
-			requireIntegratedCampaignControlAuthorization,
-		).Post("/", startDeploymentCampaignRunHandler(service)).
+		).Post("/", startDeploymentCampaignRunHandler(service, runtimeAuthorizer)).
 			With(option.Request(api.StartDeploymentCampaignRunRequest{})).
 			With(option.Response(http.StatusCreated, api.DeploymentCampaignRun{}))
 		r.Get("/{campaignRunId}", getDeploymentCampaignRunHandler(service)).
@@ -53,14 +53,16 @@ func deploymentCampaignRunsRouterWithFlags(
 		r.With(
 			middleware.RequireReadWriteOrAdmin,
 			middleware.BlockSuperAdmin,
-			requireIntegratedCampaignControlAuthorization,
-		).Post("/{campaignRunId}/transitions", transitionDeploymentCampaignRunHandler(service)).
+		).Post("/{campaignRunId}/transitions", transitionDeploymentCampaignRunHandler(service, runtimeAuthorizer)).
 			With(option.Request(api.TransitionDeploymentCampaignRunRequest{})).
 			With(option.Response(http.StatusOK, api.DeploymentCampaignRun{}))
 	})
 }
 
-func startDeploymentCampaignRunHandler(service CampaignRunService) http.HandlerFunc {
+func startDeploymentCampaignRunHandler(
+	service CampaignRunService,
+	authorizer campaignRuntimeAuthorizer,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		request, err := JsonBody[api.StartDeploymentCampaignRunRequest](w, r)
 		if err != nil {
@@ -71,8 +73,16 @@ func startDeploymentCampaignRunHandler(service CampaignRunService) http.HandlerF
 			return
 		}
 		authInfo := auth.Authentication.Require(r.Context())
+		organizationID := *authInfo.CurrentOrgID()
+		if err := authorizer.AuthorizeCampaignRevision(
+			r.Context(),
+			organizationID,
+			request.CampaignRevisionID,
+		); writeCampaignControlError(w, r, err) {
+			return
+		}
 		run, err := service.StartCampaignRun(r.Context(), types.CampaignRunStartInput{
-			OrganizationID: *authInfo.CurrentOrgID(), CampaignRevisionID: request.CampaignRevisionID,
+			OrganizationID: organizationID, CampaignRevisionID: request.CampaignRevisionID,
 			ActorID: authInfo.CurrentUserID(), StartedAt: time.Now().UTC(),
 		})
 		if writeCampaignControlError(w, r, err) {
@@ -89,7 +99,10 @@ func getDeploymentCampaignRunHandler(service CampaignRunService) http.HandlerFun
 	})
 }
 
-func transitionDeploymentCampaignRunHandler(service CampaignRunService) http.HandlerFunc {
+func transitionDeploymentCampaignRunHandler(
+	service CampaignRunService,
+	authorizer campaignRuntimeAuthorizer,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runID, err := uuid.Parse(r.PathValue("campaignRunId"))
 		if err != nil {
@@ -105,9 +118,17 @@ func transitionDeploymentCampaignRunHandler(service CampaignRunService) http.Han
 			return
 		}
 		authInfo := auth.Authentication.Require(r.Context())
+		organizationID := *authInfo.CurrentOrgID()
+		if err := authorizer.AuthorizeCampaignRun(
+			r.Context(),
+			organizationID,
+			runID,
+		); writeCampaignControlError(w, r, err) {
+			return
+		}
 		actorID := authInfo.CurrentUserID()
 		run, err := service.TransitionCampaignRun(r.Context(), types.CampaignTransition{
-			RunID: runID, OrganizationID: *authInfo.CurrentOrgID(),
+			RunID: runID, OrganizationID: organizationID,
 			ExpectedVersion: request.ExpectedVersion, To: request.To,
 			Reason: request.Reason, ActorID: &actorID, At: time.Now().UTC(),
 		})

@@ -104,7 +104,7 @@ func TestCampaignRunToAPIMapsOperationalEvidence(t *testing.T) {
 }
 
 func TestCampaignControlResultToAPIMapsReconciliationState(t *testing.T) {
-	g := gomega.NewWithT(t)
+	g := NewWithT(t)
 	result := types.CampaignControlResult{
 		RequestID: uuid.New(),
 		Status:    types.CampaignControlStatusPendingReconciliation,
@@ -115,7 +115,7 @@ func TestCampaignControlResultToAPIMapsReconciliationState(t *testing.T) {
 		},
 	}
 	mapped := DeploymentCampaignControlResultToAPI(result)
-	g.Expect(mapped.RequestID).To(gomega.Equal(result.RequestID))
-	g.Expect(mapped.Status).To(gomega.Equal(result.Status))
-	g.Expect(mapped.Run.AdmissionsBlocked).To(gomega.BeTrue())
+	g.Expect(mapped.RequestID).To(Equal(result.RequestID))
+	g.Expect(mapped.Status).To(Equal(result.Status))
+	g.Expect(mapped.Run.AdmissionsBlocked).To(BeTrue())
 }

@@ -62,46 +62,46 @@ func TestCampaignRunResponseIncludesFencingAndAdmissionState(t *testing.T) {
 }
 
 func TestCampaignControlRequestValidation(t *testing.T) {
-	g := gomega.NewWithT(t)
+	g := NewWithT(t)
 	valid := CampaignControlRequest{
 		RequestID:       uuid.New(),
 		ExpectedVersion: 2,
 		Reason:          "operator incident response",
 	}
-	g.Expect(valid.Validate()).To(gomega.Succeed())
+	g.Expect(valid.Validate()).To(Succeed())
 
 	invalid := valid
 	invalid.RequestID = uuid.Nil
-	g.Expect(invalid.Validate()).To(gomega.MatchError(gomega.ContainSubstring("requestId")))
+	g.Expect(invalid.Validate()).To(MatchError(ContainSubstring("requestId")))
 	invalid = valid
 	invalid.Reason = " "
-	g.Expect(invalid.Validate()).To(gomega.MatchError(gomega.ContainSubstring("reason")))
+	g.Expect(invalid.Validate()).To(MatchError(ContainSubstring("reason")))
 	invalid = valid
 	invalid.Reason = " padded reason "
-	g.Expect(invalid.Validate()).To(gomega.MatchError(gomega.ContainSubstring("trimmed")))
+	g.Expect(invalid.Validate()).To(MatchError(ContainSubstring("trimmed")))
 }
 
 func TestStartDeploymentCampaignRunRequestRequiresRevision(t *testing.T) {
-	g := gomega.NewWithT(t)
+	g := NewWithT(t)
 	g.Expect((StartDeploymentCampaignRunRequest{}).Validate()).To(
-		gomega.MatchError(gomega.ContainSubstring("campaignRevisionId")),
+		MatchError(ContainSubstring("campaignRevisionId")),
 	)
-	g.Expect((StartDeploymentCampaignRunRequest{CampaignRevisionID: uuid.New()}).Validate()).To(gomega.Succeed())
+	g.Expect((StartDeploymentCampaignRunRequest{CampaignRevisionID: uuid.New()}).Validate()).To(Succeed())
 }
 
 func TestTransitionDeploymentCampaignRunRequestRequiresVersionAndTrimmedReason(t *testing.T) {
-	g := gomega.NewWithT(t)
-	g.Expect((TransitionDeploymentCampaignRunRequest{}).Validate()).To(gomega.HaveOccurred())
+	g := NewWithT(t)
+	g.Expect((TransitionDeploymentCampaignRunRequest{}).Validate()).To(HaveOccurred())
 	g.Expect((TransitionDeploymentCampaignRunRequest{
 		ExpectedVersion: 1, To: types.CampaignRunStateValidated, Reason: " validate ",
-	}).Validate()).To(gomega.HaveOccurred())
+	}).Validate()).To(HaveOccurred())
 	g.Expect((TransitionDeploymentCampaignRunRequest{
 		ExpectedVersion: 1, To: types.CampaignRunStateValidated, Reason: "validated frozen inputs",
-	}).Validate()).To(gomega.Succeed())
+	}).Validate()).To(Succeed())
 }
 
 func TestCampaignMemberControlRequiresMemberAndProtocolForRetry(t *testing.T) {
-	g := gomega.NewWithT(t)
+	g := NewWithT(t)
 	request := CampaignMemberControlRequest{
 		CampaignControlRequest: CampaignControlRequest{
 			RequestID:       uuid.New(),
@@ -110,8 +110,8 @@ func TestCampaignMemberControlRequiresMemberAndProtocolForRetry(t *testing.T) {
 		},
 		MemberRunID: uuid.New(),
 	}
-	g.Expect(request.Validate(false)).To(gomega.Succeed())
-	g.Expect(request.Validate(true)).To(gomega.MatchError(gomega.ContainSubstring("protocolVersion")))
+	g.Expect(request.Validate(false)).To(Succeed())
+	g.Expect(request.Validate(true)).To(MatchError(ContainSubstring("protocolVersion")))
 	request.ProtocolVersion = "v1"
-	g.Expect(request.Validate(true)).To(gomega.Succeed())
+	g.Expect(request.Validate(true)).To(Succeed())
 }

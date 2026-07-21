@@ -21,10 +21,8 @@ import (
 )
 
 // DeploymentCampaignControlRoutes registers the production campaign-control
-// endpoints. The scoped authorization adapter intentionally fails closed once
-// the PR-066 schema is present; the integration stack replaces that adapter
-// with RequireEffectiveControlPlaneAction(ActionCampaignControl,
-// OrganizationResourceRef).
+// endpoints. Each mutation resolves and authorizes its immutable campaign and
+// environment scope before calling the runtime service.
 func DeploymentCampaignControlRoutes(r chiopenapi.Router) {
 	repository := db.CampaignRepository{}
 	service := campaigns.NewCampaignControlService(repository, repository)
@@ -35,7 +33,6 @@ func DeploymentCampaignControlRoutes(r chiopenapi.Router) {
 		middleware.RequireVendor,
 		middleware.RequireOrgAndRole,
 		featureGate,
-		requireIntegratedCampaignControlAuthorization,
 	).Group(func(r chiopenapi.Router) {
 		DeploymentCampaignControlsRouter(r, service)
 	})
@@ -70,6 +67,7 @@ func DeploymentCampaignControlsRouter(
 	r chiopenapi.Router,
 	service CampaignControlService,
 ) {
+	runtimeAuthorizer := newCampaignRuntimeAuthorizer()
 	type CampaignControlRouteRequest struct {
 		ID uuid.UUID `path:"id"`
 		api.CampaignControlRequest
@@ -81,35 +79,35 @@ func DeploymentCampaignControlsRouter(
 	r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
 		Post(
 			"/deployment-campaigns/{id}/pause",
-			campaignControlHandler(service, types.CampaignControlKindPause),
+			campaignControlHandler(service, runtimeAuthorizer, types.CampaignControlKindPause),
 		).
 		With(option.Request(CampaignControlRouteRequest{})).
 		With(option.Response(http.StatusOK, api.DeploymentCampaignControlResult{}))
 	r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
 		Post(
 			"/deployment-campaigns/{id}/resume",
-			campaignControlHandler(service, types.CampaignControlKindResume),
+			campaignControlHandler(service, runtimeAuthorizer, types.CampaignControlKindResume),
 		).
 		With(option.Request(CampaignControlRouteRequest{})).
 		With(option.Response(http.StatusOK, api.DeploymentCampaignControlResult{}))
 	r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
 		Post(
 			"/deployment-campaigns/{id}/cancel",
-			campaignControlHandler(service, types.CampaignControlKindCancel),
+			campaignControlHandler(service, runtimeAuthorizer, types.CampaignControlKindCancel),
 		).
 		With(option.Request(CampaignControlRouteRequest{})).
 		With(option.Response(http.StatusOK, api.DeploymentCampaignControlResult{}))
 	r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
 		Post(
 			"/deployment-campaigns/{id}/exclude",
-			campaignMemberControlHandler(service, false),
+			campaignMemberControlHandler(service, runtimeAuthorizer, false),
 		).
 		With(option.Request(CampaignMemberControlRouteRequest{})).
 		With(option.Response(http.StatusOK, api.DeploymentCampaignExclusion{}))
 	r.With(middleware.RequireReadWriteOrAdmin, middleware.BlockSuperAdmin).
 		Post(
 			"/deployment-campaigns/{id}/retry",
-			campaignMemberControlHandler(service, true),
+			campaignMemberControlHandler(service, runtimeAuthorizer, true),
 		).
 		With(option.Request(CampaignMemberControlRouteRequest{})).
 		With(option.Response(http.StatusOK, api.DeploymentPlan{}))
@@ -117,6 +115,7 @@ func DeploymentCampaignControlsRouter(
 
 func campaignControlHandler(
 	service CampaignControlService,
+	authorizer campaignRuntimeAuthorizer,
 	kind types.CampaignControlKind,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -134,9 +133,17 @@ func campaignControlHandler(
 			return
 		}
 		authInfo := auth.Authentication.Require(r.Context())
+		organizationID := *authInfo.CurrentOrgID()
+		if err := authorizer.AuthorizeCampaignRun(
+			r.Context(),
+			organizationID,
+			runID,
+		); writeCampaignControlError(w, r, err) {
+			return
+		}
 		result, err := service.ApplyCampaignControl(r.Context(), types.CampaignControlInput{
 			RequestID:       request.RequestID,
-			OrganizationID:  *authInfo.CurrentOrgID(),
+			OrganizationID:  organizationID,
 			RunID:           runID,
 			ActorID:         authInfo.CurrentUserID(),
 			ExpectedVersion: request.ExpectedVersion,
@@ -153,6 +160,7 @@ func campaignControlHandler(
 
 func campaignMemberControlHandler(
 	service CampaignControlService,
+	authorizer campaignRuntimeAuthorizer,
 	retry bool,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -170,10 +178,18 @@ func campaignMemberControlHandler(
 			return
 		}
 		authInfo := auth.Authentication.Require(r.Context())
+		organizationID := *authInfo.CurrentOrgID()
+		if err := authorizer.AuthorizeCampaignRun(
+			r.Context(),
+			organizationID,
+			runID,
+		); writeCampaignControlError(w, r, err) {
+			return
+		}
 		input := types.CampaignMemberControlInput{
 			CampaignControlInput: types.CampaignControlInput{
 				RequestID:       request.RequestID,
-				OrganizationID:  *authInfo.CurrentOrgID(),
+				OrganizationID:  organizationID,
 				RunID:           runID,
 				ActorID:         authInfo.CurrentUserID(),
 				ExpectedVersion: request.ExpectedVersion,
