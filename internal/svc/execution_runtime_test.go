@@ -8,9 +8,21 @@ import (
 	"testing"
 
 	"github.com/distr-sh/distr/internal/executionprotocol"
+	"github.com/distr-sh/distr/internal/executionruntime"
 	"github.com/distr-sh/distr/internal/featureflags"
 	. "github.com/onsi/gomega"
 )
+
+func TestRegistryRetainsConfigVerifierAndExecutorRuntimeDependencies(t *testing.T) {
+	g := NewWithT(t)
+	registry := Registry{
+		targetConfigObjectVerifier: nil,
+		executionRuntime:           executionruntime.Dependencies{},
+	}
+
+	g.Expect(registry.targetConfigObjectVerifier).To(BeNil())
+	g.Expect(registry.executionRuntime).To(Equal(executionruntime.Dependencies{}))
+}
 
 func TestNewExecutionRuntimeDependenciesUsesConfiguredIndependentKeySets(t *testing.T) {
 	g := NewWithT(t)

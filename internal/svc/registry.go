@@ -52,11 +52,8 @@ type Registry struct {
 	observabilityMetricsEnabled bool
 	observabilityTracingEnabled bool
 	s3Client                    *s3.Client
-<<<<<<< HEAD
 	targetConfigObjectVerifier  targetconfig.ObjectVerifier
-=======
 	executionRuntime            executionruntime.Dependencies
->>>>>>> 1fbda05a (fix: bind executor v2 production runtime)
 }
 
 func New(ctx context.Context, options ...RegistryOption) (*Registry, error) {
