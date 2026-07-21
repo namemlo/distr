@@ -303,6 +303,7 @@ func TestPR066DownstreamAdaptersAuthorizeExactActionsAndScopes(t *testing.T) {
 				ActorUserID:     actorID,
 				CampaignDraftID: campaignID,
 			},
+			resource,
 		)
 		NewWithT(t).Expect(err).NotTo(HaveOccurred())
 	})

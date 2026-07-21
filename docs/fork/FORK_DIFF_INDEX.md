@@ -1391,7 +1391,8 @@ Use one entry per pull request:
   live sequential PostgreSQL verification remains an integration gate.
 - Upstream base: `43a57716`.
 - Feature flag: `operator_control_plane_v2` gates mutations; authenticated tenant-scoped draft reads remain
-  available. Mutations use the PR-066 shared authorizer for `campaign.control` over the exact draft scope.
+  available. Creation uses PR-066 `campaign.control` at organization scope; existing-draft mutations resolve the
+  exact tenant-owned campaign scope.
 - User-facing behavior: Operators can author, validate, and publish deterministic campaign membership, waves,
   bake/threshold policy, and cross-plan shared-provider prerequisites.
 - Database changes: Migration 153 adds a mutable campaign draft root and immutable normalized revision, wave,

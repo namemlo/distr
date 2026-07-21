@@ -62,9 +62,10 @@ foreign-keyed to the frozen upstream plan. The database recomputes the campaign 
 `canonical_payload`, and draft/published concurrency cannot exceed 1,000. Concurrent publication attempts with the
 same idempotency key replay the winning revision after unique or serialization conflicts.
 
-The API is additive below `/api/v1/deployment-campaign-drafts`. Mutations require
-`operator_control_plane_v2` and the PR-066 `campaign.control` authorization over the exact campaign draft scope.
-The shared authorizer preserves credential-role caps and denies super-admin mutations. Reads remain tenant-scoped.
+The API is additive below `/api/v1/deployment-campaign-drafts`. Mutations require `operator_control_plane_v2` and
+PR-066 `campaign.control` authorization. Creation authorizes the organization scope before the new draft identity
+exists; edit, validate, and publish resolve the exact tenant-owned campaign scope. The shared authorizer preserves
+credential-role caps and denies super-admin mutations. Reads remain tenant-scoped.
 
 ## Consequences
 

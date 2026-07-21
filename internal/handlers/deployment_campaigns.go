@@ -32,19 +32,22 @@ type campaignActionAuthorizer interface {
 	AuthorizeCampaignAction(
 		context.Context,
 		types.CampaignAuthorizationContext,
+		types.ResourceRef,
 	) error
 }
 
 type campaignActionAuthorizerFunc func(
 	context.Context,
 	types.CampaignAuthorizationContext,
+	types.ResourceRef,
 ) error
 
 func (fn campaignActionAuthorizerFunc) AuthorizeCampaignAction(
 	ctx context.Context,
 	request types.CampaignAuthorizationContext,
+	resource types.ResourceRef,
 ) error {
-	return fn(ctx, request)
+	return fn(ctx, request, resource)
 }
 
 type scopedCampaignActionAuthorizer struct {
@@ -54,12 +57,14 @@ type scopedCampaignActionAuthorizer struct {
 func (authorizer scopedCampaignActionAuthorizer) AuthorizeCampaignAction(
 	ctx context.Context,
 	request types.CampaignAuthorizationContext,
+	resource types.ResourceRef,
 ) error {
 	authInfo, err := auth.Authentication.Get(ctx)
 	if err != nil ||
 		authInfo.CurrentOrgID() == nil ||
 		*authInfo.CurrentOrgID() != request.OrganizationID ||
-		authInfo.CurrentUserID() != request.ActorUserID {
+		authInfo.CurrentUserID() != request.ActorUserID ||
+		!campaignAuthorizationResourceValid(request, resource) {
 		return apierrors.ErrForbidden
 	}
 	return authorizeControlPlaneResourceWithDependencies(
@@ -70,15 +75,28 @@ func (authorizer scopedCampaignActionAuthorizer) AuthorizeCampaignAction(
 			CredentialRole: authInfo.CurrentUserRole(),
 			IsSuperAdmin:   authInfo.IsSuperAdmin(),
 			Action:         types.ActionCampaignControl,
-			Resource: types.ResourceRef{
-				OrganizationID: request.OrganizationID,
-				Kind:           types.PermissionScopeCampaign,
-				ID:             request.CampaignDraftID,
-			},
-			DecisionAt: time.Now().UTC(),
+			Resource:       resource,
+			DecisionAt:     time.Now().UTC(),
 		},
 		authorizer.dependencies,
 	)
+}
+
+func campaignAuthorizationResourceValid(
+	request types.CampaignAuthorizationContext,
+	resource types.ResourceRef,
+) bool {
+	if resource.OrganizationID != request.OrganizationID {
+		return false
+	}
+	switch resource.Kind {
+	case types.PermissionScopeOrganization:
+		return request.CampaignDraftID == uuid.Nil && resource.ID == request.OrganizationID
+	case types.PermissionScopeCampaign:
+		return request.CampaignDraftID != uuid.Nil && resource.ID == request.CampaignDraftID
+	default:
+		return false
+	}
 }
 
 func newCampaignActionAuthorizer() campaignActionAuthorizer {
@@ -161,17 +179,16 @@ func createDeploymentCampaignDraftHandler(
 			return
 		}
 		authInfo := auth.Authentication.Require(r.Context())
-		draftID := uuid.New()
-		if err := authorizeCampaignDraftMutation(
+		if err := authorizeCampaignDraftCreation(
 			r.Context(),
 			authorizer,
 			*authInfo.CurrentOrgID(),
 			authInfo.CurrentUserID(),
-			draftID,
 		); err != nil {
 			handleDeploymentCampaignError(w, r, "authorize campaign draft", err)
 			return
 		}
+		draftID := uuid.New()
 		draft := request.ToDomain(
 			*authInfo.CurrentOrgID(),
 			authInfo.CurrentUserID(),
@@ -344,6 +361,31 @@ func authorizeCampaignDraftMutation(
 			OrganizationID:  organizationID,
 			ActorUserID:     actorUserID,
 			CampaignDraftID: campaignDraftID,
+		},
+		types.ResourceRef{
+			OrganizationID: organizationID,
+			Kind:           types.PermissionScopeCampaign,
+			ID:             campaignDraftID,
+		},
+	)
+}
+
+func authorizeCampaignDraftCreation(
+	ctx context.Context,
+	authorizer campaignActionAuthorizer,
+	organizationID uuid.UUID,
+	actorUserID uuid.UUID,
+) error {
+	return authorizer.AuthorizeCampaignAction(
+		ctx,
+		types.CampaignAuthorizationContext{
+			OrganizationID: organizationID,
+			ActorUserID:    actorUserID,
+		},
+		types.ResourceRef{
+			OrganizationID: organizationID,
+			Kind:           types.PermissionScopeOrganization,
+			ID:             organizationID,
 		},
 	)
 }

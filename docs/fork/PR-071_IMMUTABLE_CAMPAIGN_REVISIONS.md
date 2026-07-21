@@ -10,7 +10,8 @@ shared-provider expectations.
 
 - Routes: create, get, edit, validate, and publish below `/api/v1/deployment-campaign-drafts`.
 - Access: authenticated vendor organization context is required. Mutations require
-  `operator_control_plane_v2` and PR-066 `campaign.control` authorization over the exact campaign draft scope.
+  `operator_control_plane_v2` and PR-066 `campaign.control` authorization. Creation uses organization scope before
+  the draft exists; edit, validate, and publish resolve the exact tenant-owned campaign scope.
 - Draft concurrency: edits supply `expectedRevision`; a stale revision returns conflict.
 - Membership: explicit plan IDs and a conjunction of canonical `key=value` tag terms are resolved into at most
   1,000 eligible organization plans.
