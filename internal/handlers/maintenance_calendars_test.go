@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -159,6 +160,7 @@ func TestMaintenanceCalendarActionAuthorizationStopsBeforeDatabaseAccess(t *test
 		organizationID, actorID uuid.UUID,
 		action string,
 		scope types.CalendarScopeRef,
+		_ time.Time,
 	) error {
 		g.Expect(organizationID).NotTo(Equal(uuid.Nil))
 		g.Expect(actorID).NotTo(Equal(uuid.Nil))
@@ -192,7 +194,7 @@ func TestMaintenanceCalendarActionAuthorizationStopsBeforeDatabaseAccess(t *test
 	g.Expect(recorder.Code).To(Equal(http.StatusForbidden))
 }
 
-func TestProductionCalendarAuthorizationSeamFailsClosedUntilPR066Adapter(t *testing.T) {
+func TestProductionCalendarAuthorizationDeniesMissingAuthentication(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
 	err := authorizeCalendarAction(
@@ -225,6 +227,7 @@ func TestFreezeScopeTransitionAuthorizesCurrentBeforeDestination(t *testing.T) {
 		_, _ uuid.UUID,
 		_ string,
 		scope types.CalendarScopeRef,
+		_ time.Time,
 	) error {
 		visited = append(visited, scope)
 		if scope == current {
@@ -245,6 +248,34 @@ func TestFreezeScopeTransitionAuthorizesCurrentBeforeDestination(t *testing.T) {
 	g.Expect(visited).To(Equal([]types.CalendarScopeRef{current}))
 }
 
+func TestFreezeScopeTransitionUsesOneAuthorizationInstant(t *testing.T) {
+	g := NewWithT(t)
+	decisionInstants := []time.Time{}
+	authorizer := calendarActionAuthorizerFunc(func(
+		_ context.Context,
+		_, _ uuid.UUID,
+		_ string,
+		_ types.CalendarScopeRef,
+		decisionAt time.Time,
+	) error {
+		decisionInstants = append(decisionInstants, decisionAt)
+		return nil
+	})
+
+	err := authorizeDeploymentFreezeScopeTransition(
+		t.Context(),
+		authorizer,
+		uuid.New(),
+		uuid.New(),
+		types.CalendarScopeRef{Kind: types.CalendarScopeEnvironment, ID: uuid.New()},
+		types.CalendarScopeRef{Kind: types.CalendarScopeEnvironment, ID: uuid.New()},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(decisionInstants).To(HaveLen(2))
+	g.Expect(decisionInstants[1]).To(Equal(decisionInstants[0]))
+}
+
 func TestDeploymentFreezeActionAuthorizationReceivesRequestedScope(t *testing.T) {
 	g := NewWithT(t)
 	scopeID := uuid.New()
@@ -253,6 +284,7 @@ func TestDeploymentFreezeActionAuthorizationReceivesRequestedScope(t *testing.T)
 		_, _ uuid.UUID,
 		action string,
 		scope types.CalendarScopeRef,
+		_ time.Time,
 	) error {
 		g.Expect(action).To(Equal(freezeActionManage))
 		g.Expect(scope).To(Equal(types.CalendarScopeRef{
@@ -349,6 +381,7 @@ func allowCalendarActionsForTest() calendarActionAuthorizer {
 		uuid.UUID,
 		string,
 		types.CalendarScopeRef,
+		time.Time,
 	) error {
 		return nil
 	})

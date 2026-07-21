@@ -38,6 +38,8 @@ type approvalAuthorizationRequest struct {
 	Action                string
 	DecisionAt            time.Time
 	DeploymentPlanID      uuid.UUID
+	EnvironmentID         uuid.UUID
+	DeploymentUnitID      *uuid.UUID
 	ApprovalRequestID     uuid.UUID
 	ApprovalRequirementID uuid.UUID
 }
@@ -71,24 +73,48 @@ func defaultApprovalHandlerDependencies() approvalHandlerDependencies {
 		listRequests:      db.ListApprovalRequests,
 		getRequest:        db.GetApprovalRequest,
 		recordDecision:    db.RecordApprovalDecision,
-		authorizeRequest:  approvalScopedAuthorizationUnavailable,
-		authorizeDecision: approvalScopedAuthorizationUnavailable,
+		authorizeRequest:  approvalScopedAuthorization,
+		authorizeDecision: approvalScopedAuthorization,
 		clock: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
 }
 
-func approvalScopedAuthorizationUnavailable(
-	context.Context,
-	approvalAuthorizationRequest,
+func approvalScopedAuthorization(
+	ctx context.Context,
+	request approvalAuthorizationRequest,
 ) error {
-	// PR-066 supplies the action/scope evaluator. Keeping this adapter closed
-	// prevents legacy role middleware from becoming approval authority while the
-	// speculative PR stack is waiting to be rebased onto that slice.
-	return apierrors.NewForbidden(
-		"scoped approval authorization is unavailable until PR-066 is integrated",
+	return approvalScopedAuthorizationWithDependencies(
+		ctx,
+		request,
+		defaultControlPlaneResourceAuthorizationDependencies(),
 	)
+}
+
+func approvalScopedAuthorizationWithDependencies(
+	ctx context.Context,
+	request approvalAuthorizationRequest,
+	dependencies controlPlaneResourceAuthorizationDependencies,
+) error {
+	resource := types.ResourceRef{
+		OrganizationID: request.OrganizationID,
+		Kind:           types.PermissionScopeEnvironment,
+		ID:             request.EnvironmentID,
+	}
+	if request.DeploymentUnitID != nil {
+		resource.Kind = types.PermissionScopeDeploymentUnit
+		resource.ID = *request.DeploymentUnitID
+	}
+	return authorizeControlPlaneResourceWithDependencies(ctx, controlPlaneResourceAuthorizationRequest{
+		OrganizationID: request.OrganizationID,
+		PrincipalID:    request.ActorUserAccountID,
+		CredentialRole: request.CredentialRole,
+		IsSuperAdmin:   request.IsSuperAdmin,
+		Action:         types.Action(request.Action),
+		Resource:       resource,
+		DecisionAt:     request.DecisionAt,
+	}, dependencies)
 }
 
 func ApprovalRequestsRouter(r chiopenapi.Router) {
@@ -191,6 +217,8 @@ func createApprovalRequestHandlerWithDependencies(
 				) error {
 					authorizationRequest.DecisionAt = evidence.DecisionAt
 					authorizationRequest.DeploymentPlanID = evidence.DeploymentPlanID
+					authorizationRequest.EnvironmentID = evidence.EnvironmentID
+					authorizationRequest.DeploymentUnitID = evidence.DeploymentUnitID
 					return dependencies.authorizeRequest(ctx, authorizationRequest)
 				},
 			},
@@ -295,6 +323,8 @@ func recordApprovalDecisionHandlerWithDependencies(
 				) error {
 					authorizationRequest.DecisionAt = evidence.DecisionAt
 					authorizationRequest.DeploymentPlanID = evidence.DeploymentPlanID
+					authorizationRequest.EnvironmentID = evidence.EnvironmentID
+					authorizationRequest.DeploymentUnitID = evidence.DeploymentUnitID
 					authorizationRequest.ApprovalRequestID = evidence.ApprovalRequestID
 					authorizationRequest.ApprovalRequirementID =
 						evidence.ApprovalRequirementID

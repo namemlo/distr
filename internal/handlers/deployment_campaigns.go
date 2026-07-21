@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -46,17 +47,44 @@ func (fn campaignActionAuthorizerFunc) AuthorizeCampaignAction(
 	return fn(ctx, request)
 }
 
-type unavailableCampaignActionAuthorizer struct{}
+type scopedCampaignActionAuthorizer struct {
+	dependencies controlPlaneResourceAuthorizationDependencies
+}
 
-func (unavailableCampaignActionAuthorizer) AuthorizeCampaignAction(
-	context.Context,
-	types.CampaignAuthorizationContext,
+func (authorizer scopedCampaignActionAuthorizer) AuthorizeCampaignAction(
+	ctx context.Context,
+	request types.CampaignAuthorizationContext,
 ) error {
-	return apierrors.ErrForbidden
+	authInfo, err := auth.Authentication.Get(ctx)
+	if err != nil ||
+		authInfo.CurrentOrgID() == nil ||
+		*authInfo.CurrentOrgID() != request.OrganizationID ||
+		authInfo.CurrentUserID() != request.ActorUserID {
+		return apierrors.ErrForbidden
+	}
+	return authorizeControlPlaneResourceWithDependencies(
+		ctx,
+		controlPlaneResourceAuthorizationRequest{
+			OrganizationID: request.OrganizationID,
+			PrincipalID:    request.ActorUserID,
+			CredentialRole: authInfo.CurrentUserRole(),
+			IsSuperAdmin:   authInfo.IsSuperAdmin(),
+			Action:         types.ActionCampaignControl,
+			Resource: types.ResourceRef{
+				OrganizationID: request.OrganizationID,
+				Kind:           types.PermissionScopeCampaign,
+				ID:             request.CampaignDraftID,
+			},
+			DecisionAt: time.Now().UTC(),
+		},
+		authorizer.dependencies,
+	)
 }
 
 func newCampaignActionAuthorizer() campaignActionAuthorizer {
-	return unavailableCampaignActionAuthorizer{}
+	return scopedCampaignActionAuthorizer{
+		dependencies: defaultControlPlaneResourceAuthorizationDependencies(),
+	}
 }
 
 func DeploymentCampaignDraftsRouter(r chiopenapi.Router) {

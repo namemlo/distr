@@ -1,4 +1,4 @@
-# ADR-0063: Deterministic Deployment Campaigns
+# ADR-0064: Deterministic Deployment Campaigns
 
 ## Status
 
@@ -63,8 +63,8 @@ foreign-keyed to the frozen upstream plan. The database recomputes the campaign 
 same idempotency key replay the winning revision after unique or serialization conflicts.
 
 The API is additive below `/api/v1/deployment-campaign-drafts`. Mutations require
-`operator_control_plane_v2` and a scoped campaign-action authorization seam. This synthetic stack does not contain
-PR-066, so the production authorizer fails closed until that adapter is transplanted. Reads remain tenant-scoped.
+`operator_control_plane_v2` and the PR-066 `campaign.control` authorization over the exact campaign draft scope.
+The shared authorizer preserves credential-role caps and denies super-admin mutations. Reads remain tenant-scoped.
 
 ## Consequences
 

@@ -155,9 +155,7 @@ func deploymentPolicyMutationAccessMiddlewareWithFlags(
 	enabledFlags []featureflags.Key,
 ) func(http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
-		scoped := failClosedUntilScopedAuthorizationAdapter(
-			pr066ScopedAuthorizationSchemaPresent,
-		)(handler)
+		scoped := requireControlPlaneOrganizationAction(types.ActionPolicyManage)(handler)
 		mutation := operatorControlPlaneMutationAccessMiddlewareWithFlags(enabledFlags)(
 			scoped,
 		)

@@ -44,8 +44,8 @@ Unknown JSON fields, trailing JSON values, oversized bodies, invalid idempotency
 closed.
 
 Reads remain available to authenticated organization users. Mutations require `operator_control_plane_v2`.
-The scoped authorization adapter intentionally denies every mutation on this speculative branch until PR-066 is
-rebased; legacy role middleware is not treated as deployment approval authority.
+Mutations resolve the exact plan deployment-unit/environment hierarchy through PR-066 and call its shared scoped
+authorizer; legacy role compatibility remains credential-capped inside that evaluator.
 
 ## Database and Audit History
 
@@ -65,8 +65,7 @@ yet contain PR-066 migration 148 or `internal/authorization`, even though migrat
 PR-066 `PrincipalGroup` and its versioned membership evidence. The final stack must therefore be ordered
 148 -> 149 -> 150 and must rerun migration/repository tests after the PR-066 schema is final.
 
-Before enabling `operator_control_plane_v2`, replace `approvalScopedAuthorizationUnavailable` with one production
-adapter backed only by PR-066:
+The integrated production adapter is backed only by PR-066:
 
 1. Inside the supplied database authorization callback, resolve the exact organization-owned
    plan/unit/environment resource scopes with `authorization.ResolveResourceScopes`.

@@ -36,10 +36,9 @@ instants, offsets, and identities. A zone or rule-version binding mismatch fails
 
 The new APIs use opaque keyset pagination and organization predicates on every read and write. They are completely
 hidden unless `operator_control_plane_v2` is enabled, and currently require vendor organization admin access while
-blocking super-admin mutation-by-impersonation. Mutations call the `calendar.manage` or `freeze.manage` scoped
-authorization seam without changing repository tenant predicates. Until PR-066 supplies its shared
-`authorization.Authorize` adapter, the production seam fails closed; test injection cannot become a permissive
-production fallback. Freeze updates
+blocking super-admin mutation-by-impersonation. Mutations resolve the exact resource hierarchy and call the PR-066
+shared `authorization.Authorize` adapter for `calendar.manage` or `freeze.manage` without changing repository
+tenant predicates. Freeze updates
 authorize both the exact expected current scope and any destination scope. Freeze publication authorizes the
 locked revision scope inside the publication transaction.
 

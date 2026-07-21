@@ -159,6 +159,8 @@ type ApprovalAuthorizationContext struct {
 	ActorUserAccountID    uuid.UUID
 	DecisionAt            time.Time
 	DeploymentPlanID      uuid.UUID
+	EnvironmentID         uuid.UUID
+	DeploymentUnitID      *uuid.UUID
 	ApprovalRequestID     uuid.UUID
 	ApprovalRequirementID uuid.UUID
 }

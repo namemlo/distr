@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -177,11 +178,24 @@ func createDeploymentPlanHandler() http.HandlerFunc {
 			return
 		}
 		if request.DeploymentUnitID != nil {
-			scopedAuthorizationStackPresent, probeErr := pr066ScopedAuthorizationSchemaPresent(ctx)
-			if probeErr != nil || scopedAuthorizationStackPresent {
-				// Creating a v2 plan freezes policy evidence and is itself a
-				// policy-managed operation. A PR-066 stack must authorize it
-				// through policy.manage plus effective enrollment.
+			if err := authorizeControlPlaneResource(
+				ctx,
+				controlPlaneResourceAuthorizationRequest{
+					OrganizationID: *auth.CurrentOrgID(),
+					PrincipalID:    auth.CurrentUserID(),
+					CredentialRole: auth.CurrentUserRole(),
+					IsSuperAdmin:   auth.IsSuperAdmin(),
+					Action:         types.ActionPlanCreate,
+					Resource: types.ResourceRef{
+						OrganizationID: *auth.CurrentOrgID(),
+						Kind:           types.PermissionScopeDeploymentUnit,
+						ID:             *request.DeploymentUnitID,
+					},
+					DecisionAt:        time.Now().UTC(),
+					RequireEnrollment: true,
+					EnvironmentID:     request.EnvironmentID,
+				},
+			); err != nil {
 				http.Error(w, "insufficient permissions", http.StatusForbidden)
 				return
 			}

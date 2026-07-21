@@ -2,65 +2,61 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
 
-func TestFailClosedUntilScopedAuthorizationAdapter(t *testing.T) {
-	tests := []struct {
-		name       string
-		stackFound bool
-		probeErr   error
-		wantStatus int
-		wantCalled bool
-	}{
-		{
-			name:       "isolated branch delegates to legacy process guard",
-			wantStatus: http.StatusNoContent,
-			wantCalled: true,
+func TestDeploymentPolicyScopedAuthorizationUsesOrganizationResource(t *testing.T) {
+	g := NewWithT(t)
+	userAuth := testChannelAuth()
+	userAuth.role = types.UserRoleAdmin
+	organizationID := *userAuth.CurrentOrgID()
+	called := false
+	handler := requireControlPlaneOrganizationActionWithDependencies(
+		types.ActionPolicyManage,
+		controlPlaneResourceAuthorizationDependencies{
+			resolveScopes: func(_ context.Context, resource types.ResourceRef) ([]types.ScopeRef, error) {
+				g.Expect(resource).To(Equal(types.ResourceRef{
+					OrganizationID: organizationID,
+					Kind:           types.PermissionScopeOrganization,
+					ID:             organizationID,
+				}))
+				return []types.ScopeRef{{
+					Kind: types.PermissionScopeOrganization,
+					ID:   organizationID,
+				}}, nil
+			},
+			authorize: func(_ context.Context, request types.AccessRequest) (types.AccessDecision, error) {
+				g.Expect(request.Action).To(Equal(types.ActionPolicyManage))
+				g.Expect(request.DecisionAt).To(BeTemporally("~", time.Now(), time.Second))
+				return types.AccessDecision{Allowed: true}, nil
+			},
+			isEffective: func(context.Context, uuid.UUID, uuid.UUID, time.Time) (bool, error) {
+				t.Fatal("policy authoring must not require selected-environment enrollment")
+				return false, nil
+			},
 		},
-		{
-			name:       "PR-066 stack cannot bypass scoped authorization",
-			stackFound: true,
-			wantStatus: http.StatusForbidden,
-		},
-		{
-			name:       "probe failure denies",
-			probeErr:   errors.New("catalog unavailable"),
-			wantStatus: http.StatusForbidden,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			g := NewWithT(t)
-			called := false
-			handler := failClosedUntilScopedAuthorizationAdapter(
-				func(context.Context) (bool, error) {
-					return test.stackFound, test.probeErr
-				},
-			)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				called = true
-				w.WriteHeader(http.StatusNoContent)
-			}))
+	)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request = request.WithContext(auth.Authentication.NewContext(request.Context(), userAuth))
+	recorder := httptest.NewRecorder()
 
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(
-				recorder,
-				httptest.NewRequest(http.MethodPost, "/", nil),
-			)
+	handler.ServeHTTP(recorder, request)
 
-			g.Expect(recorder.Code).To(Equal(test.wantStatus))
-			g.Expect(called).To(Equal(test.wantCalled))
-		})
-	}
+	g.Expect(recorder.Code).To(Equal(http.StatusNoContent))
+	g.Expect(called).To(BeTrue())
 }
 
 func TestDeploymentPolicyMutationAccessMiddleware(t *testing.T) {

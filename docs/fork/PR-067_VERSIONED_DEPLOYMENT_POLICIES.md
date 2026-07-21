@@ -16,7 +16,8 @@ subscriber so that a deployment plan records the exact governance contract that 
   hard maximum of 100. Version collection items are bounded summaries; only the item route returns the policy
   document.
 - Authenticated reads remain available when operator control plane v2 is disabled. Every mutation is hidden unless
-  `operator_control_plane_v2` is effective and also requires read-write/admin while excluding super-admin.
+  `operator_control_plane_v2` is effective, passes PR-066 `policy.manage` authorization at organization scope, and
+  also requires read-write/admin while excluding super-admin.
 - Policy documents use the exact `distr.deployment-policy/v1` typed schema. Unknown request fields, trailing JSON,
   caller-supplied derived authority fields, invalid restricted expressions, and invalid bounds are rejected.
 
@@ -54,7 +55,8 @@ the requested environment, and belong to one of the selected deployment targets.
 
 Every policy composition issue becomes a deployment-plan blocker. This slice does not create approvals or enable
 execution; PR-068 and later slices consume the immutable snapshot. Requests without `deploymentUnitId` preserve
-the existing v1 plan behavior and canonical shape.
+the existing v1 plan behavior and canonical shape. Requests with `deploymentUnitId` additionally require PR-066
+`plan.create` authorization over the resolved unit hierarchy and effective selected-environment enrollment.
 
 ## Database and Downgrade
 

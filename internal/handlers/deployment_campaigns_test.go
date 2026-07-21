@@ -31,7 +31,7 @@ func TestCampaignRevisionDraftEditWithoutAuthorityIsDenied(t *testing.T) {
 	g.Expect(errors.Is(err, apierrors.ErrForbidden)).To(BeTrue())
 }
 
-func TestCampaignRevisionUnavailableAuthorizerFailsClosed(t *testing.T) {
+func TestCampaignRevisionProductionAuthorizerDeniesMissingAuthentication(t *testing.T) {
 	g := NewWithT(t)
 
 	err := newCampaignActionAuthorizer().AuthorizeCampaignAction(

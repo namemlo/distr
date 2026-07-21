@@ -267,7 +267,7 @@ git commit -m "feat: gate plans with deployment admission"
 - Create: `internal/handlers/deployment_campaigns.go`
 - Create: `internal/handlers/deployment_campaigns_test.go`
 - Modify: `internal/routing/routing.go`
-- Create: `docs/adr/0063-deterministic-deployment-campaigns.md`
+- Create: `docs/adr/0064-deterministic-deployment-campaigns.md`
 - Create: `docs/fork/PR-071_IMMUTABLE_CAMPAIGN_REVISIONS.md`
 
 Migration 153 creates `DeploymentCampaignDraft`, `DeploymentCampaignRevision`, `DeploymentCampaignWave`, `DeploymentCampaignMember`, and `DeploymentCampaignPrerequisite`. Published revisions freeze ordered plan membership, tag-query result, plan/approval checksums, wave assignment, risk/bake/threshold policy, and each cross-plan prerequisite's upstream plan ID, step key, and expected observed-state checksum.

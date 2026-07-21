@@ -126,6 +126,8 @@ func RequestApproval(
 			ActorUserAccountID: input.RequestedByUserAccountID,
 			DecisionAt:         decisionAt,
 			DeploymentPlanID:   plan.ID,
+			EnvironmentID:      plan.EnvironmentID,
+			DeploymentUnitID:   plan.DeploymentUnitID,
 		}); err != nil {
 			return err
 		}
@@ -233,11 +235,21 @@ func RecordApprovalDecision(
 		if err != nil {
 			return err
 		}
+		plan, err := getApprovalPlanForUpdate(
+			ctx,
+			request.SubjectID,
+			request.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
 		if err := input.Authorize(ctx, types.ApprovalAuthorizationContext{
 			OrganizationID:        request.OrganizationID,
 			ActorUserAccountID:    input.ActorUserAccountID,
 			DecisionAt:            decisionAt,
 			DeploymentPlanID:      request.SubjectID,
+			EnvironmentID:         plan.EnvironmentID,
+			DeploymentUnitID:      plan.DeploymentUnitID,
 			ApprovalRequestID:     request.ID,
 			ApprovalRequirementID: input.ApprovalRequirementID,
 		}); err != nil {

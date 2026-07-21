@@ -17,7 +17,7 @@ decisions.
 - Both routes are absent unless `operator_control_plane_v2` and `executor_protocol_v2` are effective.
 - Repository mutation requires scoped `plan.execute` or `emergency.override` authorization using the plan's
   organization, environment, and optional deployment-unit scope. The same scope must be effectively enrolled.
-  The adapter is intentionally closed until PR-066 is integrated.
+  The adapter resolves scopes and checks PR-066 authorization plus enrollment at the database decision instant.
 - Closed maintenance windows and active freezes return `WAIT`. Missing or stale approval and failed mandatory
   gates return `BLOCK`.
 - Emergency overrides may shorten only the strict intersection of policy-whitelisted gates. They cannot accelerate

@@ -31,9 +31,9 @@ override are material and must produce new checksum-bound evidence.
   backup, provenance, observation, and mandatory health gates are permanently protected. A calendar or freeze wait
   is shortened only when its trusted remaining duration is no greater than the requested maximum; an unbounded
   approval wait cannot be accelerated.
-- Require both `operator_control_plane_v2` and `executor_protocol_v2`, scoped `plan.execute` or
-  `emergency.override` authorization, and effective enrollment before mutation. Until the PR-066 adapter is present,
-  the authorization seam fails closed.
+- Require both `operator_control_plane_v2` and `executor_protocol_v2`, PR-066 scoped `plan.execute` or
+  `emergency.override` authorization, and effective organization/selected-environment enrollment at the same
+  database decision instant before mutation.
 - Keep `CreateTasksForDeploymentPlan` unchanged for v1. The only v2 entry point is
   `CreateTasksForAdmittedV2Plan`, which requires frozen v2 schema/protocol identity, records an `ADMIT` decision, and
   then delegates to the existing creator.
@@ -50,6 +50,6 @@ operation remains auditable without becoming a general bypass. A changed materia
 revision or override. Existing v1 task status, preflight, step-run, and event behavior remains unchanged while the
 new flags are off.
 
-The PR-066 authorization/enrollment package and PR-063 v2 deployment-plan columns are stacked dependencies. This
-slice exposes strict seams for both and never falls back to legacy role authority when scoped authorization is
-unavailable.
+The PR-066 authorization/enrollment package and PR-063 v2 deployment-plan columns are stacked dependencies. The
+shared authorizer preserves the legacy-role compatibility fallback only inside PR-066, keeps credential roles as
+the upper bound, and denies super-admin mutation.

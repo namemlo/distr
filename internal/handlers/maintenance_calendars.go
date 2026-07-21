@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -27,8 +28,8 @@ import (
 
 const (
 	maintenanceCalendarMaximumBodyBytes int64 = 2 << 20
-	calendarActionManage                      = "calendar.manage"
-	freezeActionManage                        = "freeze.manage"
+	calendarActionManage                      = string(types.ActionCalendarManage)
+	freezeActionManage                        = string(types.ActionFreezeManage)
 )
 
 type calendarActionAuthorizer interface {
@@ -38,6 +39,7 @@ type calendarActionAuthorizer interface {
 		uuid.UUID,
 		string,
 		types.CalendarScopeRef,
+		time.Time,
 	) error
 }
 
@@ -47,6 +49,7 @@ type calendarActionAuthorizerFunc func(
 	uuid.UUID,
 	string,
 	types.CalendarScopeRef,
+	time.Time,
 ) error
 
 func (fn calendarActionAuthorizerFunc) AuthorizeCalendarAction(
@@ -54,26 +57,53 @@ func (fn calendarActionAuthorizerFunc) AuthorizeCalendarAction(
 	organizationID, actorID uuid.UUID,
 	action string,
 	scope types.CalendarScopeRef,
+	decisionAt time.Time,
 ) error {
-	return fn(ctx, organizationID, actorID, action, scope)
+	return fn(ctx, organizationID, actorID, action, scope, decisionAt)
 }
 
-// unavailableCalendarActionAuthorizer keeps calendar mutations fail-closed until
-// PR-066's shared authorization.Authorize adapter is rebased into this seam.
-type unavailableCalendarActionAuthorizer struct{}
+type scopedCalendarActionAuthorizer struct {
+	dependencies controlPlaneResourceAuthorizationDependencies
+}
 
-func (unavailableCalendarActionAuthorizer) AuthorizeCalendarAction(
-	context.Context,
-	uuid.UUID,
-	uuid.UUID,
-	string,
-	types.CalendarScopeRef,
+func (authorizer scopedCalendarActionAuthorizer) AuthorizeCalendarAction(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	actorID uuid.UUID,
+	action string,
+	scope types.CalendarScopeRef,
+	decisionAt time.Time,
 ) error {
-	return apierrors.ErrForbidden
+	authInfo, err := auth.Authentication.Get(ctx)
+	if err != nil ||
+		authInfo.CurrentOrgID() == nil ||
+		*authInfo.CurrentOrgID() != organizationID ||
+		authInfo.CurrentUserID() != actorID {
+		return apierrors.ErrForbidden
+	}
+	return authorizeControlPlaneResourceWithDependencies(
+		ctx,
+		controlPlaneResourceAuthorizationRequest{
+			OrganizationID: organizationID,
+			PrincipalID:    actorID,
+			CredentialRole: authInfo.CurrentUserRole(),
+			IsSuperAdmin:   authInfo.IsSuperAdmin(),
+			Action:         types.Action(action),
+			Resource: types.ResourceRef{
+				OrganizationID: organizationID,
+				Kind:           types.PermissionScope(scope.Kind),
+				ID:             scope.ID,
+			},
+			DecisionAt: decisionAt,
+		},
+		authorizer.dependencies,
+	)
 }
 
 func newCalendarActionAuthorizer() calendarActionAuthorizer {
-	return unavailableCalendarActionAuthorizer{}
+	return scopedCalendarActionAuthorizer{
+		dependencies: defaultControlPlaneResourceAuthorizationDependencies(),
+	}
 }
 
 type maintenanceCalendarIDRequest struct {
@@ -798,6 +828,25 @@ func authorizeCalendarAction(
 	action string,
 	scope types.CalendarScopeRef,
 ) error {
+	return authorizeCalendarActionAt(
+		ctx,
+		authorizer,
+		organizationID,
+		actorID,
+		action,
+		scope,
+		time.Now().UTC(),
+	)
+}
+
+func authorizeCalendarActionAt(
+	ctx context.Context,
+	authorizer calendarActionAuthorizer,
+	organizationID, actorID uuid.UUID,
+	action string,
+	scope types.CalendarScopeRef,
+	decisionAt time.Time,
+) error {
 	if authorizer == nil {
 		return errors.New("calendar action authorizer is not configured")
 	}
@@ -811,6 +860,7 @@ func authorizeCalendarAction(
 		actorID,
 		action,
 		scope,
+		decisionAt,
 	)
 }
 
@@ -820,26 +870,29 @@ func authorizeDeploymentFreezeScopeTransition(
 	organizationID, actorID uuid.UUID,
 	current, destination types.CalendarScopeRef,
 ) error {
-	if err := authorizeCalendarAction(
+	decisionAt := time.Now().UTC()
+	if err := authorizeCalendarActionAt(
 		ctx,
 		authorizer,
 		organizationID,
 		actorID,
 		freezeActionManage,
 		current,
+		decisionAt,
 	); err != nil {
 		return err
 	}
 	if destination == current {
 		return nil
 	}
-	return authorizeCalendarAction(
+	return authorizeCalendarActionAt(
 		ctx,
 		authorizer,
 		organizationID,
 		actorID,
 		freezeActionManage,
 		destination,
+		decisionAt,
 	)
 }
 

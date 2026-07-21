@@ -50,8 +50,8 @@ Focused tests cover ordinary allow/deny, overnight windows, DST gaps, repeated h
 collision, IANA/rule-version drift, canonical checksum stability and material changes, exact freeze instants,
 freeze overlap/priority, cursor bounds, API validation, response non-leakage, strict JSON, hidden feature routes,
 admin/super-admin policy, scoped-action handoff, tenant-safe error mapping, and the static migration contract.
-Additional focused tests cover host-zoneinfo independence, declared/runtime rule-data mismatch, fail-closed PR-066
-integration, current-before-destination freeze authorization, historical publish replay, version-scoped child IDs,
+Additional focused tests cover host-zoneinfo independence, declared/runtime rule-data mismatch, PR-066 scope
+resolution, current-before-destination freeze authorization, historical publish replay, version-scoped child IDs,
 and batch rule grouping/query shape.
 
 Live PostgreSQL migration/repository/retention tests, the complete repository suite, containers, browser/UI, and
@@ -61,8 +61,8 @@ production deployment remain final integration gates. Migration 151 must be reba
 ## Operations
 
 1. Keep `operator_control_plane_v2` disabled while applying the sequential migration set.
-2. Rebase PR-066 and replace the fail-closed calendar authorization factory with its shared
-   `authorization.Authorize` adapter before enabling the flag. No permissive production fallback exists.
+2. Configure `calendar.manage` and `freeze.manage` bindings; the production factory delegates to PR-066
+   `authorization.ResolveResourceScopes` and `authorization.Authorize`.
 3. Submit rule version `2026a`; reject a deployment if its reported
    `zonerules.ProductionRuleDataIdentity` differs from the approved build identity.
 4. Pin the returned immutable IDs and checksums in the policy/plan slice.

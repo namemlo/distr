@@ -40,20 +40,56 @@ func defaultAdmissionHandlerDependencies() admissionHandlerDependencies {
 	return admissionHandlerDependencies{
 		admit:          db.AdmitDeploymentPlan,
 		createOverride: db.CreateEmergencyOverride,
-		authorize:      admissionScopedAuthorizationUnavailable,
+		authorize:      admissionScopedAuthorization,
 		clock: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
 }
 
-func admissionScopedAuthorizationUnavailable(
-	context.Context,
-	types.AdmissionAuthorizationContext,
+func admissionScopedAuthorization(
+	ctx context.Context,
+	evidence types.AdmissionAuthorizationContext,
 ) error {
-	return apierrors.NewForbidden(
-		"scoped admission authorization and enrollment are unavailable until PR-066 is integrated",
+	return admissionScopedAuthorizationWithDependencies(
+		ctx,
+		evidence,
+		defaultControlPlaneResourceAuthorizationDependencies(),
 	)
+}
+
+func admissionScopedAuthorizationWithDependencies(
+	ctx context.Context,
+	evidence types.AdmissionAuthorizationContext,
+	dependencies controlPlaneResourceAuthorizationDependencies,
+) error {
+	authInfo, err := auth.Authentication.Get(ctx)
+	if err != nil ||
+		authInfo.CurrentOrgID() == nil ||
+		*authInfo.CurrentOrgID() != evidence.OrganizationID ||
+		authInfo.CurrentUserID() != evidence.ActorUserAccountID {
+		return apierrors.ErrForbidden
+	}
+	resource := types.ResourceRef{
+		OrganizationID: evidence.OrganizationID,
+		Kind:           types.PermissionScopeEnvironment,
+		ID:             evidence.EnvironmentID,
+	}
+	if evidence.DeploymentUnitID != nil {
+		resource.Kind = types.PermissionScopeDeploymentUnit
+		resource.ID = *evidence.DeploymentUnitID
+	}
+	return authorizeControlPlaneResourceWithDependencies(ctx, controlPlaneResourceAuthorizationRequest{
+		OrganizationID:    evidence.OrganizationID,
+		PrincipalID:       evidence.ActorUserAccountID,
+		CredentialRole:    authInfo.CurrentUserRole(),
+		IsSuperAdmin:      authInfo.IsSuperAdmin(),
+		Action:            types.Action(evidence.Action),
+		Resource:          resource,
+		DecisionAt:        evidence.DecisionAt,
+		RequireEnrollment: true,
+		EnvironmentID:     evidence.EnvironmentID,
+	}, dependencies)
 }
 
 func deploymentPlanAdmissionRoutes(r chiopenapi.Router) {

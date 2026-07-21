@@ -10,8 +10,7 @@ shared-provider expectations.
 
 - Routes: create, get, edit, validate, and publish below `/api/v1/deployment-campaign-drafts`.
 - Access: authenticated vendor organization context is required. Mutations require
-  `operator_control_plane_v2` and the campaign-control authorization seam; the seam fails closed until PR-066 is
-  integrated.
+  `operator_control_plane_v2` and PR-066 `campaign.control` authorization over the exact campaign draft scope.
 - Draft concurrency: edits supply `expectedRevision`; a stale revision returns conflict.
 - Membership: explicit plan IDs and a conjunction of canonical `key=value` tag terms are resolved into at most
   1,000 eligible organization plans.
@@ -58,17 +57,15 @@ mapping fidelity, and draft edits without scoped authority.
 Cross-PR coverage also proves canonical provider coordinates are persisted, canonicalized, mapped to the API, and
 rejected when the plan-local placement has no immutable snapshot bridge.
 
-Focused Go tests and `go vet` are the feature-local gates. Migrations 141 through 148 and migration 152 are absent
-from the assigned synthetic stack, so migration lint reports those exact predecessor gaps until the missing
-planning, authorization, and PR-070 stacks are transplanted. Live sequential PostgreSQL and full-branch regression
-remain integration gates.
+Focused Go tests and `go vet` are the feature-local gates. Migrations 141 through 153 are present on the integrated
+governance stack. Live sequential PostgreSQL and full-branch regression remain integration gates.
 
 ## Dependency Seams
 
-1. PR-066 must replace `newCampaignActionAuthorizer` with the shared scoped authorization adapter. The current
-   production factory denies every mutation.
-2. The integration branch must supply migrations 141 through 148 and PR-070 migration 152 before migration lint or
-   sequential database application can pass.
+1. PR-066 is wired through `newCampaignActionAuthorizer`; it resolves exact campaign and organization scopes and
+   delegates to the shared credential-capped authorizer.
+2. The integrated branch supplies migrations 141 through 153 in sequence; migration lint and live sequential
+   database application remain required gates.
 3. The full target-plan/provider-placement stack must replace the narrow target-component evidence adapter when
    campaign code is transplanted onto the integrated planning branch.
 4. PR-072 consumes immutable revisions, records the actual matching trusted observation ID, and implements
