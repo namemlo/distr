@@ -10,6 +10,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/executionprotocol"
+	"github.com/distr-sh/distr/internal/executionworker"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/middleware"
 	"github.com/distr-sh/distr/internal/types"
@@ -243,9 +244,12 @@ func completeExecutionV2Handler() http.HandlerFunc {
 			return
 		}
 		agent := auth.AgentAuthentication.Require(r.Context())
-		err = db.CompleteExecutionAttempt(r.Context(), request.ToTypes(
+		task, err := db.CompleteExecutionAttempt(r.Context(), request.ToTypes(
 			agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(), attemptID,
 		))
+		if err == nil && task != nil {
+			err = executionworker.DispatchReadyTaskSteps(r.Context(), *task)
+		}
 		if err != nil {
 			respondExecutionV2Error(w, err)
 			return

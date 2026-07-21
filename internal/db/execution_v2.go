@@ -474,37 +474,50 @@ func AcknowledgeExecutionAttempt(
 		request.FenceGeneration <= 0 {
 		return apierrors.NewBadRequest("execution acknowledgement is invalid")
 	}
-	db := internalctx.GetDb(ctx)
-	command, err := db.Exec(ctx, `
-		UPDATE ExecutionAttempt ea
-		SET status = 'RUNNING', acknowledged_at = COALESCE(
-				ea.acknowledged_at, clock_timestamp()
-			), updated_at = clock_timestamp()
-		FROM ExecutionFence ef
-		WHERE ea.id = @attemptId
-			AND ea.organization_id = @organizationId
-			AND ea.deployment_target_id = @deploymentTargetId
-			AND ea.claimed_by = @executorId
-			AND ea.status IN ('CLAIMED', 'RUNNING')
-			AND ea.intent_expires_at > clock_timestamp()
-			AND ef.execution_attempt_id = ea.id
-			AND ef.organization_id = ea.organization_id
-			AND ef.generation = @generation
-			AND ef.released_at IS NULL
-			AND ef.lease_expires_at > clock_timestamp()`,
-		pgx.NamedArgs{
+	return RunTx(ctx, func(ctx context.Context) error {
+		attempt, err := getExecutionAttemptForTargetUpdate(
+			ctx, request.AttemptID, request.OrganizationID, request.DeploymentTargetID,
+		)
+		if err != nil {
+			return err
+		}
+		database := internalctx.GetDb(ctx)
+		var trustedNow time.Time
+		if err := database.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&trustedNow); err != nil {
+			return fmt.Errorf("read trusted database time: %w", err)
+		}
+		if attempt.Fence.Generation != request.FenceGeneration ||
+			attempt.ClaimedBy != request.ExecutorID ||
+			(attempt.Status != types.ExecutionAttemptStatusClaimed &&
+				attempt.Status != types.ExecutionAttemptStatusRunning) ||
+			attempt.Fence.LeaseExpiresAt.IsZero() ||
+			!attempt.Fence.LeaseExpiresAt.After(trustedNow) ||
+			!attempt.IntentExpiresAt.After(trustedNow) {
+			return apierrors.NewConflict("execution acknowledgement rejected by ownership, lease, or fence")
+		}
+		command, err := database.Exec(ctx, `
+			UPDATE ExecutionAttempt
+			SET status = 'RUNNING',
+				acknowledged_at = COALESCE(acknowledged_at, clock_timestamp()),
+				updated_at = clock_timestamp()
+			WHERE id = @attemptId
+				AND organization_id = @organizationId
+				AND deployment_target_id = @deploymentTargetId
+				AND claimed_by = @executorId
+				AND status IN ('CLAIMED', 'RUNNING')`, pgx.NamedArgs{
 			"attemptId": request.AttemptID, "organizationId": request.OrganizationID,
 			"deploymentTargetId": request.DeploymentTargetID,
-			"executorId":         request.ExecutorID, "generation": request.FenceGeneration,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("acknowledge ExecutionAttempt: %w", err)
-	}
-	if command.RowsAffected() != 1 {
-		return apierrors.NewConflict("execution acknowledgement rejected by ownership, lease, or fence")
-	}
-	return nil
+			"executorId":         request.ExecutorID,
+		})
+		if err != nil {
+			return fmt.Errorf("acknowledge ExecutionAttempt: %w", err)
+		}
+		if command.RowsAffected() != 1 {
+			return apierrors.NewConflict("execution acknowledgement raced")
+		}
+		attempt.Status = types.ExecutionAttemptStatusRunning
+		return projectExecutionV2Running(ctx, *attempt)
+	})
 }
 
 func HeartbeatExecutionAttempt(ctx context.Context, request types.HeartbeatRequest) error {
@@ -646,12 +659,19 @@ func RecordExecutionEvent(
 				"executorId":         input.ExecutorID,
 			},
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if input.Status == types.ExecutionEventStatusRunning {
+			attempt.Status = types.ExecutionAttemptStatusRunning
+			return projectExecutionV2Running(ctx, *attempt)
+		}
+		return nil
 	})
 	return result, err
 }
 
-func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) error {
+func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) (*types.Task, error) {
 	if input.OrganizationID == uuid.Nil || input.DeploymentTargetID == uuid.Nil ||
 		input.AttemptID == uuid.Nil ||
 		strings.TrimSpace(input.ExecutorID) == "" || input.FenceGeneration <= 0 ||
@@ -660,10 +680,39 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 			input.Status != types.ExecutionAttemptStatusFailed &&
 			input.Status != types.ExecutionAttemptStatusCanceled &&
 			input.Status != types.ExecutionAttemptStatusTimedOut) {
-		return apierrors.NewBadRequest("execution completion request is invalid")
+		return nil, apierrors.NewBadRequest("execution completion request is invalid")
 	}
-	return RunTx(ctx, func(ctx context.Context) error {
+	var task *types.Task
+	err := RunTx(ctx, func(ctx context.Context) error {
 		db := internalctx.GetDb(ctx)
+		attempt, err := getExecutionAttemptForTargetUpdate(
+			ctx, input.AttemptID, input.OrganizationID, input.DeploymentTargetID,
+		)
+		if err != nil {
+			return err
+		}
+		failureReason := strings.TrimSpace(input.FailureReason)
+		if attempt.Status.IsTerminal() {
+			if attempt.Status != input.Status || attempt.FailureReason != failureReason ||
+				attempt.Fence.Generation != input.FenceGeneration {
+				return apierrors.NewConflict("conflicting duplicate execution completion")
+			}
+			task, err = getTask(ctx, attempt.TaskID, attempt.OrganizationID)
+			return err
+		}
+		var trustedNow time.Time
+		if err := db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&trustedNow); err != nil {
+			return fmt.Errorf("read trusted database time: %w", err)
+		}
+		if attempt.Fence.Generation != input.FenceGeneration ||
+			attempt.ClaimedBy != input.ExecutorID ||
+			(attempt.Status != types.ExecutionAttemptStatusClaimed &&
+				attempt.Status != types.ExecutionAttemptStatusRunning) ||
+			attempt.Fence.LeaseExpiresAt.IsZero() ||
+			!attempt.Fence.LeaseExpiresAt.After(trustedNow) ||
+			!attempt.IntentExpiresAt.After(trustedNow) {
+			return apierrors.NewConflict("execution completion rejected by lease or fence")
+		}
 		command, err := db.Exec(ctx, `
 			UPDATE ExecutionAttempt ea
 			SET status = @status, completed_at = clock_timestamp(),
@@ -685,7 +734,7 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 				"deploymentTargetId": input.DeploymentTargetID,
 				"executorId":         input.ExecutorID, "generation": input.FenceGeneration,
 				"status":        input.Status,
-				"failureReason": strings.TrimSpace(input.FailureReason),
+				"failureReason": failureReason,
 			},
 		)
 		if err != nil {
@@ -705,8 +754,15 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 				"generation": input.FenceGeneration,
 			},
 		)
+		if err != nil {
+			return err
+		}
+		attempt.Status = input.Status
+		attempt.FailureReason = failureReason
+		task, err = projectExecutionV2Terminal(ctx, *attempt, input.Status)
 		return err
 	})
+	return task, err
 }
 
 func FenceExecutionAttempt(
@@ -756,7 +812,10 @@ func fenceExecutionAttemptTx(
 				AND organization_id = @organizationId`,
 		pgx.NamedArgs{"attemptId": attemptID, "organizationId": orgID},
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return projectExecutionV2Uncertain(ctx, attemptID, orgID)
 }
 
 func validateExecutionV2ClaimRequest(request types.ClaimRequest) error {
@@ -1201,7 +1260,10 @@ func RecordCancelAcknowledgement(
 				"organizationId": ack.OrganizationID,
 			},
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		return nil
 	})
 }
 
@@ -1392,6 +1454,14 @@ func ImportReconciliationStatus(
 				"attemptId": attempt.ID, "organizationId": input.OrganizationID,
 			},
 		)
+		if err != nil {
+			return err
+		}
+		attempt.Status = decision.Status
+		if decision.Status == types.ExecutionAttemptStatusUnknown {
+			return projectExecutionV2Uncertain(ctx, attempt.ID, input.OrganizationID)
+		}
+		_, err = projectExecutionV2Terminal(ctx, *attempt, decision.Status)
 		return err
 	})
 }

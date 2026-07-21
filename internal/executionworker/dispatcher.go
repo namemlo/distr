@@ -130,8 +130,22 @@ type V1Dispatcher interface {
 }
 
 type ProtocolDispatcher struct {
-	v1 V1Dispatcher
-	v2 *Dispatcher
+	v1         V1Dispatcher
+	v2         *Dispatcher
+	readySteps ReadyStepRunsLoader
+}
+
+type ReadyStepRunsLoader interface {
+	LoadExecutionV2ReadyStepRuns(context.Context, uuid.UUID, uuid.UUID) ([]types.StepRun, error)
+}
+
+type repositoryReadyStepRunsLoader struct{}
+
+func (repositoryReadyStepRunsLoader) LoadExecutionV2ReadyStepRuns(
+	ctx context.Context,
+	organizationID, taskID uuid.UUID,
+) ([]types.StepRun, error) {
+	return db.GetExecutionV2ReadyStepRuns(ctx, organizationID, taskID)
 }
 
 type protocolDispatcherContextKey struct{}
@@ -148,7 +162,7 @@ func DispatchCreatedTasks(ctx context.Context, tasks []types.Task) error {
 		if task.ProtocolVersion == types.ExecutionProtocolVersionV1 {
 			continue
 		}
-		if err := dispatchTask(ctx, task, false); err != nil {
+		if err := DispatchReadyTaskSteps(ctx, task); err != nil {
 			return err
 		}
 	}
@@ -159,10 +173,40 @@ func DispatchTaskRetry(ctx context.Context, task types.Task) error {
 	if task.ProtocolVersion != types.ExecutionProtocolVersionV2 {
 		return errors.New("execution retry requires protocol v2")
 	}
-	return dispatchTask(ctx, task, true)
+	return dispatchTaskRetry(ctx, task)
 }
 
-func dispatchTask(ctx context.Context, task types.Task, retry bool) error {
+func DispatchReadyTaskSteps(ctx context.Context, task types.Task) error {
+	dispatcher, ok := ctx.Value(protocolDispatcherContextKey{}).(*ProtocolDispatcher)
+	if !ok || dispatcher == nil {
+		return errors.New("execution protocol dispatcher is not configured")
+	}
+	if task.ProtocolVersion != types.ExecutionProtocolVersionV2 {
+		return nil
+	}
+	if dispatcher.readySteps == nil {
+		return errors.New("execution v2 ready-step repository is not configured")
+	}
+	steps, err := dispatcher.readySteps.LoadExecutionV2ReadyStepRuns(
+		ctx, task.OrganizationID, task.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("load execution v2 ready steps: %w", err)
+	}
+	for _, step := range steps {
+		if _, err := dispatcher.Dispatch(ctx, task.ProtocolVersion, DispatchRequest{
+			OrganizationID: task.OrganizationID, DeploymentTargetID: task.DeploymentTargetID,
+			EnvironmentID: task.EnvironmentID, ExecutionID: task.ID,
+			PlanID: task.DeploymentPlanID, TaskID: task.ID,
+			StepRunID: step.ID, StepKey: step.StepKey,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dispatchTaskRetry(ctx context.Context, task types.Task) error {
 	dispatcher, ok := ctx.Value(protocolDispatcherContextKey{}).(*ProtocolDispatcher)
 	if !ok || dispatcher == nil {
 		return errors.New("execution protocol dispatcher is not configured")
@@ -181,13 +225,15 @@ func dispatchTask(ctx context.Context, task types.Task, retry bool) error {
 		OrganizationID: task.OrganizationID, DeploymentTargetID: task.DeploymentTargetID,
 		EnvironmentID: task.EnvironmentID, ExecutionID: task.ID,
 		PlanID: task.DeploymentPlanID, TaskID: task.ID,
-		StepRunID: step.ID, StepKey: step.StepKey, Retry: retry,
+		StepRunID: step.ID, StepKey: step.StepKey, Retry: true,
 	})
 	return err
 }
 
 func NewProtocolDispatcher(v1 V1Dispatcher, v2 *Dispatcher) *ProtocolDispatcher {
-	return &ProtocolDispatcher{v1: v1, v2: v2}
+	return &ProtocolDispatcher{
+		v1: v1, v2: v2, readySteps: repositoryReadyStepRunsLoader{},
+	}
 }
 
 func (d *ProtocolDispatcher) Dispatch(

@@ -93,3 +93,16 @@ func TestCampaignCancelRequestUsesTrustedDatabaseTimestamp(t *testing.T) {
 		"@requested_by, @idempotency_key, @reason, clock_timestamp()",
 	))
 }
+
+func TestCampaignCancelProjectsEveryAffectedWaveInTheSameTransaction(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("campaign_cancel_fanout.go")
+	g.Expect(err).NotTo(HaveOccurred())
+
+	code := string(source)
+	g.Expect(code).To(ContainSubstring("RETURNING member_run.wave_run_id"))
+	g.Expect(code).To(ContainSubstring("SELECT DISTINCT wave_run_id"))
+	g.Expect(code).To(ContainSubstring(
+		"projectCampaignWaveExecution(ctx, input.OrganizationID, waveRunID)",
+	))
+}

@@ -48,6 +48,19 @@ type attemptCreatorStub struct {
 	lastRequest CreateAttemptRequest
 }
 
+type readyStepRunsLoaderStub struct {
+	steps []types.StepRun
+	err   error
+	calls int
+}
+
+func (s *readyStepRunsLoaderStub) LoadExecutionV2ReadyStepRuns(
+	context.Context, uuid.UUID, uuid.UUID,
+) ([]types.StepRun, error) {
+	s.calls++
+	return s.steps, s.err
+}
+
 func (s *attemptCreatorStub) CreateExecutionAttempt(
 	_ context.Context, request CreateAttemptRequest,
 ) (*types.ExecutionAttempt, error) {
@@ -125,9 +138,59 @@ func TestCreatedTasksRouteV1ToLeaseWorkersAndV2ToSignedDispatcher(t *testing.T) 
 			ID: uuid.New(), StepKey: "deploy", Status: types.StepRunStatusPending,
 		}},
 	}
+	dispatcher.readySteps = &readyStepRunsLoaderStub{steps: v2Task.StepRuns}
 	ctx := WithProtocolDispatcher(context.Background(), dispatcher)
 	g.Expect(DispatchCreatedTasks(ctx, []types.Task{v1, v2Task})).To(Succeed())
 	g.Expect(creator.calls).To(Equal(1))
+}
+
+func TestCreatedTaskDispatchesEveryDependencyReadyStepWithoutAnAttempt(t *testing.T) {
+	g := NewWithT(t)
+	creator := &attemptCreatorStub{}
+	first := types.StepRun{ID: uuid.New(), StepKey: "prepare", Status: types.StepRunStatusPending}
+	second := types.StepRun{ID: uuid.New(), StepKey: "deploy", Status: types.StepRunStatusPending}
+	loader := &readyStepRunsLoaderStub{steps: []types.StepRun{first, second}}
+	dispatcher := NewProtocolDispatcher(nil, NewDispatcher(admissionGateStub{decision: AdmissionDecision{
+		OperatorFlag: true, ExecutorFlag: true, ScopedEnrollment: true,
+		PlanApproved: true, PlanAdmitted: true, AdapterPreflight: true,
+	}}, creator))
+	dispatcher.readySteps = loader
+	task := types.Task{
+		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		EnvironmentID: uuid.New(), DeploymentPlanID: uuid.New(),
+		ProtocolVersion: types.ExecutionProtocolVersionV2,
+		StepRuns:        []types.StepRun{first, second},
+	}
+
+	err := DispatchCreatedTasks(
+		WithProtocolDispatcher(context.Background(), dispatcher), []types.Task{task},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(loader.calls).To(Equal(1))
+	g.Expect(creator.calls).To(Equal(2))
+}
+
+func TestDispatchReadyTaskStepsIsNoOpWhenNoDependencyReadyStepRemains(t *testing.T) {
+	g := NewWithT(t)
+	creator := &attemptCreatorStub{}
+	loader := &readyStepRunsLoaderStub{}
+	dispatcher := NewProtocolDispatcher(nil, NewDispatcher(admissionGateStub{decision: AdmissionDecision{
+		OperatorFlag: true, ExecutorFlag: true, ScopedEnrollment: true,
+		PlanApproved: true, PlanAdmitted: true, AdapterPreflight: true,
+	}}, creator))
+	dispatcher.readySteps = loader
+	task := types.Task{
+		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		ProtocolVersion: types.ExecutionProtocolVersionV2,
+	}
+
+	err := DispatchReadyTaskSteps(
+		WithProtocolDispatcher(context.Background(), dispatcher), task,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(creator.calls).To(Equal(0))
 }
 
 func TestRepositoryAdmissionGateUsesProcessFlagsAndDurableDecision(t *testing.T) {

@@ -320,7 +320,8 @@ func markFullyCanceledCampaignMembers(
 	ctx context.Context,
 	input types.CampaignControlInput,
 ) error {
-	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+WITH canceled_members AS (
 UPDATE DeploymentCampaignMemberRun AS member_run
 SET status = 'CANCELED', completed_at = COALESCE(completed_at, @canceled_at)
 WHERE member_run.organization_id = @organization_id
@@ -343,13 +344,38 @@ WHERE member_run.organization_id = @organization_id
       AND lineage.campaign_run_id = member_run.campaign_run_id
       AND lineage.campaign_member_run_id = member_run.id
       AND task.status <> 'CANCELED'
-  )`, pgx.NamedArgs{
+  )
+RETURNING member_run.wave_run_id
+)
+SELECT DISTINCT wave_run_id
+FROM canceled_members
+ORDER BY wave_run_id`, pgx.NamedArgs{
 		"organization_id": input.OrganizationID,
 		"campaign_run_id": input.RunID,
 		"canceled_at":     input.RequestedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("mark campaign members canceled: %w", err)
+	}
+	defer rows.Close()
+
+	waveRunIDs := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var waveRunID uuid.UUID
+		if err := rows.Scan(&waveRunID); err != nil {
+			return fmt.Errorf("scan canceled campaign wave: %w", err)
+		}
+		waveRunIDs = append(waveRunIDs, waveRunID)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("load canceled campaign waves: %w", err)
+	}
+	rows.Close()
+
+	for _, waveRunID := range waveRunIDs {
+		if err := projectCampaignWaveExecution(ctx, input.OrganizationID, waveRunID); err != nil {
+			return fmt.Errorf("project canceled campaign wave: %w", err)
+		}
 	}
 	return nil
 }
