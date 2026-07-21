@@ -34,6 +34,7 @@ func TestTaskQueueRepositoryCreatesTasksForReadyPlanInQueueOrder(t *testing.T) {
 	g.Expect(tasks[0].Status).To(Equal(types.TaskStatusQueued))
 	g.Expect(tasks[1].Status).To(Equal(types.TaskStatusQueued))
 	g.Expect(tasks[0].TaskType).To(Equal(types.TaskTypeDeployment))
+	g.Expect(tasks[0].ExecutionOccurrenceID).To(Equal(deps.plan.ID))
 	g.Expect(tasks[0].QueueOrder).To(BeNumerically("<", tasks[1].QueueOrder))
 	g.Expect(tasks[0].DeploymentPlanID).To(Equal(deps.plan.ID))
 	g.Expect(tasks[0].DeploymentPlanTargetID).To(Equal(deps.plan.Targets[0].ID))
@@ -65,9 +66,10 @@ func TestTaskQueueRepositoryCreateTasksForPlanIsIdempotent(t *testing.T) {
 	g := NewWithT(t)
 	deps := createReadyDeploymentPlanForTaskQueue(t, ctx, "cluster-a")
 	request := types.CreateTasksForDeploymentPlanRequest{
-		OrganizationID:     deps.orgID,
-		DeploymentPlanID:   deps.plan.ID,
-		ActorUserAccountID: deps.actorID,
+		OrganizationID:        deps.orgID,
+		DeploymentPlanID:      deps.plan.ID,
+		ExecutionOccurrenceID: uuid.New(),
+		ActorUserAccountID:    deps.actorID,
 	}
 
 	first, err := db.CreateTasksForDeploymentPlan(ctx, request)
@@ -77,6 +79,8 @@ func TestTaskQueueRepositoryCreateTasksForPlanIsIdempotent(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(second).To(HaveLen(1))
 	g.Expect(second[0].ID).To(Equal(first[0].ID))
+	g.Expect(first[0].ExecutionOccurrenceID).To(Equal(deps.plan.ID))
+	g.Expect(second[0].ExecutionOccurrenceID).To(Equal(deps.plan.ID))
 	g.Expect(second[0].QueueOrder).To(Equal(first[0].QueueOrder))
 	listed, err := db.GetTasksByOrganizationID(ctx, deps.orgID)
 	g.Expect(err).NotTo(HaveOccurred())

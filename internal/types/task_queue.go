@@ -117,11 +117,12 @@ func (s StepRunStatus) IsTerminal() bool {
 }
 
 type CreateTasksForDeploymentPlanRequest struct {
-	OrganizationID      uuid.UUID
-	DeploymentPlanID    uuid.UUID
-	ActorUserAccountID  uuid.UUID
-	ConcurrencyPolicy   TaskConcurrencyPolicy
-	AdditionalResources []TaskLockResourceRequest
+	OrganizationID        uuid.UUID
+	DeploymentPlanID      uuid.UUID
+	ExecutionOccurrenceID uuid.UUID
+	ActorUserAccountID    uuid.UUID
+	ConcurrencyPolicy     TaskConcurrencyPolicy
+	AdditionalResources   []TaskLockResourceRequest
 }
 
 type TaskLockResourceRequest struct {
@@ -152,6 +153,7 @@ type Task struct {
 	OrganizationID         uuid.UUID                `db:"organization_id" json:"organizationId"`
 	TaskType               TaskType                 `db:"task_type" json:"taskType"`
 	DeploymentPlanID       uuid.UUID                `db:"deployment_plan_id" json:"deploymentPlanId"`
+	ExecutionOccurrenceID  uuid.UUID                `db:"execution_occurrence_id" json:"executionOccurrenceId"`
 	DeploymentPlanTargetID uuid.UUID                `db:"deployment_plan_target_id" json:"deploymentPlanTargetId"`
 	DeploymentTargetID     uuid.UUID                `db:"deployment_target_id" json:"deploymentTargetId"`
 	ApplicationID          uuid.UUID                `db:"application_id" json:"applicationId"`

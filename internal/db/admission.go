@@ -120,7 +120,7 @@ func CreateTasksForAdmittedV2Plan(
 				return getAdmissionPlanSnapshot(ctx, planID, organizationID)
 			},
 			AdmitDeploymentPlan: AdmitDeploymentPlan,
-			CreateTasks:         CreateTasksForDeploymentPlan,
+			CreateTasks:         createTasksForAdmittedV2Plan,
 		},
 	)
 }

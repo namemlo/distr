@@ -47,6 +47,20 @@ func TestCreateTasksForAdmittedV2PlanRequiresFrozenV2Identity(t *testing.T) {
 	g.Expect(taskCalls).To(Equal(0))
 }
 
+func TestCreateTasksForAdmittedV2PlanRequiresExecutionOccurrence(t *testing.T) {
+	g := NewWithT(t)
+	request := admittedTaskCreationTestRequest()
+	request.ExecutionOccurrenceID = uuid.Nil
+
+	_, err := CreateTasksForAdmittedV2Plan(
+		context.Background(),
+		request,
+		admittedTaskCreationTestDependencies(),
+	)
+
+	g.Expect(err).To(MatchError(ContainSubstring("executionOccurrenceId")))
+}
+
 func TestCreateTasksForAdmittedV2PlanCreatesTasksOnlyAfterAdmit(t *testing.T) {
 	g := NewWithT(t)
 	request := admittedTaskCreationTestRequest()
@@ -59,10 +73,11 @@ func TestCreateTasksForAdmittedV2PlanCreatesTasksOnlyAfterAdmit(t *testing.T) {
 		return &types.AdmissionEvaluation{Decision: types.AdmissionDecisionWait}, nil
 	}
 	dependencies.CreateTasks = func(
-		context.Context,
-		types.CreateTasksForDeploymentPlanRequest,
+		_ context.Context,
+		createRequest types.CreateTasksForDeploymentPlanRequest,
 	) ([]types.Task, error) {
 		taskCalls++
+		g.Expect(createRequest.ExecutionOccurrenceID).To(Equal(request.ExecutionOccurrenceID))
 		return []types.Task{{ID: uuid.New()}}, nil
 	}
 
@@ -95,6 +110,7 @@ func admittedTaskCreationTestRequest() types.CreateTasksForAdmittedV2PlanRequest
 	return types.CreateTasksForAdmittedV2PlanRequest{
 		OrganizationID:          uuid.New(),
 		DeploymentPlanID:        uuid.New(),
+		ExecutionOccurrenceID:   uuid.New(),
 		ActorUserAccountID:      uuid.New(),
 		SchedulerIdempotencyKey: "scheduler:plan:1",
 	}

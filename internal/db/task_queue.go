@@ -28,6 +28,7 @@ const taskOutputExpr = `
 	t.organization_id,
 	t.task_type,
 	t.deployment_plan_id,
+	t.execution_occurrence_id,
 	t.deployment_plan_target_id,
 	t.deployment_target_id,
 	t.application_id,
@@ -84,6 +85,13 @@ type taskResourceLockSource struct {
 	ResourceKey  string                     `db:"resource_key"`
 }
 
+type deploymentPlanTaskCreationPath uint8
+
+const (
+	deploymentPlanTaskCreationPathV1 deploymentPlanTaskCreationPath = iota
+	deploymentPlanTaskCreationPathAdmittedV2
+)
+
 func reuseExistingDeploymentPlanTasks(
 	plan types.DeploymentPlan,
 	existing []types.Task,
@@ -100,9 +108,91 @@ func reuseExistingDeploymentPlanTasks(
 	return nil, false, nil
 }
 
+func reuseExistingAdmittedV2DeploymentPlanTasks(
+	plan types.DeploymentPlan,
+	existing []types.Task,
+) ([]types.Task, bool, error) {
+	if err := validateAdmittedV2DeploymentPlanTaskCreation(plan); err != nil {
+		return nil, false, err
+	}
+	if len(existing) == 0 {
+		return nil, false, nil
+	}
+	if plan.Status != types.DeploymentPlanStatusExecuted ||
+		!deploymentPlanTasksExactlyMatch(plan, existing) {
+		return nil, false, apierrors.NewConflict(
+			"existing target task set does not exactly match the admitted deployment occurrence",
+		)
+	}
+	return existing, true, nil
+}
+
+func deploymentPlanTasksExactlyMatch(plan types.DeploymentPlan, tasks []types.Task) bool {
+	if len(plan.Targets) == 0 || len(tasks) != len(plan.Targets) {
+		return false
+	}
+	targets := make(map[uuid.UUID]types.DeploymentPlanTarget, len(plan.Targets))
+	for _, target := range plan.Targets {
+		if target.ID == uuid.Nil || target.DeploymentTargetID == uuid.Nil {
+			return false
+		}
+		if _, exists := targets[target.ID]; exists {
+			return false
+		}
+		targets[target.ID] = target
+	}
+	seen := make(map[uuid.UUID]struct{}, len(tasks))
+	executionOccurrenceID := tasks[0].ExecutionOccurrenceID
+	if executionOccurrenceID == uuid.Nil {
+		return false
+	}
+	for _, task := range tasks {
+		target, exists := targets[task.DeploymentPlanTargetID]
+		if !exists {
+			return false
+		}
+		if _, duplicate := seen[task.DeploymentPlanTargetID]; duplicate {
+			return false
+		}
+		seen[task.DeploymentPlanTargetID] = struct{}{}
+		if task.ExecutionOccurrenceID != executionOccurrenceID ||
+			task.OrganizationID != plan.OrganizationID ||
+			task.TaskType != types.TaskTypeDeployment ||
+			task.DeploymentPlanID != plan.ID ||
+			task.DeploymentTargetID != target.DeploymentTargetID ||
+			task.ApplicationID != plan.ApplicationID ||
+			task.ReleaseBundleID != plan.ReleaseBundleID ||
+			task.ChannelID != plan.ChannelID ||
+			task.EnvironmentID != plan.EnvironmentID ||
+			task.ProtocolVersion != types.ExecutionProtocolVersion(plan.ProtocolVersion) {
+			return false
+		}
+	}
+	return len(seen) == len(targets)
+}
+
 func CreateTasksForDeploymentPlan(
 	ctx context.Context,
 	request types.CreateTasksForDeploymentPlanRequest,
+) ([]types.Task, error) {
+	request.ExecutionOccurrenceID = request.DeploymentPlanID
+	return createTasksForDeploymentPlan(ctx, request, deploymentPlanTaskCreationPathV1)
+}
+
+func createTasksForAdmittedV2Plan(
+	ctx context.Context,
+	request types.CreateTasksForDeploymentPlanRequest,
+) ([]types.Task, error) {
+	if request.ExecutionOccurrenceID == uuid.Nil {
+		return nil, apierrors.NewBadRequest("executionOccurrenceId is required")
+	}
+	return createTasksForDeploymentPlan(ctx, request, deploymentPlanTaskCreationPathAdmittedV2)
+}
+
+func createTasksForDeploymentPlan(
+	ctx context.Context,
+	request types.CreateTasksForDeploymentPlanRequest,
+	path deploymentPlanTaskCreationPath,
 ) ([]types.Task, error) {
 	if err := validateCreateTasksForDeploymentPlanRequest(request); err != nil {
 		return nil, err
@@ -115,11 +205,16 @@ func CreateTasksForDeploymentPlan(
 		if err != nil {
 			return err
 		}
-		existing, err := getTasksByDeploymentPlanID(ctx, request.DeploymentPlanID, request.OrganizationID)
+		existing, err := getTasksByDeploymentPlanID(
+			ctx,
+			request.DeploymentPlanID,
+			request.OrganizationID,
+			request.ExecutionOccurrenceID,
+		)
 		if err != nil {
 			return err
 		}
-		if reusable, reused, err := reuseExistingDeploymentPlanTasks(*plan, existing); err != nil {
+		if reusable, reused, err := reuseExistingTasksForCreationPath(*plan, existing, path); err != nil {
 			return err
 		} else if reused {
 			tasks = reusable
@@ -137,11 +232,22 @@ func CreateTasksForDeploymentPlan(
 		if err := lockTaskResourceAdvisoryGroups(ctx, lockGroups); err != nil {
 			return err
 		}
-		existing, err = getTasksByDeploymentPlanID(ctx, request.DeploymentPlanID, request.OrganizationID)
+		if path == deploymentPlanTaskCreationPathAdmittedV2 {
+			plan, err = GetDeploymentPlan(ctx, request.DeploymentPlanID, request.OrganizationID)
+			if err != nil {
+				return err
+			}
+		}
+		existing, err = getTasksByDeploymentPlanID(
+			ctx,
+			request.DeploymentPlanID,
+			request.OrganizationID,
+			request.ExecutionOccurrenceID,
+		)
 		if err != nil {
 			return err
 		}
-		if reusable, reused, err := reuseExistingDeploymentPlanTasks(*plan, existing); err != nil {
+		if reusable, reused, err := reuseExistingTasksForCreationPath(*plan, existing, path); err != nil {
 			return err
 		} else if reused {
 			tasks = reusable
@@ -159,6 +265,7 @@ func CreateTasksForDeploymentPlan(
 			ctx,
 			request.DeploymentPlanID,
 			request.OrganizationID,
+			request.ExecutionOccurrenceID,
 			uuidOrNil(request.ActorUserAccountID),
 		)
 		if err != nil {
@@ -175,13 +282,25 @@ func CreateTasksForDeploymentPlan(
 		if err := insertStepRunsForTasks(ctx, created); err != nil {
 			return err
 		}
-		if err := attachDeploymentPreflightTasks(ctx, preflight.ID, request.OrganizationID); err != nil {
+		if err := attachDeploymentPreflightTasks(
+			ctx,
+			preflight.ID,
+			request.OrganizationID,
+			request.ExecutionOccurrenceID,
+		); err != nil {
 			return err
 		}
-		if err := markDeploymentPlanExecuted(ctx, plan.ID, plan.OrganizationID); err != nil {
-			return err
+		if path == deploymentPlanTaskCreationPathV1 || plan.Status == types.DeploymentPlanStatusReady {
+			if err := markDeploymentPlanExecuted(ctx, plan.ID, plan.OrganizationID); err != nil {
+				return err
+			}
 		}
-		tasks, err = getTasksByDeploymentPlanID(ctx, request.DeploymentPlanID, request.OrganizationID)
+		tasks, err = getTasksByDeploymentPlanID(
+			ctx,
+			request.DeploymentPlanID,
+			request.OrganizationID,
+			request.ExecutionOccurrenceID,
+		)
 		return err
 	})
 	if err != nil {
@@ -193,14 +312,44 @@ func CreateTasksForDeploymentPlan(
 	return tasks, nil
 }
 
+func reuseExistingTasksForCreationPath(
+	plan types.DeploymentPlan,
+	existing []types.Task,
+	path deploymentPlanTaskCreationPath,
+) ([]types.Task, bool, error) {
+	if path == deploymentPlanTaskCreationPathAdmittedV2 {
+		return reuseExistingAdmittedV2DeploymentPlanTasks(plan, existing)
+	}
+	return reuseExistingDeploymentPlanTasks(plan, existing)
+}
+
 func validateDeploymentPlanTaskCreation(plan types.DeploymentPlan) error {
 	if plan.PlanSchema == types.TargetDeploymentPlanSchemaV2 {
 		return apierrors.NewConflict(
-			"target deployment plan execution is disabled until PR-075",
+			"target deployment plan tasks require the admitted v2 creation path",
 		)
 	}
 	if plan.Status != types.DeploymentPlanStatusReady {
 		return apierrors.NewConflict("deployment plan must be READY before tasks can be created")
+	}
+	return nil
+}
+
+func validateAdmittedV2DeploymentPlanTaskCreation(plan types.DeploymentPlan) error {
+	if plan.PlanSchema != types.TargetDeploymentPlanSchemaV2 ||
+		plan.ProtocolVersion != string(types.ExecutionProtocolVersionV2) {
+		return apierrors.NewConflict(
+			"admitted task creation requires frozen plan_schema v2 and protocol_version v2",
+		)
+	}
+	if len(plan.Targets) == 0 {
+		return apierrors.NewConflict("admitted v2 deployment plan has no frozen targets")
+	}
+	if plan.Status != types.DeploymentPlanStatusReady &&
+		plan.Status != types.DeploymentPlanStatusExecuted {
+		return apierrors.NewConflict(
+			"admitted v2 deployment plan must be READY or EXECUTED before tasks can be created",
+		)
 	}
 	return nil
 }
@@ -408,13 +557,18 @@ func uuidOrNil(id uuid.UUID) any {
 	return id
 }
 
-func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID, actorUserAccountID any) ([]types.Task, error) {
+func insertTasksForDeploymentPlan(
+	ctx context.Context,
+	planID, orgID, executionOccurrenceID uuid.UUID,
+	actorUserAccountID any,
+) ([]types.Task, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
 		`INSERT INTO Task AS t (
 			organization_id,
 			task_type,
 			deployment_plan_id,
+			execution_occurrence_id,
 			deployment_plan_target_id,
 			deployment_target_id,
 			application_id,
@@ -429,6 +583,7 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID, 
 			dp.organization_id,
 			@taskType,
 			dp.id,
+			@executionOccurrenceId,
 			dpt.id,
 			dpt.deployment_target_id,
 			dp.application_id,
@@ -445,14 +600,15 @@ func insertTasksForDeploymentPlan(ctx context.Context, planID, orgID uuid.UUID, 
 		WHERE dp.id = @deploymentPlanId
 			AND dp.organization_id = @organizationId
 		ORDER BY dpt.sort_order, dpt.deployment_target_id
-		ON CONFLICT (deployment_plan_id, deployment_plan_target_id) DO NOTHING
+		ON CONFLICT (deployment_plan_id, deployment_plan_target_id, execution_occurrence_id) DO NOTHING
 		RETURNING `+taskOutputExpr,
 		pgx.NamedArgs{
-			"deploymentPlanId":   planID,
-			"organizationId":     orgID,
-			"taskType":           types.TaskTypeDeployment,
-			"actorUserAccountId": actorUserAccountID,
-			"status":             types.TaskStatusQueued,
+			"deploymentPlanId":      planID,
+			"organizationId":        orgID,
+			"executionOccurrenceId": executionOccurrenceID,
+			"taskType":              types.TaskTypeDeployment,
+			"actorUserAccountId":    actorUserAccountID,
+			"status":                types.TaskStatusQueued,
 		},
 	)
 	if err != nil {
@@ -697,15 +853,23 @@ func insertStepRunsForTasks(ctx context.Context, tasks []types.Task) error {
 	return nil
 }
 
-func getTasksByDeploymentPlanID(ctx context.Context, planID, orgID uuid.UUID) ([]types.Task, error) {
+func getTasksByDeploymentPlanID(
+	ctx context.Context,
+	planID, orgID, executionOccurrenceID uuid.UUID,
+) ([]types.Task, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
 		`SELECT `+taskOutputExpr+`
 		FROM Task t
 		WHERE t.deployment_plan_id = @deploymentPlanId
 			AND t.organization_id = @organizationId
+			AND t.execution_occurrence_id = @executionOccurrenceId
 		ORDER BY t.queue_order, t.id`,
-		pgx.NamedArgs{"deploymentPlanId": planID, "organizationId": orgID},
+		pgx.NamedArgs{
+			"deploymentPlanId":      planID,
+			"organizationId":        orgID,
+			"executionOccurrenceId": executionOccurrenceID,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not query Task by deployment plan: %w", err)

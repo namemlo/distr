@@ -149,7 +149,12 @@ func PrepareExternalExecution(
 		if err != nil {
 			return err
 		}
-		if err := attachDeploymentPreflightTasks(ctx, preflight.ID, request.OrganizationID); err != nil {
+		if err := attachDeploymentPreflightTasks(
+			ctx,
+			preflight.ID,
+			request.OrganizationID,
+			source.DeploymentPlanID,
+		); err != nil {
 			return err
 		}
 		if !passed {

@@ -166,3 +166,16 @@ func TestDeploymentPlanV1PolicyEvidencePersistsAsNull(t *testing.T) {
 		t.Fatalf("expected v2 policy evidence, got %#v", value)
 	}
 }
+
+func TestAttachDeploymentPreflightTasksIsExecutionOccurrenceScoped(t *testing.T) {
+	for _, expected := range []string{
+		"dpc.deployment_preflight_run_id = @runId",
+		"t.deployment_plan_id = dpc.deployment_plan_id",
+		"t.deployment_plan_target_id = dpc.deployment_plan_target_id",
+		"t.execution_occurrence_id = @executionOccurrenceId",
+	} {
+		if !strings.Contains(attachDeploymentPreflightTasksSQL, expected) {
+			t.Fatalf("preflight task attachment is missing %q", expected)
+		}
+	}
+}

@@ -218,6 +218,7 @@ type CreateEmergencyOverrideRequest struct {
 type CreateTasksForAdmittedV2PlanRequest struct {
 	OrganizationID          uuid.UUID
 	DeploymentPlanID        uuid.UUID
+	ExecutionOccurrenceID   uuid.UUID
 	ActorUserAccountID      uuid.UUID
 	SchedulerIdempotencyKey string
 	ConcurrencyPolicy       TaskConcurrencyPolicy

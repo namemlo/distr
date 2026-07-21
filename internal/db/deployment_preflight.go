@@ -48,6 +48,16 @@ const deploymentPreflightCheckOutputExpr = `
 	dpc.sort_order
 `
 
+const attachDeploymentPreflightTasksSQL = `UPDATE DeploymentPreflightCheck AS dpc
+	SET task_id = t.id
+	FROM Task t
+	WHERE dpc.deployment_preflight_run_id = @runId
+		AND dpc.organization_id = @organizationId
+		AND t.organization_id = dpc.organization_id
+		AND t.deployment_plan_id = dpc.deployment_plan_id
+		AND t.deployment_plan_target_id = dpc.deployment_plan_target_id
+		AND t.execution_occurrence_id = @executionOccurrenceId`
+
 type deploymentPreflightTargetSource struct {
 	ID                     uuid.UUID                      `db:"id"`
 	Type                   types.DeploymentType           `db:"type"`
@@ -444,19 +454,17 @@ func insertDeploymentPreflightChecks(ctx context.Context, run types.DeploymentPr
 
 func attachDeploymentPreflightTasks(
 	ctx context.Context,
-	runID, orgID uuid.UUID,
+	runID, orgID, executionOccurrenceID uuid.UUID,
 ) error {
 	database := internalctx.GetDb(ctx)
-	_, err := database.Exec(ctx,
-		`UPDATE DeploymentPreflightCheck AS dpc
-		SET task_id = t.id
-		FROM Task t
-		WHERE dpc.deployment_preflight_run_id = @runId
-			AND dpc.organization_id = @organizationId
-			AND t.organization_id = dpc.organization_id
-			AND t.deployment_plan_id = dpc.deployment_plan_id
-			AND t.deployment_plan_target_id = dpc.deployment_plan_target_id`,
-		pgx.NamedArgs{"runId": runID, "organizationId": orgID},
+	_, err := database.Exec(
+		ctx,
+		attachDeploymentPreflightTasksSQL,
+		pgx.NamedArgs{
+			"runId":                 runID,
+			"organizationId":        orgID,
+			"executionOccurrenceId": executionOccurrenceID,
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("could not attach preflight checks to tasks: %w", err)

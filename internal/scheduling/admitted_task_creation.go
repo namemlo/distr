@@ -32,9 +32,10 @@ func CreateTasksForAdmittedV2Plan(
 ) ([]types.Task, error) {
 	if request.OrganizationID == uuid.Nil ||
 		request.DeploymentPlanID == uuid.Nil ||
+		request.ExecutionOccurrenceID == uuid.Nil ||
 		request.ActorUserAccountID == uuid.Nil {
 		return nil, apierrors.NewBadRequest(
-			"organizationId, deploymentPlanId, and actorUserAccountId are required",
+			"organizationId, deploymentPlanId, executionOccurrenceId, and actorUserAccountId are required",
 		)
 	}
 	if !admissionIdempotencyKeyValid(request.SchedulerIdempotencyKey) {
@@ -85,11 +86,12 @@ func CreateTasksForAdmittedV2Plan(
 	return dependencies.CreateTasks(
 		ctx,
 		types.CreateTasksForDeploymentPlanRequest{
-			OrganizationID:      request.OrganizationID,
-			DeploymentPlanID:    request.DeploymentPlanID,
-			ActorUserAccountID:  request.ActorUserAccountID,
-			ConcurrencyPolicy:   request.ConcurrencyPolicy,
-			AdditionalResources: request.AdditionalResources,
+			OrganizationID:        request.OrganizationID,
+			DeploymentPlanID:      request.DeploymentPlanID,
+			ExecutionOccurrenceID: request.ExecutionOccurrenceID,
+			ActorUserAccountID:    request.ActorUserAccountID,
+			ConcurrencyPolicy:     request.ConcurrencyPolicy,
+			AdditionalResources:   request.AdditionalResources,
 		},
 	)
 }
