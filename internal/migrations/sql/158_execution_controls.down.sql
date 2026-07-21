@@ -1,8 +1,10 @@
 DO $$
 BEGIN
   LOCK TABLE
-	Task,
-	DeploymentCampaignMemberRun,
+    Task,
+    DeploymentCampaignMemberRun,
+    DeploymentCampaignRun,
+    DeploymentCampaignRevision,
     ExecutionAttempt,
     ExecutionCancelRequest,
     ExecutionStatusQuery,
@@ -10,6 +12,29 @@ BEGIN
     CampaignMemberTaskExecution,
     ExecutionCampaignControlHandoff
   IN ACCESS EXCLUSIVE MODE;
+
+  IF EXISTS (
+    SELECT 1
+    FROM Task
+    GROUP BY deployment_plan_id, deployment_plan_target_id
+    HAVING count(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'refusing migration 158 rollback while duplicate plan-target execution occurrences exist';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM DeploymentCampaignRun AS campaign_run
+    JOIN DeploymentCampaignRevision AS campaign_revision
+      ON campaign_revision.id = campaign_run.campaign_revision_id
+     AND campaign_revision.organization_id = campaign_run.organization_id
+    WHERE campaign_run.started_by_useraccount_id
+      IS DISTINCT FROM campaign_revision.published_by_useraccount_id
+  ) THEN
+    RAISE EXCEPTION
+      'refusing migration 158 rollback while campaign run initiator evidence differs from its publication actor';
+  END IF;
 
   IF EXISTS (SELECT 1 FROM ExecutionCancelRequest)
      OR EXISTS (SELECT 1 FROM ExecutionStatusQuery)
@@ -38,6 +63,21 @@ DROP TRIGGER IF EXISTS CampaignMemberTaskExecution_append_only
 
 DROP TABLE IF EXISTS ExecutionCampaignControlHandoff;
 DROP TABLE IF EXISTS CampaignMemberTaskExecution;
+
+ALTER TABLE Task
+  DROP CONSTRAINT IF EXISTS task_id_plan_target_organization_unique,
+  DROP CONSTRAINT IF EXISTS task_plan_target_occurrence_unique,
+  ADD CONSTRAINT task_plan_target_unique
+    UNIQUE (deployment_plan_id, deployment_plan_target_id),
+  DROP COLUMN IF EXISTS execution_occurrence_id;
+
+DROP TRIGGER IF EXISTS DeploymentCampaignRun_started_by_immutable
+  ON DeploymentCampaignRun;
+DROP FUNCTION IF EXISTS deploymentcampaignrun_started_by_immutable_guard();
+
+ALTER TABLE DeploymentCampaignRun
+  DROP CONSTRAINT IF EXISTS deploymentcampaignrun_started_by_useraccount_fk,
+  DROP COLUMN IF EXISTS started_by_useraccount_id;
 
 ALTER TABLE DeploymentCampaignMemberRun
   DROP CONSTRAINT IF EXISTS deploymentcampaignmemberrun_execution_lineage_unique;

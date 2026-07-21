@@ -24,6 +24,42 @@ ALTER TABLE ExecutionAttempt
   ADD CONSTRAINT executionattempt_id_org_execution_unique
     UNIQUE (id, organization_id, execution_id);
 
+ALTER TABLE DeploymentCampaignRun
+  ADD COLUMN started_by_useraccount_id UUID;
+
+UPDATE DeploymentCampaignRun AS campaign_run
+SET started_by_useraccount_id = campaign_revision.published_by_useraccount_id
+FROM DeploymentCampaignRevision AS campaign_revision
+WHERE campaign_revision.id = campaign_run.campaign_revision_id
+  AND campaign_revision.organization_id = campaign_run.organization_id;
+
+ALTER TABLE DeploymentCampaignRun
+  ALTER COLUMN started_by_useraccount_id SET NOT NULL,
+  ADD CONSTRAINT deploymentcampaignrun_started_by_useraccount_fk
+    FOREIGN KEY (started_by_useraccount_id)
+    REFERENCES UserAccount(id)
+    ON UPDATE NO ACTION
+    ON DELETE RESTRICT;
+
+CREATE FUNCTION deploymentcampaignrun_started_by_immutable_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.started_by_useraccount_id
+       IS DISTINCT FROM OLD.started_by_useraccount_id THEN
+    RAISE EXCEPTION 'campaign run initiator is immutable'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER DeploymentCampaignRun_started_by_immutable
+BEFORE UPDATE OF started_by_useraccount_id ON DeploymentCampaignRun
+FOR EACH ROW
+EXECUTE FUNCTION deploymentcampaignrun_started_by_immutable_guard();
+
 CREATE TABLE ExecutionCancelRequest (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -84,6 +120,30 @@ ALTER TABLE DeploymentCampaignMemberRun
   ADD CONSTRAINT deploymentcampaignmemberrun_execution_lineage_unique
     UNIQUE (id, organization_id, campaign_run_id, deployment_plan_id);
 
+ALTER TABLE Task
+  ADD COLUMN execution_occurrence_id UUID;
+
+UPDATE Task
+SET execution_occurrence_id = deployment_plan_id
+WHERE execution_occurrence_id IS NULL;
+
+ALTER TABLE Task
+  ALTER COLUMN execution_occurrence_id SET NOT NULL,
+  DROP CONSTRAINT task_plan_target_unique,
+  ADD CONSTRAINT task_plan_target_occurrence_unique
+    UNIQUE (
+      deployment_plan_id,
+      deployment_plan_target_id,
+      execution_occurrence_id
+    ),
+  ADD CONSTRAINT task_id_plan_target_organization_unique
+    UNIQUE (
+      id,
+      deployment_plan_id,
+      deployment_target_id,
+      organization_id
+    );
+
 CREATE TABLE CampaignMemberTaskExecution (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -106,8 +166,18 @@ CREATE TABLE CampaignMemberTaskExecution (
       deployment_plan_id
     ) ON UPDATE NO ACTION ON DELETE CASCADE,
   CONSTRAINT campaignmembertaskexecution_task_fk
-    FOREIGN KEY (task_id, deployment_plan_id, organization_id)
-    REFERENCES Task(id, deployment_plan_id, organization_id)
+    FOREIGN KEY (
+      task_id,
+      deployment_plan_id,
+      deployment_target_id,
+      organization_id
+    )
+    REFERENCES Task(
+      id,
+      deployment_plan_id,
+      deployment_target_id,
+      organization_id
+    )
     ON UPDATE NO ACTION ON DELETE CASCADE,
   CONSTRAINT campaignmembertaskexecution_target_fk
     FOREIGN KEY (deployment_target_id, organization_id)
