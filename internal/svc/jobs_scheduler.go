@@ -2,13 +2,53 @@ package svc
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
+	"time"
 
+	"github.com/distr-sh/distr/internal/campaignruntime"
+	"github.com/distr-sh/distr/internal/campaigns"
 	"github.com/distr-sh/distr/internal/cleanup"
+	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/env"
+	"github.com/distr-sh/distr/internal/executionworker"
+	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/jobs"
 	"github.com/distr-sh/distr/internal/notification"
 	"github.com/distr-sh/distr/internal/registry/upstream"
+	"github.com/distr-sh/distr/internal/types"
+	"github.com/google/uuid"
 )
+
+const (
+	deploymentCampaignSchedulerInterval      = 5 * time.Second
+	deploymentCampaignSchedulerTimeout       = 30 * time.Second
+	deploymentCampaignSchedulerLeaseDuration = 30 * time.Second
+	deploymentCampaignSchedulerBatchSize     = 25
+)
+
+var (
+	errDeploymentCampaignSchedulerUnconfigured = errors.New("deployment campaign scheduler is unconfigured")
+	errDeploymentCampaignSchedulerTick         = errors.New("deployment campaign scheduler tick failed")
+	deploymentCampaignSchedulerWorkerID        = newDeploymentCampaignSchedulerWorkerID()
+)
+
+type durationJobRegistrar interface {
+	RegisterDurationJob(time.Duration, jobs.Job) error
+}
+
+type campaignSchedulerTicker interface {
+	Tick(context.Context, uuid.UUID, time.Time) (types.CampaignSchedulerResult, error)
+}
+
+type campaignSchedulerJobDependencies struct {
+	WorkerID                   string
+	ListRunnableCampaignRunIDs func(context.Context, string, int) ([]uuid.UUID, error)
+	Scheduler                  campaignSchedulerTicker
+	InjectRuntime              func(context.Context) context.Context
+	Clock                      func() time.Time
+}
 
 func (r *Registry) GetJobsScheduler() *jobs.Scheduler {
 	return r.jobsScheduler
@@ -132,5 +172,100 @@ func (r *Registry) createJobsScheduler() (*jobs.Scheduler, error) {
 		}
 	}
 
+	flags := featureflags.NewRegistry(env.ExperimentalFeatureFlags())
+	if err := registerDeploymentCampaignScheduler(
+		scheduler,
+		flags,
+		r.deploymentCampaignSchedulerJobDependencies(),
+	); err != nil {
+		return nil, err
+	}
+
 	return scheduler, nil
+}
+
+func (r *Registry) deploymentCampaignSchedulerJobDependencies() campaignSchedulerJobDependencies {
+	repository := db.CampaignRepository{}
+	scheduler := campaigns.NewSchedulerWithRuntime(
+		repository,
+		campaigns.UnwiredCampaignObservationResolver{},
+		campaigns.UnwiredCampaignObservationVerifier{},
+		campaignruntime.NewDatabaseBackgroundAdmissionAuthorizer(),
+		campaigns.CampaignTaskDispatcherFunc(executionworker.DispatchCreatedTasks),
+		deploymentCampaignSchedulerWorkerID,
+		deploymentCampaignSchedulerLeaseDuration,
+	)
+	return campaignSchedulerJobDependencies{
+		WorkerID:                   deploymentCampaignSchedulerWorkerID,
+		ListRunnableCampaignRunIDs: repository.ListRunnableCampaignRunIDs,
+		Scheduler:                  scheduler,
+		InjectRuntime: func(ctx context.Context) context.Context {
+			return r.executionRuntime.Inject(ctx)
+		},
+		Clock: func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func registerDeploymentCampaignScheduler(
+	registrar durationJobRegistrar,
+	flags featureflags.Registry,
+	dependencies campaignSchedulerJobDependencies,
+) error {
+	if !flags.IsEnabled(featureflags.KeyOperatorControlPlaneV2) ||
+		!flags.IsEnabled(featureflags.KeyExecutorProtocolV2) {
+		return nil
+	}
+	return registrar.RegisterDurationJob(
+		deploymentCampaignSchedulerInterval,
+		jobs.NewJob(
+			"DeploymentCampaignScheduler",
+			deploymentCampaignSchedulerJob(dependencies),
+			deploymentCampaignSchedulerTimeout,
+		),
+	)
+}
+
+func deploymentCampaignSchedulerJob(
+	dependencies campaignSchedulerJobDependencies,
+) jobs.JobFunc {
+	return func(ctx context.Context) error {
+		if dependencies.WorkerID == "" ||
+			dependencies.ListRunnableCampaignRunIDs == nil ||
+			dependencies.Scheduler == nil ||
+			dependencies.InjectRuntime == nil ||
+			dependencies.Clock == nil {
+			return errDeploymentCampaignSchedulerUnconfigured
+		}
+
+		ctx = dependencies.InjectRuntime(ctx)
+		runIDs, err := dependencies.ListRunnableCampaignRunIDs(
+			ctx,
+			dependencies.WorkerID,
+			deploymentCampaignSchedulerBatchSize,
+		)
+		if err != nil {
+			return fmt.Errorf("list runnable deployment campaigns: %w", err)
+		}
+
+		var tickErrors []error
+		for _, runID := range runIDs {
+			if _, err := dependencies.Scheduler.Tick(ctx, runID, dependencies.Clock().UTC()); err != nil {
+				tickErrors = append(tickErrors, fmt.Errorf(
+					"%w for run %s: %w",
+					errDeploymentCampaignSchedulerTick,
+					runID,
+					err,
+				))
+			}
+		}
+		return errors.Join(tickErrors...)
+	}
+}
+
+func newDeploymentCampaignSchedulerWorkerID() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "unknown-host"
+	}
+	return fmt.Sprintf("campaign-scheduler:%s:%d:%s", hostname, os.Getpid(), uuid.NewString())
 }
