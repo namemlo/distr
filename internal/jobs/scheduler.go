@@ -1,6 +1,8 @@
 package jobs
 
 import (
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/distr-sh/distr/internal/db/queryable"
 	"github.com/go-co-op/gocron/v2"
@@ -38,6 +40,16 @@ func NewScheduler(
 func (s *Scheduler) RegisterCronJob(cron string, job Job) error {
 	_, err := s.scheduler.NewJob(
 		gocron.CronJob(cron, false),
+		gocron.NewTask(s.runner.RunJobFunc(job)),
+		gocron.WithName(job.name),
+		gocron.WithSingletonMode(gocron.LimitModeReschedule),
+	)
+	return err
+}
+
+func (s *Scheduler) RegisterDurationJob(duration time.Duration, job Job) error {
+	_, err := s.scheduler.NewJob(
+		gocron.DurationJob(duration),
 		gocron.NewTask(s.runner.RunJobFunc(job)),
 		gocron.WithName(job.name),
 		gocron.WithSingletonMode(gocron.LimitModeReschedule),
