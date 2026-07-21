@@ -48,7 +48,10 @@ func TestDeriveFrozenAttemptInputsReusesNormalDispatchAndAdvancesExplicitRetry(t
 	g := NewWithT(t)
 	task := types.Task{
 		ID: uuid.New(), DeploymentTargetID: uuid.New(),
-		Locks: []types.TaskResourceLock{{ResourceKey: "deployment-target:choice-tp-dev"}},
+		Locks: []types.TaskResourceLock{{
+			ResourceType: types.TaskLockResourceDeploymentTarget,
+			ResourceKey:  "deployment-target:choice-tp-dev",
+		}},
 	}
 	plan := types.DeploymentPlan{
 		CanonicalChecksum: checksumForFrozenInput("plan"),
@@ -83,4 +86,62 @@ func TestDeriveFrozenAttemptInputsReusesNormalDispatchAndAdvancesExplicitRetry(t
 	g.Expect(retry.ArtifactDigest).To(Equal(bundle.CanonicalChecksum))
 	g.Expect(retry.FenceGeneration).To(Equal(int64(5)))
 	g.Expect(retry.IntentTTL).To(Equal(5 * time.Minute))
+}
+
+func TestDeriveFrozenAttemptInputsUsesCompleteTypedTaskResourceSet(t *testing.T) {
+	g := NewWithT(t)
+	task := types.Task{
+		ID: uuid.New(), DeploymentTargetID: uuid.New(),
+		Locks: []types.TaskResourceLock{
+			{ResourceType: types.TaskLockResourceCustom, ResourceKey: "shared"},
+			{ResourceType: types.TaskLockResourceTargetComponent, ResourceKey: "shared"},
+			{ResourceType: types.TaskLockResourceDeploymentTarget, ResourceKey: "choice-tp-dev"},
+		},
+	}
+	plan := types.DeploymentPlan{
+		CanonicalChecksum: checksumForFrozenInput("plan"),
+		Steps: []types.DeploymentPlanStep{{
+			StepKey: "deploy", ActionType: "distr.compose.deploy", Included: true,
+		}},
+		TargetComponents: []types.DeploymentPlanTargetComponent{{
+			DeploymentTargetID: task.DeploymentTargetID, Component: "transaction-api",
+			ConfigChecksum: checksumForFrozenInput("config"),
+		}},
+	}
+	bundle := types.ReleaseBundle{CanonicalChecksum: checksumForFrozenInput("bundle")}
+
+	inputs, err := deriveFrozenAttemptInputs(task, plan, bundle, "deploy", nil, false)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(inputs.ResourceKey).To(HavePrefix("task-resource-set:sha256:"))
+
+	reordered := task
+	reordered.Locks = []types.TaskResourceLock{task.Locks[2], task.Locks[0], task.Locks[1]}
+	reorderedInputs, err := deriveFrozenAttemptInputs(reordered, plan, bundle, "deploy", nil, false)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(reorderedInputs.ResourceKey).To(Equal(inputs.ResourceKey))
+
+	withoutFirst := task
+	withoutFirst.Locks = task.Locks[1:]
+	otherInputs, err := deriveFrozenAttemptInputs(withoutFirst, plan, bundle, "deploy", nil, false)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(otherInputs.ResourceKey).NotTo(Equal(inputs.ResourceKey))
+}
+
+func TestDeriveFrozenAttemptInputsFailsClosedWithoutTaskResourceLocks(t *testing.T) {
+	g := NewWithT(t)
+	task := types.Task{ID: uuid.New(), DeploymentTargetID: uuid.New()}
+	plan := types.DeploymentPlan{
+		CanonicalChecksum: checksumForFrozenInput("plan"),
+		Steps: []types.DeploymentPlanStep{{
+			StepKey: "deploy", ActionType: "distr.compose.deploy", Included: true,
+		}},
+		TargetComponents: []types.DeploymentPlanTargetComponent{{
+			DeploymentTargetID: task.DeploymentTargetID, Component: "transaction-api",
+			ConfigChecksum: checksumForFrozenInput("config"),
+		}},
+	}
+	bundle := types.ReleaseBundle{CanonicalChecksum: checksumForFrozenInput("bundle")}
+
+	_, err := deriveFrozenAttemptInputs(task, plan, bundle, "deploy", nil, false)
+	g.Expect(err).To(MatchError(ContainSubstring("typed task resource lock")))
 }

@@ -53,6 +53,56 @@ func TestExecutionV2AttemptInsertValidation(t *testing.T) {
 	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(MatchError(ContainSubstring("PENDING")))
 }
 
+func TestExecutionV2AttemptRequiresCanonicalCompleteTaskResourceSet(t *testing.T) {
+	g := NewWithT(t)
+	orgID, taskID := uuid.New(), uuid.New()
+	locks := []types.TaskResourceLock{
+		{
+			OrganizationID: orgID, TaskID: taskID,
+			ResourceType: types.TaskLockResourceTargetComponent, ResourceKey: "shared",
+		},
+		{
+			OrganizationID: orgID, TaskID: taskID,
+			ResourceType: types.TaskLockResourceCustom, ResourceKey: "shared",
+		},
+		{
+			OrganizationID: orgID, TaskID: taskID,
+			ResourceType: types.TaskLockResourceDeploymentTarget, ResourceKey: "choice-tp-dev",
+		},
+	}
+	canonical, err := CanonicalExecutionFenceResourceKey(locks)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(canonical).To(HavePrefix("task-resource-set:sha256:"))
+
+	attempt := types.ExecutionAttempt{
+		OrganizationID: orgID, TaskID: taskID,
+		Fence: types.ExecutionFence{ResourceKey: canonical, Generation: 1},
+	}
+	g.Expect(validateExecutionAttemptTaskResourceLocks(attempt, locks)).To(Succeed())
+
+	firstOnly, err := CanonicalExecutionFenceResourceKey(locks[:1])
+	g.Expect(err).NotTo(HaveOccurred())
+	attempt.Fence.ResourceKey = firstOnly
+	g.Expect(validateExecutionAttemptTaskResourceLocks(attempt, locks)).To(
+		MatchError(ContainSubstring("complete typed task resource lock set")),
+	)
+
+	reordered := []types.TaskResourceLock{locks[2], locks[0], locks[1]}
+	reorderedCanonical, err := CanonicalExecutionFenceResourceKey(reordered)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(reorderedCanonical).To(Equal(canonical))
+
+	withoutCustomType, err := CanonicalExecutionFenceResourceKey([]types.TaskResourceLock{locks[0], locks[2]})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(withoutCustomType).NotTo(Equal(canonical))
+}
+
+func TestExecutionV2AttemptRejectsMissingTaskResourceLocks(t *testing.T) {
+	g := NewWithT(t)
+	_, err := CanonicalExecutionFenceResourceKey(nil)
+	g.Expect(err).To(MatchError(ContainSubstring("at least one typed task resource lock")))
+}
+
 func repeatDBHex(pair string) string {
 	result := ""
 	for range 32 {

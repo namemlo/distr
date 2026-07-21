@@ -203,15 +203,9 @@ func deriveFrozenAttemptInputs(
 	if len(configParts) == 0 {
 		return FrozenAttemptInputs{}, errors.New("frozen target config snapshot was not found")
 	}
-	resourceKeys := make([]string, 0, len(task.Locks))
-	for _, lock := range task.Locks {
-		if value := strings.TrimSpace(lock.ResourceKey); value != "" {
-			resourceKeys = append(resourceKeys, value)
-		}
-	}
-	sort.Strings(resourceKeys)
-	if len(resourceKeys) == 0 {
-		resourceKeys = append(resourceKeys, "deployment-target:"+task.DeploymentTargetID.String())
+	resourceKey, err := db.CanonicalExecutionFenceResourceKey(task.Locks)
+	if err != nil {
+		return FrozenAttemptInputs{}, err
 	}
 	attemptNumber := 1
 	fenceGeneration := int64(1)
@@ -231,7 +225,7 @@ func deriveFrozenAttemptInputs(
 		AttemptNumber: attemptNumber, PlanChecksum: plan.CanonicalChecksum,
 		ArtifactDigest:  bundle.CanonicalChecksum,
 		ConfigChecksum:  checksumForFrozenInput(strings.Join(configParts, "\n")),
-		AdapterRevision: adapterRevision, ResourceKey: resourceKeys[0],
+		AdapterRevision: adapterRevision, ResourceKey: resourceKey,
 		FenceGeneration: fenceGeneration, Cancellable: true,
 		RetrySafe: step.RetryMaxAttempts > 1, IntentTTL: 5 * time.Minute,
 	}, nil

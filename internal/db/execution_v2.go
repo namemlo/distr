@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,10 +79,18 @@ func CreateExecutionAttempt(
 			if !executionprotocol.MatchesExecutionDispatch(*existing, attempt) {
 				return apierrors.NewConflict("conflicting duplicate execution attempt")
 			}
+			if !existing.Status.IsTerminal() {
+				if err := acquireExecutionAttemptTaskResourceLocks(ctx, attempt); err != nil {
+					return err
+				}
+			}
 			result = existing
 			return nil
 		}
 		if !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
+		if err := acquireExecutionAttemptTaskResourceLocks(ctx, attempt); err != nil {
 			return err
 		}
 		_, err = db.Exec(ctx, `
@@ -161,6 +170,150 @@ func CreateExecutionAttempt(
 		}
 	}
 	return result, err
+}
+
+type canonicalTaskResource struct {
+	resourceType string
+	resourceKey  string
+}
+
+// CanonicalExecutionFenceResourceKey binds a protocol-v2 fence to the complete
+// order-independent set of typed task resources without exceeding the fence column limit.
+func CanonicalExecutionFenceResourceKey(locks []types.TaskResourceLock) (string, error) {
+	resources := make([]canonicalTaskResource, 0, len(locks))
+	seen := make(map[string]struct{}, len(locks))
+	for _, lock := range locks {
+		resourceType := strings.TrimSpace(string(lock.ResourceType))
+		resourceKey := strings.TrimSpace(lock.ResourceKey)
+		if !types.TaskLockResourceType(resourceType).IsValid() || resourceKey == "" {
+			return "", errors.New("execution attempt requires valid typed task resource locks")
+		}
+		identity := fmt.Sprintf("%d:%s%d:%s", len(resourceType), resourceType, len(resourceKey), resourceKey)
+		if _, ok := seen[identity]; ok {
+			continue
+		}
+		seen[identity] = struct{}{}
+		resources = append(resources, canonicalTaskResource{
+			resourceType: resourceType,
+			resourceKey:  resourceKey,
+		})
+	}
+	if len(resources) == 0 {
+		return "", errors.New("execution attempt requires at least one typed task resource lock")
+	}
+	sort.Slice(resources, func(i, j int) bool {
+		if resources[i].resourceType == resources[j].resourceType {
+			return resources[i].resourceKey < resources[j].resourceKey
+		}
+		return resources[i].resourceType < resources[j].resourceType
+	})
+	digest := sha256.New()
+	for _, resource := range resources {
+		_, _ = fmt.Fprintf(
+			digest,
+			"%d:%s%d:%s\x00",
+			len(resource.resourceType), resource.resourceType,
+			len(resource.resourceKey), resource.resourceKey,
+		)
+	}
+	return "task-resource-set:sha256:" + hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func validateExecutionAttemptTaskResourceLocks(
+	attempt types.ExecutionAttempt,
+	locks []types.TaskResourceLock,
+) error {
+	for _, lock := range locks {
+		if lock.OrganizationID != attempt.OrganizationID || lock.TaskID != attempt.TaskID {
+			return apierrors.NewConflict("execution attempt task resource lock ownership does not match")
+		}
+	}
+	resourceKey, err := CanonicalExecutionFenceResourceKey(locks)
+	if err != nil {
+		return apierrors.NewConflict(err.Error())
+	}
+	if resourceKey != strings.TrimSpace(attempt.Fence.ResourceKey) {
+		return apierrors.NewConflict("execution fence must cover the complete typed task resource lock set")
+	}
+	return nil
+}
+
+func acquireExecutionAttemptTaskResourceLocks(
+	ctx context.Context,
+	attempt types.ExecutionAttempt,
+) error {
+	status, err := getTaskStatusForUpdate(ctx, attempt.TaskID, attempt.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if status != types.TaskStatusQueued && status != types.TaskStatusRunning {
+		return apierrors.NewConflict("execution attempt task is not dispatchable")
+	}
+	locks, err := getTaskResourceLocksByTaskID(ctx, attempt.TaskID, attempt.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if err := validateExecutionAttemptTaskResourceLocks(attempt, locks); err != nil {
+		return err
+	}
+	if err := acquireTaskResourceLocks(ctx, attempt.TaskID, attempt.OrganizationID); err != nil {
+		return err
+	}
+	conflict, err := hasAcquiredExecutionTaskResourceConflict(
+		ctx, attempt.TaskID, attempt.OrganizationID,
+	)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return apierrors.NewConflict("execution attempt overlaps task resources owned by another task")
+	}
+	owned, err := getTaskResourceLocksForUpdate(ctx, attempt.TaskID, attempt.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if err := validateExecutionAttemptTaskResourceLocks(attempt, owned); err != nil {
+		return err
+	}
+	for _, lock := range owned {
+		if lock.AcquiredAt == nil || lock.ReleasedAt != nil {
+			return apierrors.NewConflict("execution attempt does not own every task resource lock")
+		}
+	}
+	return nil
+}
+
+func hasAcquiredExecutionTaskResourceConflict(
+	ctx context.Context,
+	taskID, organizationID uuid.UUID,
+) (bool, error) {
+	db := internalctx.GetDb(ctx)
+	var exists bool
+	err := db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM TaskResourceLock owned
+			JOIN TaskResourceLock competing
+				ON competing.organization_id = owned.organization_id
+				AND competing.resource_type = owned.resource_type
+				AND competing.resource_key = owned.resource_key
+				AND competing.task_id <> owned.task_id
+			WHERE owned.organization_id = @organizationId
+				AND owned.task_id = @taskId
+				AND owned.concurrency_policy <> @allowParallel
+				AND owned.acquired_at IS NOT NULL
+				AND owned.released_at IS NULL
+				AND competing.acquired_at IS NOT NULL
+				AND competing.released_at IS NULL
+		)`, pgx.NamedArgs{
+		"organizationId": organizationID,
+		"taskId":         taskID,
+		"allowParallel":  types.TaskConcurrencyPolicyAllowParallel,
+	}).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check execution task resource overlap: %w", err)
+	}
+	return exists, nil
 }
 
 func GetTrustedExecutionTime(ctx context.Context) (time.Time, error) {
