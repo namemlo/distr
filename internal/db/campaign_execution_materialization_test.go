@@ -127,6 +127,23 @@ func TestPendingCampaignDispatchQueryIsTenantLeaseAndAttemptFenced(t *testing.T)
 	}
 }
 
+func TestPendingCampaignDispatchQueryRecoversTasksWithAReadyUnattemptedStep(t *testing.T) {
+	g := NewWithT(t)
+	for _, fragment := range []string{
+		"FROM StepRun AS step_run",
+		"step_run.task_id = t.id",
+		"step_run.status = 'PENDING'",
+		"attempt.step_run_id = step_run.id",
+		"FROM unnest(plan_step.dependencies)",
+		"dependency_run.status NOT IN ('SUCCEEDED', 'SKIPPED')",
+	} {
+		g.Expect(loadPendingCampaignDispatchTasksSQL).To(ContainSubstring(fragment))
+	}
+	g.Expect(loadPendingCampaignDispatchTasksSQL).NotTo(ContainSubstring(
+		"attempt.task_id = t.id\n  )",
+	))
+}
+
 func TestCampaignRunInstantiationPersistsExactStarter(t *testing.T) {
 	g := NewWithT(t)
 	g.Expect(instantiateCampaignRunSQL).To(ContainSubstring("started_by_useraccount_id"))

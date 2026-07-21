@@ -36,11 +36,35 @@ WHERE run.id = @run_id
   AND run.lease_expires_at > clock_timestamp()
   AND member_run.status IN ('ADMITTED', 'RUNNING')
   AND t.status IN ('QUEUED', 'RUNNING')
-  AND NOT EXISTS (
+  AND EXISTS (
     SELECT 1
-    FROM ExecutionAttempt AS attempt
-    WHERE attempt.organization_id = t.organization_id
-      AND attempt.task_id = t.id
+    FROM StepRun AS step_run
+    JOIN DeploymentPlanStep AS plan_step
+      ON plan_step.id = step_run.deployment_plan_step_id
+     AND plan_step.deployment_plan_id = step_run.deployment_plan_id
+     AND plan_step.organization_id = step_run.organization_id
+    WHERE step_run.organization_id = t.organization_id
+      AND step_run.task_id = t.id
+      AND step_run.status = 'PENDING'
+      AND plan_step.included
+      AND lower(btrim(plan_step.execution_location)) = 'target'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ExecutionAttempt AS attempt
+        WHERE attempt.organization_id = step_run.organization_id
+          AND attempt.task_id = step_run.task_id
+          AND attempt.step_run_id = step_run.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM unnest(plan_step.dependencies) dependency(step_key)
+        LEFT JOIN StepRun AS dependency_run
+          ON dependency_run.organization_id = step_run.organization_id
+         AND dependency_run.task_id = step_run.task_id
+         AND dependency_run.step_key = dependency.step_key
+        WHERE dependency_run.id IS NULL
+           OR dependency_run.status NOT IN ('SUCCEEDED', 'SKIPPED')
+      )
   )
 ORDER BY member_run.wave_order, member_run.member_order, t.queue_order, t.id`
 
