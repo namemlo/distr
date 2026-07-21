@@ -1257,6 +1257,7 @@ Use one entry per pull request:
   contracts; no adopter, database vendor, client, credential, or infrastructure-specific behavior.
 - Compatibility notes: v1 payloads omit empty additive metadata. PR-064 must supply migration 146 and its exact
   planned-state/change facts before integration; the replay seams are documented in the PR notes.
+
 ### PR-066 - Scoped authorization and feature enrollment
 
 - Status: Implemented on the speculative PR-057 checkpoint; integrated PostgreSQL 16/18 and full-regression
@@ -1286,6 +1287,7 @@ Use one entry per pull request:
 - Compatibility notes: Existing v1 middleware and `Organization_UserAccount.user_role` remain unchanged.
   Legacy roles are dual-read fallback and are backfilled without rewriting membership rows. Foreign scoped IDs
   remain indistinguishable from missing IDs.
+
 ### PR-067 - Versioned deployment policies
 
 - Status: Implemented on the speculative PR-057 base; live stacked PostgreSQL verification is deferred to the
@@ -1332,6 +1334,7 @@ Use one entry per pull request:
   or application-database behavior.
 - Compatibility notes: Existing v1 plans, tasks, execution, agents, and external executors remain unchanged.
   PR-070 supplies execution admission and PR-071 consumes the approved-plan campaign guard.
+
 ### PR-069 - Versioned maintenance calendars and deployment freezes
 
 - Status: Implemented on the speculative PR-057 branch; live PostgreSQL and sequential migration verification are
@@ -1374,7 +1377,7 @@ Use one entry per pull request:
 - UI changes: None.
 - Agent protocol changes: No wire change. The admitted-v2 wrapper requires frozen protocol `v2`; the existing v1
   task creator and agent behavior are unchanged.
-- Documentation: Added ADR-0063, PR-070 fork notes, and the governance API index entry.
+- Documentation: Added ADR-0069, PR-070 fork notes, and the governance API index entry.
 - Tests: Added pure admission/override, repository replay/migration, API/mapping, handler scope/flag, admitted-v2
   wrapper, and flags-off v1 regression coverage.
 - Upstream contribution notes: Community-neutral admission and emergency-governance primitives; no adopter,
@@ -1396,7 +1399,7 @@ Use one entry per pull request:
 - API changes: Adds create/get/edit/validate/publish routes below `/api/v1/deployment-campaign-drafts`.
 - UI changes: None.
 - Agent protocol changes: None.
-- Documentation: Added ADR-0064 and PR-071 fork notes.
+- Documentation: Added ADR-0063 and PR-071 fork notes.
 - Tests: Added pure membership/canonical/validation, migration/repository contract, API, mapping, and scoped
   authorization coverage.
 - Upstream contribution notes: Community-neutral campaign primitives with no adopter, provider, host, credential,

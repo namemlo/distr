@@ -58,12 +58,10 @@ plan. Organization retention is the only deletion path and must set the transact
 The down migration takes exclusive locks and refuses to cross migration 150 while approval evidence exists.
 It never silently deletes audit history.
 
-## Exact PR-066/PR-067 Rebase Wiring
+## Integrated PR-066/PR-067 Wiring
 
-This slice is based on PR-067 commit `4c2eb9afb413a55bbe1403671aad47ec8770437c`. That speculative base does not
-yet contain PR-066 migration 148 or `internal/authorization`, even though migration 150 deliberately references
-PR-066 `PrincipalGroup` and its versioned membership evidence. The final stack must therefore be ordered
-148 -> 149 -> 150 and must rerun migration/repository tests after the PR-066 schema is final.
+The integrated governance stack contains PR-066 migration 148 and `internal/authorization` before PR-067 migration
+149 and approval migration 150. Migration and repository verification must preserve that 148 -> 149 -> 150 order.
 
 The integrated production adapter is backed only by PR-066:
 
@@ -77,9 +75,8 @@ The integrated production adapter is backed only by PR-066:
 4. Continue only for an allowed result. Keep the database principal-group membership/quorum check as an
    independent requirement; do not replace it with a broad role or legacy fallback.
 
-If PR-066 changes the final member-revision names, adapt only `approvalActorInRequiredGroup` to the final
-`PrincipalGroupMember`/latest effective revision contract. Preserve the same organization, membership-generation,
-effective-time, and active-state predicates.
+`approvalActorInRequiredGroup` uses the final `PrincipalGroupMember` and latest effective revision contract while
+preserving organization, membership-generation, effective-time, and active-state predicates.
 
 ## Later Admission and Campaign Wiring
 

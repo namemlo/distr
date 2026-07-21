@@ -50,5 +50,5 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0060: Target Deployment Plan v2](0060-target-deployment-plan-v2.md)
 - [ADR-0061: Scoped Authorization and Enrollment](0061-scoped-authorization-and-enrollment.md)
 - [ADR-0062: Versioned Calendar Admission](0062-versioned-calendar-admission.md)
-- [ADR-0063: Checksum-Bound Deployment Admission and Emergency Overrides](0063-deployment-admission-emergency-overrides.md)
-- [ADR-0064: Deterministic Deployment Campaigns](0064-deterministic-deployment-campaigns.md)
+- [ADR-0063: Deterministic Deployment Campaigns](0063-deterministic-deployment-campaigns.md)
+- [ADR-0069: Checksum-Bound Deployment Admission and Emergency Overrides](0069-deployment-admission-emergency-overrides.md)

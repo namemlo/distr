@@ -1,4 +1,4 @@
-# ADR-0063: Checksum-Bound Deployment Admission and Emergency Overrides
+# ADR-0069: Checksum-Bound Deployment Admission and Emergency Overrides
 
 ## Status
 
