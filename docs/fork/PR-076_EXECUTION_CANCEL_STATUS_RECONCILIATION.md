@@ -14,6 +14,8 @@ Migration 158 adds:
 - `ExecutionCancelRequest`
 - `ExecutionStatusQuery`
 - append-only `ExecutionReconciliationEvent`
+- append-only `CampaignMemberTaskExecution`
+- append-only `ExecutionCampaignControlHandoff`
 
 It extends the protocol-v2 attempt status constraint with `UNKNOWN`. Every
 control row is organization- and execution-scoped. Cancel and status duplicate
@@ -24,8 +26,9 @@ Every new reconciliation fact requires a new event identity; an exact signed
 request replay returns the stored fact so interrupted campaign delivery can be
 resumed safely.
 
-Rollback locks the attempt and all control/evidence tables before checking and
-is refused while control/reconciliation evidence or unknown attempts exist.
+Rollback locks the task/campaign parents, attempt and all control/evidence
+tables before checking and is refused while control/reconciliation evidence,
+campaign lineage/handoffs or unknown attempts exist.
 
 ## API
 
@@ -65,9 +68,19 @@ acknowledgement use the credential-derived organization and current fence.
 
 ## Production campaign handoff
 
-`CampaignExecutionControlBridge` is bound in the service registry to the
-organization-scoped durable task that owns the execution. Cancel verifies the
-execution/task scope after the cancel fact commits. An allowed reconciliation
-retry reloads that task and enters the explicit protocol-v2 retry dispatch,
-which advances the attempt identity and fence generation; ordinary request
-replay continues returning the existing attempt.
+`CampaignExecutionControlBridge` is bound in the service registry to the exact,
+immutable campaign-run/member-run/task lineage persisted by the campaign
+scheduler in the same transaction as task creation. After a cancel fact commits,
+the bridge records an idempotent member-scoped `CANCEL_REQUESTED` handoff keyed
+by that cancel-request ID; it never infers membership from a reusable plan ID or
+cancels an entire campaign run. Non-campaign tasks remain a no-op. An allowed
+reconciliation retry reloads the task and enters explicit protocol-v2 retry
+dispatch, which advances the attempt identity and fence generation; ordinary
+request replay continues returning the existing attempt.
+
+This isolated PR provides `BindCampaignMemberTaskExecution` and its immutable,
+idempotent persistence contract. In the final stacked branch, the PR-072
+admitted-member scheduler must call it for every task returned by
+`CreateTasksForAdmittedV2Plan` before dispatch. The binding cannot be inferred
+later from `deployment_plan_id`, because the same plan can participate in more
+than one campaign run.

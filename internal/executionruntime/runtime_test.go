@@ -49,7 +49,9 @@ func (runtimeObserverGate) AuthorizeReconciliationObserver(
 
 type runtimeCampaignBridge struct{ canceled uuid.UUID }
 
-func (b *runtimeCampaignBridge) CancelCampaignExecution(_ context.Context, id uuid.UUID) error {
+func (b *runtimeCampaignBridge) CancelCampaignExecution(
+	_ context.Context, id, _ uuid.UUID,
+) error {
 	b.canceled = id
 	return nil
 }
@@ -88,6 +90,8 @@ func TestDependenciesInjectEveryExecutionV2RuntimeSeam(t *testing.T) {
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(verified).To(Equal(evidence))
-	g.Expect(executionprotocol.BridgeCampaignCancelIfConfigured(ctx, evidence.ExecutionID)).To(Succeed())
+	g.Expect(executionprotocol.BridgeCampaignCancelIfConfigured(
+		ctx, evidence.ExecutionID, uuid.New(),
+	)).To(Succeed())
 	g.Expect(bridge.canceled).To(Equal(evidence.ExecutionID))
 }

@@ -995,11 +995,14 @@ func scanExecutionEvent(row rowScanner) (*types.ExecutionEvent, error) {
 	return &event, nil
 }
 
-func RequestExecutionCancel(ctx context.Context, request types.CancelRequest) error {
+func RequestExecutionCancel(
+	ctx context.Context, request types.CancelRequest,
+) (*types.ExecutionCancelRequest, error) {
 	if err := validateCancelRequest(request); err != nil {
-		return err
+		return nil, err
 	}
-	return RunTx(ctx, func(ctx context.Context) error {
+	var result *types.ExecutionCancelRequest
+	err := RunTx(ctx, func(ctx context.Context) error {
 		attempt, err := getLatestExecutionAttemptByExecutionIDForUpdate(
 			ctx, request.ExecutionID, request.OrganizationID,
 		)
@@ -1010,7 +1013,7 @@ func RequestExecutionCancel(ctx context.Context, request types.CancelRequest) er
 			return apierrors.NewConflict(err.Error())
 		}
 		db := internalctx.GetDb(ctx)
-		command, err := db.Exec(ctx, `
+		_, err = db.Exec(ctx, `
 			INSERT INTO ExecutionCancelRequest (
 				organization_id, execution_id, execution_attempt_id,
 				requested_by, idempotency_key, reason, created_at
@@ -1030,9 +1033,6 @@ func RequestExecutionCancel(ctx context.Context, request types.CancelRequest) er
 		if err != nil {
 			return fmt.Errorf("insert ExecutionCancelRequest: %w", err)
 		}
-		if command.RowsAffected() == 1 {
-			return nil
-		}
 		existing, err := getExecutionCancelRequestByIdempotency(
 			ctx, request.OrganizationID, attempt.ID, request.IdempotencyKey,
 		)
@@ -1042,8 +1042,92 @@ func RequestExecutionCancel(ctx context.Context, request types.CancelRequest) er
 		if !executionprotocol.IsExactDuplicateCancel(*existing, request) {
 			return apierrors.NewConflict("conflicting duplicate execution cancel request")
 		}
+		result = existing
 		return nil
 	})
+	return result, err
+}
+
+func RecordCampaignExecutionCancelHandoff(
+	ctx context.Context,
+	orgID, executionID, cancelRequestID uuid.UUID,
+) error {
+	if orgID == uuid.Nil || executionID == uuid.Nil || cancelRequestID == uuid.Nil {
+		return apierrors.NewBadRequest("campaign execution cancel handoff identity is invalid")
+	}
+	database := internalctx.GetDb(ctx)
+	command, err := database.Exec(ctx, `
+		INSERT INTO ExecutionCampaignControlHandoff (
+			organization_id, execution_cancel_request_id, execution_id,
+			execution_attempt_id, campaign_member_task_execution_id,
+			task_id, control_kind
+		)
+		SELECT
+			cancel.organization_id, cancel.id, cancel.execution_id,
+			cancel.execution_attempt_id, lineage.id, attempt.task_id,
+			'CANCEL_REQUESTED'
+		FROM ExecutionCancelRequest cancel
+		JOIN ExecutionAttempt attempt
+		  ON attempt.id = cancel.execution_attempt_id
+		 AND attempt.organization_id = cancel.organization_id
+		JOIN CampaignMemberTaskExecution lineage
+		  ON lineage.task_id = attempt.task_id
+		 AND lineage.organization_id = attempt.organization_id
+		WHERE cancel.id = @cancelRequestId
+		  AND cancel.organization_id = @organizationId
+		  AND cancel.execution_id = @executionId
+		ON CONFLICT (organization_id, execution_cancel_request_id) DO NOTHING`,
+		pgx.NamedArgs{
+			"cancelRequestId": cancelRequestID, "organizationId": orgID,
+			"executionId": executionID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("record campaign execution cancel handoff: %w", err)
+	}
+	if command.RowsAffected() == 1 {
+		return nil
+	}
+	var cancelExists bool
+	var campaignBound bool
+	err = database.QueryRow(ctx, `
+		SELECT
+			EXISTS (
+				SELECT 1 FROM ExecutionCancelRequest
+				WHERE id = @cancelRequestId
+				  AND organization_id = @organizationId
+				  AND execution_id = @executionId
+			),
+			EXISTS (
+				SELECT 1
+				FROM ExecutionCancelRequest cancel
+				JOIN ExecutionAttempt attempt
+				  ON attempt.id = cancel.execution_attempt_id
+				 AND attempt.organization_id = cancel.organization_id
+				JOIN CampaignMemberTaskExecution lineage
+				  ON lineage.task_id = attempt.task_id
+				 AND lineage.organization_id = attempt.organization_id
+				WHERE cancel.id = @cancelRequestId
+				  AND cancel.organization_id = @organizationId
+				  AND cancel.execution_id = @executionId
+			)`,
+		pgx.NamedArgs{
+			"cancelRequestId": cancelRequestID, "organizationId": orgID,
+			"executionId": executionID,
+		},
+	).Scan(&cancelExists, &campaignBound)
+	if err != nil {
+		return fmt.Errorf("verify campaign execution cancel handoff: %w", err)
+	}
+	if !cancelExists {
+		return apierrors.ErrNotFound
+	}
+	// A non-campaign execution has no campaign handoff to record.
+	if !campaignBound {
+		return nil
+	}
+	// An exact replay already owns the unique cancel-request identity.
+	return nil
 }
 
 func RecordCancelAcknowledgement(

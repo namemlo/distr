@@ -84,7 +84,9 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		zap.Bool("release", buildconfig.IsRelease()))
 
 	experimentalFeatures := featureflags.NewRegistry(env.ExperimentalFeatureFlags())
-	executionRuntime, err := newExecutionRuntimeDependencies(env.JWTSecret(), experimentalFeatures)
+	executionRuntime, err := newExecutionRuntimeDependencies(
+		env.ExecutionV2SigningKeysJSON(), env.ExecutionV2ObserverPublicKeysJSON(), experimentalFeatures,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -29,11 +29,15 @@ func (s *observerGateStub) AuthorizeReconciliationObserver(
 
 type campaignBridgeStub struct {
 	cancelled uuid.UUID
+	cancelID  uuid.UUID
 	retried   uuid.UUID
 }
 
-func (s *campaignBridgeStub) CancelCampaignExecution(_ context.Context, id uuid.UUID) error {
+func (s *campaignBridgeStub) CancelCampaignExecution(
+	_ context.Context, id, cancelID uuid.UUID,
+) error {
 	s.cancelled = id
+	s.cancelID = cancelID
 	return nil
 }
 
@@ -105,18 +109,20 @@ func TestCampaignControlCoordinatorInvokesBridge(t *testing.T) {
 	bridge := &campaignBridgeStub{}
 	coordinator := NewCampaignControlCoordinator(bridge)
 	executionID := uuid.New()
-	g.Expect(coordinator.Cancel(context.Background(), executionID)).To(Succeed())
+	cancelID := uuid.New()
+	g.Expect(coordinator.Cancel(context.Background(), executionID, cancelID)).To(Succeed())
 	g.Expect(coordinator.Retry(
 		context.Background(), executionID, types.RetryDispositionAllowed,
 	)).To(Succeed())
 	g.Expect(bridge.cancelled).To(Equal(executionID))
+	g.Expect(bridge.cancelID).To(Equal(cancelID))
 	g.Expect(bridge.retried).To(Equal(executionID))
 }
 
 func TestCampaignControlSeamFailsClosedWhenNotBound(t *testing.T) {
 	g := NewWithT(t)
 	executionID := uuid.New()
-	g.Expect(BridgeCampaignCancelIfConfigured(context.Background(), executionID)).
+	g.Expect(BridgeCampaignCancelIfConfigured(context.Background(), executionID, uuid.New())).
 		To(MatchError(ContainSubstring("not configured")))
 	g.Expect(BridgeCampaignRetryIfConfigured(
 		context.Background(), executionID, types.RetryDispositionAllowed,

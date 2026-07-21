@@ -42,7 +42,8 @@ func TestExecutionV2DowngradesLockAllOwnedEvidenceBeforeRefusalChecks(t *testing
 			path: "sql/158_execution_controls.down.sql",
 			tables: []string{
 				"ExecutionAttempt", "ExecutionCancelRequest", "ExecutionStatusQuery",
-				"ExecutionReconciliationEvent",
+				"ExecutionReconciliationEvent", "CampaignMemberTaskExecution",
+				"ExecutionCampaignControlHandoff",
 			},
 		},
 	}
@@ -70,6 +71,49 @@ func TestExecutionV2DowngradesLockAllOwnedEvidenceBeforeRefusalChecks(t *testing
 				}
 			}
 		})
+	}
+}
+
+func TestExecutionControlsPersistExactCampaignTaskHandoff(t *testing.T) {
+	content, err := os.ReadFile("sql/158_execution_controls.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(content)
+	for _, required := range []string{
+		"CREATE TABLE CampaignMemberTaskExecution",
+		"campaign_member_run_id",
+		"campaignmembertaskexecution_task_fk",
+		"campaignmembertaskexecution_member_fk",
+		"UNIQUE (organization_id, task_id)",
+		"CREATE TABLE ExecutionCampaignControlHandoff",
+		"execution_cancel_request_id",
+		"executioncampaigncontrolhandoff_cancel_unique",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("campaign execution handoff schema missing %q", required)
+		}
+	}
+}
+
+func TestExecutionControlsDowngradeLocksCampaignLineageParents(t *testing.T) {
+	content, err := os.ReadFile("sql/158_execution_controls.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(content)
+	lockAt := strings.Index(sql, "LOCK TABLE")
+	checkAt := strings.Index(sql, "IF EXISTS")
+	dropAt := strings.Index(sql, "DROP TABLE IF EXISTS ExecutionCampaignControlHandoff")
+	alterAt := strings.Index(sql, "ALTER TABLE DeploymentCampaignMemberRun")
+	if lockAt < 0 || checkAt < 0 || dropAt < 0 || alterAt < 0 ||
+		!(lockAt < checkAt && checkAt < dropAt && dropAt < alterAt) {
+		t.Fatal("campaign lineage parents must be locked before refusal, child drop and parent alter")
+	}
+	for _, table := range []string{"Task", "DeploymentCampaignMemberRun"} {
+		if !strings.Contains(sql[lockAt:checkAt], table) {
+			t.Fatalf("campaign lineage downgrade lock is missing parent %s", table)
+		}
 	}
 }
 

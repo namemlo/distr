@@ -338,11 +338,13 @@ func requestExecutionCancelHandler() http.HandlerFunc {
 			return
 		}
 		authInfo := auth.Authentication.Require(r.Context())
-		err = db.RequestExecutionCancel(r.Context(), request.ToTypes(
+		cancel, err := db.RequestExecutionCancel(r.Context(), request.ToTypes(
 			*authInfo.CurrentOrgID(), executionID, authInfo.CurrentUserID(), time.Now().UTC(),
 		))
 		if err == nil {
-			err = executionprotocol.BridgeCampaignCancelIfConfigured(r.Context(), executionID)
+			err = executionprotocol.BridgeCampaignCancelIfConfigured(
+				r.Context(), executionID, cancel.ID,
+			)
 		}
 		if err != nil {
 			respondExecutionV2Error(w, err)

@@ -22,6 +22,16 @@ func (productionRuntimeRepositoryStub) EvaluateExecutionV2Admission(
 	return executionworker.AdmissionDecision{}, nil
 }
 
+type productionSignerProviderStub struct {
+	signer executionprotocol.IntentSigner
+}
+
+func (p productionSignerProviderStub) ResolveIntentSigner(
+	context.Context, string, string,
+) (executionprotocol.IntentSigner, error) {
+	return p.signer, nil
+}
+
 func (productionRuntimeRepositoryStub) LoadFrozenAttemptInputs(
 	context.Context, executionworker.CreateAttemptRequest,
 ) (executionworker.FrozenAttemptInputs, error) {
@@ -30,7 +40,9 @@ func (productionRuntimeRepositoryStub) LoadFrozenAttemptInputs(
 
 type productionCampaignBridgeStub struct{}
 
-func (productionCampaignBridgeStub) CancelCampaignExecution(context.Context, uuid.UUID) error {
+func (productionCampaignBridgeStub) CancelCampaignExecution(
+	context.Context, uuid.UUID, uuid.UUID,
+) error {
 	return nil
 }
 
@@ -49,11 +61,16 @@ func TestNewProductionDependenciesBindsEveryRuntimeService(t *testing.T) {
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 
+	observerPublicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	g.Expect(err).NotTo(HaveOccurred())
+	observerKeyID := executionprotocol.PublicKeyFingerprint(observerPublicKey)
 	dependencies, err := NewProductionDependencies(ProductionConfig{
 		Flags: featureflags.NewRegistry([]featureflags.Key{
 			featureflags.KeyOperatorControlPlaneV2, featureflags.KeyExecutorProtocolV2,
 		}),
-		Signer: signer, Repository: productionRuntimeRepositoryStub{},
+		SignerProvider: productionSignerProviderStub{signer: signer},
+		ObserverKeys:   map[string]ed25519.PublicKey{observerKeyID: observerPublicKey},
+		Repository:     productionRuntimeRepositoryStub{},
 		CampaignBridge: productionCampaignBridgeStub{},
 	})
 	g.Expect(err).NotTo(HaveOccurred())
@@ -61,6 +78,9 @@ func TestNewProductionDependenciesBindsEveryRuntimeService(t *testing.T) {
 	g.Expect(dependencies.ReconciliationEvidenceVerifier).NotTo(BeNil())
 	g.Expect(dependencies.ReconciliationObserverGate).NotTo(BeNil())
 	g.Expect(dependencies.CampaignControlCoordinator).NotTo(BeNil())
+	verifier := dependencies.ReconciliationEvidenceVerifier.(executionprotocol.Ed25519ReconciliationEvidenceVerifier)
+	g.Expect(verifier.Keys).To(HaveKey(observerKeyID))
+	g.Expect(verifier.Keys).NotTo(HaveKey(signer.KeyID()))
 }
 
 func TestTaskCampaignBridgeValidatesCancelScopeAndDispatchesExplicitRetry(t *testing.T) {
@@ -69,8 +89,17 @@ func TestTaskCampaignBridgeValidatesCancelScopeAndDispatchesExplicitRetry(t *tes
 	task := types.Task{ID: executionID, OrganizationID: orgID}
 	loaded := 0
 	retried := false
+	cancelRequestID := uuid.New()
+	recorded := false
 	bridge := NewTaskCampaignControlBridge(
 		func(context.Context) (uuid.UUID, error) { return orgID, nil },
+		func(_ context.Context, requestedOrgID, requestedExecutionID, requestedCancelID uuid.UUID) error {
+			recorded = true
+			g.Expect(requestedOrgID).To(Equal(orgID))
+			g.Expect(requestedExecutionID).To(Equal(executionID))
+			g.Expect(requestedCancelID).To(Equal(cancelRequestID))
+			return nil
+		},
 		func(_ context.Context, id, requestedOrgID uuid.UUID) (*types.Task, error) {
 			loaded++
 			g.Expect(id).To(Equal(executionID))
@@ -83,10 +112,13 @@ func TestTaskCampaignBridgeValidatesCancelScopeAndDispatchesExplicitRetry(t *tes
 			return nil
 		},
 	)
-	g.Expect(bridge.CancelCampaignExecution(context.Background(), executionID)).To(Succeed())
+	g.Expect(bridge.CancelCampaignExecution(
+		context.Background(), executionID, cancelRequestID,
+	)).To(Succeed())
 	g.Expect(bridge.RetryCampaignExecution(
 		context.Background(), executionID, types.RetryDispositionAllowed,
 	)).To(Succeed())
-	g.Expect(loaded).To(Equal(2))
+	g.Expect(recorded).To(BeTrue())
+	g.Expect(loaded).To(Equal(1))
 	g.Expect(retried).To(BeTrue())
 }

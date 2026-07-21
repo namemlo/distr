@@ -101,6 +101,8 @@ var (
 	metricsBearerToken                      *string
 	observabilityGrafanaBaseURL             string
 	experimentalFeatureFlags                []featureflags.Key
+	executionV2SigningKeysJSON              []byte
+	executionV2ObserverPublicKeysJSON       []byte
 )
 
 func Initialize() {
@@ -289,6 +291,12 @@ func Initialize() {
 		featureflags.ParseEnabledKeys,
 		nil,
 	)
+	if featureflags.NewRegistry(experimentalFeatureFlags).IsEnabled(featureflags.KeyExecutorProtocolV2) {
+		executionV2SigningKeysJSON = []byte(envutil.RequireEnv("DISTR_EXECUTION_V2_SIGNING_KEYS_JSON"))
+		executionV2ObserverPublicKeysJSON = []byte(
+			envutil.RequireEnv("DISTR_EXECUTION_V2_OBSERVER_PUBLIC_KEYS_JSON"),
+		)
+	}
 }
 
 func DatabaseUrl() string {
@@ -663,4 +671,12 @@ func ObservabilityGrafanaBaseURL() string {
 
 func ExperimentalFeatureFlags() []featureflags.Key {
 	return slices.Clone(experimentalFeatureFlags)
+}
+
+func ExecutionV2SigningKeysJSON() []byte {
+	return slices.Clone(executionV2SigningKeysJSON)
+}
+
+func ExecutionV2ObserverPublicKeysJSON() []byte {
+	return slices.Clone(executionV2ObserverPublicKeysJSON)
 }

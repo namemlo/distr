@@ -16,15 +16,19 @@ import (
 
 type ProductionConfig struct {
 	Flags          featureflags.Registry
-	Signer         executionprotocol.IntentSigner
+	SignerProvider executionworker.IntentSignerProvider
+	ObserverKeys   map[string]ed25519.PublicKey
 	Repository     executionworker.RuntimeRepository
 	ObserverGate   executionprotocol.ReconciliationObserverGate
 	CampaignBridge executionprotocol.CampaignExecutionControlBridge
 }
 
 func NewProductionDependencies(config ProductionConfig) (Dependencies, error) {
-	if config.Signer == nil {
-		return Dependencies{}, errors.New("execution v2 intent signer is required")
+	if config.SignerProvider == nil {
+		return Dependencies{}, errors.New("execution v2 intent signer provider is required")
+	}
+	if len(config.ObserverKeys) == 0 {
+		return Dependencies{}, errors.New("execution v2 observer trust keys are required")
 	}
 	if config.Repository == nil {
 		return Dependencies{}, errors.New("execution v2 runtime repository is required")
@@ -37,13 +41,13 @@ func NewProductionDependencies(config ProductionConfig) (Dependencies, error) {
 	}
 	gate := executionworker.NewRepositoryAdmissionGate(config.Flags, config.Repository)
 	loader := executionworker.NewRepositoryFrozenAttemptInputsLoader(config.Repository)
-	creator := executionworker.NewRepositoryAttemptCreator(loader, config.Signer)
+	creator := executionworker.NewRepositoryAttemptCreator(loader, config.SignerProvider)
 	return Dependencies{
 		ProtocolDispatcher: executionworker.NewProtocolDispatcher(
 			nil, executionworker.NewDispatcher(gate, creator),
 		),
 		ReconciliationEvidenceVerifier: executionprotocol.Ed25519ReconciliationEvidenceVerifier{
-			Keys: map[string]ed25519.PublicKey{config.Signer.KeyID(): config.Signer.PublicKey()},
+			Keys: config.ObserverKeys,
 		},
 		ReconciliationObserverGate: config.ObserverGate,
 		CampaignControlCoordinator: executionprotocol.NewCampaignControlCoordinator(
@@ -68,22 +72,26 @@ func (AuthenticatedReconciliationObserverGate) AuthorizeReconciliationObserver(
 }
 
 type OperatorOrganizationResolver func(context.Context) (uuid.UUID, error)
+type CampaignCancelHandoffRecorder func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
 type ExecutionTaskLoader func(context.Context, uuid.UUID, uuid.UUID) (*types.Task, error)
 type ExecutionTaskRetryDispatcher func(context.Context, types.Task) error
 
 type TaskCampaignControlBridge struct {
 	resolveOrganization OperatorOrganizationResolver
+	recordCancel        CampaignCancelHandoffRecorder
 	loadTask            ExecutionTaskLoader
 	retryTask           ExecutionTaskRetryDispatcher
 }
 
 func NewTaskCampaignControlBridge(
 	resolveOrganization OperatorOrganizationResolver,
+	recordCancel CampaignCancelHandoffRecorder,
 	loadTask ExecutionTaskLoader,
 	retryTask ExecutionTaskRetryDispatcher,
 ) *TaskCampaignControlBridge {
 	return &TaskCampaignControlBridge{
-		resolveOrganization: resolveOrganization, loadTask: loadTask, retryTask: retryTask,
+		resolveOrganization: resolveOrganization, recordCancel: recordCancel,
+		loadTask: loadTask, retryTask: retryTask,
 	}
 }
 
@@ -97,6 +105,7 @@ func NewDatabaseCampaignControlBridge() *TaskCampaignControlBridge {
 			}
 			return *orgID, nil
 		},
+		db.RecordCampaignExecutionCancelHandoff,
 		db.GetTask,
 		executionworker.DispatchTaskRetry,
 	)
@@ -104,10 +113,16 @@ func NewDatabaseCampaignControlBridge() *TaskCampaignControlBridge {
 
 func (b *TaskCampaignControlBridge) CancelCampaignExecution(
 	ctx context.Context,
-	executionID uuid.UUID,
+	executionID, cancelRequestID uuid.UUID,
 ) error {
-	_, err := b.loadScopedTask(ctx, executionID)
-	return err
+	if b == nil || b.resolveOrganization == nil || b.recordCancel == nil {
+		return errors.New("campaign cancel handoff is not configured")
+	}
+	orgID, err := b.resolveOrganization(ctx)
+	if err != nil {
+		return err
+	}
+	return b.recordCancel(ctx, orgID, executionID, cancelRequestID)
 }
 
 func (b *TaskCampaignControlBridge) RetryCampaignExecution(

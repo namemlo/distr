@@ -76,6 +76,82 @@ CREATE TABLE ExecutionCancelRequest (
   )
 );
 
+ALTER TABLE ExecutionCancelRequest
+  ADD CONSTRAINT executioncancelrequest_id_org_execution_attempt_unique
+    UNIQUE (id, organization_id, execution_id, execution_attempt_id);
+
+ALTER TABLE DeploymentCampaignMemberRun
+  ADD CONSTRAINT deploymentcampaignmemberrun_execution_lineage_unique
+    UNIQUE (id, organization_id, campaign_run_id, deployment_plan_id);
+
+CREATE TABLE CampaignMemberTaskExecution (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  campaign_run_id UUID NOT NULL,
+  campaign_member_run_id UUID NOT NULL,
+  deployment_plan_id UUID NOT NULL,
+  task_id UUID NOT NULL,
+  deployment_target_id UUID NOT NULL,
+  CONSTRAINT campaignmembertaskexecution_member_fk
+    FOREIGN KEY (
+      campaign_member_run_id,
+      organization_id,
+      campaign_run_id,
+      deployment_plan_id
+    ) REFERENCES DeploymentCampaignMemberRun(
+      id,
+      organization_id,
+      campaign_run_id,
+      deployment_plan_id
+    ) ON UPDATE NO ACTION ON DELETE CASCADE,
+  CONSTRAINT campaignmembertaskexecution_task_fk
+    FOREIGN KEY (task_id, deployment_plan_id, organization_id)
+    REFERENCES Task(id, deployment_plan_id, organization_id)
+    ON UPDATE NO ACTION ON DELETE CASCADE,
+  CONSTRAINT campaignmembertaskexecution_target_fk
+    FOREIGN KEY (deployment_target_id, organization_id)
+    REFERENCES DeploymentTarget(id, organization_id)
+    ON UPDATE NO ACTION ON DELETE RESTRICT,
+  CONSTRAINT campaignmembertaskexecution_task_unique
+    UNIQUE (organization_id, task_id),
+  CONSTRAINT campaignmembertaskexecution_id_org_task_unique
+    UNIQUE (id, organization_id, task_id)
+);
+
+CREATE TABLE ExecutionCampaignControlHandoff (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  organization_id UUID NOT NULL REFERENCES Organization(id) ON DELETE CASCADE,
+  execution_cancel_request_id UUID NOT NULL,
+  execution_id UUID NOT NULL,
+  execution_attempt_id UUID NOT NULL,
+  campaign_member_task_execution_id UUID NOT NULL,
+  task_id UUID NOT NULL,
+  control_kind TEXT NOT NULL CHECK (control_kind = 'CANCEL_REQUESTED'),
+  CONSTRAINT executioncampaigncontrolhandoff_cancel_fk
+    FOREIGN KEY (
+      execution_cancel_request_id,
+      organization_id,
+      execution_id,
+      execution_attempt_id
+    ) REFERENCES ExecutionCancelRequest(
+      id,
+      organization_id,
+      execution_id,
+      execution_attempt_id
+    ) ON UPDATE NO ACTION ON DELETE CASCADE,
+  CONSTRAINT executioncampaigncontrolhandoff_lineage_fk
+    FOREIGN KEY (
+      campaign_member_task_execution_id,
+      organization_id,
+      task_id
+    ) REFERENCES CampaignMemberTaskExecution(id, organization_id, task_id)
+    ON UPDATE NO ACTION ON DELETE CASCADE,
+  CONSTRAINT executioncampaigncontrolhandoff_cancel_unique
+    UNIQUE (organization_id, execution_cancel_request_id)
+);
+
 CREATE TABLE ExecutionStatusQuery (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -251,4 +327,20 @@ FOR EACH ROW EXECUTE FUNCTION execution_reconciliation_append_only_guard();
 
 CREATE TRIGGER ExecutionReconciliationEvent_no_truncate
 BEFORE TRUNCATE ON ExecutionReconciliationEvent
+FOR EACH STATEMENT EXECUTE FUNCTION execution_reconciliation_append_only_guard();
+
+CREATE TRIGGER CampaignMemberTaskExecution_append_only
+BEFORE UPDATE OR DELETE ON CampaignMemberTaskExecution
+FOR EACH ROW EXECUTE FUNCTION execution_reconciliation_append_only_guard();
+
+CREATE TRIGGER CampaignMemberTaskExecution_no_truncate
+BEFORE TRUNCATE ON CampaignMemberTaskExecution
+FOR EACH STATEMENT EXECUTE FUNCTION execution_reconciliation_append_only_guard();
+
+CREATE TRIGGER ExecutionCampaignControlHandoff_append_only
+BEFORE UPDATE OR DELETE ON ExecutionCampaignControlHandoff
+FOR EACH ROW EXECUTE FUNCTION execution_reconciliation_append_only_guard();
+
+CREATE TRIGGER ExecutionCampaignControlHandoff_no_truncate
+BEFORE TRUNCATE ON ExecutionCampaignControlHandoff
 FOR EACH STATEMENT EXECUTE FUNCTION execution_reconciliation_append_only_guard();

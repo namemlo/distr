@@ -1,15 +1,21 @@
 DO $$
 BEGIN
   LOCK TABLE
+	Task,
+	DeploymentCampaignMemberRun,
     ExecutionAttempt,
     ExecutionCancelRequest,
     ExecutionStatusQuery,
-    ExecutionReconciliationEvent
+    ExecutionReconciliationEvent,
+    CampaignMemberTaskExecution,
+    ExecutionCampaignControlHandoff
   IN ACCESS EXCLUSIVE MODE;
 
   IF EXISTS (SELECT 1 FROM ExecutionCancelRequest)
      OR EXISTS (SELECT 1 FROM ExecutionStatusQuery)
      OR EXISTS (SELECT 1 FROM ExecutionReconciliationEvent)
+     OR EXISTS (SELECT 1 FROM CampaignMemberTaskExecution)
+     OR EXISTS (SELECT 1 FROM ExecutionCampaignControlHandoff)
      OR EXISTS (
        SELECT 1
        FROM ExecutionAttempt
@@ -20,6 +26,21 @@ BEGIN
   END IF;
 END;
 $$;
+
+DROP TRIGGER IF EXISTS ExecutionCampaignControlHandoff_no_truncate
+  ON ExecutionCampaignControlHandoff;
+DROP TRIGGER IF EXISTS ExecutionCampaignControlHandoff_append_only
+  ON ExecutionCampaignControlHandoff;
+DROP TRIGGER IF EXISTS CampaignMemberTaskExecution_no_truncate
+  ON CampaignMemberTaskExecution;
+DROP TRIGGER IF EXISTS CampaignMemberTaskExecution_append_only
+  ON CampaignMemberTaskExecution;
+
+DROP TABLE IF EXISTS ExecutionCampaignControlHandoff;
+DROP TABLE IF EXISTS CampaignMemberTaskExecution;
+
+ALTER TABLE DeploymentCampaignMemberRun
+  DROP CONSTRAINT IF EXISTS deploymentcampaignmemberrun_execution_lineage_unique;
 
 DROP TRIGGER IF EXISTS ExecutionReconciliationEvent_no_truncate
   ON ExecutionReconciliationEvent;

@@ -1511,6 +1511,9 @@ Use one entry per pull request:
   binding, database-time leases, monotonically increasing fencing and
   conflict-secure exact event replay. Expired authorization cannot be extended
   by heartbeat, and exact dispatch replay reuses matching frozen attempts.
+- Configuration: Protocol-v2 startup requires independently configured intent
+  signing keys and observer public keys; neither is derived from the JWT secret,
+  and a public key cannot be trusted for both roles.
 - Documentation: Added ADR-0064 and PR-075 fork notes.
 - Tests: Added golden/tamper/wrong-key/expiry/input-mismatch signing coverage,
   fencing/idempotency/restart/timeout state coverage, dispatcher admission,
@@ -1532,8 +1535,9 @@ Use one entry per pull request:
   evidence without inventing success or rewriting terminal state.
 - Database changes: Migration 158 adds `ExecutionCancelRequest`,
   `ExecutionStatusQuery`, append-only signed
-  `ExecutionReconciliationEvent`, attempt-scoped control idempotency, and the
-  explicit completion-consistent `UNKNOWN` attempt outcome. Status-query TTL
+  `ExecutionReconciliationEvent`, immutable campaign-member/task lineage,
+  idempotent member-scoped campaign-control handoffs, attempt-scoped control
+  idempotency, and the explicit completion-consistent `UNKNOWN` attempt outcome. Status-query TTL
   participates in idempotency, reconciliation is foreign-key bound to the exact
   attempt/query tuple, and downgrade locks every owned evidence table.
 - API changes: Adds operator execution-control routes and executor cancel/status

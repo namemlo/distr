@@ -224,7 +224,7 @@ func ValidateReconciliationEventIdentity(
 }
 
 type CampaignExecutionControlBridge interface {
-	CancelCampaignExecution(context.Context, uuid.UUID) error
+	CancelCampaignExecution(context.Context, uuid.UUID, uuid.UUID) error
 	RetryCampaignExecution(context.Context, uuid.UUID, types.RetryDisposition) error
 }
 
@@ -241,12 +241,14 @@ func WithCampaignControlCoordinator(
 	return context.WithValue(ctx, campaignControlCoordinatorContextKey{}, coordinator)
 }
 
-func BridgeCampaignCancelIfConfigured(ctx context.Context, executionID uuid.UUID) error {
+func BridgeCampaignCancelIfConfigured(
+	ctx context.Context, executionID, cancelRequestID uuid.UUID,
+) error {
 	coordinator, _ := ctx.Value(campaignControlCoordinatorContextKey{}).(*CampaignControlCoordinator)
 	if coordinator == nil {
 		return errors.New("campaign execution control bridge is not configured")
 	}
-	return coordinator.Cancel(ctx, executionID)
+	return coordinator.Cancel(ctx, executionID, cancelRequestID)
 }
 
 func BridgeCampaignRetryIfConfigured(
@@ -265,11 +267,16 @@ func NewCampaignControlCoordinator(bridge CampaignExecutionControlBridge) *Campa
 	return &CampaignControlCoordinator{bridge: bridge}
 }
 
-func (c *CampaignControlCoordinator) Cancel(ctx context.Context, executionID uuid.UUID) error {
+func (c *CampaignControlCoordinator) Cancel(
+	ctx context.Context, executionID, cancelRequestID uuid.UUID,
+) error {
 	if c == nil || c.bridge == nil {
 		return errors.New("campaign execution control bridge is not configured")
 	}
-	return c.bridge.CancelCampaignExecution(ctx, executionID)
+	if cancelRequestID == uuid.Nil {
+		return errors.New("campaign cancel handoff requires cancel request identity")
+	}
+	return c.bridge.CancelCampaignExecution(ctx, executionID, cancelRequestID)
 }
 
 func (c *CampaignControlCoordinator) Retry(

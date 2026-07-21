@@ -212,16 +212,19 @@ func (d *ProtocolDispatcher) Dispatch(
 }
 
 type FrozenAttemptInputs struct {
-	AttemptNumber   int
-	PlanChecksum    string
-	ArtifactDigest  string
-	ConfigChecksum  string
-	AdapterRevision string
-	ResourceKey     string
-	FenceGeneration int64
-	Cancellable     bool
-	RetrySafe       bool
-	IntentTTL       time.Duration
+	AttemptNumber                int
+	PlanChecksum                 string
+	ArtifactDigest               string
+	ConfigChecksum               string
+	AdapterRevision              string
+	ResourceKey                  string
+	FenceGeneration              int64
+	Cancellable                  bool
+	RetrySafe                    bool
+	IntentTTL                    time.Duration
+	PublicKeyFingerprint         string
+	SigningKeyReference          string
+	SigningKeyVersionFingerprint string
 }
 
 type FrozenAttemptInputsLoader interface {
@@ -229,27 +232,35 @@ type FrozenAttemptInputsLoader interface {
 }
 
 type RepositoryAttemptCreator struct {
-	loader FrozenAttemptInputsLoader
-	signer executionprotocol.IntentSigner
+	loader         FrozenAttemptInputsLoader
+	signerProvider IntentSignerProvider
+}
+
+type IntentSignerProvider interface {
+	ResolveIntentSigner(context.Context, string, string) (executionprotocol.IntentSigner, error)
 }
 
 func NewRepositoryAttemptCreator(
 	loader FrozenAttemptInputsLoader,
-	signer executionprotocol.IntentSigner,
+	signerProvider IntentSignerProvider,
 ) *RepositoryAttemptCreator {
-	return &RepositoryAttemptCreator{loader: loader, signer: signer}
+	return &RepositoryAttemptCreator{loader: loader, signerProvider: signerProvider}
 }
 
 func (c *RepositoryAttemptCreator) CreateExecutionAttempt(
 	ctx context.Context,
 	request CreateAttemptRequest,
 ) (*types.ExecutionAttempt, error) {
-	if c == nil || c.loader == nil || c.signer == nil {
+	if c == nil || c.loader == nil || c.signerProvider == nil {
 		return nil, errors.New("repository attempt creator is not configured")
 	}
 	inputs, err := c.loader.LoadFrozenAttemptInputs(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("load frozen execution inputs: %w", err)
+	}
+	signer, err := resolveFrozenIntentSigner(ctx, c.signerProvider, inputs)
+	if err != nil {
+		return nil, err
 	}
 	now, err := db.GetTrustedExecutionTime(ctx)
 	if err != nil {
@@ -273,12 +284,34 @@ func (c *RepositoryAttemptCreator) CreateExecutionAttempt(
 		},
 	}
 	intent, err := executionprotocol.BuildExecutionIntent(
-		executionprotocol.WithIntentSigner(ctx, c.signer), attempt,
+		executionprotocol.WithIntentSigner(ctx, signer), attempt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	return db.CreateExecutionAttempt(ctx, attempt, intent, types.TrustPolicy{
-		Keys: map[string]ed25519.PublicKey{c.signer.KeyID(): c.signer.PublicKey()},
+		Keys: map[string]ed25519.PublicKey{signer.KeyID(): signer.PublicKey()},
 	})
+}
+
+func resolveFrozenIntentSigner(
+	ctx context.Context,
+	provider IntentSignerProvider,
+	inputs FrozenAttemptInputs,
+) (executionprotocol.IntentSigner, error) {
+	if provider == nil || strings.TrimSpace(inputs.SigningKeyReference) == "" ||
+		strings.TrimSpace(inputs.SigningKeyVersionFingerprint) == "" ||
+		strings.TrimSpace(inputs.PublicKeyFingerprint) == "" {
+		return nil, errors.New("frozen adapter signing lineage is incomplete")
+	}
+	signer, err := provider.ResolveIntentSigner(
+		ctx, inputs.SigningKeyReference, inputs.SigningKeyVersionFingerprint,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve frozen adapter signing key: %w", err)
+	}
+	if signer == nil || signer.KeyID() != inputs.PublicKeyFingerprint {
+		return nil, errors.New("resolved signer does not match frozen adapter public-key fingerprint")
+	}
+	return signer, nil
 }
