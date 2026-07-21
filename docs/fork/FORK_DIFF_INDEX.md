@@ -1492,16 +1492,19 @@ Use one entry per pull request:
 - Feature flag: Requires both `operator_control_plane_v2` and
   `executor_protocol_v2`; missing scoped enrollment, approval, admission or
   adapter-preflight evidence denies dispatch.
-- User-facing behavior: Target-authenticated executors can claim, separately
+- User-facing behavior: Target-authenticated executors can atomically poll and
+  lease compatible pending work, explicitly claim known work, separately
   acknowledge, heartbeat, append ordered events and complete signed fenced v2
   attempts while the owning lease and intent remain live.
 - Database changes: Migration 157 adds `ExecutionAttempt`, `ExecutionFence`,
   append-only `ExecutionIntent`, append-only `ExecutionEvent`, and frozen
   `Task.protocol_version`; downgrade locks `Task` and every owned evidence table
   and refuses retained v2 tasks/evidence before destructive rollback.
-- API changes: Adds `/api/executor/v2` claim, acknowledgement, heartbeat, event
-  and completion routes scoped to the authenticated organization and deployment
-  target.
+- API changes: Adds `/api/executor/v2` atomic lease, explicit claim,
+  acknowledgement, heartbeat, event and completion routes scoped to the
+  authenticated organization and deployment target. Lease discovery requires
+  exact frozen adapter-revision and signing-key identities and returns no
+  content when no compatible pending attempt exists.
 - UI changes: None.
 - Agent protocol changes: Adds canonical Ed25519-signed intent v2, public-key
   fingerprint identity, exact tenant/target/task/step/plan/adapter/resource

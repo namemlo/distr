@@ -23,6 +23,7 @@ writer cannot race the refusal check and destructive downgrade.
 
 Executor endpoints are under:
 
+- `POST /api/executor/v2/executions/lease`
 - `POST /api/executor/v2/executions/claim`
 - `POST /api/executor/v2/attempts/{id}/heartbeat`
 - `POST /api/executor/v2/attempts/{id}/events`
@@ -30,6 +31,12 @@ Executor endpoints are under:
 
 They use the existing agent/executor bearer credential boundary and both v2
 process flags. Organization scope comes only from the authenticated credential.
+The atomic lease poll also derives deployment-target scope from that credential,
+selects with `FOR UPDATE SKIP LOCKED`, and returns `204 No Content` when no
+eligible attempt exists. A candidate must be pending, have an unexpired intent
+and unreleased fence, and exactly match the executor's frozen adapter revision
+and intent signing-key fingerprint. The explicit claim route remains available
+for clients that already know an attempt ID.
 
 ## Security and compatibility
 

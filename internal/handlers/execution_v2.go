@@ -24,6 +24,11 @@ func ExecutionV2ExecutorRouter(r chiopenapi.Router) {
 		middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyOperatorControlPlaneV2),
 		middleware.ExperimentalFeatureFlagMiddleware(featureflags.KeyExecutorProtocolV2),
 	)
+	r.Post("/executions/lease", leaseExecutionV2Handler()).
+		With(option.Description("Atomically lease a pending attempt matching the authenticated target and frozen executor identity")).
+		With(option.Request(api.ExecutionV2LeaseRequest{})).
+		With(option.Response(http.StatusOK, api.ExecutionV2LeaseResponse{})).
+		With(option.Response(http.StatusNoContent, nil))
 	r.Post("/executions/claim", claimExecutionV2Handler()).
 		With(option.Description("Claim a signed fenced execution attempt")).
 		With(option.Request(api.ExecutionV2ClaimRequest{})).

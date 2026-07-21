@@ -62,6 +62,14 @@ release, target configuration, step adapter identity and resource lock. An
 ordinary replay reuses the stored attempt inputs; only an explicit authorized
 retry advances attempt and fence generation.
 
+Executors poll through an atomic lease endpoint. The authenticated bearer
+credential is the sole source of organization and deployment-target scope. The
+poll declares the exact adapter revision and trusted public-key fingerprint it
+can execute; the Hub locks and claims only a pending attempt whose immutable
+adapter and signed intent match both values and whose intent and fence remain
+valid. Concurrent pollers use `FOR UPDATE SKIP LOCKED`, and an empty poll returns
+no content rather than exposing another target's work.
+
 ## Compatibility boundary
 
 This decision supersedes only v1 delivery semantics for plans already frozen to
