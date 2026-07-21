@@ -86,12 +86,15 @@ type CampaignObservationRequirement struct {
 }
 
 type CampaignMemberCandidate struct {
-	MemberRunID   uuid.UUID
-	WaveRunID     uuid.UUID
-	WaveOrder     int
-	MemberOrder   int
-	PlanID        uuid.UUID
-	Prerequisites []CampaignObservationRequirement
+	OrganizationID     uuid.UUID
+	ActorUserAccountID uuid.UUID
+	CampaignEvidence   AdmissionCampaignEvidence
+	MemberRunID        uuid.UUID
+	WaveRunID          uuid.UUID
+	WaveOrder          int
+	MemberOrder        int
+	PlanID             uuid.UUID
+	Prerequisites      []CampaignObservationRequirement
 }
 
 type CampaignSchedule struct {

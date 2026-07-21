@@ -15,6 +15,7 @@ var (
 	ErrCampaignLeaseLost                      = errors.New("campaign scheduler lease lost")
 	ErrCampaignObservationVerifierUnavailable = errors.New("campaign observation verifier unavailable")
 	ErrCampaignObservationResolverUnavailable = errors.New("campaign observation resolver unavailable")
+	ErrCampaignTaskDispatcherUnavailable      = errors.New("campaign task dispatcher unavailable")
 )
 
 // CampaignObservationVerifier is the PR-077 integration seam. Implementations
@@ -65,20 +66,50 @@ type SchedulerStore interface {
 		time.Duration,
 	) (types.CampaignLease, bool, error)
 	LoadCampaignSchedule(context.Context, uuid.UUID, int64) (types.CampaignSchedule, error)
+	LoadPendingCampaignDispatchTasks(context.Context, uuid.UUID, int64) ([]types.Task, error)
 	RecordPrerequisitesAndAdmit(
 		context.Context,
 		types.CampaignMemberCandidate,
 		types.CampaignMemberAdmission,
 		CampaignObservationResolver,
 		CampaignObservationVerifier,
+		types.AdmissionAuthorizer,
 		int64,
-	) (bool, bool, error)
+	) ([]types.Task, bool, bool, error)
 	RecordThresholdAndMaybePause(
 		context.Context,
 		types.CampaignThresholdEvaluation,
 		int64,
 	) (bool, error)
 	PauseCampaignAdmission(context.Context, uuid.UUID, string, int64) error
+}
+
+type CampaignTaskDispatcher interface {
+	DispatchCampaignTasks(context.Context, []types.Task) error
+}
+
+type CampaignTaskDispatcherFunc func(context.Context, []types.Task) error
+
+func (dispatch CampaignTaskDispatcherFunc) DispatchCampaignTasks(
+	ctx context.Context,
+	tasks []types.Task,
+) error {
+	if dispatch == nil {
+		return ErrCampaignTaskDispatcherUnavailable
+	}
+	return dispatch(ctx, tasks)
+}
+
+type UnwiredCampaignTaskDispatcher struct{}
+
+func (UnwiredCampaignTaskDispatcher) DispatchCampaignTasks(
+	_ context.Context,
+	tasks []types.Task,
+) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	return ErrCampaignTaskDispatcherUnavailable
 }
 
 type PendingCampaignPauseStore interface {
@@ -89,6 +120,8 @@ type Scheduler struct {
 	store         SchedulerStore
 	resolver      CampaignObservationResolver
 	observations  CampaignObservationVerifier
+	authorizer    types.AdmissionAuthorizer
+	dispatcher    CampaignTaskDispatcher
 	workerID      string
 	leaseDuration time.Duration
 }
@@ -115,16 +148,41 @@ func NewSchedulerWithObservationResolver(
 	workerID string,
 	leaseDuration time.Duration,
 ) *Scheduler {
+	return NewSchedulerWithRuntime(
+		store,
+		resolver,
+		observations,
+		nil,
+		UnwiredCampaignTaskDispatcher{},
+		workerID,
+		leaseDuration,
+	)
+}
+
+func NewSchedulerWithRuntime(
+	store SchedulerStore,
+	resolver CampaignObservationResolver,
+	observations CampaignObservationVerifier,
+	authorizer types.AdmissionAuthorizer,
+	dispatcher CampaignTaskDispatcher,
+	workerID string,
+	leaseDuration time.Duration,
+) *Scheduler {
 	if resolver == nil {
 		resolver = UnwiredCampaignObservationResolver{}
 	}
 	if observations == nil {
 		observations = UnwiredCampaignObservationVerifier{}
 	}
+	if dispatcher == nil {
+		dispatcher = UnwiredCampaignTaskDispatcher{}
+	}
 	return &Scheduler{
 		store:         store,
 		resolver:      resolver,
 		observations:  observations,
+		authorizer:    authorizer,
+		dispatcher:    dispatcher,
 		workerID:      workerID,
 		leaseDuration: leaseDuration,
 	}
@@ -167,6 +225,19 @@ func (s *Scheduler) Tick(
 	}
 	if schedule.Run.State != types.CampaignRunStateRunning || schedule.Run.AdmissionsBlocked {
 		return result, nil
+	}
+	pendingTasks, err := s.store.LoadPendingCampaignDispatchTasks(
+		ctx,
+		runID,
+		lease.FencingToken,
+	)
+	if err != nil {
+		return result, err
+	}
+	if len(pendingTasks) > 0 {
+		if err := s.dispatcher.DispatchCampaignTasks(ctx, pendingTasks); err != nil {
+			return result, err
+		}
 	}
 	if campaignAdmissionBlocked(schedule, now) {
 		return result, nil
@@ -217,8 +288,9 @@ func (s *Scheduler) Tick(
 		AdmittedAt:   now,
 		FencingToken: lease.FencingToken,
 	}
-	admitted, paused, err := s.store.RecordPrerequisitesAndAdmit(
-		ctx, candidate, admission, s.resolver, s.observations, lease.FencingToken,
+	createdTasks, admitted, paused, err := s.store.RecordPrerequisitesAndAdmit(
+		ctx, candidate, admission, s.resolver, s.observations, s.authorizer,
+		lease.FencingToken,
 	)
 	if err != nil {
 		return result, err
@@ -227,6 +299,12 @@ func (s *Scheduler) Tick(
 	result.Admitted = admitted
 	if admitted {
 		result.MemberRunID = candidate.MemberRunID
+		if len(createdTasks) == 0 {
+			return result, fmt.Errorf("campaign admission produced no dispatchable tasks")
+		}
+		if err := s.dispatcher.DispatchCampaignTasks(ctx, createdTasks); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
 }

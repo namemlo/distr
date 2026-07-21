@@ -22,6 +22,19 @@ type schedulerStoreFake struct {
 	loseLeaseOnAdmit   bool
 	duplicateAdmission bool
 	finalizedPause     bool
+	pendingTasks       []types.Task
+	materializedTasks  []types.Task
+	authorizer         types.AdmissionAuthorizer
+	recoveryLoads      int
+}
+
+func (s *schedulerStoreFake) LoadPendingCampaignDispatchTasks(
+	_ context.Context,
+	_ uuid.UUID,
+	_ int64,
+) ([]types.Task, error) {
+	s.recoveryLoads++
+	return s.pendingTasks, nil
 }
 
 func (s *schedulerStoreFake) FinalizePendingCampaignPause(
@@ -69,8 +82,10 @@ func (s *schedulerStoreFake) RecordPrerequisitesAndAdmit(
 	admission types.CampaignMemberAdmission,
 	resolver CampaignObservationResolver,
 	verifier CampaignObservationVerifier,
+	authorizer types.AdmissionAuthorizer,
 	_ int64,
-) (bool, bool, error) {
+) ([]types.Task, bool, bool, error) {
+	s.authorizer = authorizer
 	for _, requirement := range candidate.Prerequisites {
 		observationID := requirement.ObservationID
 		runtimeChecksum := requirement.RuntimeStateChecksum
@@ -108,17 +123,52 @@ func (s *schedulerStoreFake) RecordPrerequisitesAndAdmit(
 			} else {
 				s.pausedReason = "campaign prerequisite mismatch"
 			}
-			return false, true, nil
+			return nil, false, true, nil
 		}
 	}
 	if s.loseLeaseOnAdmit {
-		return false, false, ErrCampaignLeaseLost
+		return nil, false, false, ErrCampaignLeaseLost
 	}
 	if s.duplicateAdmission {
-		return false, false, nil
+		return nil, false, false, nil
 	}
 	s.admitted = append(s.admitted, admission)
-	return true, false, nil
+	if s.materializedTasks == nil {
+		s.materializedTasks = []types.Task{{
+			ID: admission.MemberRunID, ExecutionOccurrenceID: admission.MemberRunID,
+		}}
+	}
+	return s.materializedTasks, true, false, nil
+}
+
+type campaignTaskDispatcherFake struct {
+	batches [][]types.Task
+	err     error
+}
+
+func (d *campaignTaskDispatcherFake) DispatchCampaignTasks(
+	_ context.Context,
+	tasks []types.Task,
+) error {
+	d.batches = append(d.batches, append([]types.Task(nil), tasks...))
+	return d.err
+}
+
+func newSchedulerForTest(
+	store SchedulerStore,
+	observations CampaignObservationVerifier,
+	workerID string,
+	leaseDuration time.Duration,
+) *Scheduler {
+	return NewSchedulerWithRuntime(
+		store,
+		UnwiredCampaignObservationResolver{},
+		observations,
+		nil,
+		&campaignTaskDispatcherFake{},
+		workerID,
+		leaseDuration,
+	)
 }
 
 func (s *schedulerStoreFake) PauseCampaignAdmission(
@@ -204,7 +254,7 @@ func TestSchedulerUsesDeterministicAdmissionOrderAndDeduplicatesTick(t *testing.
 			},
 		},
 	}
-	scheduler := NewScheduler(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute)
+	scheduler := newSchedulerForTest(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute)
 
 	result, err := scheduler.Tick(context.Background(), runID, time.Now())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -246,7 +296,7 @@ func TestSchedulerFailsClosedWhenObservationVerifierIsUnwired(t *testing.T) {
 		},
 	}
 
-	result, err := NewScheduler(
+	result, err := newSchedulerForTest(
 		store,
 		UnwiredCampaignObservationVerifier{},
 		"worker-a",
@@ -288,7 +338,7 @@ func TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch(t *testing.
 			}},
 		},
 	}
-	scheduler := NewScheduler(store, &observationVerifierFake{}, "worker-a", time.Minute)
+	scheduler := newSchedulerForTest(store, &observationVerifierFake{}, "worker-a", time.Minute)
 
 	result, err := scheduler.Tick(context.Background(), runID, time.Now())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -332,10 +382,12 @@ func TestSchedulerResolvesFrozenPrerequisiteByCanonicalProviderIdentity(t *testi
 	}
 	verifier := &capturingObservationVerifier{}
 
-	result, err := NewSchedulerWithObservationResolver(
+	result, err := NewSchedulerWithRuntime(
 		store,
 		resolver,
 		verifier,
+		nil,
+		&campaignTaskDispatcherFake{},
 		"worker-a",
 		time.Minute,
 	).Tick(context.Background(), runID, time.Now())
@@ -400,7 +452,7 @@ func TestSchedulerBlocksForBakeConcurrencyRiskAndHealth(t *testing.T) {
 			lease:    types.CampaignLease{RunID: runID, FencingToken: 41},
 			schedule: tc.schedule,
 		}
-		result, err := NewScheduler(
+		result, err := newSchedulerForTest(
 			store,
 			UnwiredCampaignObservationVerifier{},
 			"worker-a",
@@ -426,7 +478,7 @@ func TestSchedulerStopsForThresholdPauseAndLeaseLoss(t *testing.T) {
 		},
 	}
 
-	result, err := NewScheduler(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute).
+	result, err := newSchedulerForTest(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute).
 		Tick(context.Background(), runID, time.Now())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(result.Admitted).To(gomega.BeFalse())
@@ -438,7 +490,7 @@ func TestSchedulerStopsForThresholdPauseAndLeaseLoss(t *testing.T) {
 	store.schedule.ThresholdSnapshot = types.CampaignThresholdSnapshot{}
 	store.pausedReason = ""
 	store.loseLeaseOnAdmit = true
-	_, err = NewScheduler(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute).
+	_, err = newSchedulerForTest(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute).
 		Tick(context.Background(), runID, time.Now())
 	g.Expect(errors.Is(err, ErrCampaignLeaseLost)).To(gomega.BeTrue())
 	g.Expect(store.admitted).To(gomega.BeEmpty())
@@ -455,7 +507,7 @@ func TestSchedulerDoesNotExposeWhilePausedOrLeaseUnavailable(t *testing.T) {
 			Candidates: []types.CampaignMemberCandidate{{MemberRunID: uuid.New(), PlanID: uuid.New()}},
 		},
 	}
-	scheduler := NewScheduler(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute)
+	scheduler := newSchedulerForTest(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute)
 	result, err := scheduler.Tick(context.Background(), runID, time.Now())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(result.LeaseAcquired).To(gomega.BeFalse())
@@ -484,10 +536,149 @@ func TestPauseCampaignCompletesAtSafePointAfterRestart(t *testing.T) {
 		},
 	}
 
-	result, err := NewScheduler(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute).
+	result, err := newSchedulerForTest(store, UnwiredCampaignObservationVerifier{}, "worker-a", time.Minute).
 		Tick(context.Background(), runID, time.Now())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(result.Paused).To(gomega.BeTrue())
 	g.Expect(store.finalizedPause).To(gomega.BeTrue())
 	g.Expect(store.admitted).To(gomega.BeEmpty())
+}
+
+func TestSchedulerDispatchesRecoveryBeforeMaterializedAdmissionTasks(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	memberRunID := uuid.New()
+	recovery := types.Task{ID: uuid.New(), ExecutionOccurrenceID: uuid.New()}
+	created := types.Task{ID: uuid.New(), ExecutionOccurrenceID: memberRunID}
+	authorizer := types.AdmissionAuthorizer(func(context.Context, types.AdmissionAuthorizationContext) error {
+		return nil
+	})
+	store := &schedulerStoreFake{
+		acquired:          true,
+		lease:             types.CampaignLease{RunID: runID, FencingToken: 44},
+		pendingTasks:      []types.Task{recovery},
+		materializedTasks: []types.Task{created},
+		schedule: types.CampaignSchedule{
+			Run: types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			Candidates: []types.CampaignMemberCandidate{{
+				MemberRunID: memberRunID,
+				PlanID:      uuid.New(),
+			}},
+		},
+	}
+	dispatcher := &campaignTaskDispatcherFake{}
+
+	result, err := NewSchedulerWithRuntime(
+		store,
+		UnwiredCampaignObservationResolver{},
+		UnwiredCampaignObservationVerifier{},
+		authorizer,
+		dispatcher,
+		"worker-a",
+		time.Minute,
+	).Tick(context.Background(), runID, time.Now())
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Admitted).To(gomega.BeTrue())
+	g.Expect(store.authorizer).NotTo(gomega.BeNil())
+	g.Expect(dispatcher.batches).To(gomega.Equal([][]types.Task{{recovery}, {created}}))
+}
+
+func TestSchedulerStopsBeforeAdmissionWhenRecoveryDispatchFails(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	store := &schedulerStoreFake{
+		acquired:     true,
+		lease:        types.CampaignLease{RunID: runID, FencingToken: 45},
+		pendingTasks: []types.Task{{ID: uuid.New()}},
+		schedule: types.CampaignSchedule{
+			Run: types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			Candidates: []types.CampaignMemberCandidate{{
+				MemberRunID: uuid.New(), PlanID: uuid.New(),
+			}},
+		},
+	}
+	dispatcher := &campaignTaskDispatcherFake{err: errors.New("dispatcher unavailable")}
+
+	result, err := NewSchedulerWithRuntime(
+		store,
+		UnwiredCampaignObservationResolver{},
+		UnwiredCampaignObservationVerifier{},
+		func(context.Context, types.AdmissionAuthorizationContext) error { return nil },
+		dispatcher,
+		"worker-a",
+		time.Minute,
+	).Tick(context.Background(), runID, time.Now())
+
+	g.Expect(err).To(gomega.MatchError("dispatcher unavailable"))
+	g.Expect(result.Admitted).To(gomega.BeFalse())
+	g.Expect(store.admitted).To(gomega.BeEmpty())
+}
+
+func TestSchedulerNeverDispatchesWhilePaused(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	store := &schedulerStoreFake{
+		acquired:     true,
+		lease:        types.CampaignLease{RunID: runID, FencingToken: 46},
+		pendingTasks: []types.Task{{ID: uuid.New()}},
+		schedule: types.CampaignSchedule{
+			Run: types.CampaignRun{ID: runID, State: types.CampaignRunStatePaused},
+		},
+	}
+	dispatcher := &campaignTaskDispatcherFake{}
+
+	_, err := NewSchedulerWithRuntime(
+		store,
+		UnwiredCampaignObservationResolver{},
+		UnwiredCampaignObservationVerifier{},
+		func(context.Context, types.AdmissionAuthorizationContext) error { return nil },
+		dispatcher,
+		"worker-a",
+		time.Minute,
+	).Tick(context.Background(), runID, time.Now())
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(dispatcher.batches).To(gomega.BeEmpty())
+	g.Expect(store.recoveryLoads).To(gomega.Equal(0))
+}
+
+func TestSchedulerDoesNotCallDispatcherWhenNothingWasAdmittedOrRecovered(t *testing.T) {
+	g := gomega.NewWithT(t)
+	runID := uuid.New()
+	store := &schedulerStoreFake{
+		acquired:           true,
+		duplicateAdmission: true,
+		lease:              types.CampaignLease{RunID: runID, FencingToken: 47},
+		schedule: types.CampaignSchedule{
+			Run: types.CampaignRun{ID: runID, State: types.CampaignRunStateRunning},
+			Candidates: []types.CampaignMemberCandidate{{
+				MemberRunID: uuid.New(), PlanID: uuid.New(),
+			}},
+		},
+	}
+	dispatcher := &campaignTaskDispatcherFake{}
+
+	result, err := NewSchedulerWithRuntime(
+		store,
+		UnwiredCampaignObservationResolver{},
+		UnwiredCampaignObservationVerifier{},
+		func(context.Context, types.AdmissionAuthorizationContext) error { return nil },
+		dispatcher,
+		"worker-a",
+		time.Minute,
+	).Tick(context.Background(), runID, time.Now())
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(result.Admitted).To(gomega.BeFalse())
+	g.Expect(dispatcher.batches).To(gomega.BeEmpty())
+}
+
+func TestNilCampaignTaskDispatcherFunctionFailsClosed(t *testing.T) {
+	g := gomega.NewWithT(t)
+	err := CampaignTaskDispatcherFunc(nil).DispatchCampaignTasks(
+		context.Background(),
+		[]types.Task{{ID: uuid.New()}},
+	)
+	g.Expect(err).To(gomega.MatchError(ErrCampaignTaskDispatcherUnavailable))
 }

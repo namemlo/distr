@@ -1348,6 +1348,11 @@ WHERE campaign_run.id = @run_id
 
 const loadCampaignCandidatesSQL = `
 SELECT
+  campaign_run.organization_id,
+  campaign_run.started_by_useraccount_id,
+  revision.campaign_draft_id,
+  revision.revision_number,
+  revision.canonical_checksum,
   member_run.id,
   member_run.wave_run_id,
   member_run.wave_order,
@@ -1358,6 +1363,9 @@ FROM DeploymentCampaignMemberRun AS member_run
 JOIN DeploymentCampaignRun AS campaign_run
   ON campaign_run.id = member_run.campaign_run_id
  AND campaign_run.organization_id = member_run.organization_id
+JOIN DeploymentCampaignRevision AS revision
+  ON revision.id = campaign_run.campaign_revision_id
+ AND revision.organization_id = campaign_run.organization_id
 JOIN DeploymentCampaignMember AS frozen_member
   ON frozen_member.campaign_revision_id = campaign_run.campaign_revision_id
  AND frozen_member.organization_id = campaign_run.organization_id
@@ -1524,11 +1532,11 @@ WITH selected_revision AS (
 ), inserted_run AS (
   INSERT INTO DeploymentCampaignRun (
     id, created_at, updated_at, organization_id, campaign_revision_id,
-    state, version, transition_evidence
+    started_by_useraccount_id, state, version, transition_evidence
   )
   SELECT
     @run_id, @started_at, @started_at, organization_id, id,
-    'DRAFT', 1, '[]'::jsonb
+    @actor_id, 'DRAFT', 1, '[]'::jsonb
   FROM selected_revision
   RETURNING *
 ), inserted_waves AS (
@@ -1669,7 +1677,7 @@ func (CampaignRepository) StartCampaignRun(
 	var waveCount, memberCount, expectedWaves, expectedMembers int
 	err = tx.QueryRow(ctx, instantiateCampaignRunSQL, pgx.NamedArgs{
 		"run_id": runID, "started_at": input.StartedAt, "organization_id": input.OrganizationID,
-		"campaign_revision_id": input.CampaignRevisionID,
+		"campaign_revision_id": input.CampaignRevisionID, "actor_id": input.ActorID,
 	}).Scan(
 		&run.ID, &run.CreatedAt, &run.UpdatedAt, &run.OrganizationID,
 		&run.CampaignRevisionID, &run.State, &run.Version,
@@ -2563,6 +2571,11 @@ func (CampaignRepository) LoadCampaignSchedule(
 		var candidate types.CampaignMemberCandidate
 		var frozenMaximumConcurrency int
 		if err := rows.Scan(
+			&candidate.OrganizationID,
+			&candidate.ActorUserAccountID,
+			&candidate.CampaignEvidence.ID,
+			&candidate.CampaignEvidence.Revision,
+			&candidate.CampaignEvidence.Checksum,
 			&candidate.MemberRunID,
 			&candidate.WaveRunID,
 			&candidate.WaveOrder,
@@ -2678,11 +2691,12 @@ func (CampaignRepository) RecordPrerequisitesAndAdmit(
 	admission types.CampaignMemberAdmission,
 	resolver campaigns.CampaignObservationResolver,
 	verifier campaigns.CampaignObservationVerifier,
+	authorizer types.AdmissionAuthorizer,
 	fencingToken int64,
-) (bool, bool, error) {
+) ([]types.Task, bool, bool, error) {
 	tx, err := internalctx.GetDb(ctx).Begin(ctx)
 	if err != nil {
-		return false, false, err
+		return nil, false, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	txCtx := internalctx.WithDb(ctx, tx)
@@ -2724,7 +2738,7 @@ func (CampaignRepository) RecordPrerequisitesAndAdmit(
 			evaluation.Reason = "prerequisite runtime state does not match frozen expectation"
 		}
 		if err := RecordCampaignPrerequisiteEvaluation(txCtx, evaluation); err != nil {
-			return false, false, err
+			return nil, false, false, err
 		}
 		paused = paused || !matched
 	}
@@ -2732,26 +2746,30 @@ func (CampaignRepository) RecordPrerequisitesAndAdmit(
 		if err := (CampaignRepository{}).PauseCampaignAdmission(
 			txCtx, admission.RunID, pauseReason, fencingToken,
 		); err != nil {
-			return false, false, err
+			return nil, false, false, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return false, false, err
+			return nil, false, false, err
 		}
-		return false, true, nil
+		return nil, false, true, nil
 	}
 	admitted, err := (CampaignRepository{}).AdmitCampaignMember(txCtx, admission, fencingToken)
 	if err != nil {
-		return false, false, err
+		return nil, false, false, err
 	}
 	if !admitted {
 		// The deferred rollback also removes the prerequisite evidence. Evidence
 		// is retained only for the admission decision it atomically governed.
-		return false, false, nil
+		return nil, false, false, nil
+	}
+	tasks, err := materializeAdmittedCampaignTasks(txCtx, candidate, admission, authorizer)
+	if err != nil {
+		return nil, false, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return false, false, err
+		return nil, false, false, err
 	}
-	return admitted, false, nil
+	return tasks, admitted, false, nil
 }
 
 func (CampaignRepository) RecordCampaignThresholdEvaluation(
