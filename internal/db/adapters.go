@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -17,6 +18,18 @@ import (
 func CreateAdapterImplementation(
 	ctx context.Context,
 	implementation types.AdapterImplementation,
+) (*types.AdapterImplementation, error) {
+	return createAdapterImplementationWithAudit(
+		ctx,
+		implementation,
+		DirectControlPlaneAuditAppendHook(),
+	)
+}
+
+func createAdapterImplementationWithAudit(
+	ctx context.Context,
+	implementation types.AdapterImplementation,
+	auditHook ControlPlaneAuditAppendHook,
 ) (*types.AdapterImplementation, error) {
 	if implementation.OrganizationID == uuid.Nil || len(implementation.Capabilities) == 0 {
 		return nil, apierrors.NewBadRequest("adapter implementation identity and capabilities are required")
@@ -61,12 +74,45 @@ func CreateAdapterImplementation(
 		if err != nil {
 			return mapAdapterWriteError("create capabilities", err)
 		}
-		return nil
+		event, err := adapterImplementationPublishedAuditEvent(implementation)
+		if err != nil {
+			return err
+		}
+		return RecordControlPlaneAuditMutation(ctx, auditHook, event)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &implementation, nil
+}
+
+func adapterImplementationPublishedAuditEvent(
+	implementation types.AdapterImplementation,
+) (types.ControlPlaneAuditEventInput, error) {
+	capabilities := make([]map[string]string, 0, len(implementation.Capabilities))
+	for _, capability := range implementation.Capabilities {
+		capabilities = append(capabilities, map[string]string{
+			"capability": capability.Capability,
+			"version":    capability.Version,
+		})
+	}
+	payload, err := json.Marshal(map[string]any{
+		"adapterKey":   implementation.Key,
+		"name":         implementation.Name,
+		"version":      implementation.Version,
+		"enabled":      implementation.Enabled,
+		"capabilities": capabilities,
+	})
+	if err != nil {
+		return types.ControlPlaneAuditEventInput{}, fmt.Errorf("could not encode adapter implementation audit: %w", err)
+	}
+	return types.ControlPlaneAuditEventInput{
+		OrganizationID:    implementation.OrganizationID,
+		EventType:         "adapter.implementation.published",
+		Outcome:           "SUCCEEDED",
+		AdapterRevisionID: &implementation.ID,
+		Payload:           payload,
+	}, nil
 }
 
 func ListAdapterImplementations(
@@ -209,6 +255,14 @@ func CreateAdapterAssignment(
 	ctx context.Context,
 	assignment types.AdapterAssignment,
 ) (*types.AdapterAssignment, error) {
+	return createAdapterAssignmentWithAudit(ctx, assignment, DirectControlPlaneAuditAppendHook())
+}
+
+func createAdapterAssignmentWithAudit(
+	ctx context.Context,
+	assignment types.AdapterAssignment,
+	auditHook ControlPlaneAuditAppendHook,
+) (*types.AdapterAssignment, error) {
 	if assignment.OrganizationID == uuid.Nil || assignment.AdapterImplementationID == uuid.Nil {
 		return nil, apierrors.NewBadRequest("adapter assignment identity is required")
 	}
@@ -258,12 +312,46 @@ func CreateAdapterAssignment(
 				"enabled":                      assignment.Enabled,
 			},
 		).Scan(&assignment.CreatedAt, &assignment.UpdatedAt)
-		return mapAdapterWriteError("create assignment", err)
+		if err := mapAdapterWriteError("create assignment", err); err != nil {
+			return err
+		}
+		event, err := adapterAssignmentPublishedAuditEvent(assignment)
+		if err != nil {
+			return err
+		}
+		return RecordControlPlaneAuditMutation(ctx, auditHook, event)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &assignment, nil
+}
+
+func adapterAssignmentPublishedAuditEvent(
+	assignment types.AdapterAssignment,
+) (types.ControlPlaneAuditEventInput, error) {
+	assignment.NormalizeKeyConfiguration()
+	payload, err := json.Marshal(map[string]any{
+		"adapterImplementationId":      assignment.AdapterImplementationID,
+		"scopeType":                    assignment.ScopeType,
+		"scopeReference":               assignment.ScopeReference,
+		"keyId":                        assignment.KeyConfiguration.KeyID,
+		"publicKeyFingerprint":         assignment.KeyConfiguration.PublicKeyFingerprint,
+		"signingKeyVersionFingerprint": assignment.KeyConfiguration.SigningKeyVersionFingerprint,
+		"enabled":                      assignment.Enabled,
+	})
+	if err != nil {
+		return types.ControlPlaneAuditEventInput{}, fmt.Errorf("could not encode adapter assignment audit: %w", err)
+	}
+	return types.ControlPlaneAuditEventInput{
+		OrganizationID:       assignment.OrganizationID,
+		EventType:            "adapter.assignment.published",
+		Outcome:              "SUCCEEDED",
+		AdapterRevisionID:    &assignment.ID,
+		TargetConfigID:       &assignment.ConfigSnapshotID,
+		TargetConfigChecksum: assignment.ConfigChecksum,
+		Payload:              payload,
+	}, nil
 }
 
 func requireAdapterScope(
@@ -555,6 +643,18 @@ func insertDeploymentPlanStepAdapters(
 	ctx context.Context,
 	plan types.DeploymentPlan,
 ) error {
+	return insertDeploymentPlanStepAdaptersWithAudit(
+		ctx,
+		plan,
+		DirectControlPlaneAuditAppendHook(),
+	)
+}
+
+func insertDeploymentPlanStepAdaptersWithAudit(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+	auditHook ControlPlaneAuditAppendHook,
+) error {
 	if len(plan.StepAdapters) == 0 {
 		return nil
 	}
@@ -613,6 +713,49 @@ func insertDeploymentPlanStepAdapters(
 	)
 	if err != nil {
 		return mapAdapterWriteError("freeze plan step adapters", err)
+	}
+	return recordFrozenAdapterSelectionAudit(ctx, auditHook, plan)
+}
+
+func recordFrozenAdapterSelectionAudit(
+	ctx context.Context,
+	auditHook ControlPlaneAuditAppendHook,
+	plan types.DeploymentPlan,
+) error {
+	for index := range plan.StepAdapters {
+		frozen := plan.StepAdapters[index]
+		frozen.NormalizeKeyConfiguration()
+		payload, err := json.Marshal(map[string]any{
+			"stepKey":                      frozen.StepKey,
+			"adapterAssignmentId":          frozen.AdapterAssignmentID,
+			"adapterImplementationId":      frozen.AdapterImplementationID,
+			"implementationVersion":        frozen.ImplementationVersion,
+			"capability":                   frozen.Capability,
+			"capabilityVersion":            frozen.CapabilityVersion,
+			"scopeType":                    frozen.ScopeType,
+			"scopeReference":               frozen.ScopeReference,
+			"keyId":                        frozen.KeyConfiguration.KeyID,
+			"publicKeyFingerprint":         frozen.KeyConfiguration.PublicKeyFingerprint,
+			"signingKeyVersionFingerprint": frozen.KeyConfiguration.SigningKeyVersionFingerprint,
+		})
+		if err != nil {
+			return fmt.Errorf("could not encode frozen adapter selection audit: %w", err)
+		}
+		event := types.ControlPlaneAuditEventInput{
+			OrganizationID:         plan.OrganizationID,
+			EventType:              "adapter.revision.selected",
+			ActorID:                plan.PublishedByUserAccountID,
+			Outcome:                "SUCCEEDED",
+			DeploymentPlanID:       &plan.ID,
+			AdapterRevisionID:      &frozen.ID,
+			TargetConfigID:         &frozen.ConfigSnapshotID,
+			TargetConfigChecksum:   frozen.ConfigChecksum,
+			DeploymentPlanChecksum: plan.CanonicalChecksum,
+			Payload:                payload,
+		}
+		if err := RecordControlPlaneAuditMutation(ctx, auditHook, event); err != nil {
+			return err
+		}
 	}
 	return nil
 }

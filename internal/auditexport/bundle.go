@@ -54,10 +54,12 @@ func BuildDeploymentEvidenceBundle(
 	})
 
 	canonical := struct {
+		Version          string                         `json:"version"`
 		OrganizationID   [16]byte                       `json:"organizationId"`
 		DeploymentPlanID [16]byte                       `json:"deploymentPlanId"`
 		Events           []types.ControlPlaneAuditEvent `json:"events"`
 	}{
+		Version:          types.EvidenceBundleSchemaV1,
 		OrganizationID:   query.OrganizationID,
 		DeploymentPlanID: query.DeploymentPlanID,
 		Events:           ordered,
@@ -68,6 +70,7 @@ func BuildDeploymentEvidenceBundle(
 	}
 	sum := sha256.Sum256(payload)
 	return &types.EvidenceBundle{
+		Version:          types.EvidenceBundleSchemaV1,
 		OrganizationID:   query.OrganizationID,
 		DeploymentPlanID: query.DeploymentPlanID,
 		Events:           ordered,

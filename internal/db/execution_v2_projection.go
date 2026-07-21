@@ -128,6 +128,86 @@ WHERE attempt.organization_id = @organizationId
 const executionV2UncertainProjectionSQL = executionV2UncertainMemberProjectionSQL + ";\n" +
 	executionV2UncertainRunProjectionSQL
 
+const executionV2ReconciledMemberProjectionSQL = `
+WITH target AS (
+  SELECT lineage.organization_id, lineage.campaign_run_id,
+         lineage.campaign_member_run_id
+  FROM CampaignMemberTaskExecution lineage
+  JOIN ExecutionAttempt attempt
+    ON attempt.organization_id = lineage.organization_id
+   AND attempt.task_id = lineage.task_id
+  WHERE attempt.organization_id = @organizationId
+    AND attempt.id = @attemptId
+    AND lineage.organization_id = @organizationId
+    AND lineage.task_id = @taskId
+), unresolved_member AS (
+  SELECT target.organization_id, target.campaign_run_id,
+         target.campaign_member_run_id,
+         EXISTS (
+           SELECT 1
+           FROM CampaignMemberTaskExecution member_lineage
+           JOIN ExecutionAttempt attempt
+             ON attempt.organization_id = member_lineage.organization_id
+            AND attempt.task_id = member_lineage.task_id
+           WHERE member_lineage.organization_id = target.organization_id
+             AND member_lineage.campaign_run_id = target.campaign_run_id
+             AND member_lineage.campaign_member_run_id = target.campaign_member_run_id
+             AND attempt.status IN ('UNKNOWN', 'FENCED')
+         ) AS has_uncertain_attempt
+  FROM target
+)
+UPDATE DeploymentCampaignMemberRun member
+SET execution_uncertain = unresolved_member.has_uncertain_attempt,
+    updated_at = clock_timestamp()
+FROM unresolved_member
+WHERE member.id = unresolved_member.campaign_member_run_id
+  AND member.organization_id = unresolved_member.organization_id
+  AND member.campaign_run_id = unresolved_member.campaign_run_id
+  AND member.execution_uncertain = TRUE`
+
+const executionV2ReconciledRunProjectionSQL = `
+WITH target AS (
+  SELECT lineage.organization_id, lineage.campaign_run_id
+  FROM CampaignMemberTaskExecution lineage
+  JOIN ExecutionAttempt attempt
+    ON attempt.organization_id = lineage.organization_id
+   AND attempt.task_id = lineage.task_id
+  WHERE attempt.organization_id = @organizationId
+    AND attempt.id = @attemptId
+    AND lineage.organization_id = @organizationId
+    AND lineage.task_id = @taskId
+), aggregate AS (
+  SELECT target.organization_id, target.campaign_run_id,
+         COALESCE(bool_or(member.execution_uncertain), FALSE) AS any_uncertain
+  FROM target
+  LEFT JOIN DeploymentCampaignMemberRun member
+    ON member.organization_id = target.organization_id
+   AND member.campaign_run_id = target.campaign_run_id
+  GROUP BY target.organization_id, target.campaign_run_id
+)
+UPDATE DeploymentCampaignRun campaign_run
+SET reconciliation_required = aggregate.any_uncertain,
+    admissions_blocked = CASE
+      WHEN aggregate.any_uncertain THEN TRUE
+      WHEN campaign_run.state NOT IN ('SCHEDULED', 'RUNNING') THEN TRUE
+      WHEN campaign_run.pause_requested THEN TRUE
+      WHEN EXISTS (
+        SELECT 1
+        FROM CampaignControlRequest control
+        WHERE control.organization_id = campaign_run.organization_id
+          AND control.campaign_run_id = campaign_run.id
+          AND control.status = 'PENDING_RECONCILIATION'
+      ) THEN TRUE
+      ELSE FALSE
+    END,
+    updated_at = clock_timestamp()
+FROM aggregate
+WHERE campaign_run.id = aggregate.campaign_run_id
+  AND campaign_run.organization_id = aggregate.organization_id`
+
+const executionV2ReconciledProjectionSQL = executionV2ReconciledMemberProjectionSQL + ";\n" +
+	executionV2ReconciledRunProjectionSQL
+
 func GetExecutionV2ReadyStepRuns(
 	ctx context.Context,
 	organizationID, taskID uuid.UUID,
@@ -232,7 +312,38 @@ func projectExecutionV2Terminal(
 	if err := projectCampaignExecutionTerminal(ctx, attempt); err != nil {
 		return nil, err
 	}
+	if err := projectExecutionV2Reconciled(ctx, attempt); err != nil {
+		return nil, err
+	}
 	return getTask(ctx, attempt.TaskID, attempt.OrganizationID)
+}
+
+func projectExecutionV2Reconciled(
+	ctx context.Context,
+	attempt types.ExecutionAttempt,
+) error {
+	args := pgx.NamedArgs{
+		"organizationId": attempt.OrganizationID,
+		"attemptId":      attempt.ID,
+		"taskId":         attempt.TaskID,
+	}
+	command, err := internalctx.GetDb(ctx).Exec(
+		ctx, executionV2ReconciledMemberProjectionSQL, args,
+	)
+	if err != nil {
+		return fmt.Errorf("recompute reconciled execution member uncertainty: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return nil
+	}
+	if _, err = internalctx.GetDb(ctx).Exec(
+		ctx, executionV2ReconciledRunProjectionSQL, args,
+	); err != nil {
+		return fmt.Errorf("recompute reconciled execution campaign uncertainty: %w", err)
+	}
+	return recordCampaignExecutionProjectionAudit(
+		ctx, attempt, "campaign.execution.reconciled", string(attempt.Status),
+	)
 }
 
 func projectExecutionV2Uncertain(
@@ -258,5 +369,5 @@ func projectExecutionV2Uncertain(
 	); err != nil {
 		return fmt.Errorf("project uncertain execution attempt: %w", err)
 	}
-	return nil
+	return recordCampaignExecutionUncertainAudit(ctx, *attempt)
 }

@@ -105,6 +105,80 @@ func TestExecutionV2AttemptRejectsMissingTaskResourceLocks(t *testing.T) {
 	g.Expect(err).To(MatchError(ContainSubstring("at least one typed task resource lock")))
 }
 
+func TestExecutionV2AuditEventCarriesFrozenExecutionCorrelations(t *testing.T) {
+	g := NewWithT(t)
+	attempt := types.ExecutionAttempt{
+		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		TaskID: uuid.New(), StepRunID: uuid.New(),
+		Identity: types.ExecutionIdentity{
+			ExecutionID: uuid.New(), AttemptNumber: 2, StepKey: "component:api:deploy",
+		},
+		PlanChecksum:    "sha256:" + repeatDBHex("11"),
+		ArtifactDigest:  "sha256:" + repeatDBHex("22"),
+		ConfigChecksum:  "sha256:" + repeatDBHex("33"),
+		AdapterRevision: "adapter.compose@2",
+		Fence:           types.ExecutionFence{Generation: 7},
+	}
+
+	event, err := executionV2AuditEvent(attempt, "execution.claimed", "CLAIMED", nil, map[string]any{
+		"executorId": "executor-a",
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(validateControlPlaneAuditEventInput(event)).To(Succeed())
+	g.Expect(event.ExecutionID).NotTo(BeNil())
+	g.Expect(*event.ExecutionID).To(Equal(attempt.Identity.ExecutionID))
+	g.Expect(event.TaskID).NotTo(BeNil())
+	g.Expect(*event.TaskID).To(Equal(attempt.TaskID))
+	g.Expect(event.StepRunID).NotTo(BeNil())
+	g.Expect(*event.StepRunID).To(Equal(attempt.StepRunID))
+	g.Expect(event.DeploymentTargetID).NotTo(BeNil())
+	g.Expect(*event.DeploymentTargetID).To(Equal(attempt.DeploymentTargetID))
+	g.Expect(event.DeploymentPlanChecksum).To(Equal(attempt.PlanChecksum))
+	g.Expect(event.ArtifactDigest).To(Equal(attempt.ArtifactDigest))
+	g.Expect(event.TargetConfigChecksum).To(Equal(attempt.ConfigChecksum))
+	g.Expect(string(event.Payload)).To(ContainSubstring(`"attemptId":"` + attempt.ID.String() + `"`))
+	g.Expect(string(event.Payload)).To(ContainSubstring(`"fenceGeneration":7`))
+}
+
+func TestExecutionV2ReconciliationAllowsOnlySafeStatusTransitions(t *testing.T) {
+	g := NewWithT(t)
+	known := types.ExecutionAttemptStatusSucceeded
+
+	for _, status := range []types.ExecutionAttemptStatus{
+		types.ExecutionAttemptStatusPending,
+		types.ExecutionAttemptStatusClaimed,
+		types.ExecutionAttemptStatusRunning,
+		types.ExecutionAttemptStatusUnknown,
+		types.ExecutionAttemptStatusFenced,
+	} {
+		g.Expect(executionV2ReconciliationTransitionAllowed(status, known)).To(BeTrue(), string(status))
+	}
+	for _, status := range []types.ExecutionAttemptStatus{
+		types.ExecutionAttemptStatusSucceeded,
+		types.ExecutionAttemptStatusFailed,
+		types.ExecutionAttemptStatusCanceled,
+		types.ExecutionAttemptStatusTimedOut,
+	} {
+		g.Expect(executionV2ReconciliationTransitionAllowed(status, known)).To(BeFalse(), string(status))
+	}
+	g.Expect(executionV2ReconciliationTransitionAllowed(
+		types.ExecutionAttemptStatusUnknown,
+		types.ExecutionAttemptStatusUnknown,
+	)).To(BeFalse())
+	g.Expect(executionV2ReconciliationTransitionAllowed(
+		types.ExecutionAttemptStatusFenced,
+		types.ExecutionAttemptStatusUnknown,
+	)).To(BeFalse())
+	g.Expect(executionV2ReconciliationReplaySuperseded(
+		types.ExecutionAttemptStatusSucceeded,
+		types.ExecutionAttemptStatusUnknown,
+	)).To(BeTrue())
+	g.Expect(executionV2ReconciliationReplaySuperseded(
+		types.ExecutionAttemptStatusUnknown,
+		types.ExecutionAttemptStatusSucceeded,
+	)).To(BeFalse())
+}
+
 func repeatDBHex(pair string) string {
 	result := ""
 	for range 32 {

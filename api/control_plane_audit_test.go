@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -8,6 +9,52 @@ import (
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
+
+func TestControlPlaneAuditEventUsesExplicitCampaignContract(t *testing.T) {
+	t.Parallel()
+
+	revisionID := uuid.New()
+	runID := uuid.New()
+	waveDefinitionID := uuid.New()
+	waveRunID := uuid.New()
+	payload, err := json.Marshal(ControlPlaneAuditEvent{
+		CampaignRevisionID:       &revisionID,
+		CampaignRunID:            &runID,
+		CampaignWaveDefinitionID: &waveDefinitionID,
+		CampaignWaveRunID:        &waveRunID,
+		CampaignRevisionChecksum: "sha256:" + strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatalf("marshal audit event: %v", err)
+	}
+	text := string(payload)
+	for _, field := range []string{
+		`"campaignRevisionId"`, `"campaignRunId"`, `"campaignWaveDefinitionId"`, `"campaignWaveRunId"`,
+		`"campaignRevisionChecksum"`,
+	} {
+		if !strings.Contains(text, field) {
+			t.Fatalf("typed campaign contract missing %s: %s", field, text)
+		}
+	}
+	if strings.Contains(text, `"campaignId"`) || strings.Contains(text, `"waveId"`) ||
+		strings.Contains(text, `"campaignWaveId"`) ||
+		strings.Contains(text, `"campaignChecksum"`) {
+		t.Fatalf("legacy ambiguous campaign contract leaked: %s", text)
+	}
+}
+
+func TestControlPlaneAuditEventExposesExecutionAttemptCorrelation(t *testing.T) {
+	t.Parallel()
+
+	attemptID := uuid.New()
+	payload, err := json.Marshal(ControlPlaneAuditEvent{ExecutionAttemptID: &attemptID})
+	if err != nil {
+		t.Fatalf("marshal audit event: %v", err)
+	}
+	if !strings.Contains(string(payload), `"executionAttemptId":"`+attemptID.String()+`"`) {
+		t.Fatalf("execution attempt correlation missing: %s", payload)
+	}
+}
 
 func TestControlPlaneAuditListRequestValidatesStablePageBounds(t *testing.T) {
 	t.Parallel()

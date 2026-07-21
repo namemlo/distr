@@ -89,6 +89,28 @@ func TestControlPlaneAuditEventRequiresCorrelationAndCanonicalChecksums(t *testi
 	}
 }
 
+func TestControlPlaneAuditEventValidatesTypedCampaignChecksums(t *testing.T) {
+	t.Parallel()
+
+	revisionID := uuid.New()
+	input := types.ControlPlaneAuditEventInput{
+		OrganizationID:           uuid.New(),
+		EventType:                "campaign_revision.published",
+		Outcome:                  "SUCCEEDED",
+		CampaignRevisionID:       &revisionID,
+		CampaignRevisionChecksum: "sha256:" + strings.Repeat("a", 64),
+		CampaignControlChecksum:  "sha256:" + strings.Repeat("b", 64),
+	}
+	if err := validateControlPlaneAuditEventInput(input); err != nil {
+		t.Fatalf("valid typed campaign checksums rejected: %v", err)
+	}
+	input.CampaignRevisionChecksum = "sha256:not-a-digest"
+	if err := validateControlPlaneAuditEventInput(input); err == nil ||
+		!strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("validation error = %v, want checksum", err)
+	}
+}
+
 func TestCreateAuditExportSinkRejectsUnsafePersistenceBoundary(t *testing.T) {
 	t.Parallel()
 
@@ -264,6 +286,26 @@ func TestMigration160DefinesTenantSafeCorrelationAndImmutableRetryHistory(t *tes
 		"maintenance_calendar_id UUID",
 		"admission_decision_id UUID",
 		"emergency_override_id UUID",
+		"campaign_draft_id UUID",
+		"campaign_revision_id UUID",
+		"campaign_run_id UUID",
+		"campaign_wave_definition_id UUID",
+		"campaign_wave_run_id UUID",
+		"campaign_member_id UUID",
+		"campaign_member_run_id UUID",
+		"campaign_control_request_id UUID",
+		"campaign_exclusion_id UUID",
+		"campaign_prerequisite_evaluation_id UUID",
+		"campaign_threshold_evaluation_id UUID",
+		"execution_attempt_id UUID",
+		"CREATE UNIQUE INDEX ControlPlaneAuditEvent_attempt_event_unique",
+		"WHERE execution_attempt_id IS NOT NULL",
+		"'campaign.execution.running'",
+		"'campaign.execution.terminal'",
+		"'campaign.execution.uncertain'",
+		"'campaign.execution.reconciled'",
+		"campaign_revision_checksum TEXT",
+		"campaign_control_checksum TEXT",
 		"desired_state_id UUID",
 		"drift_case_id UUID",
 		"artifact_digest TEXT",
@@ -276,6 +318,26 @@ func TestMigration160DefinesTenantSafeCorrelationAndImmutableRetryHistory(t *tes
 	if !strings.Contains(string(down), "DROP TABLE IF EXISTS ControlPlaneAuditEventSubject") ||
 		!strings.Contains(string(down), "DROP TABLE IF EXISTS ControlPlaneAuditSubject") {
 		t.Fatal("migration 160 down does not remove correlation graph after refusal guard")
+	}
+}
+
+func TestControlPlaneAuditAppendUsesAttemptLevelAtomicIdempotency(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("control_plane_audit.go")
+	if err != nil {
+		t.Fatalf("read control-plane audit repository: %v", err)
+	}
+	text := string(source)
+	for _, fragment := range []string{
+		"ON CONFLICT (organization_id, event_type, execution_attempt_id)",
+		"WHERE execution_attempt_id IS NOT NULL",
+		"DO NOTHING",
+		"executionAttemptId",
+	} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("atomic attempt audit append missing %q", fragment)
+		}
 	}
 }
 

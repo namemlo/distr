@@ -601,7 +601,10 @@ func PublishDeploymentPolicyVersion(
 			)
 		}
 		published = &result
-		return nil
+		return recordGovernanceAuditMutation(
+			ctx,
+			deploymentPolicyVersionPublishedAuditEvent(*published),
+		)
 	})
 	return published, issues, err
 }
@@ -675,7 +678,10 @@ func BindDeploymentPolicy(
 				err,
 			)
 		}
-		return nil
+		return recordGovernanceAuditMutation(
+			ctx,
+			deploymentPolicyBoundAuditEvent(request, *version),
+		)
 	})
 }
 

@@ -301,7 +301,28 @@ func createTasksForDeploymentPlan(
 			request.OrganizationID,
 			request.ExecutionOccurrenceID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		for i := range tasks {
+			task := tasks[i]
+			planID, taskID, targetID, environmentID := plan.ID, task.ID, task.DeploymentTargetID, task.EnvironmentID
+			event := types.ControlPlaneAuditEventInput{
+				OrganizationID:         task.OrganizationID,
+				EventType:              "execution.task_created",
+				ActorID:                task.ActorUserAccountID,
+				Outcome:                string(task.Status),
+				DeploymentPlanID:       &planID,
+				DeploymentTargetID:     &targetID,
+				EnvironmentID:          &environmentID,
+				TaskID:                 &taskID,
+				DeploymentPlanChecksum: plan.CanonicalChecksum,
+			}
+			if err := appendExecutionV2Audit(ctx, event); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

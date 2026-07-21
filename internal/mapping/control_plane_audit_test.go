@@ -37,21 +37,72 @@ func TestControlPlaneAuditEventToAPIPreservesExpandedTypedCorrelation(t *testing
 	productReleaseID := uuid.New()
 	policyID := uuid.New()
 	driftCaseID := uuid.New()
+	executionAttemptID := uuid.New()
 	event := ControlPlaneAuditEventToAPI(types.ControlPlaneAuditEvent{
 		ComponentReleaseID:        &componentReleaseID,
 		ProductReleaseID:          &productReleaseID,
 		DeploymentPolicyID:        &policyID,
 		DriftCaseID:               &driftCaseID,
+		ExecutionAttemptID:        &executionAttemptID,
 		ArtifactDigest:            "sha256:" + strings.Repeat("a", 64),
 		ManifestDigest:            "sha256:" + strings.Repeat("b", 64),
 		AuditExportConfigChecksum: "sha256:" + strings.Repeat("c", 64),
 	})
 	if event.ComponentReleaseID == nil || event.ProductReleaseID == nil ||
-		event.DeploymentPolicyID == nil || event.DriftCaseID == nil {
+		event.DeploymentPolicyID == nil || event.DriftCaseID == nil ||
+		event.ExecutionAttemptID == nil || *event.ExecutionAttemptID != executionAttemptID {
 		t.Fatalf("mapping lost typed correlation: %#v", event)
 	}
 	if event.ArtifactDigest == "" || event.ManifestDigest == "" || event.AuditExportConfigChecksum == "" {
 		t.Fatalf("mapping lost digest evidence: %#v", event)
+	}
+}
+
+func TestControlPlaneAuditEventToAPIPreservesCampaignTypedCorrelations(t *testing.T) {
+	t.Parallel()
+
+	revisionID := uuid.New()
+	runID := uuid.New()
+	waveDefinitionID := uuid.New()
+	waveRunID := uuid.New()
+	memberID := uuid.New()
+	memberRunID := uuid.New()
+	controlID := uuid.New()
+	event := ControlPlaneAuditEventToAPI(types.ControlPlaneAuditEvent{
+		CampaignRevisionID:       &revisionID,
+		CampaignRunID:            &runID,
+		CampaignWaveDefinitionID: &waveDefinitionID,
+		CampaignWaveRunID:        &waveRunID,
+		CampaignMemberID:         &memberID,
+		CampaignMemberRunID:      &memberRunID,
+		CampaignControlRequestID: &controlID,
+		CampaignRevisionChecksum: "sha256:" + strings.Repeat("d", 64),
+		CampaignControlChecksum:  "sha256:" + strings.Repeat("e", 64),
+	})
+
+	if event.CampaignRevisionID == nil || event.CampaignRunID == nil ||
+		event.CampaignWaveDefinitionID == nil || event.CampaignWaveRunID == nil ||
+		event.CampaignMemberID == nil || event.CampaignMemberRunID == nil ||
+		event.CampaignControlRequestID == nil {
+		t.Fatalf("mapping lost typed campaign correlation: %#v", event)
+	}
+	if event.CampaignRevisionChecksum == "" || event.CampaignControlChecksum == "" {
+		t.Fatalf("mapping lost campaign checksum evidence: %#v", event)
+	}
+}
+
+func TestEvidenceBundleToAPIPreservesCanonicalVersion(t *testing.T) {
+	t.Parallel()
+
+	planID := uuid.New()
+	bundle := EvidenceBundleToAPI(types.EvidenceBundle{
+		Version:          types.EvidenceBundleSchemaV1,
+		DeploymentPlanID: planID,
+		Checksum:         "sha256:" + strings.Repeat("f", 64),
+	})
+	if bundle.Version != types.EvidenceBundleSchemaV1 || bundle.DeploymentPlanID != planID ||
+		bundle.Checksum == "" {
+		t.Fatalf("mapping lost versioned canonical evidence: %#v", bundle)
 	}
 }
 

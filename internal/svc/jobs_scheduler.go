@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/distr-sh/distr/internal/auditexport"
 	"github.com/distr-sh/distr/internal/campaignruntime"
 	"github.com/distr-sh/distr/internal/campaigns"
 	"github.com/distr-sh/distr/internal/cleanup"
@@ -20,6 +21,7 @@ import (
 	"github.com/distr-sh/distr/internal/registry/upstream"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 const (
@@ -31,6 +33,11 @@ const (
 	deploymentCampaignSchedulerTimeout       = 30 * time.Second
 	deploymentCampaignSchedulerLeaseDuration = 30 * time.Second
 	deploymentCampaignSchedulerBatchSize     = 25
+
+	controlPlaneAuditExportInterval       = 30 * time.Second
+	controlPlaneAuditExportTimeout        = 25 * time.Second
+	controlPlaneAuditExportSinkBatchSize  = 25
+	controlPlaneAuditExportEventBatchSize = 250
 )
 
 var (
@@ -42,6 +49,8 @@ var (
 	)
 	errDeploymentCampaignSchedulerUnconfigured = errors.New("deployment campaign scheduler is unconfigured")
 	errDeploymentCampaignSchedulerTick         = errors.New("deployment campaign scheduler tick failed")
+	errControlPlaneAuditExportUnconfigured     = errors.New("control plane audit export is unconfigured")
+	errControlPlaneAuditExportSink             = errors.New("control plane audit export sink failed")
 	deploymentCampaignSchedulerWorkerID        = newDeploymentCampaignSchedulerWorkerID()
 )
 
@@ -51,6 +60,17 @@ type durationJobRegistrar interface {
 
 type campaignSchedulerTicker interface {
 	Tick(context.Context, uuid.UUID, time.Time) (types.CampaignSchedulerResult, error)
+}
+
+type auditExportBatcher interface {
+	ExportAuditBatch(context.Context, uuid.UUID, int) (types.ExportBatchResult, error)
+}
+
+type controlPlaneAuditExportJobDependencies struct {
+	ListEnabledSinks func(context.Context, int) ([]types.AuditExportSink, error)
+	NewSinkResolver  func([]types.AuditExportSink) auditexport.SinkResolver
+	NewBatcher       func(auditexport.SinkResolver) auditExportBatcher
+	Report           func(context.Context, types.ExportBatchResult, error)
 }
 
 type campaignSchedulerJobDependencies struct {
@@ -223,8 +243,107 @@ func (r *Registry) createJobsScheduler() (*jobs.Scheduler, error) {
 	); err != nil {
 		return nil, err
 	}
+	if err := registerControlPlaneAuditExport(
+		scheduler,
+		flags,
+		r.controlPlaneAuditExportJobDependencies(),
+	); err != nil {
+		return nil, err
+	}
 
 	return scheduler, nil
+}
+
+func (r *Registry) controlPlaneAuditExportJobDependencies() controlPlaneAuditExportJobDependencies {
+	return controlPlaneAuditExportJobDependencies{
+		ListEnabledSinks: auditexport.ListEnabledAuditExportSinks,
+		NewSinkResolver: func(sinks []types.AuditExportSink) auditexport.SinkResolver {
+			return auditexport.NewProductionSinkResolver(
+				sinks,
+				r.auditExportSinkFactories,
+				r.auditExportSecretResolver,
+			)
+		},
+		NewBatcher: func(resolver auditexport.SinkResolver) auditExportBatcher {
+			return db.NewControlPlaneAuditExportWorker(resolver)
+		},
+		Report: func(_ context.Context, result types.ExportBatchResult, exportErr error) {
+			fields := []zap.Field{
+				zap.Stringer("sinkId", result.SinkID),
+				zap.Int("exported", result.Exported),
+				zap.Int64("checkpointLag", result.CheckpointLag),
+			}
+			if exportErr != nil {
+				r.GetLogger().Warn("control plane audit export failed", append(fields, zap.Error(exportErr))...)
+				return
+			}
+			r.GetLogger().Info("control plane audit export completed", fields...)
+		},
+	}
+}
+
+func registerControlPlaneAuditExport(
+	registrar durationJobRegistrar,
+	flags featureflags.Registry,
+	dependencies controlPlaneAuditExportJobDependencies,
+) error {
+	if !flags.IsEnabled(featureflags.KeyOperatorControlPlaneV2) {
+		return nil
+	}
+	return registrar.RegisterDurationJob(
+		controlPlaneAuditExportInterval,
+		jobs.NewJob(
+			"ControlPlaneAuditExport",
+			controlPlaneAuditExportJob(dependencies),
+			controlPlaneAuditExportTimeout,
+		),
+	)
+}
+
+func controlPlaneAuditExportJob(
+	dependencies controlPlaneAuditExportJobDependencies,
+) jobs.JobFunc {
+	return func(ctx context.Context) error {
+		if dependencies.ListEnabledSinks == nil ||
+			dependencies.NewSinkResolver == nil ||
+			dependencies.NewBatcher == nil || dependencies.Report == nil {
+			return errControlPlaneAuditExportUnconfigured
+		}
+		sinks, err := dependencies.ListEnabledSinks(ctx, controlPlaneAuditExportSinkBatchSize)
+		if err != nil {
+			return fmt.Errorf("list enabled control plane audit export sinks: %w", err)
+		}
+		if len(sinks) == 0 {
+			return nil
+		}
+		resolver := dependencies.NewSinkResolver(sinks)
+		if resolver == nil {
+			return errControlPlaneAuditExportUnconfigured
+		}
+		batcher := dependencies.NewBatcher(resolver)
+		if batcher == nil {
+			return errControlPlaneAuditExportUnconfigured
+		}
+
+		var exportErrors []error
+		for _, sink := range sinks {
+			result, exportErr := batcher.ExportAuditBatch(
+				ctx,
+				sink.ID,
+				controlPlaneAuditExportEventBatchSize,
+			)
+			dependencies.Report(ctx, result, exportErr)
+			if exportErr != nil {
+				exportErrors = append(exportErrors, fmt.Errorf(
+					"%w for sink %s: %w",
+					errControlPlaneAuditExportSink,
+					sink.ID,
+					exportErr,
+				))
+			}
+		}
+		return errors.Join(exportErrors...)
+	}
 }
 
 func (r *Registry) desiredObservationDeadlineSweepJobDependencies() desiredObservationDeadlineSweepJobDependencies {

@@ -1,12 +1,49 @@
 package db
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
+
+func TestCampaignLineageAuditIsCorrelated(t *testing.T) {
+	binding := CampaignMemberTaskExecutionBinding{
+		ID: uuid.New(), OrganizationID: uuid.New(), CampaignRunID: uuid.New(),
+		CampaignMemberRunID: uuid.New(), DeploymentPlanID: uuid.New(),
+		TaskID: uuid.New(), DeploymentTargetID: uuid.New(),
+	}
+	event, err := campaignLineageBoundAuditEvent(binding)
+	if err != nil {
+		t.Fatalf("build campaign lineage audit: %v", err)
+	}
+	if err := validateControlPlaneAuditEventInput(event); err != nil {
+		t.Fatalf("campaign lineage audit is invalid: %v", err)
+	}
+	if event.DeploymentPlanID == nil || *event.DeploymentPlanID != binding.DeploymentPlanID ||
+		event.CampaignRunID == nil || *event.CampaignRunID != binding.CampaignRunID ||
+		event.CampaignMemberRunID == nil || *event.CampaignMemberRunID != binding.CampaignMemberRunID ||
+		event.TaskID == nil || *event.TaskID != binding.TaskID ||
+		event.DeploymentTargetID == nil || *event.DeploymentTargetID != binding.DeploymentTargetID {
+		t.Fatalf("campaign lineage audit lost typed correlations: %#v", event)
+	}
+	var captured types.ControlPlaneAuditEventInput
+	ctx := WithExecutionV2AuditHook(context.Background(), ControlPlaneAuditAppendHookFunc(
+		func(_ context.Context, input types.ControlPlaneAuditEventInput) error {
+			captured = input
+			return nil
+		},
+	))
+	if err := appendExecutionV2Audit(ctx, event); err != nil {
+		t.Fatalf("append campaign lineage audit: %v", err)
+	}
+	if captured.EventType != "execution.campaign_lineage_bound" {
+		t.Fatalf("unexpected campaign lineage audit: %#v", captured)
+	}
+}
 
 func TestCampaignMemberTaskExecutionBindingRequiresCompleteLineage(t *testing.T) {
 	binding := CampaignMemberTaskExecutionBinding{

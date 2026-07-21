@@ -224,7 +224,13 @@ func CreateDeploymentPlan(
 			return err
 		}
 		created, err = getDeploymentPlan(ctx, plan.ID, plan.OrganizationID)
-		return err
+		if err != nil {
+			return err
+		}
+		return recordDeploymentPlanControlPlaneAuditMutation(
+			ctx,
+			deploymentPlanControlPlaneAuditInput(*created, "plan.created", nil),
+		)
 	})
 	if err != nil {
 		return nil, err

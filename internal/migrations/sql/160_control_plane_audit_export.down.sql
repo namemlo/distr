@@ -41,6 +41,7 @@ DROP TABLE IF EXISTS AuditExportCheckpoint;
 DROP TABLE IF EXISTS AuditExportSink;
 
 DROP INDEX IF EXISTS ControlPlaneAuditEvent_execution_sequence;
+DROP INDEX IF EXISTS ControlPlaneAuditEvent_attempt_event_unique;
 DROP INDEX IF EXISTS ControlPlaneAuditEvent_plan_sequence;
 DROP INDEX IF EXISTS ControlPlaneAuditEvent_organization_created;
 DROP INDEX IF EXISTS ControlPlaneAuditEventSubject_subject_event;

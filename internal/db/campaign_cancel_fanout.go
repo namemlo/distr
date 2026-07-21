@@ -85,6 +85,9 @@ func campaignCancelIdempotencyKey(runID, requestID, attemptID uuid.UUID) string 
 func applyCampaignCancelFanout(
 	ctx context.Context,
 	input types.CampaignControlInput,
+	controlID uuid.UUID,
+	controlChecksum string,
+	auditInputs *[]types.ControlPlaneAuditEventInput,
 ) error {
 	if input.ActorID == uuid.Nil {
 		return apierrors.NewBadRequest("campaign cancel actor is required")
@@ -123,6 +126,20 @@ func applyCampaignCancelFanout(
 		); err != nil {
 			return err
 		}
+		lineage, err := loadCampaignMemberAuditLineageForTask(
+			ctx, input.OrganizationID, attempt.task,
+		)
+		if err != nil {
+			return err
+		}
+		auditInput := campaignMemberAuditInput(
+			lineage, "campaign.execution.cancel_requested", &input.ActorID,
+		)
+		auditInput.CampaignControlRequestID = &controlID
+		auditInput.CampaignControlChecksum = controlChecksum
+		auditInput.TaskID = &attempt.task
+		auditInput.ExecutionID = &attempt.execution
+		*auditInputs = append(*auditInputs, auditInput)
 	}
 
 	for _, task := range tasks {
@@ -137,12 +154,48 @@ func applyCampaignCancelFanout(
 		); err != nil {
 			return fmt.Errorf("cancel campaign task before executor dispatch: %w", err)
 		}
+		lineage, err := loadCampaignMemberAuditLineage(
+			ctx, input.OrganizationID, task.memberRunID,
+		)
+		if err != nil {
+			return err
+		}
+		auditInput := campaignMemberAuditInput(
+			lineage, "campaign.task.canceled_before_dispatch", &input.ActorID,
+		)
+		auditInput.CampaignControlRequestID = &controlID
+		auditInput.CampaignControlChecksum = controlChecksum
+		auditInput.TaskID = &task.id
+		*auditInputs = append(*auditInputs, auditInput)
 	}
 
-	if err := markFullyCanceledCampaignMembers(ctx, input); err != nil {
+	if err := markFullyCanceledCampaignMembers(
+		ctx, input, controlID, controlChecksum, auditInputs,
+	); err != nil {
 		return err
 	}
 	return nil
+}
+
+func loadCampaignMemberAuditLineageForTask(
+	ctx context.Context,
+	organizationID, taskID uuid.UUID,
+) (campaignAuditLineage, error) {
+	var memberRunID uuid.UUID
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT campaign_member_run_id
+FROM CampaignMemberTaskExecution
+WHERE organization_id = @organization_id
+  AND task_id = @task_id`, pgx.NamedArgs{
+		"organization_id": organizationID, "task_id": taskID,
+	}).Scan(&memberRunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return campaignAuditLineage{}, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return campaignAuditLineage{}, err
+	}
+	return loadCampaignMemberAuditLineage(ctx, organizationID, memberRunID)
 }
 
 func lockCampaignCancelAttempts(
@@ -319,6 +372,9 @@ SELECT EXISTS (
 func markFullyCanceledCampaignMembers(
 	ctx context.Context,
 	input types.CampaignControlInput,
+	controlID uuid.UUID,
+	controlChecksum string,
+	auditInputs *[]types.ControlPlaneAuditEventInput,
 ) error {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 WITH canceled_members AS (
@@ -345,11 +401,11 @@ WHERE member_run.organization_id = @organization_id
       AND lineage.campaign_member_run_id = member_run.id
       AND task.status <> 'CANCELED'
   )
-RETURNING member_run.wave_run_id
+RETURNING member_run.id, member_run.wave_run_id
 )
-SELECT DISTINCT wave_run_id
+SELECT id, wave_run_id
 FROM canceled_members
-ORDER BY wave_run_id`, pgx.NamedArgs{
+ORDER BY wave_run_id, id`, pgx.NamedArgs{
 		"organization_id": input.OrganizationID,
 		"campaign_run_id": input.RunID,
 		"canceled_at":     input.RequestedAt,
@@ -359,20 +415,32 @@ ORDER BY wave_run_id`, pgx.NamedArgs{
 	}
 	defer rows.Close()
 
-	waveRunIDs := make([]uuid.UUID, 0)
+	waveRunIDs := make(map[uuid.UUID]struct{})
 	for rows.Next() {
-		var waveRunID uuid.UUID
-		if err := rows.Scan(&waveRunID); err != nil {
+		var memberRunID, waveRunID uuid.UUID
+		if err := rows.Scan(&memberRunID, &waveRunID); err != nil {
 			return fmt.Errorf("scan canceled campaign wave: %w", err)
 		}
-		waveRunIDs = append(waveRunIDs, waveRunID)
+		waveRunIDs[waveRunID] = struct{}{}
+		lineage, err := loadCampaignMemberAuditLineage(
+			ctx, input.OrganizationID, memberRunID,
+		)
+		if err != nil {
+			return err
+		}
+		auditInput := campaignMemberAuditInput(
+			lineage, "campaign.member.execution.canceled", &input.ActorID,
+		)
+		auditInput.CampaignControlRequestID = &controlID
+		auditInput.CampaignControlChecksum = controlChecksum
+		*auditInputs = append(*auditInputs, auditInput)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("load canceled campaign waves: %w", err)
 	}
 	rows.Close()
 
-	for _, waveRunID := range waveRunIDs {
+	for waveRunID := range waveRunIDs {
 		if err := projectCampaignWaveExecution(ctx, input.OrganizationID, waveRunID); err != nil {
 			return fmt.Errorf("project canceled campaign wave: %w", err)
 		}

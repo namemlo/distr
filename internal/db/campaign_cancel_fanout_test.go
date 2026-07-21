@@ -79,7 +79,7 @@ func TestApplyCampaignControlFansOutBeforePersistingControl(t *testing.T) {
 	g.Expect(applyEnd).To(BeNumerically(">", 0))
 	applySource = applySource[:applyEnd]
 
-	fanoutAt := strings.Index(applySource, "applyCampaignCancelFanout(txCtx, input)")
+	fanoutAt := strings.Index(applySource, "applyCampaignCancelFanout(")
 	controlWriteAt := strings.Index(applySource, "insertCampaignControlSQL")
 	g.Expect(fanoutAt).To(BeNumerically(">=", 0))
 	g.Expect(controlWriteAt).To(BeNumerically(">", fanoutAt))
@@ -100,8 +100,8 @@ func TestCampaignCancelProjectsEveryAffectedWaveInTheSameTransaction(t *testing.
 	g.Expect(err).NotTo(HaveOccurred())
 
 	code := string(source)
-	g.Expect(code).To(ContainSubstring("RETURNING member_run.wave_run_id"))
-	g.Expect(code).To(ContainSubstring("SELECT DISTINCT wave_run_id"))
+	g.Expect(code).To(ContainSubstring("RETURNING member_run.id, member_run.wave_run_id"))
+	g.Expect(code).To(ContainSubstring("SELECT id, wave_run_id"))
 	g.Expect(code).To(ContainSubstring(
 		"projectCampaignWaveExecution(ctx, input.OrganizationID, waveRunID)",
 	))

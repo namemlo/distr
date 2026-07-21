@@ -229,9 +229,10 @@ func CreateDeploymentCampaignDraft(
 	if err != nil {
 		return err
 	}
-	return internalctx.GetDb(ctx).QueryRow(
-		ctx,
-		`INSERT INTO DeploymentCampaignDraft (
+	return RunTx(ctx, func(txCtx context.Context) error {
+		if err := internalctx.GetDb(txCtx).QueryRow(
+			txCtx,
+			`INSERT INTO DeploymentCampaignDraft (
 			id,
 			organization_id,
 			name,
@@ -244,16 +245,26 @@ func CreateDeploymentCampaignDraft(
 			updated_by_useraccount_id
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 		RETURNING created_at, updated_at, revision`,
-		draft.ID,
-		draft.OrganizationID,
-		draft.Name,
-		draft.Description,
-		membership,
-		waves,
-		prerequisites,
-		riskPolicy,
-		draft.CreatedByUserAccountID,
-	).Scan(&draft.CreatedAt, &draft.UpdatedAt, &draft.Revision)
+			draft.ID,
+			draft.OrganizationID,
+			draft.Name,
+			draft.Description,
+			membership,
+			waves,
+			prerequisites,
+			riskPolicy,
+			draft.CreatedByUserAccountID,
+		).Scan(&draft.CreatedAt, &draft.UpdatedAt, &draft.Revision); err != nil {
+			return err
+		}
+		return recordCampaignAuditMutation(txCtx, types.ControlPlaneAuditEventInput{
+			OrganizationID:  draft.OrganizationID,
+			EventType:       "campaign.draft.created",
+			ActorID:         &draft.CreatedByUserAccountID,
+			Outcome:         "SUCCEEDED",
+			CampaignDraftID: &draft.ID,
+		})
+	})
 }
 
 func GetDeploymentCampaignDraft(
@@ -281,9 +292,10 @@ func UpdateDeploymentCampaignDraft(
 	if err != nil {
 		return err
 	}
-	err = internalctx.GetDb(ctx).QueryRow(
-		ctx,
-		`UPDATE DeploymentCampaignDraft
+	err = RunTx(ctx, func(txCtx context.Context) error {
+		err := internalctx.GetDb(txCtx).QueryRow(
+			txCtx,
+			`UPDATE DeploymentCampaignDraft
 		SET name = $3,
 			description = $4,
 			membership = $5,
@@ -297,20 +309,31 @@ func UpdateDeploymentCampaignDraft(
 		  AND organization_id = $2
 		  AND revision = $10
 		RETURNING updated_at, revision`,
-		draft.ID,
-		draft.OrganizationID,
-		draft.Name,
-		draft.Description,
-		membership,
-		waves,
-		prerequisites,
-		riskPolicy,
-		draft.UpdatedByUserAccountID,
-		expectedRevision,
-	).Scan(&draft.UpdatedAt, &draft.Revision)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return apierrors.NewConflict("campaign draft revision changed")
-	}
+			draft.ID,
+			draft.OrganizationID,
+			draft.Name,
+			draft.Description,
+			membership,
+			waves,
+			prerequisites,
+			riskPolicy,
+			draft.UpdatedByUserAccountID,
+			expectedRevision,
+		).Scan(&draft.UpdatedAt, &draft.Revision)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierrors.NewConflict("campaign draft revision changed")
+		}
+		if err != nil {
+			return err
+		}
+		return recordCampaignAuditMutation(txCtx, types.ControlPlaneAuditEventInput{
+			OrganizationID:  draft.OrganizationID,
+			EventType:       "campaign.draft.updated",
+			ActorID:         &draft.UpdatedByUserAccountID,
+			Outcome:         "SUCCEEDED",
+			CampaignDraftID: &draft.ID,
+		})
+	})
 	return err
 }
 
@@ -420,6 +443,46 @@ func PublishCampaignRevision(
 			revision.ID,
 		); err != nil {
 			return err
+		}
+		if err := recordCampaignAuditMutation(txCtx, types.ControlPlaneAuditEventInput{
+			OrganizationID:           revision.OrganizationID,
+			EventType:                "campaign.revision.published",
+			ActorID:                  &publication.ActorUserID,
+			Outcome:                  "SUCCEEDED",
+			CampaignDraftID:          &revision.CampaignDraftID,
+			CampaignRevisionID:       &revision.ID,
+			CampaignRevisionChecksum: revision.CanonicalChecksum,
+		}); err != nil {
+			return err
+		}
+		waveIDs := make(map[int]uuid.UUID, len(revision.Waves))
+		for _, wave := range revision.Waves {
+			waveIDs[wave.Order] = wave.ID
+		}
+		for index := range revision.Members {
+			member := &revision.Members[index]
+			waveID, ok := waveIDs[member.WaveOrder]
+			if !ok {
+				return apierrors.NewConflict("campaign frozen member wave is missing")
+			}
+			if err := recordCampaignAuditMutation(txCtx, types.ControlPlaneAuditEventInput{
+				OrganizationID:           revision.OrganizationID,
+				EventType:                "campaign.member.frozen",
+				ActorID:                  &publication.ActorUserID,
+				Outcome:                  "SUCCEEDED",
+				CampaignDraftID:          &revision.CampaignDraftID,
+				CampaignRevisionID:       &revision.ID,
+				CampaignWaveDefinitionID: &waveID,
+				CampaignMemberID:         &member.ID,
+				DeploymentPlanID:         &member.PlanID,
+				ApprovalID:               &member.ApprovalRequestID,
+				CampaignRevisionChecksum: revision.CanonicalChecksum,
+				DeploymentPlanChecksum:   member.PlanChecksum,
+				ApprovalChecksum:         member.ApprovalChecksum,
+				AdmissionChecksum:        member.AdmissionChecksum,
+			}); err != nil {
+				return err
+			}
 		}
 		result = revision
 		return nil
@@ -1757,6 +1820,229 @@ WHERE run.id = @campaign_run_id AND run.fencing_token = @fencing_token`
 
 type CampaignRepository struct{}
 
+type campaignControlPlaneAuditHookContextKey struct{}
+
+// WithCampaignControlPlaneAuditHook injects a transaction-local audit adapter
+// for campaign mutations. Production callers omit it and append directly
+// through the database transaction bound to the supplied context.
+func WithCampaignControlPlaneAuditHook(
+	ctx context.Context,
+	hook ControlPlaneAuditAppendHook,
+) context.Context {
+	return context.WithValue(ctx, campaignControlPlaneAuditHookContextKey{}, hook)
+}
+
+func campaignControlPlaneAuditHook(ctx context.Context) ControlPlaneAuditAppendHook {
+	if hook, ok := ctx.Value(campaignControlPlaneAuditHookContextKey{}).(ControlPlaneAuditAppendHook); ok && hook != nil {
+		return hook
+	}
+	return DirectControlPlaneAuditAppendHook()
+}
+
+type campaignAuditLineage struct {
+	OrganizationID      uuid.UUID
+	DraftID             uuid.UUID
+	RevisionID          uuid.UUID
+	RunID               uuid.UUID
+	WaveID              uuid.UUID
+	WaveRunID           uuid.UUID
+	MemberID            uuid.UUID
+	MemberRunID         uuid.UUID
+	PlanID              uuid.UUID
+	AdmissionDecisionID uuid.UUID
+	RevisionChecksum    string
+	PlanChecksum        string
+	AdmissionChecksum   string
+}
+
+func recordCampaignAuditMutation(
+	ctx context.Context,
+	input types.ControlPlaneAuditEventInput,
+) error {
+	return RecordControlPlaneAuditMutation(ctx, campaignControlPlaneAuditHook(ctx), input)
+}
+
+func loadCampaignRunAuditLineage(
+	ctx context.Context,
+	organizationID, runID uuid.UUID,
+) (campaignAuditLineage, error) {
+	lineage := campaignAuditLineage{OrganizationID: organizationID, RunID: runID}
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT revision.deployment_campaign_draft_id,
+       revision.id,
+       revision.canonical_checksum
+FROM DeploymentCampaignRun run
+JOIN DeploymentCampaignRevision revision
+  ON revision.id = run.campaign_revision_id
+ AND revision.organization_id = run.organization_id
+WHERE run.id = @run_id
+  AND run.organization_id = @organization_id`, pgx.NamedArgs{
+		"run_id": runID, "organization_id": organizationID,
+	}).Scan(&lineage.DraftID, &lineage.RevisionID, &lineage.RevisionChecksum)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return campaignAuditLineage{}, apierrors.ErrNotFound
+	}
+	return lineage, err
+}
+
+func loadCampaignRunAuditLineageByRunID(
+	ctx context.Context,
+	runID uuid.UUID,
+) (campaignAuditLineage, error) {
+	lineage := campaignAuditLineage{RunID: runID}
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT run.organization_id,
+       revision.deployment_campaign_draft_id,
+       revision.id,
+       revision.canonical_checksum
+FROM DeploymentCampaignRun run
+JOIN DeploymentCampaignRevision revision
+  ON revision.id = run.campaign_revision_id
+ AND revision.organization_id = run.organization_id
+WHERE run.id = @run_id`, pgx.NamedArgs{"run_id": runID}).Scan(
+		&lineage.OrganizationID, &lineage.DraftID,
+		&lineage.RevisionID, &lineage.RevisionChecksum,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return campaignAuditLineage{}, apierrors.ErrNotFound
+	}
+	return lineage, err
+}
+
+func loadCampaignMemberAuditLineage(
+	ctx context.Context,
+	organizationID, memberRunID uuid.UUID,
+) (campaignAuditLineage, error) {
+	lineage := campaignAuditLineage{OrganizationID: organizationID, MemberRunID: memberRunID}
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT revision.deployment_campaign_draft_id,
+       revision.id,
+       run.id,
+       frozen_wave.id,
+       wave_run.id,
+       frozen_member.id,
+       member_run.deployment_plan_id,
+       frozen_member.admission_evaluation_id,
+       revision.canonical_checksum,
+       frozen_member.plan_checksum,
+       frozen_member.admission_checksum
+FROM DeploymentCampaignMemberRun member_run
+JOIN DeploymentCampaignRun run
+  ON run.id = member_run.campaign_run_id
+ AND run.organization_id = member_run.organization_id
+JOIN DeploymentCampaignRevision revision
+  ON revision.id = run.campaign_revision_id
+ AND revision.organization_id = run.organization_id
+JOIN DeploymentCampaignMember frozen_member
+  ON frozen_member.id = member_run.campaign_member_id
+ AND frozen_member.campaign_revision_id = revision.id
+ AND frozen_member.organization_id = member_run.organization_id
+JOIN DeploymentCampaignWaveRun wave_run
+  ON wave_run.id = member_run.wave_run_id
+ AND wave_run.campaign_run_id = run.id
+ AND wave_run.organization_id = member_run.organization_id
+JOIN DeploymentCampaignWave frozen_wave
+  ON frozen_wave.id = wave_run.campaign_wave_id
+ AND frozen_wave.campaign_revision_id = revision.id
+ AND frozen_wave.organization_id = member_run.organization_id
+WHERE member_run.id = @member_run_id
+  AND member_run.organization_id = @organization_id`, pgx.NamedArgs{
+		"member_run_id": memberRunID, "organization_id": organizationID,
+	}).Scan(
+		&lineage.DraftID, &lineage.RevisionID, &lineage.RunID,
+		&lineage.WaveID, &lineage.WaveRunID, &lineage.MemberID,
+		&lineage.PlanID, &lineage.AdmissionDecisionID,
+		&lineage.RevisionChecksum, &lineage.PlanChecksum, &lineage.AdmissionChecksum,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return campaignAuditLineage{}, apierrors.ErrNotFound
+	}
+	return lineage, err
+}
+
+func loadCampaignMemberAuditLineageByMemberRunID(
+	ctx context.Context,
+	memberRunID uuid.UUID,
+) (campaignAuditLineage, error) {
+	lineage := campaignAuditLineage{MemberRunID: memberRunID}
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT member_run.organization_id,
+       revision.deployment_campaign_draft_id,
+       revision.id,
+       run.id,
+       frozen_wave.id,
+       wave_run.id,
+       frozen_member.id,
+       member_run.deployment_plan_id,
+       frozen_member.admission_evaluation_id,
+       revision.canonical_checksum,
+       frozen_member.plan_checksum,
+       frozen_member.admission_checksum
+FROM DeploymentCampaignMemberRun member_run
+JOIN DeploymentCampaignRun run
+  ON run.id = member_run.campaign_run_id
+ AND run.organization_id = member_run.organization_id
+JOIN DeploymentCampaignRevision revision
+  ON revision.id = run.campaign_revision_id
+ AND revision.organization_id = run.organization_id
+JOIN DeploymentCampaignMember frozen_member
+  ON frozen_member.id = member_run.campaign_member_id
+ AND frozen_member.campaign_revision_id = revision.id
+ AND frozen_member.organization_id = member_run.organization_id
+JOIN DeploymentCampaignWaveRun wave_run
+  ON wave_run.id = member_run.wave_run_id
+ AND wave_run.campaign_run_id = run.id
+ AND wave_run.organization_id = member_run.organization_id
+JOIN DeploymentCampaignWave frozen_wave
+  ON frozen_wave.id = wave_run.campaign_wave_id
+ AND frozen_wave.campaign_revision_id = revision.id
+ AND frozen_wave.organization_id = member_run.organization_id
+WHERE member_run.id = @member_run_id`, pgx.NamedArgs{"member_run_id": memberRunID}).Scan(
+		&lineage.OrganizationID, &lineage.DraftID, &lineage.RevisionID,
+		&lineage.RunID, &lineage.WaveID, &lineage.WaveRunID,
+		&lineage.MemberID, &lineage.PlanID, &lineage.AdmissionDecisionID,
+		&lineage.RevisionChecksum, &lineage.PlanChecksum, &lineage.AdmissionChecksum,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return campaignAuditLineage{}, apierrors.ErrNotFound
+	}
+	return lineage, err
+}
+
+func campaignRunAuditInput(
+	lineage campaignAuditLineage,
+	eventType string,
+	actorID *uuid.UUID,
+) types.ControlPlaneAuditEventInput {
+	return types.ControlPlaneAuditEventInput{
+		OrganizationID:           lineage.OrganizationID,
+		EventType:                eventType,
+		ActorID:                  actorID,
+		Outcome:                  "SUCCEEDED",
+		CampaignDraftID:          &lineage.DraftID,
+		CampaignRevisionID:       &lineage.RevisionID,
+		CampaignRunID:            &lineage.RunID,
+		CampaignRevisionChecksum: lineage.RevisionChecksum,
+	}
+}
+
+func campaignMemberAuditInput(
+	lineage campaignAuditLineage,
+	eventType string,
+	actorID *uuid.UUID,
+) types.ControlPlaneAuditEventInput {
+	input := campaignRunAuditInput(lineage, eventType, actorID)
+	input.CampaignWaveDefinitionID = &lineage.WaveID
+	input.CampaignWaveRunID = &lineage.WaveRunID
+	input.CampaignMemberID = &lineage.MemberID
+	input.CampaignMemberRunID = &lineage.MemberRunID
+	input.DeploymentPlanID = &lineage.PlanID
+	input.AdmissionDecisionID = &lineage.AdmissionDecisionID
+	input.DeploymentPlanChecksum = lineage.PlanChecksum
+	input.AdmissionChecksum = lineage.AdmissionChecksum
+	return input
+}
+
 func (CampaignRepository) GetCampaignRun(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -1777,6 +2063,7 @@ func (CampaignRepository) StartCampaignRun(
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	txCtx := internalctx.WithDb(ctx, tx)
 	runID := uuid.New()
 	var run types.CampaignRun
 	var waveCount, memberCount, expectedWaves, expectedMembers int
@@ -1798,6 +2085,16 @@ func (CampaignRepository) StartCampaignRun(
 	}
 	if waveCount == 0 || memberCount == 0 || waveCount != expectedWaves || memberCount != expectedMembers {
 		return nil, apierrors.NewConflict("campaign runtime instantiation was incomplete")
+	}
+	lineage, err := loadCampaignRunAuditLineage(txCtx, input.OrganizationID, run.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := recordCampaignAuditMutation(
+		txCtx,
+		campaignRunAuditInput(lineage, "campaign.run.started", &input.ActorID),
+	); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -1987,6 +2284,18 @@ FOR UPDATE`, pgx.NamedArgs{
 	if tag.RowsAffected() != 1 {
 		return nil, apierrors.NewConflict("campaign retry lost optimistic update")
 	}
+	lineage, err := loadCampaignMemberAuditLineage(
+		txCtx, input.OrganizationID, input.MemberRunID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	auditInput := campaignMemberAuditInput(lineage, "campaign.member.retried", &input.ActorID)
+	auditInput.CampaignControlRequestID = &controlID
+	auditInput.CampaignControlChecksum = checksum
+	if err := recordCampaignAuditMutation(txCtx, auditInput); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -2064,8 +2373,12 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 		PausePending:           decision.PausePending,
 		ReconciliationRequired: decision.ReconciliationRequired,
 	}
+	controlID := uuid.New()
+	var fanoutAuditInputs []types.ControlPlaneAuditEventInput
 	if shouldFanoutCampaignCancel(input, decision) {
-		if err := applyCampaignCancelFanout(txCtx, input); err != nil {
+		if err := applyCampaignCancelFanout(
+			txCtx, input, controlID, checksum, &fanoutAuditInputs,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -2073,7 +2386,6 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 	if err != nil {
 		return nil, err
 	}
-	controlID := uuid.New()
 	tag, err := tx.Exec(ctx, insertCampaignControlSQL, campaignControlArgs(
 		controlID,
 		input,
@@ -2117,6 +2429,23 @@ WHERE id = @run_id AND organization_id = @organization_id`,
 	}
 	if tag.RowsAffected() != 1 {
 		return nil, apierrors.NewConflict("campaign control lost optimistic update")
+	}
+	lineage, err := loadCampaignRunAuditLineage(txCtx, input.OrganizationID, input.RunID)
+	if err != nil {
+		return nil, err
+	}
+	auditInput := campaignRunAuditInput(
+		lineage, campaignControlAuditEventType(input.Kind, decision.Status), &input.ActorID,
+	)
+	auditInput.CampaignControlRequestID = &controlID
+	auditInput.CampaignControlChecksum = checksum
+	if err := recordCampaignAuditMutation(txCtx, auditInput); err != nil {
+		return nil, err
+	}
+	for _, fanoutAuditInput := range fanoutAuditInputs {
+		if err := recordCampaignAuditMutation(txCtx, fanoutAuditInput); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -2309,6 +2638,19 @@ INSERT INTO CampaignExclusion (
 	if tag.RowsAffected() != 1 {
 		return nil, apierrors.NewConflict("campaign member control lost optimistic update")
 	}
+	lineage, err := loadCampaignMemberAuditLineage(
+		internalctx.WithDb(ctx, tx), input.OrganizationID, input.MemberRunID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	auditInput := campaignMemberAuditInput(lineage, "campaign.member.excluded", &input.ActorID)
+	auditInput.CampaignControlRequestID = &controlID
+	auditInput.CampaignExclusionID = &exclusion.ID
+	auditInput.CampaignControlChecksum = checksum
+	if err := recordCampaignAuditMutation(internalctx.WithDb(ctx, tx), auditInput); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -2327,54 +2669,75 @@ func transitionCampaignWithGuard(
 	transition types.CampaignTransition,
 	guard func(types.CampaignRunState, types.CampaignRunState) bool,
 ) (*types.CampaignRun, error) {
-	var current types.CampaignRun
-	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+	var result *types.CampaignRun
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		var current types.CampaignRun
+		err := internalctx.GetDb(txCtx).QueryRow(txCtx, `
 SELECT state, version
 FROM DeploymentCampaignRun
 WHERE id = @run_id AND organization_id = @organization_id`,
-		pgx.NamedArgs{
-			"run_id":          transition.RunID,
-			"organization_id": transition.OrganizationID,
-		},
-	).Scan(&current.State, &current.Version)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apierrors.ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	if guard != nil && !guard(current.State, transition.To) {
-		return nil, apierrors.NewConflict(
-			"public campaign transitions are limited to the pre-run lifecycle; use operational controls after start",
-		)
-	}
-	if _, err := campaigns.NextCampaignRun(current, transition); err != nil {
-		return nil, apierrors.NewConflict(err.Error())
-	}
+			pgx.NamedArgs{
+				"run_id":          transition.RunID,
+				"organization_id": transition.OrganizationID,
+			},
+		).Scan(&current.State, &current.Version)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierrors.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if guard != nil && !guard(current.State, transition.To) {
+			return apierrors.NewConflict(
+				"public campaign transitions are limited to the pre-run lifecycle; use operational controls after start",
+			)
+		}
+		if _, err := campaigns.NextCampaignRun(current, transition); err != nil {
+			return apierrors.NewConflict(err.Error())
+		}
 
-	at := transition.At
-	if at.IsZero() {
-		at = time.Now().UTC()
-	}
-	blocked := transition.To == types.CampaignRunStatePaused ||
-		transition.To == types.CampaignRunStateFailed ||
-		transition.To == types.CampaignRunStateCompleted ||
-		transition.To == types.CampaignRunStateCanceled
-	run, err := scanCampaignRun(internalctx.GetDb(ctx).QueryRow(ctx, transitionCampaignSQL, pgx.NamedArgs{
-		"run_id":             transition.RunID,
-		"organization_id":    transition.OrganizationID,
-		"expected_version":   transition.ExpectedVersion,
-		"from_state":         current.State,
-		"to_state":           transition.To,
-		"reason":             transition.Reason,
-		"actor_id":           transition.ActorID,
-		"transitioned_at":    at,
-		"admissions_blocked": blocked,
-	}))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apierrors.NewConflict("campaign run changed or does not exist")
-	}
-	return run, err
+		at := transition.At
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		blocked := transition.To == types.CampaignRunStatePaused ||
+			transition.To == types.CampaignRunStateFailed ||
+			transition.To == types.CampaignRunStateCompleted ||
+			transition.To == types.CampaignRunStateCanceled
+		run, err := scanCampaignRun(internalctx.GetDb(txCtx).QueryRow(
+			txCtx, transitionCampaignSQL, pgx.NamedArgs{
+				"run_id": transition.RunID, "organization_id": transition.OrganizationID,
+				"expected_version": transition.ExpectedVersion, "from_state": current.State,
+				"to_state": transition.To, "reason": transition.Reason,
+				"actor_id": transition.ActorID, "transitioned_at": at,
+				"admissions_blocked": blocked,
+			},
+		))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierrors.NewConflict("campaign run changed or does not exist")
+		}
+		if err != nil {
+			return err
+		}
+		lineage, err := loadCampaignRunAuditLineage(
+			txCtx, transition.OrganizationID, transition.RunID,
+		)
+		if err != nil {
+			return err
+		}
+		eventType := "campaign.run.transitioned"
+		if transition.To == types.CampaignRunStateCompleted {
+			eventType = "campaign.run.completed"
+		}
+		if err := recordCampaignAuditMutation(
+			txCtx, campaignRunAuditInput(lineage, eventType, transition.ActorID),
+		); err != nil {
+			return err
+		}
+		result = run
+		return nil
+	})
+	return result, err
 }
 
 func EvaluateNextWaveAdmission(
@@ -2430,6 +2793,15 @@ func RecordCampaignPrerequisiteEvaluation(
 	ctx context.Context,
 	evaluation types.CampaignPrerequisiteEvaluation,
 ) error {
+	return RunTx(ctx, func(txCtx context.Context) error {
+		return recordCampaignPrerequisiteEvaluationInCurrentBoundary(txCtx, evaluation)
+	})
+}
+
+func recordCampaignPrerequisiteEvaluationInCurrentBoundary(
+	ctx context.Context,
+	evaluation types.CampaignPrerequisiteEvaluation,
+) error {
 	tag, err := internalctx.GetDb(ctx).Exec(ctx, `
 INSERT INTO CampaignPrerequisiteEvaluation (
   id,
@@ -2473,10 +2845,31 @@ WHERE campaign_run.id = @campaign_run_id
 	if err != nil {
 		return err
 	}
-	return campaigns.RequireCampaignLease(tag.RowsAffected())
+	if err := campaigns.RequireCampaignLease(tag.RowsAffected()); err != nil {
+		return err
+	}
+	lineage, err := loadCampaignMemberAuditLineageByMemberRunID(ctx, evaluation.MemberRunID)
+	if err != nil {
+		return err
+	}
+	input := campaignMemberAuditInput(lineage, "campaign.prerequisite.evaluated", nil)
+	input.CampaignPrerequisiteEvaluationID = &evaluation.ID
+	if evaluation.ActualObservationID != uuid.Nil {
+		input.ObservationID = &evaluation.ActualObservationID
+	}
+	return recordCampaignAuditMutation(ctx, input)
 }
 
 func RecordThresholdEvaluation(
+	ctx context.Context,
+	evaluation types.CampaignThresholdEvaluation,
+) error {
+	return RunTx(ctx, func(txCtx context.Context) error {
+		return recordThresholdEvaluationInCurrentBoundary(txCtx, evaluation)
+	})
+}
+
+func recordThresholdEvaluationInCurrentBoundary(
 	ctx context.Context,
 	evaluation types.CampaignThresholdEvaluation,
 ) error {
@@ -2513,7 +2906,16 @@ WHERE campaign_run.id = @campaign_run_id
 	if err != nil {
 		return err
 	}
-	return campaigns.RequireCampaignLease(tag.RowsAffected())
+	if err := campaigns.RequireCampaignLease(tag.RowsAffected()); err != nil {
+		return err
+	}
+	lineage, err := loadCampaignRunAuditLineageByRunID(ctx, evaluation.CampaignRunID)
+	if err != nil {
+		return err
+	}
+	input := campaignRunAuditInput(lineage, "campaign.threshold.evaluated", nil)
+	input.CampaignThresholdEvaluationID = &evaluation.ID
+	return recordCampaignAuditMutation(ctx, input)
 }
 
 func GetDeploymentCampaignRun(
@@ -2759,7 +3161,9 @@ func (CampaignRepository) FinalizePendingCampaignPause(
 	runID uuid.UUID,
 	fencingToken int64,
 ) (bool, error) {
-	tag, err := internalctx.GetDb(ctx).Exec(ctx, `
+	finalized := false
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		tag, err := internalctx.GetDb(txCtx).Exec(txCtx, `
 UPDATE DeploymentCampaignRun AS campaign_run
 SET state = 'PAUSED',
     pause_requested = FALSE,
@@ -2780,10 +3184,22 @@ WHERE campaign_run.id = @run_id
     WHERE member_run.campaign_run_id = campaign_run.id
       AND member_run.status IN ('ADMITTED', 'RUNNING')
   )`, pgx.NamedArgs{"run_id": runID, "fencing_token": fencingToken})
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		lineage, err := loadCampaignRunAuditLineageByRunID(txCtx, runID)
+		if err != nil {
+			return err
+		}
+		if err := recordCampaignAuditMutation(
+			txCtx, campaignRunAuditInput(lineage, "campaign.run.paused", nil),
+		); err != nil {
+			return err
+		}
+		finalized = true
+		return nil
+	})
+	return finalized, err
 }
 
 func (CampaignRepository) CompleteCampaignRun(
@@ -2796,16 +3212,28 @@ func (CampaignRepository) CompleteCampaignRun(
 	if thresholdEvaluationID == uuid.Nil {
 		return false, apierrors.NewConflict("campaign completion requires threshold evidence")
 	}
-	tag, err := internalctx.GetDb(ctx).Exec(ctx, completeCampaignRunSQL, pgx.NamedArgs{
-		"run_id":                  runID,
-		"fencing_token":           fencingToken,
-		"threshold_evaluation_id": thresholdEvaluationID,
-		"completed_at":            completedAt,
+	completed := false
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		tag, err := internalctx.GetDb(txCtx).Exec(txCtx, completeCampaignRunSQL, pgx.NamedArgs{
+			"run_id": runID, "fencing_token": fencingToken,
+			"threshold_evaluation_id": thresholdEvaluationID, "completed_at": completedAt,
+		})
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		lineage, err := loadCampaignRunAuditLineageByRunID(txCtx, runID)
+		if err != nil {
+			return err
+		}
+		input := campaignRunAuditInput(lineage, "campaign.run.completed", nil)
+		input.CampaignThresholdEvaluationID = &thresholdEvaluationID
+		if err := recordCampaignAuditMutation(txCtx, input); err != nil {
+			return err
+		}
+		completed = true
+		return nil
 	})
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	return completed, err
 }
 
 func (CampaignRepository) RecordCampaignPrerequisiteEvaluation(
@@ -2869,7 +3297,7 @@ func (CampaignRepository) RecordPrerequisitesAndAdmit(
 		} else if !matched {
 			evaluation.Reason = "prerequisite runtime state does not match frozen expectation"
 		}
-		if err := RecordCampaignPrerequisiteEvaluation(txCtx, evaluation); err != nil {
+		if err := recordCampaignPrerequisiteEvaluationInCurrentBoundary(txCtx, evaluation); err != nil {
 			return nil, false, false, err
 		}
 		paused = paused || !matched
@@ -2898,6 +3326,29 @@ func (CampaignRepository) RecordPrerequisitesAndAdmit(
 	if err != nil {
 		return nil, false, false, err
 	}
+	lineage, err := loadCampaignMemberAuditLineage(
+		txCtx, candidate.OrganizationID, candidate.MemberRunID,
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if err := recordCampaignAuditMutation(
+		txCtx,
+		campaignMemberAuditInput(
+			lineage, "campaign.member.admitted", &candidate.ActorUserAccountID,
+		),
+	); err != nil {
+		return nil, false, false, err
+	}
+	for index := range tasks {
+		taskInput := campaignMemberAuditInput(
+			lineage, "campaign.member.task.materialized", &candidate.ActorUserAccountID,
+		)
+		taskInput.TaskID = &tasks[index].ID
+		if err := recordCampaignAuditMutation(txCtx, taskInput); err != nil {
+			return nil, false, false, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, false, err
 	}
@@ -2925,7 +3376,7 @@ func (CampaignRepository) RecordThresholdAndMaybePause(
 	defer func() { _ = tx.Rollback(ctx) }()
 	txCtx := internalctx.WithDb(ctx, tx)
 	evaluation.FencingToken = fencingToken
-	if err := RecordThresholdEvaluation(txCtx, evaluation); err != nil {
+	if err := recordThresholdEvaluationInCurrentBoundary(txCtx, evaluation); err != nil {
 		return false, err
 	}
 	if evaluation.Breached {
@@ -2994,7 +3445,7 @@ SET state = 'PAUSED',
 WHERE id = @run_id
   AND fencing_token = @fencing_token
   AND lease_expires_at > clock_timestamp()
-  AND state IN ('SCHEDULED', 'RUNNING', 'PAUSED')`,
+  AND state IN ('SCHEDULED', 'RUNNING')`,
 		pgx.NamedArgs{"run_id": runID, "reason": reason, "fencing_token": fencingToken},
 	)
 	if err != nil {
@@ -3003,7 +3454,13 @@ WHERE id = @run_id
 	if tag.RowsAffected() != 1 {
 		return fmt.Errorf("campaign scheduler lease lost")
 	}
-	return nil
+	lineage, err := loadCampaignRunAuditLineageByRunID(ctx, runID)
+	if err != nil {
+		return err
+	}
+	return recordCampaignAuditMutation(
+		ctx, campaignRunAuditInput(lineage, "campaign.run.paused", nil),
+	)
 }
 
 func scanCampaignRun(row pgx.Row) (*types.CampaignRun, error) {
@@ -3103,6 +3560,32 @@ func campaignControlChecksum(
 	)
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func campaignControlAuditEventType(
+	kind types.CampaignControlKind,
+	status types.CampaignControlStatus,
+) string {
+	switch kind {
+	case types.CampaignControlKindPause:
+		if status == types.CampaignControlStatusPendingSafePoint {
+			return "campaign.run.pause_requested"
+		}
+		return "campaign.run.paused"
+	case types.CampaignControlKindResume:
+		return "campaign.run.resumed"
+	case types.CampaignControlKindCancel:
+		if status == types.CampaignControlStatusPendingReconciliation {
+			return "campaign.run.cancel_requested"
+		}
+		return "campaign.run.canceled"
+	case types.CampaignControlKindExclude:
+		return "campaign.member.excluded"
+	case types.CampaignControlKindRetry:
+		return "campaign.member.retried"
+	default:
+		return "campaign.control.applied"
+	}
 }
 
 func campaignRetryChecksum(input types.CampaignMemberControlInput) string {

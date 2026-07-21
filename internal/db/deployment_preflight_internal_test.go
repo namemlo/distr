@@ -2,6 +2,7 @@ package db
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,84 @@ import (
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
+
+func TestDeploymentPreflightAuditPersistsOutcomeAndAdapterMismatch(t *testing.T) {
+	plan := types.DeploymentPlan{
+		ID: uuid.New(), OrganizationID: uuid.New(),
+		CanonicalChecksum: "sha256:" + strings.Repeat("c", 64),
+		StepAdapters: []types.DeploymentPlanStepAdapter{{
+			ID: uuid.New(), StepKey: "component:loyalty-api:deploy",
+			AdapterAssignmentID: uuid.New(), AdapterImplementationID: uuid.New(),
+			Capability: "deploy", CapabilityVersion: "v2",
+		}},
+	}
+	actorID := uuid.New()
+	run := types.DeploymentPreflightRun{
+		ID: uuid.New(), OrganizationID: plan.OrganizationID, DeploymentPlanID: plan.ID,
+		PlanChecksum: plan.CanonicalChecksum, ActorUserAccountID: &actorID,
+		Status: types.DeploymentPreflightStatusFailed,
+		Checks: []types.DeploymentPreflightCheck{{
+			CheckKey: "adapter:component:loyalty-api:deploy",
+			Status:   types.DeploymentPreflightCheckStatusFailed,
+			Message:  "adapter capability version does not match the frozen plan",
+		}},
+	}
+	hook := &recordingAdapterAuditHook{}
+
+	err := recordDeploymentPreflightAudit(context.Background(), hook, plan, run)
+
+	if err != nil {
+		t.Fatalf("record deployment preflight audit: %v", err)
+	}
+	if len(hook.events) != 2 {
+		t.Fatalf("expected persisted outcome and adapter mismatch events, got %d", len(hook.events))
+	}
+	persisted := hook.events[0]
+	if persisted.EventType != "deployment.preflight.persisted" || persisted.Outcome != "FAILED" {
+		t.Fatalf("unexpected persisted event: %#v", persisted)
+	}
+	if persisted.DeploymentPlanID == nil || *persisted.DeploymentPlanID != plan.ID {
+		t.Fatalf("persisted event did not correlate the deployment plan: %#v", persisted)
+	}
+	if persisted.ActorID == nil || *persisted.ActorID != actorID {
+		t.Fatalf("persisted event did not retain the actor: %#v", persisted)
+	}
+	mismatch := hook.events[1]
+	if mismatch.EventType != "adapter.preflight.evaluated" || mismatch.Outcome != "FAILED" {
+		t.Fatalf("unexpected adapter mismatch event: %#v", mismatch)
+	}
+	if mismatch.AdapterRevisionID == nil || *mismatch.AdapterRevisionID != plan.StepAdapters[0].ID {
+		t.Fatalf("adapter event did not correlate the frozen revision: %#v", mismatch)
+	}
+	if err := validateControlPlaneAuditEventInput(mismatch); err != nil {
+		t.Fatalf("adapter event is invalid: %v", err)
+	}
+}
+
+func TestDeploymentPreflightAuditFailureStopsRemainingEvents(t *testing.T) {
+	plan := types.DeploymentPlan{
+		ID: uuid.New(), OrganizationID: uuid.New(),
+		CanonicalChecksum: "sha256:" + strings.Repeat("d", 64),
+		StepAdapters:      []types.DeploymentPlanStepAdapter{{ID: uuid.New(), StepKey: "deploy"}},
+	}
+	run := types.DeploymentPreflightRun{
+		ID: uuid.New(), OrganizationID: plan.OrganizationID, DeploymentPlanID: plan.ID,
+		PlanChecksum: plan.CanonicalChecksum, Status: types.DeploymentPreflightStatusPassed,
+		Checks: []types.DeploymentPreflightCheck{{
+			CheckKey: "adapter:deploy", Status: types.DeploymentPreflightCheckStatusPassed,
+		}},
+	}
+	hook := &recordingAdapterAuditHook{errAt: 1}
+
+	err := recordDeploymentPreflightAudit(context.Background(), hook, plan, run)
+
+	if err == nil || err.Error() != "audit unavailable" {
+		t.Fatalf("expected audit failure, got %v", err)
+	}
+	if len(hook.events) != 1 {
+		t.Fatalf("expected audit processing to stop at first failure, got %d events", len(hook.events))
+	}
+}
 
 func TestDeploymentPreflightLoadsEveryFrozenMigrationContract(t *testing.T) {
 	first := types.DeploymentPlanMigration{

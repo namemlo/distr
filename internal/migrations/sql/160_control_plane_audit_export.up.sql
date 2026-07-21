@@ -21,9 +21,19 @@ CREATE TABLE ControlPlaneAuditEvent (
   deployment_freeze_id UUID,
   admission_decision_id UUID,
   emergency_override_id UUID,
-  campaign_id UUID,
-  wave_id UUID,
+  campaign_draft_id UUID,
+  campaign_revision_id UUID,
+  campaign_run_id UUID,
+  campaign_wave_definition_id UUID,
+  campaign_wave_run_id UUID,
+  campaign_member_id UUID,
+  campaign_member_run_id UUID,
+  campaign_control_request_id UUID,
+  campaign_exclusion_id UUID,
+  campaign_prerequisite_evaluation_id UUID,
+  campaign_threshold_evaluation_id UUID,
   execution_id UUID,
+  execution_attempt_id UUID,
   adapter_revision_id UUID,
   desired_state_id UUID,
   observation_id UUID,
@@ -49,7 +59,8 @@ CREATE TABLE ControlPlaneAuditEvent (
   approval_checksum TEXT NOT NULL DEFAULT '',
   calendar_checksum TEXT NOT NULL DEFAULT '',
   admission_checksum TEXT NOT NULL DEFAULT '',
-  campaign_checksum TEXT NOT NULL DEFAULT '',
+  campaign_revision_checksum TEXT NOT NULL DEFAULT '',
+  campaign_control_checksum TEXT NOT NULL DEFAULT '',
   execution_checksum TEXT NOT NULL DEFAULT '',
   desired_state_checksum TEXT NOT NULL DEFAULT '',
   observation_checksum TEXT NOT NULL DEFAULT '',
@@ -80,9 +91,19 @@ CREATE TABLE ControlPlaneAuditEvent (
     OR deployment_freeze_id IS NOT NULL
     OR admission_decision_id IS NOT NULL
     OR emergency_override_id IS NOT NULL
-    OR campaign_id IS NOT NULL
-    OR wave_id IS NOT NULL
+    OR campaign_draft_id IS NOT NULL
+    OR campaign_revision_id IS NOT NULL
+    OR campaign_run_id IS NOT NULL
+    OR campaign_wave_definition_id IS NOT NULL
+    OR campaign_wave_run_id IS NOT NULL
+    OR campaign_member_id IS NOT NULL
+    OR campaign_member_run_id IS NOT NULL
+    OR campaign_control_request_id IS NOT NULL
+    OR campaign_exclusion_id IS NOT NULL
+    OR campaign_prerequisite_evaluation_id IS NOT NULL
+    OR campaign_threshold_evaluation_id IS NOT NULL
     OR execution_id IS NOT NULL
+    OR execution_attempt_id IS NOT NULL
     OR adapter_revision_id IS NOT NULL
     OR desired_state_id IS NOT NULL
     OR observation_id IS NOT NULL
@@ -113,9 +134,11 @@ CREATE TABLE ControlPlaneAuditEvent (
     approval_checksum = ''
     OR approval_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
-  CONSTRAINT controlplaneauditevent_campaign_checksum_check CHECK (
-    campaign_checksum = ''
-    OR campaign_checksum ~ '^sha256:[0-9a-f]{64}$'
+  CONSTRAINT controlplaneauditevent_campaign_checksums_check CHECK (
+    (campaign_revision_checksum = ''
+      OR campaign_revision_checksum ~ '^sha256:[0-9a-f]{64}$')
+    AND (campaign_control_checksum = ''
+      OR campaign_control_checksum ~ '^sha256:[0-9a-f]{64}$')
   ),
   CONSTRAINT controlplaneauditevent_execution_checksum_check CHECK (
     execution_checksum = ''
@@ -160,6 +183,20 @@ CREATE INDEX ControlPlaneAuditEvent_execution_sequence
     id
   )
   WHERE execution_id IS NOT NULL;
+
+CREATE UNIQUE INDEX ControlPlaneAuditEvent_attempt_event_unique
+  ON ControlPlaneAuditEvent (
+    organization_id,
+    event_type,
+    execution_attempt_id
+  )
+  WHERE execution_attempt_id IS NOT NULL
+    AND event_type IN (
+      'campaign.execution.running',
+      'campaign.execution.terminal',
+      'campaign.execution.uncertain',
+      'campaign.execution.reconciled'
+    );
 
 CREATE TABLE ControlPlaneAuditSubject (
   correlation_kind TEXT NOT NULL CHECK (

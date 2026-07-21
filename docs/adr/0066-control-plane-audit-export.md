@@ -21,10 +21,18 @@ database transaction; an outbox implementation can satisfy the same interface.
 Events contain bounded, redacted metadata and typed identifiers/checksums; they
 never contain credentials. Correlation subjects are tenant-owned and immutable,
 so the same typed identity cannot be claimed by another organization.
+Campaign evidence names each lifecycle identity explicitly: draft, revision,
+run, wave definition (`campaignWaveDefinitionId` / `campaign_wave_definition_id`),
+wave run, member definition, member run, control request,
+exclusion, prerequisite evaluation, and threshold evaluation. The contract does
+not expose ambiguous `campaignId`, `waveId`, `campaignWaveId`,
+`campaign_wave_id`, or `campaignChecksum` aliases.
 
 Evidence bundles are built from the connected typed-correlation graph rooted at
 the requested deployment plan, deterministically ordered by sequence, and
-checksummed with SHA-256. External sinks consume ordered batches through per-sink
+checksummed with SHA-256. The `distr.control-plane-evidence/v1` schema identifier
+is part of the canonical checksum input, so a future schema must use a new
+version rather than silently changing existing evidence. External sinks consume ordered batches through per-sink
 checkpoints and idempotency keys. Every delivery starts a new immutable attempt
 row in `RUNNING`; resolver or delivery failure completes that row as `FAILED`,
 while a retry creates a new row. Failure retains the primary event and leaves the
@@ -42,7 +50,11 @@ PR-066 through PR-077 mutations after those repositories have stabilized.
 `AuditView` authorizes event, bundle, sink, and status reads. `AuditExport`
 authorizes sink configuration. Export transports are resolved through an
 injected sink adapter; the core does not dereference endpoint references or make
-outbound requests on its own.
+outbound requests on its own. Production must explicitly enable the operator
+control plane and register both a generic sink-kind factory and a secret-reference
+resolver. Resolved versioned configuration must match the persisted canonical
+configuration checksum. Missing or mismatched wiring fails closed and leaves the
+checkpoint unchanged while preserving failed-attempt and lag evidence.
 
 ## Consequences
 

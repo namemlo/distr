@@ -1,12 +1,26 @@
 package db
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/types"
 	. "github.com/onsi/gomega"
 )
+
+func TestUncertainProjectionRecordsCampaignAuditAfterBothStateUpdates(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("execution_v2_projection.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	body := string(source)
+	memberUpdate := strings.Index(body, "executionV2UncertainMemberProjectionSQL")
+	runUpdate := strings.Index(body[memberUpdate+1:], "executionV2UncertainRunProjectionSQL") + memberUpdate + 1
+	audit := strings.Index(body[runUpdate+1:], "recordCampaignExecutionUncertainAudit") + runUpdate + 1
+	g.Expect(memberUpdate).To(BeNumerically(">=", 0))
+	g.Expect(runUpdate).To(BeNumerically(">", memberUpdate))
+	g.Expect(audit).To(BeNumerically(">", runUpdate))
+}
 
 func TestExecutionV2TerminalProjectionMapsAttemptResultsWithoutInventingSuccess(t *testing.T) {
 	g := NewWithT(t)
@@ -56,6 +70,37 @@ func TestExecutionProjectionSQLUsesExactTenantTaskAndCampaignLineage(t *testing.
 			executionV2UncertainProjectionSQL,
 			campaignMemberExecutionProjectionSQL,
 		}, "\n")).To(ContainSubstring(fragment))
+	}
+}
+
+func TestExecutionV2ReconciledProjectionRecomputesMemberAndRunUncertainty(t *testing.T) {
+	g := NewWithT(t)
+
+	for _, fragment := range []string{
+		"member.id = unresolved_member.campaign_member_run_id",
+		"attempt.status IN ('UNKNOWN', 'FENCED')",
+		"execution_uncertain = unresolved_member.has_uncertain_attempt",
+		"COALESCE(bool_or(member.execution_uncertain), FALSE) AS any_uncertain",
+		"reconciliation_required = aggregate.any_uncertain",
+		"WHEN aggregate.any_uncertain THEN TRUE",
+	} {
+		g.Expect(executionV2ReconciledProjectionSQL).To(ContainSubstring(fragment))
+	}
+	g.Expect(executionV2ReconciledProjectionSQL).NotTo(ContainSubstring(
+		"UPDATE DeploymentCampaignRun SET state = 'COMPLETED'",
+	))
+}
+
+func TestExecutionV2ReconciledProjectionDoesNotRemoveGovernanceBlocks(t *testing.T) {
+	g := NewWithT(t)
+
+	for _, fragment := range []string{
+		"campaign_run.state NOT IN ('SCHEDULED', 'RUNNING')",
+		"campaign_run.pause_requested",
+		"control.status = 'PENDING_RECONCILIATION'",
+		"THEN TRUE",
+	} {
+		g.Expect(executionV2ReconciledProjectionSQL).To(ContainSubstring(fragment))
 	}
 }
 

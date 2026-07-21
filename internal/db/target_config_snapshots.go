@@ -248,7 +248,13 @@ func CreateTargetConfigSnapshot(
 	err := RunTx(ctx, func(txCtx context.Context) error {
 		var err error
 		snapshot, err = createTargetConfigSnapshot(txCtx, draft)
-		return err
+		if err != nil {
+			return err
+		}
+		return recordTargetConfigControlPlaneAuditMutation(
+			txCtx,
+			targetConfigControlPlaneAuditInput(*snapshot, "target_config.published"),
+		)
 	})
 	if err != nil {
 		return nil, mapTargetConfigWriteError("commit target config snapshot", err)
@@ -2338,6 +2344,12 @@ func createOrGetV1ExtractionSnapshot(
 	if err == nil {
 		if snapshot.CanonicalChecksum != expectedChecksum {
 			return nil, fmt.Errorf("created target config snapshot checksum mismatch")
+		}
+		if err := recordTargetConfigControlPlaneAuditMutation(
+			ctx,
+			targetConfigControlPlaneAuditInput(*snapshot, "target_config.published"),
+		); err != nil {
+			return nil, err
 		}
 		return snapshot, nil
 	}

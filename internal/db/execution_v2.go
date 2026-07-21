@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -22,6 +23,110 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+type executionV2AuditHookContextKey struct{}
+
+// WithExecutionV2AuditHook overrides the transaction-local executor audit append boundary.
+// Production callers use DirectControlPlaneAuditAppendHook when no override is present.
+func WithExecutionV2AuditHook(
+	ctx context.Context,
+	hook ControlPlaneAuditAppendHook,
+) context.Context {
+	return context.WithValue(ctx, executionV2AuditHookContextKey{}, hook)
+}
+
+func executionV2AuditHook(ctx context.Context) ControlPlaneAuditAppendHook {
+	if hook, ok := ctx.Value(executionV2AuditHookContextKey{}).(ControlPlaneAuditAppendHook); ok && hook != nil {
+		return hook
+	}
+	return DirectControlPlaneAuditAppendHook()
+}
+
+func appendExecutionV2Audit(
+	ctx context.Context,
+	event types.ControlPlaneAuditEventInput,
+) error {
+	return RecordControlPlaneAuditMutation(ctx, executionV2AuditHook(ctx), event)
+}
+
+func executionV2AuditEvent(
+	attempt types.ExecutionAttempt,
+	eventType, outcome string,
+	actorID *uuid.UUID,
+	details map[string]any,
+) (types.ControlPlaneAuditEventInput, error) {
+	payload := make(map[string]any, len(details)+5)
+	for key, value := range details {
+		payload[key] = value
+	}
+	payload["attemptId"] = attempt.ID
+	payload["attemptNumber"] = attempt.Identity.AttemptNumber
+	payload["stepKey"] = attempt.Identity.StepKey
+	payload["adapterRevision"] = attempt.AdapterRevision
+	payload["fenceGeneration"] = attempt.Fence.Generation
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return types.ControlPlaneAuditEventInput{}, fmt.Errorf("marshal execution audit payload: %w", err)
+	}
+	executionID, targetID := attempt.Identity.ExecutionID, attempt.DeploymentTargetID
+	taskID, stepRunID := attempt.TaskID, attempt.StepRunID
+	return types.ControlPlaneAuditEventInput{
+		OrganizationID:         attempt.OrganizationID,
+		EventType:              eventType,
+		ActorID:                actorID,
+		Outcome:                outcome,
+		ExecutionID:            &executionID,
+		DeploymentTargetID:     &targetID,
+		TaskID:                 &taskID,
+		StepRunID:              &stepRunID,
+		DeploymentPlanChecksum: attempt.PlanChecksum,
+		ArtifactDigest:         attempt.ArtifactDigest,
+		TargetConfigChecksum:   attempt.ConfigChecksum,
+		Payload:                payloadJSON,
+	}, nil
+}
+
+func appendExecutionV2AttemptAudit(
+	ctx context.Context,
+	attempt types.ExecutionAttempt,
+	eventType, outcome string,
+	actorID *uuid.UUID,
+	details map[string]any,
+) error {
+	event, err := executionV2AuditEvent(attempt, eventType, outcome, actorID, details)
+	if err != nil {
+		return err
+	}
+	return appendExecutionV2Audit(ctx, event)
+}
+
+func appendExecutionV2ReconciliationAudit(
+	ctx context.Context,
+	attempt types.ExecutionAttempt,
+	input types.ReconciliationStatusInput,
+	outcome string,
+	projectedTaskStatus *types.TaskStatus,
+) error {
+	details := map[string]any{
+		"statusQueryId":   input.StatusQueryID,
+		"eventIdentity":   input.EventIdentity,
+		"reportedOutcome": input.Outcome,
+		"retryRequested":  input.RetryRequested,
+	}
+	if projectedTaskStatus != nil {
+		details["projectedTaskStatus"] = *projectedTaskStatus
+	}
+	event, err := executionV2AuditEvent(
+		attempt, "execution.reconciliation_imported", outcome, nil, details,
+	)
+	if err != nil {
+		return err
+	}
+	reconciliationID := input.EventIdentity
+	event.ReconciliationID = &reconciliationID
+	event.ReconciliationChecksum = input.EvidenceChecksum
+	return appendExecutionV2Audit(ctx, event)
+}
 
 var intentChecksumPatternDB = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -156,7 +261,13 @@ func CreateExecutionAttempt(
 			return fmt.Errorf("admit execution-v2 desired state: %w", err)
 		}
 		result, err = getExecutionAttemptForUpdate(ctx, attempt.ID, attempt.OrganizationID)
-		return err
+		if err != nil {
+			return err
+		}
+		return appendExecutionV2AttemptAudit(
+			ctx, *result, "execution.dispatch_created", "PENDING", nil,
+			map[string]any{"intentChecksum": intent.Checksum},
+		)
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -438,7 +549,13 @@ func ClaimExecutionAttempt(
 		result, err = getExecutionAttemptForTargetUpdate(
 			ctx, request.AttemptID, request.OrganizationID, request.DeploymentTargetID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		return appendExecutionV2AttemptAudit(
+			ctx, *result, "execution.claimed", "CLAIMED", nil,
+			map[string]any{"executorId": request.ExecutorID},
+		)
 	})
 	if err == nil && committedConflict != nil {
 		return nil, committedConflict
@@ -498,6 +615,7 @@ func AcknowledgeExecutionAttempt(
 			!attempt.IntentExpiresAt.After(trustedNow) {
 			return apierrors.NewConflict("execution acknowledgement rejected by ownership, lease, or fence")
 		}
+		isReplay := attempt.Status == types.ExecutionAttemptStatusRunning && attempt.AcknowledgedAt != nil
 		command, err := database.Exec(ctx, `
 			UPDATE ExecutionAttempt
 			SET status = 'RUNNING',
@@ -519,7 +637,16 @@ func AcknowledgeExecutionAttempt(
 			return apierrors.NewConflict("execution acknowledgement raced")
 		}
 		attempt.Status = types.ExecutionAttemptStatusRunning
-		return projectExecutionV2Running(ctx, *attempt)
+		if err := projectExecutionV2Running(ctx, *attempt); err != nil {
+			return err
+		}
+		if isReplay {
+			return nil
+		}
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.acknowledged", "RUNNING", nil,
+			map[string]any{"executorId": request.ExecutorID},
+		)
 	})
 }
 
@@ -530,8 +657,15 @@ func HeartbeatExecutionAttempt(ctx context.Context, request types.HeartbeatReque
 		request.LeaseDuration <= 0 {
 		return apierrors.NewBadRequest("execution heartbeat request is invalid")
 	}
-	db := internalctx.GetDb(ctx)
-	command, err := db.Exec(ctx, `
+	return RunTx(ctx, func(ctx context.Context) error {
+		db := internalctx.GetDb(ctx)
+		attempt, err := getExecutionAttemptForTargetUpdate(
+			ctx, request.AttemptID, request.OrganizationID, request.DeploymentTargetID,
+		)
+		if err != nil {
+			return err
+		}
+		command, err := db.Exec(ctx, `
 		UPDATE ExecutionFence ef
 		SET lease_expires_at = clock_timestamp() + @leaseDuration
 		FROM ExecutionAttempt ea
@@ -546,20 +680,24 @@ func HeartbeatExecutionAttempt(ctx context.Context, request types.HeartbeatReque
 			AND ea.claimed_by = @executorId
 			AND ea.intent_expires_at > clock_timestamp()
 			AND ea.status IN ('CLAIMED', 'RUNNING')`,
-		pgx.NamedArgs{
-			"attemptId": request.AttemptID, "organizationId": request.OrganizationID,
-			"deploymentTargetId": request.DeploymentTargetID,
-			"generation":         request.FenceGeneration, "executorId": request.ExecutorID,
-			"leaseDuration": request.LeaseDuration,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("heartbeat ExecutionAttempt: %w", err)
-	}
-	if command.RowsAffected() != 1 {
-		return apierrors.NewConflict("execution heartbeat rejected by lease or fence")
-	}
-	return nil
+			pgx.NamedArgs{
+				"attemptId": request.AttemptID, "organizationId": request.OrganizationID,
+				"deploymentTargetId": request.DeploymentTargetID,
+				"generation":         request.FenceGeneration, "executorId": request.ExecutorID,
+				"leaseDuration": request.LeaseDuration,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("heartbeat ExecutionAttempt: %w", err)
+		}
+		if command.RowsAffected() != 1 {
+			return apierrors.NewConflict("execution heartbeat rejected by lease or fence")
+		}
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.heartbeat", "LEASE_RENEWED", nil,
+			map[string]any{"executorId": request.ExecutorID},
+		)
+	})
 }
 
 func RecordExecutionEvent(
@@ -667,9 +805,17 @@ func RecordExecutionEvent(
 		}
 		if input.Status == types.ExecutionEventStatusRunning {
 			attempt.Status = types.ExecutionAttemptStatusRunning
-			return projectExecutionV2Running(ctx, *attempt)
+			if err := projectExecutionV2Running(ctx, *attempt); err != nil {
+				return err
+			}
 		}
-		return nil
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.event_recorded", string(input.Status), nil,
+			map[string]any{
+				"eventId": result.ID, "eventSequence": input.EventSequence,
+				"payloadChecksum": input.PayloadChecksum,
+			},
+		)
 	})
 	return result, err
 }
@@ -783,10 +929,25 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 			"execution-attempt:"+input.AttemptID.String(),
 		)
 		if err != nil || len(pendingRevisionIDs) > 0 {
-			return err
+			if err != nil {
+				return err
+			}
+			return appendExecutionV2AttemptAudit(
+				ctx, *attempt, "execution.completed", string(input.Status), nil,
+				map[string]any{"executorId": input.ExecutorID},
+			)
 		}
 		task, err = projectExecutionV2Terminal(ctx, *attempt, input.Status)
-		return err
+		if err != nil {
+			return err
+		}
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.completed", string(input.Status), nil,
+			map[string]any{
+				"executorId":          input.ExecutorID,
+				"projectedTaskStatus": task.Status,
+			},
+		)
 	})
 	if err != nil || len(pendingRevisionIDs) == 0 {
 		return task, err
@@ -814,6 +975,10 @@ func fenceExecutionAttemptTx(
 	reason string,
 ) error {
 	db := internalctx.GetDb(ctx)
+	attempt, err := getExecutionAttemptForTargetUpdate(ctx, attemptID, orgID, deploymentTargetID)
+	if err != nil {
+		return err
+	}
 	command, err := db.Exec(ctx, `
 			UPDATE ExecutionAttempt
 			SET status = 'FENCED', claimed_by = '', completed_at = now(),
@@ -844,7 +1009,15 @@ func fenceExecutionAttemptTx(
 	if err != nil {
 		return err
 	}
-	return projectExecutionV2Uncertain(ctx, attemptID, orgID)
+	if err := projectExecutionV2Uncertain(ctx, attemptID, orgID); err != nil {
+		return err
+	}
+	attempt.Status = types.ExecutionAttemptStatusFenced
+	attempt.FailureReason = strings.TrimSpace(reason)
+	return appendExecutionV2AttemptAudit(
+		ctx, *attempt, "execution.fenced", "FENCED", nil,
+		map[string]any{"reason": strings.TrimSpace(reason), "projection": "UNCERTAIN"},
+	)
 }
 
 func validateExecutionV2ClaimRequest(request types.ClaimRequest) error {
@@ -1101,7 +1274,7 @@ func RequestExecutionCancel(
 			return apierrors.NewConflict(err.Error())
 		}
 		db := internalctx.GetDb(ctx)
-		_, err = db.Exec(ctx, `
+		command, err := db.Exec(ctx, `
 			INSERT INTO ExecutionCancelRequest (
 				organization_id, execution_id, execution_attempt_id,
 				requested_by, idempotency_key, reason, created_at
@@ -1131,7 +1304,17 @@ func RequestExecutionCancel(
 			return apierrors.NewConflict("conflicting duplicate execution cancel request")
 		}
 		result = existing
-		return nil
+		if command.RowsAffected() == 0 {
+			return nil
+		}
+		actorID := request.RequestedBy
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.cancel_requested", "REQUESTED", &actorID,
+			map[string]any{
+				"cancelRequestId": existing.ID,
+				"idempotencyKey":  request.IdempotencyKey,
+			},
+		)
 	})
 	return result, err
 }
@@ -1143,6 +1326,15 @@ func RecordCampaignExecutionCancelHandoff(
 	if orgID == uuid.Nil || executionID == uuid.Nil || cancelRequestID == uuid.Nil {
 		return apierrors.NewBadRequest("campaign execution cancel handoff identity is invalid")
 	}
+	return RunTx(ctx, func(ctx context.Context) error {
+		return recordCampaignExecutionCancelHandoffTx(ctx, orgID, executionID, cancelRequestID)
+	})
+}
+
+func recordCampaignExecutionCancelHandoffTx(
+	ctx context.Context,
+	orgID, executionID, cancelRequestID uuid.UUID,
+) error {
 	database := internalctx.GetDb(ctx)
 	command, err := database.Exec(ctx, `
 		INSERT INTO ExecutionCampaignControlHandoff (
@@ -1174,7 +1366,26 @@ func RecordCampaignExecutionCancelHandoff(
 		return fmt.Errorf("record campaign execution cancel handoff: %w", err)
 	}
 	if command.RowsAffected() == 1 {
-		return nil
+		var attemptID uuid.UUID
+		if err := database.QueryRow(ctx, `
+			SELECT execution_attempt_id
+			FROM ExecutionCancelRequest
+			WHERE id = @cancelRequestId
+			  AND organization_id = @organizationId
+			  AND execution_id = @executionId`, pgx.NamedArgs{
+			"cancelRequestId": cancelRequestID, "organizationId": orgID,
+			"executionId": executionID,
+		}).Scan(&attemptID); err != nil {
+			return fmt.Errorf("load campaign cancel handoff attempt: %w", err)
+		}
+		attempt, err := getExecutionAttemptForUpdate(ctx, attemptID, orgID)
+		if err != nil {
+			return err
+		}
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.campaign_cancel_handoff_recorded", "RECORDED", nil,
+			map[string]any{"cancelRequestId": cancelRequestID},
+		)
 	}
 	var cancelExists bool
 	var campaignBound bool
@@ -1292,7 +1503,14 @@ func RecordCancelAcknowledgement(
 		if err != nil {
 			return err
 		}
-		return nil
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.cancel_acknowledged", string(status), nil,
+			map[string]any{
+				"cancelRequestId": cancel.ID,
+				"executorId":      ack.ExecutorID,
+				"accepted":        ack.Accepted,
+			},
+		)
 	})
 }
 
@@ -1346,7 +1564,17 @@ func RequestExecutionStatus(
 			!executionprotocol.IsExactDuplicateStatus(*result, request) {
 			return apierrors.NewConflict("conflicting duplicate execution status query")
 		}
-		return nil
+		if command.RowsAffected() == 0 {
+			return nil
+		}
+		actorID := request.RequestedBy
+		return appendExecutionV2AttemptAudit(
+			ctx, *attempt, "execution.status_requested", "PENDING", &actorID,
+			map[string]any{
+				"statusQueryId":  result.ID,
+				"idempotencyKey": request.IdempotencyKey,
+			},
+		)
 	})
 	return result, err
 }
@@ -1394,6 +1622,12 @@ func ImportReconciliationStatusWithTask(
 			)
 			if getErr != nil {
 				return getErr
+			}
+			if attempt.Status != status {
+				if executionV2ReconciliationReplaySuperseded(attempt.Status, status) {
+					return nil
+				}
+				return apierrors.NewConflict("reconciliation replay no longer matches execution attempt state")
 			}
 			outcome, mapErr := executorOutcomeForAttemptStatus(status)
 			if mapErr != nil {
@@ -1444,12 +1678,12 @@ func ImportReconciliationStatusWithTask(
 		if err != nil {
 			return err
 		}
-		if attempt.Status.IsTerminal() {
-			return apierrors.NewConflict("terminal execution attempt is immutable")
-		}
 		decision, err := executionprotocol.ReconcileCallbackLoss(*attempt, input)
 		if err != nil {
 			return apierrors.NewConflict(err.Error())
+		}
+		if !executionV2ReconciliationTransitionAllowed(attempt.Status, decision.Status) {
+			return apierrors.NewConflict("terminal execution attempt is immutable")
 		}
 		_, err = db.Exec(ctx, `
 			INSERT INTO ExecutionReconciliationEvent (
@@ -1499,24 +1733,31 @@ func ImportReconciliationStatusWithTask(
 		if err != nil {
 			return fmt.Errorf("resolve ExecutionStatusQuery: %w", err)
 		}
-		_, err = db.Exec(ctx, `
+		command, err := db.Exec(ctx, `
 			UPDATE ExecutionAttempt
 			SET status = @status,
-				completed_at = CASE WHEN @status = 'UNKNOWN' THEN NULL ELSE clock_timestamp() END,
+				completed_at = CASE
+					WHEN @status = 'UNKNOWN' THEN NULL
+					ELSE COALESCE(completed_at, clock_timestamp())
+				END,
 				updated_at = clock_timestamp(), claimed_by = ''
 			WHERE id = @attemptId AND organization_id = @organizationId
-				AND status IN ('PENDING', 'CLAIMED', 'RUNNING')`,
+				AND status = @previousStatus`,
 			pgx.NamedArgs{
-				"status":    decision.Status,
+				"status": decision.Status, "previousStatus": attempt.Status,
 				"attemptId": attempt.ID, "organizationId": input.OrganizationID,
 			},
 		)
 		if err != nil {
 			return fmt.Errorf("reconcile ExecutionAttempt: %w", err)
 		}
+		if command.RowsAffected() != 1 {
+			return apierrors.NewConflict("execution attempt reconciliation raced")
+		}
 		_, err = db.Exec(ctx, `
 			UPDATE ExecutionFence
-			SET lease_expires_at = NULL, released_at = clock_timestamp()
+			SET lease_expires_at = NULL,
+				released_at = COALESCE(released_at, clock_timestamp())
 			WHERE execution_attempt_id = @attemptId
 				AND organization_id = @organizationId`,
 			pgx.NamedArgs{
@@ -1536,18 +1777,58 @@ func ImportReconciliationStatusWithTask(
 			"execution-reconciliation:"+input.EventIdentity.String(),
 		)
 		if err != nil || len(pendingRevisionIDs) > 0 {
-			return err
+			if err != nil {
+				return err
+			}
+			return appendExecutionV2ReconciliationAudit(
+				ctx, *attempt, input, string(decision.Status), nil,
+			)
 		}
 		if decision.Status == types.ExecutionAttemptStatusUnknown {
-			return projectExecutionV2Uncertain(ctx, attempt.ID, input.OrganizationID)
+			if err := projectExecutionV2Uncertain(ctx, attempt.ID, input.OrganizationID); err != nil {
+				return err
+			}
+			return appendExecutionV2ReconciliationAudit(
+				ctx, *attempt, input, string(decision.Status), nil,
+			)
 		}
 		task, err = projectExecutionV2Terminal(ctx, *attempt, decision.Status)
-		return err
+		if err != nil {
+			return err
+		}
+		return appendExecutionV2ReconciliationAudit(
+			ctx, *attempt, input, string(decision.Status), &task.Status,
+		)
 	})
 	if err != nil || len(pendingRevisionIDs) == 0 {
 		return task, err
 	}
 	return reconcilePendingDesiredRevisionIDs(ctx, pendingRevisionIDs)
+}
+
+func executionV2ReconciliationTransitionAllowed(
+	current, next types.ExecutionAttemptStatus,
+) bool {
+	switch current {
+	case types.ExecutionAttemptStatusPending,
+		types.ExecutionAttemptStatusClaimed,
+		types.ExecutionAttemptStatusRunning:
+		return true
+	case types.ExecutionAttemptStatusUnknown,
+		types.ExecutionAttemptStatusFenced:
+		return next == types.ExecutionAttemptStatusSucceeded ||
+			next == types.ExecutionAttemptStatusFailed
+	default:
+		return false
+	}
+}
+
+func executionV2ReconciliationReplaySuperseded(
+	current, replayed types.ExecutionAttemptStatus,
+) bool {
+	return replayed == types.ExecutionAttemptStatusUnknown &&
+		(current == types.ExecutionAttemptStatusSucceeded ||
+			current == types.ExecutionAttemptStatusFailed)
 }
 
 func GetPendingExecutionCancel(

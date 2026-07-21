@@ -952,12 +952,28 @@ func createPreviousStatePlanInTx(
 	); err != nil {
 		return nil, err
 	}
-	return publishValidatedTargetPlan(
+	plan, err := publishValidatedTargetPlan(
 		ctx,
 		*draft,
 		*validation,
 		actorUserAccountID,
 	)
+	if err != nil {
+		return nil, err
+	}
+	auditInput := deploymentPlanControlPlaneAuditInput(
+		*plan,
+		"plan.previous_state.created",
+		&actorUserAccountID,
+	)
+	if validation.Draft.ResolutionInput != nil {
+		auditInput.ProductReleaseChecksum = validation.Draft.ResolutionInput.ProductChecksum
+		auditInput.TargetConfigChecksum = validation.Draft.ResolutionInput.Config.CanonicalChecksum
+	}
+	if err := recordDeploymentPlanControlPlaneAuditMutation(ctx, auditInput); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 func validatePreviousStatePlanPair(

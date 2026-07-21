@@ -165,6 +165,12 @@ func RequestApproval(
 			); err != nil {
 				return err
 			}
+			if err := recordGovernanceAuditMutation(
+				ctx,
+				approvalInvalidatedAuditEvent(*existing, reason),
+			); err != nil {
+				return err
+			}
 		}
 
 		request := &types.ApprovalRequest{
@@ -192,7 +198,10 @@ func RequestApproval(
 			return err
 		}
 		result = request
-		return nil
+		return recordGovernanceAuditMutation(
+			ctx,
+			approvalRequestedAuditEvent(*request),
+		)
 	})
 	return result, err
 }
@@ -288,6 +297,12 @@ func RecordApprovalDecision(
 				); err != nil {
 					return err
 				}
+				if err := recordGovernanceAuditMutation(
+					ctx,
+					approvalInvalidatedAuditEvent(*request, invalidationReason),
+				); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -361,7 +376,10 @@ func RecordApprovalDecision(
 			return err
 		}
 		result = decision
-		return nil
+		return recordGovernanceAuditMutation(
+			ctx,
+			approvalDecisionRecordedAuditEvent(*request, *decision),
+		)
 	})
 	if err != nil {
 		return nil, err
@@ -418,6 +436,12 @@ func EvaluateApprovalEligibility(
 				stateForApprovalInvalidation(reason),
 				reason,
 				decisionAt,
+			); err != nil {
+				return err
+			}
+			if err := recordGovernanceAuditMutation(
+				ctx,
+				approvalInvalidatedAuditEvent(*request, reason),
 			); err != nil {
 				return err
 			}
@@ -484,12 +508,18 @@ func InvalidateApproval(
 		if err != nil {
 			return err
 		}
-		return updateApprovalRequestState(
+		if err := updateApprovalRequestState(
 			ctx,
 			request,
 			stateForApprovalInvalidation(reason),
 			reason,
 			decisionAt,
+		); err != nil {
+			return err
+		}
+		return recordGovernanceAuditMutation(
+			ctx,
+			approvalInvalidatedAuditEvent(*request, reason),
 		)
 	})
 }

@@ -284,7 +284,13 @@ func CreateEmergencyOverride(
 			return apierrors.NewBadRequest(err.Error())
 		}
 		result, err = insertEmergencyOverride(txCtx, override)
-		return err
+		if err != nil {
+			return err
+		}
+		return recordGovernanceAuditMutation(
+			txCtx,
+			emergencyOverrideCreatedAuditEvent(*result),
+		)
 	})
 	return result, err
 }
@@ -853,6 +859,12 @@ func persistAdmissionEvaluation(
 	}
 	inserted, err := collectAdmissionEvaluation(rows)
 	if err == nil {
+		if err := recordGovernanceAuditMutation(
+			ctx,
+			admissionEvaluationRecordedAuditEvent(*inserted),
+		); err != nil {
+			return nil, err
+		}
 		return inserted, nil
 	}
 	if !errors.Is(err, apierrors.ErrNotFound) {

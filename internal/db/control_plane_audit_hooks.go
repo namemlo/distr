@@ -20,12 +20,21 @@ func (hook ControlPlaneAuditAppendHookFunc) AppendControlPlaneAuditEvent(
 	return hook(ctx, input)
 }
 
-var DirectControlPlaneAuditAppendHook ControlPlaneAuditAppendHook = ControlPlaneAuditAppendHookFunc(
-	func(ctx context.Context, input types.ControlPlaneAuditEventInput) error {
-		_, err := AppendControlPlaneAuditEventInCurrentBoundary(ctx, input)
-		return err
-	},
-)
+type directControlPlaneAuditAppendHook struct{}
+
+func (directControlPlaneAuditAppendHook) AppendControlPlaneAuditEvent(
+	ctx context.Context,
+	input types.ControlPlaneAuditEventInput,
+) error {
+	_, err := AppendControlPlaneAuditEventInCurrentBoundary(ctx, input)
+	return err
+}
+
+// DirectControlPlaneAuditAppendHook returns the immutable production adapter.
+// A factory function avoids package-global mutable injection state.
+func DirectControlPlaneAuditAppendHook() ControlPlaneAuditAppendHook {
+	return directControlPlaneAuditAppendHook{}
+}
 
 func RecordControlPlaneAuditMutation(
 	ctx context.Context,

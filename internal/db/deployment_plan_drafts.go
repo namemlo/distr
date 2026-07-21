@@ -135,12 +135,18 @@ func CreateDeploymentPlanDraft(
 		if err != nil {
 			return mapDeploymentPlanWriteError("collect created draft", err)
 		}
-		return insertDeploymentPlanDraftAuditEvent(
+		if err := insertDeploymentPlanDraftAuditEvent(
 			txCtx,
 			created,
 			"CREATED",
 			nil,
 			created.CreatedByUserAccountID,
+		); err != nil {
+			return err
+		}
+		return recordDeploymentPlanControlPlaneAuditMutation(
+			txCtx,
+			deploymentPlanDraftAuditInput(created, "plan.draft.created"),
 		)
 	})
 	if err != nil {
@@ -226,12 +232,18 @@ func UpdateDeploymentPlanDraft(
 		if err != nil {
 			return mapDeploymentPlanWriteError("collect updated draft", err)
 		}
-		return insertDeploymentPlanDraftAuditEvent(
+		if err := insertDeploymentPlanDraftAuditEvent(
 			txCtx,
 			updated,
 			"UPDATED",
 			nil,
 			updated.UpdatedByUserAccountID,
+		); err != nil {
+			return err
+		}
+		return recordDeploymentPlanControlPlaneAuditMutation(
+			txCtx,
+			deploymentPlanDraftAuditInput(updated, "plan.draft.updated"),
 		)
 	})
 	if err != nil {
@@ -299,11 +311,26 @@ func ValidateDeploymentPlanDraftWithVerifier(
 	organizationID uuid.UUID,
 	verifier TargetConfigObjectVerifier,
 ) (*types.PlanDraftValidation, error) {
-	draft, err := GetDeploymentPlanDraft(ctx, id, organizationID)
-	if err != nil {
-		return nil, err
-	}
-	return validateDeploymentPlanDraft(ctx, draft, verifier)
+	var validation *types.PlanDraftValidation
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		draft, err := GetDeploymentPlanDraft(txCtx, id, organizationID)
+		if err != nil {
+			return err
+		}
+		validation, err = validateDeploymentPlanDraft(txCtx, draft, verifier)
+		if err != nil {
+			return err
+		}
+		outcome := "SUCCEEDED"
+		if len(validation.Issues) > 0 {
+			outcome = "REJECTED"
+		}
+		return recordDeploymentPlanControlPlaneAuditMutation(
+			txCtx,
+			deploymentPlanValidationAuditInput(*validation, outcome),
+		)
+	})
+	return validation, err
 }
 
 func validateDeploymentPlanDraft(
@@ -588,7 +615,28 @@ func publishValidatedTargetPlan(
 	if err := sealPublishedTargetPlan(ctx, plan.ID, plan.OrganizationID); err != nil {
 		return nil, err
 	}
-	return getDeploymentPlan(ctx, plan.ID, plan.OrganizationID)
+	published, err := getDeploymentPlan(ctx, plan.ID, plan.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	auditInput := deploymentPlanControlPlaneAuditInput(
+		*published,
+		"plan.published",
+		&publisherUserAccountID,
+	)
+	auditInput.ProductReleaseChecksum = input.ProductChecksum
+	auditInput.TargetConfigChecksum = input.Config.CanonicalChecksum
+	if err := recordDeploymentPlanControlPlaneAuditMutation(ctx, auditInput); err != nil {
+		return nil, err
+	}
+	if len(validation.Changes) > 0 {
+		changeInput := auditInput
+		changeInput.EventType = "plan.change.recorded"
+		if err := recordDeploymentPlanControlPlaneAuditMutation(ctx, changeInput); err != nil {
+			return nil, err
+		}
+	}
+	return published, nil
 }
 
 func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) error {

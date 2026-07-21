@@ -98,6 +98,17 @@ const observerRegistrationOutputExpr = `
 	r.max_clock_skew_seconds, r.measurements
 `
 
+func appendDesiredObservedAudit(
+	ctx context.Context,
+	mutated bool,
+	input types.ControlPlaneAuditEventInput,
+) error {
+	if !mutated {
+		return nil
+	}
+	return RecordControlPlaneAuditMutation(ctx, controlPlaneDomainAuditHook(ctx), input)
+}
+
 func CreateObserverRegistration(
 	ctx context.Context,
 	registration *types.ObserverRegistration,
@@ -111,6 +122,19 @@ func CreateObserverRegistration(
 	if registration.ID == uuid.Nil {
 		registration.ID = uuid.New()
 	}
+	var result *types.ObserverRegistration
+	err := RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
+		var err error
+		result, err = createObserverRegistrationTx(txCtx, registration)
+		return err
+	})
+	return result, err
+}
+
+func createObserverRegistrationTx(
+	ctx context.Context,
+	registration *types.ObserverRegistration,
+) (*types.ObserverRegistration, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		INSERT INTO ObserverRegistration AS r (
 			id, organization_id, deployment_unit_id, component_instance_id,
@@ -145,6 +169,16 @@ func CreateObserverRegistration(
 		return nil, fmt.Errorf("could not collect ObserverRegistration: %w", err)
 	}
 	result := row.toType()
+	if err := appendDesiredObservedAudit(ctx, true,
+		types.ControlPlaneAuditEventInput{
+			OrganizationID:   result.OrganizationID,
+			EventType:        "observer.registered",
+			Outcome:          "SUCCEEDED",
+			DeploymentUnitID: &result.DeploymentUnitID,
+		},
+	); err != nil {
+		return nil, fmt.Errorf("could not audit ObserverRegistration: %w", err)
+	}
 	return &result, nil
 }
 
@@ -205,6 +239,29 @@ func RecordExecutorReportWithTask(
 	if report.ID == uuid.Nil {
 		report.ID = uuid.New()
 	}
+	var value *types.ExecutorReport
+	err := RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
+		var err error
+		value, err = recordExecutorReportTx(txCtx, report)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	task, err := ReconcilePendingDesiredRevisionWithTask(ctx, value.PendingRevisionID)
+	if err != nil {
+		return value, nil, fmt.Errorf(
+			"could not reconcile desired state after executor report: %w",
+			err,
+		)
+	}
+	return value, task, nil
+}
+
+func recordExecutorReportTx(
+	ctx context.Context,
+	report types.ExecutorReport,
+) (*types.ExecutorReport, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		INSERT INTO ExecutorReport AS e (
 			id, organization_id, pending_revision_id, execution_id,
@@ -225,22 +282,27 @@ func RecordExecutorReportWithTask(
 		},
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not insert ExecutorReport: %w", err)
+		return nil, fmt.Errorf("could not insert ExecutorReport: %w", err)
 	}
 	value, err := pgx.CollectExactlyOneRow(
 		rows, pgx.RowToStructByName[types.ExecutorReport],
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not collect ExecutorReport: %w", err)
+		return nil, fmt.Errorf("could not collect ExecutorReport: %w", err)
 	}
-	task, err := ReconcilePendingDesiredRevisionWithTask(ctx, value.PendingRevisionID)
-	if err != nil {
-		return &value, nil, fmt.Errorf(
-			"could not reconcile desired state after executor report: %w",
-			err,
-		)
+	if err := appendDesiredObservedAudit(ctx, true,
+		types.ControlPlaneAuditEventInput{
+			OrganizationID:    value.OrganizationID,
+			EventType:         "executor_report.recorded",
+			Outcome:           string(value.Outcome),
+			DesiredStateID:    &value.PendingRevisionID,
+			ExecutionID:       &value.ExecutionID,
+			ExecutionChecksum: value.ReportedStateChecksum,
+		},
+	); err != nil {
+		return nil, fmt.Errorf("could not audit ExecutorReport: %w", err)
 	}
-	return &value, task, nil
+	return &value, nil
 }
 
 func isLowerSHA256(value string) bool {
@@ -402,6 +464,21 @@ func admitPendingDesiredRevisionTx(
 	if err != nil {
 		return nil, fmt.Errorf("could not update ComponentDesiredStateHead: %w", err)
 	}
+	if err := appendDesiredObservedAudit(ctx, true,
+		types.ControlPlaneAuditEventInput{
+			OrganizationID:       value.OrganizationID,
+			EventType:            "desired_revision.pending",
+			Outcome:              string(value.Status),
+			DeploymentPlanID:     &value.DeploymentPlanID,
+			ExecutionID:          &value.ExecutionID,
+			DesiredStateID:       &value.ID,
+			DeploymentUnitID:     &value.DeploymentUnitID,
+			ArtifactDigest:       value.ArtifactDigest,
+			TargetConfigChecksum: value.ConfigChecksum,
+		},
+	); err != nil {
+		return nil, fmt.Errorf("could not audit PendingDesiredRevision: %w", err)
+	}
 	return &value, nil
 }
 
@@ -560,6 +637,45 @@ func advanceActiveDesiredRevisionTx(
 	if err != nil {
 		return nil, err
 	}
+	terminalEventType := "desired_revision.terminalized"
+	if !now.Before(pending.ObservationDeadline) &&
+		terminal.Status != types.PendingDesiredStatusVerified {
+		terminalEventType = "desired_revision.deadline_terminalized"
+	}
+	if err := appendDesiredObservedAudit(txCtx, true,
+		types.ControlPlaneAuditEventInput{
+			OrganizationID:       terminal.OrganizationID,
+			EventType:            terminalEventType,
+			Outcome:              string(terminal.Status),
+			DeploymentPlanID:     &terminal.DeploymentPlanID,
+			ExecutionID:          &terminal.ExecutionID,
+			DesiredStateID:       &terminal.ID,
+			ObservationID:        nonNilUUIDPointer(terminal.TerminalObservationID),
+			DeploymentUnitID:     &terminal.DeploymentUnitID,
+			ArtifactDigest:       terminal.ArtifactDigest,
+			TargetConfigChecksum: terminal.ConfigChecksum,
+		},
+	); err != nil {
+		return nil, fmt.Errorf("could not audit terminal desired revision: %w", err)
+	}
+	if next != nil && terminal.Status == types.PendingDesiredStatusVerified {
+		if err := appendDesiredObservedAudit(txCtx, true,
+			types.ControlPlaneAuditEventInput{
+				OrganizationID:       next.OrganizationID,
+				EventType:            "active_desired_revision.advanced",
+				Outcome:              "VERIFIED",
+				DeploymentPlanID:     &next.DeploymentPlanID,
+				ExecutionID:          &next.ExecutionID,
+				DesiredStateID:       &next.ID,
+				ObservationID:        &next.VerifiedObservationID,
+				DeploymentUnitID:     &next.DeploymentUnitID,
+				ArtifactDigest:       next.ArtifactDigest,
+				TargetConfigChecksum: next.ConfigChecksum,
+			},
+		); err != nil {
+			return nil, fmt.Errorf("could not audit active desired revision: %w", err)
+		}
+	}
 	if active != nil && terminal.Status != types.PendingDesiredStatusVerified &&
 		gate.ObservationID != uuid.Nil {
 		if err := openTerminalMismatchDriftCaseTx(
@@ -569,6 +685,13 @@ func advanceActiveDesiredRevisionTx(
 		}
 	}
 	return finalizeExecutionV2Mutation(txCtx, terminal)
+}
+
+func nonNilUUIDPointer(value uuid.UUID) *uuid.UUID {
+	if value == uuid.Nil {
+		return nil
+	}
+	return &value
 }
 
 func SweepExpiredPendingDesiredRevisions(
@@ -787,7 +910,16 @@ func openAutomaticDriftCaseTx(ctx context.Context, input types.DriftInput) error
 	if err != nil {
 		return fmt.Errorf("could not append automatic DriftCaseEvent: %w", err)
 	}
-	return nil
+	return appendDesiredObservedAudit(ctx, true,
+		types.ControlPlaneAuditEventInput{
+			OrganizationID: input.OrganizationID,
+			EventType:      "drift_case.opened",
+			Outcome:        string(types.DriftCaseStatusOpen),
+			DesiredStateID: &input.ActiveDesiredRevisionID,
+			ObservationID:  &input.ObservationID,
+			DriftCaseID:    &caseID,
+		},
+	)
 }
 
 func validateVerifiedGate(
@@ -1003,6 +1135,24 @@ func IngestObservationWithTask(
 			if err != nil {
 				return fmt.Errorf("could not quarantine desired state head: %w", err)
 			}
+		}
+		eventType := "observation.rejected"
+		if value.Disposition == types.ObservationDispositionAccepted {
+			eventType = "observation.accepted"
+		}
+		if err := appendDesiredObservedAudit(txCtx, true,
+			types.ControlPlaneAuditEventInput{
+				OrganizationID:       value.OrganizationID,
+				EventType:            eventType,
+				Outcome:              string(value.Disposition),
+				ObservationID:        &value.ID,
+				DeploymentUnitID:     &value.DeploymentUnitID,
+				ArtifactDigest:       value.ArtifactDigest,
+				TargetConfigChecksum: value.ConfigChecksum,
+				ObservationChecksum:  value.StateChecksum,
+			},
+		); err != nil {
+			return fmt.Errorf("could not audit observation ingestion: %w", err)
 		}
 		ingested = &value
 		return nil
@@ -1712,7 +1862,7 @@ func OpenDriftCase(
 			ON CONFLICT (
 				organization_id, active_desired_revision_id, observation_id
 			) WHERE status IN ('OPEN', 'ASSIGNED', 'EXCEPTION')
-			DO UPDATE SET updated_at = d.updated_at
+			DO NOTHING
 			RETURNING `+driftCaseOutputExpr,
 			pgx.NamedArgs{
 				"id": uuid.New(), "organizationID": input.OrganizationID,
@@ -1729,9 +1879,34 @@ func OpenDriftCase(
 			rows, pgx.RowToStructByName[driftCaseRow],
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return apierrors.NewConflict(
-				"drift desired and observed state do not share a placement",
+			existingRows, queryErr := internalctx.GetDb(txCtx).Query(txCtx, `
+				SELECT `+driftCaseOutputExpr+`
+				FROM DriftCase d
+				WHERE d.organization_id = @organizationID
+				  AND d.active_desired_revision_id = @activeDesiredRevisionID
+				  AND d.observation_id = @observationID
+				  AND d.status IN ('OPEN', 'ASSIGNED', 'EXCEPTION')`,
+				pgx.NamedArgs{
+					"organizationID":          input.OrganizationID,
+					"activeDesiredRevisionID": input.ActiveDesiredRevisionID,
+					"observationID":           input.ObservationID,
+				},
 			)
+			if queryErr != nil {
+				return fmt.Errorf("could not query existing DriftCase: %w", queryErr)
+			}
+			existing, queryErr := pgx.CollectExactlyOneRow(
+				existingRows, pgx.RowToStructByName[driftCaseRow],
+			)
+			if queryErr == nil {
+				value := existing.toType()
+				result = &value
+				return nil
+			}
+			if !errors.Is(queryErr, pgx.ErrNoRows) {
+				return fmt.Errorf("could not collect existing DriftCase: %w", queryErr)
+			}
+			return apierrors.NewConflict("drift desired and observed state do not share a placement")
 		}
 		if err != nil {
 			return fmt.Errorf("could not collect DriftCase: %w", err)
@@ -1751,6 +1926,19 @@ func OpenDriftCase(
 		)
 		if err != nil {
 			return fmt.Errorf("could not append DriftCaseEvent: %w", err)
+		}
+		if err := appendDesiredObservedAudit(txCtx, true,
+			types.ControlPlaneAuditEventInput{
+				OrganizationID:   value.OrganizationID,
+				EventType:        "drift_case.opened",
+				Outcome:          string(value.Status),
+				DesiredStateID:   &value.ActiveDesiredRevisionID,
+				ObservationID:    &value.ObservationID,
+				DriftCaseID:      &value.ID,
+				DeploymentUnitID: &value.DeploymentUnitID,
+			},
+		); err != nil {
+			return fmt.Errorf("could not audit DriftCase: %w", err)
 		}
 		result = &value
 		return nil
@@ -1791,6 +1979,35 @@ func ResolveDriftCase(
 		if err != nil {
 			return fmt.Errorf("could not lock DriftCase: %w", err)
 		}
+		var replay bool
+		err = internalctx.GetDb(txCtx).QueryRow(txCtx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM ReconciliationAction
+				WHERE organization_id = @organizationID
+				  AND drift_case_id = @driftCaseID
+				  AND action = @action
+				  AND reason = @reason
+				  AND actor_id = @actorID
+				  AND deployment_plan_id IS NOT DISTINCT FROM @deploymentPlanID
+				  AND outcome_observation_id IS NOT DISTINCT FROM @outcomeObservationID
+				  AND accepted_until IS NOT DISTINCT FROM @acceptedUntil
+			)`, pgx.NamedArgs{
+			"organizationID":       decision.OrganizationID,
+			"driftCaseID":          decision.DriftCaseID,
+			"action":               decision.Action,
+			"reason":               strings.TrimSpace(decision.Reason),
+			"actorID":              decision.ActorID,
+			"deploymentPlanID":     decision.DeploymentPlanID,
+			"outcomeObservationID": decision.OutcomeObservationID,
+			"acceptedUntil":        decision.AcceptedUntil,
+		}).Scan(&replay)
+		if err != nil {
+			return fmt.Errorf("could not check ReconciliationAction replay: %w", err)
+		}
+		if replay {
+			return nil
+		}
 		if status == types.DriftCaseStatusResolved {
 			return apierrors.NewConflict("drift case is already resolved")
 		}
@@ -1822,6 +2039,7 @@ func ResolveDriftCase(
 				)
 			}
 		}
+		actionID := uuid.New()
 		_, err = internalctx.GetDb(txCtx).Exec(txCtx, `
 			INSERT INTO ReconciliationAction (
 				id, organization_id, drift_case_id, action, reason,
@@ -1833,7 +2051,7 @@ func ResolveDriftCase(
 				@acceptedUntil
 			)`,
 			pgx.NamedArgs{
-				"id": uuid.New(), "organizationID": decision.OrganizationID,
+				"id": actionID, "organizationID": decision.OrganizationID,
 				"driftCaseID": decision.DriftCaseID, "action": decision.Action,
 				"reason": strings.TrimSpace(decision.Reason), "actorID": decision.ActorID,
 				"deploymentPlanID":     decision.DeploymentPlanID,
@@ -1874,7 +2092,40 @@ func ResolveDriftCase(
 				"actorID": decision.ActorID, "reason": strings.TrimSpace(decision.Reason),
 			},
 		)
-		return err
+		if err != nil {
+			return fmt.Errorf("could not append DriftCaseEvent: %w", err)
+		}
+		actionAudit := types.ControlPlaneAuditEventInput{
+			OrganizationID:   decision.OrganizationID,
+			EventType:        "reconciliation.action_recorded",
+			ActorID:          &decision.ActorID,
+			Outcome:          string(decision.Action),
+			DeploymentPlanID: decision.DeploymentPlanID,
+			DesiredStateID:   &activeDesiredRevisionID,
+			ObservationID:    decision.OutcomeObservationID,
+			DriftCaseID:      &decision.DriftCaseID,
+			ReconciliationID: &actionID,
+		}
+		if err := appendDesiredObservedAudit(
+			txCtx, true, actionAudit,
+		); err != nil {
+			return fmt.Errorf("could not audit ReconciliationAction: %w", err)
+		}
+		stateEventType := "drift_case.assigned"
+		if nextStatus == types.DriftCaseStatusResolved {
+			stateEventType = "drift_case.resolved"
+		} else if nextStatus == types.DriftCaseStatusException {
+			stateEventType = "drift_case.deviation_accepted"
+		}
+		stateAudit := actionAudit
+		stateAudit.EventType = stateEventType
+		stateAudit.Outcome = string(nextStatus)
+		if err := appendDesiredObservedAudit(
+			txCtx, true, stateAudit,
+		); err != nil {
+			return fmt.Errorf("could not audit DriftCase transition: %w", err)
+		}
+		return nil
 	})
 }
 

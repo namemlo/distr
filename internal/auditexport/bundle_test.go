@@ -60,6 +60,31 @@ func TestBuildDeploymentEvidenceBundleIsDeterministicAndCorrelated(t *testing.T)
 	if first.OrganizationID != organizationID || first.DeploymentPlanID != deploymentPlanID {
 		t.Fatalf("bundle lost correlation: %#v", first)
 	}
+	if first.Version != types.EvidenceBundleSchemaV1 {
+		t.Fatalf("bundle version = %q, want %q", first.Version, types.EvidenceBundleSchemaV1)
+	}
+}
+
+func TestBuildDeploymentEvidenceBundleChecksumCommitsToSchemaVersion(t *testing.T) {
+	t.Parallel()
+
+	organizationID := uuid.MustParse("10000000-0000-0000-0000-000000000001")
+	deploymentPlanID := uuid.MustParse("20000000-0000-0000-0000-000000000002")
+	bundle, err := BuildDeploymentEvidenceBundle(types.EvidenceBundleQuery{
+		OrganizationID: organizationID, DeploymentPlanID: deploymentPlanID,
+	}, []types.ControlPlaneAuditEvent{{
+		ID:             uuid.MustParse("30000000-0000-0000-0000-000000000003"),
+		OrganizationID: organizationID, DeploymentPlanID: &deploymentPlanID,
+		Sequence: 1, EventType: "plan.published", Outcome: "SUCCEEDED",
+		CreatedAt: time.Date(2026, 7, 18, 1, 0, 0, 0, time.UTC),
+	}})
+	if err != nil {
+		t.Fatalf("BuildDeploymentEvidenceBundle() error = %v", err)
+	}
+	const expected = "sha256:b6040f6136a3d78fd6e04c0c306027359169bf16fe042d20fc51d6ba249bf1d0"
+	if bundle.Checksum != expected {
+		t.Fatalf("bundle checksum = %q, want versioned canonical checksum %q", bundle.Checksum, expected)
+	}
 }
 
 func TestBuildDeploymentEvidenceBundleRejectsCrossOrganizationEvent(t *testing.T) {

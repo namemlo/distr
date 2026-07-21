@@ -70,7 +70,13 @@ func evaluateAndPersistDeploymentPreflight(
 	plan types.DeploymentPlan,
 	actorUserAccountID uuid.UUID,
 ) (*types.DeploymentPreflightRun, bool, error) {
-	return evaluateAndPersistDeploymentPreflightScope(ctx, plan, plan, actorUserAccountID)
+	return evaluateAndPersistDeploymentPreflightScope(
+		ctx,
+		plan,
+		plan,
+		actorUserAccountID,
+		DirectControlPlaneAuditAppendHook(),
+	)
 }
 
 func evaluateAndPersistDeploymentPreflightForTask(
@@ -95,7 +101,13 @@ func evaluateAndPersistDeploymentPreflightForTask(
 			scoped.TargetComponents = append(scoped.TargetComponents, component)
 		}
 	}
-	return evaluateAndPersistDeploymentPreflightScope(ctx, plan, scoped, uuid.Nil)
+	return evaluateAndPersistDeploymentPreflightScope(
+		ctx,
+		plan,
+		scoped,
+		uuid.Nil,
+		DirectControlPlaneAuditAppendHook(),
+	)
 }
 
 func evaluateAndPersistDeploymentPreflightScope(
@@ -103,6 +115,7 @@ func evaluateAndPersistDeploymentPreflightScope(
 	canonicalPlan types.DeploymentPlan,
 	evaluationPlan types.DeploymentPlan,
 	actorUserAccountID uuid.UUID,
+	auditHook ControlPlaneAuditAppendHook,
 ) (*types.DeploymentPreflightRun, bool, error) {
 	currentTargets, err := getDeploymentPreflightTargets(ctx, evaluationPlan)
 	if err != nil {
@@ -156,11 +169,97 @@ func evaluateAndPersistDeploymentPreflightScope(
 	if err := insertDeploymentPreflightChecks(ctx, *run); err != nil {
 		return nil, false, err
 	}
+	if err := recordDeploymentPreflightAudit(ctx, auditHook, evaluationPlan, *run); err != nil {
+		return nil, false, err
+	}
 	created, err := getDeploymentPreflightRun(ctx, run.ID, canonicalPlan.OrganizationID)
 	if err != nil {
 		return nil, false, err
 	}
 	return created, status == types.DeploymentPreflightStatusPassed, nil
+}
+
+func recordDeploymentPreflightAudit(
+	ctx context.Context,
+	auditHook ControlPlaneAuditAppendHook,
+	plan types.DeploymentPlan,
+	run types.DeploymentPreflightRun,
+) error {
+	failedCheckKeys := make([]string, 0)
+	adapterChecks := make(map[string]types.DeploymentPreflightCheck, len(plan.StepAdapters))
+	for _, check := range run.Checks {
+		if check.Status == types.DeploymentPreflightCheckStatusFailed {
+			failedCheckKeys = append(failedCheckKeys, check.CheckKey)
+		}
+		if strings.HasPrefix(check.CheckKey, "adapter:") {
+			adapterChecks[check.CheckKey] = check
+		}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"deploymentPreflightRunId": run.ID,
+		"status":                   run.Status,
+		"checkCount":               len(run.Checks),
+		"failedCheckKeys":          failedCheckKeys,
+	})
+	if err != nil {
+		return fmt.Errorf("could not encode deployment preflight audit: %w", err)
+	}
+	if err := RecordControlPlaneAuditMutation(ctx, auditHook, types.ControlPlaneAuditEventInput{
+		OrganizationID:         run.OrganizationID,
+		EventType:              "deployment.preflight.persisted",
+		ActorID:                run.ActorUserAccountID,
+		Outcome:                string(run.Status),
+		DeploymentPlanID:       &run.DeploymentPlanID,
+		DeploymentPlanChecksum: run.PlanChecksum,
+		Payload:                payload,
+	}); err != nil {
+		return err
+	}
+
+	for index := range plan.StepAdapters {
+		frozen := plan.StepAdapters[index]
+		check, found := adapterChecks["adapter:"+frozen.StepKey]
+		outcome := "NOT_EVALUATED"
+		var expected any
+		var actual any
+		message := "adapter preflight check was not produced"
+		if found {
+			outcome = string(check.Status)
+			expected = check.Expected
+			actual = check.Actual
+			message = check.Message
+		}
+		payload, err := json.Marshal(map[string]any{
+			"deploymentPreflightRunId": run.ID,
+			"stepKey":                  frozen.StepKey,
+			"adapterAssignmentId":      frozen.AdapterAssignmentID,
+			"adapterImplementationId":  frozen.AdapterImplementationID,
+			"capability":               frozen.Capability,
+			"capabilityVersion":        frozen.CapabilityVersion,
+			"expected":                 expected,
+			"actual":                   actual,
+			"message":                  message,
+		})
+		if err != nil {
+			return fmt.Errorf("could not encode adapter preflight audit: %w", err)
+		}
+		event := types.ControlPlaneAuditEventInput{
+			OrganizationID:         run.OrganizationID,
+			EventType:              "adapter.preflight.evaluated",
+			ActorID:                run.ActorUserAccountID,
+			Outcome:                outcome,
+			DeploymentPlanID:       &run.DeploymentPlanID,
+			AdapterRevisionID:      &frozen.ID,
+			TargetConfigID:         &frozen.ConfigSnapshotID,
+			TargetConfigChecksum:   frozen.ConfigChecksum,
+			DeploymentPlanChecksum: run.PlanChecksum,
+			Payload:                payload,
+		}
+		if err := RecordControlPlaneAuditMutation(ctx, auditHook, event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func deploymentPreflightMigrations(

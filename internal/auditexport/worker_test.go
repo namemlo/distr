@@ -20,7 +20,7 @@ func TestAuditExportBatchRetriesInOrderAndIsIdempotent(t *testing.T) {
 		},
 	}
 	sink := &recordingSink{}
-	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return sink, nil })
+	worker := NewWorker(store, func(context.Context, uuid.UUID) (Sink, error) { return sink, nil })
 
 	first, err := worker.ExportAuditBatch(context.Background(), sinkID, 10)
 	if err != nil {
@@ -48,7 +48,7 @@ func TestAuditExportBatchRecordsFailureWithoutAdvancingCheckpoint(t *testing.T) 
 	sinkID := uuid.New()
 	store := &memoryExportStore{events: []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}}}
 	sink := &recordingSink{err: errors.New("sink unavailable")}
-	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return sink, nil })
+	worker := NewWorker(store, func(context.Context, uuid.UUID) (Sink, error) { return sink, nil })
 
 	result, err := worker.ExportAuditBatch(context.Background(), sinkID, 10)
 	if err == nil {
@@ -71,7 +71,7 @@ func TestAuditExportBatchRecordsSinkResolutionFailureAsAttempt(t *testing.T) {
 
 	sinkID := uuid.New()
 	store := &memoryExportStore{events: []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}}}
-	worker := NewWorker(store, func(uuid.UUID) (Sink, error) {
+	worker := NewWorker(store, func(context.Context, uuid.UUID) (Sink, error) {
 		return nil, errors.New("resolver unavailable")
 	})
 
@@ -94,7 +94,7 @@ func TestAuditExportBatchRetainsFailedAttemptWhenRetrySucceeds(t *testing.T) {
 	sinkID := uuid.New()
 	store := &memoryExportStore{events: []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}}}
 	sink := &failOnceSink{}
-	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return sink, nil })
+	worker := NewWorker(store, func(context.Context, uuid.UUID) (Sink, error) { return sink, nil })
 
 	if _, err := worker.ExportAuditBatch(context.Background(), sinkID, 10); err == nil {
 		t.Fatal("first ExportAuditBatch() expected failure")
@@ -116,7 +116,7 @@ func TestAuditExportBatchPersistsCancellationFailureWithDetachedContext(t *testi
 		events:            []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}},
 		honorCancellation: true,
 	}
-	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return contextErrorSink{}, nil })
+	worker := NewWorker(store, func(context.Context, uuid.UUID) (Sink, error) { return contextErrorSink{}, nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -139,7 +139,7 @@ func TestAuditExportBatchPersistsCommitFailure(t *testing.T) {
 		events:    []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}},
 		commitErr: errors.New("commit unavailable"),
 	}
-	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return &recordingSink{}, nil })
+	worker := NewWorker(store, func(context.Context, uuid.UUID) (Sink, error) { return &recordingSink{}, nil })
 
 	if _, err := worker.ExportAuditBatch(context.Background(), sinkID, 10); err == nil {
 		t.Fatal("ExportAuditBatch() expected commit failure")

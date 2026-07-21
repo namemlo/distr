@@ -10,7 +10,8 @@ PR-078 adds the client-neutral evidence layer for the v2 control plane:
 - direct-transaction and transactional-outbox append hooks with bounded payload
   redaction;
 - deterministic, tenant-scoped deployment evidence bundles built from the
-  connected correlation graph;
+  connected correlation graph, with the versioned canonical schema identifier
+  included in the checksum input;
 - ordered, idempotent export batches with immutable retry and lag evidence;
 - leased attempts with atomic stale-attempt recovery and background-safe failure
   persistence after cancellation or checkpoint-commit failure;
@@ -50,6 +51,15 @@ redaction, redact credential keys, authentication headers, cookies, private
 keys, credential URLs, and token patterns, and are limited to 32 KiB. Export
 configuration persists only a validated `secret:` reference and a checksum.
 
+Campaign audit events expose separate typed correlations for campaign drafts,
+published revisions, runs, wave definitions (`campaignWaveDefinitionId` in the
+API and `campaign_wave_definition_id` in migration 160), wave runs, member
+definitions, member runs, control requests, exclusions, prerequisite
+evaluations, and threshold evaluations. They carry revision and control-request
+checksums where applicable. Ambiguous legacy campaign, wave, `campaignWaveId`,
+`campaign_wave_id`, and campaign-checksum fields are not part of the API or
+persisted audit schema.
+
 Example sink request:
 
 ```json
@@ -78,6 +88,14 @@ deployment supplies an allowlisted sink adapter that resolves the stored
 reference through its approved secret provider. This keeps endpoint policy,
 credentials, DNS/IP controls, timeout, and retry ownership outside the generic
 database layer.
+
+Production export requires `operator_control_plane_v2`, a registered generic
+factory for the configured sink kind, and a secret-reference resolver. The
+resolver must return versioned configuration whose canonical checksum matches
+the sink's persisted `configChecksum`; raw secret environment values and
+adopter-specific providers are not part of the core contract. Without this
+wiring the worker fails closed: enabled lagging sinks retain failed attempts and
+lag alerts, and their checkpoints do not advance.
 
 ## Verification
 

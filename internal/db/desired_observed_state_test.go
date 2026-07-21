@@ -254,6 +254,60 @@ func TestObservationIngestionAutomaticallyOpensDriftAndMismatchCases(t *testing.
 	g.Expect(text).To(ContainSubstring("types.DriftClassConflict"))
 }
 
+func TestDesiredObservedAuditSkipsNoopAndUsesInjectedHook(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	desiredStateID := uuid.New()
+	var captured []types.ControlPlaneAuditEventInput
+	hook := ControlPlaneAuditAppendHookFunc(func(
+		_ context.Context,
+		input types.ControlPlaneAuditEventInput,
+	) error {
+		captured = append(captured, input)
+		return nil
+	})
+
+	ctx := WithControlPlaneDomainAuditHook(context.Background(), hook)
+	err := appendDesiredObservedAudit(ctx, false,
+		types.ControlPlaneAuditEventInput{
+			OrganizationID: organizationID,
+			EventType:      "desired_revision.pending",
+			Outcome:        "PENDING",
+			DesiredStateID: &desiredStateID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(captured).To(BeEmpty())
+
+	err = appendDesiredObservedAudit(ctx, true,
+		types.ControlPlaneAuditEventInput{
+			OrganizationID: organizationID,
+			EventType:      "desired_revision.pending",
+			Outcome:        "PENDING",
+			DesiredStateID: &desiredStateID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(captured).To(HaveLen(1))
+	g.Expect(captured[0].DesiredStateID).NotTo(BeNil())
+	g.Expect(*captured[0].DesiredStateID).To(Equal(desiredStateID))
+
+	auditFailure := errors.New("audit unavailable")
+	err = appendDesiredObservedAudit(WithControlPlaneDomainAuditHook(
+		context.Background(), ControlPlaneAuditAppendHookFunc(func(
+			_ context.Context,
+			_ types.ControlPlaneAuditEventInput,
+		) error {
+			return auditFailure
+		})), true, types.ControlPlaneAuditEventInput{
+		OrganizationID: organizationID,
+		EventType:      "desired_revision.pending",
+		Outcome:        "PENDING",
+		DesiredStateID: &desiredStateID,
+	})
+	g.Expect(errors.Is(err, auditFailure)).To(BeTrue())
+}
+
 func desiredObservedDigest(value string) string {
 	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(value)))
 }

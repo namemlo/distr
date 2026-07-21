@@ -315,13 +315,13 @@ git diff --check
 | 077 |       159 | Pending/active desired state, independent observations, drift and reconciliation           | Trust/freshness/sequence, observer mismatch, partial/unknown/failure, prior active retention.                       |
 | 078 |       160 | Correlated append-only audit, deterministic evidence bundles, external export              | Complete correlation, tenant isolation, redaction, ordered idempotent retry, sink failure/lag visibility.           |
 
-- [ ] Use separate worktrees for PR-071, PR-074, PR-075, PR-077, and PR-078 domain cores while the sequential campaign/executor dependencies stabilize.
-- [ ] PR-072 defines a compile-safe `CampaignObservationVerifier` interface. Until PR-077 registers the independent observer implementation, any prerequisite requiring an observation ID/checksum remains blocked; never bind it to the legacy executor projection.
-- [ ] PR-075 uses Ed25519 over the canonical intent payload and SHA-256 checksum. `keyId` resolves to the versioned public-key fingerprint frozen in the PR-074 adapter/config revision; the private key remains in the configured secret provider. Rotation publishes a new adapter/config revision with an overlap interval and explicit revocation evidence.
-- [ ] After PR-077 is final, instrument every v2 privileged mutation/state transition through PR-078's single append helper in the same transaction or outbox boundary.
-- [ ] PR-078 cross-cutting instrumentation covers plan draft/publication, policy, approval, calendar/freeze, admission/override, campaign/control, adapter assignment/resolution, execution/control, observation/desired-state, drift, and reconciliation repositories/handlers. Its final diff must include those owning files, not only `internal/auditexport`.
-- [ ] Rebase and merge only in order 071 → 078.
-- [ ] Run the exact focused command in each canonical PR task while its packages exist. After PR-078 is stacked, run this combined governance smoke; do not use it as a substitute for the per-slice commands.
+- [x] Use separate worktrees for PR-071, PR-074, PR-075, PR-077, and PR-078 domain cores while the sequential campaign/executor dependencies stabilize.
+- [x] PR-072 defines a compile-safe `CampaignObservationVerifier` interface. Until PR-077 registers the independent observer implementation, any prerequisite requiring an observation ID/checksum remains blocked; never bind it to the legacy executor projection.
+- [x] PR-075 uses Ed25519 over the canonical intent payload and SHA-256 checksum. `keyId` resolves to the versioned public-key fingerprint frozen in the PR-074 adapter/config revision; the private key remains in the configured secret provider. Rotation publishes a new adapter/config revision with an overlap interval and explicit revocation evidence.
+- [x] After PR-077 is final, instrument every v2 privileged mutation/state transition through PR-078's single append helper in the same transaction or outbox boundary.
+- [x] PR-078 cross-cutting instrumentation covers plan draft/publication, policy, approval, calendar/freeze, admission/override, campaign/control, adapter assignment/resolution, execution/control, observation/desired-state, drift, and reconciliation repositories/handlers. Its final diff includes those owning files, not only `internal/auditexport`.
+- [x] Rebase and merge only in order 071 → 078.
+- [x] Run the exact focused command in each canonical PR task while its packages exist. After PR-078 is stacked, run this combined governance smoke; do not use it as a substitute for the per-slice commands.
 
 ```powershell
 go test ./internal/campaigns ./internal/campaignworker ./internal/adapterresolution ./internal/executionprotocol ./internal/executionworker ./internal/desiredstate ./internal/observation ./internal/reconciliation ./internal/auditexport ./internal/db ./api ./internal/handlers -run 'Campaign|Adapter|ExecutionV2|Fence|Cancel|StatusQuery|Desired|Observation|Drift|Reconciliation|ControlPlaneAudit|EvidenceBundle|AuditExport' -count=1

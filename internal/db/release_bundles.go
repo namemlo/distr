@@ -79,7 +79,15 @@ var ErrReleaseBundleIdempotencyConflict = errors.New("release bundle idempotency
 
 func CreateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error {
 	return RunTx(ctx, func(ctx context.Context) error {
-		return createReleaseBundle(ctx, bundle)
+		if err := createReleaseBundle(ctx, bundle); err != nil {
+			return err
+		}
+		return recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+			*bundle,
+			releaseControlPlaneEventType(*bundle, "draft.created"),
+			nil,
+			"SUCCEEDED",
+		))
 	})
 }
 
@@ -136,7 +144,21 @@ func CreateReleaseBundleWithIdempotency(ctx context.Context, bundle *types.Relea
 		if err := insertReleaseBundle(ctx, bundle); err != nil {
 			return err
 		}
-		return insertReleaseBundleIdempotencyRecord(ctx, bundle.OrganizationID, keyHash, bundle.CanonicalChecksum, bundle.ID)
+		if err := insertReleaseBundleIdempotencyRecord(
+			ctx,
+			bundle.OrganizationID,
+			keyHash,
+			bundle.CanonicalChecksum,
+			bundle.ID,
+		); err != nil {
+			return err
+		}
+		return recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+			*bundle,
+			releaseControlPlaneEventType(*bundle, "draft.created"),
+			nil,
+			"SUCCEEDED",
+		))
 	})
 }
 
@@ -520,7 +542,12 @@ func UpdateReleaseBundle(ctx context.Context, bundle *types.ReleaseBundle) error
 			return err
 		}
 		*bundle = *loaded
-		return nil
+		return recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+			*bundle,
+			releaseControlPlaneEventType(*bundle, "draft.updated"),
+			nil,
+			"SUCCEEDED",
+		))
 	})
 }
 
@@ -561,17 +588,34 @@ func ValidateReleaseBundle(
 	id uuid.UUID,
 	organizationID uuid.UUID,
 ) (releasebundles.ValidationResult, error) {
-	bundle, err := GetReleaseBundle(ctx, id, organizationID)
-	if err != nil {
-		return releasebundles.ValidationResult{}, err
-	}
-	if bundle.Kind == types.ReleaseBundleKindProduct {
-		return releasebundles.ValidationResult{}, fmt.Errorf(
-			"could not validate Product Release through generic ReleaseBundle API: %w",
-			apierrors.ErrConflict,
-		)
-	}
-	return validateReleaseBundle(ctx, *bundle)
+	result := releasebundles.NewValidResult()
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		bundle, err := getReleaseBundle(txCtx, id, organizationID, false)
+		if err != nil {
+			return err
+		}
+		if bundle.Kind == types.ReleaseBundleKindProduct {
+			return fmt.Errorf(
+				"could not validate Product Release through generic ReleaseBundle API: %w",
+				apierrors.ErrConflict,
+			)
+		}
+		result, err = validateReleaseBundle(txCtx, *bundle)
+		if err != nil {
+			return err
+		}
+		outcome := "SUCCEEDED"
+		if !result.Valid {
+			outcome = "REJECTED"
+		}
+		return recordReleaseControlPlaneAuditMutation(txCtx, releaseControlPlaneAuditInput(
+			*bundle,
+			releaseControlPlaneEventType(*bundle, "validated"),
+			nil,
+			outcome,
+		))
+	})
+	return result, err
 }
 
 func PublishReleaseBundle(
@@ -650,6 +694,14 @@ func PublishReleaseBundleWithProvenance(
 				)); err != nil {
 					return err
 				}
+				if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+					*bundle,
+					releaseControlPlaneEventType(*bundle, "publish.rejected"),
+					&actorUserAccountID,
+					"REJECTED",
+				)); err != nil {
+					return err
+				}
 				operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrBadRequest)
 				return nil
 			}
@@ -667,6 +719,14 @@ func PublishReleaseBundleWithProvenance(
 			)); err != nil {
 				return err
 			}
+			if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+				*bundle,
+				releaseControlPlaneEventType(*bundle, "publish.rejected"),
+				&actorUserAccountID,
+				"REJECTED",
+			)); err != nil {
+				return err
+			}
 			operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrConflict)
 			return nil
 		}
@@ -681,6 +741,14 @@ func PublishReleaseBundleWithProvenance(
 				types.ReleaseBundleAuditEventTypeStateTransitionRejected,
 				&toStatus,
 				"validation failed",
+			)); err != nil {
+				return err
+			}
+			if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+				*bundle,
+				releaseControlPlaneEventType(*bundle, "publish.rejected"),
+				&actorUserAccountID,
+				"REJECTED",
 			)); err != nil {
 				return err
 			}
@@ -708,6 +776,14 @@ func PublishReleaseBundleWithProvenance(
 				)); err != nil {
 					return err
 				}
+				if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+					*bundle,
+					releaseControlPlaneEventType(*bundle, "publish.rejected"),
+					&actorUserAccountID,
+					"REJECTED",
+				)); err != nil {
+					return err
+				}
 				operationErr = fmt.Errorf("could not publish ReleaseBundle: %w", apierrors.ErrBadRequest)
 				return nil
 			}
@@ -722,6 +798,14 @@ func PublishReleaseBundleWithProvenance(
 					types.ReleaseBundleAuditEventTypeStateTransitionRejected,
 					&toStatus,
 					"component version artifact identity conflict",
+				)); err != nil {
+					return err
+				}
+				if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+					*bundle,
+					releaseControlPlaneEventType(*bundle, "publish.rejected"),
+					&actorUserAccountID,
+					"REJECTED",
 				)); err != nil {
 					return err
 				}
@@ -752,6 +836,14 @@ func PublishReleaseBundleWithProvenance(
 			types.ReleaseBundleAuditEventTypePublished,
 			&toStatus,
 			"",
+		)); err != nil {
+			return err
+		}
+		if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+			*updated,
+			releaseControlPlaneEventType(*updated, "published"),
+			&actorUserAccountID,
+			"SUCCEEDED",
 		)); err != nil {
 			return err
 		}
@@ -1264,6 +1356,14 @@ func transitionReleaseBundle(
 			)); err != nil {
 				return err
 			}
+			if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+				*bundle,
+				releaseControlPlaneEventType(*bundle, strings.ToLower(string(toStatus))+".rejected"),
+				&actorUserAccountID,
+				"REJECTED",
+			)); err != nil {
+				return err
+			}
 			operationErr = fmt.Errorf("could not transition ReleaseBundle: %w", apierrors.ErrConflict)
 			return nil
 		}
@@ -1280,7 +1380,12 @@ func transitionReleaseBundle(
 		)); err != nil {
 			return err
 		}
-		return nil
+		return recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+			*updated,
+			releaseControlPlaneEventType(*updated, strings.ToLower(string(toStatus))),
+			&actorUserAccountID,
+			"SUCCEEDED",
+		))
 	})
 	if err != nil {
 		return updated, err

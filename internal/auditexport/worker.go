@@ -25,7 +25,7 @@ type Sink interface {
 	Export(context.Context, types.ControlPlaneAuditEvent) error
 }
 
-type SinkResolver func(uuid.UUID) (Sink, error)
+type SinkResolver func(context.Context, uuid.UUID) (Sink, error)
 
 type Worker struct {
 	store       Store
@@ -81,7 +81,7 @@ func (w *Worker) ExportAuditBatch(
 	if err != nil {
 		return result, fmt.Errorf("start audit export attempt: %w", err)
 	}
-	sink, err := w.resolveSink(sinkID)
+	sink, err := w.resolveSink(ctx, sinkID)
 	if err != nil {
 		var persistenceErr error
 		result.CheckpointLag, persistenceErr = w.persistAuditExportFailure(

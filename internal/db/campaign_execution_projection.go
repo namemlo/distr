@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -145,7 +146,7 @@ func projectCampaignExecutionRunning(
 	ctx context.Context,
 	attempt types.ExecutionAttempt,
 ) error {
-	_, err := internalctx.GetDb(ctx).Exec(ctx, campaignExecutionRunningProjectionSQL, pgx.NamedArgs{
+	command, err := internalctx.GetDb(ctx).Exec(ctx, campaignExecutionRunningProjectionSQL, pgx.NamedArgs{
 		"organizationId": attempt.OrganizationID,
 		"taskId":         attempt.TaskID,
 		"attemptId":      attempt.ID,
@@ -153,7 +154,12 @@ func projectCampaignExecutionRunning(
 	if err != nil {
 		return fmt.Errorf("project running campaign execution: %w", err)
 	}
-	return nil
+	if command.RowsAffected() == 0 {
+		return nil
+	}
+	return recordCampaignExecutionProjectionAudit(
+		ctx, attempt, "campaign.execution.running", "RUNNING",
+	)
 }
 
 func projectCampaignExecutionTerminal(
@@ -164,8 +170,12 @@ func projectCampaignExecutionTerminal(
 		"organizationId": attempt.OrganizationID,
 		"taskId":         attempt.TaskID,
 	}
-	if _, err := internalctx.GetDb(ctx).Exec(ctx, campaignMemberExecutionProjectionSQL, args); err != nil {
+	command, err := internalctx.GetDb(ctx).Exec(ctx, campaignMemberExecutionProjectionSQL, args)
+	if err != nil {
 		return fmt.Errorf("project campaign member execution: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return nil
 	}
 	waveRunID, found, err := campaignWaveRunIDForTask(
 		ctx, attempt.OrganizationID, attempt.TaskID,
@@ -173,7 +183,62 @@ func projectCampaignExecutionTerminal(
 	if err != nil || !found {
 		return err
 	}
-	return projectCampaignWaveExecution(ctx, attempt.OrganizationID, waveRunID)
+	if err := projectCampaignWaveExecution(ctx, attempt.OrganizationID, waveRunID); err != nil {
+		return err
+	}
+	return recordCampaignExecutionProjectionAudit(
+		ctx, attempt, "campaign.execution.terminal", string(attempt.Status),
+	)
+}
+
+func recordCampaignExecutionUncertainAudit(
+	ctx context.Context,
+	attempt types.ExecutionAttempt,
+) error {
+	return recordCampaignExecutionProjectionAudit(
+		ctx, attempt, "campaign.execution.uncertain", string(attempt.Status),
+	)
+}
+
+func recordCampaignExecutionProjectionAudit(
+	ctx context.Context,
+	attempt types.ExecutionAttempt,
+	eventType, outcome string,
+) error {
+	executionID := attempt.Identity.ExecutionID
+	if attempt.ID == uuid.Nil || executionID == uuid.Nil {
+		return apierrors.NewConflict("campaign execution audit requires immutable execution identity")
+	}
+	lineage, err := loadCampaignMemberAuditLineageForTask(
+		ctx, attempt.OrganizationID, attempt.TaskID,
+	)
+	if errors.Is(err, apierrors.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return recordCampaignAuditMutation(
+		ctx, campaignExecutionProjectionAuditInput(lineage, attempt, eventType, outcome),
+	)
+}
+
+func campaignExecutionProjectionAuditInput(
+	lineage campaignAuditLineage,
+	attempt types.ExecutionAttempt,
+	eventType, outcome string,
+) types.ControlPlaneAuditEventInput {
+	executionID := attempt.Identity.ExecutionID
+	input := campaignMemberAuditInput(lineage, eventType, nil)
+	input.Outcome = outcome
+	input.ExecutionID = &executionID
+	input.ExecutionAttemptID = &attempt.ID
+	input.TaskID = &attempt.TaskID
+	input.StepRunID = &attempt.StepRunID
+	input.DeploymentTargetID = &attempt.DeploymentTargetID
+	input.DeploymentPlanChecksum = attempt.PlanChecksum
+	input.ArtifactDigest = attempt.ArtifactDigest
+	return input
 }
 
 func campaignWaveRunIDForTask(

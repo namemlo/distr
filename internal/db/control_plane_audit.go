@@ -49,9 +49,19 @@ const controlPlaneAuditEventColumns = `
 	deployment_freeze_id,
 	admission_decision_id,
 	emergency_override_id,
-	campaign_id,
-	wave_id,
+	campaign_draft_id,
+	campaign_revision_id,
+	campaign_run_id,
+	campaign_wave_definition_id,
+	campaign_wave_run_id,
+	campaign_member_id,
+	campaign_member_run_id,
+	campaign_control_request_id,
+	campaign_exclusion_id,
+	campaign_prerequisite_evaluation_id,
+	campaign_threshold_evaluation_id,
 	execution_id,
+	execution_attempt_id,
 	adapter_revision_id,
 	desired_state_id,
 	observation_id,
@@ -77,7 +87,8 @@ const controlPlaneAuditEventColumns = `
 	approval_checksum,
 	calendar_checksum,
 	admission_checksum,
-	campaign_checksum,
+	campaign_revision_checksum,
+	campaign_control_checksum,
 	execution_checksum,
 	desired_state_checksum,
 	observation_checksum,
@@ -146,9 +157,19 @@ func AppendControlPlaneAuditEventInCurrentBoundary(
 				deployment_freeze_id,
 				admission_decision_id,
 				emergency_override_id,
-				campaign_id,
-				wave_id,
+				campaign_draft_id,
+				campaign_revision_id,
+				campaign_run_id,
+				campaign_wave_definition_id,
+				campaign_wave_run_id,
+				campaign_member_id,
+				campaign_member_run_id,
+				campaign_control_request_id,
+				campaign_exclusion_id,
+				campaign_prerequisite_evaluation_id,
+				campaign_threshold_evaluation_id,
 				execution_id,
+				execution_attempt_id,
 				adapter_revision_id,
 				desired_state_id,
 				observation_id,
@@ -174,7 +195,8 @@ func AppendControlPlaneAuditEventInCurrentBoundary(
 				approval_checksum,
 				calendar_checksum,
 				admission_checksum,
-				campaign_checksum,
+				campaign_revision_checksum,
+				campaign_control_checksum,
 				execution_checksum,
 				desired_state_checksum,
 				observation_checksum,
@@ -207,9 +229,19 @@ func AppendControlPlaneAuditEventInCurrentBoundary(
 				@deploymentFreezeId,
 				@admissionDecisionId,
 				@emergencyOverrideId,
-				@campaignId,
-				@waveId,
+				@campaignDraftId,
+				@campaignRevisionId,
+				@campaignRunId,
+				@campaignWaveDefinitionId,
+				@campaignWaveRunId,
+				@campaignMemberId,
+				@campaignMemberRunId,
+				@campaignControlRequestId,
+				@campaignExclusionId,
+				@campaignPrerequisiteEvaluationId,
+				@campaignThresholdEvaluationId,
 				@executionId,
+				@executionAttemptId,
 				@adapterRevisionId,
 				@desiredStateId,
 				@observationId,
@@ -235,7 +267,8 @@ func AppendControlPlaneAuditEventInCurrentBoundary(
 				@approvalChecksum,
 				@calendarChecksum,
 				@admissionChecksum,
-				@campaignChecksum,
+				@campaignRevisionChecksum,
+				@campaignControlChecksum,
 				@executionChecksum,
 				@desiredStateChecksum,
 				@observationChecksum,
@@ -246,73 +279,123 @@ func AppendControlPlaneAuditEventInCurrentBoundary(
 				@payloadRedacted,
 				@payloadTruncated
 			)
+			ON CONFLICT (organization_id, event_type, execution_attempt_id)
+			WHERE execution_attempt_id IS NOT NULL
+			  AND event_type IN (
+			    'campaign.execution.running',
+			    'campaign.execution.terminal',
+			    'campaign.execution.uncertain',
+			    'campaign.execution.reconciled'
+			  )
+			DO NOTHING
 			RETURNING `+controlPlaneAuditEventColumns,
 		pgx.NamedArgs{
-			"organizationId":            input.OrganizationID,
-			"eventType":                 strings.TrimSpace(input.EventType),
-			"actorId":                   input.ActorID,
-			"outcome":                   strings.TrimSpace(input.Outcome),
-			"releaseId":                 input.ReleaseID,
-			"componentReleaseId":        input.ComponentReleaseID,
-			"productReleaseId":          input.ProductReleaseID,
-			"targetConfigId":            input.TargetConfigID,
-			"deploymentPlanId":          input.DeploymentPlanID,
-			"deploymentPolicyId":        input.DeploymentPolicyID,
-			"deploymentPolicyVersionId": input.DeploymentPolicyVersionID,
-			"approvalId":                input.ApprovalID,
-			"maintenanceCalendarId":     input.MaintenanceCalendarID,
-			"deploymentFreezeId":        input.DeploymentFreezeID,
-			"admissionDecisionId":       input.AdmissionDecisionID,
-			"emergencyOverrideId":       input.EmergencyOverrideID,
-			"campaignId":                input.CampaignID,
-			"waveId":                    input.WaveID,
-			"executionId":               input.ExecutionID,
-			"adapterRevisionId":         input.AdapterRevisionID,
-			"desiredStateId":            input.DesiredStateID,
-			"observationId":             input.ObservationID,
-			"driftCaseId":               input.DriftCaseID,
-			"reconciliationId":          input.ReconciliationID,
-			"deploymentTargetId":        input.DeploymentTargetID,
-			"environmentId":             input.EnvironmentID,
-			"customerOrganizationId":    input.CustomerOrganizationID,
-			"deploymentUnitId":          input.DeploymentUnitID,
-			"componentId":               input.ComponentID,
-			"taskId":                    input.TaskID,
-			"stepRunId":                 input.StepRunID,
-			"auditExportSinkId":         input.AuditExportSinkID,
-			"auditExportAttemptId":      input.AuditExportAttemptID,
-			"releaseChecksum":           input.ReleaseChecksum,
-			"componentReleaseChecksum":  input.ComponentReleaseChecksum,
-			"productReleaseChecksum":    input.ProductReleaseChecksum,
-			"artifactDigest":            input.ArtifactDigest,
-			"manifestDigest":            input.ManifestDigest,
-			"targetConfigChecksum":      input.TargetConfigChecksum,
-			"deploymentPlanChecksum":    input.DeploymentPlanChecksum,
-			"policyChecksum":            input.PolicyChecksum,
-			"approvalChecksum":          input.ApprovalChecksum,
-			"calendarChecksum":          input.CalendarChecksum,
-			"admissionChecksum":         input.AdmissionChecksum,
-			"campaignChecksum":          input.CampaignChecksum,
-			"executionChecksum":         input.ExecutionChecksum,
-			"desiredStateChecksum":      input.DesiredStateChecksum,
-			"observationChecksum":       input.ObservationChecksum,
-			"driftChecksum":             input.DriftChecksum,
-			"reconciliationChecksum":    input.ReconciliationChecksum,
-			"auditExportConfigChecksum": input.AuditExportConfigChecksum,
-			"payload":                   nullableJSON(payload),
-			"payloadRedacted":           payloadRedacted,
-			"payloadTruncated":          payloadTruncated,
+			"organizationId":                   input.OrganizationID,
+			"eventType":                        strings.TrimSpace(input.EventType),
+			"actorId":                          input.ActorID,
+			"outcome":                          strings.TrimSpace(input.Outcome),
+			"releaseId":                        input.ReleaseID,
+			"componentReleaseId":               input.ComponentReleaseID,
+			"productReleaseId":                 input.ProductReleaseID,
+			"targetConfigId":                   input.TargetConfigID,
+			"deploymentPlanId":                 input.DeploymentPlanID,
+			"deploymentPolicyId":               input.DeploymentPolicyID,
+			"deploymentPolicyVersionId":        input.DeploymentPolicyVersionID,
+			"approvalId":                       input.ApprovalID,
+			"maintenanceCalendarId":            input.MaintenanceCalendarID,
+			"deploymentFreezeId":               input.DeploymentFreezeID,
+			"admissionDecisionId":              input.AdmissionDecisionID,
+			"emergencyOverrideId":              input.EmergencyOverrideID,
+			"campaignDraftId":                  input.CampaignDraftID,
+			"campaignRevisionId":               input.CampaignRevisionID,
+			"campaignRunId":                    input.CampaignRunID,
+			"campaignWaveDefinitionId":         input.CampaignWaveDefinitionID,
+			"campaignWaveRunId":                input.CampaignWaveRunID,
+			"campaignMemberId":                 input.CampaignMemberID,
+			"campaignMemberRunId":              input.CampaignMemberRunID,
+			"campaignControlRequestId":         input.CampaignControlRequestID,
+			"campaignExclusionId":              input.CampaignExclusionID,
+			"campaignPrerequisiteEvaluationId": input.CampaignPrerequisiteEvaluationID,
+			"campaignThresholdEvaluationId":    input.CampaignThresholdEvaluationID,
+			"executionId":                      input.ExecutionID,
+			"executionAttemptId":               input.ExecutionAttemptID,
+			"adapterRevisionId":                input.AdapterRevisionID,
+			"desiredStateId":                   input.DesiredStateID,
+			"observationId":                    input.ObservationID,
+			"driftCaseId":                      input.DriftCaseID,
+			"reconciliationId":                 input.ReconciliationID,
+			"deploymentTargetId":               input.DeploymentTargetID,
+			"environmentId":                    input.EnvironmentID,
+			"customerOrganizationId":           input.CustomerOrganizationID,
+			"deploymentUnitId":                 input.DeploymentUnitID,
+			"componentId":                      input.ComponentID,
+			"taskId":                           input.TaskID,
+			"stepRunId":                        input.StepRunID,
+			"auditExportSinkId":                input.AuditExportSinkID,
+			"auditExportAttemptId":             input.AuditExportAttemptID,
+			"releaseChecksum":                  input.ReleaseChecksum,
+			"componentReleaseChecksum":         input.ComponentReleaseChecksum,
+			"productReleaseChecksum":           input.ProductReleaseChecksum,
+			"artifactDigest":                   input.ArtifactDigest,
+			"manifestDigest":                   input.ManifestDigest,
+			"targetConfigChecksum":             input.TargetConfigChecksum,
+			"deploymentPlanChecksum":           input.DeploymentPlanChecksum,
+			"policyChecksum":                   input.PolicyChecksum,
+			"approvalChecksum":                 input.ApprovalChecksum,
+			"calendarChecksum":                 input.CalendarChecksum,
+			"admissionChecksum":                input.AdmissionChecksum,
+			"campaignRevisionChecksum":         input.CampaignRevisionChecksum,
+			"campaignControlChecksum":          input.CampaignControlChecksum,
+			"executionChecksum":                input.ExecutionChecksum,
+			"desiredStateChecksum":             input.DesiredStateChecksum,
+			"observationChecksum":              input.ObservationChecksum,
+			"driftChecksum":                    input.DriftChecksum,
+			"reconciliationChecksum":           input.ReconciliationChecksum,
+			"auditExportConfigChecksum":        input.AuditExportConfigChecksum,
+			"payload":                          nullableJSON(payload),
+			"payloadRedacted":                  payloadRedacted,
+			"payloadTruncated":                 payloadTruncated,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not append control-plane audit event: %w", err)
 	}
 	value, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ControlPlaneAuditEvent])
+	if errors.Is(err, pgx.ErrNoRows) && input.ExecutionAttemptID != nil {
+		return getControlPlaneAuditAttemptEvent(
+			ctx, input.OrganizationID, strings.TrimSpace(input.EventType), *input.ExecutionAttemptID,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("could not scan control-plane audit event: %w", err)
 	}
 	if err := claimControlPlaneAuditCorrelations(ctx, value, input.Correlations()); err != nil {
 		return nil, err
+	}
+	return &value, nil
+}
+
+func getControlPlaneAuditAttemptEvent(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	eventType string,
+	executionAttemptID uuid.UUID,
+) (*types.ControlPlaneAuditEvent, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+controlPlaneAuditEventColumns+`
+		FROM ControlPlaneAuditEvent
+		WHERE organization_id = @organizationId
+		  AND event_type = @eventType
+		  AND execution_attempt_id = @executionAttemptId`, pgx.NamedArgs{
+		"organizationId": organizationID, "eventType": eventType,
+		"executionAttemptId": executionAttemptID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not query replayed control-plane audit event: %w", err)
+	}
+	value, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ControlPlaneAuditEvent])
+	if err != nil {
+		return nil, fmt.Errorf("could not scan replayed control-plane audit event: %w", err)
 	}
 	return &value, nil
 }
@@ -534,7 +617,7 @@ func CreateAuditExportSink(
 		}
 		return RecordControlPlaneAuditMutation(
 			ctx,
-			DirectControlPlaneAuditAppendHook,
+			DirectControlPlaneAuditAppendHook(),
 			auditExportSinkCreatedEvent(input, *sink),
 		)
 	})
@@ -1120,7 +1203,8 @@ func controlPlaneAuditChecksumsValid(input types.ControlPlaneAuditEventInput) bo
 		input.ApprovalChecksum,
 		input.CalendarChecksum,
 		input.AdmissionChecksum,
-		input.CampaignChecksum,
+		input.CampaignRevisionChecksum,
+		input.CampaignControlChecksum,
 		input.ExecutionChecksum,
 		input.DesiredStateChecksum,
 		input.ObservationChecksum,

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/distr-sh/distr/internal/auditexport"
 	"github.com/distr-sh/distr/internal/buildconfig"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/env"
@@ -54,6 +55,8 @@ type Registry struct {
 	s3Client                    *s3.Client
 	targetConfigObjectVerifier  targetconfig.ObjectVerifier
 	executionRuntime            executionruntime.Dependencies
+	auditExportSinkFactories    auditexport.ProductionSinkFactories
+	auditExportSecretResolver   auditexport.SecretReferenceResolver
 }
 
 func New(ctx context.Context, options ...RegistryOption) (*Registry, error) {

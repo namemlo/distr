@@ -173,7 +173,30 @@ func CreateProductReleaseDraft(
 			return err
 		}
 		created, err = getReleaseBundle(ctx, bundle.ID, bundle.OrganizationID, false)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+			*created,
+			"product_release.draft.created",
+			nil,
+			"SUCCEEDED",
+		)); err != nil {
+			return err
+		}
+		for _, component := range manifest.Components {
+			if err := recordReleaseControlPlaneAuditMutation(
+				ctx,
+				productReleaseComponentAuditInput(
+					*created,
+					component,
+					"product_release.component.pinned",
+				),
+			); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -207,11 +230,28 @@ func ValidateProductRelease(
 	id uuid.UUID,
 	organizationID uuid.UUID,
 ) ([]types.ProductReleaseValidationIssue, error) {
-	_, manifest, err := GetProductRelease(ctx, id, organizationID)
-	if err != nil {
-		return nil, err
-	}
-	return validateProductReleaseEligibility(ctx, *manifest, organizationID, false)
+	var issues []types.ProductReleaseValidationIssue
+	err := RunTx(ctx, func(txCtx context.Context) error {
+		bundle, manifest, err := GetProductRelease(txCtx, id, organizationID)
+		if err != nil {
+			return err
+		}
+		issues, err = validateProductReleaseEligibility(txCtx, *manifest, organizationID, false)
+		if err != nil {
+			return err
+		}
+		outcome := "SUCCEEDED"
+		if len(issues) > 0 {
+			outcome = "REJECTED"
+		}
+		return recordReleaseControlPlaneAuditMutation(txCtx, releaseControlPlaneAuditInput(
+			*bundle,
+			"product_release.validated",
+			nil,
+			outcome,
+		))
+	})
+	return issues, err
 }
 
 func GetProductReleaseGraph(
@@ -286,6 +326,14 @@ func PublishProductRelease(
 				published = bundle
 				return nil
 			}
+			if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+				*bundle,
+				"product_release.publish.rejected",
+				&actorUserAccountID,
+				"REJECTED",
+			)); err != nil {
+				return err
+			}
 			operationErr = apierrors.NewConflict("published Product Release does not match frozen checksum")
 			return nil
 		}
@@ -297,6 +345,14 @@ func PublishProductRelease(
 				types.ReleaseBundleAuditEventTypeStateTransitionRejected,
 				&toStatus,
 				releaseBundleTransitionRejectedReason(bundle.Status, toStatus),
+			)); err != nil {
+				return err
+			}
+			if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+				*bundle,
+				"product_release.publish.rejected",
+				&actorUserAccountID,
+				"REJECTED",
 			)); err != nil {
 				return err
 			}
@@ -321,6 +377,14 @@ func PublishProductRelease(
 			)); err != nil {
 				return err
 			}
+			if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+				*bundle,
+				"product_release.publish.rejected",
+				&actorUserAccountID,
+				"REJECTED",
+			)); err != nil {
+				return err
+			}
 			operationErr = &ProductReleaseValidationError{Issues: issues}
 			return nil
 		}
@@ -340,6 +404,14 @@ func PublishProductRelease(
 			types.ReleaseBundleAuditEventTypePublished,
 			&toStatus,
 			"",
+		)); err != nil {
+			return err
+		}
+		if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+			*updated,
+			"product_release.published",
+			&actorUserAccountID,
+			"SUCCEEDED",
 		)); err != nil {
 			return err
 		}

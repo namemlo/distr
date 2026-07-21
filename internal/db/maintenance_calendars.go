@@ -419,7 +419,10 @@ func PublishMaintenanceCalendar(
 			return err
 		}
 		published = &version
-		return nil
+		return recordGovernanceAuditMutation(
+			txCtx,
+			maintenanceCalendarPublishedAuditEvent(version),
+		)
 	})
 	if err != nil {
 		return nil, err
@@ -883,7 +886,10 @@ func PublishDeploymentFreeze(
 			return err
 		}
 		published = &revision
-		return nil
+		return recordGovernanceAuditMutation(
+			txCtx,
+			deploymentFreezePublishedAuditEvent(revision),
+		)
 	})
 	if err != nil {
 		return nil, err

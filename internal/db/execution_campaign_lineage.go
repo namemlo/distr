@@ -2,11 +2,13 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -51,7 +53,11 @@ func BindCampaignMemberTaskExecution(
 		"deploymentTargetID": binding.DeploymentTargetID,
 	}).Scan(&insertedID)
 	if err == nil {
-		return nil
+		event, eventErr := campaignLineageBoundAuditEvent(binding)
+		if eventErr != nil {
+			return eventErr
+		}
+		return appendExecutionV2Audit(ctx, event)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("bind campaign member task execution: %w", err)
@@ -78,6 +84,31 @@ func BindCampaignMemberTaskExecution(
 		return apierrors.NewConflict("task is already bound to different campaign member lineage")
 	}
 	return nil
+}
+
+func campaignLineageBoundAuditEvent(
+	binding CampaignMemberTaskExecutionBinding,
+) (types.ControlPlaneAuditEventInput, error) {
+	payload, err := json.Marshal(map[string]any{
+		"bindingId":           binding.ID,
+		"campaignRunId":       binding.CampaignRunID,
+		"campaignMemberRunId": binding.CampaignMemberRunID,
+	})
+	if err != nil {
+		return types.ControlPlaneAuditEventInput{}, fmt.Errorf("marshal campaign lineage audit: %w", err)
+	}
+	planID, taskID, targetID := binding.DeploymentPlanID, binding.TaskID, binding.DeploymentTargetID
+	return types.ControlPlaneAuditEventInput{
+		OrganizationID:      binding.OrganizationID,
+		EventType:           "execution.campaign_lineage_bound",
+		Outcome:             "BOUND",
+		CampaignRunID:       &binding.CampaignRunID,
+		CampaignMemberRunID: &binding.CampaignMemberRunID,
+		DeploymentPlanID:    &planID,
+		TaskID:              &taskID,
+		DeploymentTargetID:  &targetID,
+		Payload:             payload,
+	}, nil
 }
 
 func validateCampaignMemberTaskExecutionBinding(
