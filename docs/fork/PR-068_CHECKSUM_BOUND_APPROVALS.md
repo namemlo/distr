@@ -102,5 +102,5 @@ exact idempotent retry matching, optimistic-revision conflict, row-lock and keys
 expiration/supersession/material invalidation, campaign-member blocking, strict API parsing, mapping, and the
 mutation kill switch.
 
-Live PostgreSQL 16/18 migrations and repositories, the complete stacked suite, containers, and browser verification
-remain final integration gates because the speculative base does not yet contain migrations 141-148.
+Migrations 141 through 150 are present in sequence on the integrated governance stack. Live PostgreSQL 16/18
+migration/repository checks, the complete stacked suite, containers, and browser verification remain final gates.

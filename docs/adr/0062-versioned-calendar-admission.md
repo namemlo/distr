@@ -59,8 +59,8 @@ checksums. Existing v1 deployment and agent behavior is unchanged because this s
 governance APIs and pure evaluation.
 
 The application must submit the provider's IANA rule version and verify its exact reported rule-data identity as
-part of build/deployment evidence. Migration 151 is speculative until migrations 141 through 150 are integrated
-and must be rebased in sequence before live application.
+part of build/deployment evidence. Migrations 141 through 151 are present in sequence on the integrated governance
+stack; migration lint and live sequential application remain required verification gates.
 
 ## Alternatives Considered
 
