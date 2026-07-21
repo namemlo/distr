@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -413,8 +414,11 @@ func importExecutionReconciliationHandler() http.HandlerFunc {
 			respondExecutionV2Error(w, apierrors.NewConflict("reconciliation evidence scope mismatch"))
 			return
 		}
-		err = db.ImportReconciliationStatus(
-			r.Context(), api.ReconciliationEvidenceToTypes(evidence, request.Evidence),
+		err = importReconciliationStatusWithDispatch(
+			r.Context(),
+			api.ReconciliationEvidenceToTypes(evidence, request.Evidence),
+			db.ImportReconciliationStatusWithTask,
+			executionworker.DispatchReadyTaskSteps,
 		)
 		if err == nil && evidence.RetryRequested {
 			err = executionprotocol.BridgeCampaignRetryIfConfigured(
@@ -427,6 +431,19 @@ func importExecutionReconciliationHandler() http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func importReconciliationStatusWithDispatch(
+	ctx context.Context,
+	input types.ReconciliationStatusInput,
+	importStatus func(context.Context, types.ReconciliationStatusInput) (*types.Task, error),
+	dispatch func(context.Context, types.Task) error,
+) error {
+	task, err := importStatus(ctx, input)
+	if err == nil && task != nil {
+		err = dispatch(ctx, *task)
+	}
+	return err
 }
 
 func executionV2AttemptID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {

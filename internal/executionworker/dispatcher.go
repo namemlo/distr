@@ -169,6 +169,25 @@ func DispatchCreatedTasks(ctx context.Context, tasks []types.Task) error {
 	return nil
 }
 
+// DispatchRecoveredTasks dispatches the ready StepRuns loaded by the bounded
+// recovery query. It deliberately does not reload each task's steps, keeping a
+// recovery tick to a fixed number of database queries.
+func DispatchRecoveredTasks(ctx context.Context, tasks []types.Task) error {
+	for _, task := range tasks {
+		if task.ProtocolVersion == types.ExecutionProtocolVersionV1 {
+			continue
+		}
+		dispatcher, ok := ctx.Value(protocolDispatcherContextKey{}).(*ProtocolDispatcher)
+		if !ok || dispatcher == nil {
+			return errors.New("execution protocol dispatcher is not configured")
+		}
+		if err := dispatchReadyTaskSteps(ctx, dispatcher, task, task.StepRuns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func DispatchTaskRetry(ctx context.Context, task types.Task) error {
 	if task.ProtocolVersion != types.ExecutionProtocolVersionV2 {
 		return errors.New("execution retry requires protocol v2")
@@ -193,6 +212,15 @@ func DispatchReadyTaskSteps(ctx context.Context, task types.Task) error {
 	if err != nil {
 		return fmt.Errorf("load execution v2 ready steps: %w", err)
 	}
+	return dispatchReadyTaskSteps(ctx, dispatcher, task, steps)
+}
+
+func dispatchReadyTaskSteps(
+	ctx context.Context,
+	dispatcher *ProtocolDispatcher,
+	task types.Task,
+	steps []types.StepRun,
+) error {
 	for _, step := range steps {
 		if _, err := dispatcher.Dispatch(ctx, task.ProtocolVersion, DispatchRequest{
 			OrganizationID: task.OrganizationID, DeploymentTargetID: task.DeploymentTargetID,

@@ -193,6 +193,34 @@ func TestDispatchReadyTaskStepsIsNoOpWhenNoDependencyReadyStepRemains(t *testing
 	g.Expect(creator.calls).To(Equal(0))
 }
 
+func TestDispatchRecoveredTasksUsesPreloadedReadyStepsWithoutRepositoryLookup(t *testing.T) {
+	g := NewWithT(t)
+	creator := &attemptCreatorStub{}
+	loader := &readyStepRunsLoaderStub{err: fmt.Errorf("recovery must not query steps per task")}
+	dispatcher := NewProtocolDispatcher(nil, NewDispatcher(admissionGateStub{decision: AdmissionDecision{
+		OperatorFlag: true, ExecutorFlag: true, ScopedEnrollment: true,
+		PlanApproved: true, PlanAdmitted: true, AdapterPreflight: true,
+	}}, creator))
+	dispatcher.readySteps = loader
+	task := types.Task{
+		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		EnvironmentID: uuid.New(), DeploymentPlanID: uuid.New(),
+		ProtocolVersion: types.ExecutionProtocolVersionV2,
+		StepRuns: []types.StepRun{
+			{ID: uuid.New(), StepKey: "prepare", Status: types.StepRunStatusPending},
+			{ID: uuid.New(), StepKey: "deploy", Status: types.StepRunStatusPending},
+		},
+	}
+
+	err := DispatchRecoveredTasks(
+		WithProtocolDispatcher(context.Background(), dispatcher), []types.Task{task},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(loader.calls).To(Equal(0))
+	g.Expect(creator.calls).To(Equal(2))
+}
+
 func TestRepositoryAdmissionGateUsesProcessFlagsAndDurableDecision(t *testing.T) {
 	g := NewWithT(t)
 	repository := &runtimeRepositoryStub{decision: AdmissionDecision{

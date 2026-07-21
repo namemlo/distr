@@ -40,7 +40,7 @@ func IsExactExecutionEventReplay(
 func IsExactReconciliationReplay(
 	existing types.ExecutionReconciliationEvent,
 	input types.ReconciliationStatusInput,
-	decision types.ReconciliationDecision,
+	decision types.ExecutionReconciliationDecision,
 ) bool {
 	return existing.OrganizationID == input.OrganizationID &&
 		existing.ExecutionID == input.ExecutionID &&
@@ -98,15 +98,15 @@ func ReconcileVerifiedEvidence(
 	gate ReconciliationObserverGate,
 	attempt types.ExecutionAttempt,
 	evidence types.ReconciliationEvidence,
-) (types.ReconciliationDecision, error) {
+) (types.ExecutionReconciliationDecision, error) {
 	if gate == nil {
-		return types.ReconciliationDecision{}, ErrObserverNotAuthorized
+		return types.ExecutionReconciliationDecision{}, ErrObserverNotAuthorized
 	}
 	if err := gate.AuthorizeReconciliationObserver(ctx, evidence); err != nil {
-		return types.ReconciliationDecision{}, err
+		return types.ExecutionReconciliationDecision{}, err
 	}
 	if attempt.Status.IsTerminal() {
-		return types.ReconciliationDecision{}, errors.New("terminal execution attempt is immutable")
+		return types.ExecutionReconciliationDecision{}, errors.New("terminal execution attempt is immutable")
 	}
 	return ReconcileCallbackLoss(attempt, types.ReconciliationStatusInput{
 		OrganizationID: evidence.OrganizationID, ExecutionID: evidence.ExecutionID,
@@ -174,20 +174,20 @@ func ValidateCallbackWindow(attempt types.ExecutionAttempt, callbackAt time.Time
 func ReconcileCallbackLoss(
 	attempt types.ExecutionAttempt,
 	input types.ReconciliationStatusInput,
-) (types.ReconciliationDecision, error) {
+) (types.ExecutionReconciliationDecision, error) {
 	if input.EventIdentity == uuid.Nil || !input.Outcome.IsValid() ||
 		!intentChecksumPattern.MatchString(input.EvidenceChecksum) ||
 		input.ObservedAt.IsZero() {
-		return types.ReconciliationDecision{}, errors.New("reconciliation status is invalid")
+		return types.ExecutionReconciliationDecision{}, errors.New("reconciliation status is invalid")
 	}
 	switch input.Outcome {
 	case types.ReconciliationOutcomeProvenSucceeded:
-		return types.ReconciliationDecision{
+		return types.ExecutionReconciliationDecision{
 			Status:           types.ExecutionAttemptStatusSucceeded,
 			RetryDisposition: types.RetryDispositionForbidden,
 		}, nil
 	case types.ReconciliationOutcomeProvenFailed:
-		return types.ReconciliationDecision{
+		return types.ExecutionReconciliationDecision{
 			Status:           types.ExecutionAttemptStatusFailed,
 			RetryDisposition: types.RetryDispositionForbidden,
 		}, nil
@@ -196,15 +196,15 @@ func ReconcileCallbackLoss(
 		if input.RetryRequested {
 			query := &types.ExecutionStatusQuery{Status: types.StatusQueryStatusReported}
 			if err := EvaluateRetryAfterCallbackLoss(attempt, query, input.OperationIncomplete); err != nil {
-				return types.ReconciliationDecision{}, err
+				return types.ExecutionReconciliationDecision{}, err
 			}
 			disposition = types.RetryDispositionAllowed
 		}
-		return types.ReconciliationDecision{
+		return types.ExecutionReconciliationDecision{
 			Status: types.ExecutionAttemptStatusUnknown, RetryDisposition: disposition,
 		}, nil
 	default:
-		return types.ReconciliationDecision{}, errors.New("reconciliation outcome is invalid")
+		return types.ExecutionReconciliationDecision{}, errors.New("reconciliation outcome is invalid")
 	}
 }
 

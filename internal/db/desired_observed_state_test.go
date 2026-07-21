@@ -222,7 +222,7 @@ func TestObservationStateChecksumCoversEvidenceReferenceAndComponentScope(t *tes
 	g.Expect(componentChecksum).NotTo(Equal(original))
 }
 
-func TestDesiredObservationDeadlineSweepIsFencedAndReleasesTaskLocks(t *testing.T) {
+func TestDesiredObservationDeadlineSweepUsesExactAttemptProjection(t *testing.T) {
 	g := NewWithT(t)
 	source, err := os.ReadFile("desired_observed_state.go")
 	g.Expect(err).NotTo(HaveOccurred())
@@ -231,11 +231,11 @@ func TestDesiredObservationDeadlineSweepIsFencedAndReleasesTaskLocks(t *testing.
 	g.Expect(text).To(ContainSubstring("func SweepExpiredPendingDesiredRevisions("))
 	g.Expect(text).To(ContainSubstring("observation_deadline <= clock_timestamp()"))
 	g.Expect(text).To(ContainSubstring("FOR UPDATE SKIP LOCKED"))
-	g.Expect(text).To(ContainSubstring("UPDATE ExecutionAttempt"))
-	g.Expect(text).To(ContainSubstring("SET status = 'FENCED'"))
-	g.Expect(text).To(ContainSubstring("UPDATE ExecutionFence"))
-	g.Expect(text).To(ContainSubstring("generation = generation + 1"))
-	g.Expect(text).To(ContainSubstring("updateTaskStatus("))
+	g.Expect(text).To(ContainSubstring("finalizeExecutionV2Mutation"))
+	g.Expect(text).To(ContainSubstring("getExecutionAttemptForUpdate("))
+	g.Expect(text).To(ContainSubstring("projectExecutionV2Terminal("))
+	g.Expect(text).NotTo(ContainSubstring("SET status = 'FENCED'"))
+	g.Expect(text).NotTo(ContainSubstring("generation = generation + 1"))
 }
 
 func TestObservationIngestionAutomaticallyOpensDriftAndMismatchCases(t *testing.T) {
@@ -245,6 +245,10 @@ func TestObservationIngestionAutomaticallyOpensDriftAndMismatchCases(t *testing.
 	text := string(source)
 
 	g.Expect(text).To(ContainSubstring("openAutomaticDriftCaseForObservation"))
+	g.Expect(text).NotTo(ContainSubstring(
+		"inserted && ingested.Disposition == types.ObservationDispositionAccepted",
+	))
+	g.Expect(text).To(ContainSubstring("openAutomaticDriftCaseTx"))
 	g.Expect(text).To(ContainSubstring("reconciliation.ClassifyDriftAt"))
 	g.Expect(text).To(ContainSubstring("types.DriftClassExecutorMismatch"))
 	g.Expect(text).To(ContainSubstring("types.DriftClassConflict"))

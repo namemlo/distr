@@ -16,12 +16,17 @@ import (
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/jobs"
 	"github.com/distr-sh/distr/internal/notification"
+	"github.com/distr-sh/distr/internal/observation"
 	"github.com/distr-sh/distr/internal/registry/upstream"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
 
 const (
+	executionV2ReadyStepRecoveryInterval  = 5 * time.Second
+	executionV2ReadyStepRecoveryTimeout   = 30 * time.Second
+	executionV2ReadyStepRecoveryBatchSize = 100
+
 	deploymentCampaignSchedulerInterval      = 5 * time.Second
 	deploymentCampaignSchedulerTimeout       = 30 * time.Second
 	deploymentCampaignSchedulerLeaseDuration = 30 * time.Second
@@ -29,6 +34,12 @@ const (
 )
 
 var (
+	errDesiredObservationDeadlineSweepUnconfigured = errors.New(
+		"desired observation deadline sweep is unconfigured",
+	)
+	errExecutionV2ReadyStepRecoveryUnconfigured = errors.New(
+		"execution v2 ready-step recovery is unconfigured",
+	)
 	errDeploymentCampaignSchedulerUnconfigured = errors.New("deployment campaign scheduler is unconfigured")
 	errDeploymentCampaignSchedulerTick         = errors.New("deployment campaign scheduler tick failed")
 	deploymentCampaignSchedulerWorkerID        = newDeploymentCampaignSchedulerWorkerID()
@@ -50,6 +61,18 @@ type campaignSchedulerJobDependencies struct {
 	Clock                      func() time.Time
 }
 
+type desiredObservationDeadlineSweepJobDependencies struct {
+	InjectRuntime func(context.Context) context.Context
+	Sweep         func(context.Context) ([]types.Task, error)
+	Dispatch      func(context.Context, []types.Task) error
+}
+
+type executionV2ReadyStepRecoveryJobDependencies struct {
+	InjectRuntime  func(context.Context) context.Context
+	ListReadyTasks func(context.Context, int) ([]types.Task, error)
+	Dispatch       func(context.Context, []types.Task) error
+}
+
 func (r *Registry) GetJobsScheduler() *jobs.Scheduler {
 	return r.jobsScheduler
 }
@@ -63,7 +86,9 @@ func (r *Registry) createJobsScheduler() (*jobs.Scheduler, error) {
 		"* * * * *",
 		jobs.NewJob(
 			"DesiredObservationDeadlineSweep",
-			db.RunDesiredObservationDeadlineSweep,
+			desiredObservationDeadlineSweepJob(
+				r.desiredObservationDeadlineSweepJobDependencies(),
+			),
 			50*time.Second,
 		),
 	)
@@ -191,16 +216,98 @@ func (r *Registry) createJobsScheduler() (*jobs.Scheduler, error) {
 	); err != nil {
 		return nil, err
 	}
+	if err := registerExecutionV2ReadyStepRecovery(
+		scheduler,
+		flags,
+		r.executionV2ReadyStepRecoveryJobDependencies(),
+	); err != nil {
+		return nil, err
+	}
 
 	return scheduler, nil
 }
 
+func (r *Registry) desiredObservationDeadlineSweepJobDependencies() desiredObservationDeadlineSweepJobDependencies {
+	return desiredObservationDeadlineSweepJobDependencies{
+		InjectRuntime: r.executionRuntime.Inject,
+		Sweep:         db.RunDesiredObservationDeadlineSweepWithTasks,
+		Dispatch:      executionworker.DispatchCreatedTasks,
+	}
+}
+
+func desiredObservationDeadlineSweepJob(
+	dependencies desiredObservationDeadlineSweepJobDependencies,
+) jobs.JobFunc {
+	return func(ctx context.Context) error {
+		if dependencies.InjectRuntime == nil || dependencies.Sweep == nil || dependencies.Dispatch == nil {
+			return errDesiredObservationDeadlineSweepUnconfigured
+		}
+		ctx = dependencies.InjectRuntime(ctx)
+		tasks, err := dependencies.Sweep(ctx)
+		if err != nil {
+			return fmt.Errorf("sweep desired observation deadlines: %w", err)
+		}
+		if err := dependencies.Dispatch(ctx, tasks); err != nil {
+			return fmt.Errorf("dispatch desired observation continuations: %w", err)
+		}
+		return nil
+	}
+}
+
+func (r *Registry) executionV2ReadyStepRecoveryJobDependencies() executionV2ReadyStepRecoveryJobDependencies {
+	return executionV2ReadyStepRecoveryJobDependencies{
+		InjectRuntime:  r.executionRuntime.Inject,
+		ListReadyTasks: db.ListExecutionV2ReadyDispatchTasks,
+		Dispatch:       executionworker.DispatchRecoveredTasks,
+	}
+}
+
+func registerExecutionV2ReadyStepRecovery(
+	registrar durationJobRegistrar,
+	flags featureflags.Registry,
+	dependencies executionV2ReadyStepRecoveryJobDependencies,
+) error {
+	if !flags.IsEnabled(featureflags.KeyOperatorControlPlaneV2) ||
+		!flags.IsEnabled(featureflags.KeyExecutorProtocolV2) {
+		return nil
+	}
+	return registrar.RegisterDurationJob(
+		executionV2ReadyStepRecoveryInterval,
+		jobs.NewJob(
+			"ExecutionV2ReadyStepRecovery",
+			executionV2ReadyStepRecoveryJob(dependencies),
+			executionV2ReadyStepRecoveryTimeout,
+		),
+	)
+}
+
+func executionV2ReadyStepRecoveryJob(
+	dependencies executionV2ReadyStepRecoveryJobDependencies,
+) jobs.JobFunc {
+	return func(ctx context.Context) error {
+		if dependencies.InjectRuntime == nil ||
+			dependencies.ListReadyTasks == nil || dependencies.Dispatch == nil {
+			return errExecutionV2ReadyStepRecoveryUnconfigured
+		}
+		ctx = dependencies.InjectRuntime(ctx)
+		tasks, err := dependencies.ListReadyTasks(ctx, executionV2ReadyStepRecoveryBatchSize)
+		if err != nil {
+			return fmt.Errorf("list execution v2 ready-step recovery tasks: %w", err)
+		}
+		if err := dependencies.Dispatch(ctx, tasks); err != nil {
+			return fmt.Errorf("dispatch execution v2 ready-step recovery tasks: %w", err)
+		}
+		return nil
+	}
+}
+
 func (r *Registry) deploymentCampaignSchedulerJobDependencies() campaignSchedulerJobDependencies {
 	repository := db.CampaignRepository{}
+	observationRepository := db.CampaignObservationRepository{}
 	scheduler := campaigns.NewSchedulerWithRuntime(
 		repository,
-		campaigns.UnwiredCampaignObservationResolver{},
-		campaigns.UnwiredCampaignObservationVerifier{},
+		observation.CampaignResolver{Store: observationRepository},
+		observation.CampaignVerifier{Store: observationRepository},
 		campaignruntime.NewDatabaseBackgroundAdmissionAuthorizer(),
 		campaigns.CampaignTaskDispatcherFunc(executionworker.DispatchCreatedTasks),
 		deploymentCampaignSchedulerWorkerID,

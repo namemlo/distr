@@ -178,9 +178,17 @@ func RecordExecutorReport(
 	ctx context.Context,
 	report types.ExecutorReport,
 ) (*types.ExecutorReport, error) {
+	value, _, err := RecordExecutorReportWithTask(ctx, report)
+	return value, err
+}
+
+func RecordExecutorReportWithTask(
+	ctx context.Context,
+	report types.ExecutorReport,
+) (*types.ExecutorReport, *types.Task, error) {
 	if report.OrganizationID == uuid.Nil || report.PendingRevisionID == uuid.Nil ||
 		report.ExecutionID == uuid.Nil || len(report.EvidenceReference) > 2048 {
-		return nil, apierrors.NewBadRequest("executor report lineage is invalid")
+		return nil, nil, apierrors.NewBadRequest("executor report lineage is invalid")
 	}
 	switch report.Outcome {
 	case types.ExecutorOutcomeSucceeded,
@@ -188,11 +196,11 @@ func RecordExecutorReport(
 		types.ExecutorOutcomeCancelled,
 		types.ExecutorOutcomeUnknown:
 	default:
-		return nil, apierrors.NewBadRequest("executor report outcome is invalid")
+		return nil, nil, apierrors.NewBadRequest("executor report outcome is invalid")
 	}
 	if report.ReportedStateChecksum != "" &&
 		!isLowerSHA256(report.ReportedStateChecksum) {
-		return nil, apierrors.NewBadRequest("executor report checksum is invalid")
+		return nil, nil, apierrors.NewBadRequest("executor report checksum is invalid")
 	}
 	if report.ID == uuid.Nil {
 		report.ID = uuid.New()
@@ -217,21 +225,22 @@ func RecordExecutorReport(
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not insert ExecutorReport: %w", err)
+		return nil, nil, fmt.Errorf("could not insert ExecutorReport: %w", err)
 	}
 	value, err := pgx.CollectExactlyOneRow(
 		rows, pgx.RowToStructByName[types.ExecutorReport],
 	)
 	if err != nil {
-		return nil, fmt.Errorf("could not collect ExecutorReport: %w", err)
+		return nil, nil, fmt.Errorf("could not collect ExecutorReport: %w", err)
 	}
-	if err := ReconcilePendingDesiredRevision(ctx, value.PendingRevisionID); err != nil {
-		return &value, fmt.Errorf(
+	task, err := ReconcilePendingDesiredRevisionWithTask(ctx, value.PendingRevisionID)
+	if err != nil {
+		return &value, nil, fmt.Errorf(
 			"could not reconcile desired state after executor report: %w",
 			err,
 		)
 	}
-	return &value, nil
+	return &value, task, nil
 }
 
 func isLowerSHA256(value string) bool {
@@ -292,29 +301,41 @@ func AdmitPendingDesiredRevision(
 ) (*types.PendingDesiredRevision, error) {
 	var admitted *types.PendingDesiredRevision
 	err := RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
-		if err := validateExecutionV2Lineage(txCtx, input); err != nil {
-			return err
-		}
-		head, err := getDesiredHeadForUpdate(
-			txCtx, input.OrganizationID, input.DeploymentUnitID, input.ComponentInstanceID,
+		var err error
+		admitted, err = admitPendingDesiredRevisionTx(txCtx, input, time.Now().UTC())
+		return err
+	})
+	return admitted, err
+}
+
+func admitPendingDesiredRevisionTx(
+	ctx context.Context,
+	input types.PendingDesiredRevisionInput,
+	now time.Time,
+) (*types.PendingDesiredRevision, error) {
+	if err := validateExecutionV2Lineage(ctx, input); err != nil {
+		return nil, err
+	}
+	head, err := getDesiredHeadForUpdate(
+		ctx, input.OrganizationID, input.DeploymentUnitID, input.ComponentInstanceID,
+	)
+	if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
+		return nil, err
+	}
+	var active *types.ActiveDesiredRevision
+	if head != nil && head.ActiveRevisionID != nil {
+		active, err = getActiveDesiredRevision(
+			ctx, input.OrganizationID, *head.ActiveRevisionID,
 		)
-		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
-			return err
-		}
-		var active *types.ActiveDesiredRevision
-		if head != nil && head.ActiveRevisionID != nil {
-			active, err = getActiveDesiredRevision(
-				txCtx, input.OrganizationID, *head.ActiveRevisionID,
-			)
-			if err != nil {
-				return err
-			}
-		}
-		pending, _, err := desiredstate.Admit(input, active, time.Now().UTC())
 		if err != nil {
-			return apierrors.NewBadRequest(err.Error())
+			return nil, err
 		}
-		rows, err := internalctx.GetDb(txCtx).Query(txCtx, `
+	}
+	pending, _, err := desiredstate.Admit(input, active, now.UTC())
+	if err != nil {
+		return nil, apierrors.NewBadRequest(err.Error())
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 			INSERT INTO PendingDesiredRevision AS p (
 				id, organization_id, deployment_plan_id, execution_id,
 				execution_attempt_id,
@@ -331,30 +352,30 @@ func AdmitPendingDesiredRevision(
 				@observationDeadline, @status
 			)
 			RETURNING `+pendingDesiredOutputExpr,
-			pgx.NamedArgs{
-				"id": pending.ID, "organizationID": pending.OrganizationID,
-				"deploymentPlanID": pending.DeploymentPlanID, "executionID": pending.ExecutionID,
-				"executionAttemptID":  pending.ExecutionAttemptID,
-				"deploymentUnitID":    pending.DeploymentUnitID,
-				"componentInstanceID": pending.ComponentInstanceID,
-				"componentKey":        pending.ComponentKey, "revision": pending.Revision,
-				"artifactDigest": pending.ArtifactDigest, "configChecksum": pending.ConfigChecksum,
-				"schemaVersion":      pending.SchemaVersion,
-				"capabilityChecksum": pending.CapabilityChecksum,
-				"platform":           pending.Platform, "topologyChecksum": pending.TopologyChecksum,
-				"observationDeadline": pending.ObservationDeadline, "status": pending.Status,
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("could not insert PendingDesiredRevision: %w", err)
-		}
-		value, err := pgx.CollectExactlyOneRow(
-			rows, pgx.RowToStructByName[types.PendingDesiredRevision],
-		)
-		if err != nil {
-			return fmt.Errorf("could not collect PendingDesiredRevision: %w", err)
-		}
-		_, err = internalctx.GetDb(txCtx).Exec(txCtx, `
+		pgx.NamedArgs{
+			"id": pending.ID, "organizationID": pending.OrganizationID,
+			"deploymentPlanID": pending.DeploymentPlanID, "executionID": pending.ExecutionID,
+			"executionAttemptID":  pending.ExecutionAttemptID,
+			"deploymentUnitID":    pending.DeploymentUnitID,
+			"componentInstanceID": pending.ComponentInstanceID,
+			"componentKey":        pending.ComponentKey, "revision": pending.Revision,
+			"artifactDigest": pending.ArtifactDigest, "configChecksum": pending.ConfigChecksum,
+			"schemaVersion":      pending.SchemaVersion,
+			"capabilityChecksum": pending.CapabilityChecksum,
+			"platform":           pending.Platform, "topologyChecksum": pending.TopologyChecksum,
+			"observationDeadline": pending.ObservationDeadline, "status": pending.Status,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not insert PendingDesiredRevision: %w", err)
+	}
+	value, err := pgx.CollectExactlyOneRow(
+		rows, pgx.RowToStructByName[types.PendingDesiredRevision],
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not collect PendingDesiredRevision: %w", err)
+	}
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
 			INSERT INTO ComponentDesiredStateHead (
 				organization_id, deployment_unit_id, component_instance_id,
 				component_key, pending_revision_id, active_revision_id
@@ -365,26 +386,23 @@ func AdmitPendingDesiredRevision(
 			ON CONFLICT (organization_id, deployment_unit_id, component_instance_id)
 			DO UPDATE SET pending_revision_id = EXCLUDED.pending_revision_id,
 				component_key = EXCLUDED.component_key, updated_at = now()`,
-			pgx.NamedArgs{
-				"organizationID":      value.OrganizationID,
-				"deploymentUnitID":    value.DeploymentUnitID,
-				"componentInstanceID": value.ComponentInstanceID,
-				"componentKey":        value.ComponentKey, "pendingRevisionID": value.ID,
-				"activeRevisionID": func() *uuid.UUID {
-					if active == nil {
-						return nil
-					}
-					return &active.ID
-				}(),
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("could not update ComponentDesiredStateHead: %w", err)
-		}
-		admitted = &value
-		return nil
-	})
-	return admitted, err
+		pgx.NamedArgs{
+			"organizationID":      value.OrganizationID,
+			"deploymentUnitID":    value.DeploymentUnitID,
+			"componentInstanceID": value.ComponentInstanceID,
+			"componentKey":        value.ComponentKey, "pendingRevisionID": value.ID,
+			"activeRevisionID": func() *uuid.UUID {
+				if active == nil {
+					return nil
+				}
+				return &active.ID
+			}(),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not update ComponentDesiredStateHead: %w", err)
+	}
+	return &value, nil
 }
 
 func AdvanceActiveDesiredRevision(
@@ -392,11 +410,28 @@ func AdvanceActiveDesiredRevision(
 	pendingRevisionID uuid.UUID,
 	gate types.ObservationGateResult,
 ) error {
-	return RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
-		return advanceActiveDesiredRevisionTx(
+	_, err := AdvanceActiveDesiredRevisionWithTask(ctx, pendingRevisionID, gate)
+	return err
+}
+
+// AdvanceActiveDesiredRevisionWithTask returns the exact task whose step projection
+// became terminal. Callers must dispatch newly-ready dependent steps only after this
+// function returns, because the returned task is produced inside a serializable
+// transaction and exposed after commit.
+func AdvanceActiveDesiredRevisionWithTask(
+	ctx context.Context,
+	pendingRevisionID uuid.UUID,
+	gate types.ObservationGateResult,
+) (*types.Task, error) {
+	var task *types.Task
+	err := RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
+		var err error
+		task, err = advanceActiveDesiredRevisionTx(
 			txCtx, pendingRevisionID, gate, time.Now().UTC(),
 		)
+		return err
 	})
+	return task, err
 }
 
 func advanceActiveDesiredRevisionTx(
@@ -404,10 +439,13 @@ func advanceActiveDesiredRevisionTx(
 	pendingRevisionID uuid.UUID,
 	gate types.ObservationGateResult,
 	now time.Time,
-) error {
+) (*types.Task, error) {
 	pending, err := getPendingDesiredRevisionForUpdate(txCtx, pendingRevisionID)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if pending.Status != types.PendingDesiredStatusPending {
+		return finalizeExecutionV2Mutation(txCtx, *pending)
 	}
 	evaluated, err := evaluateObservationGate(
 		txCtx,
@@ -415,10 +453,10 @@ func advanceActiveDesiredRevisionTx(
 		now,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := validatePromotionGateHint(gate, evaluated); err != nil {
-		return err
+		return nil, err
 	}
 	gate = evaluated
 	head, err := getDesiredHeadForUpdate(
@@ -426,7 +464,7 @@ func advanceActiveDesiredRevisionTx(
 		pending.ComponentInstanceID,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var active *types.ActiveDesiredRevision
 	if head.ActiveRevisionID != nil {
@@ -434,17 +472,17 @@ func advanceActiveDesiredRevisionTx(
 			txCtx, pending.OrganizationID, *head.ActiveRevisionID,
 		)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	next, terminal, err := desiredstate.Advance(
 		active, *pending, gate, now,
 	)
 	if err != nil {
-		return apierrors.NewConflict(err.Error())
+		return nil, apierrors.NewConflict(err.Error())
 	}
 	if terminal.Status == types.PendingDesiredStatusPending {
-		return nil
+		return nil, nil
 	}
 	_, err = internalctx.GetDb(txCtx).Exec(txCtx, `
 			UPDATE PendingDesiredRevision
@@ -465,7 +503,7 @@ func advanceActiveDesiredRevisionTx(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("could not terminalize PendingDesiredRevision: %w", err)
+		return nil, fmt.Errorf("could not terminalize PendingDesiredRevision: %w", err)
 	}
 	var activeID *uuid.UUID
 	if next != nil && terminal.Status == types.PendingDesiredStatusVerified {
@@ -498,7 +536,7 @@ func advanceActiveDesiredRevisionTx(
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("could not insert ActiveDesiredRevision: %w", err)
+			return nil, fmt.Errorf("could not insert ActiveDesiredRevision: %w", err)
 		}
 		activeID = &next.ID
 	} else if active != nil {
@@ -520,27 +558,27 @@ func advanceActiveDesiredRevisionTx(
 		},
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if active != nil && terminal.Status != types.PendingDesiredStatusVerified &&
 		gate.ObservationID != uuid.Nil {
 		if err := openTerminalMismatchDriftCaseTx(
 			txCtx, *active, *pending, gate, now,
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return finalizeExecutionV2Mutation(txCtx, *pending)
+	return finalizeExecutionV2Mutation(txCtx, terminal)
 }
 
 func SweepExpiredPendingDesiredRevisions(
 	ctx context.Context,
 	limit int,
-) (int, error) {
+) ([]types.Task, error) {
 	if limit < 1 || limit > 1000 {
-		return 0, apierrors.NewBadRequest("deadline sweep limit must be between 1 and 1000")
+		return nil, apierrors.NewBadRequest("deadline sweep limit must be between 1 and 1000")
 	}
-	processed := 0
+	tasks := make([]types.Task, 0, limit)
 	err := RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
 		rows, err := internalctx.GetDb(txCtx).Query(txCtx, `
 			SELECT id
@@ -575,25 +613,38 @@ func SweepExpiredPendingDesiredRevisions(
 			if gate.Status == types.ObservationGateStatusPending {
 				return fmt.Errorf("expired desired revision remained pending")
 			}
-			if err := advanceActiveDesiredRevisionTx(txCtx, id, gate, now); err != nil {
+			task, err := advanceActiveDesiredRevisionTx(txCtx, id, gate, now)
+			if err != nil {
 				return err
 			}
-			processed++
+			if task == nil {
+				return fmt.Errorf("expired desired revision produced no execution task projection")
+			}
+			tasks = append(tasks, *task)
 		}
 		return nil
 	})
-	return processed, err
+	return tasks, err
 }
 
 func RunDesiredObservationDeadlineSweep(ctx context.Context) error {
+	_, err := RunDesiredObservationDeadlineSweepWithTasks(ctx)
+	return err
+}
+
+// RunDesiredObservationDeadlineSweepWithTasks returns committed task projections
+// so the scheduler layer can dispatch dependency-ready steps after each batch.
+func RunDesiredObservationDeadlineSweepWithTasks(ctx context.Context) ([]types.Task, error) {
 	const batchSize = 100
+	var projected []types.Task
 	for {
-		processed, err := SweepExpiredPendingDesiredRevisions(ctx, batchSize)
+		tasks, err := SweepExpiredPendingDesiredRevisions(ctx, batchSize)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if processed < batchSize {
-			return nil
+		projected = append(projected, tasks...)
+		if len(tasks) < batchSize {
+			return projected, nil
 		}
 	}
 }
@@ -601,116 +652,26 @@ func RunDesiredObservationDeadlineSweep(ctx context.Context) error {
 func finalizeExecutionV2Mutation(
 	ctx context.Context,
 	pending types.PendingDesiredRevision,
-) error {
-	var taskID uuid.UUID
-	var attemptStatus string
-	err := internalctx.GetDb(ctx).QueryRow(ctx, `
-		SELECT task_id, status
-		FROM ExecutionAttempt
-		WHERE id = @executionAttemptID
-		  AND organization_id = @organizationID
-		  AND execution_id = @executionID
-		FOR UPDATE`,
-		pgx.NamedArgs{
-			"executionAttemptID": pending.ExecutionAttemptID,
-			"organizationID":     pending.OrganizationID,
-			"executionID":        pending.ExecutionID,
-		},
-	).Scan(&taskID, &attemptStatus)
+) (*types.Task, error) {
+	projectionStatus, err := executionProjectionStatusForDesiredTerminal(pending.Status)
 	if err != nil {
-		return fmt.Errorf("could not lock execution-v2 attempt: %w", err)
+		return nil, err
 	}
-	if attemptStatus == "PENDING" || attemptStatus == "CLAIMED" ||
-		attemptStatus == "RUNNING" || attemptStatus == "UNKNOWN" {
-		command, err := internalctx.GetDb(ctx).Exec(ctx, `
-			UPDATE ExecutionAttempt
-			SET status = 'FENCED', claimed_by = '', completed_at = now(),
-				updated_at = now(),
-				failure_reason = 'desired-state observation gate became terminal'
-			WHERE id = @executionAttemptID
-			  AND organization_id = @organizationID
-			  AND execution_id = @executionID
-			  AND status IN ('PENDING', 'CLAIMED', 'RUNNING', 'UNKNOWN')`,
-			pgx.NamedArgs{
-				"executionAttemptID": pending.ExecutionAttemptID,
-				"organizationID":     pending.OrganizationID,
-				"executionID":        pending.ExecutionID,
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("could not fence execution-v2 attempt: %w", err)
-		}
-		if command.RowsAffected() != 1 {
-			return apierrors.NewConflict("execution-v2 attempt fencing raced")
-		}
-	}
-	_, err = internalctx.GetDb(ctx).Exec(ctx, `
-		UPDATE ExecutionFence
-		SET generation = generation + 1,
-			lease_expires_at = NULL, released_at = COALESCE(released_at, now())
-		WHERE execution_attempt_id = @executionAttemptID
-		  AND organization_id = @organizationID`,
-		pgx.NamedArgs{
-			"executionAttemptID": pending.ExecutionAttemptID,
-			"organizationID":     pending.OrganizationID,
-		},
+	attempt, err := getExecutionAttemptForUpdate(
+		ctx, pending.ExecutionAttemptID, pending.OrganizationID,
 	)
 	if err != nil {
-		return fmt.Errorf("could not release execution-v2 fence: %w", err)
+		return nil, err
 	}
-	var siblingsPending bool
-	err = internalctx.GetDb(ctx).QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM PendingDesiredRevision p
-			JOIN ExecutionAttempt ea
-			  ON ea.id = p.execution_attempt_id
-			 AND ea.organization_id = p.organization_id
-			WHERE ea.task_id = @taskID
-			  AND p.organization_id = @organizationID
-			  AND p.status = 'PENDING'
-		)`,
-		pgx.NamedArgs{"taskID": taskID, "organizationID": pending.OrganizationID},
-	).Scan(&siblingsPending)
-	if err != nil {
-		return fmt.Errorf("could not check sibling desired revisions: %w", err)
+	if attempt.Identity.ExecutionID != pending.ExecutionID {
+		return nil, apierrors.NewConflict("desired-state execution attempt lineage changed")
 	}
-	if siblingsPending {
-		return nil
+	if projectionStatus == types.ExecutionAttemptStatusUnknown {
+		return nil, projectExecutionV2Uncertain(
+			ctx, attempt.ID, attempt.OrganizationID,
+		)
 	}
-	var allVerified bool
-	var allCancelled bool
-	err = internalctx.GetDb(ctx).QueryRow(ctx, `
-		SELECT bool_and(p.status = 'VERIFIED'),
-			bool_and(p.status = 'CANCELLED')
-		FROM PendingDesiredRevision p
-		JOIN ExecutionAttempt ea
-		  ON ea.id = p.execution_attempt_id
-		 AND ea.organization_id = p.organization_id
-		WHERE ea.task_id = @taskID
-		  AND p.organization_id = @organizationID`,
-		pgx.NamedArgs{"taskID": taskID, "organizationID": pending.OrganizationID},
-	).Scan(&allVerified, &allCancelled)
-	if err != nil {
-		return fmt.Errorf("could not aggregate desired revision outcomes: %w", err)
-	}
-	taskStatus := types.TaskStatusFailed
-	if allVerified {
-		taskStatus = types.TaskStatusSucceeded
-	} else if allCancelled {
-		taskStatus = types.TaskStatusCanceled
-	}
-	current, err := getTaskStatusForUpdate(ctx, taskID, pending.OrganizationID)
-	if err != nil {
-		return err
-	}
-	if current.IsTerminal() {
-		return nil
-	}
-	if current != types.TaskStatusRunning {
-		return apierrors.NewConflict("execution-v2 task is not running")
-	}
-	return updateTaskStatus(ctx, taskID, pending.OrganizationID, taskStatus)
+	return projectExecutionV2Terminal(ctx, *attempt, projectionStatus)
 }
 
 func openTerminalMismatchDriftCaseTx(
@@ -868,8 +829,15 @@ func IngestObservation(
 	ctx context.Context,
 	envelope types.ObservationEnvelope,
 ) (*types.ObservedComponentState, error) {
+	state, _, err := IngestObservationWithTask(ctx, envelope)
+	return state, err
+}
+
+func IngestObservationWithTask(
+	ctx context.Context,
+	envelope types.ObservationEnvelope,
+) (*types.ObservedComponentState, *types.Task, error) {
 	var ingested *types.ObservedComponentState
-	inserted := false
 	err := RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
 		registration, err := getObserverRegistrationForUpdate(
 			txCtx, envelope.OrganizationID, envelope.ObserverID,
@@ -1037,94 +1005,114 @@ func IngestObservation(
 			}
 		}
 		ingested = &value
-		inserted = true
 		return nil
 	})
 	if err != nil || ingested == nil {
-		return ingested, err
+		return ingested, nil, err
 	}
-	if err := ReconcilePendingDesiredRevisionForComponent(
+	task, err := ReconcilePendingDesiredRevisionForComponentWithTask(
 		ctx,
 		ingested.OrganizationID,
 		ingested.DeploymentUnitID,
 		ingested.ComponentInstanceID,
-	); err != nil {
-		return ingested, fmt.Errorf(
+	)
+	if err != nil {
+		return ingested, nil, fmt.Errorf(
 			"could not reconcile desired state after observation ingestion: %w",
 			err,
 		)
 	}
-	if inserted && ingested.Disposition == types.ObservationDispositionAccepted {
+	if ingested.Disposition == types.ObservationDispositionAccepted {
 		if err := openAutomaticDriftCaseForObservation(ctx, *ingested); err != nil {
-			return ingested, fmt.Errorf(
+			return ingested, nil, fmt.Errorf(
 				"could not classify observation drift: %w", err,
 			)
 		}
 	}
-	return ingested, nil
+	return ingested, task, nil
 }
 
 func openAutomaticDriftCaseForObservation(
 	ctx context.Context,
 	observed types.ObservedComponentState,
 ) error {
-	var activeRevisionID *uuid.UUID
-	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+	return RunTxIso(ctx, pgx.Serializable, func(txCtx context.Context) error {
+		var activeRevisionID *uuid.UUID
+		err := internalctx.GetDb(txCtx).QueryRow(txCtx, `
 		SELECT active_revision_id
 		FROM ComponentDesiredStateHead
 		WHERE organization_id = @organizationID
 		  AND deployment_unit_id = @deploymentUnitID
 		  AND component_instance_id = @componentInstanceID`,
-		pgx.NamedArgs{
-			"organizationID":      observed.OrganizationID,
-			"deploymentUnitID":    observed.DeploymentUnitID,
-			"componentInstanceID": observed.ComponentInstanceID,
-		},
-	).Scan(&activeRevisionID)
-	if errors.Is(err, pgx.ErrNoRows) || activeRevisionID == nil {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("could not query active desired state for drift: %w", err)
-	}
-	active, err := getActiveDesiredRevision(ctx, observed.OrganizationID, *activeRevisionID)
-	if err != nil {
-		return err
-	}
-	classification := reconciliation.ClassifyDriftAt(
-		*active, observed, time.Now().UTC(),
-	)
-	if !classification.Drifted {
-		return nil
-	}
-	_, err = OpenDriftCase(ctx, types.DriftInput{
-		OrganizationID:          observed.OrganizationID,
-		ActiveDesiredRevisionID: active.ID,
-		ObservationID:           observed.ID,
-		Classification:          classification,
-		Reason:                  "accepted runtime observation differs from active desired state",
+			pgx.NamedArgs{
+				"organizationID":      observed.OrganizationID,
+				"deploymentUnitID":    observed.DeploymentUnitID,
+				"componentInstanceID": observed.ComponentInstanceID,
+			},
+		).Scan(&activeRevisionID)
+		if errors.Is(err, pgx.ErrNoRows) || activeRevisionID == nil {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("could not query active desired state for drift: %w", err)
+		}
+		active, err := getActiveDesiredRevision(
+			txCtx, observed.OrganizationID, *activeRevisionID,
+		)
+		if err != nil {
+			return err
+		}
+		classification := reconciliation.ClassifyDriftAt(
+			*active, observed, time.Now().UTC(),
+		)
+		if !classification.Drifted {
+			return nil
+		}
+		return openAutomaticDriftCaseTx(txCtx, types.DriftInput{
+			OrganizationID:          observed.OrganizationID,
+			ActiveDesiredRevisionID: active.ID, ObservationID: observed.ID,
+			Classification: classification,
+			Reason:         "accepted runtime observation differs from active desired state",
+		})
 	})
-	return err
 }
 
 func ReconcilePendingDesiredRevision(
 	ctx context.Context,
 	pendingRevisionID uuid.UUID,
 ) error {
+	_, err := ReconcilePendingDesiredRevisionWithTask(ctx, pendingRevisionID)
+	return err
+}
+
+func ReconcilePendingDesiredRevisionWithTask(
+	ctx context.Context,
+	pendingRevisionID uuid.UUID,
+) (*types.Task, error) {
 	gate, err := EvaluateObservationGate(ctx, pendingRevisionID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if gate.Status == types.ObservationGateStatusPending {
-		return nil
+		return nil, nil
 	}
-	return AdvanceActiveDesiredRevision(ctx, pendingRevisionID, gate)
+	return AdvanceActiveDesiredRevisionWithTask(ctx, pendingRevisionID, gate)
 }
 
 func ReconcilePendingDesiredRevisionForComponent(
 	ctx context.Context,
 	organizationID, deploymentUnitID, componentInstanceID uuid.UUID,
 ) error {
+	_, err := ReconcilePendingDesiredRevisionForComponentWithTask(
+		ctx, organizationID, deploymentUnitID, componentInstanceID,
+	)
+	return err
+}
+
+func ReconcilePendingDesiredRevisionForComponentWithTask(
+	ctx context.Context,
+	organizationID, deploymentUnitID, componentInstanceID uuid.UUID,
+) (*types.Task, error) {
 	var pendingRevisionID *uuid.UUID
 	err := internalctx.GetDb(ctx).QueryRow(ctx, `
 		SELECT pending_revision_id
@@ -1138,12 +1126,12 @@ func ReconcilePendingDesiredRevisionForComponent(
 		},
 	).Scan(&pendingRevisionID)
 	if errors.Is(err, pgx.ErrNoRows) || pendingRevisionID == nil {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("could not query component pending desired revision: %w", err)
+		return nil, fmt.Errorf("could not query component pending desired revision: %w", err)
 	}
-	return ReconcilePendingDesiredRevision(ctx, *pendingRevisionID)
+	return ReconcilePendingDesiredRevisionWithTask(ctx, *pendingRevisionID)
 }
 
 func EvaluateObservationGate(

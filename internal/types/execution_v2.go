@@ -308,7 +308,7 @@ type SignedReconciliationEvidence struct {
 	Signature string `json:"signature"`
 }
 
-type ReconciliationDecision struct {
+type ExecutionReconciliationDecision struct {
 	Status           ExecutionAttemptStatus
 	RetryDisposition RetryDisposition
 }

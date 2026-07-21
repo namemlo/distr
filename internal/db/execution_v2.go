@@ -56,7 +56,7 @@ func CreateExecutionAttempt(
 		return nil, err
 	}
 	var result *types.ExecutionAttempt
-	err := RunTx(ctx, func(ctx context.Context) error {
+	err := RunTxIso(ctx, pgx.Serializable, func(ctx context.Context) error {
 		db := internalctx.GetDb(ctx)
 		var trustedNow time.Time
 		if err := db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&trustedNow); err != nil {
@@ -151,6 +151,9 @@ func CreateExecutionAttempt(
 		)
 		if err != nil {
 			return fmt.Errorf("insert ExecutionIntent: %w", err)
+		}
+		if _, err = admitExecutionDesiredStateTx(ctx, attempt, trustedNow.UTC()); err != nil {
+			return fmt.Errorf("admit execution-v2 desired state: %w", err)
 		}
 		result, err = getExecutionAttemptForUpdate(ctx, attempt.ID, attempt.OrganizationID)
 		return err
@@ -683,6 +686,7 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 		return nil, apierrors.NewBadRequest("execution completion request is invalid")
 	}
 	var task *types.Task
+	var pendingRevisionIDs []uuid.UUID
 	err := RunTx(ctx, func(ctx context.Context) error {
 		db := internalctx.GetDb(ctx)
 		attempt, err := getExecutionAttemptForTargetUpdate(
@@ -696,6 +700,17 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 			if attempt.Status != input.Status || attempt.FailureReason != failureReason ||
 				attempt.Fence.Generation != input.FenceGeneration {
 				return apierrors.NewConflict("conflicting duplicate execution completion")
+			}
+			outcome, mapErr := executorOutcomeForAttemptStatus(input.Status)
+			if mapErr != nil {
+				return mapErr
+			}
+			pendingRevisionIDs, err = recordExecutionAttemptReportsTx(
+				ctx, input.AttemptID, input.OrganizationID, outcome,
+				"execution-attempt:"+input.AttemptID.String(),
+			)
+			if err != nil || len(pendingRevisionIDs) > 0 {
+				return err
 			}
 			task, err = getTask(ctx, attempt.TaskID, attempt.OrganizationID)
 			return err
@@ -759,10 +774,24 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 		}
 		attempt.Status = input.Status
 		attempt.FailureReason = failureReason
+		outcome, mapErr := executorOutcomeForAttemptStatus(input.Status)
+		if mapErr != nil {
+			return mapErr
+		}
+		pendingRevisionIDs, err = recordExecutionAttemptReportsTx(
+			ctx, input.AttemptID, input.OrganizationID, outcome,
+			"execution-attempt:"+input.AttemptID.String(),
+		)
+		if err != nil || len(pendingRevisionIDs) > 0 {
+			return err
+		}
 		task, err = projectExecutionV2Terminal(ctx, *attempt, input.Status)
 		return err
 	})
-	return task, err
+	if err != nil || len(pendingRevisionIDs) == 0 {
+		return task, err
+	}
+	return reconcilePendingDesiredRevisionIDs(ctx, pendingRevisionIDs)
 }
 
 func FenceExecutionAttempt(
@@ -1326,22 +1355,62 @@ func ImportReconciliationStatus(
 	ctx context.Context,
 	input types.ReconciliationStatusInput,
 ) error {
+	_, err := ImportReconciliationStatusWithTask(ctx, input)
+	return err
+}
+
+// ImportReconciliationStatusWithTask returns the exact committed task projection
+// when reconciliation resolves an attempt. The handler layer can then dispatch
+// dependency-ready steps without importing executionworker into the DB package.
+func ImportReconciliationStatusWithTask(
+	ctx context.Context,
+	input types.ReconciliationStatusInput,
+) (*types.Task, error) {
 	if err := validateReconciliationStatusInput(input); err != nil {
-		return err
+		return nil, err
 	}
-	return RunTx(ctx, func(ctx context.Context) error {
+	var task *types.Task
+	var pendingRevisionIDs []uuid.UUID
+	err := RunTx(ctx, func(ctx context.Context) error {
 		existing, err := getExecutionReconciliationEventByIdentity(
 			ctx, input.OrganizationID, input.EventIdentity,
 		)
 		if err == nil {
+			status, mapErr := executionAttemptStatusForReconciliationOutcome(input.Outcome)
+			if mapErr != nil {
+				return mapErr
+			}
 			if !executionprotocol.IsExactReconciliationReplay(
 				*existing,
 				input,
-				types.ReconciliationDecision{RetryDisposition: existing.RetryDisposition},
+				types.ExecutionReconciliationDecision{
+					Status: status, RetryDisposition: existing.RetryDisposition,
+				},
 			) {
 				return apierrors.NewConflict("conflicting duplicate reconciliation event")
 			}
-			return nil
+			attempt, getErr := getExecutionAttemptForUpdate(
+				ctx, input.AttemptID, input.OrganizationID,
+			)
+			if getErr != nil {
+				return getErr
+			}
+			outcome, mapErr := executorOutcomeForAttemptStatus(status)
+			if mapErr != nil {
+				return mapErr
+			}
+			pendingRevisionIDs, err = recordExecutionAttemptReportsTx(
+				ctx, attempt.ID, input.OrganizationID, outcome,
+				"execution-reconciliation:"+input.EventIdentity.String(),
+			)
+			if err != nil || len(pendingRevisionIDs) > 0 {
+				return err
+			}
+			if status == types.ExecutionAttemptStatusUnknown {
+				return projectExecutionV2Uncertain(ctx, attempt.ID, input.OrganizationID)
+			}
+			task, err = projectExecutionV2Terminal(ctx, *attempt, status)
+			return err
 		}
 		if !errors.Is(err, apierrors.ErrNotFound) {
 			return err
@@ -1458,12 +1527,27 @@ func ImportReconciliationStatus(
 			return err
 		}
 		attempt.Status = decision.Status
+		outcome, mapErr := executorOutcomeForAttemptStatus(decision.Status)
+		if mapErr != nil {
+			return mapErr
+		}
+		pendingRevisionIDs, err = recordExecutionAttemptReportsTx(
+			ctx, attempt.ID, input.OrganizationID, outcome,
+			"execution-reconciliation:"+input.EventIdentity.String(),
+		)
+		if err != nil || len(pendingRevisionIDs) > 0 {
+			return err
+		}
 		if decision.Status == types.ExecutionAttemptStatusUnknown {
 			return projectExecutionV2Uncertain(ctx, attempt.ID, input.OrganizationID)
 		}
-		_, err = projectExecutionV2Terminal(ctx, *attempt, decision.Status)
+		task, err = projectExecutionV2Terminal(ctx, *attempt, decision.Status)
 		return err
 	})
+	if err != nil || len(pendingRevisionIDs) == 0 {
+		return task, err
+	}
+	return reconcilePendingDesiredRevisionIDs(ctx, pendingRevisionIDs)
 }
 
 func GetPendingExecutionCancel(

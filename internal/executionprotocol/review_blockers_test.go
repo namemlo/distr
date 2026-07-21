@@ -177,7 +177,7 @@ func TestExactReconciliationReplayCanResumeCampaignDelivery(t *testing.T) {
 		ObservedAt: input.ObservedAt, OperationIncomplete: true, RetryRequested: true,
 		RetryDisposition: types.RetryDispositionAllowed,
 	}
-	g.Expect(IsExactReconciliationReplay(existing, input, types.ReconciliationDecision{
+	g.Expect(IsExactReconciliationReplay(existing, input, types.ExecutionReconciliationDecision{
 		Status: types.ExecutionAttemptStatusUnknown, RetryDisposition: types.RetryDispositionAllowed,
 	})).To(BeTrue())
 }

@@ -19,15 +19,16 @@ import (
 )
 
 type desiredObservedFixture struct {
-	ctx               context.Context
-	organizationID    uuid.UUID
-	deploymentPlanID  uuid.UUID
-	executionID       uuid.UUID
-	deploymentUnitID  uuid.UUID
-	componentID       uuid.UUID
-	secondComponentID uuid.UUID
-	otherUnitID       uuid.UUID
-	otherComponentID  uuid.UUID
+	ctx                context.Context
+	organizationID     uuid.UUID
+	deploymentPlanID   uuid.UUID
+	executionID        uuid.UUID
+	executionAttemptID uuid.UUID
+	deploymentUnitID   uuid.UUID
+	componentID        uuid.UUID
+	secondComponentID  uuid.UUID
+	otherUnitID        uuid.UUID
+	otherComponentID   uuid.UUID
 }
 
 func TestDesiredObservedLifecyclePromotesOnlyAfterExecutorAndIndependentEvidence(
@@ -38,6 +39,7 @@ func TestDesiredObservedLifecyclePromotesOnlyAfterExecutorAndIndependentEvidence
 	input := fixture.pendingInput()
 	pending, err := db.AdmitPendingDesiredRevision(fixture.ctx, input)
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(pending.ExecutionAttemptID).To(Equal(fixture.executionAttemptID))
 	registration, credential := fixture.createObserver(t, fixture.componentID, "lifecycle")
 
 	observed, err := db.IngestObservation(
@@ -59,12 +61,134 @@ func TestDesiredObservedLifecyclePromotesOnlyAfterExecutorAndIndependentEvidence
 	g.Expect(readPendingStatus(t, fixture.ctx, pending.ID)).To(
 		Equal(types.PendingDesiredStatusVerified),
 	)
+	projected, err := db.GetTask(fixture.ctx, fixture.executionID, fixture.organizationID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(projected.Status).To(Equal(types.TaskStatusSucceeded))
+	g.Expect(projected.StepRuns).To(HaveLen(1))
+	g.Expect(projected.StepRuns[0].Status).To(Equal(types.StepRunStatusSucceeded))
 	g.Expect(countRowsForOrganization(
 		t,
 		fixture.ctx,
 		"ActiveDesiredRevision",
 		fixture.organizationID,
 	)).To(Equal(int64(1)))
+}
+
+func TestExecutorSuccessWaitsForTrustedObservationBeforeProjection(t *testing.T) {
+	g := NewWithT(t)
+	fixture := newDesiredObservedFixture(t)
+	input := fixture.pendingInput()
+	pending, err := db.AdmitPendingDesiredRevision(fixture.ctx, input)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.RecordExecutorReport(fixture.ctx, types.ExecutorReport{
+		OrganizationID: fixture.organizationID, PendingRevisionID: pending.ID,
+		ExecutionID: input.ExecutionID, Outcome: types.ExecutorOutcomeSucceeded,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(readPendingStatus(t, fixture.ctx, pending.ID)).To(
+		Equal(types.PendingDesiredStatusPending),
+	)
+	deferred, err := db.GetTask(fixture.ctx, fixture.executionID, fixture.organizationID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(deferred.Status).To(Equal(types.TaskStatusRunning))
+	g.Expect(deferred.StepRuns[0].Status).To(Equal(types.StepRunStatusRunning))
+
+	registration, credential := fixture.createObserver(t, fixture.componentID, "projection-gate")
+	_, err = db.IngestObservation(
+		fixture.ctx,
+		fixture.envelope(registration, credential, input, 1),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(readPendingStatus(t, fixture.ctx, pending.ID)).To(
+		Equal(types.PendingDesiredStatusVerified),
+	)
+	projected, err := db.GetTask(fixture.ctx, fixture.executionID, fixture.organizationID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(projected.Status).To(Equal(types.TaskStatusSucceeded))
+	g.Expect(projected.StepRuns[0].Status).To(Equal(types.StepRunStatusSucceeded))
+}
+
+func TestComponentDeployCompletionDefersProjectionUntilObservationGate(t *testing.T) {
+	g := NewWithT(t)
+	fixture := newDesiredObservedFixture(t)
+	input := fixture.pendingInput()
+	pending, err := db.AdmitPendingDesiredRevision(fixture.ctx, input)
+	g.Expect(err).NotTo(HaveOccurred())
+	const executorID = "component-gate-executor"
+	_, err = internalctx.GetDb(fixture.ctx).Exec(fixture.ctx, `
+		UPDATE ExecutionAttempt
+		SET status = 'CLAIMED', claimed_by = @executorID
+		WHERE id = @attemptID AND organization_id = @organizationID`,
+		pgx.NamedArgs{
+			"executorID": executorID, "attemptID": fixture.executionAttemptID,
+			"organizationID": fixture.organizationID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(fixture.ctx).Exec(fixture.ctx, `
+		UPDATE ExecutionFence
+		SET lease_expires_at = clock_timestamp() + interval '5 minutes'
+		WHERE execution_attempt_id = @attemptID
+		  AND organization_id = @organizationID`,
+		pgx.NamedArgs{
+			"attemptID":      fixture.executionAttemptID,
+			"organizationID": fixture.organizationID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	projected, err := db.CompleteExecutionAttempt(fixture.ctx, types.CompletionInput{
+		OrganizationID: fixture.organizationID, DeploymentTargetID: readExecutionTargetID(
+			t, fixture.ctx, fixture.executionAttemptID,
+		),
+		AttemptID: fixture.executionAttemptID, ExecutorID: executorID,
+		FenceGeneration: 1, Status: types.ExecutionAttemptStatusSucceeded,
+		CompletedAt: time.Now().UTC(),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(projected).To(BeNil())
+	g.Expect(readPendingStatus(t, fixture.ctx, pending.ID)).To(
+		Equal(types.PendingDesiredStatusPending),
+	)
+	deferred, err := db.GetTask(fixture.ctx, fixture.executionID, fixture.organizationID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(deferred.Status).To(Equal(types.TaskStatusRunning))
+	g.Expect(deferred.StepRuns[0].Status).To(Equal(types.StepRunStatusRunning))
+
+	registration, credential := fixture.createObserver(t, fixture.componentID, "completion-gate")
+	_, err = db.IngestObservation(
+		fixture.ctx,
+		fixture.envelope(registration, credential, input, 1),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	completed, err := db.GetTask(fixture.ctx, fixture.executionID, fixture.organizationID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(completed.Status).To(Equal(types.TaskStatusSucceeded))
+	g.Expect(completed.StepRuns[0].Status).To(Equal(types.StepRunStatusSucceeded))
+}
+
+func TestUnknownDesiredOutcomeKeepsTaskAndStepNonterminal(t *testing.T) {
+	g := NewWithT(t)
+	fixture := newDesiredObservedFixture(t)
+	input := fixture.pendingInput()
+	pending, err := db.AdmitPendingDesiredRevision(fixture.ctx, input)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, projected, err := db.RecordExecutorReportWithTask(fixture.ctx, types.ExecutorReport{
+		OrganizationID: fixture.organizationID, PendingRevisionID: pending.ID,
+		ExecutionID: input.ExecutionID, Outcome: types.ExecutorOutcomeUnknown,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(projected).To(BeNil())
+	g.Expect(readPendingStatus(t, fixture.ctx, pending.ID)).To(
+		Equal(types.PendingDesiredStatusUnknown),
+	)
+	deferred, err := db.GetTask(fixture.ctx, fixture.executionID, fixture.organizationID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(deferred.Status).To(Equal(types.TaskStatusRunning))
+	g.Expect(deferred.StepRuns).To(HaveLen(1))
+	g.Expect(deferred.StepRuns[0].Status).To(Equal(types.StepRunStatusRunning))
 }
 
 func TestDesiredObservedPromotionRechecksAllObserversForConflict(t *testing.T) {
@@ -265,6 +389,46 @@ func TestDriftAndReconciliationRequireSamePlacementAndProvenOutcome(t *testing.T
 	)
 }
 
+func TestAcceptedObservationReplayRepairsDriftWithoutDuplicateCaseEvents(t *testing.T) {
+	g := NewWithT(t)
+	fixture := newDesiredObservedFixture(t)
+	input := fixture.pendingInput()
+	pending, err := db.AdmitPendingDesiredRevision(fixture.ctx, input)
+	g.Expect(err).NotTo(HaveOccurred())
+	registration, credential := fixture.createObserver(t, fixture.componentID, "replay-drift")
+	initial := fixture.envelope(registration, credential, input, 1)
+	observed, err := db.IngestObservation(fixture.ctx, initial)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = db.RecordExecutorReport(fixture.ctx, types.ExecutorReport{
+		OrganizationID: fixture.organizationID, PendingRevisionID: pending.ID,
+		ExecutionID: input.ExecutionID, Outcome: types.ExecutorOutcomeSucceeded,
+		ReportedStateChecksum: observed.StateChecksum,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	drifted := fixture.envelope(registration, credential, input, 2)
+	drifted.ArtifactDigest = desiredObservedTestDigest("replay-drifted-artifact")
+	first, err := db.IngestObservation(fixture.ctx, drifted)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(first.Disposition).To(Equal(types.ObservationDispositionAccepted))
+	g.Expect(countRowsForOrganization(
+		t, fixture.ctx, "DriftCase", fixture.organizationID,
+	)).To(Equal(int64(1)))
+	g.Expect(countRowsForOrganization(
+		t, fixture.ctx, "DriftCaseEvent", fixture.organizationID,
+	)).To(Equal(int64(1)))
+
+	replay, err := db.IngestObservation(fixture.ctx, drifted)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(replay.ID).To(Equal(first.ID))
+	g.Expect(countRowsForOrganization(
+		t, fixture.ctx, "DriftCase", fixture.organizationID,
+	)).To(Equal(int64(1)))
+	g.Expect(countRowsForOrganization(
+		t, fixture.ctx, "DriftCaseEvent", fixture.organizationID,
+	)).To(Equal(int64(1)))
+}
+
 func newDesiredObservedFixture(t *testing.T) desiredObservedFixture {
 	t.Helper()
 	ctx := taskQueueDBTestContext(t)
@@ -287,12 +451,120 @@ func newDesiredObservedFixture(t *testing.T) desiredObservedFixture {
 	second := createDesiredObservedComponent(t, ctx, deps.orgID, unit.ID, "worker")
 	otherUnit := createDesiredObservedUnit(t, ctx, deps.orgID, scope.ID, assignment, "other")
 	other := createDesiredObservedComponent(t, ctx, deps.orgID, otherUnit.ID, "other")
+	executionID, executionAttemptID := createDesiredObservedExecutionAttempt(
+		t, ctx, deps, targetID,
+	)
 	return desiredObservedFixture{
 		ctx: ctx, organizationID: deps.orgID, deploymentPlanID: deps.plan.ID,
-		executionID: uuid.New(), deploymentUnitID: unit.ID, componentID: first.ID,
+		executionID: executionID, executionAttemptID: executionAttemptID,
+		deploymentUnitID: unit.ID, componentID: first.ID,
 		secondComponentID: second.ID, otherUnitID: otherUnit.ID,
 		otherComponentID: other.ID,
 	}
+}
+
+func createDesiredObservedExecutionAttempt(
+	t *testing.T,
+	ctx context.Context,
+	deps taskQueuePlanDeps,
+	targetID uuid.UUID,
+) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	g := NewWithT(t)
+	taskID := uuid.New()
+	stepRunID := uuid.New()
+	attemptID := uuid.New()
+	step := deps.plan.Steps[0]
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO Task (
+			id, organization_id, task_type, deployment_plan_id,
+			deployment_plan_target_id, deployment_target_id, application_id,
+			release_bundle_id, channel_id, environment_id, status, protocol_version,
+			started_at
+		) VALUES (
+			@id, @organizationID, 'deployment', @deploymentPlanID,
+			@deploymentPlanTargetID, @deploymentTargetID, @applicationID,
+			@releaseBundleID, @channelID, @environmentID, 'RUNNING', 'v2', now()
+		)`,
+		pgx.NamedArgs{
+			"id": taskID, "organizationID": deps.orgID,
+			"deploymentPlanID":       deps.plan.ID,
+			"deploymentPlanTargetID": deps.plan.Targets[0].ID,
+			"deploymentTargetID":     targetID, "applicationID": deps.plan.ApplicationID,
+			"releaseBundleID": deps.plan.ReleaseBundleID, "channelID": deps.plan.ChannelID,
+			"environmentID": deps.plan.EnvironmentID,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO StepRun (
+			id, organization_id, task_id, deployment_plan_id,
+			deployment_plan_step_id, step_key, name, action_type,
+			status, sort_order, started_at
+		) VALUES (
+			@id, @organizationID, @taskID, @deploymentPlanID,
+			@deploymentPlanStepID, @stepKey, @name, @actionType,
+			'RUNNING', @sortOrder, now()
+		)`,
+		pgx.NamedArgs{
+			"id": stepRunID, "organizationID": deps.orgID, "taskID": taskID,
+			"deploymentPlanID": deps.plan.ID, "deploymentPlanStepID": step.ID,
+			"stepKey": step.StepKey, "name": step.Name, "actionType": step.ActionType,
+			"sortOrder": step.SortOrder,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO ExecutionAttempt (
+			id, organization_id, deployment_target_id, task_id, step_run_id,
+			execution_id, attempt_number, step_key, status, plan_checksum,
+			artifact_digest, config_checksum, adapter_revision,
+			intent_issued_at, intent_expires_at
+		) VALUES (
+			@id, @organizationID, @deploymentTargetID, @taskID, @stepRunID,
+			@executionID, 1, @stepKey, 'PENDING', @planChecksum,
+			@artifactDigest, @configChecksum, 'test.adapter@2',
+			now(), now() + interval '10 minutes'
+		)`,
+		pgx.NamedArgs{
+			"id": attemptID, "organizationID": deps.orgID,
+			"deploymentTargetID": targetID, "taskID": taskID, "stepRunID": stepRunID,
+			"executionID": taskID, "stepKey": step.StepKey,
+			"planChecksum":   desiredObservedTestDigest("plan"),
+			"artifactDigest": desiredObservedTestDigest("artifact"),
+			"configChecksum": desiredObservedTestDigest("config"),
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO ExecutionFence (
+			execution_attempt_id, organization_id, resource_key, generation
+		) VALUES (@attemptID, @organizationID, @resourceKey, 1)`,
+		pgx.NamedArgs{
+			"attemptID": attemptID, "organizationID": deps.orgID,
+			"resourceKey": "desired-observed:" + taskID.String(),
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	return taskID, attemptID
+}
+
+func readExecutionTargetID(
+	t *testing.T,
+	ctx context.Context,
+	attemptID uuid.UUID,
+) uuid.UUID {
+	t.Helper()
+	g := NewWithT(t)
+	var targetID uuid.UUID
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT deployment_target_id
+		FROM ExecutionAttempt
+		WHERE id = @attemptID`,
+		pgx.NamedArgs{"attemptID": attemptID},
+	).Scan(&targetID)
+	g.Expect(err).NotTo(HaveOccurred())
+	return targetID
 }
 
 func createDesiredObservedUnit(
@@ -341,7 +613,8 @@ func createDesiredObservedComponent(
 func (f desiredObservedFixture) pendingInput() types.PendingDesiredRevisionInput {
 	return types.PendingDesiredRevisionInput{
 		OrganizationID: f.organizationID, DeploymentPlanID: f.deploymentPlanID,
-		ExecutionID: f.executionID, DeploymentUnitID: f.deploymentUnitID,
+		ExecutionID: f.executionID, ExecutionAttemptID: f.executionAttemptID,
+		DeploymentUnitID:    f.deploymentUnitID,
 		ComponentInstanceID: f.componentID, ComponentKey: "api",
 		ArtifactDigest: desiredObservedTestDigest("artifact"),
 		ConfigChecksum: desiredObservedTestDigest("config"), SchemaVersion: "1",

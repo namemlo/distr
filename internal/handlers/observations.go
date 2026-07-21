@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/executionworker"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
@@ -81,7 +83,11 @@ func ingestObservationHandler() http.HandlerFunc {
 			return
 		}
 		envelope := request.ToEnvelope(api.ObserverCredentialFingerprint(credential))
-		state, err := db.IngestObservation(r.Context(), envelope)
+		state, err := ingestObservationWithDispatch(
+			r.Context(), envelope,
+			db.IngestObservationWithTask,
+			executionworker.DispatchReadyTaskSteps,
+		)
 		if err != nil {
 			handleObservationError(w, r, "ingest", err)
 			return
@@ -92,6 +98,19 @@ func ingestObservationHandler() http.HandlerFunc {
 			mapping.ObservedComponentStateToAPI(*state),
 		)
 	}
+}
+
+func ingestObservationWithDispatch(
+	ctx context.Context,
+	envelope types.ObservationEnvelope,
+	ingest func(context.Context, types.ObservationEnvelope) (*types.ObservedComponentState, *types.Task, error),
+	dispatch func(context.Context, types.Task) error,
+) (*types.ObservedComponentState, error) {
+	state, task, err := ingest(ctx, envelope)
+	if err == nil && task != nil {
+		err = dispatch(ctx, *task)
+	}
+	return state, err
 }
 
 func createObserverRegistrationHandler() http.HandlerFunc {

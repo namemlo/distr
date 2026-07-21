@@ -1,13 +1,79 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/types"
 	. "github.com/onsi/gomega"
 )
+
+func TestIngestObservationWithDispatchDispatchesCommittedTask(t *testing.T) {
+	g := NewWithT(t)
+	committed := false
+	dispatched := false
+	state := &types.ObservedComponentState{}
+	task := &types.Task{}
+
+	got, err := ingestObservationWithDispatch(
+		context.Background(),
+		types.ObservationEnvelope{},
+		func(context.Context, types.ObservationEnvelope) (*types.ObservedComponentState, *types.Task, error) {
+			committed = true
+			return state, task, nil
+		},
+		func(_ context.Context, gotTask types.Task) error {
+			g.Expect(committed).To(BeTrue())
+			g.Expect(gotTask).To(Equal(*task))
+			dispatched = true
+			return nil
+		},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got).To(BeIdenticalTo(state))
+	g.Expect(dispatched).To(BeTrue())
+}
+
+func TestIngestObservationWithDispatchDoesNotDispatchExactReplayWithoutTask(t *testing.T) {
+	g := NewWithT(t)
+	state := &types.ObservedComponentState{}
+	dispatchErr := errors.New("dispatch must not run")
+
+	got, err := ingestObservationWithDispatch(
+		context.Background(),
+		types.ObservationEnvelope{},
+		func(context.Context, types.ObservationEnvelope) (*types.ObservedComponentState, *types.Task, error) {
+			return state, nil, nil
+		},
+		func(context.Context, types.Task) error { return dispatchErr },
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got).To(BeIdenticalTo(state))
+}
+
+func TestIngestObservationWithDispatchPropagatesDispatchError(t *testing.T) {
+	g := NewWithT(t)
+	dispatchErr := errors.New("dispatch failed")
+	state := &types.ObservedComponentState{}
+
+	got, err := ingestObservationWithDispatch(
+		context.Background(),
+		types.ObservationEnvelope{},
+		func(context.Context, types.ObservationEnvelope) (*types.ObservedComponentState, *types.Task, error) {
+			return state, &types.Task{}, nil
+		},
+		func(context.Context, types.Task) error { return dispatchErr },
+	)
+
+	g.Expect(err).To(MatchError(dispatchErr))
+	g.Expect(got).To(BeIdenticalTo(state))
+}
 
 func TestObservationCredentialParsingRejectsWrongSchemeAndShortSecret(t *testing.T) {
 	g := NewWithT(t)
