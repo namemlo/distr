@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/auditexport"
@@ -20,6 +21,8 @@ import (
 )
 
 const controlPlaneAuditPayloadLimit = 32 * 1024
+
+const auditExportAttemptLeaseSeconds = 15 * 60
 
 var (
 	controlPlaneAuditEventTypePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,127}$`)
@@ -35,28 +38,74 @@ const controlPlaneAuditEventColumns = `
 	actor_id,
 	outcome,
 	release_id,
+	component_release_id,
+	product_release_id,
 	target_config_id,
 	deployment_plan_id,
+	deployment_policy_id,
+	deployment_policy_version_id,
 	approval_id,
+	maintenance_calendar_id,
+	deployment_freeze_id,
+	admission_decision_id,
+	emergency_override_id,
 	campaign_id,
 	wave_id,
 	execution_id,
 	adapter_revision_id,
+	desired_state_id,
 	observation_id,
+	drift_case_id,
 	reconciliation_id,
+	deployment_target_id,
+	environment_id,
+	customer_organization_id,
+	deployment_unit_id,
+	component_id,
+	task_id,
+	step_run_id,
+	audit_export_sink_id,
+	audit_export_attempt_id,
 	release_checksum,
+	component_release_checksum,
+	product_release_checksum,
+	artifact_digest,
+	manifest_digest,
 	target_config_checksum,
 	deployment_plan_checksum,
+	policy_checksum,
 	approval_checksum,
+	calendar_checksum,
+	admission_checksum,
 	campaign_checksum,
 	execution_checksum,
+	desired_state_checksum,
 	observation_checksum,
+	drift_checksum,
+	reconciliation_checksum,
+	audit_export_config_checksum,
 	payload,
 	payload_redacted,
 	payload_truncated,
 	created_at`
 
 func AppendControlPlaneAuditEvent(
+	ctx context.Context,
+	input types.ControlPlaneAuditEventInput,
+) (*types.ControlPlaneAuditEvent, error) {
+	if err := validateControlPlaneAuditEventInput(input); err != nil {
+		return nil, err
+	}
+	var event *types.ControlPlaneAuditEvent
+	err := RunTx(ctx, func(ctx context.Context) error {
+		var err error
+		event, err = AppendControlPlaneAuditEventInCurrentBoundary(ctx, input)
+		return err
+	})
+	return event, err
+}
+
+func AppendControlPlaneAuditEventInCurrentBoundary(
 	ctx context.Context,
 	input types.ControlPlaneAuditEventInput,
 ) (*types.ControlPlaneAuditEvent, error) {
@@ -71,16 +120,14 @@ func AppendControlPlaneAuditEvent(
 		return nil, apierrors.NewBadRequest("audit payload is invalid: " + err.Error())
 	}
 
-	var event *types.ControlPlaneAuditEvent
-	err = RunTx(ctx, func(ctx context.Context) error {
-		database := internalctx.GetDb(ctx)
-		if _, err := database.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtextextended(@organizationId::text, 160))`,
-			pgx.NamedArgs{"organizationId": input.OrganizationID},
-		); err != nil {
-			return fmt.Errorf("could not lock control-plane audit sequence: %w", err)
-		}
-		rows, err := database.Query(ctx, `
+	database := internalctx.GetDb(ctx)
+	if _, err := database.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended(@organizationId::text, 160))`,
+		pgx.NamedArgs{"organizationId": input.OrganizationID},
+	); err != nil {
+		return nil, fmt.Errorf("could not lock control-plane audit sequence: %w", err)
+	}
+	rows, err := database.Query(ctx, `
 			INSERT INTO ControlPlaneAuditEvent (
 				organization_id,
 				sequence,
@@ -88,22 +135,52 @@ func AppendControlPlaneAuditEvent(
 				actor_id,
 				outcome,
 				release_id,
+				component_release_id,
+				product_release_id,
 				target_config_id,
 				deployment_plan_id,
+				deployment_policy_id,
+				deployment_policy_version_id,
 				approval_id,
+				maintenance_calendar_id,
+				deployment_freeze_id,
+				admission_decision_id,
+				emergency_override_id,
 				campaign_id,
 				wave_id,
 				execution_id,
 				adapter_revision_id,
+				desired_state_id,
 				observation_id,
+				drift_case_id,
 				reconciliation_id,
+				deployment_target_id,
+				environment_id,
+				customer_organization_id,
+				deployment_unit_id,
+				component_id,
+				task_id,
+				step_run_id,
+				audit_export_sink_id,
+				audit_export_attempt_id,
 				release_checksum,
+				component_release_checksum,
+				product_release_checksum,
+				artifact_digest,
+				manifest_digest,
 				target_config_checksum,
 				deployment_plan_checksum,
+				policy_checksum,
 				approval_checksum,
+				calendar_checksum,
+				admission_checksum,
 				campaign_checksum,
 				execution_checksum,
+				desired_state_checksum,
 				observation_checksum,
+				drift_checksum,
+				reconciliation_checksum,
+				audit_export_config_checksum,
 				payload,
 				payload_redacted,
 				payload_truncated
@@ -119,65 +196,191 @@ func AppendControlPlaneAuditEvent(
 				@actorId,
 				@outcome,
 				@releaseId,
+				@componentReleaseId,
+				@productReleaseId,
 				@targetConfigId,
 				@deploymentPlanId,
+				@deploymentPolicyId,
+				@deploymentPolicyVersionId,
 				@approvalId,
+				@maintenanceCalendarId,
+				@deploymentFreezeId,
+				@admissionDecisionId,
+				@emergencyOverrideId,
 				@campaignId,
 				@waveId,
 				@executionId,
 				@adapterRevisionId,
+				@desiredStateId,
 				@observationId,
+				@driftCaseId,
 				@reconciliationId,
+				@deploymentTargetId,
+				@environmentId,
+				@customerOrganizationId,
+				@deploymentUnitId,
+				@componentId,
+				@taskId,
+				@stepRunId,
+				@auditExportSinkId,
+				@auditExportAttemptId,
 				@releaseChecksum,
+				@componentReleaseChecksum,
+				@productReleaseChecksum,
+				@artifactDigest,
+				@manifestDigest,
 				@targetConfigChecksum,
 				@deploymentPlanChecksum,
+				@policyChecksum,
 				@approvalChecksum,
+				@calendarChecksum,
+				@admissionChecksum,
 				@campaignChecksum,
 				@executionChecksum,
+				@desiredStateChecksum,
 				@observationChecksum,
+				@driftChecksum,
+				@reconciliationChecksum,
+				@auditExportConfigChecksum,
 				@payload,
 				@payloadRedacted,
 				@payloadTruncated
 			)
 			RETURNING `+controlPlaneAuditEventColumns,
-			pgx.NamedArgs{
-				"organizationId":         input.OrganizationID,
-				"eventType":              strings.TrimSpace(input.EventType),
-				"actorId":                input.ActorID,
-				"outcome":                strings.TrimSpace(input.Outcome),
-				"releaseId":              input.ReleaseID,
-				"targetConfigId":         input.TargetConfigID,
-				"deploymentPlanId":       input.DeploymentPlanID,
-				"approvalId":             input.ApprovalID,
-				"campaignId":             input.CampaignID,
-				"waveId":                 input.WaveID,
-				"executionId":            input.ExecutionID,
-				"adapterRevisionId":      input.AdapterRevisionID,
-				"observationId":          input.ObservationID,
-				"reconciliationId":       input.ReconciliationID,
-				"releaseChecksum":        input.ReleaseChecksum,
-				"targetConfigChecksum":   input.TargetConfigChecksum,
-				"deploymentPlanChecksum": input.DeploymentPlanChecksum,
-				"approvalChecksum":       input.ApprovalChecksum,
-				"campaignChecksum":       input.CampaignChecksum,
-				"executionChecksum":      input.ExecutionChecksum,
-				"observationChecksum":    input.ObservationChecksum,
-				"payload":                nullableJSON(payload),
-				"payloadRedacted":        payloadRedacted,
-				"payloadTruncated":       payloadTruncated,
-			},
+		pgx.NamedArgs{
+			"organizationId":            input.OrganizationID,
+			"eventType":                 strings.TrimSpace(input.EventType),
+			"actorId":                   input.ActorID,
+			"outcome":                   strings.TrimSpace(input.Outcome),
+			"releaseId":                 input.ReleaseID,
+			"componentReleaseId":        input.ComponentReleaseID,
+			"productReleaseId":          input.ProductReleaseID,
+			"targetConfigId":            input.TargetConfigID,
+			"deploymentPlanId":          input.DeploymentPlanID,
+			"deploymentPolicyId":        input.DeploymentPolicyID,
+			"deploymentPolicyVersionId": input.DeploymentPolicyVersionID,
+			"approvalId":                input.ApprovalID,
+			"maintenanceCalendarId":     input.MaintenanceCalendarID,
+			"deploymentFreezeId":        input.DeploymentFreezeID,
+			"admissionDecisionId":       input.AdmissionDecisionID,
+			"emergencyOverrideId":       input.EmergencyOverrideID,
+			"campaignId":                input.CampaignID,
+			"waveId":                    input.WaveID,
+			"executionId":               input.ExecutionID,
+			"adapterRevisionId":         input.AdapterRevisionID,
+			"desiredStateId":            input.DesiredStateID,
+			"observationId":             input.ObservationID,
+			"driftCaseId":               input.DriftCaseID,
+			"reconciliationId":          input.ReconciliationID,
+			"deploymentTargetId":        input.DeploymentTargetID,
+			"environmentId":             input.EnvironmentID,
+			"customerOrganizationId":    input.CustomerOrganizationID,
+			"deploymentUnitId":          input.DeploymentUnitID,
+			"componentId":               input.ComponentID,
+			"taskId":                    input.TaskID,
+			"stepRunId":                 input.StepRunID,
+			"auditExportSinkId":         input.AuditExportSinkID,
+			"auditExportAttemptId":      input.AuditExportAttemptID,
+			"releaseChecksum":           input.ReleaseChecksum,
+			"componentReleaseChecksum":  input.ComponentReleaseChecksum,
+			"productReleaseChecksum":    input.ProductReleaseChecksum,
+			"artifactDigest":            input.ArtifactDigest,
+			"manifestDigest":            input.ManifestDigest,
+			"targetConfigChecksum":      input.TargetConfigChecksum,
+			"deploymentPlanChecksum":    input.DeploymentPlanChecksum,
+			"policyChecksum":            input.PolicyChecksum,
+			"approvalChecksum":          input.ApprovalChecksum,
+			"calendarChecksum":          input.CalendarChecksum,
+			"admissionChecksum":         input.AdmissionChecksum,
+			"campaignChecksum":          input.CampaignChecksum,
+			"executionChecksum":         input.ExecutionChecksum,
+			"desiredStateChecksum":      input.DesiredStateChecksum,
+			"observationChecksum":       input.ObservationChecksum,
+			"driftChecksum":             input.DriftChecksum,
+			"reconciliationChecksum":    input.ReconciliationChecksum,
+			"auditExportConfigChecksum": input.AuditExportConfigChecksum,
+			"payload":                   nullableJSON(payload),
+			"payloadRedacted":           payloadRedacted,
+			"payloadTruncated":          payloadTruncated,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not append control-plane audit event: %w", err)
+	}
+	value, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ControlPlaneAuditEvent])
+	if err != nil {
+		return nil, fmt.Errorf("could not scan control-plane audit event: %w", err)
+	}
+	if err := claimControlPlaneAuditCorrelations(ctx, value, input.Correlations()); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func claimControlPlaneAuditCorrelations(
+	ctx context.Context,
+	event types.ControlPlaneAuditEvent,
+	correlations []types.AuditCorrelation,
+) error {
+	if len(correlations) == 0 {
+		return apierrors.NewBadRequest("audit correlation is required")
+	}
+	kinds := make([]string, len(correlations))
+	ids := make([]uuid.UUID, len(correlations))
+	for i, correlation := range correlations {
+		kinds[i] = string(correlation.Kind)
+		ids[i] = correlation.ID
+	}
+	database := internalctx.GetDb(ctx)
+	args := pgx.NamedArgs{
+		"eventId":        event.ID,
+		"organizationId": event.OrganizationID,
+		"kinds":          kinds,
+		"ids":            ids,
+	}
+	if _, err := database.Exec(ctx, `
+		INSERT INTO ControlPlaneAuditSubject (
+			correlation_kind,
+			subject_id,
+			organization_id,
+			first_event_id
 		)
-		if err != nil {
-			return fmt.Errorf("could not append control-plane audit event: %w", err)
-		}
-		value, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[types.ControlPlaneAuditEvent])
-		if err != nil {
-			return fmt.Errorf("could not scan control-plane audit event: %w", err)
-		}
-		event = &value
-		return nil
-	})
-	return event, err
+		SELECT correlation.kind, correlation.id, @organizationId, @eventId
+		FROM unnest(@kinds::text[], @ids::uuid[]) AS correlation(kind, id)
+		ON CONFLICT (correlation_kind, subject_id) DO NOTHING`,
+		args,
+	); err != nil {
+		return fmt.Errorf("could not claim control-plane audit correlation: %w", err)
+	}
+	var foreignCount int
+	if err := database.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM unnest(@kinds::text[], @ids::uuid[]) AS correlation(kind, id)
+		JOIN ControlPlaneAuditSubject subject
+		  ON subject.correlation_kind = correlation.kind
+		 AND subject.subject_id = correlation.id
+		WHERE subject.organization_id <> @organizationId`,
+		args,
+	).Scan(&foreignCount); err != nil {
+		return fmt.Errorf("could not validate control-plane audit tenant correlation: %w", err)
+	}
+	if foreignCount > 0 {
+		return apierrors.NewForbidden("audit correlation belongs to another organization")
+	}
+	if _, err := database.Exec(ctx, `
+		INSERT INTO ControlPlaneAuditEventSubject (
+			event_id,
+			organization_id,
+			correlation_kind,
+			subject_id
+		)
+		SELECT @eventId, @organizationId, correlation.kind, correlation.id
+		FROM unnest(@kinds::text[], @ids::uuid[]) AS correlation(kind, id)`,
+		args,
+	); err != nil {
+		return fmt.Errorf("could not link control-plane audit correlation: %w", err)
+	}
+	return nil
 }
 
 func GetControlPlaneAuditEvents(
@@ -221,10 +424,31 @@ func BuildDeploymentEvidenceBundle(
 	}
 	database := internalctx.GetDb(ctx)
 	rows, err := database.Query(ctx, `
+		WITH RECURSIVE evidence_event(event_id) AS (
+			SELECT id
+			FROM ControlPlaneAuditEvent
+			WHERE organization_id = @organizationId
+			  AND deployment_plan_id = @deploymentPlanId
+			UNION
+			SELECT linked.event_id
+			FROM evidence_event current_event
+			JOIN ControlPlaneAuditEventSubject current_subject
+			  ON current_subject.event_id = current_event.event_id
+			 AND current_subject.organization_id = @organizationId
+			JOIN ControlPlaneAuditEventSubject linked
+			  ON linked.organization_id = current_subject.organization_id
+			 AND linked.correlation_kind = current_subject.correlation_kind
+			 AND linked.subject_id = current_subject.subject_id
+			JOIN ControlPlaneAuditEvent candidate
+			  ON candidate.id = linked.event_id
+			 AND candidate.organization_id = linked.organization_id
+			WHERE candidate.deployment_plan_id IS NULL
+			   OR candidate.deployment_plan_id = @deploymentPlanId
+		)
 		SELECT `+controlPlaneAuditEventColumns+`
 		FROM ControlPlaneAuditEvent
 		WHERE organization_id = @organizationId
-		  AND deployment_plan_id = @deploymentPlanId
+		  AND id IN (SELECT event_id FROM evidence_event)
 		ORDER BY sequence, id`,
 		pgx.NamedArgs{
 			"organizationId":   query.OrganizationID,
@@ -308,7 +532,11 @@ func CreateAuditExportSink(
 		); err != nil {
 			return mapAuditExportWriteError("create checkpoint", err)
 		}
-		return nil
+		return RecordControlPlaneAuditMutation(
+			ctx,
+			DirectControlPlaneAuditAppendHook,
+			auditExportSinkCreatedEvent(input, *sink),
+		)
 	})
 	return sink, err
 }
@@ -476,16 +704,16 @@ func (ControlPlaneAuditExportStore) LoadAuditBatch(
 	return pgx.CollectRows(rows, pgx.RowToStructByName[types.ControlPlaneAuditEvent])
 }
 
-func (ControlPlaneAuditExportStore) CommitAuditExport(
+func (ControlPlaneAuditExportStore) StartAuditExportAttempt(
 	ctx context.Context,
 	sinkID uuid.UUID,
-	lastSequence int64,
-	eventCount int,
-) error {
-	if sinkID == uuid.Nil || lastSequence < 1 || eventCount < 1 {
-		return apierrors.NewBadRequest("audit export checkpoint is invalid")
+	events []types.ControlPlaneAuditEvent,
+) (uuid.UUID, error) {
+	if sinkID == uuid.Nil || len(events) == 0 {
+		return uuid.Nil, apierrors.NewBadRequest("audit export attempt requires a sink and events")
 	}
-	return RunTx(ctx, func(ctx context.Context) error {
+	var attemptID uuid.UUID
+	err := RunTx(ctx, func(ctx context.Context) error {
 		database := internalctx.GetDb(ctx)
 		var organizationID uuid.UUID
 		var checkpoint int64
@@ -504,12 +732,175 @@ func (ControlPlaneAuditExportStore) CommitAuditExport(
 			return apierrors.ErrNotFound
 		}
 		if err != nil {
+			return fmt.Errorf("could not lock audit export attempt: %w", err)
+		}
+		for i, event := range events {
+			if event.OrganizationID != organizationID || event.Sequence != checkpoint+int64(i)+1 {
+				return apierrors.NewConflict("audit export batch is cross-tenant or non-contiguous")
+			}
+		}
+		staleAttempts, err := database.Exec(ctx, `
+			UPDATE AuditExportAttempt
+			SET status = 'FAILED',
+				error_summary = 'audit export attempt lease expired',
+				completed_at = now()
+			WHERE sink_id = @sinkId
+			  AND organization_id = @organizationId
+			  AND status = 'RUNNING'
+			  AND lease_expires_at <= now()`,
+			pgx.NamedArgs{"sinkId": sinkID, "organizationId": organizationID},
+		)
+		if err != nil {
+			return fmt.Errorf("could not reconcile stale audit export attempt: %w", err)
+		}
+		if staleAttempts.RowsAffected() > 0 {
+			if _, err := database.Exec(ctx, `
+				UPDATE AuditExportSink
+				SET last_failure_at = now(),
+					consecutive_failures = consecutive_failures + @failureCount,
+					updated_at = now()
+				WHERE id = @sinkId
+				  AND organization_id = @organizationId`,
+				pgx.NamedArgs{
+					"sinkId":         sinkID,
+					"organizationId": organizationID,
+					"failureCount":   staleAttempts.RowsAffected(),
+				},
+			); err != nil {
+				return fmt.Errorf("could not record stale audit export failure: %w", err)
+			}
+		}
+		firstSequence := events[0].Sequence
+		lastSequence := events[len(events)-1].Sequence
+		var running bool
+		var priorAttempts int
+		err = database.QueryRow(ctx, `
+			SELECT
+				EXISTS (
+					SELECT 1
+					FROM AuditExportAttempt
+					WHERE sink_id = @sinkId
+					  AND organization_id = @organizationId
+					  AND status = 'RUNNING'
+				),
+				COUNT(*)
+			FROM AuditExportAttempt
+			WHERE sink_id = @sinkId
+			  AND organization_id = @organizationId
+			  AND first_sequence = @firstSequence
+			  AND last_sequence = @lastSequence`,
+			pgx.NamedArgs{
+				"sinkId":         sinkID,
+				"organizationId": organizationID,
+				"firstSequence":  firstSequence,
+				"lastSequence":   lastSequence,
+			},
+		).Scan(&running, &priorAttempts)
+		if err != nil {
+			return fmt.Errorf("could not inspect audit export retry history: %w", err)
+		}
+		if running {
+			return apierrors.NewConflict("audit export batch already has a running attempt")
+		}
+		attemptID = uuid.New()
+		if _, err := database.Exec(ctx, `
+			INSERT INTO AuditExportAttempt (
+				id,
+				sink_id,
+				organization_id,
+				first_sequence,
+				last_sequence,
+				event_count,
+				status,
+				idempotency_key,
+				lease_expires_at
+			)
+			VALUES (
+				@attemptId,
+				@sinkId,
+				@organizationId,
+				@firstSequence,
+				@lastSequence,
+				@eventCount,
+				'RUNNING',
+				@idempotencyKey,
+				now() + make_interval(secs => @leaseSeconds)
+			)`,
+			pgx.NamedArgs{
+				"attemptId":      attemptID,
+				"sinkId":         sinkID,
+				"organizationId": organizationID,
+				"firstSequence":  firstSequence,
+				"lastSequence":   lastSequence,
+				"eventCount":     len(events),
+				"leaseSeconds":   auditExportAttemptLeaseSeconds,
+				"idempotencyKey": auditExportAttemptKey(
+					sinkID, firstSequence, lastSequence, len(events),
+					fmt.Sprintf("ATTEMPT:%d", priorAttempts+1),
+				),
+			},
+		); err != nil {
+			return mapAuditExportWriteError("start attempt", err)
+		}
+		return nil
+	})
+	return attemptID, err
+}
+
+func (ControlPlaneAuditExportStore) CommitAuditExport(
+	ctx context.Context,
+	sinkID uuid.UUID,
+	attemptID uuid.UUID,
+	lastSequence int64,
+	eventCount int,
+) error {
+	if sinkID == uuid.Nil || attemptID == uuid.Nil || lastSequence < 1 || eventCount < 1 {
+		return apierrors.NewBadRequest("audit export checkpoint is invalid")
+	}
+	return RunTx(ctx, func(ctx context.Context) error {
+		database := internalctx.GetDb(ctx)
+		var organizationID uuid.UUID
+		var checkpoint int64
+		var attemptFirstSequence int64
+		var attemptLastSequence int64
+		var attemptEventCount int
+		err := database.QueryRow(ctx, `
+			SELECT
+				s.organization_id,
+				c.last_sequence,
+				a.first_sequence,
+				a.last_sequence,
+				a.event_count
+			FROM AuditExportSink s
+			JOIN AuditExportCheckpoint c
+			  ON c.sink_id = s.id
+			 AND c.organization_id = s.organization_id
+			JOIN AuditExportAttempt a
+			  ON a.id = @attemptId
+			 AND a.sink_id = s.id
+			 AND a.organization_id = s.organization_id
+			 AND a.status = 'RUNNING'
+			 AND a.lease_expires_at > now()
+			WHERE s.id = @sinkId
+			  AND s.enabled
+			FOR UPDATE OF s, c, a`,
+			pgx.NamedArgs{"sinkId": sinkID, "attemptId": attemptID},
+		).Scan(
+			&organizationID,
+			&checkpoint,
+			&attemptFirstSequence,
+			&attemptLastSequence,
+			&attemptEventCount,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierrors.ErrNotFound
+		}
+		if err != nil {
 			return fmt.Errorf("could not lock audit export checkpoint: %w", err)
 		}
-		if checkpoint >= lastSequence {
-			return nil
-		}
-		if lastSequence-checkpoint != int64(eventCount) {
+		if attemptFirstSequence != checkpoint+1 ||
+			attemptLastSequence != lastSequence ||
+			attemptEventCount != eventCount {
 			return apierrors.NewConflict("audit export checkpoint changed or batch is not contiguous")
 		}
 
@@ -528,38 +919,18 @@ func (ControlPlaneAuditExportStore) CommitAuditExport(
 			return fmt.Errorf("could not load audit export checkpoint event: %w", err)
 		}
 
-		firstSequence := checkpoint + 1
 		if _, err := database.Exec(ctx, `
-			INSERT INTO AuditExportAttempt (
-				sink_id,
-				organization_id,
-				first_sequence,
-				last_sequence,
-				event_count,
-				status,
-				idempotency_key,
-				completed_at
-			)
-			VALUES (
-				@sinkId,
-				@organizationId,
-				@firstSequence,
-				@lastSequence,
-				@eventCount,
-				'SUCCEEDED',
-				@idempotencyKey,
-				now()
-			)
-			ON CONFLICT (sink_id, idempotency_key) DO NOTHING`,
+			UPDATE AuditExportAttempt
+			SET status = 'SUCCEEDED',
+				completed_at = now()
+			WHERE id = @attemptId
+			  AND sink_id = @sinkId
+			  AND organization_id = @organizationId
+			  AND status = 'RUNNING'`,
 			pgx.NamedArgs{
+				"attemptId":      attemptID,
 				"sinkId":         sinkID,
 				"organizationId": organizationID,
-				"firstSequence":  firstSequence,
-				"lastSequence":   lastSequence,
-				"eventCount":     eventCount,
-				"idempotencyKey": auditExportAttemptKey(
-					sinkID, firstSequence, lastSequence, eventCount, "SUCCEEDED",
-				),
 			},
 		); err != nil {
 			return fmt.Errorf("could not record successful audit export: %w", err)
@@ -598,75 +969,57 @@ func (ControlPlaneAuditExportStore) CommitAuditExport(
 func (ControlPlaneAuditExportStore) RecordAuditExportFailure(
 	ctx context.Context,
 	sinkID uuid.UUID,
+	attemptID uuid.UUID,
 	failedSequence int64,
 	exportErr error,
 ) error {
-	if sinkID == uuid.Nil || failedSequence < 1 || exportErr == nil {
+	if sinkID == uuid.Nil || attemptID == uuid.Nil || failedSequence < 1 || exportErr == nil {
 		return apierrors.NewBadRequest("audit export failure is invalid")
 	}
 	return RunTx(ctx, func(ctx context.Context) error {
 		database := internalctx.GetDb(ctx)
 		var organizationID uuid.UUID
-		var checkpoint int64
+		var firstSequence int64
+		var lastSequence int64
+		var status string
 		err := database.QueryRow(ctx, `
-			SELECT s.organization_id, c.last_sequence
+			SELECT s.organization_id, a.first_sequence, a.last_sequence, a.status
 			FROM AuditExportSink s
-			JOIN AuditExportCheckpoint c
-			  ON c.sink_id = s.id
-			 AND c.organization_id = s.organization_id
+			JOIN AuditExportAttempt a
+			  ON a.id = @attemptId
+			 AND a.sink_id = s.id
+			 AND a.organization_id = s.organization_id
 			WHERE s.id = @sinkId
-			FOR UPDATE OF s, c`,
-			pgx.NamedArgs{"sinkId": sinkID},
-		).Scan(&organizationID, &checkpoint)
+			FOR UPDATE OF s, a`,
+			pgx.NamedArgs{"sinkId": sinkID, "attemptId": attemptID},
+		).Scan(&organizationID, &firstSequence, &lastSequence, &status)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apierrors.ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("could not lock failed audit export: %w", err)
 		}
-		if failedSequence <= checkpoint {
+		if status == "FAILED" {
 			return nil
 		}
-
-		firstSequence := checkpoint + 1
-		eventCount := int(failedSequence - checkpoint)
+		if status != "RUNNING" || failedSequence < firstSequence || failedSequence > lastSequence {
+			return apierrors.NewConflict("audit export attempt is not running or failure is outside its batch")
+		}
 		errorSummary := auditExportErrorSummary(exportErr)
 		if _, err := database.Exec(ctx, `
-			INSERT INTO AuditExportAttempt (
-				sink_id,
-				organization_id,
-				first_sequence,
-				last_sequence,
-				event_count,
-				status,
-				idempotency_key,
-				error_summary,
-				completed_at
-			)
-			VALUES (
-				@sinkId,
-				@organizationId,
-				@firstSequence,
-				@failedSequence,
-				@eventCount,
-				'FAILED',
-				@idempotencyKey,
-				@errorSummary,
-				now()
-			)
-			ON CONFLICT (sink_id, idempotency_key) DO UPDATE
-			SET error_summary = EXCLUDED.error_summary,
-				completed_at = EXCLUDED.completed_at`,
+			UPDATE AuditExportAttempt
+			SET status = 'FAILED',
+				error_summary = @errorSummary,
+				completed_at = now()
+			WHERE id = @attemptId
+			  AND sink_id = @sinkId
+			  AND organization_id = @organizationId
+			  AND status = 'RUNNING'`,
 			pgx.NamedArgs{
+				"attemptId":      attemptID,
 				"sinkId":         sinkID,
 				"organizationId": organizationID,
-				"firstSequence":  firstSequence,
-				"failedSequence": failedSequence,
-				"eventCount":     eventCount,
-				"idempotencyKey": auditExportAttemptKey(
-					sinkID, firstSequence, failedSequence, eventCount, "FAILED",
-				),
-				"errorSummary": errorSummary,
+				"errorSummary":   errorSummary,
 			},
 		); err != nil {
 			return fmt.Errorf("could not record failed audit export: %w", err)
@@ -751,27 +1104,29 @@ func validateControlPlaneAuditEventInput(input types.ControlPlaneAuditEventInput
 }
 
 func controlPlaneAuditInputHasCorrelation(input types.ControlPlaneAuditEventInput) bool {
-	return input.ReleaseID != nil ||
-		input.TargetConfigID != nil ||
-		input.DeploymentPlanID != nil ||
-		input.ApprovalID != nil ||
-		input.CampaignID != nil ||
-		input.WaveID != nil ||
-		input.ExecutionID != nil ||
-		input.AdapterRevisionID != nil ||
-		input.ObservationID != nil ||
-		input.ReconciliationID != nil
+	return len(input.Correlations()) > 0
 }
 
 func controlPlaneAuditChecksumsValid(input types.ControlPlaneAuditEventInput) bool {
 	for _, checksum := range []string{
 		input.ReleaseChecksum,
+		input.ComponentReleaseChecksum,
+		input.ProductReleaseChecksum,
+		input.ArtifactDigest,
+		input.ManifestDigest,
 		input.TargetConfigChecksum,
 		input.DeploymentPlanChecksum,
+		input.PolicyChecksum,
 		input.ApprovalChecksum,
+		input.CalendarChecksum,
+		input.AdmissionChecksum,
 		input.CampaignChecksum,
 		input.ExecutionChecksum,
+		input.DesiredStateChecksum,
 		input.ObservationChecksum,
+		input.DriftChecksum,
+		input.ReconciliationChecksum,
+		input.AuditExportConfigChecksum,
 	} {
 		if checksum != "" && !controlPlaneAuditChecksumPattern.MatchString(checksum) {
 			return false
@@ -786,16 +1141,32 @@ func validateCreateAuditExportSinkInput(input types.CreateAuditExportSinkInput) 
 	switch {
 	case input.OrganizationID == uuid.Nil:
 		return apierrors.NewBadRequest("audit export organization is required")
+	case input.ActorID == uuid.Nil:
+		return apierrors.NewBadRequest("audit export actor is required")
 	case len(name) < 1 || len(name) > 128:
 		return apierrors.NewBadRequest("audit export sink name is invalid")
 	case !input.Kind.Valid():
 		return apierrors.NewBadRequest("audit export sink kind is invalid")
-	case len(reference) < 1 || len(reference) > 1024 || strings.ContainsAny(reference, "\r\n"):
+	case !types.ValidAuditExportEndpointReference(reference):
 		return apierrors.NewBadRequest("audit export endpoint reference is invalid")
 	case !controlPlaneAuditChecksumPattern.MatchString(input.ConfigChecksum):
 		return apierrors.NewBadRequest("audit export config checksum is invalid")
 	default:
 		return nil
+	}
+}
+
+func auditExportSinkCreatedEvent(
+	input types.CreateAuditExportSinkInput,
+	sink types.AuditExportSink,
+) types.ControlPlaneAuditEventInput {
+	return types.ControlPlaneAuditEventInput{
+		OrganizationID:            input.OrganizationID,
+		EventType:                 "audit_export_sink.created",
+		ActorID:                   &input.ActorID,
+		Outcome:                   "SUCCEEDED",
+		AuditExportSinkID:         &sink.ID,
+		AuditExportConfigChecksum: input.ConfigChecksum,
 	}
 }
 
@@ -813,22 +1184,14 @@ func auditExportAttemptKey(
 
 func auditExportErrorSummary(err error) string {
 	value := strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(err.Error()))
-	lower := strings.ToLower(value)
-	for _, marker := range []string{
-		"authorization:",
-		"bearer ",
-		"password=",
-		"token=",
-		"api_key=",
-		"apikey=",
-		"secret=",
-	} {
-		if strings.Contains(lower, marker) {
-			return "[REDACTED]"
-		}
+	if redacted, changed := auditexport.RedactAuditText(value); changed {
+		return redacted
 	}
 	if len(value) > 2048 {
 		value = value[:2048]
+		for !utf8.ValidString(value) {
+			value = value[:len(value)-1]
+		}
 	}
 	return value
 }

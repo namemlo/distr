@@ -5,15 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
 
+const auditExportFailurePersistenceTimeout = 5 * time.Second
+
 type Store interface {
 	LoadAuditBatch(context.Context, uuid.UUID, int) ([]types.ControlPlaneAuditEvent, error)
-	CommitAuditExport(context.Context, uuid.UUID, int64, int) error
-	RecordAuditExportFailure(context.Context, uuid.UUID, int64, error) error
+	StartAuditExportAttempt(context.Context, uuid.UUID, []types.ControlPlaneAuditEvent) (uuid.UUID, error)
+	CommitAuditExport(context.Context, uuid.UUID, uuid.UUID, int64, int) error
+	RecordAuditExportFailure(context.Context, uuid.UUID, uuid.UUID, int64, error) error
 	AuditExportLag(context.Context, uuid.UUID) (int64, error)
 }
 
@@ -65,43 +69,85 @@ func (w *Worker) ExportAuditBatch(
 		}
 		return result, nil
 	}
-
-	sink, err := w.resolveSink(sinkID)
-	if err != nil {
-		return result, fmt.Errorf("resolve audit export sink: %w", err)
-	}
 	var previous int64
 	for i, event := range events {
 		if i > 0 && event.Sequence <= previous {
 			return result, errors.New("audit export batch is not strictly ordered")
 		}
-		if err := sink.Export(ctx, event); err != nil {
-			recordErr := w.store.RecordAuditExportFailure(ctx, sinkID, event.Sequence, err)
-			var lagErr error
-			result.CheckpointLag, lagErr = w.store.AuditExportLag(ctx, sinkID)
-			if recordErr != nil {
-				err = errors.Join(
-					fmt.Errorf("export audit sequence %d: %w", event.Sequence, err),
-					fmt.Errorf("record audit export failure: %w", recordErr),
-				)
-			} else {
-				err = fmt.Errorf("export audit sequence %d: %w", event.Sequence, err)
-			}
-			if lagErr != nil {
-				err = errors.Join(err, fmt.Errorf("load audit export lag: %w", lagErr))
-			}
-			return result, err
-		}
 		previous = event.Sequence
+	}
+
+	attemptID, err := w.store.StartAuditExportAttempt(ctx, sinkID, events)
+	if err != nil {
+		return result, fmt.Errorf("start audit export attempt: %w", err)
+	}
+	sink, err := w.resolveSink(sinkID)
+	if err != nil {
+		var persistenceErr error
+		result.CheckpointLag, persistenceErr = w.persistAuditExportFailure(
+			ctx, sinkID, attemptID, events[0].Sequence, err,
+		)
+		return result, errors.Join(
+			fmt.Errorf("resolve audit export sink: %w", err),
+			persistenceErr,
+		)
+	}
+	for _, event := range events {
+		if err := sink.Export(ctx, event); err != nil {
+			var persistenceErr error
+			result.CheckpointLag, persistenceErr = w.persistAuditExportFailure(
+				ctx, sinkID, attemptID, event.Sequence, err,
+			)
+			return result, errors.Join(
+				fmt.Errorf("export audit sequence %d: %w", event.Sequence, err),
+				persistenceErr,
+			)
+		}
 		result.Exported++
 		result.LastSequence = event.Sequence
 	}
-	if err := w.store.CommitAuditExport(ctx, sinkID, result.LastSequence, result.Exported); err != nil {
-		return result, fmt.Errorf("commit audit export checkpoint: %w", err)
+	if err := w.store.CommitAuditExport(ctx, sinkID, attemptID, result.LastSequence, result.Exported); err != nil {
+		var persistenceErr error
+		result.CheckpointLag, persistenceErr = w.persistAuditExportFailure(
+			ctx, sinkID, attemptID, result.LastSequence, err,
+		)
+		return result, errors.Join(
+			fmt.Errorf("commit audit export checkpoint: %w", err),
+			persistenceErr,
+		)
 	}
 	result.CheckpointLag, err = w.store.AuditExportLag(ctx, sinkID)
 	if err != nil {
 		return result, fmt.Errorf("load audit export lag: %w", err)
 	}
 	return result, nil
+}
+
+func (w *Worker) persistAuditExportFailure(
+	ctx context.Context,
+	sinkID uuid.UUID,
+	attemptID uuid.UUID,
+	failedSequence int64,
+	exportErr error,
+) (int64, error) {
+	persistenceCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		auditExportFailurePersistenceTimeout,
+	)
+	defer cancel()
+	recordErr := w.store.RecordAuditExportFailure(
+		persistenceCtx, sinkID, attemptID, failedSequence, exportErr,
+	)
+	lag, lagErr := w.store.AuditExportLag(persistenceCtx, sinkID)
+	return lag, errors.Join(
+		wrapOptionalError("record audit export failure", recordErr),
+		wrapOptionalError("load audit export lag", lagErr),
+	)
+}
+
+func wrapOptionalError(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", message, err)
 }

@@ -15,18 +15,29 @@ never delete or block the primary evidence.
 ## Decision
 
 Store one append-only, organization-scoped `ControlPlaneAuditEvent` sequence.
-Every privileged v2 mutation appends through the same helper inside its database
-transaction or transactional outbox boundary. Events contain bounded, redacted
-metadata and correlated identifiers/checksums; they never contain credentials.
+Every privileged v2 mutation appends through an explicit hook inside its database
+transaction or transactional outbox boundary. The direct hook reuses the current
+database transaction; an outbox implementation can satisfy the same interface.
+Events contain bounded, redacted metadata and typed identifiers/checksums; they
+never contain credentials. Correlation subjects are tenant-owned and immutable,
+so the same typed identity cannot be claimed by another organization.
 
-Evidence bundles are deterministically ordered by sequence and checksummed with
-SHA-256. External sinks consume ordered batches through per-sink checkpoints and
-idempotency keys. A failed export records an attempt and lag while retaining the
-primary event and leaving the checkpoint unchanged.
+Evidence bundles are built from the connected typed-correlation graph rooted at
+the requested deployment plan, deterministically ordered by sequence, and
+checksummed with SHA-256. External sinks consume ordered batches through per-sink
+checkpoints and idempotency keys. Every delivery starts a new immutable attempt
+row in `RUNNING`; resolver or delivery failure completes that row as `FAILED`,
+while a retry creates a new row. Failure retains the primary event and leaves the
+checkpoint unchanged. Running attempts carry a durable lease. Starting the next
+batch atomically marks an expired attempt failed before creating its replacement,
+so a terminated worker cannot permanently wedge the sink. Cancellation and
+checkpoint-commit failures persist through a short context detached from the
+cancelled export request, and persisted error summaries remain valid UTF-8.
 
-The first PR-078 commit establishes migration 160, the append/bundle/export core,
-and API seams. The final integration replay instruments the owning PR-066 through
-PR-077 mutations after those repositories have stabilized.
+PR-078 instruments its owned export-sink creation transaction and establishes
+the append/bundle/export core plus direct-transaction and outbox integration
+hooks. The final ordered integration replay must use those hooks from the owning
+PR-066 through PR-077 mutations after those repositories have stabilized.
 
 `AuditView` authorizes event, bundle, sink, and status reads. `AuditExport`
 authorizes sink configuration. Export transports are resolved through an
@@ -36,11 +47,18 @@ outbound requests on its own.
 ## Consequences
 
 - Audit events cannot be updated, deleted, or truncated.
+- Correlation-subject ownership and event links cannot be updated, deleted, or
+  truncated.
 - Cross-organization evidence is rejected before bundle generation.
+- A bundle follows connected typed correlations and does not require every event
+  to carry the deployment-plan ID directly.
 - Sink failure is observable and retryable without changing primary evidence.
 - Export targets store secret references only; secret values remain in the
   configured secret provider.
-- Migration 160 refuses rollback while audit evidence or export sinks exist.
+- Migration 160 takes `ACCESS EXCLUSIVE` locks on every owned audit/export table
+  before checking for retained rows, then refuses rollback if any primary,
+  correlation, sink, checkpoint, or attempt evidence exists. The locks remain
+  held through the destructive statements, closing the check/drop race.
 
 ## Alternatives considered
 
@@ -53,9 +71,14 @@ outbound requests on its own.
 
 ## Validation
 
-Focused race tests cover correlation, deterministic bundle checksums,
-cross-organization rejection, payload redaction and bounds, ordered export,
-idempotent checkpoints, lag/failure visibility, and source-event retention.
+Focused tests cover typed correlation, deterministic bundle checksums,
+cross-organization rejection, graph connectivity, JSON-number preservation,
+payload redaction and bounds, safe sink references, ordered export, immutable
+retry history, lag/failure visibility, transactional hooks, owned sink
+instrumentation, source-event retention, and rollback lock/refusal coverage.
+Worker cancellation, commit failure, stale-attempt recovery, and multibyte error
+truncation also have focused coverage. Race execution is environment
+blocked on this Windows host because CGO and a C compiler are unavailable.
 Migration lint is expected to remain blocked on the synthetic branch's missing
 ordered migrations 140-142 and 146-159; migration 160 is not renumbered or
 backfilled around that gap.

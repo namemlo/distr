@@ -67,11 +67,21 @@ func TestCreateAuditExportSinkRequestValidatesReferencesWithoutSecretMaterial(t 
 		"inline credential": func(request *CreateAuditExportSinkRequest) {
 			request.EndpointReference = "https://user:password@example.test/export"
 		},
+		"raw network endpoint": func(request *CreateAuditExportSinkRequest) {
+			request.EndpointReference = "https://siem.example.test/export"
+		},
+		"reference traversal": func(request *CreateAuditExportSinkRequest) {
+			request.EndpointReference = "secret://audit/../admin"
+		},
+		"reference query": func(request *CreateAuditExportSinkRequest) {
+			request.EndpointReference = "secret://audit/siem?token=inline"
+		},
 		"invalid checksum": func(request *CreateAuditExportSinkRequest) {
 			request.ConfigChecksum = "sha256:not-a-digest"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			g := NewWithT(t)
 			request := valid
 			mutate(&request)
 			g.Expect(request.Validate()).To(HaveOccurred())

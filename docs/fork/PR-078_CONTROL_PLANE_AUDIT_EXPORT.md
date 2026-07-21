@@ -4,10 +4,16 @@
 
 PR-078 adds the client-neutral evidence layer for the v2 control plane:
 
-- migration 160 with append-only audit events and durable export state;
-- one transaction-safe append helper with bounded payload redaction;
-- deterministic, tenant-scoped deployment evidence bundles;
-- ordered, idempotent export batches with failure and lag evidence;
+- migration 160 with append-only audit events, typed correlation ownership, and
+  durable export state; downgrade locks all owned tables before refusing any
+  retained primary, correlation, sink, checkpoint, or attempt evidence;
+- direct-transaction and transactional-outbox append hooks with bounded payload
+  redaction;
+- deterministic, tenant-scoped deployment evidence bundles built from the
+  connected correlation graph;
+- ordered, idempotent export batches with immutable retry and lag evidence;
+- leased attempts with atomic stale-attempt recovery and background-safe failure
+  persistence after cancellation or checkpoint-commit failure;
 - API seams for paginated events, bundles, sinks, and export status.
 
 The HTTP surface is:
@@ -27,15 +33,22 @@ event ID as the delivery idempotency key.
 
 ## Integrity rules
 
-Events use a monotonically increasing per-organization sequence. A bundle accepts
-only events from the requested organization and deployment plan, sorts them by
-sequence, and hashes the canonical JSON document. Export checkpoints advance
-only after the complete ordered batch succeeds. Sink failure records an attempt,
-does not advance the checkpoint, and never removes the source event.
+Events use a monotonically increasing per-organization sequence. Each typed
+correlation identity is claimed by exactly one organization. A bundle roots at
+the requested deployment plan, follows connected typed identities, refuses
+disconnected or foreign-plan input, sorts by sequence, and hashes the canonical
+JSON document. Export checkpoints advance only after the complete ordered batch
+succeeds. Each delivery creates a distinct `RUNNING` attempt; success or failure
+completes that row without overwriting earlier retry history. Resolver and sink
+failures do not advance the checkpoint or remove source events. Attempts expire
+after a bounded durable lease; the next start atomically fails a stale attempt
+before retrying. Failure recording uses a short cancellation-detached context,
+and error summaries are bounded without splitting UTF-8 code points.
 
-Payloads are valid JSON, redacted for common credential fields and bearer/token
-patterns, and limited to 32 KiB. Export configuration persists only a secret or
-endpoint reference and a checksum.
+Payloads are valid single JSON documents, preserve JSON numbers during
+redaction, redact credential keys, authentication headers, cookies, private
+keys, credential URLs, and token patterns, and are limited to 32 KiB. Export
+configuration persists only a validated `secret:` reference and a checksum.
 
 Example sink request:
 
@@ -50,8 +63,11 @@ Example sink request:
 
 ## Integration boundary
 
-This synthetic implementation branch owns only the audit/export core. During the
-numbered integration replay, the append helper must be wired into plan
+This synthetic implementation branch owns the audit/export core and sink
+creation, which is audited in the same database transaction. It exposes
+`RunControlPlaneAuditedMutation` for a direct transaction and
+`ControlPlaneAuditAppendHook` for a transactional outbox adapter. During the
+numbered integration replay, one of those hooks must be wired into plan
 draft/publication, policy, approval, calendar/freeze, admission/override,
 campaign/control, adapter assignment/resolution, execution/control,
 desired/observed state, drift, and reconciliation mutations in the same
@@ -65,8 +81,10 @@ database layer.
 
 ## Verification
 
-Focused tests cover deterministic correlation, cross-organization refusal,
-redaction and payload bounds, ordered idempotent export, checkpoint behavior,
-sink failure visibility, and primary-event retention. The complete migration
+Focused tests cover the full typed correlation shape, tenant-safe correlation
+contracts, graph bundles, comprehensive redaction, JSON-number preservation,
+safe sink references, transactional/outbox hooks, owned sink instrumentation,
+ordered export, resolver failures, immutable retry history, checkpoint behavior,
+primary-event retention, and downgrade TOCTOU protection. The complete migration
 lint and live PostgreSQL gate remain deferred until migrations 140–159 have been
 integrated ahead of migration 160.

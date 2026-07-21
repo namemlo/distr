@@ -1595,16 +1595,19 @@ Use one entry per pull request:
 - Feature flag: Uses the existing operator-control-plane v2 boundary; no v1 audit behavior changes.
 - User-facing behavior: Operators can trace one deployment across immutable control-plane identities, produce a
   deterministic evidence checksum, and see external export failure or lag without losing the primary evidence.
-- Database changes: Migration 160 adds append-only `ControlPlaneAuditEvent`, versioned `AuditExportSink`,
-  `AuditExportCheckpoint`, and retryable `AuditExportAttempt` records with organization isolation and bounded
-  redacted payloads.
+- Database changes: Migration 160 adds append-only `ControlPlaneAuditEvent`, tenant-owned
+  `ControlPlaneAuditSubject`/`ControlPlaneAuditEventSubject` graph links, versioned `AuditExportSink`,
+  `AuditExportCheckpoint`, and immutable `AuditExportAttempt` retry records with organization isolation and
+  bounded redacted payloads.
 - API changes: Adds tenant-scoped event, evidence-bundle, export-sink, and export-status routes with `AuditView`
   and `AuditExport` authorization.
 - UI changes: None in this slice.
 - Agent protocol changes: None.
 - Documentation: Added ADR-0066 and PR-078 fork notes.
-- Tests: Added deterministic bundle ordering/checksum, cross-organization refusal, secret/oversize redaction,
-  ordered idempotent export, checkpoint behavior, sink failure visibility, and primary-event retention coverage.
+- Tests: Added complete typed-correlation contracts, graph bundle ordering/checksum, cross-organization refusal,
+  comprehensive secret/oversize redaction, JSON-number preservation, safe sink references, transaction/outbox
+  hooks, owned sink instrumentation, ordered idempotent export, immutable retry history, resolver/sink failure
+  visibility, and primary-event retention coverage.
 - Upstream contribution notes: Community-neutral audit correlation and export; no adopter, CI provider,
   infrastructure, credential value, or client-specific behavior.
 - Compatibility notes: V1 execution remains unchanged. Export checkpoints advance only after a complete batch;

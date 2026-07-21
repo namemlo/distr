@@ -105,3 +105,107 @@ func TestRedactAuditPayloadRemovesSecretsAndBoundsPayload(t *testing.T) {
 		t.Fatalf("redacted payload is not valid JSON: %s", redacted)
 	}
 }
+
+func TestBuildDeploymentEvidenceBundleFollowsTypedCorrelationGraph(t *testing.T) {
+	t.Parallel()
+
+	organizationID := uuid.New()
+	deploymentPlanID := uuid.New()
+	componentReleaseID := uuid.New()
+	productReleaseID := uuid.New()
+	bundle, err := BuildDeploymentEvidenceBundle(types.EvidenceBundleQuery{
+		OrganizationID:   organizationID,
+		DeploymentPlanID: deploymentPlanID,
+	}, []types.ControlPlaneAuditEvent{
+		{
+			ID:                 uuid.New(),
+			OrganizationID:     organizationID,
+			Sequence:           2,
+			EventType:          "product_release.published",
+			Outcome:            "SUCCEEDED",
+			ComponentReleaseID: &componentReleaseID,
+			ProductReleaseID:   &productReleaseID,
+		},
+		{
+			ID:                 uuid.New(),
+			OrganizationID:     organizationID,
+			Sequence:           1,
+			EventType:          "plan.created",
+			Outcome:            "SUCCEEDED",
+			DeploymentPlanID:   &deploymentPlanID,
+			ComponentReleaseID: &componentReleaseID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDeploymentEvidenceBundle() error = %v", err)
+	}
+	if len(bundle.Events) != 2 || bundle.Events[1].ProductReleaseID == nil {
+		t.Fatalf("bundle did not follow correlation graph: %#v", bundle.Events)
+	}
+}
+
+func TestBuildDeploymentEvidenceBundleRejectsDisconnectedSameTenantEvent(t *testing.T) {
+	t.Parallel()
+
+	organizationID := uuid.New()
+	deploymentPlanID := uuid.New()
+	unrelatedExecutionID := uuid.New()
+	_, err := BuildDeploymentEvidenceBundle(types.EvidenceBundleQuery{
+		OrganizationID:   organizationID,
+		DeploymentPlanID: deploymentPlanID,
+	}, []types.ControlPlaneAuditEvent{
+		{
+			ID:               uuid.New(),
+			OrganizationID:   organizationID,
+			Sequence:         1,
+			DeploymentPlanID: &deploymentPlanID,
+		},
+		{
+			ID:             uuid.New(),
+			OrganizationID: organizationID,
+			Sequence:       2,
+			ExecutionID:    &unrelatedExecutionID,
+		},
+	})
+	if err == nil {
+		t.Fatal("BuildDeploymentEvidenceBundle() accepted disconnected evidence")
+	}
+}
+
+func TestRedactAuditPayloadPreservesJSONNumbersAndCoversCredentialShapes(t *testing.T) {
+	t.Parallel()
+
+	payload := json.RawMessage(`{
+		"count": 900719925474099312345,
+		"client_secret": "secret-value",
+		"nested": {
+			"set-cookie": "session=abc",
+			"connectionString": "postgres://user:password@db.example.test/app",
+			"certificate": "-----BEGIN PRIVATE KEY-----abc"
+		}
+	}`)
+	redacted, changed, truncated, err := RedactAuditPayload(payload, 2048)
+	if err != nil {
+		t.Fatalf("RedactAuditPayload() error = %v", err)
+	}
+	if !changed || truncated {
+		t.Fatalf("changed=%v truncated=%v", changed, truncated)
+	}
+	text := string(redacted)
+	if !strings.Contains(text, "900719925474099312345") {
+		t.Fatalf("large JSON number changed: %s", text)
+	}
+	for _, secret := range []string{"secret-value", "session=abc", "user:password", "PRIVATE KEY"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("payload retained %q: %s", secret, text)
+		}
+	}
+}
+
+func TestRedactAuditPayloadRejectsTrailingJSONDocuments(t *testing.T) {
+	t.Parallel()
+
+	if _, _, _, err := RedactAuditPayload(json.RawMessage(`{"safe":true} {"second":true}`), 1024); err == nil {
+		t.Fatal("RedactAuditPayload() accepted trailing JSON document")
+	}
+}

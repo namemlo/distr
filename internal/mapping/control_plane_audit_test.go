@@ -1,6 +1,7 @@
 package mapping
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,31 @@ func TestControlPlaneAuditEventToAPIPreservesCorrelation(t *testing.T) {
 	}
 	if !event.PayloadRedacted || event.DeploymentPlanChecksum != "sha256:test" {
 		t.Fatalf("mapping lost evidence flags: %#v", event)
+	}
+}
+
+func TestControlPlaneAuditEventToAPIPreservesExpandedTypedCorrelation(t *testing.T) {
+	t.Parallel()
+
+	componentReleaseID := uuid.New()
+	productReleaseID := uuid.New()
+	policyID := uuid.New()
+	driftCaseID := uuid.New()
+	event := ControlPlaneAuditEventToAPI(types.ControlPlaneAuditEvent{
+		ComponentReleaseID:        &componentReleaseID,
+		ProductReleaseID:          &productReleaseID,
+		DeploymentPolicyID:        &policyID,
+		DriftCaseID:               &driftCaseID,
+		ArtifactDigest:            "sha256:" + strings.Repeat("a", 64),
+		ManifestDigest:            "sha256:" + strings.Repeat("b", 64),
+		AuditExportConfigChecksum: "sha256:" + strings.Repeat("c", 64),
+	})
+	if event.ComponentReleaseID == nil || event.ProductReleaseID == nil ||
+		event.DeploymentPolicyID == nil || event.DriftCaseID == nil {
+		t.Fatalf("mapping lost typed correlation: %#v", event)
+	}
+	if event.ArtifactDigest == "" || event.ManifestDigest == "" || event.AuditExportConfigChecksum == "" {
+		t.Fatalf("mapping lost digest evidence: %#v", event)
 	}
 }
 

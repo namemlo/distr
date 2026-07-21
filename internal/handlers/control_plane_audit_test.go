@@ -67,7 +67,8 @@ func TestAuditExportSinkInputUsesAuthenticatedOrganizationAndSafeDefaults(t *tes
 
 	g := NewWithT(t)
 	organizationID := uuid.New()
-	input := auditExportSinkInput(organizationID, api.CreateAuditExportSinkRequest{
+	actorID := uuid.New()
+	input := auditExportSinkInput(organizationID, actorID, api.CreateAuditExportSinkRequest{
 		Name:              "  Security archive  ",
 		Kind:              types.AuditExportSinkKindSIEM,
 		EndpointReference: "  secret://audit/siem  ",
@@ -78,6 +79,7 @@ func TestAuditExportSinkInputUsesAuthenticatedOrganizationAndSafeDefaults(t *tes
 	g.Expect(input.Name).To(Equal("Security archive"))
 	g.Expect(input.EndpointReference).To(Equal("secret://audit/siem"))
 	g.Expect(input.Enabled).To(BeTrue())
+	g.Expect(input.ActorID).To(Equal(actorID))
 }
 
 func TestControlPlaneAuditFeatureFlagMiddlewareRejectsDisabledAPI(t *testing.T) {

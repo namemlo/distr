@@ -66,10 +66,116 @@ func TestAuditExportBatchRecordsFailureWithoutAdvancingCheckpoint(t *testing.T) 
 	}
 }
 
+func TestAuditExportBatchRecordsSinkResolutionFailureAsAttempt(t *testing.T) {
+	t.Parallel()
+
+	sinkID := uuid.New()
+	store := &memoryExportStore{events: []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}}}
+	worker := NewWorker(store, func(uuid.UUID) (Sink, error) {
+		return nil, errors.New("resolver unavailable")
+	})
+
+	result, err := worker.ExportAuditBatch(context.Background(), sinkID, 10)
+	if err == nil {
+		t.Fatal("ExportAuditBatch() expected resolver failure")
+	}
+	if store.started != 1 || store.failures != 1 || store.checkpoint != 0 {
+		t.Fatalf("resolver failure history = started:%d failures:%d checkpoint:%d",
+			store.started, store.failures, store.checkpoint)
+	}
+	if result.CheckpointLag != 1 || len(store.events) != 1 {
+		t.Fatalf("resolver failure lost lag or source event: result=%#v events=%d", result, len(store.events))
+	}
+}
+
+func TestAuditExportBatchRetainsFailedAttemptWhenRetrySucceeds(t *testing.T) {
+	t.Parallel()
+
+	sinkID := uuid.New()
+	store := &memoryExportStore{events: []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}}}
+	sink := &failOnceSink{}
+	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return sink, nil })
+
+	if _, err := worker.ExportAuditBatch(context.Background(), sinkID, 10); err == nil {
+		t.Fatal("first ExportAuditBatch() expected failure")
+	}
+	if _, err := worker.ExportAuditBatch(context.Background(), sinkID, 10); err != nil {
+		t.Fatalf("retry ExportAuditBatch() error = %v", err)
+	}
+	statuses := store.attemptStatuses()
+	if len(statuses) != 2 || statuses[0] != "FAILED" || statuses[1] != "SUCCEEDED" {
+		t.Fatalf("retry history was overwritten: %v", statuses)
+	}
+}
+
+func TestAuditExportBatchPersistsCancellationFailureWithDetachedContext(t *testing.T) {
+	t.Parallel()
+
+	sinkID := uuid.New()
+	store := &memoryExportStore{
+		events:            []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}},
+		honorCancellation: true,
+	}
+	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return contextErrorSink{}, nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := worker.ExportAuditBatch(ctx, sinkID, 10); err == nil {
+		t.Fatal("ExportAuditBatch() expected cancellation failure")
+	}
+	if store.failures != 1 || store.checkpoint != 0 {
+		t.Fatalf("cancellation failure was not persisted: failures=%d checkpoint=%d", store.failures, store.checkpoint)
+	}
+	if statuses := store.attemptStatuses(); len(statuses) != 1 || statuses[0] != "FAILED" {
+		t.Fatalf("cancelled attempt remained running: %v", statuses)
+	}
+}
+
+func TestAuditExportBatchPersistsCommitFailure(t *testing.T) {
+	t.Parallel()
+
+	sinkID := uuid.New()
+	store := &memoryExportStore{
+		events:    []types.ControlPlaneAuditEvent{{ID: uuid.New(), Sequence: 1}},
+		commitErr: errors.New("commit unavailable"),
+	}
+	worker := NewWorker(store, func(uuid.UUID) (Sink, error) { return &recordingSink{}, nil })
+
+	if _, err := worker.ExportAuditBatch(context.Background(), sinkID, 10); err == nil {
+		t.Fatal("ExportAuditBatch() expected commit failure")
+	}
+	if store.failures != 1 || store.checkpoint != 0 {
+		t.Fatalf("commit failure was not persisted: failures=%d checkpoint=%d", store.failures, store.checkpoint)
+	}
+	if statuses := store.attemptStatuses(); len(statuses) != 1 || statuses[0] != "FAILED" {
+		t.Fatalf("commit-failed attempt remained running: %v", statuses)
+	}
+}
+
 type memoryExportStore struct {
-	events     []types.ControlPlaneAuditEvent
-	checkpoint int64
-	failures   int
+	events            []types.ControlPlaneAuditEvent
+	checkpoint        int64
+	started           int
+	failures          int
+	attempts          []memoryExportAttempt
+	honorCancellation bool
+	commitErr         error
+}
+
+type memoryExportAttempt struct {
+	id     uuid.UUID
+	status string
+}
+
+func (m *memoryExportStore) StartAuditExportAttempt(
+	_ context.Context,
+	_ uuid.UUID,
+	_ []types.ControlPlaneAuditEvent,
+) (uuid.UUID, error) {
+	m.started++
+	id := uuid.New()
+	m.attempts = append(m.attempts, memoryExportAttempt{id: id, status: "RUNNING"})
+	return id, nil
 }
 
 func (m *memoryExportStore) LoadAuditBatch(
@@ -92,20 +198,30 @@ func (m *memoryExportStore) LoadAuditBatch(
 func (m *memoryExportStore) CommitAuditExport(
 	_ context.Context,
 	_ uuid.UUID,
+	attemptID uuid.UUID,
 	lastSequence int64,
 	_ int,
 ) error {
+	if m.commitErr != nil {
+		return m.commitErr
+	}
 	m.checkpoint = lastSequence
+	m.setAttemptStatus(attemptID, "SUCCEEDED")
 	return nil
 }
 
 func (m *memoryExportStore) RecordAuditExportFailure(
-	_ context.Context,
+	ctx context.Context,
 	_ uuid.UUID,
+	attemptID uuid.UUID,
 	_ int64,
 	_ error,
 ) error {
+	if m.honorCancellation && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	m.failures++
+	m.setAttemptStatus(attemptID, "FAILED")
 	return nil
 }
 
@@ -122,9 +238,44 @@ func (m *memoryExportStore) AuditExportLag(
 	return latest - m.checkpoint, nil
 }
 
+func (m *memoryExportStore) setAttemptStatus(id uuid.UUID, status string) {
+	for i := range m.attempts {
+		if m.attempts[i].id == id {
+			m.attempts[i].status = status
+			return
+		}
+	}
+}
+
+func (m *memoryExportStore) attemptStatuses() []string {
+	result := make([]string, len(m.attempts))
+	for i := range m.attempts {
+		result[i] = m.attempts[i].status
+	}
+	return result
+}
+
 type recordingSink struct {
 	sequences []int64
 	err       error
+}
+
+type failOnceSink struct {
+	calls int
+}
+
+type contextErrorSink struct{}
+
+func (contextErrorSink) Export(ctx context.Context, _ types.ControlPlaneAuditEvent) error {
+	return ctx.Err()
+}
+
+func (s *failOnceSink) Export(_ context.Context, _ types.ControlPlaneAuditEvent) error {
+	s.calls++
+	if s.calls == 1 {
+		return errors.New("temporary sink failure")
+	}
+	return nil
 }
 
 func (s *recordingSink) Export(_ context.Context, event types.ControlPlaneAuditEvent) error {

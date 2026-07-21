@@ -130,7 +130,10 @@ func createAuditExportSinkHandler() http.HandlerFunc {
 		}
 		ctx := r.Context()
 		organizationID := *auth.Authentication.Require(ctx).CurrentOrgID()
-		sink, err := db.CreateAuditExportSink(ctx, auditExportSinkInput(organizationID, request))
+		sink, err := db.CreateAuditExportSink(
+			ctx,
+			auditExportSinkInput(organizationID, auth.Authentication.Require(ctx).CurrentUserID(), request),
+		)
 		respondControlPlaneAuditResult(w, r, err, func() {
 			RespondJSONWithStatus(w, http.StatusCreated, mapping.AuditExportSinkToAPI(*sink))
 		})
@@ -150,10 +153,12 @@ func getAuditExportStatusesHandler() http.HandlerFunc {
 
 func auditExportSinkInput(
 	organizationID uuid.UUID,
+	actorID uuid.UUID,
 	request api.CreateAuditExportSinkRequest,
 ) types.CreateAuditExportSinkInput {
 	return types.CreateAuditExportSinkInput{
 		OrganizationID:    organizationID,
+		ActorID:           actorID,
 		Name:              strings.TrimSpace(request.Name),
 		Kind:              request.Kind,
 		EndpointReference: strings.TrimSpace(request.EndpointReference),
