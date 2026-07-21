@@ -1,147 +1,223 @@
 package executionworker
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/executionprotocol"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
 
-func TestEvaluatePersistedAdmissionRequiresExactExecutedV2TaskAndPassedPreflight(t *testing.T) {
+type frozenSignerProviderStub struct {
+	reference string
+	version   string
+	signer    executionprotocol.IntentSigner
+}
+
+func TestResolveFrozenPlanArtifactRequiresExactlyOnePlatformArtifact(t *testing.T) {
 	g := NewWithT(t)
-	taskID, orgID, targetID, planID, environmentID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	task := types.Task{
-		ID: taskID, OrganizationID: orgID, DeploymentTargetID: targetID,
-		DeploymentPlanID: planID, EnvironmentID: environmentID,
-		ProtocolVersion: types.ExecutionProtocolVersionV2, Status: types.TaskStatusQueued,
-	}
-	plan := types.DeploymentPlan{
-		ID: planID, OrganizationID: orgID, EnvironmentID: environmentID,
-		ProtocolVersion: string(types.ExecutionProtocolVersionV2), Status: types.DeploymentPlanStatusExecuted,
-		Steps: []types.DeploymentPlanStep{{StepKey: "deploy", Included: true, ActionType: "distr.compose.deploy"}},
-		PreflightRuns: []types.DeploymentPreflightRun{{
-			Status: types.DeploymentPreflightStatusPassed,
-			Checks: []types.DeploymentPreflightCheck{{
-				TaskID: &taskID, Status: types.DeploymentPreflightCheckStatusPassed,
+	releaseID := uuid.New()
+	canonical := types.TargetDeploymentPlanCanonical{
+		DeploymentTargetID: uuid.New(), EnvironmentID: uuid.New(),
+		TargetPlatform: "linux/amd64", ProtocolVersion: types.DeploymentPlanProtocolV2,
+		Graph: types.TargetPlanGraph{Steps: []types.TargetPlanStep{{
+			StepKey: "deploy-api", ComponentKey: "transaction-api", ComponentReleaseID: &releaseID,
+		}}},
+		ComponentReleasePins: []types.ComponentReleasePin{{
+			ComponentKey: "transaction-api", ComponentReleaseID: releaseID, Version: "2.4.1",
+			Artifacts: []types.PinnedReleaseArtifact{{
+				Key: "image", Platform: "linux/amd64",
+				PlatformDigest: "sha256:" + strings.Repeat("a", 64),
 			}},
 		}},
 	}
-	decision := evaluatePersistedAdmission(task, plan, AdmissionRequest{
-		OrganizationID: orgID, DeploymentTargetID: targetID, EnvironmentID: environmentID,
-		PlanID: planID, TaskID: taskID, StepKey: "deploy",
-	})
-	g.Expect(decision.ScopedEnrollment).To(BeTrue())
-	g.Expect(decision.PlanApproved).To(BeTrue())
-	g.Expect(decision.PlanAdmitted).To(BeTrue())
-	g.Expect(decision.AdapterPreflight).To(BeTrue())
-
-	plan.PreflightRuns[0].Checks[0].Status = types.DeploymentPreflightCheckStatusFailed
-	g.Expect(evaluatePersistedAdmission(task, plan, AdmissionRequest{
-		OrganizationID: orgID, DeploymentTargetID: targetID, EnvironmentID: environmentID,
-		PlanID: planID, TaskID: taskID, StepKey: "deploy",
-	}).AdapterPreflight).To(BeFalse())
-}
-
-func TestDeriveFrozenAttemptInputsReusesNormalDispatchAndAdvancesExplicitRetry(t *testing.T) {
-	g := NewWithT(t)
-	task := types.Task{
-		ID: uuid.New(), DeploymentTargetID: uuid.New(),
-		Locks: []types.TaskResourceLock{{
-			ResourceType: types.TaskLockResourceDeploymentTarget,
-			ResourceKey:  "deployment-target:choice-tp-dev",
-		}},
-	}
-	plan := types.DeploymentPlan{
-		CanonicalChecksum: checksumForFrozenInput("plan"),
-		Steps: []types.DeploymentPlanStep{{
-			StepKey: "deploy", ActionType: "distr.compose.deploy", ActionName: "compose-v1",
-			TimeoutSeconds: 300, RetryMaxAttempts: 2, Included: true,
-		}},
-		TargetComponents: []types.DeploymentPlanTargetComponent{{
-			DeploymentTargetID: task.DeploymentTargetID, Component: "transaction-api",
-			ConfigChecksum: checksumForFrozenInput("config"),
-		}},
-	}
-	bundle := types.ReleaseBundle{CanonicalChecksum: checksumForFrozenInput("bundle")}
-	latest := &types.ExecutionAttempt{
-		Identity:     types.ExecutionIdentity{AttemptNumber: 2},
-		PlanChecksum: checksumForFrozenInput("old-plan"), ArtifactDigest: checksumForFrozenInput("old-artifact"),
-		ConfigChecksum: checksumForFrozenInput("old-config"), AdapterRevision: "old:v1",
-		Cancellable: true, RetrySafe: true,
-		Fence: types.ExecutionFence{ResourceKey: "old-resource", Generation: 4},
-	}
-
-	replay, err := deriveFrozenAttemptInputs(task, plan, bundle, "deploy", latest, false)
+	payload, err := json.Marshal(canonical)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(replay.AttemptNumber).To(Equal(2))
-	g.Expect(replay.PlanChecksum).To(Equal(latest.PlanChecksum))
-	g.Expect(replay.FenceGeneration).To(Equal(int64(4)))
-
-	retry, err := deriveFrozenAttemptInputs(task, plan, bundle, "deploy", latest, true)
+	_, step, pin, artifact, err := resolveFrozenPlanArtifact(payload, "deploy-api")
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(retry.AttemptNumber).To(Equal(3))
-	g.Expect(retry.PlanChecksum).To(Equal(plan.CanonicalChecksum))
-	g.Expect(retry.ArtifactDigest).To(Equal(bundle.CanonicalChecksum))
-	g.Expect(retry.FenceGeneration).To(Equal(int64(5)))
-	g.Expect(retry.IntentTTL).To(Equal(5 * time.Minute))
-}
+	g.Expect(step.ComponentKey).To(Equal("transaction-api"))
+	g.Expect(pin.ComponentReleaseID).To(Equal(releaseID))
+	g.Expect(artifact.PlatformDigest).To(Equal("sha256:" + strings.Repeat("a", 64)))
 
-func TestDeriveFrozenAttemptInputsUsesCompleteTypedTaskResourceSet(t *testing.T) {
-	g := NewWithT(t)
-	task := types.Task{
-		ID: uuid.New(), DeploymentTargetID: uuid.New(),
-		Locks: []types.TaskResourceLock{
-			{ResourceType: types.TaskLockResourceCustom, ResourceKey: "shared"},
-			{ResourceType: types.TaskLockResourceTargetComponent, ResourceKey: "shared"},
-			{ResourceType: types.TaskLockResourceDeploymentTarget, ResourceKey: "choice-tp-dev"},
+	canonical.ComponentReleasePins[0].Artifacts = append(
+		canonical.ComponentReleasePins[0].Artifacts,
+		types.PinnedReleaseArtifact{
+			Key: "second-image", Platform: "linux/amd64",
+			PlatformDigest: "sha256:" + strings.Repeat("b", 64),
 		},
-	}
-	plan := types.DeploymentPlan{
-		CanonicalChecksum: checksumForFrozenInput("plan"),
-		Steps: []types.DeploymentPlanStep{{
-			StepKey: "deploy", ActionType: "distr.compose.deploy", Included: true,
-		}},
-		TargetComponents: []types.DeploymentPlanTargetComponent{{
-			DeploymentTargetID: task.DeploymentTargetID, Component: "transaction-api",
-			ConfigChecksum: checksumForFrozenInput("config"),
-		}},
-	}
-	bundle := types.ReleaseBundle{CanonicalChecksum: checksumForFrozenInput("bundle")}
-
-	inputs, err := deriveFrozenAttemptInputs(task, plan, bundle, "deploy", nil, false)
+	)
+	payload, err = json.Marshal(canonical)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(inputs.ResourceKey).To(HavePrefix("task-resource-set:sha256:"))
-
-	reordered := task
-	reordered.Locks = []types.TaskResourceLock{task.Locks[2], task.Locks[0], task.Locks[1]}
-	reorderedInputs, err := deriveFrozenAttemptInputs(reordered, plan, bundle, "deploy", nil, false)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(reorderedInputs.ResourceKey).To(Equal(inputs.ResourceKey))
-
-	withoutFirst := task
-	withoutFirst.Locks = task.Locks[1:]
-	otherInputs, err := deriveFrozenAttemptInputs(withoutFirst, plan, bundle, "deploy", nil, false)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(otherInputs.ResourceKey).NotTo(Equal(inputs.ResourceKey))
+	_, _, _, _, err = resolveFrozenPlanArtifact(payload, "deploy-api")
+	g.Expect(err).To(MatchError(ContainSubstring("exactly one")))
 }
 
-func TestDeriveFrozenAttemptInputsFailsClosedWithoutTaskResourceLocks(t *testing.T) {
+func TestDeriveFrozenAttemptInputsBindsAdapterLineageAndExactTimeout(t *testing.T) {
 	g := NewWithT(t)
-	task := types.Task{ID: uuid.New(), DeploymentTargetID: uuid.New()}
-	plan := types.DeploymentPlan{
-		CanonicalChecksum: checksumForFrozenInput("plan"),
-		Steps: []types.DeploymentPlanStep{{
-			StepKey: "deploy", ActionType: "distr.compose.deploy", Included: true,
-		}},
-		TargetComponents: []types.DeploymentPlanTargetComponent{{
-			DeploymentTargetID: task.DeploymentTargetID, Component: "transaction-api",
-			ConfigChecksum: checksumForFrozenInput("config"),
-		}},
+	adapter := frozenAdapterEvidence{
+		AssignmentID: uuid.New(), ImplementationID: uuid.New(),
+		ImplementationVersion: "2.1.0", Capability: "distr.compose.deploy",
+		CapabilityVersion: "2.0.0", ScopeType: "deployment_target",
+		ScopeReference: uuid.NewString(), ConfigSnapshotID: uuid.New(),
+		ConfigChecksum: "sha256:" + strings.Repeat("c", 64), KeyID: "choice-tp-dev",
+		PublicKeyFingerprint:         "sha256:" + strings.Repeat("d", 64),
+		SigningKeyReference:          "secret-provider://executor/choice-tp-dev",
+		SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("e", 64),
+		CancelCapabilityVersion:      "2.0.0",
+		RetrySafeCapabilityVersion:   "2.0.0",
+		TimeoutSeconds:               420,
 	}
-	bundle := types.ReleaseBundle{CanonicalChecksum: checksumForFrozenInput("bundle")}
+	step := types.TargetPlanStep{
+		StepKey: "deploy-api", TimeoutSeconds: 420, RetryClass: "safe",
+		CancellationBehavior: "cooperative",
+	}
+	plan := types.DeploymentPlan{CanonicalChecksum: "sha256:" + strings.Repeat("f", 64)}
+	inputs, err := deriveFrozenAttemptInputs(
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		"sha256:"+strings.Repeat("b", 64), nil, false,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(inputs.IntentTTL).To(Equal(420 * time.Second))
+	g.Expect(inputs.AdapterRevision).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
+	g.Expect(inputs.ConfigChecksum).To(Equal(adapter.ConfigChecksum))
+	g.Expect(inputs.PublicKeyFingerprint).To(Equal(adapter.PublicKeyFingerprint))
+	g.Expect(inputs.SigningKeyReference).To(Equal(adapter.SigningKeyReference))
+	g.Expect(inputs.SigningKeyVersionFingerprint).To(Equal(adapter.SigningKeyVersionFingerprint))
+	g.Expect(inputs.Cancellable).To(BeTrue())
+	g.Expect(inputs.RetrySafe).To(BeTrue())
+	withoutControlFacts := adapter
+	withoutControlFacts.CancelCapabilityVersion = ""
+	withoutControlFacts.RetrySafeCapabilityVersion = ""
+	withoutControlRevision, err := frozenAdapterRevision(withoutControlFacts)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(withoutControlRevision).NotTo(Equal(inputs.AdapterRevision))
 
-	_, err := deriveFrozenAttemptInputs(task, plan, bundle, "deploy", nil, false)
-	g.Expect(err).To(MatchError(ContainSubstring("typed task resource lock")))
+	rotated := adapter
+	rotated.SigningKeyVersionFingerprint = "sha256:" + strings.Repeat("1", 64)
+	rotatedRevision, err := frozenAdapterRevision(rotated)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(rotatedRevision).NotTo(Equal(inputs.AdapterRevision))
+
+	adapter.TimeoutSeconds++
+	_, err = deriveFrozenAttemptInputs(
+		plan, step, inputs.ArtifactDigest, adapter, inputs.ResourceKey, nil, false,
+	)
+	g.Expect(err).To(MatchError(ContainSubstring("timeouts do not match")))
+}
+
+func TestDeriveFrozenAttemptInputsRequiresVersionedAdapterControlCapabilities(t *testing.T) {
+	g := NewWithT(t)
+	adapter := frozenAdapterEvidence{
+		AssignmentID: uuid.New(), ImplementationID: uuid.New(),
+		ImplementationVersion: "2.1.0", Capability: "distr.compose.deploy",
+		CapabilityVersion: "2.0.0", ScopeType: "deployment_target",
+		ScopeReference: uuid.NewString(), ConfigSnapshotID: uuid.New(),
+		ConfigChecksum: "sha256:" + strings.Repeat("c", 64), KeyID: "choice-tp-dev",
+		PublicKeyFingerprint:         "sha256:" + strings.Repeat("d", 64),
+		SigningKeyReference:          "secret-provider://executor/choice-tp-dev",
+		SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("e", 64),
+		TimeoutSeconds:               420,
+	}
+	step := types.TargetPlanStep{
+		StepKey: "deploy-api", TimeoutSeconds: 420, RetryClass: "safe",
+		CancellationBehavior: "cooperative",
+	}
+	plan := types.DeploymentPlan{CanonicalChecksum: "sha256:" + strings.Repeat("f", 64)}
+
+	inputs, err := deriveFrozenAttemptInputs(
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		"sha256:"+strings.Repeat("b", 64), nil, false,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(inputs.Cancellable).To(BeFalse())
+	g.Expect(inputs.RetrySafe).To(BeFalse())
+
+	adapter.CancelCapabilityVersion = "1.9.0"
+	adapter.RetrySafeCapabilityVersion = adapter.CapabilityVersion
+	inputs, err = deriveFrozenAttemptInputs(
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		"sha256:"+strings.Repeat("b", 64), nil, false,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(inputs.Cancellable).To(BeFalse())
+	g.Expect(inputs.RetrySafe).To(BeTrue())
+
+	adapter.CancelCapabilityVersion = adapter.CapabilityVersion
+	step.CancellationBehavior = "none"
+	step.RetryClass = "unsafe"
+	inputs, err = deriveFrozenAttemptInputs(
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		"sha256:"+strings.Repeat("b", 64), nil, false,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(inputs.Cancellable).To(BeFalse())
+	g.Expect(inputs.RetrySafe).To(BeFalse())
+}
+
+func (p *frozenSignerProviderStub) ResolveIntentSigner(
+	_ context.Context, reference, version string,
+) (executionprotocol.IntentSigner, error) {
+	p.reference, p.version = reference, version
+	return p.signer, nil
+}
+
+func TestResolveFrozenIntentSignerRequiresExactAdapterKeyLineage(t *testing.T) {
+	g := NewWithT(t)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	g.Expect(err).NotTo(HaveOccurred())
+	keyID := executionprotocol.PublicKeyFingerprint(publicKey)
+	signer, err := executionprotocol.NewEd25519IntentSigner(keyID, privateKey)
+	g.Expect(err).NotTo(HaveOccurred())
+	provider := &frozenSignerProviderStub{signer: signer}
+	inputs := FrozenAttemptInputs{
+		SigningKeyReference:          "secret-provider://executor/choice-tp-dev",
+		SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("7", 64),
+		PublicKeyFingerprint:         keyID,
+	}
+	resolved, err := resolveFrozenIntentSigner(context.Background(), provider, inputs)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(resolved.KeyID()).To(Equal(keyID))
+	g.Expect(provider.reference).To(Equal(inputs.SigningKeyReference))
+	g.Expect(provider.version).To(Equal(inputs.SigningKeyVersionFingerprint))
+
+	inputs.PublicKeyFingerprint = "sha256:" + strings.Repeat("8", 64)
+	_, err = resolveFrozenIntentSigner(context.Background(), provider, inputs)
+	g.Expect(err).To(MatchError(ContainSubstring("public-key fingerprint")))
+}
+
+func TestDatabaseRuntimeRepositoryReadsExactGovernanceAndFrozenLineage(t *testing.T) {
+	content, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(content)
+	for _, required := range []string{
+		"ControlPlaneEnrollment", "AgentCapabilityReport", "AgentActionCapability",
+		"ApprovalRequest", "AdmissionEvaluation", "DeploymentPlanStepAdapter",
+		"AdapterAssignment", "AdapterImplementation", "AdapterCapability",
+		"ComponentReleaseArtifact", "platform_digest", "public_key_fingerprint",
+		"signing_key_reference", "signing_key_version_fingerprint", "timeout_seconds",
+		"CanonicalExecutionFenceResourceKey", "distr.execution.cancel",
+		"distr.execution.retry-safe",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("production runtime repository does not bind %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"bundle.CanonicalChecksum", "RetryMaxAttempts >", "5 * time.Minute",
+		"plan.Status == types.DeploymentPlanStatusExecuted",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("production runtime repository still contains placeholder trust %q", forbidden)
+		}
+	}
 }

@@ -64,6 +64,26 @@ The service registry now creates and injects `executionruntime.Dependencies`
 into the real API router. The binding includes the signed protocol dispatcher,
 durable task/plan/preflight admission repository, frozen-input loader,
 authenticated reconciliation observer gate and campaign-control coordinator.
-Normal dispatch reuses the latest matching frozen attempt; an explicit,
-retry-authorized campaign handoff alone advances the attempt and fence
-generation. Missing or mismatched durable evidence remains fail-closed.
+Admission reads the exact scoped-enrollment, agent-capability, approved-request,
+latest admitted-evaluation and versioned-adapter records. Frozen intent inputs
+come from the exact platform artifact digest, immutable adapter/config/key
+lineage, full typed lock set and frozen step timeout. Normal dispatch reuses the
+latest attempt only if those values still match; an explicit, retry-authorized
+campaign handoff alone advances the attempt and fence generation. Missing,
+ambiguous or drifted durable evidence remains fail-closed.
+
+Control support is versioned adapter evidence, not inferred from a plan label.
+For the frozen primary capability version, `distr.execution.cancel` declares
+cooperative cancellation support and `distr.execution.retry-safe` declares
+retry-safe execution. An attempt is cancellable or retry-safe only when both
+the corresponding frozen plan declaration and the exact-version
+`AdapterCapability` fact are present. Presence, absence and version of both
+reserved facts are included in the adapter revision digest, so changing them
+cannot silently reuse an existing attempt.
+
+Production v2 startup requires two independent configured key sets:
+`DISTR_EXECUTION_V2_SIGNING_KEYS_JSON` resolves private signers by frozen secret
+reference and version fingerprint, while
+`DISTR_EXECUTION_V2_OBSERVER_PUBLIC_KEYS_JSON` contains reconciliation observer
+public keys. The service rejects a public key present in both trust roles and
+does not derive either role from the JWT secret.

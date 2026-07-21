@@ -56,11 +56,31 @@ Those dependencies are narrow interfaces so their evidence remains owned by
 PR-066 through PR-074.
 
 The Hub service registry binds those interfaces into the production router.
-The repository reads the exact v2 task, executed immutable plan and attached
-passing preflight snapshot, while intent creation reloads the frozen plan,
-release, target configuration, step adapter identity and resource lock. An
-ordinary replay reuses the stored attempt inputs; only an explicit authorized
-retry advances attempt and fence generation.
+The repository uses trusted database time and requires the latest effective
+organization and environment enrollments, exact current agent capability,
+approved request, latest admitted evaluation, passing task preflight and an
+enabled adapter assignment whose implementation, capability, configuration and
+four key-rotation fields still equal the immutable step-adapter snapshot.
+Intent creation resolves exactly one `ComponentReleaseArtifact.platform_digest`
+for the canonical step and target platform, uses the frozen step timeout and
+complete typed resource-lock set, and selects the signer by the frozen secret
+reference and version fingerprint. An ordinary replay is accepted only when
+the stored attempt still equals all current immutable evidence; only an
+explicit authorized retry advances attempt and fence generation.
+
+Cancellation and retry safety require two independent declarations. The frozen
+plan step must declare cooperative cancellation or a safe/bounded retry class,
+and the selected adapter implementation must publish the reserved
+`AdapterCapability` fact `distr.execution.cancel` or
+`distr.execution.retry-safe` at the exact frozen primary capability version.
+The reserved capability facts and versions are part of the adapter revision
+digest. A plan label alone never authorizes either control.
+
+Intent signers and reconciliation observers have independent configured trust
+sets. The Hub requires `DISTR_EXECUTION_V2_SIGNING_KEYS_JSON` and
+`DISTR_EXECUTION_V2_OBSERVER_PUBLIC_KEYS_JSON` when protocol v2 is enabled and
+rejects a signing public key reused as an observer key. Neither trust set is
+derived from the Hub JWT secret.
 
 Executors poll through an atomic lease endpoint. The authenticated bearer
 credential is the sole source of organization and deployment-target scope. The
