@@ -1,8 +1,9 @@
 import {DatePipe} from '@angular/common';
-import {ChangeDetectionStrategy, Component, inject, OnInit, signal} from '@angular/core';
+import {ChangeDetectionStrategy, Component, DestroyRef, inject, OnInit, signal} from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {FormBuilder, ReactiveFormsModule, Validators} from '@angular/forms';
 import {ActivatedRoute, Router, RouterLink} from '@angular/router';
-import {firstValueFrom} from 'rxjs';
+import {distinctUntilChanged, firstValueFrom, map} from 'rxjs';
 import {OperatorControlPlaneService} from '../../services/operator-control-plane.service';
 import {OverlayService} from '../../services/overlay.service';
 import {
@@ -34,8 +35,10 @@ export class PlanDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder);
+  private readonly destroyRef = inject(DestroyRef);
+  private planLoadGeneration = 0;
 
-  protected readonly planId = this.route.snapshot.paramMap.get('planId') ?? '';
+  protected planId = '';
   protected readonly detail = signal<OperatorPlanDetail | null>(null);
   protected readonly evidence = signal<OperatorEvidenceRef[]>([]);
   protected readonly comparison = signal<OperatorPlanCompare | null>(null);
@@ -64,13 +67,34 @@ export class PlanDetailComponent implements OnInit {
   });
 
   ngOnInit() {
-    this.load();
+    this.route.paramMap
+      .pipe(
+        map((params) => params.get('planId') ?? ''),
+        distinctUntilChanged(),
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe((planId) => {
+        this.planId = planId;
+        this.resetPlanState();
+        this.load();
+      });
     if (this.compareForm.valid) {
       this.compare();
     }
   }
 
+  private resetPlanState() {
+    this.detail.set(null);
+    this.evidence.set([]);
+    this.comparison.set(null);
+    this.draftValidation.set(null);
+    this.actionError.set(null);
+    this.error.set(null);
+    this.evidenceError.set(null);
+  }
+
   protected load() {
+    const generation = ++this.planLoadGeneration;
     this.loading.set(true);
     this.evidenceLoading.set(true);
     this.error.set(null);
@@ -78,11 +102,13 @@ export class PlanDetailComponent implements OnInit {
 
     this.service.getPlan(this.planId).subscribe({
       next: ({detail}) => {
+        if (generation !== this.planLoadGeneration) return;
         this.detail.set(detail);
         this.evidence.set(detail.evidence ?? []);
         this.loading.set(false);
       },
       error: (error: OperatorControlPlaneError) => {
+        if (generation !== this.planLoadGeneration) return;
         this.error.set(error);
         this.loading.set(false);
       },
@@ -90,10 +116,12 @@ export class PlanDetailComponent implements OnInit {
 
     this.service.getPlanEvidence(this.planId).subscribe({
       next: (page) => {
+        if (generation !== this.planLoadGeneration) return;
         this.evidence.set(page.items);
         this.evidenceLoading.set(false);
       },
       error: (error: OperatorControlPlaneError) => {
+        if (generation !== this.planLoadGeneration) return;
         this.evidenceError.set(error);
         this.evidenceLoading.set(false);
       },

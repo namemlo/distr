@@ -19,43 +19,100 @@ interface ControlPlaneFixtures {
   controlPlane: ControlPlaneMock;
 }
 
+export const fixtureIds = {
+  organization: '00000000-0000-4000-8000-000000000001',
+  customerOrganization: '00000000-0000-4000-8000-000000000002',
+  customerA: '00000000-0000-4000-8000-000000000003',
+  customerB: '00000000-0000-4000-8000-000000000004',
+  vendorAdmin: '00000000-0000-4000-8000-000000000011',
+  scopedApprover: '00000000-0000-4000-8000-000000000012',
+  executorOperator: '00000000-0000-4000-8000-000000000013',
+  auditViewer: '00000000-0000-4000-8000-000000000014',
+  unauthorized: '00000000-0000-4000-8000-000000000015',
+  environment: '00000000-0000-4000-8000-000000000101',
+  target: '00000000-0000-4000-8000-000000000102',
+  unitA: '00000000-0000-4000-8000-000000000103',
+  unitB: '00000000-0000-4000-8000-000000000104',
+  component: '00000000-0000-4000-8000-000000000105',
+  applicationPayments: '00000000-0000-4000-8000-000000000106',
+  applicationSuite: '00000000-0000-4000-8000-000000000107',
+  channelStable: '00000000-0000-4000-8000-000000000108',
+  fleetA: '00000000-0000-4000-8000-000000000109',
+  fleetB: '00000000-0000-4000-8000-000000000110',
+  componentRelease: '00000000-0000-4000-8000-000000000201',
+  pendingComponentRelease: '00000000-0000-4000-8000-000000000202',
+  productRelease: '00000000-0000-4000-8000-000000000203',
+  componentReleaseDraft: '00000000-0000-4000-8000-000000000204',
+  productReleaseDraft: '00000000-0000-4000-8000-000000000205',
+  plan: '00000000-0000-4000-8000-000000000301',
+  planDraft: '00000000-0000-4000-8000-000000000302',
+  publishedPlan: '00000000-0000-4000-8000-000000000303',
+  previousPlan: '00000000-0000-4000-8000-000000000304',
+  snapshot: '00000000-0000-4000-8000-000000000305',
+  campaign: '00000000-0000-4000-8000-000000000401',
+  campaignDraft: '00000000-0000-4000-8000-000000000402',
+  campaignRevision: '00000000-0000-4000-8000-000000000403',
+  campaignRun: '00000000-0000-4000-8000-000000000404',
+  execution: '00000000-0000-4000-8000-000000000501',
+  executionAttempt: '00000000-0000-4000-8000-000000000502',
+  executionStatusQuery: '00000000-0000-4000-8000-000000000503',
+  task: '00000000-0000-4000-8000-000000000504',
+  stepRun: '00000000-0000-4000-8000-000000000505',
+  reconciliation: '00000000-0000-4000-8000-000000000601',
+  drift: '00000000-0000-4000-8000-000000000602',
+  approval: '00000000-0000-4000-8000-000000000701',
+  invalidatedApproval: '00000000-0000-4000-8000-000000000702',
+  approvalRequirement: '00000000-0000-4000-8000-000000000703',
+  approvalDecision: '00000000-0000-4000-8000-000000000704',
+  policyVersion: '00000000-0000-4000-8000-000000000705',
+  approvalAuthority: '00000000-0000-4000-8000-000000000706',
+  audit: '00000000-0000-4000-8000-000000000801',
+  evidence: '00000000-0000-4000-8000-000000000802',
+  artifact: '00000000-0000-4000-8000-000000000805',
+  auditSink: '00000000-0000-4000-8000-000000000806',
+  priorAudit: '00000000-0000-4000-8000-000000000807',
+  registryImport: '00000000-0000-4000-8000-000000000901',
+  enrollmentOrganization: '00000000-0000-4000-8000-000000000902',
+  enrollmentEnvironment: '00000000-0000-4000-8000-000000000903',
+} as const;
+
 const actorClaims: Record<OperatorActor, Record<string, unknown>> = {
   vendorAdmin: {
-    sub: 'user-vendor-admin',
+    sub: fixtureIds.vendorAdmin,
     email: 'vendor-admin@example.invalid',
     name: 'Vendor administrator',
     role: 'admin',
     authorities: ['registry.manage', 'release.manage', 'plan.manage', 'campaign.control', 'audit.export'],
   },
   scopedApprover: {
-    sub: 'user-scoped-approver',
+    sub: fixtureIds.scopedApprover,
     email: 'scoped-approver@example.invalid',
     name: 'Scoped approver',
     role: 'read_write',
     authorities: ['approval.decide'],
-    authority_scope: {environmentIds: ['environment-production']},
+    authority_scope: {environmentIds: [fixtureIds.environment]},
   },
   executorOperator: {
-    sub: 'user-executor-operator',
+    sub: fixtureIds.executorOperator,
     email: 'executor-operator@example.invalid',
     name: 'Executor operator',
     role: 'read_write',
     authorities: ['campaign.control', 'execution.control', 'reconciliation.resolve'],
-    authority_scope: {environmentIds: ['environment-production']},
+    authority_scope: {environmentIds: [fixtureIds.environment]},
   },
   auditViewer: {
-    sub: 'user-audit-viewer',
+    sub: fixtureIds.auditViewer,
     email: 'audit-viewer@example.invalid',
     name: 'Audit viewer',
     role: 'read_only',
     authorities: ['audit.read'],
   },
   unauthorized: {
-    sub: 'user-customer-reader',
+    sub: fixtureIds.unauthorized,
     email: 'customer-reader@example.invalid',
     name: 'Customer reader',
     role: 'read_only',
-    c_org: 'customer-organization',
+    c_org: fixtureIds.customerOrganization,
     authorities: [],
   },
 };
@@ -82,42 +139,42 @@ const timestamp = '2026-07-28T08:00:00Z';
 
 const fleetRows = [
   {
-    id: 'fleet-payments-a',
+    id: fixtureIds.fleetA,
     createdAt: timestamp,
-    customerOrganizationId: 'customer-a',
+    customerOrganizationId: fixtureIds.customerA,
     customer: 'Customer A',
-    environmentId: 'environment-production',
+    environmentId: fixtureIds.environment,
     environment: 'Production',
-    deploymentTargetId: 'target-shared',
+    deploymentTargetId: fixtureIds.target,
     target: 'Shared production host',
-    deploymentUnitId: 'unit-a',
+    deploymentUnitId: fixtureIds.unitA,
     unit: 'Customer A unit',
-    componentId: 'component-payments',
+    componentId: fixtureIds.component,
     component: 'payments-api',
-    activeReleaseId: 'release-component-1',
+    activeReleaseId: fixtureIds.componentRelease,
     activeRelease: 'payments-api 2.4.0',
-    pendingReleaseId: 'release-component-2',
+    pendingReleaseId: fixtureIds.pendingComponentRelease,
     pendingRelease: 'payments-api 2.5.0',
     observedState: 'healthy',
     drift: 'none',
-    lastExecutionId: 'execution-1',
+    lastExecutionId: fixtureIds.execution,
     lastExecution: 'succeeded',
     enrollment: 'enabled',
   },
   {
-    id: 'fleet-payments-b',
+    id: fixtureIds.fleetB,
     createdAt: timestamp,
-    customerOrganizationId: 'customer-b',
+    customerOrganizationId: fixtureIds.customerB,
     customer: 'Customer B',
-    environmentId: 'environment-production',
+    environmentId: fixtureIds.environment,
     environment: 'Production',
-    deploymentTargetId: 'target-shared',
+    deploymentTargetId: fixtureIds.target,
     target: 'Shared production host',
-    deploymentUnitId: 'unit-b',
+    deploymentUnitId: fixtureIds.unitB,
     unit: 'Customer B unit',
-    componentId: 'component-payments',
+    componentId: fixtureIds.component,
     component: 'payments-api',
-    activeReleaseId: 'release-component-1',
+    activeReleaseId: fixtureIds.componentRelease,
     activeRelease: 'payments-api 2.4.0',
     pendingRelease: '',
     observedState: 'stale',
@@ -129,10 +186,10 @@ const fleetRows = [
 
 const releases = [
   {
-    id: 'release-component-1',
+    id: fixtureIds.componentRelease,
     createdAt: timestamp,
     kind: 'component',
-    applicationId: 'application-payments',
+    applicationId: fixtureIds.applicationPayments,
     releaseNumber: 24,
     version: '2.4.0',
     status: 'published',
@@ -145,10 +202,10 @@ const releases = [
     graphEdgeCount: 0,
   },
   {
-    id: 'release-product-1',
+    id: fixtureIds.productRelease,
     createdAt: timestamp,
     kind: 'product',
-    applicationId: 'application-suite',
+    applicationId: fixtureIds.applicationSuite,
     releaseNumber: 7,
     version: '2026.07',
     status: 'published',
@@ -163,18 +220,18 @@ const releases = [
 ];
 
 const planRow = {
-  id: 'plan-1',
+  id: fixtureIds.plan,
   createdAt: timestamp,
-  status: 'blocked',
+  status: 'BLOCKED',
   planSchema: 'distr.plan.v2',
   protocolVersion: 'v2',
-  productReleaseId: 'release-product-1',
+  productReleaseId: fixtureIds.productRelease,
   productReleaseVersion: '2026.07',
-  environmentId: 'environment-production',
+  environmentId: fixtureIds.environment,
   environment: 'Production',
-  deploymentUnitId: 'unit-a',
+  deploymentUnitId: fixtureIds.unitA,
   deploymentUnit: 'Customer A unit',
-  targetConfigSnapshotId: 'config-snapshot-1',
+  targetConfigSnapshotId: fixtureIds.snapshot,
   canonicalChecksum: checksums.canonical,
   targetCount: 1,
   stepCount: 3,
@@ -198,21 +255,21 @@ const fact = (key: string, message: string, blocking = false, checksum?: string)
 
 const evidence = [
   {
-    id: 'evidence-1',
+    id: fixtureIds.evidence,
     kind: 'provenance',
     label: 'Build provenance',
-    href: '/deployments/plans/plan-1',
+    href: `/deployments/plans/${fixtureIds.plan}`,
     checksum: checksums.product,
     createdAt: timestamp,
   },
 ];
 
 const campaignRow = {
-  id: 'campaign-1',
+  id: fixtureIds.campaign,
   createdAt: timestamp,
-  draftId: 'campaign-draft-1',
-  revisionId: 'campaign-revision-1',
-  runId: 'campaign-run-1',
+  draftId: fixtureIds.campaignDraft,
+  revisionId: fixtureIds.campaignRevision,
+  runId: fixtureIds.campaignRun,
   runVersion: 3,
   name: 'Production canary',
   status: 'running',
@@ -227,13 +284,13 @@ const campaignRow = {
 };
 
 const executionRow = {
-  id: 'execution-1',
+  id: fixtureIds.execution,
   createdAt: timestamp,
-  campaignId: 'campaign-1',
-  deploymentPlanId: 'plan-1',
-  deploymentTargetId: 'target-shared',
-  taskId: 'task-1',
-  stepRunId: 'step-run-1',
+  campaignId: fixtureIds.campaign,
+  deploymentPlanId: fixtureIds.plan,
+  deploymentTargetId: fixtureIds.target,
+  taskId: fixtureIds.task,
+  stepRunId: fixtureIds.stepRun,
   stepKey: 'deploy-payments',
   attemptNumber: 1,
   protocolVersion: 'v2',
@@ -248,13 +305,13 @@ const executionRow = {
 };
 
 const reconciliationRow = {
-  id: 'reconciliation-1',
+  id: fixtureIds.reconciliation,
   createdAt: timestamp,
-  driftCaseId: 'drift-1',
-  executionId: 'execution-1',
-  deploymentPlanId: 'plan-1',
-  environmentId: 'environment-production',
-  deploymentTargetId: 'target-shared',
+  driftCaseId: fixtureIds.drift,
+  executionId: fixtureIds.execution,
+  deploymentPlanId: fixtureIds.plan,
+  environmentId: fixtureIds.environment,
+  deploymentTargetId: fixtureIds.target,
   component: 'payments-api',
   drift: 'artifact_mismatch',
   status: 'OPEN',
@@ -264,40 +321,40 @@ const reconciliationRow = {
 };
 
 const auditRow = {
-  id: 'audit-1',
+  id: fixtureIds.audit,
   createdAt: timestamp,
   sequence: 42,
   action: 'deployment_plan.approved',
   subjectType: 'deployment_plan',
-  subjectId: 'plan-1',
-  actorUserAccountId: 'user-scoped-approver',
+  subjectId: fixtureIds.plan,
+  actorUserAccountId: fixtureIds.scopedApprover,
   outcome: 'accepted',
   correlationCount: 2,
   payloadChecksum: checksums.approval,
 };
 
 const approvalRequest = {
-  id: 'approval-1',
+  id: fixtureIds.approval,
   createdAt: timestamp,
   updatedAt: timestamp,
   subjectType: 'deployment_plan',
-  subjectId: 'plan-1',
+  subjectId: fixtureIds.plan,
   subjectRevision: 2,
   subjectChecksum: checksums.canonical,
   effectivePolicyChecksum: checksums.policy,
   subscriberSetChecksum: checksums.subscriber,
-  requesterUserAccountId: 'user-vendor-admin',
+  requesterUserAccountId: fixtureIds.vendorAdmin,
   state: 'PENDING',
   revision: 3,
   expiresAt: '2026-07-29T08:00:00Z',
   requirements: [
     {
-      id: 'approval-requirement-1',
+      id: fixtureIds.approvalRequirement,
       ruleKey: 'production-four-eyes',
-      policyVersionId: 'policy-version-1',
+      policyVersionId: fixtureIds.policyVersion,
       authorityKind: 'environment',
-      authorityId: 'environment-production',
-      principalGroupId: 'approvers',
+      authorityId: fixtureIds.environment,
+      principalGroupId: fixtureIds.approvalAuthority,
       quorum: 1,
       separationConstraints: ['requester_cannot_approve'],
       sortOrder: 1,
@@ -308,7 +365,7 @@ const approvalRequest = {
 
 const invalidatedApproval = {
   ...approvalRequest,
-  id: 'approval-invalidated',
+  id: fixtureIds.invalidatedApproval,
   subjectRevision: 1,
   state: 'INVALIDATED',
   revision: 4,
@@ -420,6 +477,17 @@ async function handleApi(
 
   if (method !== 'GET') {
     actions.push({method, path, body: request.postDataJSON()});
+    if (!actorCanMutate(actor, path)) {
+      await json(
+        route,
+        {
+          code: 'FORBIDDEN',
+          message: 'The fixture actor is not authorized for this scoped mutation.',
+        },
+        403
+      );
+      return;
+    }
   }
 
   if (method === 'GET' && path === '/api/v1/context') {
@@ -443,13 +511,13 @@ async function handleApi(
     await json(route, pageOf(empty ? [] : fleetRows));
   } else if (method === 'GET' && path === '/api/v1/control-plane/releases') {
     await json(route, pageOf(empty ? [] : releases));
-  } else if (method === 'GET' && path === '/api/v1/control-plane/releases/release-product-1') {
+  } else if (method === 'GET' && path === `/api/v1/control-plane/releases/${fixtureIds.productRelease}`) {
     await json(route, {
       detail: {
         release: releases[1],
         artifacts: [
           {
-            id: 'artifact-1',
+            id: fixtureIds.artifact,
             name: 'payments-api',
             version: '2.5.0',
             manifestDigest: executionRow.artifactDigest,
@@ -458,7 +526,7 @@ async function handleApi(
         ],
         componentPins: [
           {
-            componentReleaseId: 'release-component-1',
+            componentReleaseId: fixtureIds.componentRelease,
             component: 'payments-api',
             version: '2.5.0',
             checksum: checksums.product,
@@ -471,7 +539,7 @@ async function handleApi(
     });
   } else if (
     method === 'GET' &&
-    path === '/api/v1/control-plane/releases/release-product-1/compare/release-component-1'
+    path === `/api/v1/control-plane/releases/${fixtureIds.productRelease}/compare/${fixtureIds.componentRelease}`
   ) {
     await json(route, {
       comparison: {
@@ -491,10 +559,18 @@ async function handleApi(
     await json(route, {items: empty ? [] : evidence});
   } else if (method === 'GET' && path === '/api/v1/control-plane/plans') {
     await json(route, pageOf(empty ? [] : [planRow]));
-  } else if (method === 'GET' && path === '/api/v1/control-plane/plans/plan-1') {
+  } else if (
+    method === 'GET' &&
+    [
+      `/api/v1/control-plane/plans/${fixtureIds.plan}`,
+      `/api/v1/control-plane/plans/${fixtureIds.publishedPlan}`,
+      `/api/v1/control-plane/plans/${fixtureIds.previousPlan}`,
+    ].includes(path)
+  ) {
+    const planId = path.split('/').at(-1) ?? fixtureIds.plan;
     await json(route, {
       detail: {
-        plan: planRow,
+        plan: {...planRow, id: planId},
         productReleaseChecksum: checksums.product,
         targetConfigChecksum: checksums.config,
         effectivePolicyChecksum: checksums.policy,
@@ -528,7 +604,7 @@ async function handleApi(
     });
   } else if (method === 'GET' && path === '/api/v1/control-plane/campaigns') {
     await json(route, pageOf(empty ? [] : [campaignRow]));
-  } else if (method === 'GET' && path === '/api/v1/control-plane/campaigns/campaign-1') {
+  } else if (method === 'GET' && path === `/api/v1/control-plane/campaigns/${fixtureIds.campaign}`) {
     await json(route, {
       detail: {
         campaign: campaignRow,
@@ -541,7 +617,7 @@ async function handleApi(
         admissionChecksum: checksums.approval,
         waves: [
           {
-            id: 'wave-1',
+            id: '00000000-0000-4000-8000-000000000405',
             order: 1,
             name: 'Canary',
             status: 'running',
@@ -554,9 +630,9 @@ async function handleApi(
         ],
         members: [
           {
-            id: 'member-1',
-            deploymentPlanId: 'plan-1',
-            deploymentUnitId: 'unit-a',
+            id: '00000000-0000-4000-8000-000000000406',
+            deploymentPlanId: fixtureIds.plan,
+            deploymentUnitId: fixtureIds.unitA,
             waveOrder: 1,
             memberOrder: 1,
             status: 'running',
@@ -573,7 +649,7 @@ async function handleApi(
     });
   } else if (method === 'GET' && path === '/api/v1/control-plane/executions') {
     await json(route, pageOf(empty ? [] : [executionRow]));
-  } else if (method === 'GET' && path === '/api/v1/control-plane/executions/execution-1') {
+  } else if (method === 'GET' && path === `/api/v1/control-plane/executions/${fixtureIds.execution}`) {
     await json(route, {
       detail: {
         execution: executionRow,
@@ -591,11 +667,11 @@ async function handleApi(
     });
   } else if (method === 'GET' && path === '/api/v1/approval-requests') {
     await json(route, {items: empty ? [] : [currentApproval(actions), invalidatedApproval]});
-  } else if (method === 'GET' && path === '/api/v1/approval-requests/approval-1') {
+  } else if (method === 'GET' && path === `/api/v1/approval-requests/${fixtureIds.approval}`) {
     await json(route, currentApproval(actions));
   } else if (method === 'GET' && path === '/api/v1/control-plane/reconciliation') {
     await json(route, pageOf(empty ? [] : [reconciliationRow]));
-  } else if (method === 'GET' && path === '/api/v1/control-plane/reconciliation/reconciliation-1') {
+  } else if (method === 'GET' && path === `/api/v1/control-plane/reconciliation/${fixtureIds.reconciliation}`) {
     await json(route, {
       detail: {
         reconciliation: reconciliationRow,
@@ -607,13 +683,13 @@ async function handleApi(
     });
   } else if (method === 'GET' && path === '/api/v1/control-plane/audit') {
     await json(route, pageOf(empty ? [] : [auditRow]));
-  } else if (method === 'GET' && path === '/api/v1/control-plane/audit/audit-1') {
+  } else if (method === 'GET' && path === `/api/v1/control-plane/audit/${fixtureIds.audit}`) {
     await json(route, {
       detail: {
         event: auditRow,
         correlations: [
-          {id: 'correlation-1', kind: 'deployment_plan', value: 'plan-1'},
-          {id: 'correlation-2', kind: 'campaign', value: 'campaign-1'},
+          {id: '00000000-0000-4000-8000-000000000803', kind: 'deployment_plan', value: fixtureIds.plan},
+          {id: '00000000-0000-4000-8000-000000000804', kind: 'campaign', value: fixtureIds.campaign},
         ],
         payload: {planChecksum: checksums.canonical},
         evidence,
@@ -626,7 +702,7 @@ async function handleApi(
         ? []
         : [
             {
-              id: 'sink-1',
+              id: fixtureIds.auditSink,
               name: 'Retention archive',
               kind: 'object_store',
               endpointReference: 'secret://fixture/audit-archive',
@@ -642,7 +718,7 @@ async function handleApi(
     await json(route, [
       {
         sink: {
-          id: 'sink-1',
+          id: fixtureIds.auditSink,
           name: 'Retention archive',
           kind: 'object_store',
           endpointReference: 'secret://fixture/audit-archive',
@@ -653,7 +729,7 @@ async function handleApi(
           updatedAt: timestamp,
         },
         lastExportedSequence: 41,
-        lastExportedEventId: 'audit-previous',
+        lastExportedEventId: fixtureIds.priorAudit,
         latestSequence: 42,
         checkpointLag: 1,
         alert: false,
@@ -666,14 +742,14 @@ async function handleApi(
       route,
       {
         version: 'v1',
-        deploymentPlanId: 'plan-1',
+        deploymentPlanId: fixtureIds.plan,
         events: [
           {
-            id: 'audit-1',
+            id: fixtureIds.audit,
             sequence: 42,
             eventType: 'deployment_plan.approved',
             outcome: 'accepted',
-            deploymentPlanId: 'plan-1',
+            deploymentPlanId: fixtureIds.plan,
             payloadRedacted: false,
             payloadTruncated: false,
             createdAt: timestamp,
@@ -685,13 +761,16 @@ async function handleApi(
     );
   } else if (method === 'POST' && path === '/api/v1/deployment-registry/imports/preview') {
     await json(route, registryImport('needs_decision'));
-  } else if (method === 'POST' && path.includes('/deployment-registry/imports/registry-import-1/decisions')) {
+  } else if (
+    method === 'POST' &&
+    path === `/api/v1/deployment-registry/imports/${fixtureIds.registryImport}/decisions`
+  ) {
     await route.fulfill({status: 204});
-  } else if (method === 'GET' && path === '/api/v1/deployment-registry/imports/registry-import-1') {
+  } else if (method === 'GET' && path === `/api/v1/deployment-registry/imports/${fixtureIds.registryImport}`) {
     await json(route, registryImport('standard'));
-  } else if (method === 'POST' && path.includes('/deployment-registry/imports/registry-import-1/apply')) {
+  } else if (method === 'POST' && path === `/api/v1/deployment-registry/imports/${fixtureIds.registryImport}/apply`) {
     await json(route, {
-      id: 'registry-import-1',
+      id: fixtureIds.registryImport,
       previewChecksum: checksums.canonical,
       state: 'applied',
       applied: true,
@@ -701,53 +780,78 @@ async function handleApi(
   } else if (
     method === 'GET' &&
     path === '/api/v1/deployment-registry/coverage' &&
-    url.searchParams.get('importId') === 'registry-import-1'
+    url.searchParams.get('importId') === fixtureIds.registryImport
   ) {
     await json(route, registryCoverage());
   } else if (method === 'GET' && path === '/api/v1/authorization/control-plane-enrollments') {
     await json(route, {
       enrollments: [
         {
-          id: 'enrollment-1',
+          id: fixtureIds.enrollmentOrganization,
           createdAt: timestamp,
-          scope: {kind: 'environment', id: 'environment-production'},
+          scope: {kind: 'organization', id: fixtureIds.organization},
           enabled: true,
-          effectiveFrom: timestamp,
-          actorUserAccountId: 'user-vendor-admin',
+          effectiveFrom: '2026-07-01T00:00:00Z',
+          actorUserAccountId: fixtureIds.vendorAdmin,
           reason: 'Fixture enrollment',
+          revision: 1,
+        },
+        {
+          id: fixtureIds.enrollmentEnvironment,
+          createdAt: timestamp,
+          scope: {kind: 'environment', id: fixtureIds.environment},
+          enabled: true,
+          effectiveFrom: '2026-07-01T00:00:00Z',
+          actorUserAccountId: fixtureIds.vendorAdmin,
+          reason: 'Fixture environment enrollment',
           revision: 1,
         },
       ],
     });
   } else if (method === 'GET' && path === '/api/v1/target-config-snapshots/') {
-    await json(route, {items: url.searchParams.has('deploymentUnitId') ? [{id: 'config-snapshot-1'}] : []});
+    await json(route, {
+      items: url.searchParams.has('deploymentUnitId')
+        ? [
+            {
+              id: fixtureIds.snapshot,
+              deploymentUnitId: fixtureIds.unitA,
+              environmentId: fixtureIds.environment,
+            },
+          ]
+        : [],
+    });
   } else if (method === 'POST' && path === '/api/v1/release-bundles') {
     await json(route, componentRelease('DRAFT'), 201);
-  } else if (method === 'POST' && path === '/api/v1/release-bundles/release-component-draft/validate') {
+  } else if (method === 'POST' && path === `/api/v1/release-bundles/${fixtureIds.componentReleaseDraft}/validate`) {
     await json(route, {valid: true, errors: [], warnings: []});
-  } else if (method === 'POST' && path === '/api/v1/release-bundles/release-component-draft/publish') {
+  } else if (method === 'POST' && path === `/api/v1/release-bundles/${fixtureIds.componentReleaseDraft}/publish`) {
     await json(route, componentRelease('PUBLISHED'));
   } else if (method === 'POST' && path === '/api/v1/product-releases') {
     await json(route, productRelease('DRAFT'), 201);
-  } else if (method === 'POST' && path === '/api/v1/product-releases/release-product-draft/validate') {
+  } else if (method === 'POST' && path === `/api/v1/product-releases/${fixtureIds.productReleaseDraft}/validate`) {
     await json(route, {valid: true, issues: []});
-  } else if (method === 'POST' && path === '/api/v1/product-releases/release-product-draft/publish') {
+  } else if (method === 'POST' && path === `/api/v1/product-releases/${fixtureIds.productReleaseDraft}/publish`) {
     await json(route, productRelease('PUBLISHED'));
-  } else if (method === 'POST' && path === '/api/v1/approval-requests/approval-1/decisions') {
-    await json(route, currentApproval(actions), 201);
+  } else if (method === 'POST' && path === `/api/v1/deployment-plan-drafts/${fixtureIds.planDraft}/publish`) {
+    await json(route, {...planRow, id: fixtureIds.publishedPlan, status: 'PUBLISHED'});
+  } else if (method === 'POST' && path === `/api/v1/deployment-plans/${fixtureIds.plan}/previous-state`) {
+    await json(route, {...planRow, id: fixtureIds.previousPlan, status: 'READY'});
+  } else if (method === 'POST' && path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions`) {
+    await json(route, approvalDecision(actions));
   } else if (
     method === 'POST' &&
-    /^\/api\/v1\/deployment-campaigns\/campaign-run-1\/(pause|resume|cancel)$/.test(path)
+    new RegExp(`^/api/v1/deployment-campaigns/${fixtureIds.campaignRun}/(pause|resume|cancel)$`).test(path)
   ) {
     const action = path.split('/').at(-1);
+    const body = request.postDataJSON() as {requestId: string};
     await json(route, {
-      requestId: `${action}-request-1`,
+      requestId: body.requestId,
       status: 'accepted',
       run: {
-        id: 'campaign-run-1',
+        id: fixtureIds.campaignRun,
         createdAt: timestamp,
         updatedAt: timestamp,
-        campaignRevisionId: 'campaign-revision-1',
+        campaignRevisionId: fixtureIds.campaignRevision,
         state: action === 'pause' ? 'PAUSED' : action === 'resume' ? 'RUNNING' : 'CANCELED',
         version: 4,
         currentWaveOrder: 1,
@@ -761,15 +865,58 @@ async function handleApi(
       reconciliationRequired: false,
       duplicate: false,
     });
-  } else if (method === 'POST' && path === '/api/v1/executions/execution-1/cancel') {
-    await json(route, {status: 'CANCEL_REQUESTED'}, 202);
-  } else if (method === 'POST' && path === '/api/v1/executions/execution-1/status-queries') {
-    await json(route, {status: 'QUERY_REQUESTED'}, 202);
-  } else if (method === 'POST' && path === '/api/v1/drift-cases/drift-1/resolve') {
+  } else if (method === 'POST' && path === `/api/v1/executions/${fixtureIds.execution}/cancel`) {
+    await route.fulfill({status: 204});
+  } else if (method === 'POST' && path === `/api/v1/executions/${fixtureIds.execution}/status-queries`) {
+    const body = request.postDataJSON() as {idempotencyKey: string; reason: string; expiresInSeconds: number};
+    await json(route, {
+      query: {
+        id: fixtureIds.executionStatusQuery,
+        createdAt: timestamp,
+        organizationId: fixtureIds.organization,
+        executionId: fixtureIds.execution,
+        executionAttemptId: fixtureIds.executionAttempt,
+        requestedBy: fixtureIds.executorOperator,
+        idempotencyKey: body.idempotencyKey,
+        reason: body.reason,
+        status: 'PENDING',
+        expiresAt: '2026-07-28T08:01:00Z',
+        requestedTtlSeconds: body.expiresInSeconds,
+      },
+    });
+  } else if (method === 'POST' && path === `/api/v1/drift-cases/${fixtureIds.drift}/resolve`) {
     await route.fulfill({status: 204});
   } else {
     await json(route, {code: 'FIXTURE_ROUTE_MISSING', message: `No deterministic fixture for ${method} ${path}`}, 404);
   }
+}
+
+function actorCanMutate(actor: OperatorActor, path: string): boolean {
+  if (path === '/api/v1/control-plane-audit/evidence-bundles') {
+    return actor === 'vendorAdmin' || actor === 'auditViewer';
+  }
+  if (path.startsWith('/api/v1/control-plane-audit/export-sinks')) {
+    return actor === 'vendorAdmin';
+  }
+  if (path.startsWith('/api/v1/approval-requests/')) {
+    return actor === 'scopedApprover';
+  }
+  if (
+    path.startsWith('/api/v1/deployment-campaigns/') ||
+    path.startsWith('/api/v1/executions/') ||
+    path.startsWith('/api/v1/drift-cases/')
+  ) {
+    return actor === 'executorOperator';
+  }
+  if (
+    path.startsWith('/api/v1/deployment-registry/') ||
+    path.startsWith('/api/v1/release-bundles') ||
+    path.startsWith('/api/v1/product-releases') ||
+    path.startsWith('/api/v1/deployment-plan')
+  ) {
+    return actor === 'vendorAdmin';
+  }
+  return false;
 }
 
 function contextResponse(actor: OperatorActor) {
@@ -787,7 +934,7 @@ function contextResponse(actor: OperatorActor) {
       mfaEnabled: false,
     },
     organization: {
-      id: 'vendor-organization',
+      id: fixtureIds.organization,
       createdAt: timestamp,
       updatedAt: timestamp,
       name: 'Fixture Vendor',
@@ -806,7 +953,7 @@ function contextResponse(actor: OperatorActor) {
       stripeWebhookSecretConfigured: false,
     },
     ...(actor === 'unauthorized'
-      ? {customerOrganization: {id: 'customer-organization', name: 'Fixture Customer', features: []}}
+      ? {customerOrganization: {id: fixtureIds.customerOrganization, name: 'Fixture Customer', features: []}}
       : {}),
     availableContexts: [],
     sidebarLinks: [],
@@ -828,7 +975,7 @@ function registryCounts() {
 
 function registryImport(classification: 'needs_decision' | 'standard') {
   return {
-    id: 'registry-import-1',
+    id: fixtureIds.registryImport,
     previewChecksum: checksums.canonical,
     counts: {
       ...registryCounts(),
@@ -855,10 +1002,10 @@ function registryImport(classification: 'needs_decision' | 'standard') {
         name: 'Production root',
         deliveryModel: 'dedicated',
         classification,
-        customerOrganizationId: 'customer-a',
-        deploymentTargetId: 'target-shared',
-        environmentId: 'environment-production',
-        subscriberCustomerOrganizationIds: ['customer-a'],
+        customerOrganizationId: fixtureIds.customerA,
+        deploymentTargetId: fixtureIds.target,
+        environmentId: fixtureIds.environment,
+        subscriberCustomerOrganizationIds: [fixtureIds.customerA],
         physicalIdentity: 'fixture-production-root',
         placements: [
           {
@@ -876,7 +1023,7 @@ function registryImport(classification: 'needs_decision' | 'standard') {
 
 function registryCoverage() {
   return {
-    importId: 'registry-import-1',
+    importId: fixtureIds.registryImport,
     discoveredRoots: 1,
     classifiedRoots: 1,
     actionableManagedRoots: 1,
@@ -893,7 +1040,9 @@ function registryCoverage() {
 }
 
 function currentApproval(actions: RecordedAction[]) {
-  const approved = actions.some((action) => action.path === '/api/v1/approval-requests/approval-1/decisions');
+  const approved = actions.some(
+    (action) => action.path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions`
+  );
   return approved
     ? {
         ...approvalRequest,
@@ -901,13 +1050,13 @@ function currentApproval(actions: RecordedAction[]) {
         resolvedAt: timestamp,
         decisions: [
           {
-            id: 'approval-decision-1',
+            id: fixtureIds.approvalDecision,
             createdAt: timestamp,
-            approvalRequestId: 'approval-1',
-            approvalRequirementId: 'approval-requirement-1',
+            approvalRequestId: fixtureIds.approval,
+            approvalRequirementId: fixtureIds.approvalRequirement,
             decision: 'APPROVE',
             comment: 'Reviewed production checksum and blockers',
-            actorUserAccountId: 'user-scoped-approver',
+            actorUserAccountId: fixtureIds.scopedApprover,
             requestRevision: 3,
             idempotencyKey: 'fixture-approval-decision',
           },
@@ -916,20 +1065,46 @@ function currentApproval(actions: RecordedAction[]) {
     : approvalRequest;
 }
 
+function approvalDecision(actions: RecordedAction[]) {
+  const action = actions.findLast(
+    (candidate) => candidate.path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions`
+  );
+  const body = action?.body as
+    | {
+        approvalRequirementId: string;
+        decision: 'APPROVE' | 'REJECT';
+        comment: string;
+        expectedRequestRevision: number;
+        idempotencyKey: string;
+      }
+    | undefined;
+  return {
+    id: fixtureIds.approvalDecision,
+    createdAt: timestamp,
+    approvalRequestId: fixtureIds.approval,
+    approvalRequirementId: body?.approvalRequirementId ?? fixtureIds.approvalRequirement,
+    decision: body?.decision ?? 'APPROVE',
+    comment: body?.comment ?? '',
+    actorUserAccountId: fixtureIds.scopedApprover,
+    requestRevision: body?.expectedRequestRevision ?? approvalRequest.revision,
+    idempotencyKey: body?.idempotencyKey ?? '',
+  };
+}
+
 function componentRelease(status: 'DRAFT' | 'PUBLISHED') {
   return {
-    id: 'release-component-draft',
+    id: fixtureIds.componentReleaseDraft,
     createdAt: timestamp,
     updatedAt: timestamp,
-    applicationId: 'application-payments',
-    channelId: 'channel-stable',
+    applicationId: fixtureIds.applicationPayments,
+    channelId: fixtureIds.channelStable,
     releaseNumber: '25',
     releaseNotes: 'Payments component fixture',
     sourceRevision: '0123456789abcdef',
     kind: 'component',
     releaseContractSchema: 'distr.component-release/v2',
     status,
-    ...(status === 'PUBLISHED' ? {publishedByUserAccountId: 'user-vendor-admin', publishedAt: timestamp} : {}),
+    ...(status === 'PUBLISHED' ? {publishedByUserAccountId: fixtureIds.vendorAdmin, publishedAt: timestamp} : {}),
     canonicalChecksum: checksums.product,
     components: [],
   };
@@ -937,15 +1112,15 @@ function componentRelease(status: 'DRAFT' | 'PUBLISHED') {
 
 function productRelease(status: 'DRAFT' | 'PUBLISHED') {
   return {
-    id: 'release-product-draft',
+    id: fixtureIds.productReleaseDraft,
     createdAt: timestamp,
     updatedAt: timestamp,
-    applicationId: 'application-suite',
-    channelId: 'channel-stable',
+    applicationId: fixtureIds.applicationSuite,
+    channelId: fixtureIds.channelStable,
     status,
     canonicalChecksum: checksums.canonical,
     graphChecksum: checksums.graph,
-    ...(status === 'PUBLISHED' ? {publishedByUserAccountId: 'user-vendor-admin', publishedAt: timestamp} : {}),
+    ...(status === 'PUBLISHED' ? {publishedByUserAccountId: fixtureIds.vendorAdmin, publishedAt: timestamp} : {}),
     manifest: {
       schema: 'distr.product-release/v1',
       product: 'fixture-suite',

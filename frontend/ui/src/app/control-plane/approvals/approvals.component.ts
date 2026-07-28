@@ -1,6 +1,8 @@
-import {ChangeDetectionStrategy, Component, inject, signal} from '@angular/core';
+import {ChangeDetectionStrategy, Component, DestroyRef, inject, signal} from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {FormBuilder, ReactiveFormsModule, Validators} from '@angular/forms';
-import {firstValueFrom} from 'rxjs';
+import {ActivatedRoute} from '@angular/router';
+import {distinctUntilChanged, firstValueFrom, map} from 'rxjs';
 import {OperatorControlPlaneService} from '../../services/operator-control-plane.service';
 import {OverlayService} from '../../services/overlay.service';
 import {
@@ -22,6 +24,8 @@ export class ApprovalsComponent {
   private readonly service = inject(OperatorControlPlaneService);
   private readonly overlay = inject(OverlayService);
   private readonly fb = inject(FormBuilder).nonNullable;
+  private readonly route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly idempotencyKeys = new Map<string, string>();
   private fallbackKeySequence = 0;
 
@@ -47,6 +51,17 @@ export class ApprovalsComponent {
 
   constructor() {
     void this.loadApprovals(true);
+    this.route.queryParamMap
+      .pipe(
+        map((params) => params.get('requestId')?.trim() ?? ''),
+        distinctUntilChanged(),
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe((requestId) => {
+        if (requestId) {
+          void this.openApproval(requestId);
+        }
+      });
   }
 
   protected async applyFilters(): Promise<void> {
@@ -180,6 +195,7 @@ export class ApprovalsComponent {
   private async loadApprovals(reset: boolean): Promise<void> {
     if (reset) {
       this.loading.set(true);
+      this.nextCursor.set(undefined);
       this.listForbidden.set(false);
       this.listError.set('');
     } else {
@@ -198,7 +214,10 @@ export class ApprovalsComponent {
       this.approvals.update((current) => (reset ? page.items : [...current, ...page.items]));
       this.nextCursor.set(page.nextCursor);
     } catch (error) {
-      if (reset) this.approvals.set([]);
+      if (reset) {
+        this.approvals.set([]);
+        this.nextCursor.set(undefined);
+      }
       if (errorStatus(error) === 403) {
         this.listForbidden.set(true);
       } else {

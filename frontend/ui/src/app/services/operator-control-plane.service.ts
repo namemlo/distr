@@ -25,6 +25,7 @@ import {
   OperatorCampaignRow,
   OperatorControlPlaneAuditEventPage,
   OperatorControlPlaneAuditListRequest,
+  OperatorControlPlaneEnrollment,
   OperatorControlPlaneEnrollmentPage,
   OperatorControlPlaneError,
   OperatorCreateAuditExportSinkRequest,
@@ -84,10 +85,16 @@ export const OPERATOR_ACTION_KEY_FACTORY = new InjectionToken<() => string>('OPE
   factory: () => () => globalThis.crypto.randomUUID(),
 });
 
+export const OPERATOR_READINESS_CLOCK = new InjectionToken<() => Date>('OPERATOR_READINESS_CLOCK', {
+  providedIn: 'root',
+  factory: () => () => new Date(),
+});
+
 @Injectable({providedIn: 'root'})
 export class OperatorControlPlaneService {
   private readonly httpClient = inject(HttpClient);
   private readonly newActionKey = inject(OPERATOR_ACTION_KEY_FACTORY);
+  private readonly readinessClock = inject(OPERATOR_READINESS_CLOCK);
 
   listFleet(filters: OperatorFleetFilters = {}): Observable<OperatorPage<OperatorFleetRow>> {
     return this.getPage<OperatorFleetRow>(`${controlPlaneUrl}/fleet`, filters);
@@ -359,16 +366,22 @@ export class OperatorControlPlaneService {
   loadSetupReadiness(request: OperatorSetupReadinessRequest): Observable<OperatorSetupReadiness> {
     return forkJoin({
       features: this.listExperimentalFeatureFlags(),
-      hasEnabledEnrollment: this.hasEnabledEnrollment(),
+      enrollments: this.listAllControlPlaneEnrollments(),
       snapshots: this.listTargetConfigSnapshots({deploymentUnitId: request.deploymentUnitId, limit: 1}),
       coverage: this.getRegistryCoverage(request.importId),
     }).pipe(
-      map(({features, hasEnabledEnrollment, snapshots, coverage}) => {
+      map(({features, enrollments, snapshots, coverage}) => {
         const operatorControlPlaneEnabled = features.some(
           (flag) => flag.key === 'operator_control_plane_v2' && flag.enabled
         );
         const executorProtocolEnabled = features.some((flag) => flag.key === 'executor_protocol_v2' && flag.enabled);
         const hasTargetConfigSnapshot = snapshots.items.length > 0;
+        const selectedEnvironmentId = snapshots.items[0]?.environmentId;
+        const decisionAt = this.readinessClock();
+        const hasEnabledEnrollment =
+          Boolean(selectedEnvironmentId) &&
+          enrollmentEffectiveAt(enrollments, 'organization', undefined, decisionAt) &&
+          enrollmentEffectiveAt(enrollments, 'environment', selectedEnvironmentId, decisionAt);
         const registryCoverageComplete = coverage.complete;
         return {
           operatorControlPlaneEnabled,
@@ -387,13 +400,14 @@ export class OperatorControlPlaneService {
     );
   }
 
-  private hasEnabledEnrollment(cursor?: string): Observable<boolean> {
+  private listAllControlPlaneEnrollments(
+    cursor?: string,
+    accumulated: OperatorControlPlaneEnrollment[] = []
+  ): Observable<OperatorControlPlaneEnrollment[]> {
     return this.listControlPlaneEnrollments({cursor, limit: 100}).pipe(
       switchMap((page) => {
-        if (page.enrollments.some((enrollment) => enrollment.enabled)) {
-          return of(true);
-        }
-        return page.nextCursor ? this.hasEnabledEnrollment(page.nextCursor) : of(false);
+        const enrollments = [...accumulated, ...page.enrollments];
+        return page.nextCursor ? this.listAllControlPlaneEnrollments(page.nextCursor, enrollments) : of(enrollments);
       })
     );
   }
@@ -414,6 +428,26 @@ export class OperatorControlPlaneService {
   private safe<T>(request: Observable<T>): Observable<T> {
     return request.pipe(catchError((error: unknown) => throwError(() => normalizeOperatorControlPlaneError(error))));
   }
+}
+
+function enrollmentEffectiveAt(
+  enrollments: OperatorControlPlaneEnrollment[],
+  scopeKind: string,
+  scopeId: string | undefined,
+  decisionAt: Date
+): boolean {
+  const selected = enrollments
+    .filter(
+      (enrollment) =>
+        enrollment.scope.kind === scopeKind &&
+        (scopeId === undefined || enrollment.scope.id === scopeId) &&
+        Date.parse(enrollment.effectiveFrom) <= decisionAt.getTime() &&
+        (enrollment.effectiveUntil === undefined || Date.parse(enrollment.effectiveUntil) > decisionAt.getTime())
+    )
+    .sort(
+      (left, right) => right.revision - left.revision || Date.parse(right.createdAt) - Date.parse(left.createdAt)
+    )[0];
+  return selected?.enabled === true;
 }
 
 export function normalizeOperatorControlPlaneError(error: unknown): OperatorControlPlaneError {

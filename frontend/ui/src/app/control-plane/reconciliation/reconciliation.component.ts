@@ -171,6 +171,7 @@ export class ReconciliationComponent {
   private async loadCases(reset: boolean): Promise<void> {
     if (reset) {
       this.loading.set(true);
+      this.nextCursor.set(undefined);
       this.listForbidden.set(false);
       this.listError.set('');
     } else {
@@ -190,7 +191,10 @@ export class ReconciliationComponent {
       this.cases.update((current) => (reset ? page.items : [...current, ...page.items]));
       this.nextCursor.set(page.nextCursor);
     } catch (error) {
-      if (reset) this.cases.set([]);
+      if (reset) {
+        this.cases.set([]);
+        this.nextCursor.set(undefined);
+      }
       if (errorStatus(error) === 403) {
         this.listForbidden.set(true);
       } else {

@@ -90,6 +90,19 @@ describe('SideBarComponent operator control-plane navigation', () => {
     expect(visibleOperatorHrefs(fixture)).toEqual(operatorHrefs);
   });
 
+  it('exposes the control-plane submenu expanded state to assistive technology', async () => {
+    const fixture = await createOperatorNavigationComponent();
+    const toggle = Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>).find(
+      (button) => button.textContent?.includes('Control Plane')
+    );
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+
+    toggle?.click();
+    fixture.detectChanges();
+
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+  });
+
   for (const {name, operator, processes, scoped} of [
     {name: 'operator control plane', operator: false, processes: true, scoped: true},
     {name: 'deployment processes', operator: true, processes: false, scoped: true},

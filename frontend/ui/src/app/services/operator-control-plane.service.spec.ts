@@ -2,7 +2,11 @@ import {HttpErrorResponse, provideHttpClient} from '@angular/common/http';
 import {HttpTestingController, provideHttpClientTesting} from '@angular/common/http/testing';
 import {TestBed} from '@angular/core/testing';
 import {retry} from 'rxjs';
-import {OPERATOR_ACTION_KEY_FACTORY, OperatorControlPlaneService} from './operator-control-plane.service';
+import {
+  OPERATOR_ACTION_KEY_FACTORY,
+  OPERATOR_READINESS_CLOCK,
+  OperatorControlPlaneService,
+} from './operator-control-plane.service';
 
 describe('OperatorControlPlaneService', () => {
   let http: HttpTestingController;
@@ -14,6 +18,7 @@ describe('OperatorControlPlaneService', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         {provide: OPERATOR_ACTION_KEY_FACTORY, useValue: () => 'action-key-1'},
+        {provide: OPERATOR_READINESS_CLOCK, useValue: () => new Date('2026-07-28T08:00:00Z')},
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -434,7 +439,7 @@ describe('OperatorControlPlaneService', () => {
     expectRequest('/api/v1/control-plane-audit/export-status', {});
   });
 
-  it('composes setup readiness only from existing feature, enrollment, config, and coverage endpoints', () => {
+  it('requires the latest active organization and selected-environment enrollment revisions for setup readiness', () => {
     let readiness: unknown;
     service
       .loadSetupReadiness({
@@ -453,7 +458,38 @@ describe('OperatorControlPlaneService', () => {
     expect(enrollments.request.params.get('limit')).toBe('100');
     expect(enrollments.request.params.get('cursor')).toBeNull();
     enrollments.flush({
-      enrollments: [{id: 'enrollment-disabled', enabled: false}],
+      enrollments: [
+        {
+          id: '00000000-0000-4000-8000-000000000101',
+          createdAt: '2026-07-28T07:00:00Z',
+          scope: {kind: 'organization', id: '00000000-0000-4000-8000-000000000001'},
+          enabled: false,
+          effectiveFrom: '2026-07-28T06:00:00Z',
+          actorUserAccountId: '00000000-0000-4000-8000-000000000011',
+          reason: 'Older organization revision',
+          revision: 1,
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000102',
+          createdAt: '2026-07-28T07:30:00Z',
+          scope: {kind: 'organization', id: '00000000-0000-4000-8000-000000000001'},
+          enabled: true,
+          effectiveFrom: '2026-07-28T07:30:00Z',
+          actorUserAccountId: '00000000-0000-4000-8000-000000000011',
+          reason: 'Current organization revision',
+          revision: 2,
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000103',
+          createdAt: '2026-07-28T07:40:00Z',
+          scope: {kind: 'environment', id: '00000000-0000-4000-8000-000000000099'},
+          enabled: true,
+          effectiveFrom: '2026-07-28T07:40:00Z',
+          actorUserAccountId: '00000000-0000-4000-8000-000000000011',
+          reason: 'Unrelated environment',
+          revision: 5,
+        },
+      ],
       nextCursor: 'enrollment_next',
     });
 
@@ -462,12 +498,53 @@ describe('OperatorControlPlaneService', () => {
     );
     expect(nextEnrollments.request.params.get('limit')).toBe('100');
     expect(nextEnrollments.request.params.get('cursor')).toBe('enrollment_next');
-    nextEnrollments.flush({enrollments: [{id: 'enrollment-1', enabled: true}]});
+    nextEnrollments.flush({
+      enrollments: [
+        {
+          id: '00000000-0000-4000-8000-000000000104',
+          createdAt: '2026-07-28T07:00:00Z',
+          scope: {kind: 'environment', id: '00000000-0000-4000-8000-000000000002'},
+          enabled: false,
+          effectiveFrom: '2026-07-28T06:00:00Z',
+          actorUserAccountId: '00000000-0000-4000-8000-000000000011',
+          reason: 'Older selected environment revision',
+          revision: 1,
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000105',
+          createdAt: '2026-07-28T07:30:00Z',
+          scope: {kind: 'environment', id: '00000000-0000-4000-8000-000000000002'},
+          enabled: true,
+          effectiveFrom: '2026-07-28T07:30:00Z',
+          actorUserAccountId: '00000000-0000-4000-8000-000000000011',
+          reason: 'Current selected environment revision',
+          revision: 2,
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000106',
+          createdAt: '2026-07-28T07:45:00Z',
+          scope: {kind: 'environment', id: '00000000-0000-4000-8000-000000000002'},
+          enabled: true,
+          effectiveFrom: '2026-07-28T09:00:00Z',
+          actorUserAccountId: '00000000-0000-4000-8000-000000000011',
+          reason: 'Future revision is not effective',
+          revision: 3,
+        },
+      ],
+    });
 
     const snapshots = http.expectOne((request) => request.url === '/api/v1/target-config-snapshots/');
     expect(snapshots.request.params.get('deploymentUnitId')).toBe('unit-1');
     expect(snapshots.request.params.get('limit')).toBe('1');
-    snapshots.flush({items: [{id: 'snapshot-1'}]});
+    snapshots.flush({
+      items: [
+        {
+          id: '00000000-0000-4000-8000-000000000201',
+          deploymentUnitId: 'unit-1',
+          environmentId: '00000000-0000-4000-8000-000000000002',
+        },
+      ],
+    });
 
     const coverage = http.expectOne((request) => request.url === '/api/v1/deployment-registry/coverage');
     expect(coverage.request.params.get('importId')).toBe('import-1');
@@ -480,6 +557,51 @@ describe('OperatorControlPlaneService', () => {
       hasTargetConfigSnapshot: true,
       registryCoverageComplete: true,
       ready: true,
+    });
+  });
+
+  it('rejects readiness when the selected environment latest active revision disables enrollment', () => {
+    let readiness: unknown;
+    service
+      .loadSetupReadiness({
+        importId: 'import-1',
+        deploymentUnitId: 'unit-1',
+      })
+      .subscribe((value) => (readiness = value));
+
+    http.expectOne('/api/v1/experimental-feature-flags').flush([
+      {key: 'operator_control_plane_v2', enabled: true},
+      {key: 'executor_protocol_v2', enabled: true},
+    ]);
+    http
+      .expectOne((request) => request.url === '/api/v1/authorization/control-plane-enrollments')
+      .flush({
+        enrollments: [
+          enrollment('organization', '00000000-0000-4000-8000-000000000001', true, 1),
+          enrollment('environment', '00000000-0000-4000-8000-000000000002', true, 1),
+          enrollment('environment', '00000000-0000-4000-8000-000000000002', false, 2),
+        ],
+      });
+    http
+      .expectOne((request) => request.url === '/api/v1/target-config-snapshots/')
+      .flush({
+        items: [
+          {
+            id: '00000000-0000-4000-8000-000000000201',
+            deploymentUnitId: 'unit-1',
+            environmentId: '00000000-0000-4000-8000-000000000002',
+          },
+        ],
+      });
+    http.expectOne((request) => request.url === '/api/v1/deployment-registry/coverage').flush({complete: true});
+
+    expect(readiness).toEqual({
+      operatorControlPlaneEnabled: true,
+      executorProtocolEnabled: true,
+      hasEnabledEnrollment: false,
+      hasTargetConfigSnapshot: true,
+      registryCoverageComplete: true,
+      ready: false,
     });
   });
 
@@ -522,5 +644,18 @@ describe('OperatorControlPlaneService', () => {
     expect(request.request.method).toBe(method);
     expect(request.request.body).toEqual(body);
     request.flush({});
+  }
+
+  function enrollment(kind: string, id: string, enabled: boolean, revision: number) {
+    return {
+      id: `00000000-0000-4000-8000-${revision.toString().padStart(12, '0')}`,
+      createdAt: `2026-07-28T07:${revision.toString().padStart(2, '0')}:00Z`,
+      scope: {kind, id},
+      enabled,
+      effectiveFrom: '2026-07-28T06:00:00Z',
+      actorUserAccountId: '00000000-0000-4000-8000-000000000011',
+      reason: 'Fixture revision',
+      revision,
+    };
   }
 });

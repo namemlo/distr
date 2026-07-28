@@ -80,7 +80,7 @@ export class AuditComponent {
     this.loadingMore.set(true);
     this.loadError.set('');
     try {
-      const page = await firstValueFrom(this.service.listAudit({cursor, limit: 50}));
+      const page = await firstValueFrom(this.service.listAudit({...this.filterRequest(), cursor}));
       this.events.update((current) => {
         const known = new Set(current.map((event) => event.id));
         return [...current, ...page.items.filter((event) => !known.has(event.id))];

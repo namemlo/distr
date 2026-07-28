@@ -1,6 +1,6 @@
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {ActivatedRoute, convertToParamMap, provideRouter, Router} from '@angular/router';
-import {of, Subject, throwError} from 'rxjs';
+import {BehaviorSubject, of, Subject, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {OperatorControlPlaneService} from '../../services/operator-control-plane.service';
 import {OverlayService} from '../../services/overlay.service';
@@ -25,6 +25,7 @@ describe('PlanDetailComponent', () => {
   };
   let overlay: {confirm: ReturnType<typeof vi.fn>};
   let router: Router;
+  let routeParams: BehaviorSubject<ReturnType<typeof convertToParamMap>>;
 
   const plan: OperatorPlanRow = {
     id: 'plan-1',
@@ -121,6 +122,7 @@ describe('PlanDetailComponent', () => {
       createPreviousStatePlan: vi.fn(),
     };
     overlay = {confirm: vi.fn().mockReturnValue(of(true))};
+    routeParams = new BehaviorSubject(convertToParamMap({planId: 'plan-1'}));
     TestBed.configureTestingModule({
       imports: [PlanDetailComponent],
       providers: [
@@ -128,6 +130,7 @@ describe('PlanDetailComponent', () => {
         {
           provide: ActivatedRoute,
           useValue: {
+            paramMap: routeParams.asObservable(),
             snapshot: {
               paramMap: convertToParamMap({planId: 'plan-1'}),
               queryParamMap: convertToParamMap({}),
@@ -139,6 +142,32 @@ describe('PlanDetailComponent', () => {
       ],
     });
     router = TestBed.inject(Router);
+  });
+
+  it('resets and reloads immutable detail when Angular reuses the component for a new plan id', () => {
+    const {fixture, component} = createComponent();
+    routeParams.next(convertToParamMap({planId: 'plan-published'}));
+    fixture.detectChanges();
+
+    expect(service.getPlan.mock.calls.at(-1)).toEqual(['plan-published']);
+    expect(service.getPlanEvidence.mock.calls.at(-1)).toEqual(['plan-published']);
+    expect((component as any).planId).toBe('plan-published');
+  });
+
+  it('ignores a late response from the previous plan after same-route navigation', () => {
+    const oldDetail = new Subject<OperatorPlanDetailResponse>();
+    const oldEvidence = new Subject<OperatorEvidencePage>();
+    service.getPlan
+      .mockReturnValueOnce(oldDetail)
+      .mockReturnValueOnce(of({detail: {...detail, plan: {...plan, id: 'plan-published'}}}));
+    service.getPlanEvidence.mockReturnValueOnce(oldEvidence).mockReturnValueOnce(of(evidence));
+    const {component} = createComponent();
+
+    routeParams.next(convertToParamMap({planId: 'plan-published'}));
+    oldDetail.next({detail});
+    oldEvidence.next(evidence);
+
+    expect((component as any).detail()?.plan.id).toBe('plan-published');
   });
 
   it('renders every approval-critical checksum, blocker, and evidence section in the detail page', () => {
@@ -411,6 +440,7 @@ describe('PlanDetailComponent', () => {
         {
           provide: ActivatedRoute,
           useValue: {
+            paramMap: of(convertToParamMap({planId: 'plan-1'})),
             snapshot: {
               paramMap: convertToParamMap({planId: 'plan-1'}),
               queryParamMap: convertToParamMap({}),

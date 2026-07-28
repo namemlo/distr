@@ -1,5 +1,6 @@
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-import {of, Subject, throwError} from 'rxjs';
+import {ActivatedRoute, convertToParamMap} from '@angular/router';
+import {BehaviorSubject, of, Subject, throwError} from 'rxjs';
 import {vi} from 'vitest';
 import {OperatorControlPlaneService} from '../../services/operator-control-plane.service';
 import {OverlayService} from '../../services/overlay.service';
@@ -9,6 +10,7 @@ import {ApprovalsComponent} from './approvals.component';
 describe('ApprovalsComponent', () => {
   let service: any;
   let overlay: any;
+  let queryParams: BehaviorSubject<ReturnType<typeof convertToParamMap>>;
 
   beforeEach(() => {
     service = {
@@ -17,14 +19,39 @@ describe('ApprovalsComponent', () => {
       decideApproval: vi.fn().mockReturnValue(of(approvalDecision)),
     };
     overlay = {confirm: vi.fn().mockReturnValue(of(true))};
+    queryParams = new BehaviorSubject(convertToParamMap({}));
 
     TestBed.configureTestingModule({
       imports: [ApprovalsComponent],
       providers: [
         {provide: OperatorControlPlaneService, useValue: service},
         {provide: OverlayService, useValue: overlay},
+        {provide: ActivatedRoute, useValue: {queryParamMap: queryParams.asObservable()}},
       ],
     });
+  });
+
+  it('hydrates an exact approval deep link even when the request is absent from the first inbox page', async () => {
+    const deepLinked = {...pendingApproval, id: 'approval-deep-link'};
+    service.getApproval.mockReturnValueOnce(of(deepLinked));
+    queryParams.next(convertToParamMap({requestId: deepLinked.id}));
+
+    const {component} = await createComponent();
+
+    expect(service.getApproval).toHaveBeenCalledWith(deepLinked.id);
+    expect((component as any).selected()?.id).toBe(deepLinked.id);
+  });
+
+  it('renders a scoped forbidden state when an approval deep link is denied', async () => {
+    service.getApproval.mockReturnValueOnce(throwError(() => ({status: 403})));
+    queryParams.next(convertToParamMap({requestId: 'approval-denied'}));
+
+    const {fixture, component} = await createComponent();
+
+    expect((component as any).selected()).toBeUndefined();
+    expect(fixture.nativeElement.textContent).toContain(
+      'The server denied access to this approval request for your current scope'
+    );
   });
 
   it('renders the approval inbox, server-derived invalidation, and unknown states', async () => {
@@ -164,6 +191,16 @@ describe('ApprovalsComponent', () => {
       'approval-1',
       'approval-2',
     ]);
+  });
+
+  it('clears the previous cursor before a reset request that fails', async () => {
+    const {component} = await createComponent();
+    expect((component as any).nextCursor()).toBe('page-2');
+    service.listApprovals.mockReturnValueOnce(throwError(() => ({status: 500})));
+
+    await (component as any).applyFilters();
+
+    expect((component as any).nextCursor()).toBeUndefined();
   });
 
   async function createComponent(): Promise<{

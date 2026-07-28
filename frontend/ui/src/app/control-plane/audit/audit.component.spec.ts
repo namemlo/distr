@@ -169,8 +169,15 @@ describe('AuditComponent', () => {
     }
   });
 
-  it('loads the next keyset page without discarding existing events', async () => {
+  it('loads the next keyset page with every active filter without discarding existing events', async () => {
     const {fixture, component} = await createComponent();
+    (component as any).filters.setValue({
+      action: 'campaign.pause',
+      subjectType: 'campaign',
+      subjectId: 'AUTO-campaign-1',
+      actorUserAccountId: 'AUTO-user-1',
+      search: 'AUTO',
+    });
     service.listAudit.mockReturnValueOnce(
       of({
         items: [{...auditRow, id: 'AUTO-audit-2', sequence: 41, action: 'plan.publish'}],
@@ -180,7 +187,15 @@ describe('AuditComponent', () => {
     await (component as any).loadMore();
     fixture.detectChanges();
 
-    expect(service.listAudit.mock.calls.at(-1)?.[0]).toEqual({cursor: 'next-audit', limit: 50});
+    expect(service.listAudit.mock.calls.at(-1)?.[0]).toEqual({
+      cursor: 'next-audit',
+      limit: 50,
+      action: 'campaign.pause',
+      subjectType: 'campaign',
+      subjectId: 'AUTO-campaign-1',
+      actorUserAccountId: 'AUTO-user-1',
+      search: 'AUTO',
+    });
     expect(fixture.nativeElement.textContent as string).toContain('campaign.pause');
     expect(fixture.nativeElement.textContent as string).toContain('plan.publish');
   });

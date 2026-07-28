@@ -18,7 +18,9 @@ The primary routes are:
 
 ## Operator roles
 
-The UI derives route access and mutation visibility from the authenticated context and scoped authority claims.
+The UI derives vendor route access from the authenticated context. Scoped mutation authority remains server-enforced:
+the local fixture rejects out-of-authority mutation requests with `403`, and the browser suite covers a negative scoped
+mutation for every actor. The UI does not claim to reproduce the backend authorization engine client-side.
 
 | Fixture actor                | Representative authority                                    | Covered operator behavior                                                                                                   |
 | ---------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -28,7 +30,8 @@ The UI derives route access and mutation visibility from the authenticated conte
 | Audit viewer                 | Read-only audit access                                      | Filter deep link, event detail, evidence correlation, deterministic bundle metadata                                         |
 | Unauthorized customer reader | No vendor control-plane authority                           | Redirect away from the control-room route                                                                                   |
 
-These browser actors are deterministic test claims. They do not prove the authorization rules of a deployed backend.
+These browser actors are deterministic test claims. The mock API consumes those claims to enforce the documented local
+allow/deny matrix, but that does not prove the authorization rules of a deployed backend.
 
 ## Route-mocked browser contract
 
@@ -82,7 +85,8 @@ pnpm exec ng build --configuration=development
 
 - The Angular application compiles in development mode.
 - The real routed UI renders the role-specific operator journeys above.
-- Browser requests and mutation payloads conform to the deterministic fixture contracts.
+- Browser requests, mutation payloads, and the approval/execution response contracts conform to the deterministic fixture contracts.
+- Every fixture actor receives a deterministic `403` for a mutation outside its declared authority.
 - Confirmation overlays, navigation, query hydration, error-state rendering, and significant evidence attachments behave as asserted.
 - No external or adopter system is contacted by this suite.
 
@@ -103,5 +107,9 @@ Staging proof must therefore run separately with approved credentials and scoped
 - Evidence pages are consumed as bounded snapshots. Pagination and retention behavior still require backend/staging verification.
 - Campaign member controls depend on runtime identifiers and version metadata being returned by the backend; missing metadata disables those controls rather than guessing.
 - Audit evidence bundles contain metadata and checksums, not a downloadable archive.
-- Route claims in the fixture demonstrate UI gating only. Backend authorization remains the source of truth and must reject out-of-scope requests independently.
+- Fixture claims and denials demonstrate only the local routed UI/API matrix. Backend authorization remains the source of truth and must reject out-of-scope requests independently.
 - Retry, conflict, and degraded external-integration behavior requires service or staging fault-injection proof beyond this route-mocked suite.
+- Setup readiness is a conservative client-side aggregate because no server readiness endpoint exists yet. It resolves the
+  selected deployment unit to its target-config snapshot environment, then applies the backend's current organization plus
+  environment enrollment rule using only the latest active revision at the decision time. A future server aggregate should
+  replace this client composition so readiness and authorization cannot drift.

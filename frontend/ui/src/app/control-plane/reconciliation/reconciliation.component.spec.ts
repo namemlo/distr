@@ -192,6 +192,16 @@ describe('ReconciliationComponent', () => {
     ]);
   });
 
+  it('clears the previous cursor before a reset request that fails', async () => {
+    const {component} = await createComponent();
+    expect((component as any).nextCursor()).toBe('page-2');
+    service.listReconciliation.mockReturnValueOnce(throwError(() => ({status: 500})));
+
+    await (component as any).applyFilters();
+
+    expect((component as any).nextCursor()).toBeUndefined();
+  });
+
   async function createComponent(): Promise<{
     fixture: ComponentFixture<ReconciliationComponent>;
     component: ReconciliationComponent;
