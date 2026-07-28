@@ -1,0 +1,235 @@
+<main class="space-y-8 p-6">
+  <header>
+    <h1 class="text-2xl font-semibold">Control-plane audit</h1>
+    <p class="text-sm text-gray-600 dark:text-gray-300">
+      Review correlated operator activity, retained evidence, and external export health.
+    </p>
+  </header>
+
+  <section class="space-y-4" aria-labelledby="audit-events-heading">
+    <h2 id="audit-events-heading" class="text-xl font-semibold">Audit events</h2>
+    <form class="grid grid-cols-2 gap-3 lg:grid-cols-5" [formGroup]="filters" (ngSubmit)="search()">
+      <label>
+        <span class="distr-label">Action</span>
+        <input class="distr-input" formControlName="action" />
+      </label>
+      <label>
+        <span class="distr-label">Subject type</span>
+        <input class="distr-input" formControlName="subjectType" />
+      </label>
+      <label>
+        <span class="distr-label">Subject ID</span>
+        <input class="distr-input" formControlName="subjectId" />
+      </label>
+      <label>
+        <span class="distr-label">Actor</span>
+        <input class="distr-input" formControlName="actorUserAccountId" />
+      </label>
+      <label>
+        <span class="distr-label">Search</span>
+        <input class="distr-input" formControlName="search" />
+      </label>
+      <button class="distr-button col-span-2 lg:col-span-5" type="submit">Search audit</button>
+    </form>
+
+    @if (loading()) {
+      <p role="status">Loading audit events…</p>
+    } @else if (loadError()) {
+      <p role="alert" class="text-red-600">{{ loadError() }}</p>
+    } @else if (events().length === 0) {
+      <p>No audit events match the current scope.</p>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead>
+            <tr>
+              <th>Sequence</th>
+              <th>Action</th>
+              <th>Subject</th>
+              <th>Actor</th>
+              <th>Outcome</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (event of events(); track eventKey(event)) {
+              <tr>
+                <td>{{ event.sequence }}</td>
+                <td>{{ event.action }}</td>
+                <td>{{ event.subjectType }} / {{ event.subjectId }}</td>
+                <td>{{ event.actorUserAccountId || 'Unknown' }}</td>
+                <td>{{ stateLabel(event.outcome) }}</td>
+                <td>{{ event.createdAt | date: 'medium' }}</td>
+                <td>
+                  <button type="button" class="distr-button" (click)="selectEvent(event)">View</button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      @if (nextCursor()) {
+        <button type="button" class="distr-button" [disabled]="loadingMore()" (click)="loadMore()">
+          {{ loadingMore() ? 'Loading…' : 'Load more' }}
+        </button>
+      }
+    }
+  </section>
+
+  <section class="space-y-3" aria-labelledby="audit-detail-heading">
+    <h2 id="audit-detail-heading" class="text-xl font-semibold">Audit event</h2>
+    @if (loadingDetail()) {
+      <p role="status">Loading audit event…</p>
+    } @else if (detailError()) {
+      <p role="alert" class="text-red-600">{{ detailError() }}</p>
+    } @else if (detail(); as selected) {
+      <dl class="grid grid-cols-2 gap-2 text-sm">
+        <dt>Event ID</dt>
+        <dd>{{ selected.event.id }}</dd>
+        <dt>Payload checksum</dt>
+        <dd class="break-all">{{ selected.event.payloadChecksum }}</dd>
+      </dl>
+      <h3 class="font-semibold">Correlations</h3>
+      @if (selected.correlations.length === 0) {
+        <p>No correlations were retained.</p>
+      } @else {
+        <ul>
+          @for (correlation of selected.correlations; track correlation.id) {
+            <li>{{ correlationState(correlation.kind) }}: {{ correlation.id }}</li>
+          }
+        </ul>
+      }
+      <h3 class="font-semibold">Payload</h3>
+      @if (selected.payload) {
+        <pre class="overflow-auto rounded bg-gray-100 p-3 text-xs dark:bg-gray-900">{{ selected.payload | json }}</pre>
+      } @else {
+        <p>Payload unavailable.</p>
+      }
+      <h3 class="font-semibold">Evidence</h3>
+      @if (evidence().length === 0) {
+        <p>No evidence links were returned.</p>
+      } @else {
+        <ul>
+          @for (item of evidence(); track evidenceKey(item)) {
+            <li>
+              <a class="underline" [href]="item.href">{{ item.label }}</a>
+              <span class="break-all"> — {{ item.checksum }}</span>
+            </li>
+          }
+        </ul>
+      }
+    } @else {
+      <p>Select an event to review its full retained evidence.</p>
+    }
+  </section>
+
+  <section class="space-y-3" aria-labelledby="bundle-heading">
+    <h2 id="bundle-heading" class="text-xl font-semibold">Evidence bundle</h2>
+    <p>Build deterministic evidence metadata for a deployment plan. This API does not provide a file download.</p>
+    <form class="flex items-end gap-3" [formGroup]="bundleForm" (ngSubmit)="buildBundle()">
+      <label class="grow">
+        <span class="distr-label">Deployment plan ID</span>
+        <input class="distr-input" formControlName="deploymentPlanId" />
+      </label>
+      <button class="distr-button" type="submit" [disabled]="buildingBundle()">
+        {{ buildingBundle() ? 'Building…' : 'Build evidence bundle' }}
+      </button>
+    </form>
+    @if (bundleError()) {
+      <p role="alert" class="text-red-600">{{ bundleError() }}</p>
+    }
+    @if (bundle(); as built) {
+      <dl class="grid grid-cols-2 gap-2 text-sm">
+        <dt>Schema version</dt>
+        <dd>{{ built.version }}</dd>
+        <dt>Deployment plan</dt>
+        <dd>{{ built.deploymentPlanId }}</dd>
+        <dt>Checksum</dt>
+        <dd class="break-all">{{ built.checksum }}</dd>
+        <dt>Contents</dt>
+        <dd>{{ built.events.length }} {{ built.events.length === 1 ? 'event' : 'events' }}</dd>
+      </dl>
+    }
+  </section>
+
+  <section class="space-y-4" aria-labelledby="sinks-heading">
+    <h2 id="sinks-heading" class="text-xl font-semibold">Export sinks</h2>
+    @if (sinkError()) {
+      <p role="alert" class="text-red-600">{{ sinkError() }}</p>
+    }
+    @if (sinks().length === 0 && !sinkError()) {
+      <p>No export sinks are configured.</p>
+    } @else {
+      <ul class="space-y-2">
+        @for (sink of sinks(); track sinkKey(sink)) {
+          <li>
+            <strong>{{ sink.name }}</strong>
+            <span> — {{ sink.kind }} — {{ sink.enabled ? 'Enabled' : 'Disabled' }}</span>
+            <span class="block break-all text-xs">{{ sink.endpointReference }}</span>
+          </li>
+        }
+      </ul>
+    }
+
+    <h3 class="font-semibold">Add export sink</h3>
+    <form class="grid grid-cols-2 gap-3" [formGroup]="sinkForm" (ngSubmit)="createSink()">
+      <label>
+        <span class="distr-label">Name</span>
+        <input class="distr-input" formControlName="name" />
+      </label>
+      <label>
+        <span class="distr-label">Kind</span>
+        <select class="distr-input" formControlName="kind">
+          <option value="webhook">Webhook</option>
+          <option value="object_store">Object store</option>
+          <option value="siem">SIEM</option>
+        </select>
+      </label>
+      <label>
+        <span class="distr-label">Endpoint secret reference</span>
+        <input class="distr-input" formControlName="endpointReference" />
+      </label>
+      <label>
+        <span class="distr-label">Configuration checksum</span>
+        <input class="distr-input" formControlName="configChecksum" />
+      </label>
+      <label class="flex items-center gap-2">
+        <input class="distr-checkbox" type="checkbox" formControlName="enabled" />
+        Enable this sink
+      </label>
+      <label class="col-span-2 flex items-center gap-2">
+        <input class="distr-checkbox" type="checkbox" formControlName="confirmed" />
+        I reviewed the sink kind, secret reference, checksum, and enabled state.
+      </label>
+      <button class="distr-button col-span-2" type="submit" [disabled]="creatingSink()">
+        {{ creatingSink() ? 'Creating…' : 'Create export sink' }}
+      </button>
+    </form>
+    @if (sinkSuccess()) {
+      <p role="status">{{ sinkSuccess() }}</p>
+    }
+  </section>
+
+  <section class="space-y-3" aria-labelledby="export-status-heading">
+    <h2 id="export-status-heading" class="text-xl font-semibold">Export status</h2>
+    @if (exportStatusError()) {
+      <p role="alert" class="text-red-600">{{ exportStatusError() }}</p>
+    } @else if (exportStatuses().length === 0) {
+      <p>Export status is empty.</p>
+    } @else {
+      <ul>
+        @for (status of exportStatuses(); track status.sink.id) {
+          <li>
+            <strong>{{ status.sink.name }}</strong
+            >: {{ exportState(status) }} — lag {{ status.checkpointLag }} — last attempt
+            {{ stateLabel(status.lastAttemptStatus || '') }}
+            @if (status.lastAttemptError) {
+              <span> — {{ status.lastAttemptError }}</span>
+            }
+          </li>
+        }
+      </ul>
+    }
+  </section>
+</main>

@@ -1,0 +1,314 @@
+@if (loading()) {
+  <div
+    role="status"
+    class="rounded-lg border border-gray-200 p-6 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+    Loading campaign…
+  </div>
+} @else if (detailState() === 'forbidden') {
+  <div role="alert" class="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-gray-800 dark:text-yellow-300">
+    You do not have access to this campaign.
+  </div>
+} @else if (detailState() === 'not-found') {
+  <div role="alert" class="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-gray-800 dark:text-yellow-300">
+    Campaign not found.
+  </div>
+} @else if (detailState() === 'error') {
+  <div role="alert" class="rounded-lg bg-red-50 p-4 text-sm text-red-800 dark:bg-gray-800 dark:text-red-400">
+    Campaign details could not be loaded.
+  </div>
+} @else if (detail(); as model) {
+  <section class="space-y-6">
+    <header>
+      <a routerLink="/deployments/campaigns" class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+        >Deployment campaigns</a
+      >
+      <p class="mt-4 text-sm font-medium text-blue-600 dark:text-blue-400">Deployment campaign</p>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">
+          {{ model.campaign.name || 'Unnamed campaign' }}
+        </h1>
+        <span
+          class="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-800 dark:bg-gray-800 dark:text-gray-200">
+          {{ statusLabel(model.campaign.status) }}
+        </span>
+      </div>
+      <div class="mt-3 grid gap-2 text-sm text-gray-500 dark:text-gray-400 lg:grid-cols-3">
+        <div>Draft {{ model.campaign.draftId }}</div>
+        <div>{{ model.campaign.revisionId ? 'Revision ' + model.campaign.revisionId : 'No immutable revision' }}</div>
+        <div>{{ model.campaign.runId ? 'Run ' + model.campaign.runId : 'No runtime run' }}</div>
+      </div>
+    </header>
+
+    @if (evidenceError()) {
+      <div
+        role="alert"
+        class="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-gray-800 dark:text-yellow-300">
+        <strong>Campaign details are partial.</strong> Evidence could not be loaded.
+      </div>
+    }
+
+    <section
+      aria-labelledby="campaign-checksums-heading"
+      class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <h2 id="campaign-checksums-heading" class="text-lg font-semibold text-gray-900 dark:text-white">
+        Immutable checksums
+      </h2>
+      <dl class="mt-3 grid gap-3 text-sm lg:grid-cols-2">
+        <div>
+          <dt class="font-medium">Revision</dt>
+          <dd class="break-all font-mono">{{ model.revisionChecksum || 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt class="font-medium">Membership</dt>
+          <dd class="break-all font-mono">{{ model.membershipChecksum || 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt class="font-medium">Prerequisite</dt>
+          <dd class="break-all font-mono">{{ model.prerequisiteChecksum || 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt class="font-medium">Threshold</dt>
+          <dd class="break-all font-mono">{{ model.thresholdChecksum || 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt class="font-medium">Control</dt>
+          <dd class="break-all font-mono">{{ model.controlChecksum || 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt class="font-medium">Admission</dt>
+          <dd class="break-all font-mono">{{ model.admissionChecksum || 'Unknown' }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section
+      aria-labelledby="campaign-controls-heading"
+      class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <h2 id="campaign-controls-heading" class="text-lg font-semibold text-gray-900 dark:text-white">
+        Campaign controls
+      </h2>
+      @if (!model.campaign.runId) {
+        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          Controls are disabled until an immutable campaign run exists.
+        </p>
+      }
+      <div class="mt-4 grid gap-3 lg:grid-cols-2">
+        <label class="distr-label">
+          Expected run version
+          <input
+            class="distr-input mt-1"
+            type="number"
+            min="1"
+            inputmode="numeric"
+            readonly
+            [value]="expectedVersion() ?? ''" />
+        </label>
+        <label class="distr-label">
+          Reason
+          <textarea
+            class="distr-input mt-1"
+            rows="2"
+            maxlength="4000"
+            [value]="reason()"
+            (input)="setReason($event)"></textarea>
+        </label>
+      </div>
+      @if (expectedVersion() === null) {
+        <p class="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
+          Runtime control metadata is unavailable for this campaign.
+        </p>
+      } @else {
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          The expected version comes from the scoped campaign read model. Stale versions are rejected.
+        </p>
+      }
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="distr-btn-primary"
+          [disabled]="!canControl('pause')"
+          (click)="requestControl('pause')">
+          Pause campaign
+        </button>
+        <button
+          type="button"
+          class="distr-btn-primary"
+          [disabled]="!canControl('resume')"
+          (click)="requestControl('resume')">
+          Resume campaign
+        </button>
+        <button
+          type="button"
+          class="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+          [disabled]="!canControl('cancel')"
+          (click)="requestControl('cancel')">
+          Cancel campaign
+        </button>
+      </div>
+      @if (actionLoading()) {
+        <p class="mt-3 text-sm text-gray-500 dark:text-gray-400" role="status">Applying campaign action…</p>
+      }
+      @if (stale()) {
+        <p class="mt-3 text-sm text-yellow-700 dark:text-yellow-300" role="alert">{{ actionError() }}</p>
+      } @else if (actionError()) {
+        <div class="mt-3 flex items-center gap-3 text-sm text-red-700 dark:text-red-400" role="alert">
+          <span>{{ actionError() }}</span>
+          @if (retryAvailable()) {
+            <button type="button" class="font-medium underline" (click)="retryControl()">Retry same request</button>
+          }
+        </div>
+      }
+    </section>
+
+    <section aria-labelledby="waves-heading" class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <h2 id="waves-heading" class="text-lg font-semibold text-gray-900 dark:text-white">Waves</h2>
+      @if (model.waves.length === 0) {
+        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No immutable waves are available.</p>
+      } @else {
+        <div class="mt-3 grid gap-3 lg:grid-cols-2">
+          @for (wave of model.waves; track wave.id) {
+            <article class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-gray-800">
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="font-semibold text-gray-900 dark:text-white">{{ wave.order }}. {{ wave.name }}</h3>
+                <span>{{ statusLabel(wave.status) }}</span>
+              </div>
+              <p class="mt-2">
+                Bake {{ wave.bakeSeconds }} seconds · Maximum concurrency {{ wave.maximumConcurrency }}
+              </p>
+              <p class="mt-1">
+                {{ wave.memberCount }} members · {{ wave.succeededCount }} succeeded · {{ wave.failedCount }} failed
+              </p>
+            </article>
+          }
+        </div>
+      }
+    </section>
+
+    <section aria-labelledby="members-heading" class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <h2 id="members-heading" class="text-lg font-semibold text-gray-900 dark:text-white">Members</h2>
+      <label class="distr-label mt-3 block max-w-xs">
+        Retry protocol
+        <select class="distr-input mt-1" [value]="protocolVersion()" (change)="setProtocolVersion($event)">
+          <option value="">Select v1 or v2</option>
+          <option value="v1">v1</option>
+          <option value="v2">v2</option>
+        </select>
+      </label>
+      @if (!model.campaign.runId || model.runVersion === undefined) {
+        <p class="mt-2 text-sm text-yellow-700 dark:text-yellow-300">Runtime control metadata is unavailable.</p>
+      }
+      @if (model.members.length === 0) {
+        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No immutable campaign members are available.</p>
+      } @else {
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full text-left text-sm text-gray-500 dark:text-gray-400">
+            <thead class="text-xs uppercase text-gray-700 dark:text-gray-300">
+              <tr>
+                <th class="px-3 py-2">Order</th>
+                <th class="px-3 py-2">Deployment unit</th>
+                <th class="px-3 py-2">Plan</th>
+                <th class="px-3 py-2">Status</th>
+                <th class="px-3 py-2">Plan checksum</th>
+                <th class="px-3 py-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (member of model.members; track member.id) {
+                <tr class="border-t border-gray-200 dark:border-gray-700">
+                  <td class="px-3 py-2">{{ member.waveOrder }}.{{ member.memberOrder }}</td>
+                  <td class="px-3 py-2">{{ member.deploymentUnitId }}</td>
+                  <td class="px-3 py-2">
+                    <a
+                      class="text-blue-600 hover:underline dark:text-blue-400"
+                      [routerLink]="['/deployments/plans', member.deploymentPlanId]"
+                      >{{ member.deploymentPlanId }}</a
+                    >
+                  </td>
+                  <td class="px-3 py-2">{{ statusLabel(member.status) }}</td>
+                  <td class="break-all px-3 py-2 font-mono text-xs">{{ member.planChecksum || 'Unknown' }}</td>
+                  <td class="space-x-2 px-3 py-2">
+                    <button
+                      type="button"
+                      class="text-sm font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400"
+                      [disabled]="!canControlMember(member, 'exclude')"
+                      (click)="requestMemberControl(member, 'exclude')">
+                      Exclude member
+                    </button>
+                    <button
+                      type="button"
+                      class="text-sm font-medium text-blue-600 disabled:cursor-not-allowed disabled:opacity-60 dark:text-blue-400"
+                      [disabled]="!canControlMember(member, 'retry')"
+                      (click)="requestMemberControl(member, 'retry')">
+                      Retry member
+                    </button>
+                    @if (!member.memberRunId) {
+                      <span class="block text-xs text-yellow-700 dark:text-yellow-300">Runtime ID unavailable</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+
+    @for (
+      group of [
+        {heading: 'Prerequisites', facts: model.prerequisites},
+        {heading: 'Thresholds', facts: model.thresholds},
+        {heading: 'Control history', facts: model.controls},
+        {heading: 'Uncertainty blockers', facts: model.uncertaintyBlockers},
+        {heading: 'Admission blockers', facts: model.admissionBlockers},
+      ];
+      track group.heading
+    ) {
+      <section class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ group.heading }}</h2>
+        @if (group.facts.length === 0) {
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No {{ group.heading.toLowerCase() }}.</p>
+        } @else {
+          <ul class="mt-3 space-y-2 text-sm">
+            @for (fact of orderedFacts(group.facts); track fact.id ?? fact.key) {
+              <li class="rounded-lg bg-gray-50 p-3 dark:bg-gray-800">
+                <div class="flex items-center justify-between gap-3">
+                  <strong>{{ fact.key }}</strong>
+                  <span>{{ statusLabel(fact.status ?? '') }}{{ fact.blocking ? ' · Blocking' : '' }}</span>
+                </div>
+                @if (fact.message) {
+                  <p class="mt-1">{{ fact.message }}</p>
+                }
+                @if (fact.checksum) {
+                  <code class="mt-1 block break-all text-xs">{{ fact.checksum }}</code>
+                }
+              </li>
+            }
+          </ul>
+        }
+      </section>
+    }
+
+    <section aria-labelledby="evidence-heading" class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <h2 id="evidence-heading" class="text-lg font-semibold text-gray-900 dark:text-white">Evidence</h2>
+      @if (evidenceLoading()) {
+        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400" role="status">Loading evidence…</p>
+      } @else if (evidenceError()) {
+        <p class="mt-2 text-sm text-yellow-700 dark:text-yellow-300">Evidence could not be loaded.</p>
+      } @else if (evidence().length === 0) {
+        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No evidence is available.</p>
+      } @else {
+        <ul class="mt-3 space-y-2 text-sm">
+          @for (item of evidence(); track item.id) {
+            <li class="rounded-lg bg-gray-50 p-3 dark:bg-gray-800">
+              <a class="font-medium text-blue-600 hover:underline dark:text-blue-400" [href]="item.href">{{
+                item.label
+              }}</a>
+              <div class="mt-1">{{ item.kind }}</div>
+              <code class="mt-1 block break-all text-xs">{{ item.checksum || 'Unknown' }}</code>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+  </section>
+}

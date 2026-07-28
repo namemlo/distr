@@ -1,0 +1,123 @@
+<section class="space-y-6">
+  <header>
+    <p class="text-sm font-medium text-blue-600 dark:text-blue-400">Operator control room</p>
+    <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Deployment campaigns</h1>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      Review campaign drafts, immutable revisions, rollout progress, and runtime state.
+    </p>
+  </header>
+
+  <form
+    class="grid gap-3 rounded-lg border border-gray-200 p-4 dark:border-gray-700 lg:grid-cols-4"
+    (submit)="$event.preventDefault(); applyFilters()">
+    <label class="distr-label">
+      Status
+      <input class="distr-input mt-1" [formControl]="status" placeholder="RUNNING" />
+    </label>
+    <label class="distr-label">
+      Environment ID
+      <input class="distr-input mt-1" [formControl]="environmentId" />
+    </label>
+    <label class="distr-label">
+      Deployment plan ID
+      <input class="distr-input mt-1" [formControl]="deploymentPlanId" />
+    </label>
+    <div class="flex items-end">
+      <button class="distr-btn-primary w-full" type="submit" [disabled]="loading()">Apply filters</button>
+    </div>
+  </form>
+
+  @if (loading()) {
+    <div
+      role="status"
+      class="rounded-lg border border-gray-200 p-6 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+      Loading campaigns…
+    </div>
+  } @else if (error() === 'forbidden') {
+    <div role="alert" class="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-gray-800 dark:text-yellow-300">
+      You do not have access to deployment campaigns.
+    </div>
+  } @else if (error() === 'not-found') {
+    <div role="alert" class="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-gray-800 dark:text-yellow-300">
+      Campaign control plane is not available for this organization.
+    </div>
+  } @else if (error() === 'failed') {
+    <div role="alert" class="rounded-lg bg-red-50 p-4 text-sm text-red-800 dark:bg-gray-800 dark:text-red-400">
+      Campaigns could not be loaded. Try again.
+    </div>
+  } @else if (campaigns().length === 0) {
+    <div class="rounded-lg border border-dashed border-gray-300 p-8 text-center dark:border-gray-700">
+      <h2 class="font-medium text-gray-900 dark:text-white">No campaigns match these filters</h2>
+      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Adjust the campaign scope or filters and try again.</p>
+    </div>
+  } @else {
+    @if (partial()) {
+      <div
+        role="alert"
+        class="flex items-center justify-between gap-4 rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-gray-800 dark:text-yellow-300">
+        <span>Some campaigns could not be loaded. The rows below are partial.</span>
+        <button type="button" class="font-medium underline" (click)="loadMore()">Retry load more</button>
+      </div>
+    }
+
+    <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+      <table class="w-full text-left text-sm text-gray-500 dark:text-gray-400">
+        <caption class="sr-only">
+          Deployment campaign drafts, revisions, runs, and rollout counts
+        </caption>
+        <thead class="bg-gray-50 text-xs uppercase text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+          <tr>
+            <th class="px-4 py-3">Campaign</th>
+            <th class="px-4 py-3">Lifecycle</th>
+            <th class="px-4 py-3">Status</th>
+            <th class="px-4 py-3">Rollout</th>
+            <th class="px-4 py-3">Members</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (campaign of campaigns(); track campaign.id) {
+            <tr class="border-t border-gray-200 bg-white align-top dark:border-gray-700 dark:bg-gray-900">
+              <td class="px-4 py-3">
+                <a
+                  class="font-medium text-blue-600 hover:underline dark:text-blue-400"
+                  [routerLink]="['/deployments/campaigns', campaign.id]">
+                  {{ campaign.name || 'Unnamed campaign' }}
+                </a>
+                <code class="mt-1 block text-xs">{{ campaign.id }}</code>
+              </td>
+              <td class="space-y-1 px-4 py-3 text-xs">
+                <div>Draft {{ campaign.draftId }}</div>
+                <div>{{ campaign.revisionId ? 'Revision ' + campaign.revisionId : 'No immutable revision' }}</div>
+                <div>{{ campaign.runId ? 'Run ' + campaign.runId : 'No runtime run' }}</div>
+              </td>
+              <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ statusLabel(campaign.status) }}</td>
+              <td class="px-4 py-3">{{ campaign.waveCount }} waves</td>
+              <td class="px-4 py-3">
+                <div>{{ campaign.memberCount }} members</div>
+                <div class="mt-1 text-xs">
+                  {{ campaign.pendingCount }} pending · {{ campaign.runningCount }} running ·
+                  {{ campaign.succeededCount }} succeeded · {{ campaign.failedCount }} failed ·
+                  {{ campaign.blockedCount }} blocked
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
+      <span>
+        Showing {{ campaigns().length }}
+        @if (total() !== null) {
+          of {{ total() }}
+        }
+      </span>
+      @if (nextCursor()) {
+        <button type="button" class="distr-btn-primary" [disabled]="loadingMore()" (click)="loadMore()">
+          {{ loadingMore() ? 'Loading…' : 'Load more' }}
+        </button>
+      }
+    </div>
+  }
+</section>

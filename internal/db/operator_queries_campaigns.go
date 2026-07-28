@@ -277,7 +277,7 @@ LEFT JOIN LATERAL (
       'approvalChecksum', member.approval_checksum,
       'calendarChecksums', member.calendar_checksums,
       'admissionChecksum', member.admission_checksum,
-      'runId', member_run.id,
+      'memberRunId', member_run.id,
       'status', member_run.status,
       'admittedAt', member_run.admitted_at,
       'completedAt', member_run.completed_at,
@@ -439,7 +439,7 @@ type operatorCampaignMemberProjection struct {
 	ApprovalChecksum        string     `json:"approvalChecksum"`
 	CalendarChecksums       []string   `json:"calendarChecksums"`
 	AdmissionChecksum       string     `json:"admissionChecksum"`
-	RunID                   *uuid.UUID `json:"runId"`
+	MemberRunID             *uuid.UUID `json:"memberRunId"`
 	ExecutionUncertain      bool       `json:"executionUncertain"`
 	ActiveStepsCancellable  bool       `json:"activeStepsCancellable"`
 }
@@ -489,6 +489,7 @@ type operatorCampaignDetailRecord struct {
 	PublishedAt          *time.Time
 	RevisionChecksum     string
 	RunID                *uuid.UUID
+	RunVersion           *int64
 	RunState             *string
 	AdmissionsBlocked    bool
 	ReconciliationNeeded bool
@@ -644,7 +645,7 @@ func scanOperatorCampaignDetail(row pgx.Row) (operatorCampaignDetailRecord, erro
 	var membershipTagQuery *string
 	var frozenRiskPolicyJSON []byte
 	var runCreatedAt, runUpdatedAt *time.Time
-	var runVersion, fencingToken *int64
+	var fencingToken *int64
 	var currentWaveOrder, currentMemberOrder *int
 	var pauseRequested *bool
 	var admissionsBlocked, reconciliationRequired *bool
@@ -670,7 +671,7 @@ func scanOperatorCampaignDetail(row pgx.Row) (operatorCampaignDetailRecord, erro
 		&runCreatedAt,
 		&runUpdatedAt,
 		&record.RunState,
-		&runVersion,
+		&record.RunVersion,
 		&currentWaveOrder,
 		&currentMemberOrder,
 		&admissionsBlocked,
@@ -710,6 +711,7 @@ func buildOperatorCampaignDetail(record operatorCampaignDetailRecord) *types.Ope
 			Status:            operatorCampaignStatus(record.RevisionID, record.RunState),
 			CanonicalChecksum: record.RevisionChecksum,
 		},
+		RunVersion:           record.RunVersion,
 		RevisionChecksum:     record.RevisionChecksum,
 		MembershipChecksum:   checksumOperatorProjection(record.MembersJSON),
 		PrerequisiteChecksum: checksumOperatorProjection(record.PrerequisitesJSON),
@@ -743,7 +745,7 @@ func buildOperatorCampaignDetail(record operatorCampaignDetailRecord) *types.Ope
 			status = *member.Status
 		}
 		detail.Members = append(detail.Members, types.OperatorCampaignMember{
-			ID: member.ID, DeploymentPlanID: member.DeploymentPlanID,
+			ID: member.ID, MemberRunID: member.MemberRunID, DeploymentPlanID: member.DeploymentPlanID,
 			DeploymentUnitID: member.DeploymentUnitID, WaveOrder: member.WaveOrder,
 			MemberOrder: member.MemberOrder, Status: status, PlanChecksum: member.PlanChecksum,
 		})

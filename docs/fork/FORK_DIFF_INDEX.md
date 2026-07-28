@@ -1632,3 +1632,37 @@ Use one entry per pull request:
 - Upstream contribution notes: Community-neutral read contracts and indexes; no adopter, provider, or credential semantics.
 - Compatibility notes: Existing `/deployments` and `/deployments/:deploymentTargetId` behavior remains unchanged;
   static operator routes take precedence over any parameterized compatibility route.
+
+### PR-080 - Angular operator control room and role E2E
+
+- Status: Implemented and locally verified on the prepared integration branch;
+  deployed-backend and adopter proof remain separate rollout gates.
+- Upstream base: `9af9d1d8` (verified PR-079 checkpoint).
+- Feature flags: Operator routes require the existing process prerequisites
+  plus `operator_control_plane_v2`; execution mutations also retain their
+  backend `executor_protocol_v2` requirement.
+- User-facing behavior: Adds fleet, release, plan, campaign, execution,
+  approval, reconciliation, audit, and setup workspaces with bounded paging,
+  immutable evidence, visible blockers, proportional confirmations, and
+  explicit loading, empty, denied, disabled, stale, partial, unknown, and
+  error states.
+- Database changes: None. The campaign read response now exposes the already
+  persisted run version and member-run ID needed for optimistic controls.
+- API changes: No new routes. The existing PR-079 campaign detail response
+  includes optional `runVersion` and `memberRunId` fields.
+- UI changes: Adds the Angular operator control room, feature-gated navigation,
+  static deployment child routes, query/fragment-preserving legacy redirects,
+  release assembly/publication, plan decisions, campaign/execution controls,
+  reconciliation, audit evidence, and composed setup/import readiness.
+- Agent protocol changes: None.
+- Documentation: Added PR-080 fork notes and a deterministic Playwright
+  control-plane configuration.
+- Tests: Added 140 integrated Angular tests and an 18-scenario, single-worker
+  route-mocked Playwright suite with HTML, JUnit, trace, screenshot, video, and
+  JSON evidence artifacts. The community production build passes.
+- Upstream contribution notes: Community-neutral UI and fixture contracts; no
+  adopter, infrastructure, credential, or client-specific core behavior.
+- Compatibility notes: `/deployments` redirects to
+  `/deployments/targets`; legacy target links preserve query parameters and
+  fragments. The browser suite blocks non-local traffic and is not staging or
+  production proof.

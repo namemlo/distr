@@ -20,6 +20,18 @@ import {PartnerOrganizationsComponent} from './components/partner-organizations/
 import {CustomerUsersComponent} from './components/users/customers/customer-users.component';
 import {PartnerUsersComponent} from './components/users/partners/partner-users.component';
 import {VendorUsersComponent} from './components/users/vendors/vendor-users.component';
+import {ApprovalsComponent} from './control-plane/approvals/approvals.component';
+import {AuditComponent} from './control-plane/audit/audit.component';
+import {CampaignDetailComponent} from './control-plane/campaigns/campaign-detail.component';
+import {CampaignsComponent} from './control-plane/campaigns/campaigns.component';
+import {ExecutionDetailComponent} from './control-plane/executions/execution-detail.component';
+import {ExecutionsComponent} from './control-plane/executions/executions.component';
+import {FleetComponent} from './control-plane/fleet/fleet.component';
+import {PlanDetailComponent} from './control-plane/plans/plan-detail.component';
+import {PlanListComponent} from './control-plane/plans/plan-list.component';
+import {ReconciliationComponent} from './control-plane/reconciliation/reconciliation.component';
+import {ReleasesComponent} from './control-plane/releases/releases.component';
+import {SetupComponent} from './control-plane/setup/setup.component';
 import {DeploymentPlansComponent} from './deployment-plans/deployment-plans.component';
 import {DeploymentProcessesComponent} from './deployment-processes/deployment-processes.component';
 import {DeploymentTimelineComponent} from './deployment-timeline/deployment-timeline.component';
@@ -124,6 +136,17 @@ function experimentalFeatureEnabledGuard(key: ExperimentalFeatureFlagKey): CanAc
   };
 }
 
+const operatorControlPlaneGuards = [
+  requireVendor,
+  experimentalFeatureEnabledGuard('operator_control_plane_v2'),
+  experimentalFeatureEnabledGuard('deployment_processes'),
+  experimentalFeatureEnabledGuard('scoped_variables_v2'),
+];
+
+const legacyDeploymentTargetRedirectGuard: CanActivateFn = (_route, state) => {
+  return inject(Router).parseUrl(state.url.replace(/^\/deployments\//, '/deployments/targets/'));
+};
+
 function vendorBillingEnabledGuard(): CanActivateFn {
   return async () => {
     const featureFlags = inject(FeatureFlagService);
@@ -196,11 +219,71 @@ export const routes: Routes = [
         ],
       },
       {
+        path: 'fleet',
+        component: FleetComponent,
+        canActivate: operatorControlPlaneGuards,
+      },
+      {
+        path: 'releases',
+        canActivate: operatorControlPlaneGuards,
+        children: [
+          {path: '', pathMatch: 'full', component: ReleasesComponent},
+          {path: ':releaseId', component: ReleasesComponent},
+        ],
+      },
+      {
         path: 'deployments',
         children: [
-          {path: '', pathMatch: 'full', component: DeploymentTargetsComponent},
-          {path: ':deploymentTargetId', component: DeploymentTargetDetailComponent},
+          {path: '', pathMatch: 'full', redirectTo: 'targets'},
+          {path: 'targets', pathMatch: 'full', component: DeploymentTargetsComponent},
+          {path: 'targets/:deploymentTargetId', component: DeploymentTargetDetailComponent},
+          {
+            path: 'plans',
+            component: PlanListComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'plans/:planId',
+            component: PlanDetailComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'campaigns',
+            component: CampaignsComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'campaigns/:campaignId',
+            component: CampaignDetailComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'executions',
+            component: ExecutionsComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'executions/:executionId',
+            component: ExecutionDetailComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {path: ':deploymentTargetId', canActivate: [legacyDeploymentTargetRedirectGuard], children: []},
         ],
+      },
+      {
+        path: 'approvals',
+        component: ApprovalsComponent,
+        canActivate: operatorControlPlaneGuards,
+      },
+      {
+        path: 'reconciliation',
+        component: ReconciliationComponent,
+        canActivate: operatorControlPlaneGuards,
+      },
+      {
+        path: 'audit',
+        component: AuditComponent,
+        canActivate: operatorControlPlaneGuards,
       },
       {
         path: 'environments',
@@ -312,18 +395,29 @@ export const routes: Routes = [
         ],
       },
       {
-        path: 'setup/registry',
-        component: DeploymentRegistryComponent,
-        canActivate: [
-          requireVendor,
-          deploymentRegistryMutationGuard,
-          experimentalFeatureEnabledGuard('operator_control_plane_v2'),
+        path: 'setup',
+        children: [
+          {
+            path: '',
+            pathMatch: 'full',
+            component: SetupComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'registry',
+            component: DeploymentRegistryComponent,
+            canActivate: [
+              requireVendor,
+              deploymentRegistryMutationGuard,
+              experimentalFeatureEnabledGuard('operator_control_plane_v2'),
+            ],
+          },
+          {
+            path: 'config-snapshots',
+            component: TargetConfigSnapshotsComponent,
+            canActivate: [requireVendor],
+          },
         ],
-      },
-      {
-        path: 'setup/config-snapshots',
-        component: TargetConfigSnapshotsComponent,
-        canActivate: [requireVendor],
       },
       {
         path: 'artifacts',

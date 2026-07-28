@@ -94,8 +94,11 @@ describe('DeploymentPlansComponent', () => {
       releaseBundleId: 'bundle-1',
       channelId: 'channel-1',
       environmentId: 'environment-1',
+      planSchema: 'distr.deployment-plan/v1',
+      protocolVersion: 'v1',
       status: 'BLOCKED',
       canonicalChecksum: 'sha256:plan',
+      bootstrap: false,
       targets: [
         {
           id: 'plan-target-1',

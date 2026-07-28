@@ -30,7 +30,7 @@ import {
   faPalette,
   faUsers,
 } from '@fortawesome/free-solid-svg-icons';
-import {map, of, switchMap} from 'rxjs';
+import {catchError, combineLatest, map, of, switchMap} from 'rxjs';
 import {GITHUB_URL} from '../../../constants';
 import {buildConfig} from '../../../data';
 import {environment} from '../../../env/env';
@@ -102,6 +102,7 @@ export class SideBarComponent {
   protected readonly faHandHoldingDollar = faHandHoldingDollar;
   protected feedbackAlert = true;
   protected readonly agentsSubMenuOpen = signal(true);
+  protected readonly controlPlaneSubMenuOpen = signal(true);
   protected readonly registrySubMenuOpen = signal(true);
   protected readonly licenseOverlayOpen = signal(false);
   protected readonly notificationsOverlayOpen = signal(false);
@@ -167,6 +168,19 @@ export class SideBarComponent {
       : signal(false);
   protected readonly isOperatorControlPlaneV2FeatureEnabled = canMutateDeploymentRegistry(this.auth)
     ? toSignal(this.featureFlags.isExperimentalFeatureEnabled$('operator_control_plane_v2'), {initialValue: false})
+    : signal(false);
+  protected readonly isOperatorControlPlaneNavigationEnabled = this.auth.isVendor()
+    ? toSignal(
+        combineLatest([
+          this.featureFlags.isExperimentalFeatureEnabled$('operator_control_plane_v2'),
+          this.featureFlags.isDeploymentProcessesEnabled$,
+          this.featureFlags.isScopedVariablesV2Enabled$,
+        ]).pipe(
+          map((enabled) => enabled.every(Boolean)),
+          catchError(() => of(false))
+        ),
+        {initialValue: false}
+      )
     : signal(false);
 
   public readonly isSubscriptionBannerVisible = input<boolean>();

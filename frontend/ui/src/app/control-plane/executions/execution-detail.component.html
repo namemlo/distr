@@ -1,0 +1,240 @@
+<section class="space-y-6 p-6">
+  @if (loading()) {
+    <div
+      class="rounded-lg border border-gray-200 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+      Loading execution…
+    </div>
+  } @else if (detailError() === 'forbidden') {
+    <div
+      class="rounded-lg border border-red-200 bg-red-50 p-5 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+      You do not have permission to view this execution.
+    </div>
+  } @else if (detailError() === 'not-found') {
+    <div class="rounded-lg border border-gray-200 p-5 text-gray-700 dark:border-gray-700 dark:text-gray-300">
+      Execution not found.
+    </div>
+  } @else if (detailError()) {
+    <div
+      class="rounded-lg border border-red-200 bg-red-50 p-5 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+      Unable to load execution.
+    </div>
+  } @else if (detail(); as result) {
+    <header>
+      <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Execution {{ result.execution.id }}</h1>
+      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        Created {{ result.execution.createdAt | date: 'medium' }} · Protocol {{ result.execution.protocolVersion }}
+      </p>
+    </header>
+
+    @if (isStale()) {
+      <div
+        class="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-900 dark:border-yellow-900 dark:bg-yellow-950 dark:text-yellow-200">
+        <span class="font-medium">Stale observation.</span> Request current status before making state-dependent
+        decisions.
+      </div>
+    }
+
+    <div class="grid gap-4 lg:grid-cols-2">
+      <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+        <h2 class="font-semibold text-gray-900 dark:text-white">Immutable execution</h2>
+        <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+          <dt class="text-gray-500">Status</dt>
+          <dd>{{ result.execution.status || 'Unknown' }}</dd>
+          <dt class="text-gray-500">Plan checksum</dt>
+          <dd class="break-all">{{ result.execution.planChecksum || 'Unavailable' }}</dd>
+          <dt class="text-gray-500">Artifact digest</dt>
+          <dd class="break-all">{{ result.execution.artifactDigest || 'Unavailable' }}</dd>
+          <dt class="text-gray-500">Config checksum</dt>
+          <dd class="break-all">{{ result.execution.configChecksum || 'Unavailable' }}</dd>
+          <dt class="text-gray-500">Adapter revision</dt>
+          <dd>{{ result.execution.adapterRevision || 'Unknown' }}</dd>
+          <dt class="text-gray-500">Reconciliation</dt>
+          <dd>{{ result.execution.reconciliation || 'Unknown' }}</dd>
+        </dl>
+      </article>
+
+      <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+        <h2 class="font-semibold text-gray-900 dark:text-white">Previous-state pivot</h2>
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+          Previous state is resolved through the execution's deployment plan. No comparison or execution-origin endpoint
+          is assumed.
+        </p>
+        <a
+          class="mt-3 inline-block text-sm font-medium text-blue-700 hover:underline dark:text-blue-400"
+          [attr.href]="planExecutionsHref()">
+          View executions for this plan
+        </a>
+        @if (result.previousState) {
+          <div class="mt-3 text-sm">
+            {{ result.previousState.message || result.previousState.actual || 'Previous state recorded' }}
+          </div>
+        } @else {
+          <div class="mt-3 text-sm text-gray-500">Previous state unavailable.</div>
+        }
+      </article>
+    </div>
+
+    <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+      <h2 class="font-semibold text-gray-900 dark:text-white">Task and attempt correlation</h2>
+      <div class="mt-4 grid gap-4 lg:grid-cols-3">
+        <section>
+          <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Tasks</h3>
+          <div class="mt-2 space-y-2">
+            @for (fact of result.tasks; track fact.id ?? fact.key) {
+              <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+                <div class="font-medium">{{ fact.id || fact.key }}</div>
+                <div class="text-xs text-gray-500">{{ factStatusLabel(fact) }}</div>
+              </div>
+            } @empty {
+              <div class="text-sm text-gray-500">Task correlation unavailable.</div>
+            }
+          </div>
+        </section>
+        <section>
+          <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Steps</h3>
+          <div class="mt-2 space-y-2">
+            @for (fact of result.steps; track fact.id ?? fact.key) {
+              <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+                <div class="font-medium">{{ fact.id || fact.key }}</div>
+                <div class="text-xs text-gray-500">{{ factStatusLabel(fact) }}</div>
+              </div>
+            } @empty {
+              <div class="text-sm text-gray-500">Step correlation unavailable.</div>
+            }
+          </div>
+        </section>
+        <section>
+          <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Attempts</h3>
+          <div class="mt-2 space-y-2">
+            @for (fact of result.attempts; track fact.id ?? fact.key) {
+              <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+                <div class="font-medium">{{ fact.id || fact.key }}</div>
+                <div class="text-xs text-gray-500">
+                  {{ factStatusLabel(fact) }} · {{ fact.message || 'No message' }}
+                </div>
+              </div>
+            } @empty {
+              <div class="text-sm text-gray-500">Attempt correlation unavailable.</div>
+            }
+          </div>
+        </section>
+      </div>
+    </article>
+
+    <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+      <h2 class="font-semibold text-gray-900 dark:text-white">Observations</h2>
+      <div class="mt-3 space-y-2">
+        @for (fact of result.observations; track fact.id ?? fact.key) {
+          <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+            <div class="font-medium">{{ fact.key }}</div>
+            <div>{{ factStatusLabel(fact) }}</div>
+            @if (fact.message) {
+              <div class="text-xs text-gray-500">{{ fact.message }}</div>
+            }
+          </div>
+        } @empty {
+          <div class="text-sm text-gray-500">No observations recorded.</div>
+        }
+      </div>
+    </article>
+
+    <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+      <h2 class="font-semibold text-gray-900 dark:text-white">Evidence timeline</h2>
+      @if (evidencePartial()) {
+        <div
+          class="mt-3 rounded border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900 dark:border-yellow-900 dark:bg-yellow-950 dark:text-yellow-200">
+          Some execution evidence is unavailable.
+        </div>
+      }
+      @if (evidenceLoading()) {
+        <div class="mt-3 text-sm text-gray-500">Loading evidence…</div>
+      } @else {
+        <ol class="mt-4 space-y-3">
+          @for (item of evidence(); track item.id) {
+            <li class="border-l-2 border-blue-400 pl-4">
+              <div class="font-medium text-gray-900 dark:text-white">{{ item.label }}</div>
+              <div class="text-xs text-gray-500">{{ item.createdAt | date: 'medium' }} · {{ item.kind }}</div>
+              <a class="break-all text-xs text-blue-700 hover:underline dark:text-blue-400" [attr.href]="item.href">{{
+                item.checksum
+              }}</a>
+            </li>
+          } @empty {
+            <li class="text-sm text-gray-500">No execution evidence recorded.</li>
+          }
+        </ol>
+      }
+    </article>
+
+    <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+      <h2 class="font-semibold text-gray-900 dark:text-white">Execution controls</h2>
+      <div class="mt-4 grid gap-6 lg:grid-cols-2">
+        <form
+          class="space-y-3 rounded border border-red-200 p-4 dark:border-red-900"
+          [formGroup]="cancelForm"
+          (ngSubmit)="submitCancel()">
+          <h3 class="font-medium text-red-800 dark:text-red-300">Cancel execution</h3>
+          <p class="text-xs text-gray-500">Destructive confirmation: enter a reason and the exact execution ID.</p>
+          <label class="block text-sm">
+            Reason
+            <textarea
+              class="mt-1 block w-full rounded border border-gray-300 bg-white p-2 dark:border-gray-600 dark:bg-gray-800"
+              formControlName="reason"></textarea>
+          </label>
+          <label class="block text-sm">
+            Type {{ result.execution.id }}
+            <input
+              class="mt-1 block w-full rounded border border-gray-300 bg-white p-2 dark:border-gray-600 dark:bg-gray-800"
+              formControlName="confirmation" />
+          </label>
+          @if (!result.execution.cancellable) {
+            <div class="text-sm text-gray-500">Cancellation is disabled for this execution state.</div>
+          }
+          @if (cancelMessage()) {
+            <div class="text-sm">{{ cancelMessage() }}</div>
+          }
+          <button
+            type="submit"
+            data-testid="cancel-execution"
+            class="rounded bg-red-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            [disabled]="!canSubmitCancel()">
+            {{ cancelSubmitting() ? 'Requesting…' : 'Cancel execution' }}
+          </button>
+        </form>
+
+        <form
+          class="space-y-3 rounded border border-gray-200 p-4 dark:border-gray-700"
+          [formGroup]="statusForm"
+          (ngSubmit)="submitStatusQuery()">
+          <h3 class="font-medium text-gray-900 dark:text-white">Request current status</h3>
+          <p class="text-xs text-gray-500">
+            This asks the executor to report current state; it does not change desired state.
+          </p>
+          <label class="block text-sm">
+            Reason
+            <textarea
+              class="mt-1 block w-full rounded border border-gray-300 bg-white p-2 dark:border-gray-600 dark:bg-gray-800"
+              formControlName="reason"></textarea>
+          </label>
+          <label class="block text-sm">
+            Expires in seconds
+            <input
+              type="number"
+              min="30"
+              max="3600"
+              class="mt-1 block w-full rounded border border-gray-300 bg-white p-2 dark:border-gray-600 dark:bg-gray-800"
+              formControlName="expiresInSeconds" />
+          </label>
+          @if (statusMessage()) {
+            <div class="text-sm">{{ statusMessage() }}</div>
+          }
+          <button
+            type="submit"
+            class="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            [disabled]="!canSubmitStatusQuery()">
+            {{ statusSubmitting() ? 'Requesting…' : 'Request current status' }}
+          </button>
+        </form>
+      </div>
+    </article>
+  }
+</section>

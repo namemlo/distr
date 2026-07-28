@@ -327,17 +327,19 @@ type OperatorCampaignWave struct {
 }
 
 type OperatorCampaignMember struct {
-	ID               uuid.UUID `json:"id"`
-	DeploymentPlanID uuid.UUID `json:"deploymentPlanId"`
-	DeploymentUnitID uuid.UUID `json:"deploymentUnitId"`
-	WaveOrder        int       `json:"waveOrder"`
-	MemberOrder      int       `json:"memberOrder"`
-	Status           string    `json:"status"`
-	PlanChecksum     string    `json:"planChecksum"`
+	ID               uuid.UUID  `json:"id"`
+	MemberRunID      *uuid.UUID `json:"memberRunId,omitempty"`
+	DeploymentPlanID uuid.UUID  `json:"deploymentPlanId"`
+	DeploymentUnitID uuid.UUID  `json:"deploymentUnitId"`
+	WaveOrder        int        `json:"waveOrder"`
+	MemberOrder      int        `json:"memberOrder"`
+	Status           string     `json:"status"`
+	PlanChecksum     string     `json:"planChecksum"`
 }
 
 type OperatorCampaignDetail struct {
 	Campaign             OperatorCampaignRow      `json:"campaign"`
+	RunVersion           *int64                   `json:"runVersion,omitempty"`
 	RevisionChecksum     string                   `json:"revisionChecksum"`
 	MembershipChecksum   string                   `json:"membershipChecksum"`
 	PrerequisiteChecksum string                   `json:"prerequisiteChecksum"`

@@ -1,0 +1,319 @@
+<section class="bg-gray-50 p-4 antialiased dark:bg-gray-900">
+  <div class="mx-auto max-w-screen-2xl">
+    <a routerLink="/deployments/plans" class="text-sm text-primary-700 hover:underline">Back to deployment plans</a>
+
+    @if (loading()) {
+      <div role="status" class="mt-4 rounded-lg bg-white p-8 text-center text-gray-500 shadow-sm dark:bg-gray-800">
+        Loading plan review...
+      </div>
+    } @else if (isForbidden()) {
+      <div role="alert" class="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-5 text-amber-900">
+        Plan review is not available for your role.
+      </div>
+    } @else if (isNotFound()) {
+      <div role="alert" class="mt-4 rounded-lg border border-gray-300 bg-white p-5 text-gray-900">
+        Deployment plan not found.
+      </div>
+    } @else if (error(); as loadError) {
+      <div role="alert" class="mt-4 rounded-lg border border-red-300 bg-red-50 p-5 text-red-900">
+        <p>{{ loadError.message }}</p>
+        @if (loadError.retryable) {
+          <button type="button" (click)="load()" class="distr-btn-secondary mt-3 px-4 py-2">Retry</button>
+        }
+      </div>
+    } @else if (detail(); as review) {
+      <header class="mt-4 rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Plan review</h1>
+            <p class="mt-1 font-mono text-sm text-gray-500">{{ review.plan.id }}</p>
+          </div>
+          <span class="rounded bg-gray-100 px-3 py-1 text-sm font-semibold">{{ statusLabel() }}</span>
+        </div>
+        <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <dt class="text-gray-500">Product release</dt>
+            <dd>{{ review.plan.productReleaseVersion }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Environment</dt>
+            <dd>{{ review.plan.environment }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Deployment unit</dt>
+            <dd>{{ review.plan.deploymentUnit }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Created</dt>
+            <dd>{{ review.plan.createdAt | date: 'medium' }}</dd>
+          </div>
+        </dl>
+      </header>
+
+      @if (isPartial()) {
+        <div role="alert" class="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+          This plan review is partial. Do not approve or publish until every required checksum is available.
+        </div>
+      }
+      @if (!actionsEnabled()) {
+        <div role="status" class="mt-4 rounded-lg border border-gray-300 bg-gray-100 p-4 text-gray-800">
+          Actions are disabled for this plan state.
+        </div>
+      }
+
+      <section aria-labelledby="checksum-heading" class="mt-4 rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
+        <h2 id="checksum-heading" class="text-lg font-semibold">Checksum lineage</h2>
+        <dl class="mt-3 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-3">
+          <div>
+            <dt class="text-gray-500">Canonical plan checksum</dt>
+            <dd class="break-all font-mono">{{ review.plan.canonicalChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Product release checksum</dt>
+            <dd class="break-all font-mono">{{ review.productReleaseChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Target config checksum</dt>
+            <dd class="break-all font-mono">{{ review.targetConfigChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Effective policy checksum</dt>
+            <dd class="break-all font-mono">{{ review.effectivePolicyChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Subscriber set checksum</dt>
+            <dd class="break-all font-mono">{{ review.subscriberSetChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Graph checksum</dt>
+            <dd class="break-all font-mono">{{ review.graphChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Change checksum</dt>
+            <dd class="break-all font-mono">{{ review.changeChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Baseline checksum</dt>
+            <dd class="break-all font-mono">{{ review.baselineChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Provider resolution checksum</dt>
+            <dd class="break-all font-mono">{{ review.providerResolutionChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Migration checksum</dt>
+            <dd class="break-all font-mono">{{ review.migrationChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Risk checksum</dt>
+            <dd class="break-all font-mono">{{ review.riskChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Approval checksum</dt>
+            <dd class="break-all font-mono">{{ review.approvalChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Window checksum</dt>
+            <dd class="break-all font-mono">{{ review.windowChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Adapter checksum</dt>
+            <dd class="break-all font-mono">{{ review.adapterChecksum || 'Unavailable' }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Intent checksum</dt>
+            <dd class="break-all font-mono">{{ review.intentChecksum || 'Unavailable' }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <div class="mt-4 grid gap-4 lg:grid-cols-2">
+        @for (section of factSections(); track section.title) {
+          <section class="rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800" [attr.aria-label]="section.title">
+            <h2 class="text-lg font-semibold">{{ section.title }}</h2>
+            <div class="mt-3 space-y-3">
+              @for (fact of section.facts; track fact.id || fact.key) {
+                <article
+                  class="rounded border p-3"
+                  [class.border-red-400]="fact.blocking"
+                  [class.bg-red-50]="fact.blocking">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="font-medium">{{ fact.key }}</h3>
+                    @if (fact.blocking) {
+                      <span class="rounded bg-red-100 px-2 py-1 text-xs font-semibold text-red-800">Blocking</span>
+                    } @else if (fact.status) {
+                      <span class="rounded bg-gray-100 px-2 py-1 text-xs">{{ fact.status }}</span>
+                    }
+                  </div>
+                  @if (fact.kind) {
+                    <p class="mt-1 text-xs text-gray-500">{{ fact.kind }}</p>
+                  }
+                  @if (fact.message) {
+                    <p class="mt-2 text-sm">{{ fact.message }}</p>
+                  }
+                  @if (fact.expected || fact.actual) {
+                    <dl class="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                      <div>
+                        <dt class="text-gray-500">Expected</dt>
+                        <dd>{{ fact.expected || 'Unavailable' }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Actual</dt>
+                        <dd>{{ fact.actual || 'Unavailable' }}</dd>
+                      </div>
+                    </dl>
+                  }
+                  @if (fact.checksum) {
+                    <p class="mt-2 break-all font-mono text-xs">{{ fact.checksum }}</p>
+                  }
+                </article>
+              } @empty {
+                <p class="text-sm text-gray-500">No facts recorded.</p>
+              }
+            </div>
+          </section>
+        }
+      </div>
+
+      <section aria-labelledby="evidence-heading" class="mt-4 rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
+        <h2 id="evidence-heading" class="text-lg font-semibold">Evidence</h2>
+        @if (evidenceLoading()) {
+          <p class="mt-3 text-sm text-gray-500">Loading evidence...</p>
+        } @else {
+          @if (evidenceError(); as evidenceFailure) {
+            <div role="alert" class="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <strong>Evidence is partial.</strong> {{ evidenceFailure.message }}
+            </div>
+          }
+          <ul class="mt-3 space-y-2">
+            @for (item of evidence(); track item.id) {
+              <li class="rounded border p-3">
+                <a [href]="item.href" class="font-medium text-primary-700 hover:underline">{{ item.label }}</a>
+                <span class="ml-2 text-xs text-gray-500">{{ item.kind }}</span>
+                <p class="mt-1 break-all font-mono text-xs">{{ item.checksum }}</p>
+              </li>
+            } @empty {
+              <li class="text-sm text-gray-500">No evidence references recorded.</li>
+            }
+          </ul>
+        }
+      </section>
+
+      <section aria-labelledby="compare-heading" class="mt-4 rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
+        <h2 id="compare-heading" class="text-lg font-semibold">Compare immutable plans</h2>
+        <form [formGroup]="compareForm" (ngSubmit)="compare()" class="mt-3 flex gap-2">
+          <label class="grow text-sm">
+            Other plan ID
+            <input formControlName="otherPlanId" class="distr-input mt-1 w-full" />
+          </label>
+          <button type="submit" [disabled]="compareForm.invalid" class="distr-btn-secondary self-end px-4 py-2">
+            Compare
+          </button>
+        </form>
+        @if (comparison(); as result) {
+          <h3 class="mt-4 font-semibold">Comparison with {{ result.right.id }}</h3>
+          <div class="mt-2 space-y-2">
+            @for (change of result.changes; track change.id || change.key) {
+              <div class="rounded border p-3">
+                <span class="font-medium">{{ change.key }}</span>
+                @if (change.message) {
+                  <p class="text-sm">{{ change.message }}</p>
+                }
+                @if (change.checksum) {
+                  <p class="break-all font-mono text-xs">{{ change.checksum }}</p>
+                }
+              </div>
+            } @empty {
+              <p class="text-sm text-gray-500">No differences recorded.</p>
+            }
+          </div>
+        }
+      </section>
+
+      <section aria-labelledby="actions-heading" class="mt-4 rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
+        <h2 id="actions-heading" class="text-lg font-semibold">Plan actions</h2>
+        @if (actionError()) {
+          <div role="alert" class="mt-3 rounded border border-red-300 bg-red-50 p-3 text-red-900">
+            {{ actionError() }}
+          </div>
+        }
+
+        <div class="mt-4 grid gap-5 xl:grid-cols-3">
+          <form [formGroup]="draftForm" class="rounded border p-4">
+            <h3 class="font-semibold">Draft validation and publish</h3>
+            <label class="mt-3 block text-sm"
+              >Draft ID<input formControlName="draftId" class="distr-input mt-1 w-full"
+            /></label>
+            <label class="mt-3 block text-sm"
+              >Expected revision<input type="number" formControlName="expectedRevision" class="distr-input mt-1 w-full"
+            /></label>
+            <label class="mt-3 block text-sm"
+              >Expected preview checksum<input
+                formControlName="expectedPreviewChecksum"
+                class="distr-input mt-1 w-full"
+            /></label>
+            <div class="mt-3 flex gap-2">
+              <button
+                type="button"
+                (click)="validateDraft()"
+                [disabled]="!draftForm.controls.draftId.value || actionLoading()"
+                class="distr-btn-secondary px-3 py-2">
+                Validate draft
+              </button>
+              <button
+                type="button"
+                (click)="publishDraft()"
+                [disabled]="draftForm.invalid || !actionsEnabled() || actionLoading()"
+                class="distr-btn-primary px-3 py-2">
+                Publish draft
+              </button>
+            </div>
+            @if (draftValidation(); as validation) {
+              <div role="status" class="mt-3 rounded bg-gray-100 p-3 text-sm">
+                <p>Draft revision {{ validation.draft.revision }}</p>
+                <p class="break-all font-mono text-xs">
+                  {{ validation.previewChecksum || validation.draft.previewChecksum || 'No preview checksum' }}
+                </p>
+              </div>
+            }
+          </form>
+
+          <form [formGroup]="approvalForm" class="rounded border p-4">
+            <h3 class="font-semibold">Request approval</h3>
+            <p class="mt-1 text-xs text-gray-500">
+              Approval is bound to this plan, policy, subscriber set, and checksum.
+            </p>
+            <label class="mt-3 block text-sm"
+              >Expires at<input type="datetime-local" formControlName="expiresAt" class="distr-input mt-1 w-full"
+            /></label>
+            <button
+              type="button"
+              (click)="requestApproval()"
+              [disabled]="approvalForm.invalid || !actionsEnabled() || actionLoading()"
+              class="distr-btn-primary mt-3 px-3 py-2">
+              Request approval
+            </button>
+          </form>
+
+          <form [formGroup]="previousStateForm" class="rounded border p-4">
+            <h3 class="font-semibold">Create previous-state plan</h3>
+            <p class="mt-1 text-xs text-gray-500">Creates a new immutable plan and preserves current history.</p>
+            <label class="mt-3 block text-sm"
+              >Successful plan ID<input formControlName="successfulDeploymentPlanId" class="distr-input mt-1 w-full"
+            /></label>
+            <label class="mt-3 block text-sm"
+              >Reason<textarea formControlName="reason" rows="3" class="distr-input mt-1 w-full"></textarea>
+            </label>
+            <button
+              type="button"
+              (click)="createPreviousState()"
+              [disabled]="previousStateForm.invalid || !actionsEnabled() || actionLoading()"
+              class="distr-btn-primary mt-3 px-3 py-2">
+              Create previous-state plan
+            </button>
+          </form>
+        </div>
+      </section>
+    }
+  </div>
+</section>

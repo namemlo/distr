@@ -15,6 +15,7 @@
     "build:dev": "pnpm buildconfig && pnpm agent-changelog && ng build --configuration=development",
     "watch": "pnpm buildconfig && pnpm agent-changelog && ng build --watch --configuration=development",
     "test": "pnpm buildconfig && pnpm agent-changelog && ng test",
+    "test:e2e:control-plane": "playwright test --config playwright.control-plane.config.ts",
     "lint": "prettier --check .",
     "format": "prettier --write --list-different ."
   },
@@ -63,6 +64,7 @@
     "@angular/build": "^22.0.0",
     "@angular/cli": "^22.0.0",
     "@angular/compiler-cli": "^22.0.0",
+    "@playwright/test": "^1.62.0",
     "@sentry/cli": "^3.0.0",
     "@tailwindcss/postcss": "^4.1.4",
     "@types/jasmine": "~6.0.0",

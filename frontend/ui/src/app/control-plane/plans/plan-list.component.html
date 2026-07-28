@@ -1,0 +1,133 @@
+<section class="bg-gray-50 p-4 antialiased dark:bg-gray-900">
+  <div class="mx-auto max-w-screen-2xl">
+    <header class="mb-4">
+      <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Deployment plans</h1>
+      <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+        Server-paged immutable deployment plans and their approval and preflight blockers.
+      </p>
+    </header>
+
+    <form
+      [formGroup]="filters"
+      (ngSubmit)="applyFilters()"
+      class="mb-4 grid gap-3 rounded-lg bg-white p-4 shadow-sm dark:bg-gray-800 md:grid-cols-5">
+      <label class="text-sm text-gray-700 dark:text-gray-200">
+        Status
+        <select formControlName="status" class="distr-input mt-1 w-full">
+          <option value="">All statuses</option>
+          <option value="DRAFT">Draft</option>
+          <option value="VALIDATING">Validating</option>
+          <option value="BLOCKED">Blocked</option>
+          <option value="READY">Ready</option>
+          <option value="EXPIRED">Expired</option>
+          <option value="EXECUTED">Executed</option>
+        </select>
+      </label>
+      <label class="text-sm text-gray-700 dark:text-gray-200">
+        Environment ID
+        <input formControlName="environmentId" class="distr-input mt-1 w-full" />
+      </label>
+      <label class="text-sm text-gray-700 dark:text-gray-200">
+        Deployment unit ID
+        <input formControlName="deploymentUnitId" class="distr-input mt-1 w-full" />
+      </label>
+      <label class="text-sm text-gray-700 dark:text-gray-200">
+        Product release ID
+        <input formControlName="productReleaseId" class="distr-input mt-1 w-full" />
+      </label>
+      <div class="flex items-end gap-2">
+        <button type="submit" class="distr-btn-primary px-4 py-2">Apply</button>
+        <button type="button" (click)="clearFilters()" class="distr-btn-secondary px-4 py-2">Clear</button>
+      </div>
+    </form>
+
+    @if (loading()) {
+      <div role="status" class="rounded-lg bg-white p-8 text-center text-gray-500 shadow-sm dark:bg-gray-800">
+        Loading deployment plans...
+      </div>
+    } @else if (isForbidden()) {
+      <div role="alert" class="rounded-lg border border-amber-300 bg-amber-50 p-5 text-amber-900">
+        Deployment plans are not available for your role.
+      </div>
+    } @else if (error(); as loadError) {
+      <div role="alert" class="rounded-lg border border-red-300 bg-red-50 p-5 text-red-900">
+        <p>{{ loadError.message }}</p>
+        @if (loadError.requestId) {
+          <p class="mt-1 text-xs">Request ID: {{ loadError.requestId }}</p>
+        }
+        @if (loadError.retryable) {
+          <button type="button" (click)="load()" class="distr-btn-secondary mt-3 px-4 py-2">Retry</button>
+        }
+      </div>
+    } @else {
+      @if (hasPartialPlans()) {
+        <div role="status" class="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+          Some plan records are partial. Open the plan review before making an approval decision.
+        </div>
+      }
+
+      <div class="overflow-x-auto rounded-lg bg-white shadow-sm dark:bg-gray-800">
+        <table class="distr-table">
+          <thead class="distr-table-head">
+            <tr>
+              <th scope="col" class="p-4">Release and environment</th>
+              <th scope="col" class="p-4">Deployment unit</th>
+              <th scope="col" class="p-4">Status</th>
+              <th scope="col" class="p-4">Targets / steps</th>
+              <th scope="col" class="p-4">Blockers</th>
+              <th scope="col" class="p-4">Canonical checksum</th>
+              <th scope="col" class="p-4">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (plan of plans(); track plan.id) {
+              <tr class="distr-table-row">
+                <td class="px-4 py-3">
+                  <a
+                    [routerLink]="['/deployments/plans', plan.id]"
+                    class="font-medium text-primary-700 hover:underline">
+                    {{ plan.productReleaseVersion || plan.productReleaseId || 'Partial release' }}
+                  </a>
+                  <div class="text-xs text-gray-500">
+                    {{ plan.environment || plan.environmentId || 'Partial environment' }}
+                  </div>
+                </td>
+                <td class="px-4 py-3">{{ plan.deploymentUnit || plan.deploymentUnitId || 'Partial unit' }}</td>
+                <td class="px-4 py-3">
+                  <span class="rounded bg-gray-100 px-2 py-1 text-xs font-semibold">{{
+                    statusLabel(plan.status)
+                  }}</span>
+                </td>
+                <td class="px-4 py-3">{{ plan.targetCount }} / {{ plan.stepCount }}</td>
+                <td class="px-4 py-3">
+                  {{ plan.blockingIssueCount }} issues, {{ plan.approvalBlockerCount }} approvals,
+                  {{ plan.preflightBlockerCount }} preflight
+                </td>
+                <td class="px-4 py-3 font-mono text-xs">{{ plan.canonicalChecksum || 'Unavailable' }}</td>
+                <td class="px-4 py-3 text-sm">{{ plan.createdAt | date: 'medium' }}</td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="7" class="p-8 text-center text-gray-500">No deployment plans found.</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      @if (nextCursor()) {
+        <div class="mt-4 flex items-center justify-between">
+          <span class="text-sm text-gray-500">
+            More plans are available.
+            @if (total() !== undefined) {
+              Showing {{ plans().length }} of {{ total() }}.
+            }
+          </span>
+          <button type="button" (click)="loadMore()" [disabled]="loadingMore()" class="distr-btn-secondary px-4 py-2">
+            {{ loadingMore() ? 'Loading...' : 'Load more' }}
+          </button>
+        </div>
+      }
+    }
+  </div>
+</section>

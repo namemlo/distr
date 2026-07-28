@@ -1,0 +1,209 @@
+<div class="space-y-6">
+  <header>
+    <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Approvals</h1>
+    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+      Review checksum-bound approval requests and their immutable decision history.
+    </p>
+  </header>
+
+  <form class="flex flex-wrap items-end gap-3" [formGroup]="filterForm" (ngSubmit)="applyFilters()">
+    <label class="distr-label">
+      Request state
+      <select class="distr-input mt-1" formControlName="state">
+        <option value="">All states</option>
+        <option value="PENDING">Pending</option>
+        <option value="APPROVED">Approved</option>
+        <option value="REJECTED">Rejected</option>
+        <option value="EXPIRED">Expired</option>
+        <option value="SUPERSEDED">Superseded</option>
+        <option value="INVALIDATED">Invalidated</option>
+      </select>
+    </label>
+    <button type="submit" class="distr-btn-secondary">Apply filter</button>
+  </form>
+
+  @if (loading()) {
+    <div class="rounded-lg border border-gray-200 p-6 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+      Loading approvals…
+    </div>
+  } @else if (listForbidden()) {
+    <div class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      You are not authorized to view approvals in the scopes returned by the server.
+    </div>
+  } @else if (listError()) {
+    <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+      {{ listError() }}
+      <button type="button" class="ml-3 underline" (click)="retryList()">Retry</button>
+    </div>
+  } @else if (approvals().length === 0) {
+    <div class="rounded-lg border border-gray-200 p-6 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+      No approvals match the current filter.
+    </div>
+  } @else {
+    <section class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+      <table class="distr-table">
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>State</th>
+            <th>Revision</th>
+            <th>Expires</th>
+            <th>Requirements</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (approval of approvals(); track approval.id) {
+            <tr class="distr-table-row align-top">
+              <td class="px-4 py-3">
+                <div class="font-medium text-gray-900 dark:text-white">{{ approval.subjectType }}</div>
+                <div class="font-mono text-xs text-gray-500">{{ approval.subjectId }}</div>
+              </td>
+              <td class="px-4 py-3">
+                <div>{{ statusLabel(approval.state) }}</div>
+                @if (isInvalidated(approval)) {
+                  <div class="mt-1 text-xs font-semibold text-red-700">Invalidated by server</div>
+                  <div class="text-xs text-red-700">{{ approval.invalidationReason || 'Reason unavailable' }}</div>
+                }
+              </td>
+              <td class="px-4 py-3">{{ approval.revision }}</td>
+              <td class="px-4 py-3">{{ approval.expiresAt }}</td>
+              <td class="px-4 py-3">{{ approval.requirements.length }}</td>
+              <td class="px-4 py-3 text-right">
+                <button
+                  type="button"
+                  class="distr-btn-secondary"
+                  aria-label="View approval"
+                  (click)="openApproval(approval.id)">
+                  View
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+    @if (nextCursor()) {
+      <button type="button" class="distr-btn-secondary" [disabled]="loadingMore()" (click)="loadMore()">
+        {{ loadingMore() ? 'Loading more…' : 'Load more approvals' }}
+      </button>
+    }
+  }
+
+  @if (detailLoading()) {
+    <div class="rounded-lg border border-gray-200 p-5 text-sm dark:border-gray-700">Loading approval detail…</div>
+  } @else if (detailForbidden()) {
+    <div class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      The server denied access to this approval request for your current scope.
+    </div>
+  } @else if (detailNotFound()) {
+    <div class="rounded-lg border border-gray-200 p-4 text-sm dark:border-gray-700">
+      Approval request was not found.
+    </div>
+  } @else if (detailError()) {
+    <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">{{ detailError() }}</div>
+  } @else if (selected(); as approval) {
+    <section class="space-y-5 rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Approval request</h2>
+          <div class="font-mono text-xs text-gray-500">{{ approval.id }}</div>
+        </div>
+        <span class="rounded bg-gray-100 px-2 py-1 text-xs font-semibold dark:bg-gray-700">
+          {{ statusLabel(approval.state) }}
+        </span>
+      </div>
+
+      @if (approvalEvidencePartial(approval)) {
+        <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Approval evidence is partial. Decisions remain disabled when required immutable evidence is absent.
+        </div>
+      }
+      @if (isInvalidated(approval)) {
+        <div class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+          <strong>Invalidated by server.</strong>
+          {{ approval.invalidationReason || 'No invalidation reason was returned.' }}
+          @if (approval.invalidatedAt) {
+            <span>Recorded {{ approval.invalidatedAt }}.</span>
+          }
+        </div>
+      }
+      @if (stale()) {
+        <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Approval changed on the server. The latest revision has been loaded; review it before deciding again.
+        </div>
+      }
+      @if (decisionDenied()) {
+        <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          The server denied approval decisions for your current scope. Decision controls are disabled.
+        </div>
+      }
+      @if (decisionError()) {
+        <div class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900">{{ decisionError() }}</div>
+      }
+
+      <dl class="grid gap-3 text-sm md:grid-cols-2">
+        <div>
+          <dt class="text-gray-500">Subject</dt>
+          <dd>{{ approval.subjectType }} / {{ approval.subjectId }} / revision {{ approval.subjectRevision }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Request revision</dt>
+          <dd>{{ approval.revision }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Subject checksum</dt>
+          <dd class="break-all font-mono text-xs">{{ approval.subjectChecksum || 'Unavailable' }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Effective policy checksum</dt>
+          <dd class="break-all font-mono text-xs">{{ approval.effectivePolicyChecksum || 'Unavailable' }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Subscriber set checksum</dt>
+          <dd class="break-all font-mono text-xs">{{ approval.subscriberSetChecksum || 'Unavailable' }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Requester</dt>
+          <dd class="font-mono text-xs">{{ approval.requesterUserAccountId }}</dd>
+        </div>
+      </dl>
+
+      <label class="distr-label block">
+        Decision comment
+        <textarea class="distr-input mt-1 min-h-24 w-full" maxlength="4096" [formControl]="decisionComment"></textarea>
+      </label>
+
+      <div class="space-y-3">
+        @for (requirement of approval.requirements; track requirement.id) {
+          <article class="rounded border border-gray-200 p-4 dark:border-gray-700">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="font-medium text-gray-900 dark:text-white">{{ requirement.ruleKey }}</div>
+                <div class="text-xs text-gray-500">
+                  Quorum {{ requirement.quorum }} · {{ decisionFor(approval, requirement.id) }}
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  type="button"
+                  class="distr-btn-secondary"
+                  [disabled]="!canDecide() || approvalEvidencePartial(approval)"
+                  (click)="decide(requirement, 'REJECT')">
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  class="distr-btn-primary"
+                  [disabled]="!canDecide() || approvalEvidencePartial(approval)"
+                  (click)="decide(requirement, 'APPROVE')">
+                  Approve
+                </button>
+              </div>
+            </div>
+          </article>
+        }
+      </div>
+    </section>
+  }
+</div>

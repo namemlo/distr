@@ -1,0 +1,161 @@
+<div class="space-y-6">
+  <header>
+    <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Fleet</h1>
+    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+      Compare desired releases with the latest observed state across customer, environment, target, and component
+      placements.
+    </p>
+  </header>
+
+  @if (error()) {
+    <div
+      role="alert"
+      class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+      {{ error() }}
+    </div>
+  }
+
+  <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Fleet matrix</h2>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          Shared-target comparison uses only placements already loaded in this matrix.
+        </p>
+      </div>
+      <button type="button" class="distr-btn-secondary px-3 py-2 text-sm" [disabled]="loading()" (click)="load()">
+        Refresh
+      </button>
+    </div>
+
+    @if (loading()) {
+      <p role="status" aria-live="polite" class="mt-5 text-sm text-gray-600 dark:text-gray-300">Loading fleet…</p>
+    } @else {
+      <div class="mt-5 overflow-x-auto">
+        <table class="distr-table">
+          <caption class="sr-only">
+            Fleet matrix
+          </caption>
+          <thead class="distr-table-head">
+            <tr>
+              <th scope="col" class="p-4">Customer / environment</th>
+              <th scope="col" class="p-4">Target / unit</th>
+              <th scope="col" class="p-4">Component</th>
+              <th scope="col" class="p-4">Active / pending release</th>
+              <th scope="col" class="p-4">Observed state</th>
+              <th scope="col" class="p-4">Evidence</th>
+              <th scope="col" class="p-4"><span class="sr-only">Compare</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows(); track row.id) {
+              <tr class="distr-table-row align-top">
+                <td class="px-4 py-3">
+                  <div class="font-medium text-gray-900 dark:text-white">
+                    {{ row.customer || 'Unassigned customer' }}
+                  </div>
+                  <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ row.environment }}</div>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="font-medium text-gray-900 dark:text-white">{{ row.target }}</div>
+                  <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ row.unit }}</div>
+                </td>
+                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ row.component || 'Unresolved component' }}</td>
+                <td class="px-4 py-3">
+                  <div class="text-gray-900 dark:text-white">{{ row.activeRelease || 'Not available' }}</div>
+                  <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    Pending: {{ row.pendingRelease || 'None' }}
+                  </div>
+                </td>
+                <td class="px-4 py-3">
+                  <span
+                    class="inline-flex rounded-full border px-2.5 py-1 text-xs font-medium"
+                    [class]="badgeClass(row.observedState)">
+                    {{ row.observedState || 'UNKNOWN' }}
+                  </span>
+                  <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    Drift: {{ row.drift || 'UNKNOWN' }} · Enrollment: {{ row.enrollment || 'UNKNOWN' }}
+                  </div>
+                </td>
+                <td class="px-4 py-3">
+                  <span
+                    class="inline-flex rounded-full border px-2.5 py-1 text-xs font-medium"
+                    [class]="badgeClass(evidenceLabel(row))">
+                    {{ evidenceLabel(row) }}
+                  </span>
+                  <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    Last execution: {{ row.lastExecution || 'Unknown' }}
+                  </div>
+                </td>
+                <td class="px-4 py-3 text-right">
+                  @if (placementCount(row.deploymentTargetId) > 1) {
+                    <button
+                      type="button"
+                      class="distr-btn-secondary px-3 py-2 text-sm"
+                      [attr.aria-label]="'Compare shared target ' + row.target"
+                      (click)="compareTarget(row.deploymentTargetId)">
+                      Compare
+                    </button>
+                  }
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="7" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No fleet placements match the current scope.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      @if (nextCursor()) {
+        <button
+          type="button"
+          class="distr-btn-secondary mt-4 px-3 py-2 text-sm"
+          [disabled]="loadingMore()"
+          (click)="loadMore()">
+          {{ loadingMore() ? 'Loading…' : 'Load more' }}
+        </button>
+      }
+    }
+  </section>
+
+  @if (sharedTargetRows().length > 1) {
+    <section
+      aria-labelledby="shared-target-comparison-heading"
+      class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 id="shared-target-comparison-heading" class="text-lg font-semibold text-gray-900 dark:text-white">
+        Shared target comparison
+      </h2>
+      <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+        {{ sharedTargetRows()[0].target }} has {{ sharedTargetRows().length }} loaded placements.
+      </p>
+      <div class="mt-4 overflow-x-auto">
+        <table class="distr-table">
+          <thead class="distr-table-head">
+            <tr>
+              <th scope="col" class="p-4">Unit</th>
+              <th scope="col" class="p-4">Component</th>
+              <th scope="col" class="p-4">Active release</th>
+              <th scope="col" class="p-4">Pending release</th>
+              <th scope="col" class="p-4">Observed / drift</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of sharedTargetRows(); track row.id) {
+              <tr class="distr-table-row">
+                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ row.unit }}</td>
+                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ row.component }}</td>
+                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ row.activeRelease || 'Not available' }}</td>
+                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ row.pendingRelease || 'None' }}</td>
+                <td class="px-4 py-3 text-gray-600 dark:text-gray-300">{{ row.observedState }} / {{ row.drift }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
+</div>

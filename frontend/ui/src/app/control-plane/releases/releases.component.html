@@ -1,0 +1,451 @@
+<div class="space-y-6">
+  <header>
+    <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Releases</h1>
+    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+      Review immutable release history, component graphs, comparisons, and evidence.
+    </p>
+  </header>
+
+  @if (error()) {
+    <div
+      role="alert"
+      class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+      {{ error() }}
+    </div>
+  }
+
+  @if (mutationError()) {
+    <div
+      role="alert"
+      class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+      {{ mutationError() }}
+    </div>
+  }
+
+  @if (mutationStatus()) {
+    <div
+      role="status"
+      aria-live="polite"
+      class="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+      {{ mutationStatus() }}
+    </div>
+  }
+
+  @if (loading()) {
+    <p role="status" aria-live="polite" class="text-sm text-gray-600 dark:text-gray-300">
+      {{ releaseId() ? 'Loading release detail…' : 'Loading releases…' }}
+    </p>
+  } @else if (!releaseId()) {
+    <div class="grid gap-6 xl:grid-cols-2">
+      <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Assemble component release</h2>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          Submit a <code>distr.component-release/v2</code> request. The existing release-bundle API creates the
+          component release; publication makes it immutable.
+        </p>
+        <form class="mt-4 space-y-3" [formGroup]="componentReleaseForm" (ngSubmit)="createComponentRelease()">
+          <label class="distr-label">
+            Component release request (JSON)
+            <textarea
+              class="distr-input mt-1 min-h-48 w-full font-mono text-xs"
+              formControlName="request"
+              autocomplete="off"></textarea>
+          </label>
+          <button type="submit" class="distr-btn-primary" [disabled]="mutating() || componentReleaseRequest.invalid">
+            Create component release
+          </button>
+        </form>
+        @if (componentRelease(); as release) {
+          <div class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <div class="text-sm font-medium text-gray-900 dark:text-white">Component draft {{ release.id }}</div>
+            <div class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+              {{ release.canonicalChecksum || 'Checksum assigned after validation' }}
+            </div>
+            @if (componentValidation(); as validation) {
+              <p class="mt-3 text-sm text-gray-700 dark:text-gray-300">
+                Validation: {{ validation.valid ? 'valid' : 'blocked' }}
+              </p>
+              @if (!validation.valid) {
+                <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700 dark:text-red-300">
+                  @for (issue of validation.errors; track issue.field + ':' + issue.rule) {
+                    <li>{{ issue.field }}: {{ issue.message }}</li>
+                  }
+                </ul>
+              }
+            }
+            <div class="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                class="distr-btn-secondary px-3 py-2 text-sm"
+                [disabled]="mutating()"
+                (click)="validateComponentRelease()">
+                Validate component release
+              </button>
+              <button
+                type="button"
+                class="distr-btn-primary"
+                [disabled]="mutating() || !componentValidation()?.valid"
+                (click)="publishComponentRelease()">
+                Publish component release
+              </button>
+            </div>
+          </div>
+        }
+      </section>
+
+      <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Assemble product release</h2>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          Pin validated component release IDs and checksums into a <code>distr.product-release/v1</code> request.
+        </p>
+        <form class="mt-4 space-y-3" [formGroup]="productReleaseForm" (ngSubmit)="createProductRelease()">
+          <label class="distr-label">
+            Product release request (JSON)
+            <textarea
+              class="distr-input mt-1 min-h-48 w-full font-mono text-xs"
+              formControlName="request"
+              autocomplete="off"></textarea>
+          </label>
+          <button type="submit" class="distr-btn-primary" [disabled]="mutating() || productReleaseRequest.invalid">
+            Create product release
+          </button>
+        </form>
+        @if (productRelease(); as release) {
+          <div class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <div class="text-sm font-medium text-gray-900 dark:text-white">Product draft {{ release.id }}</div>
+            <div class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+              {{ release.canonicalChecksum || 'Checksum assigned after validation' }}
+            </div>
+            @if (productValidation(); as validation) {
+              <p class="mt-3 text-sm text-gray-700 dark:text-gray-300">
+                Validation: {{ validation.valid ? 'valid' : 'blocked' }}
+              </p>
+              @if (!validation.valid) {
+                <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700 dark:text-red-300">
+                  @for (issue of validation.issues; track issue.field + ':' + issue.rule) {
+                    <li>{{ issue.field }}: {{ issue.message }}</li>
+                  }
+                </ul>
+              }
+            }
+            <div class="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                class="distr-btn-secondary px-3 py-2 text-sm"
+                [disabled]="mutating()"
+                (click)="validateProductRelease()">
+                Validate product release
+              </button>
+              <button
+                type="button"
+                class="distr-btn-primary"
+                [disabled]="mutating() || !productValidation()?.valid"
+                (click)="publishProductRelease()">
+                Publish product release
+              </button>
+            </div>
+          </div>
+        }
+      </section>
+    </div>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Release history</h2>
+        <button type="button" class="distr-btn-secondary px-3 py-2 text-sm" (click)="loadList()">Refresh</button>
+      </div>
+      <div class="mt-4 overflow-x-auto">
+        <table class="distr-table">
+          <caption class="sr-only">
+            Release history
+          </caption>
+          <thead class="distr-table-head">
+            <tr>
+              <th scope="col" class="p-4">Version</th>
+              <th scope="col" class="p-4">Kind / status</th>
+              <th scope="col" class="p-4">Contents</th>
+              <th scope="col" class="p-4">Evidence</th>
+              <th scope="col" class="p-4">Checksum</th>
+              <th scope="col" class="p-4"><span class="sr-only">Open</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (release of releases(); track release.id) {
+              <tr class="distr-table-row align-top">
+                <td class="px-4 py-3">
+                  <div class="font-medium text-gray-900 dark:text-white">
+                    {{ release.version || 'Unknown version' }}
+                  </div>
+                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ release.publishedAt || release.createdAt }}
+                  </div>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="text-gray-900 dark:text-white">{{ release.kind }}</div>
+                  <span
+                    class="mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs font-medium"
+                    [class]="badgeClass(release.status)">
+                    {{ release.status || 'UNKNOWN' }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                  {{ release.artifactCount }} artifacts · {{ release.componentCount }} components ·
+                  {{ release.graphEdgeCount }} edges
+                </td>
+                <td class="px-4 py-3">
+                  <span
+                    class="inline-flex rounded-full border px-2.5 py-1 text-xs font-medium"
+                    [class]="badgeClass(evidenceLabel(release))">
+                    {{ evidenceLabel(release) }}
+                  </span>
+                  <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    {{ release.evidenceCount }} references
+                  </div>
+                </td>
+                <td class="max-w-64 break-all px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
+                  {{ release.checksum || 'Not available' }}
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <a class="distr-btn-secondary inline-flex px-3 py-2 text-sm" [attr.href]="'/releases/' + release.id">
+                    Open
+                  </a>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="6" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No releases match the current scope.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      @if (nextCursor()) {
+        <button
+          type="button"
+          class="distr-btn-secondary mt-4 px-3 py-2 text-sm"
+          [disabled]="loadingMore()"
+          (click)="loadMore()">
+          {{ loadingMore() ? 'Loading…' : 'Load more' }}
+        </button>
+      }
+    </section>
+  } @else if (detail(); as releaseDetail) {
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Release detail</h2>
+          <p class="mt-1 text-xl font-medium text-gray-900 dark:text-white">{{ releaseDetail.release.version }}</p>
+          <p class="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">{{ releaseDetail.release.id }}</p>
+        </div>
+        <span
+          class="inline-flex rounded-full border px-2.5 py-1 text-xs font-medium"
+          [class]="badgeClass(releaseDetail.release.status)">
+          {{ releaseDetail.release.status }}
+        </span>
+      </div>
+
+      <dl class="mt-5 grid gap-4 text-sm md:grid-cols-2 xl:grid-cols-4">
+        <div>
+          <dt class="text-gray-500 dark:text-gray-400">Kind</dt>
+          <dd class="mt-1 text-gray-900 dark:text-white">{{ releaseDetail.release.kind }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500 dark:text-gray-400">Source revision</dt>
+          <dd class="mt-1 break-all font-mono text-xs text-gray-900 dark:text-white">
+            {{ releaseDetail.release.sourceRevision || 'Not available' }}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-gray-500 dark:text-gray-400">Canonical checksum</dt>
+          <dd class="mt-1 break-all font-mono text-xs text-gray-900 dark:text-white">
+            {{ releaseDetail.release.checksum || 'Not available' }}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-gray-500 dark:text-gray-400">Evidence state</dt>
+          <dd class="mt-1 text-gray-900 dark:text-white">{{ evidenceLabel(releaseDetail.release) }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    @if (evidenceIncomplete()) {
+      <div
+        role="status"
+        aria-live="polite"
+        class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+        Partial evidence: the release details loaded, but the evidence collection is currently unavailable.
+      </div>
+    }
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Artifacts and platforms</h2>
+      <div class="mt-4 overflow-x-auto">
+        <table class="distr-table">
+          <thead class="distr-table-head">
+            <tr>
+              <th scope="col" class="p-4">Artifact</th>
+              <th scope="col" class="p-4">Manifest</th>
+              <th scope="col" class="p-4">Platform digests</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (artifact of releaseDetail.artifacts; track artifact.id) {
+              <tr class="distr-table-row align-top">
+                <td class="px-4 py-3 text-gray-900 dark:text-white">
+                  {{ artifact.name }} <span class="text-gray-500 dark:text-gray-400">{{ artifact.version }}</span>
+                </td>
+                <td class="max-w-72 break-all px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
+                  {{ artifact.manifestDigest }}
+                </td>
+                <td class="px-4 py-3">
+                  <ul class="space-y-2">
+                    @for (platform of platformEntries(artifact.platformDigests); track platform[0]) {
+                      <li class="text-xs text-gray-600 dark:text-gray-300">
+                        <span class="font-medium text-gray-900 dark:text-white">{{ platform[0] }}</span>
+                        <span class="ml-2 break-all font-mono">{{ platform[1] }}</span>
+                      </li>
+                    } @empty {
+                      <li class="text-sm text-gray-500 dark:text-gray-400">No platform digest evidence.</li>
+                    }
+                  </ul>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="3" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No artifacts are recorded for this release.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="grid gap-6 xl:grid-cols-2">
+      <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Component pins</h2>
+        <ul class="mt-4 space-y-3">
+          @for (pin of releaseDetail.componentPins; track pin.componentReleaseId) {
+            <li class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <div class="font-medium text-gray-900 dark:text-white">{{ pin.component }} {{ pin.version }}</div>
+              <div class="mt-2 break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ pin.checksum }}</div>
+              <div class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ pin.digest }}</div>
+            </li>
+          } @empty {
+            <li class="text-sm text-gray-500 dark:text-gray-400">No component pins are recorded.</li>
+          }
+        </ul>
+      </section>
+
+      <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Release graph</h2>
+        <ul class="mt-4 space-y-3">
+          @for (edge of releaseDetail.graphEdges; track edge.from + ':' + edge.kind + ':' + edge.to) {
+            <li class="rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-700">
+              <span class="font-medium text-gray-900 dark:text-white">{{ edge.from }}</span>
+              <span class="mx-2 text-gray-500 dark:text-gray-400">{{ edge.kind }}</span>
+              <span class="font-medium text-gray-900 dark:text-white">{{ edge.to }}</span>
+            </li>
+          } @empty {
+            <li class="text-sm text-gray-500 dark:text-gray-400">No graph edges are recorded.</li>
+          }
+        </ul>
+      </section>
+    </div>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Evidence</h2>
+      <ul class="mt-4 space-y-3">
+        @for (item of evidence(); track item.id) {
+          <li class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <a class="font-medium text-blue-700 hover:underline dark:text-blue-300" [attr.href]="item.href">
+                  {{ item.label }}
+                </a>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ item.kind }} · {{ item.createdAt }}</div>
+              </div>
+              <div class="max-w-72 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+                {{ item.checksum }}
+              </div>
+            </div>
+          </li>
+        } @empty {
+          <li class="text-sm text-gray-500 dark:text-gray-400">No evidence references are available.</li>
+        }
+      </ul>
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Compare releases</h2>
+      <form class="mt-4 flex flex-wrap items-end gap-3" [formGroup]="compareForm" (ngSubmit)="compare()">
+        <label class="distr-label min-w-72 flex-1">
+          Compare with release
+          <input
+            class="distr-input mt-1 w-full"
+            formControlName="releaseId"
+            placeholder="Release ID"
+            autocomplete="off" />
+        </label>
+        <button type="submit" class="distr-btn-primary" [disabled]="comparing() || compareReleaseId.invalid">
+          {{ comparing() ? 'Comparing…' : 'Compare releases' }}
+        </button>
+      </form>
+      @if (compareError()) {
+        <div
+          role="alert"
+          class="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {{ compareError() }}
+        </div>
+      }
+    </section>
+
+    @if (comparison(); as releaseComparison) {
+      <section
+        aria-labelledby="release-comparison-heading"
+        class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+        <h2 id="release-comparison-heading" class="text-lg font-semibold text-gray-900 dark:text-white">
+          Release comparison
+        </h2>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          {{ releaseComparison.left.version }} → {{ releaseComparison.right.version }}
+        </p>
+        <div class="mt-4 overflow-x-auto">
+          <table class="distr-table">
+            <thead class="distr-table-head">
+              <tr>
+                <th scope="col" class="p-4">Component</th>
+                <th scope="col" class="p-4">Change</th>
+                <th scope="col" class="p-4">Left checksum / digest</th>
+                <th scope="col" class="p-4">Right checksum / digest</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (change of releaseComparison.changes; track change.component + ':' + change.change) {
+                <tr class="distr-table-row align-top">
+                  <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{{ change.component }}</td>
+                  <td class="px-4 py-3 text-gray-600 dark:text-gray-300">{{ change.change }}</td>
+                  <td class="max-w-72 break-all px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
+                    {{ change.leftChecksum || change.leftDigest || 'Not present' }}
+                  </td>
+                  <td class="max-w-72 break-all px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
+                    {{ change.rightChecksum || change.rightDigest || 'Not present' }}
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                    The releases have no recorded component differences.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+  }
+</div>

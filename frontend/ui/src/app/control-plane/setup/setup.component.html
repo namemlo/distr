@@ -1,0 +1,92 @@
+<main class="space-y-10 p-6">
+  <header>
+    <h1 class="text-2xl font-semibold">Control-plane setup</h1>
+    <p class="text-sm text-gray-600 dark:text-gray-300">
+      Assess operator readiness, review registry topology, and retain immutable target configuration.
+    </p>
+  </header>
+
+  <section class="space-y-4" aria-labelledby="readiness-heading">
+    <h2 id="readiness-heading" class="text-xl font-semibold">Setup readiness</h2>
+    <p>
+      Readiness is a current aggregate of feature flags, effective enrollment, target configuration, and exact registry
+      coverage. Refresh it after any setup change.
+    </p>
+    <form class="grid grid-cols-2 gap-3" [formGroup]="readinessForm" (ngSubmit)="refreshReadiness()">
+      <label>
+        <span class="distr-label">Registry import ID</span>
+        <input class="distr-input" formControlName="importId" />
+      </label>
+      <label>
+        <span class="distr-label">Deployment unit ID</span>
+        <input class="distr-input" formControlName="deploymentUnitId" />
+      </label>
+      <button class="distr-button col-span-2" type="submit" [disabled]="loading()">
+        {{ loading() ? 'Checking setup readiness…' : 'Check setup readiness' }}
+      </button>
+    </form>
+
+    @if (loading()) {
+      <p role="status">Checking setup readiness…</p>
+    }
+    @if (error()) {
+      <p role="alert" class="text-red-600">{{ error() }}</p>
+    }
+
+    @if (readiness(); as result) {
+      @if (stale()) {
+        <p role="status">Stale — the assessed import or deployment unit changed. Refresh before relying on it.</p>
+      }
+      <div class="grid gap-3 lg:grid-cols-2">
+        <article class="rounded border p-3">
+          <h3 class="font-semibold">Feature readiness</h3>
+          <p>
+            Operator control plane:
+            {{ state(result.operatorControlPlaneEnabled, 'Enabled', 'Disabled') }}
+          </p>
+          <p>Executor protocol: {{ state(result.executorProtocolEnabled, 'Enabled', 'Disabled') }}</p>
+        </article>
+        <article class="rounded border p-3">
+          <p>
+            <strong>Enrollment readiness</strong>
+            {{ state(result.hasEnabledEnrollment, 'Enabled', 'Disabled') }}
+          </p>
+        </article>
+        <article class="rounded border p-3">
+          <p>
+            <strong>Configuration readiness</strong>
+            {{ state(result.hasTargetConfigSnapshot, 'Available', 'Missing') }}
+          </p>
+        </article>
+        <article class="rounded border p-3">
+          <p>
+            <strong>Registry coverage</strong>
+            {{ state(result.registryCoverageComplete, 'Complete', 'Partial') }}
+          </p>
+        </article>
+        <article class="rounded border p-3 lg:col-span-2">
+          <p>
+            <strong>Overall readiness</strong>
+            {{ state(result.ready, 'Ready', 'Not ready') }}
+          </p>
+        </article>
+      </div>
+    } @else if (!loading() && !error()) {
+      <div class="grid gap-3 lg:grid-cols-2">
+        <p><strong>Feature readiness</strong> Unknown</p>
+        <p><strong>Enrollment readiness</strong> Unknown</p>
+        <p><strong>Configuration readiness</strong> Unknown</p>
+        <p><strong>Registry coverage</strong> Unknown</p>
+        <p><strong>Overall readiness</strong> Unknown</p>
+      </div>
+    }
+  </section>
+
+  <section aria-label="Registry import, classification, coverage, and apply">
+    <app-deployment-registry />
+  </section>
+
+  <section aria-label="Target configuration readiness">
+    <app-target-config-snapshots />
+  </section>
+</main>

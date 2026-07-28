@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -105,6 +106,8 @@ func TestOperatorCampaignDetailReturnsCompleteControlEvidence(t *testing.T) {
 		"active_steps_cancellable",
 		"admissions_blocked",
 		"reconciliation_required",
+		"run.version AS run_version",
+		"'memberRunId', member_run.id",
 		"plan_checksum",
 		"effective_policy_checksum",
 		"approval_checksum",
@@ -114,6 +117,50 @@ func TestOperatorCampaignDetailReturnsCompleteControlEvidence(t *testing.T) {
 	} {
 		g.Expect(getOperatorCampaignSQL).To(ContainSubstring(fragment))
 	}
+}
+
+func TestBuildOperatorCampaignDetailExposesCurrentRunControlIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	g := NewWithT(t)
+	runVersion := int64(7)
+	memberRunID := uuid.New()
+	detail := buildOperatorCampaignDetail(operatorCampaignDetailRecord{
+		DraftID: uuid.New(), CreatedAt: time.Now().UTC(), Name: "running campaign",
+		RunVersion: &runVersion,
+		Members: []operatorCampaignMemberProjection{{
+			ID: uuid.New(), DeploymentPlanID: uuid.New(), DeploymentUnitID: uuid.New(),
+			MemberRunID: &memberRunID,
+		}},
+	})
+
+	g.Expect(detail.RunVersion).To(HaveValue(Equal(runVersion)))
+	g.Expect(detail.Members).To(HaveLen(1))
+	g.Expect(detail.Members[0].MemberRunID).To(HaveValue(Equal(memberRunID)))
+	payload, err := json.Marshal(detail)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).To(ContainSubstring(`"runVersion":7`))
+	g.Expect(string(payload)).To(ContainSubstring(`"memberRunId":"` + memberRunID.String() + `"`))
+}
+
+func TestBuildOperatorCampaignDetailPreservesNilControlIdentifiersWithoutRun(t *testing.T) {
+	t.Parallel()
+
+	g := NewWithT(t)
+	detail := buildOperatorCampaignDetail(operatorCampaignDetailRecord{
+		DraftID: uuid.New(), CreatedAt: time.Now().UTC(), Name: "published campaign",
+		Members: []operatorCampaignMemberProjection{{
+			ID: uuid.New(), DeploymentPlanID: uuid.New(), DeploymentUnitID: uuid.New(),
+		}},
+	})
+
+	g.Expect(detail.RunVersion).To(BeNil())
+	g.Expect(detail.Members).To(HaveLen(1))
+	g.Expect(detail.Members[0].MemberRunID).To(BeNil())
+	payload, err := json.Marshal(detail)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).NotTo(ContainSubstring(`"runVersion"`))
+	g.Expect(string(payload)).NotTo(ContainSubstring(`"memberRunId"`))
 }
 
 func TestNormalizeOperatorCampaignScopesRejectsInvalidIdentityAndMixedWideScope(t *testing.T) {

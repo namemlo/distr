@@ -70,6 +70,114 @@ describe('SideBarComponent deployment registry access', () => {
   }
 });
 
+describe('SideBarComponent operator control-plane navigation', () => {
+  const operatorHrefs = [
+    '/fleet',
+    '/releases',
+    '/deployments/targets',
+    '/deployments/plans',
+    '/deployments/campaigns',
+    '/deployments/executions',
+    '/approvals',
+    '/reconciliation',
+    '/audit',
+    '/setup',
+  ];
+
+  it('shows every operator link to a vendor when all required features are enabled', async () => {
+    const fixture = await createOperatorNavigationComponent();
+
+    expect(visibleOperatorHrefs(fixture)).toEqual(operatorHrefs);
+  });
+
+  for (const {name, operator, processes, scoped} of [
+    {name: 'operator control plane', operator: false, processes: true, scoped: true},
+    {name: 'deployment processes', operator: true, processes: false, scoped: true},
+    {name: 'scoped variables', operator: true, processes: true, scoped: false},
+  ]) {
+    it(`hides every operator link when ${name} is disabled`, async () => {
+      const fixture = await createOperatorNavigationComponent({operator, processes, scoped});
+
+      expect(visibleOperatorHrefs(fixture)).toEqual([]);
+    });
+  }
+
+  it('does not expose operator navigation to a non-vendor', async () => {
+    const fixture = await createOperatorNavigationComponent({vendor: false});
+
+    expect(visibleOperatorHrefs(fixture)).toEqual([]);
+  });
+
+  async function createOperatorNavigationComponent(
+    options: {vendor?: boolean; operator?: boolean; processes?: boolean; scoped?: boolean} = {}
+  ): Promise<ComponentFixture<SideBarComponent>> {
+    const vendor = options.vendor ?? true;
+    const operator = options.operator ?? true;
+    const processes = options.processes ?? true;
+    const scoped = options.scoped ?? true;
+    const disabled$ = of(false);
+    const auth = {
+      isVendor: vi.fn(() => vendor),
+      isPartner: vi.fn(() => false),
+      isCustomer: vi.fn(() => !vendor),
+      isSuperAdmin: vi.fn(() => false),
+      hasRole: vi.fn(() => false),
+      hasAnyRole: vi.fn(() => false),
+    };
+    TestBed.configureTestingModule({
+      imports: [SideBarComponent],
+      providers: [
+        provideRouter([]),
+        {provide: AuthService, useValue: auth},
+        {provide: OrganizationService, useValue: {hasNoSubscription: signal(false)}},
+        {provide: TutorialsService, useValue: {allStarted$: of(true)}},
+        {
+          provide: ContextService,
+          useValue: {
+            getCustomerOrganization: vi.fn(() => of(undefined)),
+            getSidebarLinks: vi.fn(() => of([])),
+          },
+        },
+        {
+          provide: FeatureFlagService,
+          useValue: {
+            isLicensingEnabled$: disabled$,
+            isNotificationsEnabled$: disabled$,
+            isSupportBundlesEnabled$: disabled$,
+            isVendorBillingEnabled: signal(false),
+            isPartnerManagementEnabled: signal(false),
+            isEnvironmentsEnabled$: disabled$,
+            isLifecyclesEnabled$: disabled$,
+            isChannelsEnabled$: disabled$,
+            isReleaseBundlesEnabled$: disabled$,
+            isDeploymentProcessesEnabled$: of(processes),
+            isStepTemplatesEnabled$: disabled$,
+            isRunbooksEnabled$: disabled$,
+            isDeploymentPlansEnabled$: disabled$,
+            isTaskQueueEnabled$: disabled$,
+            isDeploymentTimelineEnabled$: disabled$,
+            isScopedVariablesV2Enabled$: of(scoped),
+            isExperimentalFeatureEnabled$: vi.fn((key: string) => of(key === 'operator_control_plane_v2' && operator)),
+          },
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(SideBarComponent);
+    fixture.componentRef.setInput('isSidebarVisible', true);
+    fixture.componentRef.setInput('isSubscriptionBannerVisible', false);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    return fixture;
+  }
+
+  function visibleOperatorHrefs(fixture: ComponentFixture<SideBarComponent>): string[] {
+    return Array.from(
+      fixture.nativeElement.querySelectorAll('[data-operator-control-plane-link]') as NodeListOf<HTMLAnchorElement>
+    ).map((link) => link.getAttribute('href') ?? '');
+  }
+});
+
 describe('SideBarComponent target configuration history link', () => {
   for (const role of ['read_only', 'read_write', 'admin'] satisfies UserRole[]) {
     it(`shows the vendor history link to ${role} when operator mutations are disabled`, async () => {
