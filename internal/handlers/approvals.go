@@ -38,6 +38,7 @@ type approvalAuthorizationRequest struct {
 	Action                string
 	DecisionAt            time.Time
 	DeploymentPlanID      uuid.UUID
+	SampleRetirementJobID uuid.UUID
 	EnvironmentID         uuid.UUID
 	DeploymentUnitID      *uuid.UUID
 	ApprovalRequestID     uuid.UUID
@@ -102,7 +103,15 @@ func approvalScopedAuthorizationWithDependencies(
 		Kind:           types.PermissionScopeEnvironment,
 		ID:             request.EnvironmentID,
 	}
-	if request.DeploymentUnitID != nil {
+	if request.SampleRetirementJobID != uuid.Nil {
+		if request.DeploymentPlanID != uuid.Nil ||
+			request.EnvironmentID != uuid.Nil ||
+			request.DeploymentUnitID != nil {
+			return apierrors.ErrForbidden
+		}
+		resource.Kind = types.PermissionScopeOrganization
+		resource.ID = request.OrganizationID
+	} else if request.DeploymentUnitID != nil {
 		resource.Kind = types.PermissionScopeDeploymentUnit
 		resource.ID = *request.DeploymentUnitID
 	}
@@ -323,6 +332,8 @@ func recordApprovalDecisionHandlerWithDependencies(
 				) error {
 					authorizationRequest.DecisionAt = evidence.DecisionAt
 					authorizationRequest.DeploymentPlanID = evidence.DeploymentPlanID
+					authorizationRequest.SampleRetirementJobID =
+						evidence.SampleRetirementJobID
 					authorizationRequest.EnvironmentID = evidence.EnvironmentID
 					authorizationRequest.DeploymentUnitID = evidence.DeploymentUnitID
 					authorizationRequest.ApprovalRequestID = evidence.ApprovalRequestID

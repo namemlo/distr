@@ -4,11 +4,141 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
+
+func TestSampleRetirementApprovalSubjectIsClosedAndValid(t *testing.T) {
+	g := NewWithT(t)
+	g.Expect(types.ApprovalSubjectSampleRetirement.IsValid()).To(BeTrue())
+	g.Expect(types.ApprovalSubjectType("sample_retirement_external").IsValid()).To(BeFalse())
+	g.Expect(types.ApprovalInvalidationSampleRetirementChanged.IsValid()).To(BeTrue())
+	g.Expect(types.SampleRetirementSubjectEnvironment.IsValid()).To(BeTrue())
+	g.Expect(types.SampleRetirementSubjectType("organization").IsValid()).To(BeFalse())
+	g.Expect(types.SampleRetirementRecoveryEvidenceBackup.IsValid()).To(BeTrue())
+	g.Expect(types.SampleRetirementRecoveryEvidenceKind("snapshot").IsValid()).To(BeFalse())
+}
+
+func TestSampleRetirementMigrationBindsApprovalAndRegisteredEvidence(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile("../migrations/sql/162_sample_domain_retirement.up.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	sql := strings.ToLower(string(up))
+	for _, fragment := range []string{
+		"create table sampleretirementrecoveryevidence",
+		"create table sampleretirementownershipevidence",
+		"evidence_kind in ('backup', 'restore_proof')",
+	} {
+		g.Expect(sql).To(ContainSubstring(fragment))
+	}
+	g.Expect(sql).To(ContainSubstring(
+		"subject_type in ('deployment_plan', 'sample_retirement')",
+	))
+	g.Expect(sql).To(ContainSubstring("create function approval_request_subject_guard()"))
+	g.Expect(sql).To(ContainSubstring("job.preview_checksum = new.subject_checksum"))
+	g.Expect(sql).To(ContainSubstring("ordinal integer not null check (ordinal >= 1)"))
+	g.Expect(sql).To(ContainSubstring("ownership_evidence_id uuid not null"))
+	g.Expect(sql).To(ContainSubstring(
+		"sample_retirement_ownership_evidence_id uuid",
+	))
+	g.Expect(sql).To(ContainSubstring(
+		"sample_retirement_recovery_evidence_id uuid",
+	))
+	g.Expect(sql).To(ContainSubstring("sampleretirementrecoveryevidence_append_only"))
+	g.Expect(sql).To(ContainSubstring("sampleretirementownershipevidence_append_only"))
+
+	down, err := os.ReadFile("../migrations/sql/162_sample_domain_retirement.down.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	downSQL := strings.ToLower(string(down))
+	g.Expect(downSQL).To(ContainSubstring(
+		"exists (select 1 from sampleretirementrecoveryevidence)",
+	))
+	g.Expect(downSQL).To(ContainSubstring(
+		"exists (select 1 from sampleretirementownershipevidence)",
+	))
+	g.Expect(downSQL).To(ContainSubstring("add constraint approvalrequest_plan_fk"))
+	g.Expect(downSQL).To(ContainSubstring(
+		"drop column sample_retirement_ownership_evidence_id",
+	))
+}
+
+func TestValidateSampleRetirementApprovalBinding(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	organizationID := uuid.New()
+	job := types.SampleRetirementJob{
+		ID:              uuid.New(),
+		OrganizationID:  organizationID,
+		State:           types.SampleRetirementJobPreviewed,
+		PreviewChecksum: "sha256:" + strings.Repeat("a", 64),
+		Version:         1,
+	}
+	request := types.ApprovalRequest{
+		ID:                      uuid.New(),
+		OrganizationID:          organizationID,
+		SubjectType:             types.ApprovalSubjectSampleRetirement,
+		SubjectID:               job.ID,
+		SubjectRevision:         job.Version,
+		SubjectChecksum:         job.PreviewChecksum,
+		EffectivePolicyChecksum: "sha256:" + strings.Repeat("b", 64),
+		SubscriberSetChecksum:   "sha256:" + strings.Repeat("c", 64),
+		ExpiresAt:               now.Add(time.Hour),
+		State:                   types.ApprovalRequestStateApproved,
+		Revision:                2,
+	}
+
+	binding, err := validateSampleRetirementApprovalBinding(request, job, now)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(binding.ApprovalRequestID).To(Equal(request.ID))
+	g.Expect(binding.RequestRevision).To(Equal(request.Revision))
+	g.Expect(binding.ApprovalChecksum).To(Equal(approvalEvidenceChecksum(request)))
+
+	tests := []struct {
+		name   string
+		mutate func(*types.ApprovalRequest, *types.SampleRetirementJob)
+	}{
+		{"pending", func(r *types.ApprovalRequest, _ *types.SampleRetirementJob) {
+			r.State = types.ApprovalRequestStatePending
+		}},
+		{"expired", func(r *types.ApprovalRequest, _ *types.SampleRetirementJob) {
+			r.ExpiresAt = now
+		}},
+		{"organization", func(r *types.ApprovalRequest, _ *types.SampleRetirementJob) {
+			r.OrganizationID = uuid.New()
+		}},
+		{"subject type", func(r *types.ApprovalRequest, _ *types.SampleRetirementJob) {
+			r.SubjectType = types.ApprovalSubjectDeploymentPlan
+		}},
+		{"subject id", func(r *types.ApprovalRequest, _ *types.SampleRetirementJob) {
+			r.SubjectID = uuid.New()
+		}},
+		{"subject revision", func(r *types.ApprovalRequest, _ *types.SampleRetirementJob) {
+			r.SubjectRevision++
+		}},
+		{"preview checksum", func(r *types.ApprovalRequest, _ *types.SampleRetirementJob) {
+			r.SubjectChecksum = "sha256:" + strings.Repeat("d", 64)
+		}},
+		{"job is not frozen", func(_ *types.ApprovalRequest, j *types.SampleRetirementJob) {
+			j.State = types.SampleRetirementJobApplying
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			testRequest := request
+			testJob := job
+			test.mutate(&testRequest, &testJob)
+			_, validationErr := validateSampleRetirementApprovalBinding(
+				testRequest,
+				testJob,
+				now,
+			)
+			NewWithT(t).Expect(validationErr).To(HaveOccurred())
+		})
+	}
+}
 
 func TestApprovalMigrationDefinesImmutableChecksumBoundWorkflow(t *testing.T) {
 	g := NewWithT(t)

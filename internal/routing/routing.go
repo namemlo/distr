@@ -291,6 +291,8 @@ func ApiRouter(
 					r.Route("/drift-cases", handlers.DriftCasesRouter)
 					r.Route("/reconciliation-actions", handlers.ReconciliationActionsRouter)
 					r.Route("/runbooks", handlers.RunbooksRouter)
+					r.Route("/sample-retirement-evidence", handlers.SampleRetirementEvidenceRouter)
+					r.Route("/sample-retirements", handlers.SampleRetirementRouter)
 					r.Route("/secrets", handlers.SecretsRouter)
 					r.Route("/settings", handlers.SettingsRouter)
 					r.Route("/step-templates", handlers.StepTemplatesRouter)

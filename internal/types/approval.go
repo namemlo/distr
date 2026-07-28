@@ -10,11 +10,13 @@ import (
 type ApprovalSubjectType string
 
 const (
-	ApprovalSubjectDeploymentPlan ApprovalSubjectType = "deployment_plan"
+	ApprovalSubjectDeploymentPlan   ApprovalSubjectType = "deployment_plan"
+	ApprovalSubjectSampleRetirement ApprovalSubjectType = "sample_retirement"
 )
 
 func (subjectType ApprovalSubjectType) IsValid() bool {
-	return subjectType == ApprovalSubjectDeploymentPlan
+	return subjectType == ApprovalSubjectDeploymentPlan ||
+		subjectType == ApprovalSubjectSampleRetirement
 }
 
 type ApprovalRequestState string
@@ -68,6 +70,7 @@ const (
 	ApprovalInvalidationPolicyChanged            ApprovalInvalidationReason = "policy_changed"
 	ApprovalInvalidationSubscriberSetChanged     ApprovalInvalidationReason = "subscriber_set_changed"
 	ApprovalInvalidationCampaignMemberUnapproved ApprovalInvalidationReason = "campaign_member_unapproved"
+	ApprovalInvalidationSampleRetirementChanged  ApprovalInvalidationReason = "sample_retirement_changed"
 )
 
 func (reason ApprovalInvalidationReason) IsValid() bool {
@@ -77,7 +80,8 @@ func (reason ApprovalInvalidationReason) IsValid() bool {
 		ApprovalInvalidationPlanChanged,
 		ApprovalInvalidationPolicyChanged,
 		ApprovalInvalidationSubscriberSetChanged,
-		ApprovalInvalidationCampaignMemberUnapproved:
+		ApprovalInvalidationCampaignMemberUnapproved,
+		ApprovalInvalidationSampleRetirementChanged:
 		return true
 	default:
 		return false
@@ -142,6 +146,14 @@ type ApprovalRequestInput struct {
 	Authorize                ApprovalAuthorizer
 }
 
+type SampleRetirementApprovalRequestInput struct {
+	OrganizationID           uuid.UUID
+	SampleRetirementJobID    uuid.UUID
+	RequestedByUserAccountID uuid.UUID
+	ExpiresAt                time.Time
+	Authorize                ApprovalAuthorizer
+}
+
 type ApprovalDecisionInput struct {
 	OrganizationID          uuid.UUID
 	ApprovalRequestID       uuid.UUID
@@ -159,10 +171,18 @@ type ApprovalAuthorizationContext struct {
 	ActorUserAccountID    uuid.UUID
 	DecisionAt            time.Time
 	DeploymentPlanID      uuid.UUID
+	SampleRetirementJobID uuid.UUID
 	EnvironmentID         uuid.UUID
 	DeploymentUnitID      *uuid.UUID
 	ApprovalRequestID     uuid.UUID
 	ApprovalRequirementID uuid.UUID
+}
+
+type SampleRetirementApprovalBinding struct {
+	ApprovalRequestID uuid.UUID
+	ApprovalChecksum  string
+	RequestRevision   int64
+	ExpiresAt         time.Time
 }
 
 type ApprovalAuthorizer func(context.Context, ApprovalAuthorizationContext) error

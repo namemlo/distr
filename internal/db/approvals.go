@@ -144,7 +144,7 @@ func RequestApproval(
 		}
 		if existing != nil {
 			current := approvalSnapshotForPlan(*plan)
-			reason := governance.DetectApprovalInvalidation(
+			reason := detectApprovalInvalidation(
 				*existing,
 				current,
 				decisionAt,
@@ -206,6 +206,159 @@ func RequestApproval(
 	return result, err
 }
 
+func RequestSampleRetirementApproval(
+	ctx context.Context,
+	input types.SampleRetirementApprovalRequestInput,
+) (*types.ApprovalRequest, error) {
+	if err := validateSampleRetirementApprovalRequestInput(input); err != nil {
+		return nil, err
+	}
+	var result *types.ApprovalRequest
+	err := RunTx(ctx, func(ctx context.Context) error {
+		decisionAt, err := approvalDatabaseTime(ctx)
+		if err != nil {
+			return err
+		}
+		if !input.ExpiresAt.After(decisionAt) ||
+			input.ExpiresAt.After(decisionAt.Add(366*24*time.Hour)) {
+			return apierrors.NewBadRequest(
+				"expiresAt must be in the future and within 366 days",
+			)
+		}
+		if err := ensureApprovalActor(
+			ctx,
+			input.OrganizationID,
+			input.RequestedByUserAccountID,
+		); err != nil {
+			return err
+		}
+		job, err := getSampleRetirementJobForApproval(
+			ctx,
+			input.SampleRetirementJobID,
+			input.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		if job.State != types.SampleRetirementJobPreviewed {
+			return apierrors.NewConflict(
+				"sample retirement job must be PREVIEWED before approval can be requested",
+			)
+		}
+		if !approvalChecksumPattern.MatchString(job.PreviewChecksum) {
+			return apierrors.NewConflict(
+				"sample retirement preview checksum is invalid",
+			)
+		}
+		effectivePolicy, issues, err := resolveSampleRetirementApprovalPolicy(
+			ctx,
+			input.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		if len(issues) > 0 {
+			return apierrors.NewConflict(
+				"sample retirement approval policy is invalid",
+			)
+		}
+		if len(effectivePolicy.ApprovalRules) == 0 {
+			return apierrors.NewConflict(
+				"sample retirement approval policy has no approval requirements",
+			)
+		}
+		if err := input.Authorize(ctx, types.ApprovalAuthorizationContext{
+			OrganizationID:        input.OrganizationID,
+			ActorUserAccountID:    input.RequestedByUserAccountID,
+			DecisionAt:            decisionAt,
+			SampleRetirementJobID: job.ID,
+		}); err != nil {
+			return err
+		}
+
+		existing, err := getActiveApprovalRequestForSubject(
+			ctx,
+			input.OrganizationID,
+			types.ApprovalSubjectSampleRetirement,
+			job.ID,
+			true,
+		)
+		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
+		current := approvalSnapshotForSampleRetirement(*job, effectivePolicy)
+		if existing != nil {
+			reason := detectApprovalInvalidation(
+				*existing,
+				current,
+				decisionAt,
+			)
+			if reason == "" {
+				if err := hydrateApprovalRequest(ctx, existing); err != nil {
+					return err
+				}
+				result = existing
+				return nil
+			}
+			if err := updateApprovalRequestState(
+				ctx,
+				existing,
+				stateForApprovalInvalidation(reason),
+				reason,
+				decisionAt,
+			); err != nil {
+				return err
+			}
+			if err := recordGovernanceAuditMutation(
+				ctx,
+				approvalAuditEventForSubject(
+					approvalInvalidatedAuditEvent(*existing, reason),
+					*existing,
+				),
+			); err != nil {
+				return err
+			}
+		}
+
+		request := &types.ApprovalRequest{
+			ID:                      uuid.New(),
+			OrganizationID:          input.OrganizationID,
+			SubjectType:             types.ApprovalSubjectSampleRetirement,
+			SubjectID:               job.ID,
+			SubjectRevision:         job.Version,
+			SubjectChecksum:         job.PreviewChecksum,
+			EffectivePolicyChecksum: effectivePolicy.Checksum,
+			SubscriberSetChecksum:   effectivePolicy.SubscriberSetChecksum,
+			RequesterUserAccountID:  input.RequestedByUserAccountID,
+			ExpiresAt:               input.ExpiresAt.UTC(),
+			State:                   types.ApprovalRequestStatePending,
+			Revision:                1,
+		}
+		if err := insertApprovalRequest(ctx, request); err != nil {
+			return err
+		}
+		requirements := approvalRequirementsFromEffectivePolicy(
+			*request,
+			effectivePolicy,
+		)
+		if err := insertApprovalRequirements(ctx, requirements); err != nil {
+			return err
+		}
+		if err := hydrateApprovalRequest(ctx, request); err != nil {
+			return err
+		}
+		result = request
+		return recordGovernanceAuditMutation(
+			ctx,
+			approvalAuditEventForSubject(
+				approvalRequestedAuditEvent(*request),
+				*request,
+			),
+		)
+	})
+	return result, err
+}
+
 func RecordApprovalDecision(
 	ctx context.Context,
 	input types.ApprovalDecisionInput,
@@ -244,24 +397,18 @@ func RecordApprovalDecision(
 		if err != nil {
 			return err
 		}
-		plan, err := getApprovalPlanForUpdate(
+		authorizationContext, err := approvalAuthorizationContextForRequest(
 			ctx,
-			request.SubjectID,
-			request.OrganizationID,
+			*request,
 		)
 		if err != nil {
 			return err
 		}
-		if err := input.Authorize(ctx, types.ApprovalAuthorizationContext{
-			OrganizationID:        request.OrganizationID,
-			ActorUserAccountID:    input.ActorUserAccountID,
-			DecisionAt:            decisionAt,
-			DeploymentPlanID:      request.SubjectID,
-			EnvironmentID:         plan.EnvironmentID,
-			DeploymentUnitID:      plan.DeploymentUnitID,
-			ApprovalRequestID:     request.ID,
-			ApprovalRequirementID: input.ApprovalRequirementID,
-		}); err != nil {
+		authorizationContext.ActorUserAccountID = input.ActorUserAccountID
+		authorizationContext.DecisionAt = decisionAt
+		authorizationContext.ApprovalRequestID = request.ID
+		authorizationContext.ApprovalRequirementID = input.ApprovalRequirementID
+		if err := input.Authorize(ctx, authorizationContext); err != nil {
 			return err
 		}
 		existing, err := getIdempotentApprovalDecision(ctx, input)
@@ -280,7 +427,7 @@ func RecordApprovalDecision(
 
 		invalidationReason = observedReason
 		if invalidationReason == "" {
-			invalidationReason = governance.DetectApprovalInvalidation(
+			invalidationReason = detectApprovalInvalidation(
 				*request,
 				current,
 				decisionAt,
@@ -299,7 +446,10 @@ func RecordApprovalDecision(
 				}
 				if err := recordGovernanceAuditMutation(
 					ctx,
-					approvalInvalidatedAuditEvent(*request, invalidationReason),
+					approvalAuditEventForSubject(
+						approvalInvalidatedAuditEvent(*request, invalidationReason),
+						*request,
+					),
 				); err != nil {
 					return err
 				}
@@ -378,7 +528,10 @@ func RecordApprovalDecision(
 		result = decision
 		return recordGovernanceAuditMutation(
 			ctx,
-			approvalDecisionRecordedAuditEvent(*request, *decision),
+			approvalAuditEventForSubject(
+				approvalDecisionRecordedAuditEvent(*request, *decision),
+				*request,
+			),
 		)
 	})
 	if err != nil {
@@ -423,7 +576,7 @@ func EvaluateApprovalEligibility(
 			return err
 		}
 		if reason == "" {
-			reason = governance.DetectApprovalInvalidation(
+			reason = detectApprovalInvalidation(
 				*request,
 				current,
 				decisionAt,
@@ -441,7 +594,10 @@ func EvaluateApprovalEligibility(
 			}
 			if err := recordGovernanceAuditMutation(
 				ctx,
-				approvalInvalidatedAuditEvent(*request, reason),
+				approvalAuditEventForSubject(
+					approvalInvalidatedAuditEvent(*request, reason),
+					*request,
+				),
 			); err != nil {
 				return err
 			}
@@ -519,7 +675,10 @@ func InvalidateApproval(
 		}
 		return recordGovernanceAuditMutation(
 			ctx,
-			approvalInvalidatedAuditEvent(*request, reason),
+			approvalAuditEventForSubject(
+				approvalInvalidatedAuditEvent(*request, reason),
+				*request,
+			),
 		)
 	})
 }
@@ -616,6 +775,27 @@ func validateApprovalRequestInput(input types.ApprovalRequestInput) error {
 	}
 	if input.DeploymentPlanID == uuid.Nil {
 		return apierrors.NewBadRequest("deploymentPlanId is required")
+	}
+	if input.RequestedByUserAccountID == uuid.Nil {
+		return apierrors.NewBadRequest("requestedByUserAccountId is required")
+	}
+	if input.ExpiresAt.IsZero() {
+		return apierrors.NewBadRequest("expiresAt is required")
+	}
+	if input.Authorize == nil {
+		return apierrors.ErrForbidden
+	}
+	return nil
+}
+
+func validateSampleRetirementApprovalRequestInput(
+	input types.SampleRetirementApprovalRequestInput,
+) error {
+	if input.OrganizationID == uuid.Nil {
+		return apierrors.NewBadRequest("organizationId is required")
+	}
+	if input.SampleRetirementJobID == uuid.Nil {
+		return apierrors.NewBadRequest("sampleRetirementJobId is required")
 	}
 	if input.RequestedByUserAccountID == uuid.Nil {
 		return apierrors.NewBadRequest("requestedByUserAccountId is required")
@@ -920,11 +1100,21 @@ func approvalRequirementsFromPlan(
 	request types.ApprovalRequest,
 	plan types.DeploymentPlan,
 ) []types.ApprovalRequirement {
+	if plan.EffectivePolicy == nil {
+		return nil
+	}
+	return approvalRequirementsFromEffectivePolicy(request, *plan.EffectivePolicy)
+}
+
+func approvalRequirementsFromEffectivePolicy(
+	request types.ApprovalRequest,
+	policy types.EffectivePolicy,
+) []types.ApprovalRequirement {
 	requirements := make(
 		[]types.ApprovalRequirement,
-		len(plan.EffectivePolicy.ApprovalRules),
+		len(policy.ApprovalRules),
 	)
-	for index, rule := range plan.EffectivePolicy.ApprovalRules {
+	for index, rule := range policy.ApprovalRules {
 		requirements[index] = types.ApprovalRequirement{
 			ID:                uuid.New(),
 			OrganizationID:    request.OrganizationID,
@@ -1311,6 +1501,20 @@ func approvalSnapshotForPlan(
 	}
 }
 
+func approvalSnapshotForSampleRetirement(
+	job types.SampleRetirementJob,
+	policy types.EffectivePolicy,
+) types.ApprovalSubjectSnapshot {
+	return types.ApprovalSubjectSnapshot{
+		SubjectType:             types.ApprovalSubjectSampleRetirement,
+		SubjectID:               job.ID,
+		SubjectRevision:         job.Version,
+		SubjectChecksum:         job.PreviewChecksum,
+		EffectivePolicyChecksum: policy.Checksum,
+		SubscriberSetChecksum:   policy.SubscriberSetChecksum,
+	}
+}
+
 func currentApprovalSubjectSnapshot(
 	ctx context.Context,
 	request types.ApprovalRequest,
@@ -1319,6 +1523,52 @@ func currentApprovalSubjectSnapshot(
 	types.ApprovalInvalidationReason,
 	error,
 ) {
+	if request.SubjectType == types.ApprovalSubjectSampleRetirement {
+		job, err := getSampleRetirementJobForApproval(
+			ctx,
+			request.SubjectID,
+			request.OrganizationID,
+		)
+		if errors.Is(err, apierrors.ErrNotFound) {
+			return types.ApprovalSubjectSnapshot{},
+				types.ApprovalInvalidationSampleRetirementChanged,
+				nil
+		}
+		if err != nil {
+			return types.ApprovalSubjectSnapshot{}, "", err
+		}
+		effectivePolicy, issues, err := resolveSampleRetirementApprovalPolicy(
+			ctx,
+			request.OrganizationID,
+		)
+		if err != nil {
+			return types.ApprovalSubjectSnapshot{}, "", err
+		}
+		current := approvalSnapshotForSampleRetirement(*job, effectivePolicy)
+		switch job.State {
+		case types.SampleRetirementJobPreviewed:
+		case types.SampleRetirementJobApplying,
+			types.SampleRetirementJobApplied,
+			types.SampleRetirementJobVerified:
+			if job.ApprovalID == nil ||
+				*job.ApprovalID != request.ID.String() ||
+				job.ApprovalChecksum == nil ||
+				*job.ApprovalChecksum != approvalEvidenceChecksum(request) {
+				return types.ApprovalSubjectSnapshot{},
+					types.ApprovalInvalidationSampleRetirementChanged,
+					nil
+			}
+			current.SubjectRevision = request.SubjectRevision
+		default:
+			return types.ApprovalSubjectSnapshot{},
+				types.ApprovalInvalidationSampleRetirementChanged,
+				nil
+		}
+		if len(issues) > 0 || len(effectivePolicy.ApprovalRules) == 0 {
+			return current, types.ApprovalInvalidationPolicyChanged, nil
+		}
+		return current, "", nil
+	}
 	if request.SubjectType != types.ApprovalSubjectDeploymentPlan {
 		return types.ApprovalSubjectSnapshot{},
 			types.ApprovalInvalidationCampaignMemberUnapproved,
@@ -1363,6 +1613,272 @@ func currentApprovalSubjectSnapshot(
 		return current, types.ApprovalInvalidationPolicyChanged, nil
 	}
 	return current, "", nil
+}
+
+func getSampleRetirementJobForApproval(
+	ctx context.Context,
+	id uuid.UUID,
+	organizationID uuid.UUID,
+) (*types.SampleRetirementJob, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+sampleRetirementJobColumns+`
+		FROM SampleRetirementJob
+		WHERE id = @id
+		  AND organization_id = @organizationID
+		FOR UPDATE
+	`, pgx.NamedArgs{"id": id, "organizationID": organizationID})
+	if err != nil {
+		return nil, fmt.Errorf("lock sample retirement job for approval: %w", err)
+	}
+	job, err := pgx.CollectExactlyOneRow(
+		rows,
+		pgx.RowToStructByName[types.SampleRetirementJob],
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("collect sample retirement job for approval: %w", err)
+	}
+	return &job, nil
+}
+
+func resolveSampleRetirementApprovalPolicy(
+	ctx context.Context,
+	organizationID uuid.UUID,
+) (types.EffectivePolicy, []types.ValidationIssue, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+deploymentPolicyVersionOutputExpr+`
+		FROM DeploymentPolicyBinding binding
+		JOIN DeploymentPolicyVersion version
+		  ON version.id = binding.deployment_policy_version_id
+		 AND version.organization_id = binding.organization_id
+		WHERE binding.organization_id = @organizationID
+		  AND binding.scope_kind = 'organization'
+		  AND binding.scope_id = @organizationID
+		  AND binding.binding_role = 'owner'
+		  AND binding.retired_at IS NULL
+		  AND version.state = 'PUBLISHED'
+		ORDER BY version.id
+	`, pgx.NamedArgs{"organizationID": organizationID})
+	if err != nil {
+		return types.EffectivePolicy{}, nil, fmt.Errorf(
+			"resolve sample retirement approval policy: %w",
+			err,
+		)
+	}
+	versions, err := collectDeploymentPolicyVersions(rows)
+	if err != nil {
+		return types.EffectivePolicy{}, nil, fmt.Errorf(
+			"collect sample retirement approval policy: %w",
+			err,
+		)
+	}
+	effective, issues := governance.ComposeEffectivePolicy(
+		types.PolicySet{
+			AuthorityKind: types.PolicyAuthorityOwner,
+			AuthorityID:   organizationID,
+			Versions:      versions,
+		},
+		nil,
+	)
+	return effective, issues, nil
+}
+
+func approvalAuthorizationContextForRequest(
+	ctx context.Context,
+	request types.ApprovalRequest,
+) (types.ApprovalAuthorizationContext, error) {
+	result := types.ApprovalAuthorizationContext{
+		OrganizationID: request.OrganizationID,
+	}
+	switch request.SubjectType {
+	case types.ApprovalSubjectDeploymentPlan:
+		plan, err := getApprovalPlanForUpdate(
+			ctx,
+			request.SubjectID,
+			request.OrganizationID,
+		)
+		if err != nil {
+			return result, err
+		}
+		result.DeploymentPlanID = request.SubjectID
+		result.EnvironmentID = plan.EnvironmentID
+		result.DeploymentUnitID = plan.DeploymentUnitID
+	case types.ApprovalSubjectSampleRetirement:
+		if _, err := getSampleRetirementJobForApproval(
+			ctx,
+			request.SubjectID,
+			request.OrganizationID,
+		); err != nil {
+			return result, err
+		}
+		result.SampleRetirementJobID = request.SubjectID
+	default:
+		return result, apierrors.NewConflict("approval subject type is unsupported")
+	}
+	return result, nil
+}
+
+func approvalAuditEventForSubject(
+	event types.ControlPlaneAuditEventInput,
+	request types.ApprovalRequest,
+) types.ControlPlaneAuditEventInput {
+	if request.SubjectType == types.ApprovalSubjectSampleRetirement {
+		event.DeploymentPlanID = nil
+		event.DeploymentPlanChecksum = ""
+	}
+	return event
+}
+
+func validateSampleRetirementApprovalBinding(
+	request types.ApprovalRequest,
+	job types.SampleRetirementJob,
+	decisionAt time.Time,
+) (types.SampleRetirementApprovalBinding, error) {
+	if job.State != types.SampleRetirementJobPreviewed {
+		return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+			"sample retirement job is not frozen in PREVIEWED state",
+		)
+	}
+	if request.OrganizationID != job.OrganizationID ||
+		request.SubjectType != types.ApprovalSubjectSampleRetirement ||
+		request.SubjectID != job.ID ||
+		request.SubjectRevision != job.Version ||
+		request.SubjectChecksum != job.PreviewChecksum {
+		return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+			"approval request does not match the frozen sample retirement preview",
+		)
+	}
+	if request.State != types.ApprovalRequestStateApproved {
+		return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+			"sample retirement approval request is not APPROVED",
+		)
+	}
+	if !request.ExpiresAt.After(decisionAt) {
+		return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+			"sample retirement approval request has expired",
+		)
+	}
+	return types.SampleRetirementApprovalBinding{
+		ApprovalRequestID: request.ID,
+		ApprovalChecksum:  approvalEvidenceChecksum(request),
+		RequestRevision:   request.Revision,
+		ExpiresAt:         request.ExpiresAt,
+	}, nil
+}
+
+func ResolveSampleRetirementApproval(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	jobID uuid.UUID,
+	approvalRequestID uuid.UUID,
+) (types.SampleRetirementApprovalBinding, error) {
+	if organizationID == uuid.Nil || jobID == uuid.Nil || approvalRequestID == uuid.Nil {
+		return types.SampleRetirementApprovalBinding{}, apierrors.NewBadRequest(
+			"sample retirement approval identity is required",
+		)
+	}
+	var result types.SampleRetirementApprovalBinding
+	err := RunTx(ctx, func(ctx context.Context) error {
+		job, err := getSampleRetirementJobForApproval(ctx, jobID, organizationID)
+		if err != nil {
+			return err
+		}
+		result, err = resolveSampleRetirementApprovalForJob(
+			ctx,
+			*job,
+			approvalRequestID,
+		)
+		return err
+	})
+	return result, err
+}
+
+func resolveSampleRetirementApprovalForJob(
+	ctx context.Context,
+	job types.SampleRetirementJob,
+	approvalRequestID uuid.UUID,
+) (types.SampleRetirementApprovalBinding, error) {
+	request, err := getApprovalRequestForUpdate(
+		ctx,
+		approvalRequestID,
+		job.OrganizationID,
+	)
+	if err != nil {
+		return types.SampleRetirementApprovalBinding{}, err
+	}
+	effectivePolicy, issues, err := resolveSampleRetirementApprovalPolicy(
+		ctx,
+		job.OrganizationID,
+	)
+	if err != nil {
+		return types.SampleRetirementApprovalBinding{}, err
+	}
+	if len(issues) > 0 || len(effectivePolicy.ApprovalRules) == 0 {
+		return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+			"sample retirement approval policy is invalid",
+		)
+	}
+	current := approvalSnapshotForSampleRetirement(job, effectivePolicy)
+	decisionAt, err := approvalDatabaseTime(ctx)
+	if err != nil {
+		return types.SampleRetirementApprovalBinding{}, err
+	}
+	if job.State != types.SampleRetirementJobPreviewed {
+		if job.State != types.SampleRetirementJobApplying ||
+			request.OrganizationID != job.OrganizationID ||
+			request.SubjectType != types.ApprovalSubjectSampleRetirement ||
+			request.SubjectID != job.ID ||
+			request.SubjectRevision != 1 ||
+			request.SubjectChecksum != job.PreviewChecksum ||
+			request.EffectivePolicyChecksum != effectivePolicy.Checksum ||
+			request.SubscriberSetChecksum != effectivePolicy.SubscriberSetChecksum ||
+			request.State != types.ApprovalRequestStateApproved ||
+			!request.ExpiresAt.After(decisionAt) {
+			return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+				"sample retirement approval binding is no longer current",
+			)
+		}
+		binding := types.SampleRetirementApprovalBinding{
+			ApprovalRequestID: request.ID,
+			ApprovalChecksum:  approvalEvidenceChecksum(*request),
+			RequestRevision:   request.Revision,
+			ExpiresAt:         request.ExpiresAt,
+		}
+		if job.ApprovalID == nil ||
+			*job.ApprovalID != binding.ApprovalRequestID.String() ||
+			job.ApprovalChecksum == nil ||
+			*job.ApprovalChecksum != binding.ApprovalChecksum {
+			return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+				"sample retirement approval binding does not match the job",
+			)
+		}
+		return binding, nil
+	}
+	if reason := detectApprovalInvalidation(
+		*request,
+		current,
+		decisionAt,
+	); reason != "" {
+		return types.SampleRetirementApprovalBinding{}, apierrors.NewConflict(
+			"sample retirement approval request is invalid: " + string(reason),
+		)
+	}
+	return validateSampleRetirementApprovalBinding(*request, job, decisionAt)
+}
+
+func detectApprovalInvalidation(
+	request types.ApprovalRequest,
+	current types.ApprovalSubjectSnapshot,
+	decisionAt time.Time,
+) types.ApprovalInvalidationReason {
+	reason := governance.DetectApprovalInvalidation(request, current, decisionAt)
+	if reason == types.ApprovalInvalidationPlanChanged &&
+		request.SubjectType == types.ApprovalSubjectSampleRetirement {
+		return types.ApprovalInvalidationSampleRetirementChanged
+	}
+	return reason
 }
 
 func ensureApprovalActor(
