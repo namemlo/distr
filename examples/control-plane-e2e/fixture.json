@@ -1,0 +1,360 @@
+{
+  "schemaVersion": "distr.control-plane-e2e-fixture/v1",
+  "fixtureId": "neutral-control-plane-two-targets",
+  "tenant": {
+    "id": "tenant-neutral",
+    "organizationId": "organization-neutral",
+    "environmentId": "environment-validation"
+  },
+  "features": {
+    "operatorControlPlaneV2": true,
+    "executorProtocolV2": true,
+    "organizationEnrollment": true,
+    "environmentEnrollment": true,
+    "v1RegressionEnabled": true,
+    "v2KillSwitchEnabled": true
+  },
+  "releases": {
+    "A": {
+      "componentReleaseId": "component-release-a",
+      "productReleaseId": "product-release-a",
+      "version": "1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configSchemaVersion": "1"
+    },
+    "B": {
+      "componentReleaseId": "component-release-b",
+      "productReleaseId": "product-release-b",
+      "version": "1.1.0",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "configSchemaVersion": "2"
+    }
+  },
+  "product": {
+    "id": "neutral-product",
+    "components": [
+      {
+        "key": "catalog-provider",
+        "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "provides": [
+          "catalog.v1"
+        ],
+        "requires": []
+      },
+      {
+        "key": "gateway-consumer",
+        "artifactDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "provides": [],
+        "requires": [
+          "catalog.v1"
+        ]
+      }
+    ],
+    "capabilities": {
+      "providers": [
+        {
+          "component": "catalog-provider",
+          "capability": "catalog.v1"
+        }
+      ],
+      "consumers": [
+        {
+          "component": "gateway-consumer",
+          "requires": "catalog.v1",
+          "provider": "catalog-provider"
+        }
+      ]
+    },
+    "migration": {
+      "id": "migration-001",
+      "kind": "oci-job",
+      "artifactDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "idempotencyKey": "migration-001:neutral-product:1-to-2",
+      "retrySafe": true,
+      "fromSchemaVersion": "1",
+      "toSchemaVersion": "2"
+    }
+  },
+  "targets": [
+    {
+      "id": "target-alpha",
+      "bindingId": "11111111-1111-4111-8111-111111111111",
+      "adapterId": "adapter-http-alpha",
+      "adapterKind": "http-external",
+      "adapterRevision": "external-http@1.0.0",
+      "executorId": "executor-http-alpha",
+      "observerId": "observer-alpha",
+      "configSnapshotId": "config-alpha-v2",
+      "configChecksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "capabilityChecksum": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "topologyChecksum": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "targetConfig": {
+        "region": "region-one",
+        "servicePort": 18081,
+        "featureProfile": "standard"
+      }
+    },
+    {
+      "id": "target-beta",
+      "bindingId": "22222222-2222-4222-8222-222222222222",
+      "adapterId": "adapter-reference-beta",
+      "adapterKind": "reference",
+      "adapterRevision": "reference@1.0.0",
+      "executorId": "executor-reference-beta",
+      "observerId": "observer-beta",
+      "configSnapshotId": "config-beta-v2",
+      "configChecksum": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "capabilityChecksum": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "topologyChecksum": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "targetConfig": {
+        "region": "region-two",
+        "servicePort": 18082,
+        "featureProfile": "restricted"
+      }
+    }
+  ],
+  "governance": {
+    "policyChecksum": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "approvals": {
+      "required": 2,
+      "separationOfDuties": true,
+      "planChecksumBound": true,
+      "decisions": [
+        {
+          "actor": "release-approver",
+          "decision": "APPROVED"
+        },
+        {
+          "actor": "environment-approver",
+          "decision": "APPROVED"
+        }
+      ]
+    },
+    "maintenanceWindow": {
+      "timezone": "UTC",
+      "notBefore": "2030-01-01T00:00:00.000Z",
+      "notAfter": "2030-01-01T01:00:00.000Z",
+      "freezeActive": false
+    }
+  },
+  "campaign": {
+    "id": "campaign-a-to-b",
+    "revision": 1,
+    "waves": [
+      {
+        "number": 1,
+        "targetIds": [
+          "target-alpha"
+        ],
+        "maximumParallel": 1,
+        "bakeSeconds": 0,
+        "approvalBeforeNextWave": true
+      },
+      {
+        "number": 2,
+        "targetIds": [
+          "target-beta"
+        ],
+        "maximumParallel": 1,
+        "bakeSeconds": 0,
+        "approvalBeforeNextWave": false
+      }
+    ]
+  },
+  "execution": {
+    "protocolVersion": "v2",
+    "fenceToken": "fence-2",
+    "fenceGeneration": 2,
+    "leaseGeneration": 3,
+    "timeoutMs": 5000,
+    "deadline": "2030-01-01T00:05:00.000Z",
+    "priorActiveRelease": "B",
+    "maxLogBytes": 65536
+  },
+  "observation": {
+    "trustMode": "independent",
+    "maximumAgeSeconds": 300,
+    "requireIncreasingSequence": true,
+    "requiredChecks": [
+      "releaseDigest",
+      "configChecksum",
+      "capabilityChecksum",
+      "topologyChecksum",
+      "schemaVersion",
+      "health"
+    ]
+  },
+  "previousState": {
+    "from": "B",
+    "to": "A",
+    "priorActiveRelease": "B"
+  },
+  "flow": {
+    "stages": [
+      "publish-components",
+      "publish-product-dag",
+      "freeze-target-configs",
+      "publish-target-plans",
+      "approve-plans",
+      "admit-window",
+      "publish-campaign",
+      "execute-release-b",
+      "ingest-independent-observations",
+      "activate-release-b",
+      "publish-previous-state-plan",
+      "execute-release-a",
+      "ingest-previous-state-observations",
+      "activate-release-a"
+    ],
+    "releaseHistory": [
+      "A",
+      "B",
+      "A"
+    ]
+  },
+  "failureMatrix": {
+    "schemaVersion": "distr.control-plane-failure-matrix-fixture/v1",
+    "targets": [
+      {
+        "id": "target-alpha",
+        "adapterId": "adapter-http-alpha",
+        "observerId": "observer-alpha",
+        "configChecksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "capabilityChecksum": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "topologyChecksum": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      {
+        "id": "target-beta",
+        "adapterId": "adapter-reference-beta",
+        "observerId": "observer-beta",
+        "configChecksum": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "capabilityChecksum": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "topologyChecksum": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    ],
+    "releases": {
+      "A": {
+        "productReleaseId": "product-release-a",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "B": {
+        "productReleaseId": "product-release-b",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "features": {
+      "operatorControlPlaneV2": true,
+      "executorProtocolV2": true,
+      "organizationEnrollment": true,
+      "environmentEnrollment": true,
+      "v1RegressionEnabled": true,
+      "v2KillSwitchEnabled": true
+    },
+    "execution": {
+      "protocolVersion": "v2",
+      "fenceToken": "fence-2",
+      "fenceGeneration": 2,
+      "leaseGeneration": 3,
+      "timeoutMs": 5000,
+      "deadline": "2030-01-01T00:05:00.000Z",
+      "priorActiveRelease": "B",
+      "maxLogBytes": 65536
+    },
+    "cases": [
+      {
+        "id": "duplicate-dispatch",
+        "targetId": "target-alpha",
+        "idempotencyKey": "target-alpha:plan-b:deploy",
+        "expectedOutcome": "IDEMPOTENT_REPLAY"
+      },
+      {
+        "id": "duplicate-event",
+        "targetId": "target-beta",
+        "sequence": 4,
+        "checksum": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "expectedOutcome": "IDEMPOTENT_REPLAY"
+      },
+      {
+        "id": "pre-ack-crash",
+        "targetId": "target-alpha",
+        "acknowledged": false,
+        "expectedOutcome": "SAFE_REDISPATCH"
+      },
+      {
+        "id": "post-ack-crash",
+        "targetId": "target-beta",
+        "acknowledged": true,
+        "expectedOutcome": "STATUS_RECONCILIATION_REQUIRED"
+      },
+      {
+        "id": "stale-fence",
+        "targetId": "target-alpha",
+        "presentedFenceGeneration": 1,
+        "currentFenceGeneration": 2,
+        "expectedOutcome": "REJECTED_STALE_FENCE"
+      },
+      {
+        "id": "callback-loss",
+        "targetId": "target-beta",
+        "statusQuery": true,
+        "expectedOutcome": "STATUS_RECONCILED"
+      },
+      {
+        "id": "timeout",
+        "targetId": "target-alpha",
+        "elapsedMs": 5001,
+        "timeoutMs": 5000,
+        "expectedOutcome": "TIMED_OUT"
+      },
+      {
+        "id": "cancel",
+        "targetId": "target-beta",
+        "cancellable": true,
+        "expectedOutcome": "CANCELED"
+      },
+      {
+        "id": "restart",
+        "targetId": "target-alpha",
+        "persistedOperation": true,
+        "expectedOutcome": "RESUMED"
+      },
+      {
+        "id": "observer-mismatch",
+        "targetId": "target-beta",
+        "presentedObserverId": "observer-untrusted",
+        "expectedObserverId": "observer-beta",
+        "expectedOutcome": "QUARANTINED"
+      },
+      {
+        "id": "drift-reconcile",
+        "targetId": "target-alpha",
+        "desiredRelease": "B",
+        "observedRelease": "A",
+        "reconcileTo": "B",
+        "expectedOutcome": "RECONCILED"
+      },
+      {
+        "id": "previous-state-b-to-a",
+        "targetId": "target-beta",
+        "from": "B",
+        "to": "A",
+        "priorActiveRelease": "B",
+        "expectedOutcome": "ACTIVE_A"
+      },
+      {
+        "id": "v1-regression",
+        "targetId": "target-alpha",
+        "protocolVersion": "v1",
+        "newFlagsEnabled": false,
+        "expectedOutcome": "V1_UNCHANGED"
+      },
+      {
+        "id": "v2-kill-switch",
+        "targetId": "target-beta",
+        "executorProtocolV2": false,
+        "preserveHistory": true,
+        "expectedOutcome": "ADMISSION_BLOCKED_HISTORY_PRESERVED"
+      }
+    ]
+  }
+}

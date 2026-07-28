@@ -257,6 +257,26 @@ export function buildScaleFixture(parameters) {
         },
       ],
     },
+    loadProof: {
+      planning: {componentCount: 100, runs: 5},
+      wave: {stepCount: 500},
+      events: {durationSeconds: 600, ratePerSecond: 100, concurrentAgents: 100},
+      logs: {totalBytes: 100 * 1024 * 1024, maximumPageBytes: 1024 * 1024},
+      thresholds: {
+        planningP95Ms: 10_000,
+        waveMaximumMs: 30_000,
+        eventAcknowledgementP95Ms: 1_000,
+        logFirstPageMs: 2_000,
+        maximumCrossOrganizationRecords: 0,
+        maximumNonPolicyErrorRateExclusive: 0.01,
+      },
+      remote: {
+        planningPath: '/api/v1/control-plane/load-proof/plans',
+        wavePath: '/api/v1/control-plane/load-proof/waves',
+        eventPath: '/api/executor/v2/load-proof/events',
+        logPath: '/api/v1/control-plane/load-proof/logs',
+      },
+    },
   };
 }
 

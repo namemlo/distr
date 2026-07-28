@@ -1666,3 +1666,35 @@ Use one entry per pull request:
   `/deployments/targets`; legacy target links preserve query parameters and
   fragments. The browser suite blocks non-local traffic and is not staging or
   production proof.
+
+### PR-081 - Neutral end-to-end and performance proof
+
+- Status: Implemented and root-verified for deterministic local contract,
+  failure, and time-compressed load proof. Race and live environment gates
+  remain explicitly open.
+- Upstream base: `bf877e5a` (PR-080 checkpoint).
+- Feature flags: The reference workflow requires
+  `operator_control_plane_v2`; protocol-v2 execution also requires
+  `executor_protocol_v2`, plus the release/planning prerequisites recorded by
+  the fixture.
+- User-facing behavior: None. Adds synthetic, reproducible proof tooling for
+  two separately configured neutral targets, separately registered observers,
+  failure/recovery scenarios, and roadmap-scale workloads.
+- Database changes: None.
+- API changes: None to production routes; proof tooling consumes the existing
+  control-plane contracts.
+- UI changes: None.
+- Agent protocol changes: None; a deterministic reference executor implements
+  the existing signed and fenced protocol-v2 contract.
+- Documentation: Adds the PR-081 fork notes and the neutral-proof reproduction,
+  evidence, security, performance, and limitation guide.
+- Tests: Reference-executor focused tests and vet passed; race remains blocked
+  by CGO/GCC availability. All 28 Node.js tests, all 14 deterministic failure
+  cases, and the exact ten-minute/100-rate simulation passed. Clean mode used
+  fixture-contract fallback because Docker was unavailable; no live
+  remote/Compose, Hub API end-to-end, staging, or production result is claimed.
+- Upstream contribution notes: Community-neutral fixtures and harnesses with no
+  adopter/client names, private paths, provider assumptions, credentials, or
+  proprietary artifacts.
+- Compatibility notes: Existing v1 behavior remains a regression gate. A
+  disabled v2 feature fails closed and does not silently fall back to v1.

@@ -1,0 +1,167 @@
+services:
+  postgres:
+    image: postgres:18.4-alpine3.23
+    pull_policy: never
+    environment:
+      POSTGRES_USER: local
+      POSTGRES_PASSWORD: '${DISTR_CP_POSTGRES_PASSWORD:?run through run.mjs so a secret is generated in memory}'
+      POSTGRES_DB: distr_control_plane
+    ports:
+      - '127.0.0.1:${DISTR_CP_POSTGRES_PORT:-25432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U local -d distr_control_plane']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - control-plane
+
+  external-executor:
+    image: node:26-alpine
+    pull_policy: never
+    working_dir: /workspace
+    command: ['node', 'examples/control-plane-e2e/external-executor.mjs']
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      EXECUTOR_ID: executor-http-alpha
+      TARGET_ID: 11111111-1111-4111-8111-111111111111
+      EXECUTOR_SHARED_SECRET: '${DISTR_CP_EXTERNAL_SECRET:?run through run.mjs}'
+      MAX_LOG_BYTES: 65536
+    ports:
+      - '127.0.0.1:${DISTR_CP_EXTERNAL_EXECUTOR_PORT:-28081}:8080'
+    volumes:
+      - ../..:/workspace:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/ready']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - control-plane
+
+  reference-executor:
+    image: golang:1.26-alpine
+    pull_policy: never
+    working_dir: /workspace
+    command: ['go', 'run', './examples/control-plane-e2e/reference-executor']
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      EXECUTOR_ID: executor-reference-beta
+      TARGET_ID: 22222222-2222-4222-8222-222222222222
+      EXECUTOR_SHARED_SECRET: '${DISTR_CP_REFERENCE_SECRET:?run through run.mjs}'
+      EXECUTOR_PUBLIC_KEYS_JSON: '${DISTR_CP_REFERENCE_PUBLIC_KEYS_JSON:?run through run.mjs}'
+      STATE_FILE: /var/lib/reference-executor/state.json
+      MAX_LOG_BYTES: 65536
+    ports:
+      - '127.0.0.1:${DISTR_CP_REFERENCE_EXECUTOR_PORT:-28082}:8080'
+    volumes:
+      - ../..:/workspace:ro
+      - reference-state:/var/lib/reference-executor
+      - go-build-cache:/root/.cache/go-build
+      - type: bind
+        source: '${DISTR_CP_HOST_GOMODCACHE:?run through run.mjs}'
+        target: /go/pkg/mod
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/ready']
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks:
+      - control-plane
+
+  observer-alpha:
+    image: node:26-alpine
+    pull_policy: never
+    working_dir: /workspace
+    command: ['node', 'examples/control-plane-e2e/observer.mjs']
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      OBSERVER_ID: observer-alpha
+      TARGET_ID: 11111111-1111-4111-8111-111111111111
+      OBSERVER_SHARED_SECRET: '${DISTR_CP_OBSERVER_ALPHA_SECRET:?run through run.mjs}'
+    ports:
+      - '127.0.0.1:${DISTR_CP_OBSERVER_ALPHA_PORT:-28083}:8080'
+    volumes:
+      - ../..:/workspace:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/ready']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - control-plane
+
+  observer-beta:
+    image: node:26-alpine
+    pull_policy: never
+    working_dir: /workspace
+    command: ['node', 'examples/control-plane-e2e/observer.mjs']
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      OBSERVER_ID: observer-beta
+      TARGET_ID: 22222222-2222-4222-8222-222222222222
+      OBSERVER_SHARED_SECRET: '${DISTR_CP_OBSERVER_BETA_SECRET:?run through run.mjs}'
+    ports:
+      - '127.0.0.1:${DISTR_CP_OBSERVER_BETA_PORT:-28084}:8080'
+    volumes:
+      - ../..:/workspace:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/ready']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - control-plane
+
+  hub:
+    image: '${DISTR_CP_HUB_IMAGE:?set a prebuilt local Hub image}'
+    pull_policy: never
+    environment:
+      DATABASE_URL: 'postgres://local:${DISTR_CP_POSTGRES_PASSWORD}@postgres:5432/distr_control_plane?sslmode=disable'
+      JWT_SECRET: '${DISTR_CP_JWT_SECRET:?run through run.mjs}'
+      DISTR_HOST: http://127.0.0.1:8080
+      DISTR_EXPERIMENTAL_FEATURE_FLAGS: operator_control_plane_v2,executor_protocol_v2
+      DISTR_EXECUTION_V2_SIGNING_KEYS_JSON: '${DISTR_CP_SIGNING_KEYS_JSON:?run through run.mjs}'
+      DISTR_EXECUTION_V2_OBSERVER_PUBLIC_KEYS_JSON: '${DISTR_CP_OBSERVER_PUBLIC_KEYS_JSON:?run through run.mjs}'
+      MAILER_TYPE: smtp
+      MAILER_FROM_ADDRESS: fixture@localhost.invalid
+      MAILER_SMTP_HOST: 127.0.0.1
+      MAILER_SMTP_PORT: 1025
+      REGISTRY_ENABLED: 'false'
+      METRICS_ENABLED: 'false'
+      USER_EMAIL_VERIFICATION_REQUIRED: 'false'
+    ports:
+      - '127.0.0.1:${DISTR_CP_HUB_PORT:-28080}:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - control-plane
+
+networks:
+  control-plane:
+    internal: true
+
+volumes:
+  postgres-data:
+  reference-state:
+  go-build-cache:
