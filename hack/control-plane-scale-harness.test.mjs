@@ -190,3 +190,27 @@ test('remote benchmark rejects paths that could redirect authorization to anothe
     /remote benchmark request name or path is invalid/
   );
 });
+
+test('remote benchmark rejects a response containing a visible sentinel resource ID', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-remote-isolation-'));
+  const generated = await generateFixture(directory);
+  const fixture = JSON.parse(generated.text);
+  fixture.benchmark.remoteRequests = [{
+    name: 'fleet-list', path: '/api/v1/control-plane/fleet',
+    forbiddenResourceIds: [fixture.isolationSentinel.target.id],
+  }];
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({items: [{deploymentTargetId: fixture.isolationSentinel.target.id}]}));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  try {
+    await assert.rejects(benchmark(fixture, {
+      runs: 20, pageSize: 100, thresholds: {p95Ms: 2000, p99Ms: 5000},
+      baseURL: new URL(`http://127.0.0.1:${address.port}`), authEnv: 'CONTROL_PLANE_BENCHMARK_TOKEN', timeoutMs: 10000,
+    }), /tenant isolation check found 20 foreign rows/);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+});

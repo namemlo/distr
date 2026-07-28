@@ -34,6 +34,18 @@ func TestOperatorCursorRoundTripsWithinTenantCollectionAndCanonicalFilter(t *tes
 	g.Expect(decoded).To(Equal(&tuple))
 }
 
+func TestCursorDecisionAtExtractsCanonicalPaginationSnapshot(t *testing.T) {
+	scope := CursorScope{OrganizationID: uuid.New(), Collection: types.OperatorCollectionFleet,
+		DecisionAt:    time.Date(2026, time.July, 28, 9, 0, 0, 0, time.UTC),
+		ScopeChecksum: mustFilterChecksum(t, []string{"visible"}), FilterChecksum: mustFilterChecksum(t, []string{"filter"})}
+	value, err := EncodeCursor(scope, CursorTuple{CreatedAt: scope.DecisionAt, ID: uuid.New()})
+	g := NewWithT(t)
+	g.Expect(err).NotTo(HaveOccurred())
+	decisionAt, err := CursorDecisionAt(value)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(decisionAt).To(Equal(scope.DecisionAt))
+}
+
 func TestOperatorCursorRejectsForeignTenantCollectionAndFilter(t *testing.T) {
 	checksum := mustFilterChecksum(t, struct {
 		Status string `json:"status"`

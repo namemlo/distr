@@ -144,7 +144,7 @@ CREATE INDEX OperatorExecution_task_target
   ON Task (organization_id, deployment_target_id, id);
 
 CREATE INDEX OperatorReconciliation_page
-  ON DriftCase (organization_id, updated_at DESC, id DESC);
+  ON DriftCase (organization_id, created_at DESC, id DESC);
 
 CREATE INDEX OperatorAudit_type_page
   ON ControlPlaneAuditEvent (

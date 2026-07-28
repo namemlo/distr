@@ -271,7 +271,7 @@ func GetOperatorReconciliationDetail(
 	var observationHealth string
 	var actionID *uuid.UUID
 	var actionCreatedAt *time.Time
-	var action string
+	var action *string
 	err = internalctx.GetDb(ctx).QueryRow(ctx, operatorReconciliationDetailSQL, pgx.NamedArgs{
 		"organizationId":              filter.OrganizationID,
 		"reconciliationId":            reconciliationID,
@@ -326,9 +326,9 @@ func GetOperatorReconciliationDetail(
 		Expected: desiredArtifactDigest, Actual: observedArtifactDigest,
 		Checksum: detail.Reconciliation.EvidenceChecksum,
 	}
-	if actionID != nil {
+	if actionID != nil && action != nil {
 		detail.Decision = &types.OperatorPlanFact{
-			ID: actionID, Key: "latest", Kind: "reconciliation", Status: action,
+			ID: actionID, Key: "latest", Kind: "reconciliation", Status: *action,
 		}
 	}
 	detail.Evidence = []types.OperatorEvidenceRef{

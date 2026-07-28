@@ -123,6 +123,33 @@ func DecodeCursor(value string, scope CursorScope) (*CursorTuple, error) {
 	return &CursorTuple{CreatedAt: cursor.CreatedAt, ID: cursor.ID}, nil
 }
 
+// CursorDecisionAt extracts the authenticated pagination snapshot instant. The
+// caller must still decode the cursor against its re-authorized CursorScope.
+func CursorDecisionAt(value string) (time.Time, error) {
+	if value == "" || len(value) > MaximumCursorLength {
+		return time.Time{}, invalidCursorError()
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(value)
+	if err != nil {
+		return time.Time{}, invalidCursorError()
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var cursor operatorCursor
+	if err := decoder.Decode(&cursor); err != nil {
+		return time.Time{}, invalidCursorError()
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || cursor.Version != operatorCursorVersion || cursor.DecisionAt.IsZero() {
+		return time.Time{}, invalidCursorError()
+	}
+	canonical, err := json.Marshal(cursor)
+	if err != nil || base64.RawURLEncoding.EncodeToString(canonical) != value {
+		return time.Time{}, invalidCursorError()
+	}
+	return cursor.DecisionAt.UTC(), nil
+}
+
 func CompletePage[T any](
 	items []T,
 	limit int,

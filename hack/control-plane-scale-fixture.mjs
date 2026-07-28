@@ -228,7 +228,7 @@ export function buildScaleFixture(parameters) {
     },
     benchmark: {
       remoteRequests: [
-        {name: 'fleet-list', path: '/api/v1/control-plane/fleet?limit=100'},
+        {name: 'fleet-list', path: '/api/v1/control-plane/fleet?limit=100', forbiddenResourceIds: [sentinelTarget.id]},
         {name: 'campaign-list', path: '/api/v1/control-plane/campaigns?limit=100'},
         {name: 'execution-list', path: '/api/v1/control-plane/executions?limit=100'},
       ],

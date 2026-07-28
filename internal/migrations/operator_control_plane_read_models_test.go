@@ -35,6 +35,9 @@ func TestOperatorControlPlaneMigrationIsIndexesOnlyAndTenantKeysetScoped(t *test
 	} {
 		g.Expect(normalizedSQL).To(ContainSubstring(keyset))
 	}
+	g.Expect(normalizedSQL).To(ContainSubstring(
+		"OperatorReconciliation_page ON DriftCase (organization_id, created_at DESC, id DESC)",
+	))
 }
 
 func TestOperatorControlPlaneMigrationCoversEveryReadModelFilterPath(t *testing.T) {

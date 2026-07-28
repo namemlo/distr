@@ -52,8 +52,8 @@ add UI redirects only after static-route ordering and legacy-link tests pass.
 - Every index is tenant-leading, matching the mandatory organization predicate.
 - Stable keyset pagination avoids offset drift and unbounded responses.
 - Filter-specific indexes increase write amplification and storage. The scale
-  fixture and `EXPLAIN (ANALYZE, BUFFERS)` gate must justify keeping them before
-  production rollout; unused variants can be removed without data migration.
+  fixture is an in-memory contract check; PostgreSQL `EXPLAIN (ANALYZE, BUFFERS)`
+  and database latency thresholds remain unmeasured and deferred before rollout.
 - Cross-domain detail assembly remains query-layer work and must avoid N+1
   access.
 - Legacy deployment bookmarks keep their existing meaning.
@@ -77,7 +77,8 @@ indexes, cover each read-model filter/keyset path, and drop exactly those indexe
 on downgrade. The complete ordered migration lint must accept versions 0 through
 161. Query/API tests cover filter-bound cursors, default and maximum page sizes,
 empty/partial/unknown state, and cross-organization refusal. The deterministic
-scale fixture and benchmark capture query plans for 1,000 targets and enforce
-warm p95 at or below 2 seconds and p99 at or below 5 seconds for page size 100.
+scale fixture checks bounded in-memory workload shape. The optional HTTP
+benchmark measures endpoint timing only; it neither seeds PostgreSQL nor proves
+query plans or database p95/p99 gates, which remain deferred.
 Route tests preserve both legacy deployment URL forms and match static operator
 children before parameterized routes.

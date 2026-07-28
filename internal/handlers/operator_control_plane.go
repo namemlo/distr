@@ -754,7 +754,7 @@ func operatorFleetHandler(dependencies operatorControlPlaneDependencies) http.Ha
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		scopes, err := operatorRequestScopes(r, dependencies)
+		scopes, err := operatorRequestScopesForPage(r, dependencies, request.Cursor)
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return
@@ -783,7 +783,7 @@ func operatorReleaseListHandler(dependencies operatorControlPlaneDependencies) h
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		scopes, err := operatorRequestScopes(r, dependencies)
+		scopes, err := operatorRequestScopesForPage(r, dependencies, request.Cursor)
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return
@@ -812,7 +812,7 @@ func operatorPlanListHandler(dependencies operatorControlPlaneDependencies) http
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		scopes, err := operatorRequestScopes(r, dependencies)
+		scopes, err := operatorRequestScopesForPage(r, dependencies, request.Cursor)
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return
@@ -841,7 +841,7 @@ func operatorCampaignListHandler(dependencies operatorControlPlaneDependencies) 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		scopes, err := operatorRequestScopes(r, dependencies)
+		scopes, err := operatorRequestScopesForPage(r, dependencies, request.Cursor)
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return
@@ -870,7 +870,7 @@ func operatorExecutionListHandler(dependencies operatorControlPlaneDependencies)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		scopes, err := operatorRequestScopes(r, dependencies)
+		scopes, err := operatorRequestScopesForPage(r, dependencies, request.Cursor)
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return
@@ -902,7 +902,7 @@ func operatorReconciliationListHandler(
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		scopes, err := operatorRequestScopes(r, dependencies)
+		scopes, err := operatorRequestScopesForPage(r, dependencies, request.Cursor)
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return
@@ -931,7 +931,7 @@ func operatorAuditListHandler(dependencies operatorControlPlaneDependencies) htt
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		scopes, err := operatorRequestScopes(r, dependencies)
+		scopes, err := operatorRequestScopesForPage(r, dependencies, request.Cursor)
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return
@@ -1416,6 +1416,25 @@ func operatorRequestScopes(
 		CredentialRole: authInfo.CurrentUserRole(),
 		SuperAdmin:     authInfo.IsSuperAdmin(),
 	})
+}
+
+func operatorRequestScopesForPage(
+	r *http.Request,
+	dependencies operatorControlPlaneDependencies,
+	cursor string,
+) (operatorqueries.AuditViewScopes, error) {
+	scopes, err := operatorRequestScopes(r, dependencies)
+	if err != nil || cursor == "" {
+		return scopes, err
+	}
+	decisionAt, err := operatorqueries.CursorDecisionAt(cursor)
+	if err != nil {
+		return operatorqueries.AuditViewScopes{}, err
+	}
+	// Re-authorize the current principal first, then retain the cursor's stable
+	// data snapshot instant for the subsequent scope-bound cursor decode.
+	scopes.DecisionAt = decisionAt
+	return scopes, nil
 }
 
 func writeOperatorReadError(w http.ResponseWriter, r *http.Request, err error) {

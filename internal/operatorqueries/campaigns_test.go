@@ -23,6 +23,8 @@ func TestCampaignPageCursorIsBoundToTenantFiltersAndAuthorizedScopes(t *testing.
 			OrganizationID: organizationID,
 			DecisionAt:     time.Date(2026, time.July, 22, 12, 0, 0, 0, time.UTC),
 			CampaignIDs:    []uuid.UUID{campaignID},
+			CustomerIDs:    []uuid.UUID{}, EnvironmentIDs: []uuid.UUID{},
+			DeploymentUnitIDs: []uuid.UUID{}, ComponentIDs: []uuid.UUID{},
 		},
 		Status:        "RUNNING",
 		EnvironmentID: &environmentID,
@@ -75,6 +77,7 @@ func TestCampaignPageCursorRejectsNonCanonicalScopeCopies(t *testing.T) {
 		DecisionAt:     time.Now().UTC(),
 		EnvironmentIDs: []uuid.UUID{first},
 		CampaignIDs:    []uuid.UUID{second},
+		CustomerIDs:    []uuid.UUID{}, DeploymentUnitIDs: []uuid.UUID{}, ComponentIDs: []uuid.UUID{},
 	}}
 	nonCanonical := base
 	nonCanonical.EnvironmentIDs = []uuid.UUID{first, first}
@@ -95,6 +98,8 @@ func TestNormalizeCampaignPageEnforcesMaximumAndRejectsInvalidIdentity(t *testin
 		OrganizationID:   uuid.New(),
 		DecisionAt:       time.Now().UTC(),
 		OrganizationWide: true,
+		CustomerIDs:      []uuid.UUID{}, EnvironmentIDs: []uuid.UUID{},
+		DeploymentUnitIDs: []uuid.UUID{}, ComponentIDs: []uuid.UUID{}, CampaignIDs: []uuid.UUID{},
 	}}
 
 	_, _, err := NormalizeCampaignPage(filter, types.PageRequest{Limit: 101})

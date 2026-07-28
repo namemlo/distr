@@ -401,6 +401,74 @@ func TestOperatorFleetHandlerResolvesScopesOnceBeforeQueryPagination(t *testing.
 	g.Expect(response.Total).To(Equal(&total))
 }
 
+func TestOperatorFleetHandlerAcceptsNextCursorAfterReauthorizingAtAdvancedTime(t *testing.T) {
+	g := NewWithT(t)
+	userAuth := testChannelAuth()
+	organizationID := *userAuth.CurrentOrgID()
+	environmentID := uuid.New()
+	firstDecisionAt := time.Date(2026, time.July, 28, 9, 0, 0, 0, time.UTC)
+	secondDecisionAt := firstDecisionAt.Add(time.Minute)
+	scopeChecksum, err := operatorqueries.CanonicalFilterChecksum([]string{"environment:" + environmentID.String()})
+	g.Expect(err).NotTo(HaveOccurred())
+	filterChecksum, err := operatorqueries.CanonicalFilterChecksum(struct{}{})
+	g.Expect(err).NotTo(HaveOccurred())
+	cursorScope := operatorqueries.CursorScope{
+		OrganizationID: organizationID, Collection: types.OperatorCollectionFleet,
+		DecisionAt: firstDecisionAt, ScopeChecksum: scopeChecksum, FilterChecksum: filterChecksum,
+	}
+	nextCursor, err := operatorqueries.EncodeCursor(cursorScope, operatorqueries.CursorTuple{
+		CreatedAt: firstDecisionAt.Add(-time.Minute), ID: uuid.New(),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	scopeCalls := 0
+	queryCalls := 0
+	dependencies := operatorControlPlaneDependencies{
+		resolveScopes: func(context.Context, operatorReadPrincipal) (operatorqueries.AuditViewScopes, error) {
+			scopeCalls++
+			decisionAt := firstDecisionAt
+			if scopeCalls == 2 {
+				decisionAt = secondDecisionAt
+			}
+			return operatorqueries.AuditViewScopes{OrganizationID: organizationID, DecisionAt: decisionAt,
+				EnvironmentIDs: []uuid.UUID{environmentID}, CustomerIDs: []uuid.UUID{},
+				DeploymentUnitIDs: []uuid.UUID{}, ComponentIDs: []uuid.UUID{}, CampaignIDs: []uuid.UUID{}}, nil
+		},
+		listFleet: func(_ context.Context, filter types.FleetFilter, page types.PageRequest) (types.OperatorPage[types.FleetRow], error) {
+			queryCalls++
+			if queryCalls == 1 {
+				return types.OperatorPage[types.FleetRow]{NextCursor: nextCursor}, nil
+			}
+			if queryCalls > 2 {
+				_, err := operatorqueries.DecodeCursor(page.Cursor, cursorScope)
+				return types.OperatorPage[types.FleetRow]{}, err
+			}
+			g.Expect(filter.DecisionAt).To(Equal(firstDecisionAt))
+			_, err := operatorqueries.DecodeCursor(page.Cursor, cursorScope)
+			g.Expect(err).NotTo(HaveOccurred())
+			return types.OperatorPage[types.FleetRow]{}, nil
+		},
+	}
+	handler := operatorFleetHandler(dependencies)
+	for _, path := range []string{"/fleet", "/fleet?cursor=" + nextCursor} {
+		request := httptest.NewRequest(http.MethodGet, path, nil).WithContext(auth.Authentication.NewContext(context.Background(), userAuth))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		g.Expect(recorder.Code).To(Equal(http.StatusOK))
+	}
+	g.Expect(scopeCalls).To(Equal(2))
+	g.Expect(queryCalls).To(Equal(2))
+
+	tamperedScope := cursorScope
+	tamperedScope.DecisionAt = firstDecisionAt.Add(time.Second)
+	tamperedCursor, err := operatorqueries.EncodeCursor(tamperedScope, operatorqueries.CursorTuple{CreatedAt: firstDecisionAt.Add(-time.Minute), ID: uuid.New()})
+	g.Expect(err).NotTo(HaveOccurred())
+	request := httptest.NewRequest(http.MethodGet, "/fleet?cursor="+tamperedCursor, nil).WithContext(auth.Authentication.NewContext(context.Background(), userAuth))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+}
+
 func TestOperatorReleaseDetailHandlerScopesOnceAndMapsErrors(t *testing.T) {
 	userAuth := testChannelAuth()
 	organizationID := *userAuth.CurrentOrgID()

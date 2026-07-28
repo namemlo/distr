@@ -204,10 +204,15 @@ function metrics(name, samples) {
   };
 }
 
-function isolationViolations(rows, organizationID) {
-  return rows.filter(
-    (row) => row && typeof row === 'object' && row.organizationId && row.organizationId !== organizationID
-  ).length;
+function isolationViolations(rows, forbiddenResourceIDs) {
+  const forbidden = new Set(forbiddenResourceIDs);
+  const containsForbiddenID = (value) => {
+    if (typeof value === 'string') return forbidden.has(value);
+    if (Array.isArray(value)) return value.some(containsForbiddenID);
+    if (value && typeof value === 'object') return Object.values(value).some(containsForbiddenID);
+    return false;
+  };
+  return rows.filter(containsForbiddenID).length;
 }
 
 async function runFixtureBenchmark(fixture, options) {
@@ -224,7 +229,7 @@ async function runFixtureBenchmark(fixture, options) {
       if (rows.length > options.pageSize) {
         fail(`${workload.name} returned more than ${options.pageSize} rows`);
       }
-      violations += isolationViolations(rows, fixture.primaryOrganization.id);
+      violations += isolationViolations(rows, [fixture.isolationSentinel.target.id]);
       samples.get(workload.name).push(elapsed);
     }
   }
@@ -292,7 +297,12 @@ async function runRemoteBenchmark(fixture, options) {
       if (rows.length > options.pageSize) {
         fail(`remote workload ${request.name} returned more than ${options.pageSize} rows`);
       }
-      violations += isolationViolations(rows, fixture.primaryOrganization.id);
+      const forbiddenResourceIDs = request.forbiddenResourceIds ?? [fixture.isolationSentinel.target.id];
+      if (!Array.isArray(forbiddenResourceIDs) || forbiddenResourceIDs.length === 0 ||
+        !forbiddenResourceIDs.every((id) => typeof id === 'string' && id !== '')) {
+        fail('remote benchmark request forbiddenResourceIds is invalid');
+      }
+      violations += isolationViolations(rows, forbiddenResourceIDs);
       samples.get(request.name).push(performance.now() - started);
     }
   }
