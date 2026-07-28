@@ -204,6 +204,44 @@ async function writeFixture(fixture = failureFixture()) {
   return fixturePath;
 }
 
+async function unusedLoopbackPort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const {port} = server.address();
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  return port;
+}
+
+async function waitForReady(url, child, output) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      assert.fail(`adapter exited before ready: ${output()}`);
+    }
+    try {
+      const response = await fetch(url);
+      if (response.ok) return;
+    } catch {
+      // The child can take a few event-loop turns to bind.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`adapter did not become ready: ${output()}`);
+}
+
+async function stopChild(child) {
+  if (child.exitCode !== null) return;
+  child.kill('SIGTERM');
+  await Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    new Promise((resolve) => setTimeout(resolve, 1000)),
+  ]);
+  if (child.exitCode === null) child.kill('SIGKILL');
+}
+
 test('fixture mode emits all deterministic failure cases with retained checksums', async () => {
   const fixture = await writeFixture();
 
@@ -214,16 +252,18 @@ test('fixture mode emits all deterministic failure cases with retained checksums
   assert.equal(second.status, 0, second.stderr);
   assert.equal(first.stdout, second.stdout);
   const report = JSON.parse(first.stdout);
-  assert.equal(report.schemaVersion, 'distr.control-plane-failure-matrix-report/v1');
+  assert.equal(report.schemaVersion, 'distr.control-plane-failure-matrix-report/v2');
   assert.equal(report.mode, 'fixture');
-  assert.equal(report.status, 'PASS');
+  assert.equal(report.status, 'SIMULATION_ONLY');
+  assert.equal(report.acceptanceEligible, false);
+  assert.equal(report.proofMode, 'NON_ACCEPTANCE_FIXTURE_SIMULATION');
   assert.equal(report.caseCount, 14);
   assert.deepEqual(
     report.results.map(({id}) => id),
     Object.keys(expectedOutcomes)
   );
   for (const result of report.results) {
-    assert.equal(result.status, 'PASS');
+    assert.equal(result.status, 'SIMULATED');
     assert.equal(result.outcome, expectedOutcomes[result.id]);
     assert.match(result.checksum, /^sha256:[0-9a-f]{64}$/);
     assert.ok(result.checks.length > 0);
@@ -254,6 +294,21 @@ test('matrix fails when a case expects an outcome that the contract does not pro
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /callback-loss expected SUCCEEDED_WITHOUT_RECONCILIATION but produced STATUS_RECONCILED/);
+  assert.equal(result.stderr.trim().split(/\r?\n/).length, 1);
+});
+
+test('failed clean execution is not acceptance eligible', async () => {
+  const fixtureValue = failureFixture();
+  fixtureValue.failureMatrix.cases.find(({id}) => id === 'callback-loss').expectedOutcome =
+    'SUCCEEDED_WITHOUT_RECONCILIATION';
+  const fixture = await writeFixture(fixtureValue);
+
+  const result = await run(['--fixture', fixture, '--mode', 'clean']);
+
+  assert.notEqual(result.status, 0);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'FAIL');
+  assert.equal(report.acceptanceEligible, false);
 });
 
 test('matrix redacts secrets from retained case diagnostics', async () => {
@@ -270,25 +325,126 @@ test('matrix redacts secrets from retained case diagnostics', async () => {
   assert.match(result.stdout, /\[REDACTED\]/);
 });
 
-test('HTTP mode rejects non-loopback endpoints before making a request', async () => {
+test('live mode rejects non-loopback endpoints before making a request', async () => {
   const fixture = await writeFixture();
 
-  const result = await run(['--fixture', fixture, '--mode', 'http', '--base-url', 'https://example.com']);
+  const result = await run(['--fixture', fixture, '--mode', 'live', '--base-url', 'https://example.com']);
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /--base-url must use a loopback host/);
 });
 
-test('HTTP mode must be explicit when a base URL is supplied', async () => {
+test('live mode must be explicit when a base URL is supplied', async () => {
   const fixture = await writeFixture();
 
   const result = await run(['--fixture', fixture, '--base-url', 'http://127.0.0.1:1']);
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--base-url requires --mode http/);
+  assert.match(result.stderr, /--base-url requires --mode live/);
 });
 
-test('explicit HTTP mode runs every case against a loopback runtime', async () => {
+test('clean mode injects every failure through the executable loopback adapter', async () => {
+  const fixture = await writeFixture();
+
+  const result = await run(['--fixture', fixture, '--mode', 'clean']);
+
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.mode, 'clean');
+  assert.equal(report.status, 'PASS');
+  assert.equal(report.acceptanceEligible, true);
+  assert.equal(report.proofMode, 'LOOPBACK_EXECUTABLE_FAILURE_INJECTION');
+  assert.equal(report.caseCount, 14);
+  for (const entry of report.results) {
+    assert.equal(entry.status, 'PASS');
+    assert.ok(entry.evidence.actions.length >= 2, entry.id);
+    assert.match(entry.evidence.runtimeChecksum, /^sha256:[0-9a-f]{64}$/);
+  }
+  assert.ok(report.results.find(({id}) => id === 'callback-loss').evidence.actions.includes('reconcile-status'));
+  assert.ok(report.results.find(({id}) => id === 'restart').evidence.actions.includes('restart'));
+  assert.ok(report.results.find(({id}) => id === 'v2-kill-switch').evidence.actions.includes('admit-v2'));
+  assert.deepEqual(report.results.find(({id}) => id === 'v1-regression').evidence.terminalDetails.transitions, [
+    'QUEUED->RUNNING',
+    'RUNNING->SUCCEEDED',
+  ]);
+  assert.equal(report.results.find(({id}) => id === 'v2-kill-switch').evidence.terminalDetails.historyCount, 1);
+});
+
+test('live mode drives the supplied loopback adapter action protocol', async () => {
+  const fixture = await writeFixture();
+  const port = await unusedLoopbackPort();
+  const child = spawn(
+    process.execPath,
+    [matrixScript, '--fixture', fixture, '--mode', 'serve', '--port', String(port)],
+    {
+      cwd: repoRoot,
+      env: {...process.env},
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  );
+  let output = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    output += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    output += chunk;
+  });
+  try {
+    await waitForReady(`http://127.0.0.1:${port}/ready`, child, () => output);
+
+    const result = await run(['--fixture', fixture, '--mode', 'live', '--base-url', `http://127.0.0.1:${port}`]);
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.mode, 'live');
+    assert.equal(report.status, 'PASS');
+    assert.equal(report.acceptanceEligible, true);
+    assert.equal(report.proofMode, 'LOOPBACK_EXECUTABLE_FAILURE_INJECTION');
+    assert.equal(report.results.length, 14);
+  } finally {
+    await stopChild(child);
+  }
+});
+
+test('live mode rejects a loopback adapter loaded with a different fixture', async () => {
+  const fixture = await writeFixture();
+  const differentFixtureValue = failureFixture();
+  differentFixtureValue.fixtureId = 'different-neutral-fixture';
+  const differentFixture = await writeFixture(differentFixtureValue);
+  const port = await unusedLoopbackPort();
+  const child = spawn(
+    process.execPath,
+    [matrixScript, '--fixture', differentFixture, '--mode', 'serve', '--port', String(port)],
+    {
+      cwd: repoRoot,
+      env: {...process.env},
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  );
+  let output = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    output += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    output += chunk;
+  });
+  try {
+    await waitForReady(`http://127.0.0.1:${port}/ready`, child, () => output);
+
+    const result = await run(['--fixture', fixture, '--mode', 'live', '--base-url', `http://127.0.0.1:${port}`]);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /local failure-injection adapter fixture checksum mismatch/);
+  } finally {
+    await stopChild(child);
+  }
+});
+
+test('live mode rejects an outcome-echo endpoint that does not execute adapter actions', async () => {
   const fixture = await writeFixture();
   const requests = [];
   const server = createServer((request, response) => {
@@ -303,9 +459,8 @@ test('explicit HTTP mode runs every case against a loopback runtime', async () =
       response.setHeader('content-type', 'application/json');
       response.end(
         JSON.stringify({
-          outcome: expectedOutcomes[payload.caseId],
+          outcome: expectedOutcomes[payload.caseId] ?? 'IDEMPOTENT_REPLAY',
           checks: [{name: 'local-runtime-contract', passed: true}],
-          diagnostic: `completed ${payload.caseId}`,
         })
       );
     });
@@ -317,32 +472,15 @@ test('explicit HTTP mode runs every case against a loopback runtime', async () =
       '--fixture',
       fixture,
       '--mode',
-      'http',
+      'live',
       '--base-url',
       `http://127.0.0.1:${address.port}`,
     ]);
 
-    assert.equal(result.status, 0, result.stderr);
-    const report = JSON.parse(result.stdout);
-    assert.equal(report.mode, 'http');
-    assert.equal(report.status, 'PASS');
-    assert.equal(requests.length, 14);
-    for (const request of requests) {
-      assert.equal(request.method, 'POST');
-      assert.equal(request.url, '/api/v1/control-plane/failure-matrix');
-      assert.equal(request.payload.expectedOutcome, expectedOutcomes[request.payload.caseId]);
-      assert.match(request.payload.fixtureChecksum, /^sha256:[0-9a-f]{64}$/);
-      assert.equal(request.payload.input.targetId, request.payload.targetId);
-      assert.equal(request.payload.context.target.id, request.payload.targetId);
-      assert.equal(request.payload.context.execution.fenceGeneration, 2);
-      assert.equal(request.payload.context.releases.A.productReleaseId, 'release-a');
-    }
-    const staleFence = requests.find(({payload}) => payload.caseId === 'stale-fence');
-    assert.equal(staleFence.payload.input.presentedFenceGeneration, 1);
-    assert.equal(staleFence.payload.input.currentFenceGeneration, 2);
-    const duplicateEvent = requests.find(({payload}) => payload.caseId === 'duplicate-event');
-    assert.equal(duplicateEvent.payload.input.sequence, 4);
-    assert.equal(duplicateEvent.payload.input.checksum, digest('7'));
+    assert.notEqual(result.status, 0);
+    assert.ok(requests.length > 0);
+    assert.ok(requests.every(({url}) => url === '/api/v1/control-plane/failure-matrix/actions'));
+    assert.match(result.stderr, /local failure-injection adapter response is invalid/);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }

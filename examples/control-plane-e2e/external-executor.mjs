@@ -62,8 +62,8 @@ async function readJSON(request) {
   }
 }
 
-function validateOperation(body, targetId) {
-  const required = ['operationId', 'idempotencyKey', 'intent', 'signature'];
+function validateOperation(body, targetId, now) {
+  const required = ['attemptId', 'operationId', 'idempotencyKey', 'intent', 'signature'];
   for (const field of required) {
     if (!body?.[field]) {
       throw Object.assign(new Error(`${field} is required`), {status: 400, code: 'INVALID_OPERATION'});
@@ -79,6 +79,9 @@ function validateOperation(body, targetId) {
   for (const field of [
     'tenantId',
     'targetId',
+    'attemptId',
+    'operationId',
+    'idempotencyKey',
     'taskId',
     'stepId',
     'planId',
@@ -98,6 +101,37 @@ function validateOperation(body, targetId) {
     throw Object.assign(new Error('intent is bound to a different target'), {
       status: 403,
       code: 'TARGET_MISMATCH',
+    });
+  }
+  if (
+    body.attemptId !== intent.attemptId ||
+    body.operationId !== intent.operationId ||
+    body.idempotencyKey !== intent.idempotencyKey
+  ) {
+    throw Object.assign(new Error('outer operation identity does not match signed intent'), {
+      status: 400,
+      code: 'SIGNED_BINDING_MISMATCH',
+    });
+  }
+  const issuedAt = Date.parse(intent.issuedAt);
+  const expiresAt = Date.parse(intent.expiresAt);
+  if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || issuedAt >= expiresAt) {
+    throw Object.assign(new Error('signed authority interval is invalid'), {
+      status: 400,
+      code: 'INVALID_AUTHORITY_INTERVAL',
+    });
+  }
+  const clock = now().getTime();
+  if (clock < issuedAt) {
+    throw Object.assign(new Error('signed intent is not yet valid'), {
+      status: 401,
+      code: 'INTENT_NOT_YET_VALID',
+    });
+  }
+  if (clock >= expiresAt) {
+    throw Object.assign(new Error('signed intent has expired'), {
+      status: 401,
+      code: 'EXPIRED_INTENT',
     });
   }
   if (!Number.isSafeInteger(intent.fenceGeneration) || intent.fenceGeneration < 1) {
@@ -126,7 +160,13 @@ function validateOperation(body, targetId) {
   }
 }
 
-export function createExternalExecutor({executorId, targetId, sharedSecret, maxLogBytes = 64 * 1024}) {
+export function createExternalExecutor({
+  executorId,
+  targetId,
+  sharedSecret,
+  maxLogBytes = 64 * 1024,
+  now = () => new Date(),
+}) {
   if (!executorId || !targetId || !sharedSecret) {
     throw new Error('executorId, targetId, and sharedSecret are required');
   }
@@ -145,7 +185,7 @@ export function createExternalExecutor({executorId, targetId, sharedSecret, maxL
 
     if (request.method === 'POST' && url.pathname === '/v1/operations') {
       const body = await readJSON(request);
-      validateOperation(body, targetId);
+      validateOperation(body, targetId, now);
       if (!signatureMatches(body.intent, body.signature, sharedSecret)) {
         return send(response, 401, {
           code: 'INVALID_SIGNATURE',
@@ -164,11 +204,24 @@ export function createExternalExecutor({executorId, targetId, sharedSecret, maxL
         }
         return send(response, 200, previous.public);
       }
+      const previousOperation = operations.get(body.operationId);
+      if (previousOperation) {
+        return send(response, 409, {
+          code: 'OPERATION_ID_CONFLICT',
+          message: 'operation ID was reused with different input',
+        });
+      }
 
       const currentFence = fences.get(body.intent.resourceKey) ?? 0;
       if (body.intent.fenceGeneration < currentFence) {
         return send(response, 409, {
           code: 'STALE_FENCE',
+          currentFenceGeneration: currentFence,
+        });
+      }
+      if (body.intent.fenceGeneration === currentFence) {
+        return send(response, 409, {
+          code: 'NON_INCREASING_FENCE',
           currentFenceGeneration: currentFence,
         });
       }
@@ -238,6 +291,7 @@ function main() {
     targetId: process.env.TARGET_ID,
     sharedSecret: process.env.EXECUTOR_SHARED_SECRET,
     maxLogBytes: Number.parseInt(process.env.MAX_LOG_BYTES ?? '65536', 10),
+    now: process.env.EXECUTOR_NOW ? () => new Date(process.env.EXECUTOR_NOW) : () => new Date(),
   });
   server.listen(port, host, () => {
     console.log(`external executor ready on ${host}:${port}`);

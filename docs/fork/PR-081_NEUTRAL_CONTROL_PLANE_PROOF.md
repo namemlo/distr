@@ -95,8 +95,10 @@ The deterministic failure matrix exercises duplicate dispatch and events,
 pre-acknowledgement and post-acknowledgement crash, stale fence, callback loss,
 timeout, cancellation, restart, observer mismatch, drift/reconciliation,
 previous-state B-to-A, v1 compatibility, and the v2 kill switch. A scenario is
-accepted only when its terminal state and retained evidence match the explicit
-expectation; unknown or partial evidence is never projected as success.
+passed in clean/live executable mode only when its terminal state, behavior
+checks, and retained evidence match the explicit expectation. Default fixture
+simulation is explicitly non-acceptance; unknown or partial evidence is never
+projected as success.
 
 ## Performance proof boundary
 
@@ -114,10 +116,13 @@ own recorded measurements; no one subtest substitutes for another section
 
 The load tool currently reports deterministic simulation with time compression,
 in-process networking and fixture storage, simulated authentication, and
-virtual bounded log pages. The failure matrix defaults to deterministic fixture
-mode; its optional HTTP mode is restricted to a loopback proof endpoint. These
-modes verify the harness contract and fail-closed expectations, not live Hub,
-database, executor, observer, or network behavior.
+virtual bounded log pages. The failure matrix defaults to
+`NON_ACCEPTANCE_FIXTURE_SIMULATION`, with `acceptanceEligible: false`. Clean
+mode starts an owned stateful adapter on an ephemeral loopback port; live mode
+drives a separately managed compatible loopback adapter. Those executable modes
+post ordered actions to `/api/v1/control-plane/failure-matrix/actions` without
+sending expected outcomes. They prove the bounded failure-injection behavior,
+not the full Hub, database, executor, observer, or network release flow.
 
 The load tool also supports an explicit loopback-only `measured-live` mode. It
 uses environment-only bearer authentication, forbids redirects and cross-origin
@@ -151,17 +156,21 @@ metadata before classifying the result.
 ## Root-verified result
 
 Integrated local verification passed the reference-executor focused tests and
-vet, all 28 Node.js tests, all 14 deterministic failure cases, and the exact
-ten-minute/100-rate deterministic load simulation.
+vet, all 28 Node.js tests, the exact ten-minute/100-rate deterministic load
+simulation, and both failure-matrix classifications: the default non-acceptance
+fixture simulation evaluated all 14 cases, while a separate clean executable
+loopback run passed all 14 ordered-action cases.
 
 The clean runner exited zero only in `fixture-contract` mode because the Docker
 CLI was unavailable. It recorded `liveStack.started: false`, zero non-local
 calls, completed cleanup, release history A-B-A, and flow checksum
 `sha256:fc31db2b0aa7d56fd08622508be575ccc709a5c473c4efa04ca5005b1a8d8dd0`.
-The failure-matrix fixture/report checksums were respectively
-`sha256:346f08b0bd4904b5d52982538cb89da8510b9228376120e56e5d6f28f073388a`
-and
-`sha256:f476ac360e28da452b4c21c7b3c5a80455a6aae7471fa2eaf7ce4fc360448f3d`.
+The failure-matrix fixture checksum was
+`sha256:346f08b0bd4904b5d52982538cb89da8510b9228376120e56e5d6f28f073388a`.
+The non-acceptance fixture-simulation report checksum was
+`sha256:95e1959d13e0e32a882de2c7c74ccd48ef88ab82259bb968f2fa0942297a09ae`;
+the clean executable loopback report checksum was
+`sha256:cfccb61038cc6771e8f0742643d1cb72684d794751bf041d24efc61a8838613d`.
 
 The time-compressed load result covered 60,000 simulated events with 5.564 ms
 acknowledgement p95 and zero loss, tenant leakage, or non-policy errors.
@@ -170,7 +179,9 @@ Planning p95 was 6.844 ms across five deterministic-checksum runs, and the
 
 Race verification remains blocked first by the repository's CGO-disabled
 default and then by the absence of GCC. No full live remote/Compose, Hub API
-end-to-end, staging, or production result exists.
+end-to-end, staging, or production result exists. The clean failure-matrix proof
+does not resolve that full runtime gate, so overall PR-081 acceptance remains
+pending runtime review.
 
 ## Database, API, UI, and agent impact
 

@@ -40,10 +40,13 @@ When Docker and a prebuilt local Hub image are available, the runner:
 
 1. generates a unique Compose project ID and random secrets in memory;
 2. removes only stale resources under that unique project ID;
-3. starts isolated PostgreSQL, HTTP executor, reference executor, and two observer services;
-4. starts the supplied Hub image on an unused loopback port;
-5. verifies every local readiness endpoint and the deterministic control-plane contract;
-6. stops the Hub and runs `docker compose down -v --remove-orphans` for that project.
+3. starts isolated PostgreSQL and the supplied Hub image, then registers a disposable organization through Hub APIs;
+4. creates the two targets through Hub APIs and starts target-bound executors and observers with those returned IDs;
+5. publishes component releases and the product capability DAG, freezes per-target configs, and publishes approved plans;
+6. records two decisions from separately invited approvers, publishes two-wave campaigns, and drives v2 leases;
+7. executes and completes the live A-to-B-to-A path, sends independent observations, and verifies final A in the fleet read model;
+8. runs `docker compose down -v --remove-orphans`, enumerates project-labelled containers, volumes, and networks, and
+   fails the run if teardown or absence of retained resources cannot be confirmed.
 
 Set `DISTR_CP_HUB_IMAGE` to a prebuilt local Hub image. The runner uses `pull_policy: never` for every service and checks
 that all required images are already present, so it never contacts a remote registry. If Docker, the local images, or
@@ -64,9 +67,12 @@ POST /v1/operations/{id}/cancel
 GET  /v1/operations/{id}/logs
 ```
 
-An operation carries a signed v2 intent and explicit tenant, target, task, step, plan, adapter, resource, and fence
-bindings. The external executor rejects target mismatches, stale fences, non-retry-safe migrations, and conflicting
-idempotency-key reuse. Logs are bounded and redact authorization/signature material.
+An operation carries a signed v2 intent and explicit tenant, target, attempt, operation, idempotency, task, step, plan,
+adapter, resource, fence, issued-at, and expiry bindings. The external executor validates authority against an injected
+clock, handles an exact replay before fencing, and requires every new operation to advance the fence. It rejects outer
+identity rebinding, expired or not-yet-valid authority, target mismatches, non-retry-safe migrations, and conflicting
+idempotency-key reuse. Logs are bounded and redact authorization/signature material. The reference executor trusts the
+public half of the Hub signing pair; independent observer trust uses a separately generated Ed25519 key.
 
 Each observer exposes:
 
@@ -88,8 +94,9 @@ node examples/control-plane-e2e/run.mjs --mode clean
 ```
 
 The Node contract test starts the real local HTTP executor and observer servers on unused loopback ports. It verifies
-idempotency, fencing, cancellation, bounded redacted logs, observer identity/target binding, sequence replay, and the
-frozen 14-case failure-matrix schema.
+idempotency, signed outer-identity binding, authority expiry, strict fencing, cancellation, bounded redacted logs,
+observer identity/target binding, sequence replay, phased live bootstrap with Hub-created target IDs, separated trust
+keys, and the frozen 14-case failure-matrix schema.
 
 ## Safety boundary
 
@@ -97,5 +104,6 @@ frozen 14-case failure-matrix schema.
 - The Compose network is internal and volumes are project-scoped.
 - Secrets are randomly generated in process memory and are neither printed nor written to fixture files.
 - The runner does not read ambient remote-host URLs or credentials.
-- Cleanup names the exact generated Compose project; it never prunes global containers, networks, images, or volumes.
+- Cleanup names the exact generated Compose project; it never prunes global containers, networks, images, or volumes,
+  and success is withheld unless scoped teardown and resource absence are confirmed.
 - Contract-mode output is simulated fixture evidence. A fallback result is not evidence of a running Hub or database.

@@ -95,6 +95,35 @@ test('fixture mode truthfully reports deterministic compressed evidence for ever
   }
 });
 
+test('simulation acceptance fails when the log first-page p95 exceeds its threshold', async () => {
+  const loadModule = await import('./control-plane-load-test.mjs');
+  assert.equal(typeof loadModule.evaluateSimulationAcceptance, 'function');
+  const accepted = loadModule.evaluateSimulationAcceptance(
+    {
+      acceptanceProfileMet: true,
+      planningP95Ms: 10_000,
+      deterministicPlanningChecksum: true,
+      waveP99Ms: 30_000,
+      stableWaveOrder: true,
+      duplicateAdmissions: 0,
+      eventAcknowledgementP95Ms: 1_000,
+      logFirstPageP95Ms: 2_000.001,
+      crossOrganizationRecords: 0,
+      nonPolicyRate: 0,
+    },
+    {
+      planningP95Ms: 10_000,
+      waveMaximumMs: 30_000,
+      eventAcknowledgementP95Ms: 1_000,
+      logFirstPageMs: 2_000,
+      maximumCrossOrganizationRecords: 0,
+      maximumNonPolicyErrorRateExclusive: 0.01,
+    }
+  );
+
+  assert.equal(accepted, false);
+});
+
 test('load proof rejects a fixture that weakens a bounded section 20.9 workload', async () => {
   const generated = await referenceFixture();
   generated.fixture.loadProof.logs.totalBytes -= 1;

@@ -272,6 +272,21 @@ function simulatedSamples(fixture, options) {
   };
 }
 
+export function evaluateSimulationAcceptance(evidence, thresholds) {
+  return (
+    evidence.acceptanceProfileMet &&
+    evidence.planningP95Ms <= thresholds.planningP95Ms &&
+    evidence.deterministicPlanningChecksum &&
+    evidence.waveP99Ms <= thresholds.waveMaximumMs &&
+    evidence.stableWaveOrder &&
+    evidence.duplicateAdmissions === 0 &&
+    evidence.eventAcknowledgementP95Ms <= thresholds.eventAcknowledgementP95Ms &&
+    evidence.logFirstPageP95Ms <= thresholds.logFirstPageMs &&
+    evidence.crossOrganizationRecords <= thresholds.maximumCrossOrganizationRecords &&
+    evidence.nonPolicyRate < thresholds.maximumNonPolicyErrorRateExclusive
+  );
+}
+
 export function simulateLoadProof(fixture, options, fixtureBytes) {
   const startedAt = performance.now();
   validateFixture(fixture);
@@ -289,16 +304,21 @@ export function simulateLoadProof(fixture, options, fixtureBytes) {
   const nonPolicyRate = nonPolicyErrorCount / totalOperations;
   const crossOrganizationRecords = outcome.rawSamples.isolationChecks.reduce((sum, sample) => sum + sample, 0);
   const profile = acceptanceProfile(fixture, options);
-  const passed =
-    profile.met &&
-    planningMetrics.p95Ms <= fixture.loadProof.thresholds.planningP95Ms &&
-    new Set(outcome.planningChecksums).size === 1 &&
-    waveMetrics.p99Ms <= fixture.loadProof.thresholds.waveMaximumMs &&
-    outcome.stableOrder &&
-    outcome.duplicateAdmissions === 0 &&
-    eventMetrics.p95Ms <= fixture.loadProof.thresholds.eventAcknowledgementP95Ms &&
-    crossOrganizationRecords === 0 &&
-    nonPolicyRate < fixture.loadProof.thresholds.maximumNonPolicyErrorRateExclusive;
+  const passed = evaluateSimulationAcceptance(
+    {
+      acceptanceProfileMet: profile.met,
+      planningP95Ms: planningMetrics.p95Ms,
+      deterministicPlanningChecksum: new Set(outcome.planningChecksums).size === 1,
+      waveP99Ms: waveMetrics.p99Ms,
+      stableWaveOrder: outcome.stableOrder,
+      duplicateAdmissions: outcome.duplicateAdmissions,
+      eventAcknowledgementP95Ms: eventMetrics.p95Ms,
+      logFirstPageP95Ms: logMetrics.p95Ms,
+      crossOrganizationRecords,
+      nonPolicyRate,
+    },
+    fixture.loadProof.thresholds
+  );
   const wallClockDurationSeconds = Math.max(0.000001, (performance.now() - startedAt) / 1000);
 
   return {

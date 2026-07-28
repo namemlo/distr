@@ -2,12 +2,13 @@
 
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
+import {createServer} from 'node:http';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const fixtureSchema = 'distr.control-plane-failure-matrix-fixture/v1';
-const reportSchema = 'distr.control-plane-failure-matrix-report/v1';
-const httpPath = '/api/v1/control-plane/failure-matrix';
+const reportSchema = 'distr.control-plane-failure-matrix-report/v2';
+const actionPath = '/api/v1/control-plane/failure-matrix/actions';
 const checksumPattern = /^sha256:[0-9a-f]{64}$/;
 
 export const requiredFailureCases = Object.freeze([
@@ -27,7 +28,7 @@ export const requiredFailureCases = Object.freeze([
   'v2-kill-switch',
 ]);
 
-const producedOutcomes = Object.freeze({
+const simulationOutcomes = Object.freeze({
   'duplicate-dispatch': 'IDEMPOTENT_REPLAY',
   'duplicate-event': 'IDEMPOTENT_REPLAY',
   'pre-ack-crash': 'SAFE_REDISPATCH',
@@ -150,7 +151,7 @@ export function parseFailureMatrixArgs(argv) {
     }
     values.set(option, value);
   }
-  const allowed = new Set(['--fixture', '--mode', '--base-url', '--timeout-ms']);
+  const allowed = new Set(['--fixture', '--mode', '--base-url', '--timeout-ms', '--port']);
   for (const option of values.keys()) {
     if (!allowed.has(option)) {
       fail(`unknown option ${option}`);
@@ -161,20 +162,27 @@ export function parseFailureMatrixArgs(argv) {
     fail('--fixture is required');
   }
   const mode = values.get('--mode') ?? 'fixture';
-  if (!['fixture', 'http'].includes(mode)) {
-    fail('--mode must be fixture or http');
+  if (!['fixture', 'clean', 'live', 'serve'].includes(mode)) {
+    fail('--mode must be fixture, clean, live, or serve');
   }
-  if (mode === 'fixture' && values.has('--base-url')) {
-    fail('--base-url requires --mode http');
+  if (mode !== 'live' && values.has('--base-url')) {
+    fail('--base-url requires --mode live');
   }
-  if (mode === 'http' && !values.has('--base-url')) {
-    fail('--mode http requires --base-url');
+  if (mode === 'live' && !values.has('--base-url')) {
+    fail('--mode live requires --base-url');
+  }
+  if (mode === 'serve' && !values.has('--port')) {
+    fail('--mode serve requires --port');
+  }
+  if (mode !== 'serve' && values.has('--port')) {
+    fail('--port requires --mode serve');
   }
   return {
     fixture: path.resolve(fixture),
     mode,
     baseURL: values.has('--base-url') ? parseBaseURL(values.get('--base-url')) : undefined,
     timeoutMs: parseIntegerOption(values.get('--timeout-ms') ?? '10000', '--timeout-ms', 1, 300000),
+    port: values.has('--port') ? parseIntegerOption(values.get('--port'), '--port', 1, 65535) : undefined,
   };
 }
 
@@ -470,89 +478,648 @@ function fixtureCaseResult(matrix, failureCase) {
     fail(`${failureCase.id} failed check ${failed.name}`);
   }
   return {
-    outcome: producedOutcomes[failureCase.id],
+    outcome: simulationOutcomes[failureCase.id],
     checks,
     diagnostic: failureCase.diagnostic,
   };
 }
 
-function httpCaseInput(failureCase) {
-  const input = {targetId: failureCase.targetId};
-  const fields = {
-    'duplicate-dispatch': ['idempotencyKey'],
-    'duplicate-event': ['sequence', 'checksum'],
-    'pre-ack-crash': ['acknowledged'],
-    'post-ack-crash': ['acknowledged'],
-    'stale-fence': ['presentedFenceGeneration', 'currentFenceGeneration'],
-    'callback-loss': ['statusQuery'],
-    timeout: ['elapsedMs', 'timeoutMs'],
-    cancel: ['cancellable'],
-    restart: ['persistedOperation'],
-    'observer-mismatch': ['presentedObserverId', 'expectedObserverId'],
-    'drift-reconcile': ['observedRelease', 'desiredRelease', 'reconcileTo'],
-    'previous-state-b-to-a': ['from', 'to', 'priorActiveRelease'],
-    'v1-regression': ['protocolVersion', 'newFlagsEnabled'],
-    'v2-kill-switch': ['executorProtocolV2', 'preserveHistory'],
+function createSession(matrix) {
+  return {
+    attempts: {},
+    dispatches: {},
+    resourceFences: {},
+    activeReleases: Object.fromEntries(matrix.targets.map(({id}) => [id, 'A'])),
+    history: [],
+    v2Enabled: matrix.features.executorProtocolV2,
   };
-  for (const field of fields[failureCase.id] ?? []) {
-    input[field] = failureCase[field];
-  }
-  return input;
 }
 
-async function httpCaseResult(fixtureChecksum, matrix, failureCase, options) {
-  const url = new URL(httpPath, options.baseURL);
-  const target = matrix.targets.find(({id}) => id === failureCase.targetId);
+function sessionSnapshot(session) {
+  return {
+    attempts: session.attempts,
+    dispatches: session.dispatches,
+    resourceFences: session.resourceFences,
+    activeReleases: session.activeReleases,
+    history: session.history,
+    v2Enabled: session.v2Enabled,
+  };
+}
+
+function adapterResult(session, action, status, details = {}, httpStatus = 200) {
+  return {
+    httpStatus,
+    body: {
+      schemaVersion: 'distr.control-plane-failure-injection-action/v1',
+      action,
+      status,
+      details,
+      runtimeChecksum: checksum(sessionSnapshot(session)),
+    },
+  };
+}
+
+function exactDispatch(existing, payload) {
+  return (
+    existing.targetId === payload.targetId &&
+    existing.fenceGeneration === payload.fenceGeneration &&
+    existing.inputChecksum === payload.inputChecksum
+  );
+}
+
+function executeAdapterAction(matrix, sessions, request, fixtureChecksum) {
+  const sessionID = nonEmptyString(request?.sessionId, 'local adapter sessionId');
+  const action = nonEmptyString(request?.action, 'local adapter action');
+  const payload = request?.payload ?? {};
+  if (action === 'reset') {
+    if (payload.fixtureChecksum !== fixtureChecksum) {
+      fail('fixture checksum mismatch');
+    }
+    const session = createSession(matrix);
+    sessions.set(sessionID, session);
+    return adapterResult(session, action, 'RESET');
+  }
+  const session = sessions.get(sessionID);
+  if (!session) {
+    fail('local adapter session must be reset before actions');
+  }
+  const persist = (attempt) => {
+    attempt.persisted = JSON.parse(JSON.stringify(attempt));
+  };
+  switch (action) {
+    case 'set-fence': {
+      session.resourceFences[payload.targetId] = payload.generation;
+      return adapterResult(session, action, 'FENCE_SET', {
+        generation: session.resourceFences[payload.targetId],
+      });
+    }
+    case 'dispatch': {
+      const existingID = session.dispatches[payload.idempotencyKey];
+      if (existingID) {
+        const existing = session.attempts[existingID];
+        if (!exactDispatch(existing, payload)) {
+          return adapterResult(session, action, 'CONFLICTING_DUPLICATE', {}, 409);
+        }
+        return adapterResult(session, action, 'REPLAY', {attemptId: existingID});
+      }
+      const currentFence = session.resourceFences[payload.targetId] ?? 0;
+      if (payload.fenceGeneration <= currentFence) {
+        return adapterResult(
+          session,
+          action,
+          'STALE_FENCE',
+          {presented: payload.fenceGeneration, current: currentFence},
+          409
+        );
+      }
+      const attempt = {
+        id: payload.attemptId,
+        targetId: payload.targetId,
+        idempotencyKey: payload.idempotencyKey,
+        inputChecksum: payload.inputChecksum,
+        fenceGeneration: payload.fenceGeneration,
+        acknowledged: false,
+        status: 'CLAIMED',
+        hubStatus: 'RUNNING',
+        runtimeStatus: 'RUNNING',
+        cancellable: payload.cancellable !== false,
+        events: {},
+        lastEventSequence: 0,
+      };
+      session.attempts[attempt.id] = attempt;
+      session.dispatches[payload.idempotencyKey] = attempt.id;
+      session.resourceFences[payload.targetId] = payload.fenceGeneration;
+      persist(attempt);
+      return adapterResult(session, action, 'DISPATCHED', {attemptId: attempt.id});
+    }
+    case 'event': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt) fail('local adapter event attempt is missing');
+      const existing = attempt.events[payload.sequence];
+      if (existing) {
+        if (existing !== payload.checksum) {
+          return adapterResult(session, action, 'CONFLICTING_DUPLICATE', {}, 409);
+        }
+        return adapterResult(session, action, 'REPLAY', {
+          sequence: payload.sequence,
+        });
+      }
+      if (payload.sequence !== attempt.lastEventSequence + 1) {
+        return adapterResult(session, action, 'OUT_OF_ORDER', {}, 409);
+      }
+      attempt.events[payload.sequence] = payload.checksum;
+      attempt.lastEventSequence = payload.sequence;
+      persist(attempt);
+      return adapterResult(session, action, 'EVENT_RECORDED', {
+        sequence: payload.sequence,
+      });
+    }
+    case 'acknowledge': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt) fail('local adapter acknowledgement attempt is missing');
+      attempt.acknowledged = true;
+      attempt.status = 'RUNNING';
+      persist(attempt);
+      return adapterResult(session, action, 'ACKNOWLEDGED');
+    }
+    case 'crash': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt) fail('local adapter crash attempt is missing');
+      if (attempt.acknowledged) {
+        attempt.status = 'UNKNOWN';
+        attempt.hubStatus = 'UNKNOWN';
+        persist(attempt);
+        return adapterResult(session, action, 'STATUS_RECONCILIATION_REQUIRED', {
+          redispatchable: false,
+          reconciliationRequired: true,
+        });
+      }
+      attempt.status = 'PENDING';
+      attempt.hubStatus = 'PENDING';
+      persist(attempt);
+      return adapterResult(session, action, 'SAFE_REDISPATCH', {
+        redispatchable: true,
+        reconciliationRequired: false,
+      });
+    }
+    case 'complete': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt) fail('local adapter completion attempt is missing');
+      attempt.runtimeStatus = payload.status;
+      attempt.status = payload.status;
+      attempt.hubStatus = payload.callbackLoss ? 'UNKNOWN' : payload.status;
+      persist(attempt);
+      return adapterResult(session, action, 'RUNTIME_COMPLETED', {
+        runtimeStatus: attempt.runtimeStatus,
+        hubStatus: attempt.hubStatus,
+      });
+    }
+    case 'reconcile-status': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt) fail('local adapter reconciliation attempt is missing');
+      attempt.hubStatus = attempt.runtimeStatus;
+      persist(attempt);
+      return adapterResult(session, action, 'STATUS_RECONCILED', {
+        status: attempt.hubStatus,
+      });
+    }
+    case 'advance-time': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt) fail('local adapter timeout attempt is missing');
+      if (payload.elapsedMs < payload.timeoutMs) {
+        return adapterResult(session, action, 'RUNNING', {
+          elapsedMs: payload.elapsedMs,
+        });
+      }
+      attempt.status = 'TIMED_OUT';
+      attempt.runtimeStatus = 'TIMED_OUT';
+      attempt.hubStatus = 'TIMED_OUT';
+      persist(attempt);
+      return adapterResult(session, action, 'TIMED_OUT');
+    }
+    case 'cancel': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt) fail('local adapter cancel attempt is missing');
+      if (!attempt.cancellable) {
+        return adapterResult(session, action, 'NOT_CANCELLABLE', {}, 409);
+      }
+      attempt.status = 'CANCELED';
+      attempt.runtimeStatus = 'CANCELED';
+      attempt.hubStatus = 'CANCELED';
+      persist(attempt);
+      return adapterResult(session, action, 'CANCELED');
+    }
+    case 'restart': {
+      const attempt = session.attempts[payload.attemptId];
+      if (!attempt?.persisted) fail('local adapter restart state is missing');
+      session.attempts[payload.attemptId] = JSON.parse(JSON.stringify(attempt.persisted));
+      return adapterResult(session, action, 'RESUMED', {
+        status: session.attempts[payload.attemptId].status,
+        lastEventSequence: session.attempts[payload.attemptId].lastEventSequence,
+      });
+    }
+    case 'observe': {
+      const target = matrix.targets.find(({id}) => id === payload.targetId);
+      if (!target) fail('local adapter observation target is missing');
+      if (payload.observerId !== target.observerId) {
+        return adapterResult(session, action, 'QUARANTINED', {expectedObserverId: target.observerId}, 403);
+      }
+      session.activeReleases[payload.targetId] = payload.observedRelease;
+      const drift = payload.observedRelease !== payload.desiredRelease;
+      return adapterResult(session, action, drift ? 'DRIFT' : 'VERIFIED', {
+        observedRelease: payload.observedRelease,
+        desiredRelease: payload.desiredRelease,
+      });
+    }
+    case 'reconcile-release': {
+      session.activeReleases[payload.targetId] = payload.release;
+      session.history.push({targetId: payload.targetId, release: payload.release});
+      return adapterResult(session, action, 'RECONCILED', {
+        activeRelease: payload.release,
+      });
+    }
+    case 'set-active': {
+      session.activeReleases[payload.targetId] = payload.release;
+      session.history.push({targetId: payload.targetId, release: payload.release});
+      return adapterResult(session, action, 'ACTIVE_SET', {
+        activeRelease: payload.release,
+      });
+    }
+    case 'deploy-release': {
+      session.activeReleases[payload.targetId] = payload.release;
+      session.history.push({targetId: payload.targetId, release: payload.release});
+      return adapterResult(session, action, `ACTIVE_${payload.release}`, {
+        activeRelease: payload.release,
+      });
+    }
+    case 'run-v1': {
+      const allowed = {
+        QUEUED: new Set(['RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED']),
+        RUNNING: new Set(['RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED']),
+      };
+      let state = 'QUEUED';
+      const transitions = [];
+      for (const next of ['RUNNING', 'SUCCEEDED']) {
+        if (!allowed[state]?.has(next)) {
+          return adapterResult(session, action, 'V1_TRANSITION_REJECTED', {
+            transitions,
+            finalStatus: state,
+          });
+        }
+        transitions.push(`${state}->${next}`);
+        state = next;
+      }
+      return adapterResult(session, action, 'V1_EXECUTED', {
+        transitions,
+        finalStatus: state,
+        flagsDisabled: payload.protocolVersion === 'v1' && payload.newFlagsEnabled === false,
+      });
+    }
+    case 'record-history': {
+      session.history.push({kind: 'v2-execution', status: 'SUCCEEDED'});
+      return adapterResult(session, action, 'HISTORY_RECORDED', {
+        historyCount: session.history.length,
+      });
+    }
+    case 'set-v2': {
+      session.v2Enabled = payload.enabled;
+      return adapterResult(session, action, payload.enabled ? 'V2_ENABLED' : 'V2_DISABLED');
+    }
+    case 'admit-v2': {
+      if (!session.v2Enabled) {
+        return adapterResult(session, action, 'ADMISSION_BLOCKED', {historyCount: session.history.length}, 409);
+      }
+      return adapterResult(session, action, 'ADMITTED', {
+        historyCount: session.history.length,
+      });
+    }
+    default:
+      fail(`unknown local adapter action ${action}`);
+  }
+}
+
+async function readJSONRequest(request) {
+  let body = '';
+  for await (const chunk of request) {
+    body += chunk;
+    if (body.length > 1024 * 1024) fail('local adapter request is too large');
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    fail('local adapter request must be valid JSON');
+  }
+}
+
+export function createFailureInjectionAdapter(fixture) {
+  validateFailureFixture(fixture);
+  const matrix = fixture.failureMatrix;
+  const fixtureChecksum = checksum(fixture);
+  const sessions = new Map();
+  return createServer(async (request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.method === 'GET' && request.url === '/ready') {
+      response.end(
+        JSON.stringify({
+          schemaVersion: 'distr.control-plane-failure-injection-adapter/v1',
+          fixtureChecksum,
+        })
+      );
+      return;
+    }
+    if (request.method !== 'POST' || request.url !== actionPath) {
+      response.statusCode = 404;
+      response.end(JSON.stringify({code: 'NOT_FOUND'}));
+      return;
+    }
+    try {
+      const result = executeAdapterAction(matrix, sessions, await readJSONRequest(request), fixtureChecksum);
+      response.statusCode = result.httpStatus;
+      response.end(JSON.stringify(result.body));
+    } catch (error) {
+      response.statusCode = 400;
+      response.end(
+        JSON.stringify({
+          schemaVersion: 'distr.control-plane-failure-injection-error/v1',
+          code: 'INVALID_ACTION',
+          message: redactText(error.message),
+        })
+      );
+    }
+  });
+}
+
+async function callAdapter(baseURL, sessionId, action, payload, timeoutMs) {
   let response;
   try {
-    response = await fetch(url, {
+    response = await fetch(new URL(actionPath, baseURL), {
       method: 'POST',
       headers: {'content-type': 'application/json', accept: 'application/json'},
-      body: JSON.stringify({
-        caseId: failureCase.id,
-        targetId: failureCase.targetId,
-        expectedOutcome: failureCase.expectedOutcome,
-        fixtureChecksum,
-        input: httpCaseInput(failureCase),
-        context: {
-          target,
-          releases: matrix.releases,
-          features: matrix.features,
-          execution: matrix.execution,
-        },
-      }),
-      signal: AbortSignal.timeout(options.timeoutMs),
+      body: JSON.stringify({sessionId, action, payload}),
+      signal: AbortSignal.timeout(timeoutMs),
       redirect: 'error',
     });
   } catch {
-    fail(`local HTTP failure case ${failureCase.id} could not reach the configured loopback runtime`);
+    fail(`local failure-injection adapter could not execute ${action}`);
   }
-  if (!response.ok) {
-    fail(`local HTTP failure case ${failureCase.id} returned HTTP ${response.status}`);
-  }
-  let payload;
+  let result;
   try {
-    payload = await response.json();
+    result = await response.json();
   } catch {
-    fail(`local HTTP failure case ${failureCase.id} did not return JSON`);
+    fail('local failure-injection adapter response is invalid');
   }
-  nonEmptyString(payload?.outcome, `local HTTP failure case ${failureCase.id} outcome`);
+  if (!response.ok && result?.code === 'INVALID_ACTION' && typeof result.message === 'string') {
+    fail(`local failure-injection adapter ${result.message}`);
+  }
   if (
-    !Array.isArray(payload.checks) ||
-    payload.checks.length === 0 ||
-    !payload.checks.every(
-      (item) => typeof item?.name === 'string' && item.name !== '' && typeof item.passed === 'boolean'
-    )
+    result?.schemaVersion !== 'distr.control-plane-failure-injection-action/v1' ||
+    result.action !== action ||
+    typeof result.status !== 'string' ||
+    !checksumPattern.test(result.runtimeChecksum ?? '')
   ) {
-    fail(`local HTTP failure case ${failureCase.id} checks are invalid`);
+    fail('local failure-injection adapter response is invalid');
+  }
+  return {httpStatus: response.status, ...result};
+}
+
+function actionCheck(name, passed) {
+  return {name, passed: Boolean(passed)};
+}
+
+async function executeLiveCase(matrix, failureCase, fixtureChecksum, baseURL, timeoutMs) {
+  const sessionId = `failure-${failureCase.id}`;
+  const actions = [];
+  let final;
+  const run = async (action, payload = {}) => {
+    actions.push(action);
+    final = await callAdapter(baseURL, sessionId, action, payload, timeoutMs);
+    return final;
+  };
+  await run('reset', {fixtureChecksum});
+  const attemptId = `${failureCase.id}-attempt`;
+  const dispatch = (overrides = {}) =>
+    run('dispatch', {
+      attemptId,
+      targetId: failureCase.targetId,
+      idempotencyKey: failureCase.idempotencyKey ?? `${failureCase.id}:dispatch`,
+      inputChecksum: checksum({
+        targetId: failureCase.targetId,
+        release: matrix.releases.B.digest,
+      }),
+      fenceGeneration: matrix.execution.fenceGeneration,
+      cancellable: failureCase.cancellable ?? true,
+      ...overrides,
+    });
+  let outcome = 'UNPROVEN';
+  let checks = [];
+  switch (failureCase.id) {
+    case 'duplicate-dispatch': {
+      const first = await dispatch();
+      const replay = await dispatch();
+      outcome = replay.status === 'REPLAY' ? 'IDEMPOTENT_REPLAY' : 'DUPLICATE_EXECUTED';
+      checks = [
+        actionCheck('first-dispatch-created-attempt', first.status === 'DISPATCHED'),
+        actionCheck('duplicate-dispatch-replayed', replay.status === 'REPLAY'),
+        actionCheck('duplicate-kept-attempt-identity', replay.details.attemptId === attemptId),
+      ];
+      break;
+    }
+    case 'duplicate-event': {
+      await dispatch();
+      for (let sequence = 1; sequence < failureCase.sequence; sequence++) {
+        await run('event', {
+          attemptId,
+          sequence,
+          checksum: checksum(`seed-event-${sequence}`),
+        });
+      }
+      const first = await run('event', {
+        attemptId,
+        sequence: failureCase.sequence,
+        checksum: failureCase.checksum,
+      });
+      const replay = await run('event', {
+        attemptId,
+        sequence: failureCase.sequence,
+        checksum: failureCase.checksum,
+      });
+      outcome = replay.status === 'REPLAY' ? 'IDEMPOTENT_REPLAY' : 'DUPLICATE_EXECUTED';
+      checks = [
+        actionCheck('first-event-recorded', first.status === 'EVENT_RECORDED'),
+        actionCheck('duplicate-event-replayed', replay.status === 'REPLAY'),
+      ];
+      break;
+    }
+    case 'pre-ack-crash': {
+      await dispatch();
+      const crash = await run('crash', {attemptId});
+      outcome = crash.status;
+      checks = [
+        actionCheck('crash-was-before-ack', failureCase.acknowledged === false),
+        actionCheck('attempt-is-redispatchable', crash.details.redispatchable === true),
+      ];
+      break;
+    }
+    case 'post-ack-crash': {
+      await dispatch();
+      await run('acknowledge', {attemptId});
+      const crash = await run('crash', {attemptId});
+      outcome = crash.status;
+      checks = [
+        actionCheck('crash-was-after-ack', failureCase.acknowledged === true),
+        actionCheck('status-reconciliation-required', crash.details.reconciliationRequired === true),
+      ];
+      break;
+    }
+    case 'stale-fence': {
+      await run('set-fence', {
+        targetId: failureCase.targetId,
+        generation: failureCase.currentFenceGeneration,
+      });
+      const stale = await dispatch({
+        fenceGeneration: failureCase.presentedFenceGeneration,
+      });
+      outcome = stale.status === 'STALE_FENCE' ? 'REJECTED_STALE_FENCE' : stale.status;
+      checks = [
+        actionCheck('stale-dispatch-rejected', stale.httpStatus === 409),
+        actionCheck('current-fence-retained', stale.details.current === failureCase.currentFenceGeneration),
+      ];
+      break;
+    }
+    case 'callback-loss': {
+      await dispatch();
+      await run('acknowledge', {attemptId});
+      const completed = await run('complete', {
+        attemptId,
+        status: 'SUCCEEDED',
+        callbackLoss: true,
+      });
+      const reconciled = await run('reconcile-status', {attemptId});
+      outcome = reconciled.status;
+      checks = [
+        actionCheck('callback-loss-left-hub-unknown', completed.details.hubStatus === 'UNKNOWN'),
+        actionCheck('status-query-proved-success', reconciled.details.status === 'SUCCEEDED'),
+      ];
+      break;
+    }
+    case 'timeout': {
+      await dispatch();
+      await run('acknowledge', {attemptId});
+      const timedOut = await run('advance-time', {
+        attemptId,
+        elapsedMs: failureCase.elapsedMs,
+        timeoutMs: failureCase.timeoutMs,
+      });
+      outcome = timedOut.status;
+      checks = [actionCheck('deadline-produced-terminal-timeout', timedOut.status === 'TIMED_OUT')];
+      break;
+    }
+    case 'cancel': {
+      await dispatch();
+      const canceled = await run('cancel', {attemptId});
+      outcome = canceled.status;
+      checks = [
+        actionCheck('cancel-was-runtime-action', actions.includes('cancel')),
+        actionCheck('cancel-became-terminal', canceled.status === 'CANCELED'),
+      ];
+      break;
+    }
+    case 'restart': {
+      await dispatch();
+      await run('acknowledge', {attemptId});
+      await run('event', {
+        attemptId,
+        sequence: 1,
+        checksum: checksum('restart-event'),
+      });
+      const restarted = await run('restart', {attemptId});
+      outcome = restarted.status;
+      checks = [
+        actionCheck('restart-restored-running-state', restarted.details.status === 'RUNNING'),
+        actionCheck('restart-retained-event-sequence', restarted.details.lastEventSequence === 1),
+      ];
+      break;
+    }
+    case 'observer-mismatch': {
+      const observed = await run('observe', {
+        targetId: failureCase.targetId,
+        observerId: failureCase.presentedObserverId,
+        observedRelease: 'A',
+        desiredRelease: 'A',
+      });
+      outcome = observed.status;
+      checks = [
+        actionCheck('mismatched-observer-rejected', observed.httpStatus === 403),
+        actionCheck(
+          'expected-observer-remained-bound',
+          observed.details.expectedObserverId === failureCase.expectedObserverId
+        ),
+      ];
+      break;
+    }
+    case 'drift-reconcile': {
+      await run('set-active', {
+        targetId: failureCase.targetId,
+        release: failureCase.observedRelease,
+      });
+      const drift = await run('observe', {
+        targetId: failureCase.targetId,
+        observerId: matrix.targets.find(({id}) => id === failureCase.targetId).observerId,
+        observedRelease: failureCase.observedRelease,
+        desiredRelease: failureCase.desiredRelease,
+      });
+      const reconciled = await run('reconcile-release', {
+        targetId: failureCase.targetId,
+        release: failureCase.reconcileTo,
+      });
+      outcome = reconciled.status;
+      checks = [
+        actionCheck('independent-observation-detected-drift', drift.status === 'DRIFT'),
+        actionCheck(
+          'reconciliation-activated-desired-release',
+          reconciled.details.activeRelease === failureCase.desiredRelease
+        ),
+      ];
+      break;
+    }
+    case 'previous-state-b-to-a': {
+      await run('set-active', {
+        targetId: failureCase.targetId,
+        release: failureCase.from,
+      });
+      const deployed = await run('deploy-release', {
+        targetId: failureCase.targetId,
+        release: failureCase.to,
+      });
+      outcome = deployed.status;
+      checks = [
+        actionCheck('previous-state-started-at-b', failureCase.from === 'B'),
+        actionCheck('previous-state-ended-at-a', deployed.details.activeRelease === 'A'),
+      ];
+      break;
+    }
+    case 'v1-regression': {
+      const v1 = await run('run-v1', {
+        protocolVersion: failureCase.protocolVersion,
+        newFlagsEnabled: failureCase.newFlagsEnabled,
+      });
+      const transitionsUnchanged =
+        JSON.stringify(v1.details.transitions) === JSON.stringify(['QUEUED->RUNNING', 'RUNNING->SUCCEEDED']);
+      outcome =
+        transitionsUnchanged && v1.details.finalStatus === 'SUCCEEDED' && v1.details.flagsDisabled
+          ? 'V1_UNCHANGED'
+          : 'V1_CHANGED';
+      checks = [
+        actionCheck('v1-transitions-executed', transitionsUnchanged),
+        actionCheck('v1-reached-terminal-success', v1.details.finalStatus === 'SUCCEEDED'),
+        actionCheck('v2-flags-disabled-for-v1', v1.details.flagsDisabled === true),
+      ];
+      break;
+    }
+    case 'v2-kill-switch': {
+      const history = await run('record-history');
+      await run('set-v2', {enabled: failureCase.executorProtocolV2});
+      const admission = await run('admit-v2');
+      outcome =
+        admission.status === 'ADMISSION_BLOCKED' && admission.details.historyCount === history.details.historyCount
+          ? 'ADMISSION_BLOCKED_HISTORY_PRESERVED'
+          : admission.status;
+      checks = [
+        actionCheck('new-v2-admission-blocked', admission.httpStatus === 409),
+        actionCheck('existing-history-preserved', admission.details.historyCount === history.details.historyCount),
+      ];
+      break;
+    }
   }
   return {
-    outcome: payload.outcome,
-    checks: payload.checks.map((item) => ({
-      name: redactText(item.name),
-      passed: item.passed,
-    })),
-    diagnostic: payload.diagnostic,
+    outcome,
+    checks,
+    evidence: {
+      actions,
+      runtimeChecksum: final.runtimeChecksum,
+      terminalStatus: final.status,
+      terminalDetails: final.details,
+    },
   };
 }
 
@@ -560,44 +1127,85 @@ export async function runFailureMatrix(fixture, options = {mode: 'fixture'}) {
   validateFailureFixture(fixture);
   const matrix = fixture.failureMatrix;
   const fixtureChecksum = checksum(fixture);
+  const simulation = (options.mode ?? 'fixture') === 'fixture';
+  if (!simulation && !options.baseURL) {
+    fail('executable failure matrix requires a loopback adapter base URL');
+  }
   const casesByID = new Map(matrix.cases.map((failureCase) => [failureCase.id, failureCase]));
   const results = [];
   for (const id of requiredFailureCases) {
     const failureCase = casesByID.get(id);
-    const actual =
-      options.mode === 'http'
-        ? await httpCaseResult(fixtureChecksum, matrix, failureCase, options)
-        : fixtureCaseResult(matrix, failureCase);
+    const actual = simulation
+      ? fixtureCaseResult(matrix, failureCase)
+      : await executeLiveCase(matrix, failureCase, fixtureChecksum, options.baseURL, options.timeoutMs);
     const checks = [
       ...actual.checks,
       check('expected-outcome-matches', actual.outcome === failureCase.expectedOutcome),
     ];
+    const passed = checks.every(({passed}) => passed);
     const result = {
       id,
       targetId: failureCase.targetId,
-      status: checks.every(({passed}) => passed) ? 'PASS' : 'FAIL',
+      status: passed ? (simulation ? 'SIMULATED' : 'PASS') : 'FAIL',
       outcome: actual.outcome,
       expectedOutcome: failureCase.expectedOutcome,
       checks,
     };
+    if (actual.evidence !== undefined) {
+      result.evidence = actual.evidence;
+    }
     if (actual.diagnostic !== undefined) {
       result.diagnostic = redactText(actual.diagnostic);
     }
     result.checksum = checksum(result);
     results.push(result);
   }
+  const failed = results.some(({status}) => status === 'FAIL');
   const report = {
     schemaVersion: reportSchema,
     fixtureSchema: matrix.schemaVersion,
     fixtureId: fixture.fixtureId ?? fixture.seed,
     fixtureChecksum,
     mode: options.mode ?? 'fixture',
-    status: results.every(({status}) => status === 'PASS') ? 'PASS' : 'FAIL',
+    proofMode: simulation ? 'NON_ACCEPTANCE_FIXTURE_SIMULATION' : 'LOOPBACK_EXECUTABLE_FAILURE_INJECTION',
+    acceptanceEligible: !simulation && !failed,
+    status: failed ? 'FAIL' : simulation ? 'SIMULATION_ONLY' : 'PASS',
     caseCount: results.length,
     results,
   };
   report.reportChecksum = checksum(report);
   return report;
+}
+
+async function listen(server, port) {
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  return server.address();
+}
+
+async function close(server) {
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+}
+
+async function serveAdapter(fixture, port) {
+  const server = createFailureInjectionAdapter(fixture);
+  await listen(server, port);
+  process.stdout.write(
+    `${JSON.stringify({
+      schemaVersion: 'distr.control-plane-failure-injection-adapter/v1',
+      ready: true,
+      host: '127.0.0.1',
+      port,
+    })}\n`
+  );
+  await new Promise((resolve) => {
+    const stop = () => resolve();
+    process.once('SIGTERM', stop);
+    process.once('SIGINT', stop);
+  });
+  await close(server);
 }
 
 async function main() {
@@ -608,10 +1216,28 @@ async function main() {
   } catch {
     fail('fixture must be readable valid JSON');
   }
-  const report = await runFailureMatrix(fixture, options);
+  if (options.mode === 'serve') {
+    await serveAdapter(fixture, options.port);
+    return;
+  }
+  let report;
+  if (options.mode === 'clean') {
+    const server = createFailureInjectionAdapter(fixture);
+    const address = await listen(server, 0);
+    try {
+      report = await runFailureMatrix(fixture, {
+        ...options,
+        baseURL: new URL(`http://127.0.0.1:${address.port}`),
+      });
+    } finally {
+      await close(server);
+    }
+  } else {
+    report = await runFailureMatrix(fixture, options);
+  }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  if (report.status !== 'PASS') {
-    for (const result of report.results.filter(({status}) => status !== 'PASS')) {
+  if (report.status === 'FAIL') {
+    for (const result of report.results.filter(({status}) => status === 'FAIL')) {
       process.stderr.write(`${result.id} expected ${result.expectedOutcome} but produced ${result.outcome}\n`);
     }
     process.exitCode = 1;

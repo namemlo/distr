@@ -2,15 +2,115 @@ import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createHmac} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
+import {createServer as createHttpServer} from 'node:http';
 import {createServer} from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
 import {fileURLToPath} from 'node:url';
+import {createExternalExecutor} from './external-executor.mjs';
+import {bootstrapLiveHub, createRuntimeKeyMaterial} from './run.mjs';
 
 const fixtureDir = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = path.resolve(fixtureDir, '../..');
 const node = process.execPath;
 const executorSecretForTest = 'executor-memory-secret';
+
+test('runtime trust uses the Hub signing public key and a separate observer key', () => {
+  const material = createRuntimeKeyMaterial();
+  assert.equal(material.signing.publicKey.length, 32);
+  assert.equal(material.observer.publicKey.length, 32);
+  assert.notDeepEqual(material.signing.publicKey, material.observer.publicKey);
+  assert.notEqual(material.signingVersionFingerprint, material.observerKeyFingerprint);
+});
+
+test('live bootstrap captures Hub-created target IDs before target-bound services start', async () => {
+  const fixture = JSON.parse(await readFile(path.join(fixtureDir, 'fixture.json'), 'utf8'));
+  const calls = [];
+  let targetNumber = 0;
+  let approverNumber = 0;
+  const server = createHttpServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(chunk);
+    }
+    calls.push({method: request.method, path: request.url, authorization: request.headers.authorization});
+    let body = {};
+    let status = 200;
+    switch (`${request.method} ${request.url}`) {
+      case 'POST /api/v1/auth/login':
+        body = {token: 'operator-token'};
+        break;
+      case 'GET /api/v1/organization':
+        body = {id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'fixture'};
+        break;
+      case 'POST /api/v1/applications':
+        body = {id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'};
+        break;
+      case 'POST /api/v1/user-accounts':
+        approverNumber += 1;
+        body = {
+          user: {id: `10000000-0000-4000-8000-00000000000${approverNumber}`},
+          inviteUrl: `http://fixture.invalid/join?jwt=invite-${approverNumber}`,
+        };
+        break;
+      case 'POST /api/v1/auth/invite/accept':
+        body = {token: `approver-${approverNumber}`};
+        break;
+      case 'POST /api/v1/authorization/groups':
+        body = {id: `20000000-0000-4000-8000-00000000000${approverNumber}`};
+        break;
+      case 'POST /api/v1/environments':
+        body = {id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'};
+        break;
+      case 'POST /api/v1/lifecycles':
+        body = {id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'};
+        break;
+      case 'POST /api/v1/channels':
+        body = {id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'};
+        break;
+      case 'POST /api/v1/deployment-targets':
+        targetNumber += 1;
+        body = {id: `00000000-0000-4000-8000-00000000000${targetNumber}`};
+        break;
+      case 'POST /api/v1/agent/login':
+        body = {token: `agent-${targetNumber}`};
+        break;
+      default:
+        if (request.url.endsWith('/access-request')) {
+          body = {targetSecret: `target-secret-${targetNumber}`};
+        } else if (request.url.endsWith('/members')) {
+          body = {id: `30000000-0000-4000-8000-00000000000${approverNumber}`};
+        } else if (request.url === '/api/v1/auth/register') {
+          body = {};
+          status = 201;
+        } else {
+          status = 404;
+          body = {error: 'unexpected route'};
+        }
+    }
+    const encoded = JSON.stringify(body);
+    response.writeHead(status, {'Content-Type': 'application/json'});
+    response.end(encoded);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const topology = await bootstrapLiveHub({
+      hubURL: `http://127.0.0.1:${server.address().port}`,
+      runId: 'test',
+      fixture,
+    });
+    assert.deepEqual(
+      topology.targets.map(({hubTargetId}) => hubTargetId),
+      ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002']
+    );
+    assert.equal(calls.filter((call) => call.path === '/api/v1/agent/login').length, 2);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 function stableStringify(value) {
   if (Array.isArray(value)) {
@@ -87,6 +187,7 @@ async function stopFixtureServer(child) {
 
 function operation(overrides = {}) {
   const body = {
+    attemptId: 'attempt-alpha-a',
     operationId: 'operation-alpha-a',
     idempotencyKey: 'target-alpha:plan-a:deploy',
     intent: {
@@ -94,13 +195,16 @@ function operation(overrides = {}) {
       tenantId: 'tenant-neutral',
       targetId: 'target-alpha',
       taskId: 'task-alpha-a',
+      attemptId: 'attempt-alpha-a',
+      operationId: 'operation-alpha-a',
+      idempotencyKey: 'target-alpha:plan-a:deploy',
       stepId: 'deploy',
       planId: 'plan-alpha-a',
       adapterRevision: 'external-http@1.0.0',
       resourceKey: 'deployment-target:target-alpha',
       fenceGeneration: 2,
-      issuedAt: '2029-12-31T23:59:00.000Z',
-      expiresAt: '2030-01-01T00:05:00.000Z',
+      issuedAt: '2020-01-01T00:00:00.000Z',
+      expiresAt: '2099-01-01T00:00:00.000Z',
       payload: {
         releaseDigest: `sha256:${'b'.repeat(64)}`,
         configChecksum: `sha256:${'1'.repeat(64)}`,
@@ -332,9 +436,16 @@ test('HTTP external executor is target-bound, fenced, idempotent, cancellable, a
       headers,
       body: JSON.stringify(
         operation({
+          attemptId: 'attempt-stale',
           operationId: 'operation-stale',
           idempotencyKey: 'target-alpha:plan-stale:deploy',
-          intent: {...operation().intent, fenceGeneration: 1},
+          intent: {
+            ...operation().intent,
+            attemptId: 'attempt-stale',
+            operationId: 'operation-stale',
+            idempotencyKey: 'target-alpha:plan-stale:deploy',
+            fenceGeneration: 1,
+          },
         })
       ),
     });
@@ -346,10 +457,14 @@ test('HTTP external executor is target-bound, fenced, idempotent, cancellable, a
       headers,
       body: JSON.stringify(
         operation({
+          attemptId: 'attempt-invalid-signature',
           operationId: 'operation-invalid-signature',
           idempotencyKey: 'target-alpha:plan-invalid-signature:deploy',
           intent: {
             ...operation().intent,
+            attemptId: 'attempt-invalid-signature',
+            operationId: 'operation-invalid-signature',
+            idempotencyKey: 'target-alpha:plan-invalid-signature:deploy',
             taskId: 'task-invalid-signature',
             planId: 'plan-invalid-signature',
             fenceGeneration: 3,
@@ -362,10 +477,14 @@ test('HTTP external executor is target-bound, fenced, idempotent, cancellable, a
     assert.equal((await invalidSignature.json()).code, 'INVALID_SIGNATURE');
 
     const longRunning = operation({
+      attemptId: 'attempt-cancel',
       operationId: 'operation-cancel',
       idempotencyKey: 'target-alpha:plan-cancel:deploy',
       intent: {
         ...operation().intent,
+        attemptId: 'attempt-cancel',
+        operationId: 'operation-cancel',
+        idempotencyKey: 'target-alpha:plan-cancel:deploy',
         taskId: 'task-cancel',
         planId: 'plan-cancel',
         fenceGeneration: 4,
@@ -396,6 +515,88 @@ test('HTTP external executor is target-bound, fenced, idempotent, cancellable, a
     assert.ok(!output().includes(secret));
   } finally {
     await stopFixtureServer(child);
+  }
+});
+
+test('external executor binds outer identities, rejects expired authority, and advances fences strictly', async () => {
+  const fixedNow = new Date('2030-01-01T00:01:00.000Z');
+  const server = createExternalExecutor({
+    executorId: 'executor-http-alpha',
+    targetId: 'target-alpha',
+    sharedSecret: executorSecretForTest,
+    now: () => fixedNow,
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const baseURL = `http://127.0.0.1:${server.address().port}`;
+  const headers = {
+    Authorization: `Bearer ${executorSecretForTest}`,
+    'Content-Type': 'application/json',
+  };
+  const post = (body) =>
+    fetch(`${baseURL}/v1/operations`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+  try {
+    const first = await post(operation());
+    assert.equal(first.status, 202);
+
+    const rebound = operation({
+      operationId: 'operation-rebound',
+      idempotencyKey: 'target-alpha:plan-rebound:deploy',
+      intent: operation().intent,
+    });
+    const reboundResponse = await post(rebound);
+    assert.equal(reboundResponse.status, 400);
+    assert.equal((await reboundResponse.json()).code, 'SIGNED_BINDING_MISMATCH');
+
+    const expiredIntent = {
+      ...operation().intent,
+      operationId: 'operation-expired',
+      idempotencyKey: 'target-alpha:plan-expired:deploy',
+      attemptId: 'attempt-expired',
+      taskId: 'task-expired',
+      planId: 'plan-expired',
+      fenceGeneration: 3,
+      issuedAt: '2029-12-31T23:50:00.000Z',
+      expiresAt: '2029-12-31T23:55:00.000Z',
+    };
+    const expired = await post(
+      operation({
+        attemptId: expiredIntent.attemptId,
+        operationId: expiredIntent.operationId,
+        idempotencyKey: expiredIntent.idempotencyKey,
+        intent: expiredIntent,
+      })
+    );
+    assert.equal(expired.status, 401);
+    assert.equal((await expired.json()).code, 'EXPIRED_INTENT');
+
+    const equalFenceIntent = {
+      ...operation().intent,
+      operationId: 'operation-equal-fence',
+      idempotencyKey: 'target-alpha:plan-equal-fence:deploy',
+      attemptId: 'attempt-equal-fence',
+      taskId: 'task-equal-fence',
+      planId: 'plan-equal-fence',
+    };
+    const equalFence = await post(
+      operation({
+        attemptId: equalFenceIntent.attemptId,
+        operationId: equalFenceIntent.operationId,
+        idempotencyKey: equalFenceIntent.idempotencyKey,
+        intent: equalFenceIntent,
+      })
+    );
+    assert.equal(equalFence.status, 409);
+    assert.equal((await equalFence.json()).code, 'NON_INCREASING_FENCE');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

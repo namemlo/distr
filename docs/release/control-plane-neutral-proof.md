@@ -30,20 +30,26 @@ worktree on 2026-07-28:
 - That clean run was not a live-stack result:
   `liveStack.started` was `false`, and the report identified the unavailable
   Docker CLI as the blocker.
-- The deterministic failure matrix accepted all 14 expected cases. Its
-  canonical fixture checksum was
-  `sha256:346f08b0bd4904b5d52982538cb89da8510b9228376120e56e5d6f28f073388a`;
-  its report checksum was
-  `sha256:f476ac360e28da452b4c21c7b3c5a80455a6aae7471fa2eaf7ce4fc360448f3d`.
+- The default failure-matrix fixture simulation evaluated all 14 expected cases
+  but reported `SIMULATION_ONLY`, `acceptanceEligible: false`, and
+  `NON_ACCEPTANCE_FIXTURE_SIMULATION`. Its report checksum was
+  `sha256:95e1959d13e0e32a882de2c7c74ccd48ef88ab82259bb968f2fa0942297a09ae`.
+- A separate clean failure-matrix run started an owned stateful adapter on an
+  ephemeral loopback port and executed the ordered actions for all 14 cases. It
+  passed with `LOOPBACK_EXECUTABLE_FAILURE_INJECTION` and report checksum
+  `sha256:cfccb61038cc6771e8f0742643d1cb72684d794751bf041d24efc61a8838613d`.
+  Both reports used fixture checksum
+  `sha256:346f08b0bd4904b5d52982538cb89da8510b9228376120e56e5d6f28f073388a`.
 - The exact ten-minute/100-events-per-second deterministic simulation accepted
   60,000 events. Acknowledgement p95 was 5.564 ms with zero accepted-event
   loss, cross-organization leakage, or non-policy errors. Five-run
   100-component planning p95 was 6.844 ms with a stable checksum; the 500-step
   wave completed in 20.5 ms with stable order and no duplicate admission.
 
-These are contract and time-compressed simulation results. No full live remote
-run, live Compose run, Hub API end-to-end flow, staging run, or production run
-was completed or claimed.
+These are contract, local loopback failure-injection, and time-compressed
+simulation results. The executable matrix does not substitute for the full
+Hub/Docker release-flow gate. No full live remote run, live Compose run, Hub API
+end-to-end flow, staging run, or production run was completed or claimed.
 
 ## Reproducible commands
 
@@ -53,9 +59,22 @@ Run from the repository root with the toolchain pinned by `mise.toml`:
 go test ./examples/control-plane-e2e/reference-executor -count=1 -race
 node examples/control-plane-e2e/run.mjs --mode clean
 node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json
+node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json --mode clean
 node hack/control-plane-scale-fixture.mjs --targets 1000 --placements 649 --agents 100 --components 100 --steps 500 --out work/control-plane-scale.json
 node hack/control-plane-load-test.mjs --fixture work/control-plane-scale.json --duration 10m --rate 100
 rg -n -i '<approved-forbidden-term-regex>' examples/control-plane-e2e hack/control-plane-failure-matrix.mjs hack/control-plane-load-test.mjs hack/control-plane-scale-fixture.mjs
+```
+
+The failure-matrix command without `--mode` is a non-acceptance fixture
+simulation. `--mode clean` starts an owned stateful loopback adapter, executes
+the action sequence for every case, and closes the adapter.
+
+To exercise the same executable proof through separately managed processes,
+start the loopback adapter and then run live mode:
+
+```powershell
+node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json --mode serve --port 19081
+node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json --mode live --base-url http://127.0.0.1:19081
 ```
 
 Replace the placeholder with the review-approved adopter, client, product,
@@ -73,7 +92,8 @@ Retain machine-readable stdout and byte checksums:
 
 ```powershell
 node examples/control-plane-e2e/run.mjs --mode clean --json > work/control-plane-e2e-result.json
-node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json > work/control-plane-failure-result.json
+node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json > work/control-plane-failure-simulation-result.json
+node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json --mode clean > work/control-plane-failure-clean-result.json
 node hack/control-plane-load-test.mjs --fixture work/control-plane-scale.json --duration 10m --rate 100 > work/control-plane-load-result.json
 Get-ChildItem work/control-plane-*.json | ForEach-Object { "$($_.Name) $((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant())" } | Set-Content -Encoding utf8NoBOM work/control-plane-sha256.txt
 ```
@@ -310,12 +330,20 @@ to live evidence or prove that an unrecorded external dependency participated.
   falls back to fixture-contract mode and can still exit successfully. Inspect
   `proofMode`, `liveStack.started`, `liveStack.blocker`, `nonLocalCalls`, and
   cleanup metadata before classifying the result.
-- The failure matrix defaults to fixture mode. Its HTTP mode posts one case at
-  a time to `/api/v1/control-plane/failure-matrix`, a proof endpoint that a
-  compatible loopback test server must explicitly provide. It rejects
-  non-loopback base URLs and disables redirects. Its report schema is
-  `distr.control-plane-failure-matrix-report/v1` and retains fixture identity,
-  mode, status, ordered per-case checks/checksums, and a report checksum.
+- The failure matrix emits
+  `distr.control-plane-failure-matrix-report/v2`. Its default fixture mode only
+  simulates expected outcomes and is explicitly non-acceptance. Clean mode
+  starts an owned stateful adapter on an ephemeral loopback port; live mode
+  calls a separately managed compatible loopback adapter. Both executable modes
+  post ordered actions to
+  `/api/v1/control-plane/failure-matrix/actions`, without sending the expected
+  outcome, and retain terminal state, behavior checks, runtime-state checksums,
+  and per-case/report checksums. Live mode rejects non-loopback URLs, redirects,
+  URL credentials, a mismatched fixture, and outcome-echo responses.
+- A passing clean/live failure-matrix report is executable proof for the 14
+  bounded failure-injection scenarios only. It does not establish the full
+  Hub/Docker release planning, campaign, execution, or observation flow, and it
+  must not be classified as overall PR-081 acceptance before runtime review.
 - The load proof reports `mode: simulation`, `measurement:
 deterministic-simulation`, an in-process network/database, simulated
   authentication, virtual bounded log pages, and time compression. Its
