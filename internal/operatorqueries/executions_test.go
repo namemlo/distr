@@ -30,7 +30,7 @@ func TestNormalizeExecutionQueryDefaultsPageAndBindsCursorToTenantScopeAndFilter
 		Status:              "RUNNING",
 	}
 
-	normalized, err := NormalizeExecutionQuery(filter, scopes, types.PageRequest{})
+	normalized, err := NormalizeExecutionQuery(filter, scopes, types.PageRequest{}, testCursorCodec())
 	g := NewWithT(t)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(normalized.Limit).To(Equal(types.OperatorDefaultPageLimit))
@@ -41,7 +41,7 @@ func TestNormalizeExecutionQueryDefaultsPageAndBindsCursorToTenantScopeAndFilter
 	g.Expect(normalized.CursorScope.ScopeChecksum).To(Equal(scopes.Checksum()))
 	g.Expect(normalized.CursorScope.FilterChecksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
 
-	encoded, err := EncodeCursor(normalized.CursorScope, CursorTuple{
+	encoded, err := EncodeCursor(testCursorCodec(), normalized.CursorScope, CursorTuple{
 		CreatedAt: now.Add(-time.Minute),
 		ID:        uuid.New(),
 	})
@@ -50,6 +50,7 @@ func TestNormalizeExecutionQueryDefaultsPageAndBindsCursorToTenantScopeAndFilter
 		filter,
 		scopes,
 		types.PageRequest{Cursor: encoded, Limit: 100},
+		testCursorCodec(),
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(normalized.Cursor).NotTo(BeNil())
@@ -57,7 +58,7 @@ func TestNormalizeExecutionQueryDefaultsPageAndBindsCursorToTenantScopeAndFilter
 
 	foreign := scopes
 	foreign.OrganizationID = uuid.New()
-	_, err = NormalizeExecutionQuery(filter, foreign, types.PageRequest{Cursor: encoded})
+	_, err = NormalizeExecutionQuery(filter, foreign, types.PageRequest{Cursor: encoded}, testCursorCodec())
 	g.Expect(errors.Is(err, apierrors.ErrForbidden)).To(BeTrue())
 }
 
@@ -89,14 +90,14 @@ func TestNormalizeExecutionQueryRejectsInvalidStatusTimeRangeAndEmptyScope(t *te
 		t.Run(name, func(t *testing.T) {
 			filter := base
 			mutate(&filter)
-			_, err := NormalizeExecutionQuery(filter, scopes, types.PageRequest{})
+			_, err := NormalizeExecutionQuery(filter, scopes, types.PageRequest{}, testCursorCodec())
 			NewWithT(t).Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 		})
 	}
 
 	empty := scopes
 	empty.OrganizationWide = false
-	_, err := NormalizeExecutionQuery(base, empty, types.PageRequest{})
+	_, err := NormalizeExecutionQuery(base, empty, types.PageRequest{}, testCursorCodec())
 	NewWithT(t).Expect(errors.Is(err, apierrors.ErrForbidden)).To(BeTrue())
 }
 
@@ -116,7 +117,7 @@ func TestCompleteExecutionPageKeepsRetriesDistinctAndBuildsStableCursor(t *testi
 		FilterChecksum: "sha256:" + strings.Repeat("1", 64),
 	}
 
-	page, err := CompleteExecutionPage(rows, 2, scope)
+	page, err := CompleteExecutionPage(rows, 2, scope, testCursorCodec())
 	g := NewWithT(t)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(page.Items).To(HaveLen(2))
@@ -124,7 +125,7 @@ func TestCompleteExecutionPageKeepsRetriesDistinctAndBuildsStableCursor(t *testi
 	g.Expect(page.Items[1].AttemptNumber).To(Equal(2))
 	g.Expect(page.NextCursor).NotTo(BeEmpty())
 
-	cursor, err := DecodeCursor(page.NextCursor, scope)
+	cursor, err := DecodeCursor(testCursorCodec(), page.NextCursor, scope)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(cursor.CreatedAt).To(Equal(rows[1].CreatedAt))
 	g.Expect(cursor.ID).To(Equal(rows[1].ID))
@@ -210,7 +211,7 @@ func TestListOperatorExecutionsQueriesOnceAndCompletesPage(t *testing.T) {
 	page, err := ListOperatorExecutions(
 		context.Background(), repository,
 		types.ExecutionFilter{OperatorScopeFilter: types.OperatorScopeFilter{OrganizationID: organizationID}},
-		scopes, types.PageRequest{Limit: 1},
+		scopes, types.PageRequest{Limit: 1}, testCursorCodec(),
 	)
 	g := NewWithT(t)
 	g.Expect(err).NotTo(HaveOccurred())

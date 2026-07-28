@@ -63,6 +63,11 @@ test('scale fixture is deterministic and contains the reference workload', async
   assert.equal(fixture.campaign.waves[0].members.length, 500);
   assert.notEqual(fixture.primaryOrganization.id, fixture.isolationSentinel.organization.id);
   assert.equal(fixture.operatorReadModels.fleetRows.length, 1001);
+  assert.ok(fixture.isolationSentinel.campaign.id);
+  assert.ok(fixture.isolationSentinel.execution.id);
+  for (const request of fixture.benchmark.remoteRequests) {
+    assert.ok(request.forbiddenResourceIds.length > 0);
+  }
   assert.equal(fixture.expectations.cursorTie.orderedTargetIds.length, 4);
   assert.ok(fixture.expectations.filters.environment.targetIds.length > 0);
 });
@@ -138,7 +143,11 @@ test('remote benchmark applies the requested bounded page size', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-remote-page-'));
   const generated = await generateFixture(directory);
   const fixture = JSON.parse(generated.text);
-  fixture.benchmark.remoteRequests = [{name: 'fleet-list', path: '/api/v1/control-plane/fleet?limit=100'}];
+  fixture.benchmark.remoteRequests = [{
+    name: 'fleet-list',
+    path: '/api/v1/control-plane/fleet?limit=100',
+    forbiddenResourceIds: [fixture.isolationSentinel.target.id],
+  }];
   const limits = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -213,4 +222,55 @@ test('remote benchmark rejects a response containing a visible sentinel resource
   } finally {
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }
+});
+
+for (const collection of ['campaign', 'execution']) {
+  test(`remote benchmark rejects a ${collection} response containing its visible sentinel ID`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), `control-plane-remote-${collection}-isolation-`));
+    const generated = await generateFixture(directory);
+    const fixture = JSON.parse(generated.text);
+    const sentinel = fixture.isolationSentinel[collection];
+    fixture.benchmark.remoteRequests = [{
+      name: `${collection}-list`,
+      path: `/api/v1/control-plane/${collection}s`,
+      forbiddenResourceIds: [sentinel.id],
+    }];
+    const server = createServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({items: [{id: sentinel.id}]}));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    try {
+      await assert.rejects(benchmark(fixture, {
+        runs: 20, pageSize: 100, thresholds: {p95Ms: 2000, p99Ms: 5000},
+        baseURL: new URL(`http://127.0.0.1:${address.port}`),
+        authEnv: 'CONTROL_PLANE_BENCHMARK_TOKEN', timeoutMs: 10000,
+      }), /tenant isolation check found 20 foreign rows/);
+    } finally {
+      await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+}
+
+test('remote benchmark fails closed when a workload omits forbidden sentinel IDs', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-remote-missing-sentinel-'));
+  const generated = await generateFixture(directory);
+  const fixture = JSON.parse(generated.text);
+  fixture.benchmark.remoteRequests = [{
+    name: 'campaign-list',
+    path: '/api/v1/control-plane/campaigns',
+  }];
+
+  await assert.rejects(
+    benchmark(fixture, {
+      runs: 20,
+      pageSize: 100,
+      thresholds: {p95Ms: 2000, p99Ms: 5000},
+      baseURL: new URL('http://127.0.0.1:2'),
+      authEnv: 'CONTROL_PLANE_BENCHMARK_TOKEN',
+      timeoutMs: 10,
+    }),
+    /remote benchmark request forbiddenResourceIds is invalid/
+  );
 });

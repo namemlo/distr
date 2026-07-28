@@ -66,6 +66,7 @@ type operatorReadScopeDependencies struct {
 }
 
 type operatorControlPlaneDependencies struct {
+	cursorCodec   operatorqueries.CursorCodec
 	resolveScopes func(
 		context.Context,
 		operatorReadPrincipal,
@@ -171,7 +172,9 @@ func OperatorControlPlaneRouter(r chiopenapi.Router) {
 
 func defaultOperatorControlPlaneDependencies() operatorControlPlaneDependencies {
 	executionRepository := db.OperatorExecutionRepository{}
+	cursorCodec := operatorqueries.NewCursorCodec(env.JWTSecret())
 	return operatorControlPlaneDependencies{
+		cursorCodec: cursorCodec,
 		resolveScopes: func(
 			ctx context.Context,
 			principal operatorReadPrincipal,
@@ -182,20 +185,56 @@ func defaultOperatorControlPlaneDependencies() operatorControlPlaneDependencies 
 				getLegacyRole:    db.GetAuthorizationLegacyUserRole,
 			})
 		},
-		listFleet:                  operatorqueries.ListFleet,
-		listReleases:               operatorqueries.ListOperatorReleases,
-		getRelease:                 operatorqueries.GetOperatorRelease,
-		compareReleases:            operatorqueries.CompareOperatorReleases,
-		listPlans:                  operatorqueries.ListOperatorPlans,
-		getPlan:                    operatorqueries.GetOperatorPlan,
-		listCampaigns:              operatorqueries.ListOperatorCampaigns,
-		getCampaign:                operatorqueries.GetOperatorCampaign,
-		listReconciliation:         operatorqueries.ListOperatorReconciliation,
+		listFleet: func(
+			ctx context.Context,
+			filter types.FleetFilter,
+			page types.PageRequest,
+		) (types.OperatorPage[types.FleetRow], error) {
+			return operatorqueries.ListFleet(ctx, filter, page, cursorCodec)
+		},
+		listReleases: func(
+			ctx context.Context,
+			filter types.ReleaseFilter,
+			page types.PageRequest,
+		) (types.OperatorPage[types.OperatorReleaseRow], error) {
+			return operatorqueries.ListOperatorReleases(ctx, filter, page, cursorCodec)
+		},
+		getRelease:      operatorqueries.GetOperatorRelease,
+		compareReleases: operatorqueries.CompareOperatorReleases,
+		listPlans: func(
+			ctx context.Context,
+			filter types.OperatorPlanFilter,
+			page types.PageRequest,
+		) (types.OperatorPage[types.OperatorPlanRow], error) {
+			return operatorqueries.ListOperatorPlans(ctx, filter, page, cursorCodec)
+		},
+		getPlan: operatorqueries.GetOperatorPlan,
+		listCampaigns: func(
+			ctx context.Context,
+			filter types.CampaignFilter,
+			page types.PageRequest,
+		) (types.OperatorPage[types.OperatorCampaignRow], error) {
+			return operatorqueries.ListOperatorCampaigns(ctx, filter, page, cursorCodec)
+		},
+		getCampaign: operatorqueries.GetOperatorCampaign,
+		listReconciliation: func(
+			ctx context.Context,
+			filter types.ReconciliationFilter,
+			page types.PageRequest,
+		) (types.OperatorPage[types.OperatorReconciliationRow], error) {
+			return operatorqueries.ListOperatorReconciliation(ctx, filter, page, cursorCodec)
+		},
 		getReconciliation:          operatorqueries.GetOperatorReconciliation,
 		listReconciliationEvidence: operatorqueries.ListOperatorReconciliationEvidence,
-		searchAudit:                operatorqueries.SearchOperatorAudit,
-		getAudit:                   operatorqueries.GetOperatorAudit,
-		listAuditEvidence:          operatorqueries.ListOperatorAuditEvidence,
+		searchAudit: func(
+			ctx context.Context,
+			filter types.AuditFilter,
+			page types.PageRequest,
+		) (types.OperatorPage[types.OperatorAuditRow], error) {
+			return operatorqueries.SearchOperatorAudit(ctx, filter, page, cursorCodec)
+		},
+		getAudit:          operatorqueries.GetOperatorAudit,
+		listAuditEvidence: operatorqueries.ListOperatorAuditEvidence,
 		listExecutions: func(
 			ctx context.Context,
 			filter types.ExecutionFilter,
@@ -203,7 +242,7 @@ func defaultOperatorControlPlaneDependencies() operatorControlPlaneDependencies 
 			page types.PageRequest,
 		) (types.OperatorPage[types.OperatorExecutionRow], error) {
 			return operatorqueries.ListOperatorExecutions(
-				ctx, executionRepository, filter, scopes, page,
+				ctx, executionRepository, filter, scopes, page, cursorCodec,
 			)
 		},
 		getExecution: func(
@@ -1427,7 +1466,7 @@ func operatorRequestScopesForPage(
 	if err != nil || cursor == "" {
 		return scopes, err
 	}
-	decisionAt, err := operatorqueries.CursorDecisionAt(cursor)
+	decisionAt, err := operatorqueries.CursorDecisionAt(dependencies.cursorCodec, cursor)
 	if err != nil {
 		return operatorqueries.AuditViewScopes{}, err
 	}

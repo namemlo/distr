@@ -21,8 +21,12 @@ func ListOperatorPlans(
 	ctx context.Context,
 	filter types.OperatorPlanFilter,
 	pageRequest types.PageRequest,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorPlanRow], error) {
 	empty := types.OperatorPage[types.OperatorPlanRow]{Items: []types.OperatorPlanRow{}}
+	if !cursorCodec.valid() {
+		return empty, invalidCursorError()
+	}
 	limit, err := NormalizePageRequest(pageRequest)
 	if err != nil {
 		return empty, err
@@ -31,7 +35,7 @@ func ListOperatorPlans(
 	if err != nil {
 		return empty, err
 	}
-	cursor, err := DecodeCursor(pageRequest.Cursor, scope)
+	cursor, err := DecodeCursor(cursorCodec, pageRequest.Cursor, scope)
 	if err != nil {
 		return empty, err
 	}
@@ -51,7 +55,7 @@ func ListOperatorPlans(
 	if err != nil {
 		return empty, err
 	}
-	return completeOperatorPlanPage(items, limit, scope)
+	return completeOperatorPlanPage(items, limit, scope, cursorCodec)
 }
 
 func planCursorScope(filter types.OperatorPlanFilter) (CursorScope, error) {
@@ -82,8 +86,9 @@ func completeOperatorPlanPage(
 	items []types.OperatorPlanRow,
 	limit int,
 	scope CursorScope,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorPlanRow], error) {
-	return CompletePage(items, limit, scope, nil, func(item types.OperatorPlanRow) CursorTuple {
+	return CompletePage(cursorCodec, items, limit, scope, nil, func(item types.OperatorPlanRow) CursorTuple {
 		return CursorTuple{CreatedAt: item.CreatedAt, ID: item.ID}
 	})
 }

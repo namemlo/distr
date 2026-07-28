@@ -43,6 +43,7 @@ func TestListFleetDefaultsLimitTrimsLookaheadAndReturnsStableCursor(t *testing.T
 			Component: "api",
 		},
 		types.PageRequest{},
+		testCursorCodec(),
 		func(_ context.Context, query db.OperatorFleetQuery) (db.OperatorFleetResult, error) {
 			captured = query
 			return db.OperatorFleetResult{Items: rows, Total: total}, nil
@@ -72,7 +73,7 @@ func TestListFleetDefaultsLimitTrimsLookaheadAndReturnsStableCursor(t *testing.T
 		Component: "api",
 	})
 	g.Expect(err).NotTo(HaveOccurred())
-	tuple, err := DecodeCursor(page.NextCursor, scope)
+	tuple, err := DecodeCursor(testCursorCodec(), page.NextCursor, scope)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(tuple).To(Equal(&CursorTuple{
 		CreatedAt: rows[types.OperatorDefaultPageLimit-1].CreatedAt,
@@ -99,13 +100,14 @@ func TestListFleetDecodesCursorAndBindsItToVisibilityAndFilters(t *testing.T) {
 	scope, err := fleetCursorScope(filter)
 	g.Expect(err).NotTo(HaveOccurred())
 	expected := CursorTuple{CreatedAt: decisionAt.Add(-time.Hour), ID: uuid.New()}
-	cursor, err := EncodeCursor(scope, expected)
+	cursor, err := EncodeCursor(testCursorCodec(), scope, expected)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	_, err = listFleetWithRepository(
 		context.Background(),
 		filter,
 		types.PageRequest{Cursor: cursor, Limit: 100},
+		testCursorCodec(),
 		func(_ context.Context, query db.OperatorFleetQuery) (db.OperatorFleetResult, error) {
 			g.Expect(query.Limit).To(Equal(101))
 			g.Expect(query.Cursor).To(Equal(&db.OperatorFleetCursor{
@@ -123,6 +125,7 @@ func TestListFleetDecodesCursorAndBindsItToVisibilityAndFilters(t *testing.T) {
 		context.Background(),
 		filter,
 		types.PageRequest{Cursor: cursor, Limit: 100},
+		testCursorCodec(),
 		func(context.Context, db.OperatorFleetQuery) (db.OperatorFleetResult, error) {
 			t.Fatal("repository must not run for a cursor from a different filter")
 			return db.OperatorFleetResult{}, nil
@@ -150,6 +153,7 @@ func TestListFleetFailsClosedBeforeQueryAndEnforcesMaximumPage(t *testing.T) {
 			CampaignIDs: []uuid.UUID{},
 		}.ToOperatorScopeFilter()},
 		types.PageRequest{},
+		testCursorCodec(),
 		repository,
 	)
 	g := NewWithT(t)
@@ -167,6 +171,7 @@ func TestListFleetFailsClosedBeforeQueryAndEnforcesMaximumPage(t *testing.T) {
 			CampaignIDs: []uuid.UUID{},
 		}.ToOperatorScopeFilter()},
 		types.PageRequest{Limit: 101},
+		testCursorCodec(),
 		repository,
 	)
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())

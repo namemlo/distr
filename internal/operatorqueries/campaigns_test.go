@@ -34,7 +34,7 @@ func TestCampaignPageCursorIsBoundToTenantFiltersAndAuthorizedScopes(t *testing.
 		ID:        uuid.New(),
 	}
 
-	value, err := EncodeCampaignCursor(filter, tuple)
+	value, err := EncodeCampaignCursor(filter, tuple, testCursorCodec())
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(value).NotTo(ContainSubstring(organizationID.String()))
 	g.Expect(value).NotTo(ContainSubstring(campaignID.String()))
@@ -42,7 +42,7 @@ func TestCampaignPageCursorIsBoundToTenantFiltersAndAuthorizedScopes(t *testing.
 	limit, decoded, err := NormalizeCampaignPage(filter, types.PageRequest{
 		Limit:  100,
 		Cursor: value,
-	})
+	}, testCursorCodec())
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(limit).To(Equal(100))
 	g.Expect(decoded).To(Equal(&tuple))
@@ -59,7 +59,7 @@ func TestCampaignPageCursorIsBoundToTenantFiltersAndAuthorizedScopes(t *testing.
 		"scope":  changedScope,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := NormalizeCampaignPage(changed, types.PageRequest{Cursor: value})
+			_, _, err := NormalizeCampaignPage(changed, types.PageRequest{Cursor: value}, testCursorCodec())
 			NewWithT(t).Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 		})
 	}
@@ -84,9 +84,9 @@ func TestCampaignPageCursorRejectsNonCanonicalScopeCopies(t *testing.T) {
 	nonCanonical.CampaignIDs = []uuid.UUID{second, second}
 	tuple := CursorTuple{CreatedAt: time.Now().UTC(), ID: uuid.New()}
 
-	value, err := EncodeCampaignCursor(base, tuple)
+	value, err := EncodeCampaignCursor(base, tuple, testCursorCodec())
 	g.Expect(err).NotTo(HaveOccurred())
-	_, _, err = NormalizeCampaignPage(nonCanonical, types.PageRequest{Cursor: value})
+	_, _, err = NormalizeCampaignPage(nonCanonical, types.PageRequest{Cursor: value}, testCursorCodec())
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 }
 
@@ -102,9 +102,9 @@ func TestNormalizeCampaignPageEnforcesMaximumAndRejectsInvalidIdentity(t *testin
 		DeploymentUnitIDs: []uuid.UUID{}, ComponentIDs: []uuid.UUID{}, CampaignIDs: []uuid.UUID{},
 	}}
 
-	_, _, err := NormalizeCampaignPage(filter, types.PageRequest{Limit: 101})
+	_, _, err := NormalizeCampaignPage(filter, types.PageRequest{Limit: 101}, testCursorCodec())
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 	filter.OrganizationID = uuid.Nil
-	_, _, err = NormalizeCampaignPage(filter, types.PageRequest{})
+	_, _, err = NormalizeCampaignPage(filter, types.PageRequest{}, testCursorCodec())
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 }

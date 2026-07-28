@@ -18,7 +18,11 @@ func SearchOperatorAudit(
 	ctx context.Context,
 	filter types.AuditFilter,
 	request types.PageRequest,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorAuditRow], error) {
+	if !cursorCodec.valid() {
+		return types.OperatorPage[types.OperatorAuditRow]{}, invalidCursorError()
+	}
 	filter.Action = strings.TrimSpace(filter.Action)
 	filter.SubjectType = strings.TrimSpace(filter.SubjectType)
 	filter.Search = strings.TrimSpace(filter.Search)
@@ -41,7 +45,7 @@ func SearchOperatorAudit(
 	if err != nil {
 		return types.OperatorPage[types.OperatorAuditRow]{}, err
 	}
-	cursor, err := DecodeCursor(request.Cursor, cursorScope)
+	cursor, err := DecodeCursor(cursorCodec, request.Cursor, cursorScope)
 	if err != nil {
 		return types.OperatorPage[types.OperatorAuditRow]{}, err
 	}
@@ -62,7 +66,7 @@ func SearchOperatorAudit(
 	if err != nil {
 		return types.OperatorPage[types.OperatorAuditRow]{}, err
 	}
-	return CompletePage(items, limit, cursorScope, total, func(item types.OperatorAuditRow) CursorTuple {
+	return CompletePage(cursorCodec, items, limit, cursorScope, total, func(item types.OperatorAuditRow) CursorTuple {
 		return CursorTuple{CreatedAt: item.CreatedAt, ID: item.ID}
 	})
 }

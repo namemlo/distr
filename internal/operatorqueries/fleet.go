@@ -20,19 +20,24 @@ func ListFleet(
 	ctx context.Context,
 	filter types.FleetFilter,
 	pageRequest types.PageRequest,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.FleetRow], error) {
-	return listFleetWithRepository(ctx, filter, pageRequest, db.ListOperatorFleetRows)
+	return listFleetWithRepository(ctx, filter, pageRequest, cursorCodec, db.ListOperatorFleetRows)
 }
 
 func listFleetWithRepository(
 	ctx context.Context,
 	filter types.FleetFilter,
 	pageRequest types.PageRequest,
+	cursorCodec CursorCodec,
 	repository fleetRepository,
 ) (types.OperatorPage[types.FleetRow], error) {
 	page := types.OperatorPage[types.FleetRow]{Items: []types.FleetRow{}}
 	if repository == nil {
 		return page, errors.New("fleet repository is required")
+	}
+	if !cursorCodec.valid() {
+		return page, invalidCursorError()
 	}
 	normalized, scopes, err := normalizeFleetFilter(filter)
 	if err != nil {
@@ -49,7 +54,7 @@ func listFleetWithRepository(
 	if err != nil {
 		return page, err
 	}
-	cursor, err := DecodeCursor(pageRequest.Cursor, cursorScope)
+	cursor, err := DecodeCursor(cursorCodec, pageRequest.Cursor, cursorScope)
 	if err != nil {
 		return page, err
 	}
@@ -77,6 +82,7 @@ func listFleetWithRepository(
 	}
 	total := result.Total
 	return CompletePage(
+		cursorCodec,
 		result.Items,
 		limit,
 		cursorScope,

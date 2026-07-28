@@ -63,12 +63,12 @@ func TestCompleteOperatorPlanPageUsesLastReturnedImmutableTuple(t *testing.T) {
 		{ID: uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), CreatedAt: createdAt},
 		{ID: uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), CreatedAt: createdAt},
 	}
-	page, err := completeOperatorPlanPage(rows, 2, scope)
+	page, err := completeOperatorPlanPage(rows, 2, scope, testCursorCodec())
 	NewWithT(t).Expect(err).NotTo(HaveOccurred())
 	NewWithT(t).Expect(page.Items).To(Equal(rows[:2]))
 	NewWithT(t).Expect(page.NextCursor).NotTo(BeEmpty())
 
-	cursor, err := DecodeCursor(page.NextCursor, scope)
+	cursor, err := DecodeCursor(testCursorCodec(), page.NextCursor, scope)
 	NewWithT(t).Expect(err).NotTo(HaveOccurred())
 	NewWithT(t).Expect(cursor).To(Equal(&CursorTuple{
 		CreatedAt: rows[1].CreatedAt,

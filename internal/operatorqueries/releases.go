@@ -31,9 +31,10 @@ func ListOperatorReleases(
 	ctx context.Context,
 	filter types.ReleaseFilter,
 	pageRequest types.PageRequest,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorReleaseRow], error) {
 	page := types.OperatorPage[types.OperatorReleaseRow]{Items: []types.OperatorReleaseRow{}}
-	query, err := NormalizeReleaseQuery(filter, pageRequest)
+	query, err := NormalizeReleaseQuery(filter, pageRequest, cursorCodec)
 	if err != nil {
 		return page, err
 	}
@@ -60,6 +61,7 @@ func ListOperatorReleases(
 	}
 	total := result.Total
 	return CompletePage(
+		cursorCodec,
 		result.Items,
 		query.Limit,
 		query.CursorScope,
@@ -106,8 +108,12 @@ func CompareOperatorReleases(
 func NormalizeReleaseQuery(
 	filter types.ReleaseFilter,
 	page types.PageRequest,
+	cursorCodec CursorCodec,
 ) (ReleaseQuery, error) {
 	query := ReleaseQuery{}
+	if !cursorCodec.valid() {
+		return query, invalidCursorError()
+	}
 	scopes, err := AuditViewScopesFromOperatorScopeFilter(filter.OperatorScopeFilter)
 	if err != nil {
 		return query, err
@@ -148,7 +154,7 @@ func NormalizeReleaseQuery(
 		ScopeChecksum:  scopes.Checksum(),
 		FilterChecksum: filterChecksum,
 	}
-	cursor, err := DecodeCursor(page.Cursor, cursorScope)
+	cursor, err := DecodeCursor(cursorCodec, page.Cursor, cursorScope)
 	if err != nil {
 		return query, err
 	}

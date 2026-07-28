@@ -22,7 +22,7 @@ func TestNormalizeReleaseQueryBindsCursorToScopeAndFilters(t *testing.T) {
 		Search:              " 100%_ready ",
 	}
 
-	query, err := NormalizeReleaseQuery(filter, types.PageRequest{})
+	query, err := NormalizeReleaseQuery(filter, types.PageRequest{}, testCursorCodec())
 	g := NewWithT(t)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(query.Limit).To(Equal(types.OperatorDefaultPageLimit))
@@ -30,7 +30,7 @@ func TestNormalizeReleaseQueryBindsCursorToScopeAndFilters(t *testing.T) {
 	g.Expect(query.Scopes.OrganizationWide).To(BeTrue())
 	g.Expect(query.Cursor).To(BeNil())
 
-	encoded, err := EncodeCursor(query.CursorScope, CursorTuple{
+	encoded, err := EncodeCursor(testCursorCodec(), query.CursorScope, CursorTuple{
 		CreatedAt: decisionAt.Add(-time.Minute),
 		ID:        uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
 	})
@@ -38,12 +38,12 @@ func TestNormalizeReleaseQueryBindsCursorToScopeAndFilters(t *testing.T) {
 	query, err = NormalizeReleaseQuery(filter, types.PageRequest{
 		Cursor: encoded,
 		Limit:  types.OperatorMaximumPageLimit,
-	})
+	}, testCursorCodec())
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(query.Cursor).NotTo(BeNil())
 
 	filter.Status = string(types.ReleaseBundleStatusBlocked)
-	_, err = NormalizeReleaseQuery(filter, types.PageRequest{Cursor: encoded, Limit: 50})
+	_, err = NormalizeReleaseQuery(filter, types.PageRequest{Cursor: encoded, Limit: 50}, testCursorCodec())
 	g.Expect(err).To(MatchError(ContainSubstring("cursor is invalid")))
 }
 
@@ -77,7 +77,7 @@ func TestNormalizeReleaseQueryFailsClosed(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			filter := base
 			test.mutate(&filter)
-			_, err := NormalizeReleaseQuery(filter, test.page)
+			_, err := NormalizeReleaseQuery(filter, test.page, testCursorCodec())
 			NewWithT(t).Expect(err).To(MatchError(ContainSubstring(test.want)))
 		})
 	}
@@ -98,7 +98,7 @@ func TestNormalizeReleaseQueryRejectsNonCanonicalNarrowScopeOrder(t *testing.T) 
 			ComponentIDs:      []uuid.UUID{second, first, second},
 			CampaignIDs:       []uuid.UUID{},
 		},
-	}, types.PageRequest{Limit: 50})
+	}, types.PageRequest{Limit: 50}, testCursorCodec())
 
 	g := NewWithT(t)
 	g.Expect(err).To(MatchError(ContainSubstring("operator scope filter is invalid")))

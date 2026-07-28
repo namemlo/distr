@@ -29,7 +29,7 @@ func TestReconciliationCursorIsBoundToTenantScopeAndEveryFilter(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	cursorScope, err := reconciliationCursorScope(filter, scopes)
 	g.Expect(err).NotTo(HaveOccurred())
-	encoded, err := EncodeCursor(cursorScope, CursorTuple{
+	encoded, err := EncodeCursor(testCursorCodec(), cursorScope, CursorTuple{
 		CreatedAt: filter.DecisionAt.Add(-time.Minute),
 		ID:        uuid.New(),
 	})
@@ -40,7 +40,7 @@ func TestReconciliationCursorIsBoundToTenantScopeAndEveryFilter(t *testing.T) {
 	changed.Drift = "UNKNOWN"
 	changedScope, err := reconciliationCursorScope(changed, scopes)
 	g.Expect(err).NotTo(HaveOccurred())
-	_, err = DecodeCursor(encoded, changedScope)
+	_, err = DecodeCursor(testCursorCodec(), encoded, changedScope)
 	g.Expect(err).To(MatchError(ContainSubstring("cursor is invalid")))
 
 	foreign := filter
@@ -49,7 +49,7 @@ func TestReconciliationCursorIsBoundToTenantScopeAndEveryFilter(t *testing.T) {
 	foreignScopes.OrganizationID = foreign.OrganizationID
 	foreignScope, err := reconciliationCursorScope(foreign, foreignScopes)
 	g.Expect(err).NotTo(HaveOccurred())
-	_, err = DecodeCursor(encoded, foreignScope)
+	_, err = DecodeCursor(testCursorCodec(), encoded, foreignScope)
 	g.Expect(err).To(MatchError(ContainSubstring("cursor is invalid")))
 }
 

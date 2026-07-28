@@ -45,12 +45,13 @@ func ListOperatorExecutions(
 	filter types.ExecutionFilter,
 	scopes AuditViewScopes,
 	pageRequest types.PageRequest,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorExecutionRow], error) {
 	empty := types.OperatorPage[types.OperatorExecutionRow]{Items: []types.OperatorExecutionRow{}}
 	if repository == nil {
 		return empty, apierrors.NewForbidden("operator execution repository is unavailable")
 	}
-	normalized, err := NormalizeExecutionQuery(filter, scopes, pageRequest)
+	normalized, err := NormalizeExecutionQuery(filter, scopes, pageRequest, cursorCodec)
 	if err != nil {
 		return empty, err
 	}
@@ -70,7 +71,7 @@ func ListOperatorExecutions(
 	if err != nil {
 		return empty, err
 	}
-	return CompleteExecutionPage(items, normalized.Limit, normalized.CursorScope)
+	return CompleteExecutionPage(items, normalized.Limit, normalized.CursorScope, cursorCodec)
 }
 
 func GetOperatorExecution(
@@ -95,8 +96,12 @@ func NormalizeExecutionQuery(
 	filter types.ExecutionFilter,
 	scopes AuditViewScopes,
 	page types.PageRequest,
+	cursorCodec CursorCodec,
 ) (NormalizedExecutionQuery, error) {
 	var normalized NormalizedExecutionQuery
+	if !cursorCodec.valid() {
+		return normalized, invalidCursorError()
+	}
 	if filter.OrganizationID == uuid.Nil ||
 		scopes.OrganizationID == uuid.Nil ||
 		filter.OrganizationID != scopes.OrganizationID ||
@@ -149,7 +154,7 @@ func NormalizeExecutionQuery(
 		ScopeChecksum:  scopes.Checksum(),
 		FilterChecksum: filterChecksum,
 	}
-	cursor, err := DecodeCursor(page.Cursor, cursorScope)
+	cursor, err := DecodeCursor(cursorCodec, page.Cursor, cursorScope)
 	if err != nil {
 		return normalized, err
 	}
@@ -164,6 +169,7 @@ func CompleteExecutionPage(
 	items []types.OperatorExecutionRow,
 	limit int,
 	scope CursorScope,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorExecutionRow], error) {
 	page := types.OperatorPage[types.OperatorExecutionRow]{
 		Items: []types.OperatorExecutionRow{},
@@ -180,7 +186,7 @@ func CompleteExecutionPage(
 		return page, nil
 	}
 	last := items[len(items)-1]
-	nextCursor, err := EncodeCursor(scope, CursorTuple{
+	nextCursor, err := EncodeCursor(cursorCodec, scope, CursorTuple{
 		CreatedAt: last.CreatedAt,
 		ID:        last.ID,
 	})

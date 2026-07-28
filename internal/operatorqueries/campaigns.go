@@ -14,9 +14,10 @@ func ListOperatorCampaigns(
 	ctx context.Context,
 	filter types.CampaignFilter,
 	request types.PageRequest,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorCampaignRow], error) {
 	page := types.OperatorPage[types.OperatorCampaignRow]{Items: []types.OperatorCampaignRow{}}
-	limit, cursor, err := NormalizeCampaignPage(filter, request)
+	limit, cursor, err := NormalizeCampaignPage(filter, request, cursorCodec)
 	if err != nil {
 		return page, err
 	}
@@ -34,7 +35,7 @@ func ListOperatorCampaigns(
 	if err != nil {
 		return page, err
 	}
-	return CompletePage(items, limit, scope, nil, func(item types.OperatorCampaignRow) CursorTuple {
+	return CompletePage(cursorCodec, items, limit, scope, nil, func(item types.OperatorCampaignRow) CursorTuple {
 		return CursorTuple{CreatedAt: item.CreatedAt, ID: item.ID}
 	})
 }
@@ -50,7 +51,11 @@ func GetOperatorCampaign(
 func NormalizeCampaignPage(
 	filter types.CampaignFilter,
 	request types.PageRequest,
+	cursorCodec CursorCodec,
 ) (int, *CursorTuple, error) {
+	if !cursorCodec.valid() {
+		return 0, nil, invalidCursorError()
+	}
 	limit, err := NormalizePageRequest(request)
 	if err != nil {
 		return 0, nil, err
@@ -59,7 +64,7 @@ func NormalizeCampaignPage(
 	if err != nil {
 		return 0, nil, err
 	}
-	cursor, err := DecodeCursor(request.Cursor, scope)
+	cursor, err := DecodeCursor(cursorCodec, request.Cursor, scope)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -69,12 +74,13 @@ func NormalizeCampaignPage(
 func EncodeCampaignCursor(
 	filter types.CampaignFilter,
 	tuple CursorTuple,
+	cursorCodec CursorCodec,
 ) (string, error) {
 	scope, err := campaignCursorScope(filter)
 	if err != nil {
 		return "", err
 	}
-	return EncodeCursor(scope, tuple)
+	return EncodeCursor(cursorCodec, scope, tuple)
 }
 
 func campaignCursorScope(filter types.CampaignFilter) (CursorScope, error) {

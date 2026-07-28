@@ -2,6 +2,7 @@ package operatorqueries
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 func TestOperatorCursorRoundTripsWithinTenantCollectionAndCanonicalFilter(t *testing.T) {
 	g := NewWithT(t)
+	codec := testCursorCodec()
 	scope := CursorScope{
 		OrganizationID: uuid.New(),
 		Collection:     types.OperatorCollectionFleet,
@@ -25,28 +27,62 @@ func TestOperatorCursorRoundTripsWithinTenantCollectionAndCanonicalFilter(t *tes
 	}
 	tuple := CursorTuple{CreatedAt: time.Now().UTC().Round(time.Microsecond), ID: uuid.New()}
 
-	value, err := EncodeCursor(scope, tuple)
+	value, err := EncodeCursor(codec, scope, tuple)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(value).NotTo(ContainSubstring(scope.OrganizationID.String()))
+	g.Expect(len(value)).To(BeNumerically("<=", MaximumCursorLength))
 
-	decoded, err := DecodeCursor(value, scope)
+	decoded, err := DecodeCursor(codec, value, scope)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(decoded).To(Equal(&tuple))
+
+	_, err = DecodeCursor(NewCursorCodec([]byte("different-test-key")), value, scope)
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 }
 
 func TestCursorDecisionAtExtractsCanonicalPaginationSnapshot(t *testing.T) {
+	codec := testCursorCodec()
 	scope := CursorScope{OrganizationID: uuid.New(), Collection: types.OperatorCollectionFleet,
 		DecisionAt:    time.Date(2026, time.July, 28, 9, 0, 0, 0, time.UTC),
 		ScopeChecksum: mustFilterChecksum(t, []string{"visible"}), FilterChecksum: mustFilterChecksum(t, []string{"filter"})}
-	value, err := EncodeCursor(scope, CursorTuple{CreatedAt: scope.DecisionAt, ID: uuid.New()})
+	value, err := EncodeCursor(codec, scope, CursorTuple{CreatedAt: scope.DecisionAt, ID: uuid.New()})
 	g := NewWithT(t)
 	g.Expect(err).NotTo(HaveOccurred())
-	decisionAt, err := CursorDecisionAt(value)
+	decisionAt, err := CursorDecisionAt(codec, value)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(decisionAt).To(Equal(scope.DecisionAt))
 }
 
+func TestCursorDecisionAtRejectsCanonicalPayloadTamperingWithOldMAC(t *testing.T) {
+	g := NewWithT(t)
+	codec := testCursorCodec()
+	scope := CursorScope{
+		OrganizationID: uuid.New(),
+		Collection:     types.OperatorCollectionFleet,
+		DecisionAt:     time.Date(2026, time.July, 28, 9, 0, 0, 0, time.UTC),
+		ScopeChecksum:  mustFilterChecksum(t, []string{"visible"}),
+		FilterChecksum: mustFilterChecksum(t, []string{"filter"}),
+	}
+	value, err := EncodeCursor(codec, scope, CursorTuple{
+		CreatedAt: scope.DecisionAt.Add(-time.Minute),
+		ID:        uuid.New(),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	envelopeBytes, err := base64.RawURLEncoding.Strict().DecodeString(value)
+	g.Expect(err).NotTo(HaveOccurred())
+	var envelope signedOperatorCursor
+	g.Expect(json.Unmarshal(envelopeBytes, &envelope)).To(Succeed())
+	envelope.Payload.DecisionAt = scope.DecisionAt.Add(time.Second)
+	envelopeBytes, err = json.Marshal(envelope)
+	g.Expect(err).NotTo(HaveOccurred())
+	tampered := base64.RawURLEncoding.EncodeToString(envelopeBytes)
+
+	_, err = CursorDecisionAt(codec, tampered)
+	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
+}
+
 func TestOperatorCursorRejectsForeignTenantCollectionAndFilter(t *testing.T) {
+	codec := testCursorCodec()
 	checksum := mustFilterChecksum(t, struct {
 		Status string `json:"status"`
 	}{Status: "running"})
@@ -57,7 +93,7 @@ func TestOperatorCursorRejectsForeignTenantCollectionAndFilter(t *testing.T) {
 		ScopeChecksum:  mustFilterChecksum(t, []string{"organization:visible"}),
 		FilterChecksum: checksum,
 	}
-	value, err := EncodeCursor(scope, CursorTuple{
+	value, err := EncodeCursor(codec, scope, CursorTuple{
 		CreatedAt: time.Now().UTC(),
 		ID:        uuid.New(),
 	})
@@ -84,7 +120,7 @@ func TestOperatorCursorRejectsForeignTenantCollectionAndFilter(t *testing.T) {
 		"scope":      otherScope,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := DecodeCursor(value, candidate)
+			_, err := DecodeCursor(codec, value, candidate)
 			NewWithT(t).Expect(err).To(MatchError(ContainSubstring("cursor is invalid")))
 			NewWithT(t).Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 		})
@@ -92,6 +128,7 @@ func TestOperatorCursorRejectsForeignTenantCollectionAndFilter(t *testing.T) {
 }
 
 func TestOperatorCursorRejectsMalformedNonCanonicalAndUnknownFields(t *testing.T) {
+	codec := testCursorCodec()
 	scope := CursorScope{
 		OrganizationID: uuid.New(),
 		Collection:     types.OperatorCollectionReleases,
@@ -99,7 +136,7 @@ func TestOperatorCursorRejectsMalformedNonCanonicalAndUnknownFields(t *testing.T
 		ScopeChecksum:  mustFilterChecksum(t, []string{"organization:visible"}),
 		FilterChecksum: mustFilterChecksum(t, struct{}{}),
 	}
-	valid, err := EncodeCursor(scope, CursorTuple{
+	valid, err := EncodeCursor(codec, scope, CursorTuple{
 		CreatedAt: time.Now().UTC(),
 		ID:        uuid.New(),
 	})
@@ -114,10 +151,14 @@ func TestOperatorCursorRejectsMalformedNonCanonicalAndUnknownFields(t *testing.T
 		"too long":      string(make([]byte, MaximumCursorLength+1)),
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := DecodeCursor(value, scope)
+			_, err := DecodeCursor(codec, value, scope)
 			NewWithT(t).Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 		})
 	}
+}
+
+func testCursorCodec() CursorCodec {
+	return NewCursorCodec([]byte("operator-cursor-deterministic-test-key"))
 }
 
 func TestNormalizePageRequestDefaultsAndEnforcesMaximum(t *testing.T) {

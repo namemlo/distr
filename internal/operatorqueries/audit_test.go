@@ -30,7 +30,7 @@ func TestAuditCursorIsBoundToTypedCorrelationTenantAndSearchFilters(t *testing.T
 	g.Expect(err).NotTo(HaveOccurred())
 	cursorScope, err := auditCursorScope(filter, scopes)
 	g.Expect(err).NotTo(HaveOccurred())
-	encoded, err := EncodeCursor(cursorScope, CursorTuple{
+	encoded, err := EncodeCursor(testCursorCodec(), cursorScope, CursorTuple{
 		CreatedAt: filter.DecisionAt.Add(-time.Minute),
 		ID:        uuid.New(),
 	})
@@ -42,7 +42,7 @@ func TestAuditCursorIsBoundToTypedCorrelationTenantAndSearchFilters(t *testing.T
 	changed.SubjectType = "deployment_plan"
 	changedScope, err := auditCursorScope(changed, scopes)
 	g.Expect(err).NotTo(HaveOccurred())
-	_, err = DecodeCursor(encoded, changedScope)
+	_, err = DecodeCursor(testCursorCodec(), encoded, changedScope)
 	g.Expect(err).To(MatchError(ContainSubstring("cursor is invalid")))
 }
 

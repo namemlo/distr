@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -403,6 +404,7 @@ func TestOperatorFleetHandlerResolvesScopesOnceBeforeQueryPagination(t *testing.
 
 func TestOperatorFleetHandlerAcceptsNextCursorAfterReauthorizingAtAdvancedTime(t *testing.T) {
 	g := NewWithT(t)
+	cursorCodec := operatorqueries.NewCursorCodec([]byte("handler-pagination-test-key"))
 	userAuth := testChannelAuth()
 	organizationID := *userAuth.CurrentOrgID()
 	environmentID := uuid.New()
@@ -416,7 +418,7 @@ func TestOperatorFleetHandlerAcceptsNextCursorAfterReauthorizingAtAdvancedTime(t
 		OrganizationID: organizationID, Collection: types.OperatorCollectionFleet,
 		DecisionAt: firstDecisionAt, ScopeChecksum: scopeChecksum, FilterChecksum: filterChecksum,
 	}
-	nextCursor, err := operatorqueries.EncodeCursor(cursorScope, operatorqueries.CursorTuple{
+	nextCursor, err := operatorqueries.EncodeCursor(cursorCodec, cursorScope, operatorqueries.CursorTuple{
 		CreatedAt: firstDecisionAt.Add(-time.Minute), ID: uuid.New(),
 	})
 	g.Expect(err).NotTo(HaveOccurred())
@@ -424,6 +426,7 @@ func TestOperatorFleetHandlerAcceptsNextCursorAfterReauthorizingAtAdvancedTime(t
 	scopeCalls := 0
 	queryCalls := 0
 	dependencies := operatorControlPlaneDependencies{
+		cursorCodec: cursorCodec,
 		resolveScopes: func(context.Context, operatorReadPrincipal) (operatorqueries.AuditViewScopes, error) {
 			scopeCalls++
 			decisionAt := firstDecisionAt
@@ -439,12 +442,8 @@ func TestOperatorFleetHandlerAcceptsNextCursorAfterReauthorizingAtAdvancedTime(t
 			if queryCalls == 1 {
 				return types.OperatorPage[types.FleetRow]{NextCursor: nextCursor}, nil
 			}
-			if queryCalls > 2 {
-				_, err := operatorqueries.DecodeCursor(page.Cursor, cursorScope)
-				return types.OperatorPage[types.FleetRow]{}, err
-			}
 			g.Expect(filter.DecisionAt).To(Equal(firstDecisionAt))
-			_, err := operatorqueries.DecodeCursor(page.Cursor, cursorScope)
+			_, err := operatorqueries.DecodeCursor(cursorCodec, page.Cursor, cursorScope)
 			g.Expect(err).NotTo(HaveOccurred())
 			return types.OperatorPage[types.FleetRow]{}, nil
 		},
@@ -459,14 +458,45 @@ func TestOperatorFleetHandlerAcceptsNextCursorAfterReauthorizingAtAdvancedTime(t
 	g.Expect(scopeCalls).To(Equal(2))
 	g.Expect(queryCalls).To(Equal(2))
 
-	tamperedScope := cursorScope
-	tamperedScope.DecisionAt = firstDecisionAt.Add(time.Second)
-	tamperedCursor, err := operatorqueries.EncodeCursor(tamperedScope, operatorqueries.CursorTuple{CreatedAt: firstDecisionAt.Add(-time.Minute), ID: uuid.New()})
+	tamperedCursor, err := tamperOperatorCursorDecisionAt(nextCursor, firstDecisionAt.Add(time.Second))
 	g.Expect(err).NotTo(HaveOccurred())
 	request := httptest.NewRequest(http.MethodGet, "/fleet?cursor="+tamperedCursor, nil).WithContext(auth.Authentication.NewContext(context.Background(), userAuth))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	g.Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+	g.Expect(queryCalls).To(Equal(2))
+}
+
+func tamperOperatorCursorDecisionAt(value string, decisionAt time.Time) (string, error) {
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(value)
+	if err != nil {
+		return "", err
+	}
+	type cursorPayload struct {
+		Version        int       `json:"v"`
+		Scope          string    `json:"s"`
+		DecisionAt     time.Time `json:"d"`
+		ScopeChecksum  string    `json:"a"`
+		FilterChecksum string    `json:"f"`
+		CreatedAt      time.Time `json:"t"`
+		ID             uuid.UUID `json:"i"`
+	}
+	var envelope struct {
+		Payload cursorPayload `json:"p"`
+		MAC     string        `json:"m"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return "", err
+	}
+	if envelope.Payload.ID == uuid.Nil || envelope.MAC == "" {
+		return "", errors.New("cursor payload is missing")
+	}
+	envelope.Payload.DecisionAt = decisionAt.UTC()
+	payload, err = json.Marshal(envelope)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
 }
 
 func TestOperatorReleaseDetailHandlerScopesOnceAndMapsErrors(t *testing.T) {

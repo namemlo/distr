@@ -128,6 +128,29 @@ export function validateFixture(fixture) {
   if (fixture.expectations?.maximumPageSize !== 100) {
     fail('fixture maximum page size must be 100');
   }
+  const remoteRequests = fixture.benchmark?.remoteRequests;
+  assertArray(remoteRequests, 'fixture.benchmark.remoteRequests');
+  const expectedSentinels = new Map([
+    ['fleet-list', fixture.isolationSentinel?.target?.id],
+    ['campaign-list', fixture.isolationSentinel?.campaign?.id],
+    ['execution-list', fixture.isolationSentinel?.execution?.id],
+  ]);
+  for (const request of remoteRequests) {
+    if (
+      !Array.isArray(request?.forbiddenResourceIds) ||
+      request.forbiddenResourceIds.length === 0 ||
+      !request.forbiddenResourceIds.every((id) => typeof id === 'string' && id !== '')
+    ) {
+      fail(`fixture benchmark request ${request?.name ?? '<unknown>'} must define forbiddenResourceIds`);
+    }
+    const expectedSentinel = expectedSentinels.get(request.name);
+    if (expectedSentinels.has(request.name) && !expectedSentinel) {
+      fail(`fixture benchmark request ${request.name} is missing its response-visible sentinel resource`);
+    }
+    if (expectedSentinel && !request.forbiddenResourceIds.includes(expectedSentinel)) {
+      fail(`fixture benchmark request ${request.name} must include its response-visible sentinel ID`);
+    }
+  }
   return fixture;
 }
 
@@ -269,6 +292,11 @@ async function runRemoteBenchmark(fixture, options) {
       ) {
         fail('remote benchmark request name or path is invalid');
       }
+      const forbiddenResourceIDs = request.forbiddenResourceIds;
+      if (!Array.isArray(forbiddenResourceIDs) || forbiddenResourceIDs.length === 0 ||
+        !forbiddenResourceIDs.every((id) => typeof id === 'string' && id !== '')) {
+        fail('remote benchmark request forbiddenResourceIds is invalid');
+      }
       const url = new URL(request.path, options.baseURL);
       if (url.origin !== options.baseURL.origin) {
         fail('remote benchmark request name or path is invalid');
@@ -296,11 +324,6 @@ async function runRemoteBenchmark(fixture, options) {
       const rows = responseRows(payload);
       if (rows.length > options.pageSize) {
         fail(`remote workload ${request.name} returned more than ${options.pageSize} rows`);
-      }
-      const forbiddenResourceIDs = request.forbiddenResourceIds ?? [fixture.isolationSentinel.target.id];
-      if (!Array.isArray(forbiddenResourceIDs) || forbiddenResourceIDs.length === 0 ||
-        !forbiddenResourceIDs.every((id) => typeof id === 'string' && id !== '')) {
-        fail('remote benchmark request forbiddenResourceIds is invalid');
       }
       violations += isolationViolations(rows, forbiddenResourceIDs);
       samples.get(request.name).push(performance.now() - started);

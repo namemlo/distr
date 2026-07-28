@@ -15,7 +15,11 @@ func ListOperatorReconciliation(
 	ctx context.Context,
 	filter types.ReconciliationFilter,
 	request types.PageRequest,
+	cursorCodec CursorCodec,
 ) (types.OperatorPage[types.OperatorReconciliationRow], error) {
+	if !cursorCodec.valid() {
+		return types.OperatorPage[types.OperatorReconciliationRow]{}, invalidCursorError()
+	}
 	filter.Status = strings.ToUpper(strings.TrimSpace(filter.Status))
 	filter.Drift = strings.ToUpper(strings.TrimSpace(filter.Drift))
 	if !validOperatorReconciliationFilter(filter) {
@@ -37,7 +41,7 @@ func ListOperatorReconciliation(
 	if err != nil {
 		return types.OperatorPage[types.OperatorReconciliationRow]{}, err
 	}
-	cursor, err := DecodeCursor(request.Cursor, cursorScope)
+	cursor, err := DecodeCursor(cursorCodec, request.Cursor, cursorScope)
 	if err != nil {
 		return types.OperatorPage[types.OperatorReconciliationRow]{}, err
 	}
@@ -58,7 +62,7 @@ func ListOperatorReconciliation(
 	if err != nil {
 		return types.OperatorPage[types.OperatorReconciliationRow]{}, err
 	}
-	return CompletePage(items, limit, cursorScope, total, func(item types.OperatorReconciliationRow) CursorTuple {
+	return CompletePage(cursorCodec, items, limit, cursorScope, total, func(item types.OperatorReconciliationRow) CursorTuple {
 		return CursorTuple{CreatedAt: item.CreatedAt, ID: item.ID}
 	})
 }

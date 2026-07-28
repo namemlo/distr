@@ -165,6 +165,20 @@ export function buildScaleFixture(parameters) {
     enrollment: 'enrolled',
     lastExecutionAt: tieInstant,
   };
+  const sentinelCampaign = {
+    id: stableUUID('sentinel-campaign', 0),
+    organizationId: sentinelOrganization.id,
+    name: 'sentinel-campaign',
+    status: 'RUNNING',
+  };
+  const sentinelExecution = {
+    id: stableUUID('sentinel-execution', 0),
+    organizationId: sentinelOrganization.id,
+    campaignId: sentinelCampaign.id,
+    deploymentPlanId: stableUUID('sentinel-plan', 0),
+    deploymentTargetId: sentinelTarget.id,
+    status: 'RUNNING',
+  };
   const waveMembers = Array.from({length: 500}, (_, index) => ({
     id: stableUUID('campaign-member', index),
     planId: stableUUID('plan', index),
@@ -182,6 +196,8 @@ export function buildScaleFixture(parameters) {
     isolationSentinel: {
       organization: sentinelOrganization,
       target: sentinelTarget,
+      campaign: sentinelCampaign,
+      execution: sentinelExecution,
     },
     environments,
     targets,
@@ -229,8 +245,16 @@ export function buildScaleFixture(parameters) {
     benchmark: {
       remoteRequests: [
         {name: 'fleet-list', path: '/api/v1/control-plane/fleet?limit=100', forbiddenResourceIds: [sentinelTarget.id]},
-        {name: 'campaign-list', path: '/api/v1/control-plane/campaigns?limit=100'},
-        {name: 'execution-list', path: '/api/v1/control-plane/executions?limit=100'},
+        {
+          name: 'campaign-list',
+          path: '/api/v1/control-plane/campaigns?limit=100',
+          forbiddenResourceIds: [sentinelCampaign.id],
+        },
+        {
+          name: 'execution-list',
+          path: '/api/v1/control-plane/executions?limit=100',
+          forbiddenResourceIds: [sentinelExecution.id, sentinelTarget.id],
+        },
       ],
     },
   };
