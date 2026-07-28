@@ -52,6 +52,52 @@ function checksum(value) {
   return `sha256:${createHash('sha256').update(stableStringify(value)).digest('hex')}`;
 }
 
+export function deriveFrozenAdapterRevision(adapter) {
+  const frozenEvidence = {
+    assignmentId: adapter.adapterAssignmentId,
+    implementationId: adapter.adapterImplementationId,
+    implementationVersion: adapter.implementationVersion,
+    capability: adapter.capability,
+    capabilityVersion: adapter.capabilityVersion,
+    scopeType: adapter.scopeType,
+    scopeReference: adapter.scopeReference,
+    configSnapshotId: adapter.configSnapshotId,
+    configChecksum: adapter.configChecksum,
+    keyId: adapter.keyConfiguration.keyId,
+    publicKeyFingerprint: adapter.keyConfiguration.publicKeyFingerprint,
+    signingKeyReference: adapter.keyConfiguration.signingKeyReference,
+    signingKeyVersionFingerprint: adapter.keyConfiguration.signingKeyVersionFingerprint,
+    cancelCapabilityVersion: '',
+    retrySafeCapabilityVersion: '',
+  };
+  return `sha256:${createHash('sha256').update(JSON.stringify(frozenEvidence)).digest('hex')}`;
+}
+
+export function derivePlanLeaseIdentity({plan, target, signingKeyId}) {
+  assert(plan.stepAdapters?.length > 0, `${target.id} plan must freeze step adapters`);
+  const revisions = new Set();
+  const keyIds = new Set();
+  for (const adapter of plan.stepAdapters) {
+    assert(
+      adapter.capability === 'distr.compose.deploy' && adapter.capabilityVersion === '1.0.0',
+      `${target.id} frozen adapter must match the reported action capability`
+    );
+    assert(
+      adapter.scopeType === 'deployment_unit' && adapter.scopeReference === target.unit.id,
+      `${target.id} frozen adapter scope must match the deployment unit`
+    );
+    assert(
+      adapter.configSnapshotId === target.snapshot.id && adapter.configChecksum === target.snapshot.canonicalChecksum,
+      `${target.id} frozen adapter config must match the plan target snapshot`
+    );
+    revisions.add(deriveFrozenAdapterRevision(adapter));
+    keyIds.add(adapter.keyConfiguration.keyId);
+  }
+  assert(revisions.size === 1, `${target.id} plan must use one exact frozen adapter revision`);
+  assert(keyIds.size === 1 && keyIds.has(signingKeyId), `${target.id} frozen adapter key must match the signer`);
+  return {adapterRevision: [...revisions][0], keyId: [...keyIds][0]};
+}
+
 function createEd25519Material() {
   const pair = generateKeyPairSync('ed25519');
   const publicDER = pair.publicKey.export({type: 'spki', format: 'der'});
@@ -391,6 +437,20 @@ export async function bootstrapLiveHub({hubURL, runId, fixture}) {
       allowDynamicTargets: false,
     },
   });
+  for (const scope of [
+    {kind: 'organization', id: organization.id},
+    {kind: 'environment', id: environment.id},
+  ]) {
+    await request('POST', '/api/v1/authorization/control-plane-enrollments', {
+      token,
+      body: {
+        scope,
+        enabled: true,
+        effectiveFrom: new Date(Date.now() - 60_000).toISOString(),
+        reason: 'Disposable protocol-v2 control-plane enrollment',
+      },
+    });
+  }
   const lifecycle = await request('POST', '/api/v1/lifecycles', {
     token,
     body: {
@@ -443,6 +503,22 @@ export async function bootstrapLiveHub({hubURL, runId, fixture}) {
       authorization: basicAuth(target.id, access.targetSecret),
     });
     assert(agentLogin?.token, `${fixtureTarget.id} agent login must return a bearer token`);
+    await request('POST', `/api/v1/agents/${target.id}/capabilities`, {
+      token: agentLogin.token,
+      body: {
+        protocolVersion: 'v2',
+        agentVersion: 'neutral-control-plane-e2e',
+        supportedRuntimes: ['oci'],
+        supportedActions: [
+          {actionType: 'distr.compose.deploy', versions: ['1.0.0']},
+          {actionType: 'distr.preflight', versions: ['1']},
+        ],
+        operatingSystem: 'linux',
+        architecture: 'amd64',
+        availableTooling: ['compose'],
+        strategyCapabilities: ['signed-executor-v2'],
+      },
+    });
     targets.push({...fixtureTarget, hubTargetId: target.id, agentToken: agentLogin.token});
   }
   return {
@@ -517,7 +593,7 @@ async function publishComponentRelease({request, token, topology, fixture, label
         adapterRequirements: [
           {
             stepKind: 'deploy',
-            capability: 'deploy.component',
+            capability: 'distr.compose.deploy',
             version: '1.0.0',
           },
         ],
@@ -697,7 +773,7 @@ async function freezeConfigsAndRegisterBoundaries({
           key: target.adapterId,
           name: target.adapterId,
           version: '1.0.0',
-          capabilities: [{capability: 'deploy.component', version: '1.0.0'}],
+          capabilities: [{capability: 'distr.compose.deploy', version: '1.0.0'}],
           enabled: true,
         },
       });
@@ -878,6 +954,38 @@ async function publishPlans({topology, productRelease, superseded = new Map()}) 
   return plans;
 }
 
+export async function admitPublishedPlans({topology, plans, runId}) {
+  for (const [targetId, plan] of plans) {
+    const admission = await topology.request('POST', `/api/v1/deployment-plans/${plan.id}/admission`, {
+      token: topology.token,
+      body: {schedulerIdempotencyKey: `neutral-${runId}-${targetId}`},
+    });
+    assert(admission.decision === 'ADMIT', `${targetId} deployment plan admission must be ADMIT`);
+    assert(admission.approvalRequestId === plan.approval.id, `${targetId} admission must bind the approved request`);
+    plan.admission = admission;
+  }
+  return plans;
+}
+
+export async function assertPassedPlanPreflights({topology, plans}) {
+  for (const [targetId, plan] of plans) {
+    const current = await topology.request('GET', `/api/v1/deployment-plans/${plan.id}`, {
+      token: topology.token,
+    });
+    const passed = current.preflightRuns?.find(
+      (run) =>
+        run.status === 'PASSED' &&
+        run.checks?.length > 0 &&
+        run.checks.every((check) => check.status === 'PASSED') &&
+        run.checks.some((check) => check.taskId) &&
+        run.checks.some((check) => check.checkKey?.startsWith('adapter:'))
+    );
+    assert(passed, `${targetId} dispatch requires task-bound and adapter PASSED preflight evidence`);
+    plan.preflight = passed;
+  }
+  return plans;
+}
+
 async function publishCampaign({topology, plans, label, runId}) {
   const planIDs = [...plans.values()].map((plan) => plan.id);
   const draft = await topology.request('POST', '/api/v1/deployment-campaign-drafts', {
@@ -956,7 +1064,6 @@ async function executeLeasedAttempt({topology, target, lease, executorURL, execu
     await postExecutor(executorURL, executorSecret, {
       intent: lease.intent,
       binding,
-      spec: {mode: 'succeed', logEntries: 1},
     });
   } else {
     const operationId = payload.executionId;
@@ -1038,10 +1145,16 @@ async function executeAndObserveRelease({
   secrets,
   signingVersionFingerprint,
   signingKeyId,
+  plans,
   sequence,
 }) {
   const evidence = [];
   for (const [index, target] of topology.targets.entries()) {
+    const leaseIdentity = derivePlanLeaseIdentity({
+      plan: plans.get(target.id),
+      target,
+      signingKeyId,
+    });
     let completed = 0;
     const executedStepKeys = [];
     for (let leaseIndex = 0; leaseIndex < 16; leaseIndex += 1) {
@@ -1049,8 +1162,8 @@ async function executeAndObserveRelease({
         token: target.agentToken,
         body: {
           executorId: target.executorId,
-          adapterRevision: target.adapterRevision,
-          keyId: signingKeyId,
+          adapterRevision: leaseIdentity.adapterRevision,
+          keyId: leaseIdentity.keyId,
           leaseSeconds: 60,
         },
         expected: [200, 204],
@@ -1203,7 +1316,9 @@ export async function runLiveHubJourney({
 
   const evidence = [];
   const initialAPlans = await publishPlans({topology: live, productRelease: products.A});
+  await admitPublishedPlans({topology: live, plans: initialAPlans, runId: `${runId}-initial-a`});
   await publishCampaign({topology: live, plans: initialAPlans, label: 'initial-a', runId});
+  await assertPassedPlanPreflights({topology: live, plans: initialAPlans});
   evidence.push(
     ...(await executeAndObserveRelease({
       topology: live,
@@ -1213,6 +1328,7 @@ export async function runLiveHubJourney({
       secrets,
       signingKeyId,
       signingVersionFingerprint,
+      plans: initialAPlans,
       sequence: 1,
     }))
   );
@@ -1221,7 +1337,9 @@ export async function runLiveHubJourney({
     productRelease: products.B,
     superseded: initialAPlans,
   });
+  await admitPublishedPlans({topology: live, plans: bPlans, runId: `${runId}-b`});
   await publishCampaign({topology: live, plans: bPlans, label: 'b', runId});
+  await assertPassedPlanPreflights({topology: live, plans: bPlans});
   evidence.push(
     ...(await executeAndObserveRelease({
       topology: live,
@@ -1231,6 +1349,7 @@ export async function runLiveHubJourney({
       secrets,
       signingKeyId,
       signingVersionFingerprint,
+      plans: bPlans,
       sequence: 2,
     }))
   );
@@ -1239,7 +1358,9 @@ export async function runLiveHubJourney({
     productRelease: products.A,
     superseded: bPlans,
   });
+  await admitPublishedPlans({topology: live, plans: previousStatePlans, runId: `${runId}-previous-a`});
   await publishCampaign({topology: live, plans: previousStatePlans, label: 'previous-a', runId});
+  await assertPassedPlanPreflights({topology: live, plans: previousStatePlans});
   evidence.push(
     ...(await executeAndObserveRelease({
       topology: live,
@@ -1249,6 +1370,7 @@ export async function runLiveHubJourney({
       secrets,
       signingKeyId,
       signingVersionFingerprint,
+      plans: previousStatePlans,
       sequence: 3,
     }))
   );

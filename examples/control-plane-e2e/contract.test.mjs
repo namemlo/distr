@@ -23,6 +23,159 @@ test('runtime trust uses the Hub signing public key and a separate observer key'
   assert.notEqual(material.signingVersionFingerprint, material.observerKeyFingerprint);
 });
 
+test('lease adapter revision is the exact server frozen-evidence checksum', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.deriveFrozenAdapterRevision, 'function');
+  const revision = runtime.deriveFrozenAdapterRevision({
+    adapterAssignmentId: '11111111-1111-4111-8111-111111111111',
+    adapterImplementationId: '22222222-2222-4222-8222-222222222222',
+    implementationVersion: '1.0.0',
+    capability: 'distr.compose.deploy',
+    capabilityVersion: '1.0.0',
+    scopeType: 'deployment_unit',
+    scopeReference: '33333333-3333-4333-8333-333333333333',
+    configSnapshotId: '44444444-4444-4444-8444-444444444444',
+    configChecksum: `sha256:${'a'.repeat(64)}`,
+    keyConfiguration: {
+      keyId: `sha256:${'b'.repeat(64)}`,
+      publicKeyFingerprint: `sha256:${'b'.repeat(64)}`,
+      signingKeyReference: 'secret-provider://fixture/executor-signing',
+      signingKeyVersionFingerprint: `sha256:${'c'.repeat(64)}`,
+    },
+  });
+
+  assert.equal(revision, 'sha256:af18ff408f2f5cf1da246880f4c57e5fd10e9e0d1a225af56f7a4bb1b7b7a633');
+});
+
+test('published plans are admitted and dispatch is gated on task-bound passed preflight', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.admitPublishedPlans, 'function');
+  assert.equal(typeof runtime.assertPassedPlanPreflights, 'function');
+  const calls = [];
+  const plans = new Map([
+    [
+      'target-alpha',
+      {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        approval: {id: '11111111-1111-4111-8111-111111111111'},
+      },
+    ],
+    [
+      'target-beta',
+      {
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        approval: {id: '22222222-2222-4222-8222-222222222222'},
+      },
+    ],
+  ]);
+  const topology = {
+    token: 'admin-token',
+    request: async (method, requestPath, options) => {
+      calls.push({method, path: requestPath, ...options});
+      if (method === 'POST') {
+        return {
+          decision: 'ADMIT',
+          approvalRequestId: requestPath.includes('aaaaaaaa')
+            ? '11111111-1111-4111-8111-111111111111'
+            : '22222222-2222-4222-8222-222222222222',
+        };
+      }
+      return {
+        preflightRuns: [
+          {
+            status: 'PASSED',
+            checks: [
+              {
+                checkKey: 'adapter:deploy-provider',
+                status: 'PASSED',
+              },
+              {
+                checkKey: 'plan_checksum',
+                status: 'PASSED',
+                taskId: requestPath.includes('aaaaaaaa')
+                  ? '33333333-3333-4333-8333-333333333333'
+                  : '44444444-4444-4444-8444-444444444444',
+              },
+            ],
+          },
+        ],
+      };
+    },
+  };
+
+  await runtime.admitPublishedPlans({topology, plans, runId: 'run-081'});
+  await runtime.assertPassedPlanPreflights({topology, plans});
+
+  assert.deepEqual(
+    calls
+      .filter((call) => call.method === 'POST')
+      .map(({path: requestPath, body}) => ({
+        path: requestPath,
+        body,
+      })),
+    [
+      {
+        path: '/api/v1/deployment-plans/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/admission',
+        body: {schedulerIdempotencyKey: 'neutral-run-081-target-alpha'},
+      },
+      {
+        path: '/api/v1/deployment-plans/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/admission',
+        body: {schedulerIdempotencyKey: 'neutral-run-081-target-beta'},
+      },
+    ]
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'GET').map((call) => call.path),
+    [
+      '/api/v1/deployment-plans/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '/api/v1/deployment-plans/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    ]
+  );
+});
+
+test('lease identity is derived from the target plan frozen adapters, never fixture text', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.derivePlanLeaseIdentity, 'function');
+  const keyId = `sha256:${'b'.repeat(64)}`;
+  const adapter = {
+    adapterAssignmentId: '11111111-1111-4111-8111-111111111111',
+    adapterImplementationId: '22222222-2222-4222-8222-222222222222',
+    implementationVersion: '1.0.0',
+    capability: 'distr.compose.deploy',
+    capabilityVersion: '1.0.0',
+    scopeType: 'deployment_unit',
+    scopeReference: '33333333-3333-4333-8333-333333333333',
+    configSnapshotId: '44444444-4444-4444-8444-444444444444',
+    configChecksum: `sha256:${'a'.repeat(64)}`,
+    keyConfiguration: {
+      keyId,
+      publicKeyFingerprint: keyId,
+      signingKeyReference: 'secret-provider://fixture/executor-signing',
+      signingKeyVersionFingerprint: `sha256:${'c'.repeat(64)}`,
+    },
+  };
+
+  const identity = runtime.derivePlanLeaseIdentity({
+    plan: {
+      stepAdapters: [
+        {stepKey: 'deploy-provider', ...adapter},
+        {stepKey: 'deploy-consumer', ...adapter},
+      ],
+    },
+    target: {
+      id: 'target-alpha',
+      unit: {id: adapter.scopeReference},
+      snapshot: {id: adapter.configSnapshotId, canonicalChecksum: adapter.configChecksum},
+    },
+    signingKeyId: keyId,
+  });
+
+  assert.deepEqual(identity, {
+    adapterRevision: 'sha256:af18ff408f2f5cf1da246880f4c57e5fd10e9e0d1a225af56f7a4bb1b7b7a633',
+    keyId,
+  });
+});
+
 test('live bootstrap captures Hub-created target IDs before target-bound services start', async () => {
   const fixture = JSON.parse(await readFile(path.join(fixtureDir, 'fixture.json'), 'utf8'));
   const calls = [];
@@ -33,7 +186,13 @@ test('live bootstrap captures Hub-created target IDs before target-bound service
     for await (const chunk of request) {
       chunks.push(chunk);
     }
-    calls.push({method: request.method, path: request.url, authorization: request.headers.authorization});
+    const requestBody = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : undefined;
+    calls.push({
+      method: request.method,
+      path: request.url,
+      authorization: request.headers.authorization,
+      body: requestBody,
+    });
     let body = {};
     let status = 200;
     switch (`${request.method} ${request.url}`) {
@@ -80,6 +239,11 @@ test('live bootstrap captures Hub-created target IDs before target-bound service
           body = {targetSecret: `target-secret-${targetNumber}`};
         } else if (request.url.endsWith('/members')) {
           body = {id: `30000000-0000-4000-8000-00000000000${approverNumber}`};
+        } else if (request.url === '/api/v1/authorization/control-plane-enrollments') {
+          body = {id: `40000000-0000-4000-8000-00000000000${calls.length}`};
+          status = 201;
+        } else if (request.url.endsWith('/capabilities')) {
+          body = {id: `50000000-0000-4000-8000-00000000000${targetNumber}`};
         } else if (request.url === '/api/v1/auth/register') {
           body = {};
           status = 201;
@@ -107,6 +271,38 @@ test('live bootstrap captures Hub-created target IDs before target-bound service
       ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002']
     );
     assert.equal(calls.filter((call) => call.path === '/api/v1/agent/login').length, 2);
+    const enrollments = calls.filter((call) => call.path === '/api/v1/authorization/control-plane-enrollments');
+    assert.deepEqual(
+      enrollments.map((call) => ({
+        authorization: call.authorization,
+        scope: call.body.scope,
+      })),
+      [
+        {
+          authorization: 'Bearer operator-token',
+          scope: {kind: 'organization', id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},
+        },
+        {
+          authorization: 'Bearer operator-token',
+          scope: {kind: 'environment', id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'},
+        },
+      ]
+    );
+    const capabilityReports = calls.filter((call) => call.path.endsWith('/capabilities'));
+    assert.deepEqual(
+      capabilityReports.map(({path: requestPath, authorization}) => ({path: requestPath, authorization})),
+      [
+        {path: '/api/v1/agents/00000000-0000-4000-8000-000000000001/capabilities', authorization: 'Bearer agent-1'},
+        {path: '/api/v1/agents/00000000-0000-4000-8000-000000000002/capabilities', authorization: 'Bearer agent-2'},
+      ]
+    );
+    for (const report of capabilityReports) {
+      assert.equal(report.body.protocolVersion, 'v2');
+      assert.deepEqual(report.body.supportedActions, [
+        {actionType: 'distr.compose.deploy', versions: ['1.0.0']},
+        {actionType: 'distr.preflight', versions: ['1']},
+      ]);
+    }
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

@@ -30,6 +30,13 @@ worktree on 2026-07-28:
 - That clean run was not a live-stack result:
   `liveStack.started` was `false`, and the report identified the unavailable
   Docker CLI as the blocker.
+- The source now contains a separate `live-hub-api` branch that starts a
+  disposable loopback stack and attempts the Hub/API release, plan, approval,
+  campaign, protocol-v2 execution, independent-observation, and fleet-read-model
+  path for A-B-A. That branch was not executed on this host. Source re-review
+  also found unresolved governance-bootstrap, lease-revision, and Target B
+  checksum-binding contract blockers, so its intended A-B-A result is not
+  acceptance evidence.
 - The default failure-matrix fixture simulation evaluated all 14 expected cases
   but reported `SIMULATION_ONLY`, `acceptanceEligible: false`, and
   `NON_ACCEPTANCE_FIXTURE_SIMULATION`. Its report checksum was
@@ -173,13 +180,16 @@ requires two plan-checksum-bound, separated approvals in the UTC window
 protocol v2, fence `fence-2` at generation `2`, lease generation `3`, a
 5,000 ms timeout, and a 65,536-byte fixture log bound.
 
-The fixture does not currently assign separate deployment-unit, plan, approval,
-task, attempt, event, observation, desired-state, signing-key-fingerprint,
-manifest-checksum, graph-checksum, or change-log IDs. Those records are
-represented by the ordered `flow.stages`, target/config/release checksums,
-synthetic evidence rows, and the result `flowChecksum`. Do not describe absent
-identities as frozen production records. A future live proof must retain those
-exact IDs and checksums from the Hub.
+The fixture-contract result does not assign separate deployment-unit, plan,
+approval, task, attempt, event, observation, desired-state,
+signing-key-fingerprint, manifest-checksum, graph-checksum, or change-log IDs.
+Those records are represented by the ordered `flow.stages`,
+target/config/release checksums, synthetic evidence rows, and the result
+`flowChecksum`. Do not describe absent identities as frozen production records.
+The implemented live branch attempts to create and retain runtime records
+through the Hub APIs, but no accepted live result exists. An accepted live proof
+must retain the exact returned IDs and checksums after the contract blockers are
+fixed, re-reviewed, and exercised.
 
 The two targets use separately configured adapters and separately registered
 observers while consuming the same fixture Release A/B identities and digests.
@@ -205,7 +215,8 @@ target compatibility.
 
 ## Evidence lineage
 
-The clean reference run follows one forward-only evidence chain:
+The implemented live clean branch is intended to follow this forward-only
+evidence chain:
 
 ```text
 Component Release contracts and change logs
@@ -221,6 +232,8 @@ Component Release contracts and change logs
 ```
 
 Every child record must retain its parent IDs and relevant immutable checksums.
+The chain is a required live-proof shape, not evidence that the unexecuted
+branch completed it.
 The migration in the fixture is retry-safe but is not evidence that an older
 release is rollback-safe. Previous-state B-to-A behavior must use the frozen
 previous-state evidence and constraints; it must not infer compatibility from
@@ -318,18 +331,31 @@ to live evidence or prove that an unrecorded external dependency participated.
 ## Limitations
 
 - Contract mode runs `simulateContractFlow` entirely in memory.
-- Clean mode can start a loopback-only Hub, PostgreSQL, two executors, and two
-  observers and wait for readiness, but the current release-flow result still
-  comes from `simulateContractFlow`; it does not call the Hub release,
-  planning, campaign, execution, or observation APIs.
-- Clean mode generates an ephemeral reference-executor trust-key entry and
-  public fingerprint in memory so the service can start. Because the runner
-  sends no signed intent to that service, readiness is not signed-intent
-  execution evidence.
+- When its local prerequisites are available, clean mode enters the
+  `live-hub-api` branch: it starts a loopback-only Hub, PostgreSQL, two
+  executors, and two observers; calls Hub APIs to create the disposable
+  topology, releases, plans, approvals, and campaigns; attempts protocol-v2
+  execution and independent observation for A-B-A; and requires the fleet read
+  model to return to A.
+- The live branch generates ephemeral executor-signing and observer trust
+  material in memory. Its source path attempts signed/fenced leases and intents,
+  but source inspection or service readiness is not execution evidence.
+- The live branch remains unaccepted. Re-review found that it omits mandatory
+  organization/environment control-plane enrollments and a protocol-v2 agent
+  capability report, leases with adapter revisions that cannot match the frozen
+  attempt, and gives Target B an operation-spec checksum incompatible with the
+  frozen binding. Those contracts must be corrected and re-reviewed before a
+  live run can qualify as evidence.
 - If Docker, its daemon, or a Hub binary is unavailable, clean mode deliberately
   falls back to fixture-contract mode and can still exit successfully. Inspect
   `proofMode`, `liveStack.started`, `liveStack.blocker`, `nonLocalCalls`, and
-  cleanup metadata before classifying the result.
+  cleanup metadata before classifying the result. The recorded run on this host
+  took this fallback because the Docker CLI was unavailable; it did not attempt
+  the live branch.
+- Live A-B-A acceptance remains pending until the contract blockers are fixed
+  and re-reviewed and a retained clean run actually completes the
+  `live-hub-api` path against the runtime contracts. Availability of Docker or a
+  zero exit from fixture fallback is not sufficient.
 - The failure matrix emits
   `distr.control-plane-failure-matrix-report/v2`. Its default fixture mode only
   simulates expected outcomes and is explicitly non-acceptance. Clean mode

@@ -25,6 +25,39 @@ import (
 
 const fixtureAuthorization = "Bearer local-fixture-credential"
 
+func TestReferenceExecutorDerivesOperationFromSignedIntentWithoutUnsignedSpec(t *testing.T) {
+	g := NewWithT(t)
+	harness := newExecutorHarness(t, 4096)
+	input := harness.newOperationRequest(t, "succeed", 2, 1, "resource:signed-intent-only")
+	input.Binding.ConfigChecksum = checksum([]byte("hub-frozen-deployment-config"))
+	input.Intent = harness.signBinding(t, input.Binding)
+
+	body := map[string]any{
+		"intent":  input.Intent,
+		"binding": input.Binding,
+	}
+	response := harness.send(t, http.MethodPost, "/v1/operations", body, fixtureAuthorization)
+
+	g.Expect(response.Code).To(Equal(http.StatusAccepted))
+	g.Expect(decodeOperationView(t, response).Status).To(Equal(types.ExecutionAttemptStatusSucceeded))
+}
+
+func TestReferenceExecutorRejectsUnsignedOperationSpec(t *testing.T) {
+	g := NewWithT(t)
+	harness := newExecutorHarness(t, 4096)
+	input := harness.newOperationRequest(t, "succeed", 0, 1, "resource:unknown-spec")
+	body := map[string]any{
+		"intent":  input.Intent,
+		"binding": input.Binding,
+		"spec":    map[string]any{"mode": "succeed"},
+	}
+
+	response := harness.send(t, http.MethodPost, "/v1/operations", body, fixtureAuthorization)
+
+	g.Expect(response.Code).To(Equal(http.StatusBadRequest))
+	g.Expect(response.Body.String()).To(ContainSubstring("request body is invalid"))
+}
+
 func TestReferenceExecutorVerifiesSignedIntentAndAllBindings(t *testing.T) {
 	g := NewWithT(t)
 	harness := newExecutorHarness(t, 4096)
@@ -59,7 +92,7 @@ func TestReferenceExecutorVerifiesSignedIntentAndAllBindings(t *testing.T) {
 			test.mutate(&candidate)
 			response := harness.send(t, http.MethodPost, "/v1/operations", candidate, fixtureAuthorization)
 			g.Expect(response.Code).To(Equal(http.StatusBadRequest))
-			g.Expect(response.Body.String()).NotTo(ContainSubstring(string(candidate.Spec)))
+			g.Expect(response.Body.String()).NotTo(ContainSubstring(candidate.Binding.ConfigChecksum))
 		})
 	}
 
@@ -90,7 +123,7 @@ func TestReferenceExecutorFencesStaleOperationsAndReplaysExactDispatch(t *testin
 
 	conflict := first
 	conflict.Binding.PlanChecksum = checksum([]byte("conflicting-plan"))
-	conflict.Intent = harness.signBinding(t, conflict.Binding, conflict.Spec)
+	conflict.Intent = harness.signBinding(t, conflict.Binding)
 	conflicting := harness.send(t, http.MethodPost, "/v1/operations", conflict, fixtureAuthorization)
 	g.Expect(conflicting.Code).To(Equal(http.StatusConflict))
 
@@ -269,10 +302,11 @@ func TestReferenceExecutorHandlesConcurrentExactDispatchOnce(t *testing.T) {
 }
 
 type executorHarness struct {
-	handler http.Handler
-	config  referenceExecutorConfig
-	private ed25519.PrivateKey
-	now     time.Time
+	handler   http.Handler
+	config    referenceExecutorConfig
+	private   ed25519.PrivateKey
+	now       time.Time
+	behaviors sync.Map
 }
 
 func newExecutorHarness(t *testing.T, maxLogBytes int) *executorHarness {
@@ -282,6 +316,7 @@ func newExecutorHarness(t *testing.T, maxLogBytes int) *executorHarness {
 	g.Expect(err).NotTo(HaveOccurred())
 	keyID := executionprotocol.PublicKeyFingerprint(public)
 	now := time.Date(2026, 7, 28, 1, 2, 3, 0, time.UTC)
+	harness := &executorHarness{private: private, now: now}
 	config := referenceExecutorConfig{
 		ExecutorID:   "reference-executor-test",
 		TargetID:     uuid.MustParse("22222222-2222-4222-8222-222222222222"),
@@ -290,10 +325,18 @@ func newExecutorHarness(t *testing.T, maxLogBytes int) *executorHarness {
 		StateFile:    filepath.Join(t.TempDir(), "executor-state.json"),
 		MaxLogBytes:  maxLogBytes,
 		Now:          func() time.Time { return now },
+		TestBehavior: func(binding operationBinding) operationBehavior {
+			if behavior, ok := harness.behaviors.Load(binding.AttemptID); ok {
+				return behavior.(operationBehavior)
+			}
+			return operationBehavior{Status: types.ExecutionAttemptStatusSucceeded}
+		},
 	}
 	handler, err := newReferenceExecutor(config)
 	g.Expect(err).NotTo(HaveOccurred())
-	return &executorHarness{handler: handler, config: config, private: private, now: now}
+	harness.handler = handler
+	harness.config = config
+	return harness
 }
 
 func (h *executorHarness) newOperationRequest(
@@ -304,8 +347,6 @@ func (h *executorHarness) newOperationRequest(
 	resourceKey string,
 ) operationRequest {
 	t.Helper()
-	spec, err := json.Marshal(operationSpec{Mode: mode, LogEntries: logEntries})
-	NewWithT(t).Expect(err).NotTo(HaveOccurred())
 	binding := operationBinding{
 		TenantID:        uuid.MustParse("11111111-1111-4111-8111-111111111111"),
 		TargetID:        h.config.TargetID,
@@ -317,24 +358,28 @@ func (h *executorHarness) newOperationRequest(
 		StepKey:         "reference-step",
 		PlanChecksum:    checksum([]byte("plan")),
 		ArtifactDigest:  checksum([]byte("artifact")),
-		ConfigChecksum:  checksum(spec),
+		ConfigChecksum:  checksum([]byte("hub-frozen-deployment-config")),
 		AdapterRevision: "reference-executor@1",
 		ResourceKey:     resourceKey,
 		FenceGeneration: int64(attemptNumber),
 	}
-	return operationRequest{Intent: h.signBinding(t, binding, spec), Binding: binding, Spec: spec}
+	status := types.ExecutionAttemptStatusSucceeded
+	switch mode {
+	case "fail":
+		status = types.ExecutionAttemptStatusFailed
+	case "hold":
+		status = types.ExecutionAttemptStatusRunning
+	}
+	h.behaviors.Store(binding.AttemptID, operationBehavior{Status: status, LogEntries: logEntries})
+	return operationRequest{Intent: h.signBinding(t, binding), Binding: binding}
 }
 
 func (h *executorHarness) signBinding(
 	t *testing.T,
 	binding operationBinding,
-	spec json.RawMessage,
 ) types.SignedExecutionIntent {
 	t.Helper()
 	g := NewWithT(t)
-	if binding.ConfigChecksum == "" {
-		binding.ConfigChecksum = checksum(spec)
-	}
 	keyID := executionprotocol.PublicKeyFingerprint(h.private.Public().(ed25519.PublicKey))
 	signer, err := executionprotocol.NewEd25519IntentSigner(keyID, h.private)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -425,5 +470,5 @@ func TestNoSensitiveFixtureValuesArePersisted(t *testing.T) {
 	state, err := os.ReadFile(harness.config.StateFile)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(state)).NotTo(ContainSubstring("local-fixture-credential"))
-	g.Expect(string(state)).NotTo(ContainSubstring(string(request.Spec)))
+	g.Expect(string(state)).NotTo(ContainSubstring("hub-frozen-deployment-config"))
 }

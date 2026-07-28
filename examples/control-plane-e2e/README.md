@@ -41,9 +41,12 @@ When Docker and a prebuilt local Hub image are available, the runner:
 1. generates a unique Compose project ID and random secrets in memory;
 2. removes only stale resources under that unique project ID;
 3. starts isolated PostgreSQL and the supplied Hub image, then registers a disposable organization through Hub APIs;
-4. creates the two targets through Hub APIs and starts target-bound executors and observers with those returned IDs;
+4. enrolls that organization and environment in the v2 control plane, creates the two targets through Hub APIs, reports
+   each target agent's exact `distr.compose.deploy@1.0.0` and `distr.preflight@1` capabilities, and starts target-bound
+   executors and observers with the Hub-returned IDs;
 5. publishes component releases and the product capability DAG, freezes per-target configs, and publishes approved plans;
-6. records two decisions from separately invited approvers, publishes two-wave campaigns, and drives v2 leases;
+6. records two decisions from separately invited approvers, obtains approval-bound `ADMIT` evaluations, publishes
+   two-wave campaigns, and verifies a task-bound `PASSED` preflight before dispatch;
 7. executes and completes the live A-to-B-to-A path, sends independent observations, and verifies final A in the fleet read model;
 8. runs `docker compose down -v --remove-orphans`, enumerates project-labelled containers, volumes, and networks, and
    fails the run if teardown or absence of retained resources cannot be confirmed.
@@ -72,7 +75,10 @@ adapter, resource, fence, issued-at, and expiry bindings. The external executor 
 clock, handles an exact replay before fencing, and requires every new operation to advance the fence. It rejects outer
 identity rebinding, expired or not-yet-valid authority, target mismatches, non-retry-safe migrations, and conflicting
 idempotency-key reuse. Logs are bounded and redact authorization/signature material. The reference executor trusts the
-public half of the Hub signing pair; independent observer trust uses a separately generated Ed25519 key.
+public half of the Hub signing pair and derives the successful operation only from the verified signed intent and its
+immutable artifact, target-config, adapter, resource, and fence bindings. It rejects unsigned request fields such as a
+local operation spec. V2 lease requests use the SHA-256 revision derived from the exact adapter evidence frozen into the
+published plan, never a fixture-supplied adapter label. Independent observer trust uses a separately generated Ed25519 key.
 
 Each observer exposes:
 
@@ -96,7 +102,8 @@ node examples/control-plane-e2e/run.mjs --mode clean
 The Node contract test starts the real local HTTP executor and observer servers on unused loopback ports. It verifies
 idempotency, signed outer-identity binding, authority expiry, strict fencing, cancellation, bounded redacted logs,
 observer identity/target binding, sequence replay, phased live bootstrap with Hub-created target IDs, separated trust
-keys, and the frozen 14-case failure-matrix schema.
+keys, organization/environment enrollment, exact agent capability reports, approval-bound admission, task-bound passed
+preflight, frozen-adapter lease identity, and the frozen 14-case failure-matrix schema.
 
 ## Safety boundary
 

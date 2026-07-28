@@ -46,12 +46,12 @@ type referenceExecutorConfig struct {
 	StateFile    string
 	MaxLogBytes  int
 	Now          func() time.Time
+	TestBehavior func(operationBinding) operationBehavior
 }
 
 type operationRequest struct {
 	Intent  types.SignedExecutionIntent `json:"intent"`
 	Binding operationBinding            `json:"binding"`
-	Spec    json.RawMessage             `json:"spec"`
 }
 
 type operationBinding struct {
@@ -71,9 +71,9 @@ type operationBinding struct {
 	FenceGeneration int64     `json:"fenceGeneration"`
 }
 
-type operationSpec struct {
-	Mode       string `json:"mode"`
-	LogEntries int    `json:"logEntries"`
+type operationBehavior struct {
+	Status     types.ExecutionAttemptStatus
+	LogEntries int
 }
 
 type cancelRequest struct {
@@ -159,6 +159,11 @@ func newReferenceExecutor(config referenceExecutorConfig) (http.Handler, error) 
 	config.StateFile = strings.TrimSpace(config.StateFile)
 	if config.Now == nil {
 		config.Now = time.Now
+	}
+	if config.TestBehavior == nil {
+		config.TestBehavior = func(operationBinding) operationBehavior {
+			return operationBehavior{Status: types.ExecutionAttemptStatusSucceeded}
+		}
 	}
 	if config.ExecutorID == "" || len(config.ExecutorID) > 128 ||
 		strings.ContainsAny(config.ExecutorID, "\r\n") {
@@ -271,9 +276,22 @@ func (e *referenceExecutor) createOperation(response http.ResponseWriter, reques
 	if !decodeRequest(response, request, &input) {
 		return
 	}
-	spec, status, err := e.validateOperation(input)
+	status, err := e.validateOperation(input)
 	if err != nil {
 		writeError(response, status, err.Error())
+		return
+	}
+	behavior := e.config.TestBehavior(input.Binding)
+	if behavior.LogEntries < 0 || behavior.LogEntries > 10000 {
+		writeError(response, http.StatusInternalServerError, "executor behavior is invalid")
+		return
+	}
+	switch behavior.Status {
+	case types.ExecutionAttemptStatusSucceeded,
+		types.ExecutionAttemptStatusFailed,
+		types.ExecutionAttemptStatusRunning:
+	default:
+		writeError(response, http.StatusInternalServerError, "executor behavior is invalid")
 		return
 	}
 	requestBytes, err := json.Marshal(input)
@@ -321,17 +339,17 @@ func (e *referenceExecutor) createOperation(response http.ResponseWriter, reques
 		UpdatedAt:       now,
 	}
 	e.appendLog(record, now, "operation accepted")
-	for index := 1; index <= spec.LogEntries; index++ {
+	for index := 1; index <= behavior.LogEntries; index++ {
 		e.appendLog(record, now, fmt.Sprintf("deterministic progress %04d", index))
 	}
-	switch spec.Mode {
-	case "succeed":
+	switch behavior.Status {
+	case types.ExecutionAttemptStatusSucceeded:
 		record.Status = types.ExecutionAttemptStatusSucceeded
 		e.appendLog(record, now, "operation succeeded")
-	case "fail":
+	case types.ExecutionAttemptStatusFailed:
 		record.Status = types.ExecutionAttemptStatusFailed
 		e.appendLog(record, now, "operation failed")
-	case "hold":
+	case types.ExecutionAttemptStatusRunning:
 		e.appendLog(record, now, "operation waiting at a safe boundary")
 	}
 	e.state.Operations[id] = record
@@ -346,32 +364,19 @@ func (e *referenceExecutor) createOperation(response http.ResponseWriter, reques
 
 func (e *referenceExecutor) validateOperation(
 	input operationRequest,
-) (operationSpec, int, error) {
+) (int, error) {
 	if err := input.Binding.validate(); err != nil {
-		return operationSpec{}, http.StatusBadRequest, err
+		return http.StatusBadRequest, err
 	}
 	if input.Binding.TargetID != e.config.TargetID {
-		return operationSpec{}, http.StatusBadRequest, errors.New("target binding mismatch")
-	}
-	var spec operationSpec
-	if err := decodeStrictJSON(input.Spec, &spec); err != nil {
-		return operationSpec{}, http.StatusBadRequest, errors.New("operation specification is invalid")
-	}
-	if spec.Mode != "succeed" && spec.Mode != "fail" && spec.Mode != "hold" {
-		return operationSpec{}, http.StatusBadRequest, errors.New("operation mode is invalid")
-	}
-	if spec.LogEntries < 0 || spec.LogEntries > 10000 {
-		return operationSpec{}, http.StatusBadRequest, errors.New("operation log entry count is invalid")
-	}
-	if sha256Checksum(input.Spec) != input.Binding.ConfigChecksum {
-		return operationSpec{}, http.StatusBadRequest, errors.New("operation specification checksum mismatch")
+		return http.StatusBadRequest, errors.New("target binding mismatch")
 	}
 	var payload signedIntentPayload
 	if err := decodeStrictJSON(input.Intent.Payload, &payload); err != nil {
-		return operationSpec{}, http.StatusBadRequest, errors.New("signed execution intent payload is invalid")
+		return http.StatusBadRequest, errors.New("signed execution intent payload is invalid")
 	}
 	if !payload.matches(input.Binding) {
-		return operationSpec{}, http.StatusBadRequest, errors.New("signed execution intent binding mismatch")
+		return http.StatusBadRequest, errors.New("signed execution intent binding mismatch")
 	}
 	policy := types.TrustPolicy{
 		Keys:                   e.config.TrustedKeys,
@@ -380,9 +385,9 @@ func (e *referenceExecutor) validateOperation(
 		ExpectedConfigChecksum: input.Binding.ConfigChecksum,
 	}
 	if err := executionprotocol.VerifyExecutionIntent(input.Intent, policy); err != nil {
-		return operationSpec{}, http.StatusUnauthorized, errors.New("signed execution intent is not authorized")
+		return http.StatusUnauthorized, errors.New("signed execution intent is not authorized")
 	}
-	return spec, http.StatusOK, nil
+	return http.StatusOK, nil
 }
 
 func (binding operationBinding) validate() error {
