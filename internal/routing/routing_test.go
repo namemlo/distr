@@ -13,6 +13,90 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestOperatorControlPlaneCollectionsArePublishedAsAuthenticatedReadOnlyOpenAPI(t *testing.T) {
+	g := NewWithT(t)
+	tracer := obsertracing.NoopTracer{}
+	router := NewRouter(
+		zap.NewNop(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		obsertracing.Tracers{Default: tracer, Agent: tracer},
+		nil,
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/docs/openapi.json", nil),
+	)
+	g.Expect(recorder.Code).To(Equal(http.StatusOK))
+
+	var document struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &document)).To(Succeed())
+	for _, path := range []string{
+		"/api/v1/control-plane/fleet",
+		"/api/v1/control-plane/releases",
+		"/api/v1/control-plane/plans",
+		"/api/v1/control-plane/campaigns",
+		"/api/v1/control-plane/executions",
+		"/api/v1/control-plane/reconciliation",
+		"/api/v1/control-plane/audit",
+	} {
+		g.Expect(document.Paths).To(HaveKey(path), path)
+		g.Expect(document.Paths[path]).To(HaveKey("get"), path)
+		g.Expect(document.Paths[path]).NotTo(Or(
+			HaveKey("post"),
+			HaveKey("put"),
+			HaveKey("patch"),
+			HaveKey("delete"),
+		), path)
+
+		var operation deploymentRegistryOpenAPIOperation
+		g.Expect(json.Unmarshal(document.Paths[path]["get"], &operation)).To(Succeed())
+		expectDeploymentRegistrySecurity(t, operation)
+		g.Expect(operation.Parameters).To(ContainElements(
+			HaveField("Name", "cursor"),
+			HaveField("Name", "limit"),
+		), path)
+	}
+	for path, pathParameters := range map[string][]string{
+		"/api/v1/control-plane/releases/{releaseId}":                          {"releaseId"},
+		"/api/v1/control-plane/releases/{releaseId}/evidence":                 {"releaseId"},
+		"/api/v1/control-plane/releases/{releaseId}/compare/{otherReleaseId}": {"releaseId", "otherReleaseId"},
+		"/api/v1/control-plane/plans/{planId}":                                {"planId"},
+		"/api/v1/control-plane/plans/{planId}/evidence":                       {"planId"},
+		"/api/v1/control-plane/plans/{planId}/compare/{otherPlanId}":          {"planId", "otherPlanId"},
+		"/api/v1/control-plane/campaigns/{campaignId}":                        {"campaignId"},
+		"/api/v1/control-plane/campaigns/{campaignId}/evidence":               {"campaignId"},
+		"/api/v1/control-plane/executions/{executionId}":                      {"executionId"},
+		"/api/v1/control-plane/executions/{executionId}/evidence":             {"executionId"},
+		"/api/v1/control-plane/reconciliation/{reconciliationId}":             {"reconciliationId"},
+		"/api/v1/control-plane/reconciliation/{reconciliationId}/evidence":    {"reconciliationId"},
+		"/api/v1/control-plane/audit/{auditEventId}":                          {"auditEventId"},
+		"/api/v1/control-plane/audit/{auditEventId}/evidence":                 {"auditEventId"},
+	} {
+		operation := readDeploymentRegistryOpenAPIOperation(t, document.Paths, path, "get")
+		expectDeploymentRegistrySecurity(t, operation)
+		expectDeploymentRegistryResponseStatuses(
+			t, operation, "200", "400", "403", "404", "500",
+		)
+		for _, parameter := range pathParameters {
+			expectDeploymentRegistryPathParameter(t, operation, parameter)
+		}
+		g.Expect(document.Paths[path]).NotTo(Or(
+			HaveKey("post"),
+			HaveKey("put"),
+			HaveKey("patch"),
+			HaveKey("delete"),
+		), path)
+	}
+}
+
 func TestScopedAuthorizationAdminRoutesArePublishedInOpenAPI(t *testing.T) {
 	g := NewWithT(t)
 	tracer := obsertracing.NoopTracer{}

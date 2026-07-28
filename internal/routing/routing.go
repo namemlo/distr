@@ -242,6 +242,7 @@ func ApiRouter(
 					r.Route("/channels", handlers.ChannelsRouter)
 					r.Route("/config-as-code", handlers.ConfigAsCodeRouter)
 					r.Route("/context", handlers.ContextRouter)
+					r.Route("/control-plane", handlers.OperatorControlPlaneRouter)
 					r.Route("/control-plane-audit", handlers.ControlPlaneAuditRouter)
 					r.Route("/customer-organizations", handlers.CustomerOrganizationsRouter)
 					r.With(middleware.PartnerManagementFeatureMiddleware).

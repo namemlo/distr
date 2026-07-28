@@ -54,4 +54,5 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0064: Fenced Executor Protocol v2](0064-fenced-executor-protocol-v2.md)
 - [ADR-0065: Independent Observed State](0065-independent-observed-state.md)
 - [ADR-0066: Correlated Control-Plane Audit and External Export](0066-control-plane-audit-export.md)
+- [ADR-0067: Operator Read Models and Route Compatibility](0067-operator-read-models-and-route-compatibility.md)
 - [ADR-0069: Checksum-Bound Deployment Admission and Emergency Overrides](0069-deployment-admission-emergency-overrides.md)

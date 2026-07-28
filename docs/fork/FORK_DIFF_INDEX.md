@@ -1612,3 +1612,23 @@ Use one entry per pull request:
   infrastructure, credential value, or client-specific behavior.
 - Compatibility notes: V1 execution remains unchanged. Export checkpoints advance only after a complete batch;
   failures append operational evidence and never update or delete the source audit events.
+
+### PR-079 - Operator control-plane read models and paginated APIs
+
+- Status: Implemented on the prepared integration branch; production benchmark and complete integration gates remain pending.
+- Upstream base: `f992c39b` (prepared PR-078 integration checkpoint).
+- Feature flag: All operator routes require `operator_control_plane_v2`.
+- User-facing behavior: Operators can page and filter fleet, release, plan, campaign, execution, reconciliation,
+  and audit records while retaining detail access to blocking and uncertain evidence.
+- Database changes: Migration 161 adds organization-leading covering, filter, keyset, and active/unresolved partial
+  indexes over canonical source tables. It adds no projection tables or alternate write authority.
+- API changes: Adds bounded list and detail surfaces below `/api/v1/control-plane`; list size defaults to 50 and is
+  capped at 100 with filter-bound deterministic cursors.
+- UI changes: None in this slice; the Angular control room belongs to PR-080.
+- Agent protocol changes: None.
+- Documentation: Added ADR-0067 and PR-079 fork notes.
+- Tests: Added migration ownership/shape/rollback coverage plus query and handler pagination, filter, partial-state,
+  and tenant-isolation coverage. The deterministic scale benchmark remains a rollout gate.
+- Upstream contribution notes: Community-neutral read contracts and indexes; no adopter, provider, or credential semantics.
+- Compatibility notes: Existing `/deployments` and `/deployments/:deploymentTargetId` behavior remains unchanged;
+  static operator routes take precedence over any parameterized compatibility route.
