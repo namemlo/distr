@@ -717,10 +717,22 @@ async function freezeConfigsAndRegisterBoundaries({
         runtimeConstraints: Object.fromEntries(
           Object.entries(target.targetConfig).map(([key, value]) => [key, String(value)])
         ),
-        objects: [],
+        objects: [
+          {
+            key: 'adapter-input',
+            kind: 'adapter_input',
+            reference: `s3://fixture-config/_immutable/sha256/${target.configChecksum.slice(
+              'sha256:'.length
+            )}/config.json`,
+            mediaType: 'application/json',
+            sizeBytes: 2,
+            checksum: target.configChecksum,
+          },
+        ],
         components: [...target.instances.entries()].map(([componentKey, instance]) => ({
           physicalName: `${target.id}-${componentKey}`,
           componentInstanceId: instance.id,
+          deploymentUnitId: target.unit.id,
         })),
         secretReferences: [],
         featureFlags: [],
