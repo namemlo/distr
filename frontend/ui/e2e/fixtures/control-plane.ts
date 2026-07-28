@@ -738,27 +738,23 @@ async function handleApi(
       },
     ]);
   } else if (method === 'POST' && path === '/api/v1/control-plane-audit/evidence-bundles') {
-    await json(
-      route,
-      {
-        version: 'v1',
-        deploymentPlanId: fixtureIds.plan,
-        events: [
-          {
-            id: fixtureIds.audit,
-            sequence: 42,
-            eventType: 'deployment_plan.approved',
-            outcome: 'accepted',
-            deploymentPlanId: fixtureIds.plan,
-            payloadRedacted: false,
-            payloadTruncated: false,
-            createdAt: timestamp,
-          },
-        ],
-        checksum: checksums.canonical,
-      },
-      201
-    );
+    await json(route, {
+      version: 'v1',
+      deploymentPlanId: fixtureIds.plan,
+      events: [
+        {
+          id: fixtureIds.audit,
+          sequence: 42,
+          eventType: 'deployment_plan.approved',
+          outcome: 'accepted',
+          deploymentPlanId: fixtureIds.plan,
+          payloadRedacted: false,
+          payloadTruncated: false,
+          createdAt: timestamp,
+        },
+      ],
+      checksum: checksums.canonical,
+    });
   } else if (method === 'POST' && path === '/api/v1/deployment-registry/imports/preview') {
     await json(route, registryImport('needs_decision'));
   } else if (
@@ -821,13 +817,13 @@ async function handleApi(
         : [],
     });
   } else if (method === 'POST' && path === '/api/v1/release-bundles') {
-    await json(route, componentRelease('DRAFT'), 201);
+    await json(route, componentRelease('DRAFT'));
   } else if (method === 'POST' && path === `/api/v1/release-bundles/${fixtureIds.componentReleaseDraft}/validate`) {
     await json(route, {valid: true, errors: [], warnings: []});
   } else if (method === 'POST' && path === `/api/v1/release-bundles/${fixtureIds.componentReleaseDraft}/publish`) {
     await json(route, componentRelease('PUBLISHED'));
   } else if (method === 'POST' && path === '/api/v1/product-releases') {
-    await json(route, productRelease('DRAFT'), 201);
+    await json(route, productRelease('DRAFT'));
   } else if (method === 'POST' && path === `/api/v1/product-releases/${fixtureIds.productReleaseDraft}/validate`) {
     await json(route, {valid: true, issues: []});
   } else if (method === 'POST' && path === `/api/v1/product-releases/${fixtureIds.productReleaseDraft}/publish`) {

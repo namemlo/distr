@@ -129,7 +129,17 @@ test.describe('operator control room route-mocked contract', () => {
           },
         })
       );
+      const createResponse = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/release-bundles' && response.request().method() === 'POST'
+      );
       await page.getByRole('button', {name: 'Create component release'}).click();
+      const componentCreateContract = await createResponse;
+      expect(componentCreateContract.status()).toBe(200);
+      await expect(componentCreateContract.json()).resolves.toMatchObject({
+        id: fixtureIds.componentReleaseDraft,
+        status: 'DRAFT',
+      });
       await expect(page.getByText(`Component draft ${fixtureIds.componentReleaseDraft}`)).toBeVisible();
       await page.getByRole('button', {name: 'Validate component release'}).click();
       await expect(page.getByText('Component release is valid and ready to publish.')).toBeVisible();
@@ -166,7 +176,17 @@ test.describe('operator control room route-mocked contract', () => {
           requirements: [],
         })
       );
+      const createResponse = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/product-releases' && response.request().method() === 'POST'
+      );
       await page.getByRole('button', {name: 'Create product release'}).click();
+      const productCreateContract = await createResponse;
+      expect(productCreateContract.status()).toBe(200);
+      await expect(productCreateContract.json()).resolves.toMatchObject({
+        id: fixtureIds.productReleaseDraft,
+        status: 'DRAFT',
+      });
       await expect(page.getByText(`Product draft ${fixtureIds.productReleaseDraft}`)).toBeVisible();
       await page.getByRole('button', {name: 'Validate product release'}).click();
       await expect(page.getByText('Product release is valid and ready to publish.')).toBeVisible();
@@ -510,7 +530,18 @@ test.describe('operator control room route-mocked contract', () => {
         `/deployments/plans/${fixtureIds.plan}`
       );
       await page.getByLabel('Deployment plan ID').fill(fixtureIds.plan);
+      const evidenceResponse = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/v1/control-plane-audit/evidence-bundles' &&
+          response.request().method() === 'POST'
+      );
       await page.getByRole('button', {name: 'Build evidence bundle'}).click();
+      const evidenceContract = await evidenceResponse;
+      expect(evidenceContract.status()).toBe(200);
+      await expect(evidenceContract.json()).resolves.toMatchObject({
+        deploymentPlanId: fixtureIds.plan,
+        checksum: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+      });
       const bundle = page.getByRole('heading', {name: 'Evidence bundle'}).locator('xpath=ancestor::section[1]');
       await expect(bundle).toContainText('sha256:1111111111111111111111111111111111111111111111111111111111111111');
 
