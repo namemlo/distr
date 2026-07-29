@@ -52,7 +52,10 @@ test('places the test filter before Playwright variadic project options', () => 
 
 test('starts the isolated evidence web server without package-manager execution', async () => {
   const config = await readFile(path.join(repoRoot, evidenceConfig), 'utf8');
-  assert.match(config, /command:\s*'node node_modules\/@angular\/cli\/bin\/ng\.js serve /);
+  assert.match(
+    config,
+    /command:\s*\n\s*'node hack\/update-frontend-version\.js && node hack\/agent-changelog\.mjs CHANGELOG\.md frontend\/ui\/src\/data\/agent-changelog\.json && node node_modules\/@angular\/cli\/bin\/ng\.js serve /
+  );
   assert.doesNotMatch(config, /pnpm\s+exec\s+ng\s+serve/);
 });
 

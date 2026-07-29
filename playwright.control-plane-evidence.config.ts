@@ -13,7 +13,8 @@ export default defineConfig({
   ],
   projects: [{name: 'chromium'}],
   webServer: {
-    command: 'node node_modules/@angular/cli/bin/ng.js serve --host 127.0.0.1 --port 4200',
+    command:
+      'node hack/update-frontend-version.js && node hack/agent-changelog.mjs CHANGELOG.md frontend/ui/src/data/agent-changelog.json && node node_modules/@angular/cli/bin/ng.js serve --host 127.0.0.1 --port 4200',
     url: 'http://127.0.0.1:4200',
     reuseExistingServer: !process.env['CI'],
     timeout: 120_000,
