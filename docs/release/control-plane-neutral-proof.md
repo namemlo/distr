@@ -45,9 +45,10 @@ worktree on 2026-07-29:
   and the helper invocation did not enforce offline toolchain resolution.
   Commits `14545aef` and `0dcd56ff` address those source findings with persisted
   eligibility resolvers and an exact cached-toolchain, network-disabled helper
-  build. Focused Go, vet, and all 26 Node contract tests pass. The round-six
-  changes still require independent source re-review, and they have not been
-  runtime-executed; the intended A-B-A result is not acceptance evidence.
+  build. Focused Go, vet, and all 26 Node contract tests pass. Independent
+  round-six source review found no Critical, Important, or Minor findings. The
+  changes have not been runtime-executed; the intended A-B-A result is not
+  acceptance evidence.
 - The default failure-matrix fixture simulation evaluated all 14 expected cases
   but reported `SIMULATION_ONLY`, `acceptanceEligible: false`, and
   `NON_ACCEPTANCE_FIXTURE_SIMULATION`. Its report checksum was
@@ -393,11 +394,11 @@ to live evidence or prove that an unrecorded external dependency participated.
   cleanup metadata before classifying the result. The recorded run on this host
   took this fallback because the Docker CLI was unavailable; it did not attempt
   the live branch.
-- Live A-B-A acceptance remains pending until commits `14545aef` and
-  `0dcd56ff` pass independent source re-review and a retained clean run actually
-  completes the `live-hub-api` path against the runtime contracts. No retained
-  live A-B-A evidence exists. Availability of Docker or a zero exit from fixture
-  fallback is not sufficient.
+- Live A-B-A acceptance remains pending until a retained clean run completes
+  the `live-hub-api` path against the runtime contracts. Commits `14545aef` and
+  `0dcd56ff` passed independent source re-review, but no retained live A-B-A
+  evidence exists. Availability of Docker or a zero exit from fixture fallback
+  is not sufficient.
 - The failure matrix emits
   `distr.control-plane-failure-matrix-report/v2`. Its default fixture mode only
   simulates expected outcomes and is explicitly non-acceptance. Clean mode
