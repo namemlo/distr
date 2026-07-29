@@ -13,6 +13,7 @@ BACKUP_DIR="${BACKUP_DIR:-${SCRIPT_DIR}/backups}"
 LOCK_FILE="${LOCK_FILE:-${SCRIPT_DIR}/.deploy.lock}"
 TIMESTAMP_FENCE_FILE="${TIMESTAMP_FENCE_FILE:-${SCRIPT_DIR}/.timestamp-expand-fence}"
 TIMESTAMP_COMPATIBILITY_FILE="${TIMESTAMP_COMPATIBILITY_FILE:-${SCRIPT_DIR}/.timestamp-expand-compatibility}"
+RELEASE_EVIDENCE_DIR=''
 
 info() { printf '[distr-deploy] %s\n' "$*"; }
 die() { printf '[distr-deploy] ERROR: %s\n' "$*" >&2; return 1; }
@@ -259,6 +260,19 @@ audit_probe_execution_id() {
   printf '%s' "$execution_id" || return
 }
 
+check_release_audit_probe_env() {
+  local audit_url="${DISTR_AUDIT_HISTORY_PROBE_URL:-}"
+  [[ "$audit_url" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]+)?/api/v1/external-executions/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/$ ]] || {
+    die "DISTR_AUDIT_HISTORY_PROBE_URL must be an exact loopback history route with trailing slash"
+    return 1
+  }
+  [[ "${DISTR_AUDIT_HISTORY_PROBE_TOKEN:-}" =~ ^[A-Za-z0-9._~+/=-]+$ &&
+     "$DISTR_AUDIT_HISTORY_PROBE_TOKEN" != *CHANGE_ME* ]] || {
+    die "DISTR_AUDIT_HISTORY_PROBE_TOKEN must be a configured read-only token"
+    return 1
+  }
+}
+
 require_audit_probe_execution_history() {
   local execution_id="${1:-}" event_count
   [[ "$execution_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
@@ -268,6 +282,48 @@ require_audit_probe_execution_history() {
     die "audit probe execution has no captured event history"
     return 1
   }
+}
+
+validate_release_audit_history_snapshot() {
+  local snapshot="${1:-}" sequence event_id extra previous_sequence=0
+  local -A seen_ids=()
+  [[ -n "$snapshot" ]] || return 1
+  while IFS='|' read -r sequence event_id extra; do
+    [[ "$sequence" =~ ^[1-9][0-9]*$ &&
+       "$event_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ &&
+       -z "${extra:-}" ]] || return 1
+    ((sequence > previous_sequence)) || return 1
+    [[ ! -v "seen_ids[$event_id]" ]] || return 1
+    seen_ids["$event_id"]=1
+    previous_sequence="$sequence"
+  done <<<"$snapshot"
+  ((${#seen_ids[@]} > 0)) || return 1
+}
+
+authoritative_release_audit_history_snapshot() {
+  local execution_id="${1:-}" snapshot
+  [[ "$execution_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
+  snapshot="$(postgres_scalar \
+    "SELECT sequence::text || '|' || id::text FROM ExternalExecutionEvent WHERE external_execution_id = '$execution_id'::uuid ORDER BY sequence, id")" || return
+  validate_release_audit_history_snapshot "$snapshot" || {
+    die "audit probe execution history is empty or not uniquely ordered"
+    return 1
+  }
+  printf '%s' "$snapshot" || return
+}
+
+capture_release_audit_history() {
+  local evidence_dir="${1:-}" execution_id_variable="${2:-}"
+  local snapshot_variable="${3:-}" source execution_id snapshot
+  [[ "$execution_id_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ &&
+     "$snapshot_variable" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  source="$evidence_dir/source-inspection.json"
+  verify_sha256_sidecar "$source" || return
+  check_release_audit_probe_env || return
+  execution_id="$(audit_probe_execution_id "$source")" || return
+  snapshot="$(authoritative_release_audit_history_snapshot "$execution_id")" || return
+  printf -v "$execution_id_variable" '%s' "$execution_id" || return
+  printf -v "$snapshot_variable" '%s' "$snapshot" || return
 }
 
 check_timestamp_apply_env() {
@@ -1368,6 +1424,88 @@ verify_timestamp_evidence_bundle() {
   printf '%s' "$expected" || return
 }
 
+release_evidence_id() {
+  local evidence_dir="${1:-}" release_id_file release_id
+  [[ -n "$evidence_dir" ]] || return 1
+  release_id_file="$evidence_dir/release-id"
+  verify_sha256_sidecar "$release_id_file" || return
+  read -r release_id <"$release_id_file" || return
+  [[ "$release_id" =~ ^release_[0-9]{8}T[0-9]{6}Z_[0-9a-f]{16}$ ]] || return 1
+  printf '%s' "$release_id" || return
+}
+
+release_evidence_bundle_checksum() {
+  local evidence_dir="${1:-}" release_id database_backup object_backup digest
+  local release_id_checksum database_checksum object_checksum restore_checksum
+  local object_restore_checksum source_checksum postdeploy_checksum
+  [[ -n "$evidence_dir" ]] || return 1
+  release_id="$(release_evidence_id "$evidence_dir")" || return
+  database_backup="$BACKUP_DIR/postgres-$release_id.dump"
+  object_backup="$BACKUP_DIR/rustfs-$release_id.tar.gz"
+  database_checksum="$(checksum_value "$database_backup")" || return
+  object_checksum="$(checksum_value "$object_backup")" || return
+  release_id_checksum="$(checksum_value "$evidence_dir/release-id")" || return
+  restore_checksum="$(checksum_value "$evidence_dir/restore-inspection.json")" || return
+  object_restore_checksum="$(checksum_value "$evidence_dir/object-restore-inspection.json")" || return
+  source_checksum="$(checksum_value "$evidence_dir/source-inspection.json")" || return
+  postdeploy_checksum="$(checksum_value "$evidence_dir/post-deploy-inspection.json")" || return
+  digest="$({
+    printf 'distr.release-evidence/v1\n'
+    printf 'release-id=%s\n' "$release_id_checksum"
+    printf 'postgres-backup=%s\n' "$database_checksum"
+    printf 'object-backup=%s\n' "$object_checksum"
+    printf 'restore-inspection=%s\n' "$restore_checksum"
+    printf 'object-restore-inspection=%s\n' "$object_restore_checksum"
+    printf 'source-inspection=%s\n' "$source_checksum"
+    printf 'post-deploy-inspection=%s\n' "$postdeploy_checksum"
+  } | sha256sum | awk '{print $1}')" || return
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf 'sha256:%s' "$digest" || return
+}
+
+write_release_evidence_bundle() {
+  local evidence_dir="${1:-}" bundle expected temporary recorded label
+  [[ -n "$evidence_dir" ]] || return 1
+  bundle="$evidence_dir/release-evidence-bundle.sha256"
+  expected="$(release_evidence_bundle_checksum "$evidence_dir")" || return
+  if [[ -e "$bundle" || -L "$bundle" ]]; then
+    [[ -f "$bundle" && ! -L "$bundle" ]] || return 1
+    path_mode_is "$bundle" 600 || return
+    read -r recorded label <"$bundle" || return
+    [[ "$recorded" == "$expected" &&
+       "$label" == release-evidence-bundle-v1 ]] || return 1
+    return 0
+  fi
+  temporary="$(mktemp "$evidence_dir/.release-evidence-bundle.XXXXXX")" || return
+  printf '%s  release-evidence-bundle-v1\n' "$expected" >"$temporary" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  chmod 0600 "$temporary" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  copy_file_create_new_0600 "$temporary" "$bundle" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  rm -f -- "$temporary" || return
+  verify_release_evidence_bundle "$evidence_dir" >/dev/null || return
+}
+
+verify_release_evidence_bundle() {
+  local evidence_dir="${1:-}" bundle recorded label expected
+  [[ -n "$evidence_dir" ]] || return 1
+  bundle="$evidence_dir/release-evidence-bundle.sha256"
+  [[ -f "$bundle" && ! -L "$bundle" ]] || return 1
+  path_mode_is "$bundle" 600 || return
+  read -r recorded label <"$bundle" || return
+  expected="$(release_evidence_bundle_checksum "$evidence_dir")" || return
+  [[ "$recorded" == "$expected" &&
+     "$label" == release-evidence-bundle-v1 ]] || return 1
+  printf '%s' "$expected" || return
+}
+
 reviewed_manifest_checksum() {
   local manifest="${1:-}" digest
   [[ -f "$manifest" && ! -L "$manifest" ]] || {
@@ -1626,6 +1764,30 @@ verify_running_digest() {
     die "running Hub image differs from DISTR_IMAGE_REF"
     return 1
   }
+}
+
+verify_running_release_identity() {
+  local actual_ref release_commit daemon_raw image_raw
+  local daemon_platform image_platform
+  actual_ref="$(running_hub_digest)" || return
+  [[ "$actual_ref" == "$DISTR_IMAGE_REF" &&
+     "$actual_ref" =~ @sha256:[0-9a-f]{64}$ ]] || {
+    die "running Hub image differs from the configured digest"
+    return 1
+  }
+  release_commit="$(image_release_commit "$actual_ref")" || return
+  [[ "$release_commit" == "$DISTR_RELEASE_COMMIT" ]] || {
+    die "running Hub OCI revision differs from DISTR_RELEASE_COMMIT"
+    return 1
+  }
+  require_image_matches_docker_daemon "$actual_ref" || return
+  daemon_raw="$(docker info --format '{{.OSType}}/{{.Architecture}}')" || return
+  image_raw="$(docker image inspect --format \
+    '{{.Os}}/{{.Architecture}}' "$actual_ref")" || return
+  daemon_platform="$(normalize_linux_platform "$daemon_raw" "Docker daemon")" || return
+  image_platform="$(normalize_linux_platform "$image_raw" "image")" || return
+  [[ "$image_platform" == "$daemon_platform" ]] || return 1
+  printf '%s|%s|%s' "$actual_ref" "$release_commit" "$image_platform" || return
 }
 
 write_fence_id_evidence() {
@@ -1903,6 +2065,16 @@ current_schema_status() {
   postgres_scalar "SELECT version::text || ':' || dirty::text FROM schema_migrations" || return
 }
 
+capture_clean_schema_status() {
+  local status
+  status="$(current_schema_status)" || return
+  [[ "$status" =~ ^[0-9]+:false$ ]] || {
+    die "release requires exactly one clean schema_migrations row"
+    return 1
+  }
+  printf '%s' "$status" || return
+}
+
 timestamp_expand_apply_phase() {
   local approved_id="${1:-}" expected_execution_count="${2:-}"
   local expected_event_count="${3:-}" expected_raw_cell_count="${4:-}"
@@ -2043,6 +2215,107 @@ verify_audit_history_visibility() {
     return 1
   }
   rm -f -- "$temporary" || return
+}
+
+verify_release_audit_history() {
+  local evidence_dir="${1:-}" execution_id="${2:-}"
+  local authoritative_snapshot="${3:-}" audit_url audit_token temporary api_snapshot
+  [[ -n "$evidence_dir" &&
+     "$execution_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
+  validate_release_audit_history_snapshot "$authoritative_snapshot" || return
+  check_release_audit_probe_env || return
+  audit_url="$DISTR_AUDIT_HISTORY_PROBE_URL"
+  audit_token="$DISTR_AUDIT_HISTORY_PROBE_TOKEN"
+  [[ "$audit_url" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]+)?/api/v1/external-executions/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/$ &&
+     "${BASH_REMATCH[3]}" == "$execution_id" ]] || return 1
+  need_cmd curl || return
+  need_cmd jq || return
+  temporary="$(mktemp "$evidence_dir/.release-audit-history.XXXXXX")" || return
+  printf 'header = "Authorization: Bearer %s"\n' "$audit_token" | \
+    curl --config - --fail --silent --show-error --connect-timeout 2 --max-time 10 \
+      --output "$temporary" "$audit_url" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  api_snapshot="$(jq -er --arg executionID "$execution_id" '
+    select(
+      type == "object" and
+      .id == $executionID and
+      (.events | type == "array" and length > 0) and
+      all(.events[];
+        (.id | type == "string" and length > 0) and
+        (.sequence | type == "number" and floor == . and . > 0))
+    ) |
+    .events[] |
+    "\(.sequence)|\(.id)"
+  ' "$temporary")" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  rm -f -- "$temporary" || return
+  validate_release_audit_history_snapshot "$api_snapshot" || return
+  [[ "$api_snapshot" == "$authoritative_snapshot" ]] || {
+    die "authenticated audit history differs from the pre-start database snapshot"
+    return 1
+  }
+  printf '%s' "$execution_id" || return
+}
+
+write_release_postdeploy_evidence() {
+  local evidence_dir="${1:-}" schema_status="${2:-}" identity="${3:-}"
+  local audit_execution_id="${4:-}" image_ref release_commit platform extra
+  local schema_version temporary output verified_at
+  [[ -n "$evidence_dir" ]] || return 1
+  require_secure_state_directory "$evidence_dir" || return
+  [[ "$schema_status" =~ ^(0|[1-9][0-9]*):false$ ]] || return 1
+  schema_version="${schema_status%:false}"
+  IFS='|' read -r image_ref release_commit platform extra <<<"$identity" || return
+  [[ -z "${extra:-}" &&
+     "$image_ref" =~ ^[A-Za-z0-9._/:+-]+@sha256:[0-9a-f]{64}$ &&
+     "$release_commit" =~ ^[0-9a-f]{40}$ &&
+     "$platform" =~ ^linux/(amd64|arm64)$ &&
+     "$audit_execution_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
+  output="$evidence_dir/post-deploy-inspection.json"
+  temporary="$(mktemp "$evidence_dir/.post-deploy-inspection.XXXXXX")" || return
+  verified_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  jq -n \
+    --arg imageRef "$image_ref" \
+    --arg imageDigest "${image_ref##*@}" \
+    --arg releaseCommit "$release_commit" \
+    --arg platform "$platform" \
+    --argjson schemaVersion "$schema_version" \
+    --arg auditExecutionId "$audit_execution_id" \
+    --arg verifiedAt "$verified_at" \
+    '{
+      status: "PASS",
+      imageRef: $imageRef,
+      imageDigest: $imageDigest,
+      releaseCommit: $releaseCommit,
+      platform: $platform,
+      schemaVersion: $schemaVersion,
+      schemaDirty: false,
+      sameImageMigrationCheck: "PASS",
+      readiness: "PASS",
+      auditExecutionId: $auditExecutionId,
+      auditHistory: "PASS",
+      verifiedAt: $verifiedAt
+    }' >"$temporary" || {
+      rm -f -- "$temporary" || true
+      return 1
+    }
+  chmod 0600 "$temporary" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  copy_file_create_new_0600 "$temporary" "$output" || {
+    rm -f -- "$temporary" || true
+    return 1
+  }
+  rm -f -- "$temporary" || return
+  write_sha256_sidecar_create_new "$output" || return
 }
 
 verify_task_lock_integrity() {
@@ -2494,13 +2767,29 @@ backup_and_restore_timestamp_evidence() (
 )
 
 backup_and_restore_release_evidence() {
-  local stamp random release_id evidence_dir
+  local stamp random release_id evidence_dir release_id_tmp
   stamp="$(date -u +%Y%m%dT%H%M%SZ)" || return
   random="$(openssl rand -hex 8)" || return
   release_id="release_${stamp}_${random}"
   evidence_dir="$BACKUP_DIR/release-evidence-$stamp-$random"
   prepare_backup_directory "$BACKUP_DIR" || return
   prepare_timestamp_evidence_dir "$evidence_dir" || return
+  release_id_tmp="$(mktemp "$evidence_dir/.release-id.XXXXXX")" || return
+  printf '%s\n' "$release_id" >"$release_id_tmp" || {
+    rm -f -- "$release_id_tmp" || true
+    return 1
+  }
+  chmod 0600 "$release_id_tmp" || {
+    rm -f -- "$release_id_tmp" || true
+    return 1
+  }
+  copy_file_create_new_0600 \
+    "$release_id_tmp" "$evidence_dir/release-id" || {
+    rm -f -- "$release_id_tmp" || true
+    return 1
+  }
+  rm -f -- "$release_id_tmp" || return
+  write_sha256_sidecar_create_new "$evidence_dir/release-id" || return
   backup_and_restore_timestamp_evidence "$evidence_dir" "$release_id" || return
   run_timestamp_operator "$evidence_dir" \
     external-execution-timestamps inspect \
@@ -2511,6 +2800,7 @@ backup_and_restore_release_evidence() {
     "$evidence_dir/source-inspection.json" \
     "$evidence_dir/restore-inspection.json" \
     "$evidence_dir/object-restore-inspection.json" || return
+  RELEASE_EVIDENCE_DIR="$evidence_dir"
   info "retained verified release evidence: $evidence_dir"
 }
 
@@ -3407,18 +3697,70 @@ deploy_all() {
   release_from_ecr_locked || return
 }
 
+start_verify_and_retain_release() (
+  local evidence_dir="${1:-}" expected_schema_status="${2:-}"
+  local audit_execution_id="${3:-}" audit_history_snapshot="${4:-}"
+  local actual_schema_status identity
+  local complete=0 cleanup_status=0
+  [[ -n "$evidence_dir" &&
+     "$expected_schema_status" =~ ^(0|[1-9][0-9]*):false$ &&
+     "$audit_execution_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
+  validate_release_audit_history_snapshot "$audit_history_snapshot" || return
+  require_secure_state_directory "$evidence_dir" || return
+  cleanup_failed_release_start() {
+    local status=$?
+    trap - EXIT HUP INT TERM
+    if ((complete == 0)); then
+      stop_hub || cleanup_status=1
+      assert_hub_writers_stopped || cleanup_status=1
+    fi
+    if ((cleanup_status != 0)); then exit 1; fi
+    exit "$status"
+  }
+  trap cleanup_failed_release_start EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  start_hub || return
+  health || return
+  identity="$(verify_running_release_identity)" || return
+  actual_schema_status="$(current_schema_status)" || return
+  [[ "$actual_schema_status" =~ ^(0|[1-9][0-9]*):false$ &&
+     "$actual_schema_status" == "$expected_schema_status" ]] || {
+    die "post-start schema differs from the single clean migrated schema row"
+    return 1
+  }
+  run_timestamp_operator "$evidence_dir" migrate --check || return
+  verify_release_audit_history \
+    "$evidence_dir" "$audit_execution_id" "$audit_history_snapshot" >/dev/null || return
+  write_release_postdeploy_evidence \
+    "$evidence_dir" "$actual_schema_status" "$identity" \
+    "$audit_execution_id" || return
+  write_release_evidence_bundle "$evidence_dir" || return
+  info "retained accepted release evidence: $evidence_dir"
+  complete=1
+)
+
 release_from_ecr_locked() {
+  local expected_schema_status audit_execution_id audit_history_snapshot
   require_no_active_timestamp_fence || return
   compose_config || return
   pull_image || return
   start_dependencies || return
   run_migration_preflight || return
+  check_release_audit_probe_env || return
+  RELEASE_EVIDENCE_DIR=''
   stop_hub || return
   assert_hub_writers_stopped || return
   backup_and_restore_release_evidence || return
   run_migrations || return
-  start_hub || return
-  health || return
+  expected_schema_status="$(capture_clean_schema_status)" || return
+  [[ -n "$RELEASE_EVIDENCE_DIR" ]] || return 1
+  capture_release_audit_history \
+    "$RELEASE_EVIDENCE_DIR" audit_execution_id audit_history_snapshot || return
+  start_verify_and_retain_release \
+    "$RELEASE_EVIDENCE_DIR" "$expected_schema_status" \
+    "$audit_execution_id" "$audit_history_snapshot" || return
 }
 
 release_from_ecr() {
@@ -3519,8 +3861,8 @@ Commands:
   backup               back up PostgreSQL and local RustFS volume
   migrate              preflight, stop/fence Hub, restore-verify backups, migrate, start, health
   up                   start Hub with serve --migrate=false
-  release              pull, preflight, stop/fence Hub, restore-verify backups, migrate, start, health
-  deploy               build, push to ECR, release to Compose, health check
+  release              pull, backup/restore, migrate, start, prove, retain checksummed evidence
+  deploy               build, push to ECR, release, prove, retain checksummed evidence
   health               check http://127.0.0.1:\${DISTR_HTTP_PORT:-8080}/ready
   logs [service]       follow compose logs
   ps                   show compose service state

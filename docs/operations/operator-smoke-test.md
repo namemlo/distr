@@ -50,6 +50,29 @@ Then manually verify:
 - logs and events do not reveal secret values;
 - cleanup removes demo-created state.
 
+## Ordinary Server Release Proof
+
+For a digest-pinned server `release`, acceptance is part of the deployment command rather than a later best-effort
+check. Before running it, configure the exact loopback `DISTR_AUDIT_HISTORY_PROBE_URL` for one preserved historical
+execution and a read-only `DISTR_AUDIT_HISTORY_PROBE_TOKEN`.
+
+After `release` returns successfully, use the evidence directory printed by the helper and confirm:
+
+- `post-deploy-inspection.json` and its `.sha256` sidecar are mode `0600` and the sidecar verifies;
+- the recorded image reference/digest and OCI revision match the one immutable release handoff;
+- the recorded platform matches the server Docker daemon;
+- the schema version is the actual post-migration version, `schemaDirty` is `false`, and
+  `sameImageMigrationCheck` is `PASS`;
+- readiness and audit-history checks are `PASS`, with the expected historical execution ID; release acceptance has
+  compared the API event count and ordered unique event IDs/sequences exactly with the authoritative database
+  snapshot captured before Hub startup;
+- `release-evidence-bundle.sha256` is mode `0600`; and
+- the release ID, database backup, object backup, source inspection, restore inspections, and post-deploy
+  inspection remain present with their checksum sidecars.
+
+Any failed post-start gate leaves Hub stopped. Preserve the evidence and diagnose the mismatch; do not bypass the
+failed gate with a manual `up`.
+
 ## Timestamp Expand Smoke
 
 Do not run post-apply smoke immediately after `timestamp-expand-recover-dirty`. Dirty recovery repairs only the

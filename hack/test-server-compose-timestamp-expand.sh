@@ -11,9 +11,20 @@ export DISTR_TIMESTAMP_EVIDENCE_DIR="$TMP/evidence"
 export DISTR_IMAGE_REF='registry.invalid/distr@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 export DISTR_IMAGE_DIGEST="${DISTR_IMAGE_REF##*@}"
 export DISTR_RELEASE_COMMIT=cccccccccccccccccccccccccccccccccccccccc
+AUDIT_TEST_EXECUTION_ID=11111111-1111-4111-8111-111111111111
+AUDIT_TEST_EVENT_ID=22222222-2222-4222-8222-222222222222
+AUDIT_TEST_SNAPSHOT="1|$AUDIT_TEST_EVENT_ID"
 mkdir -p "$DISTR_TIMESTAMP_EVIDENCE_DIR"
 chmod 0700 "$DISTR_TIMESTAMP_EVIDENCE_DIR"
 source "$ROOT/deploy/server-docker-compose/deploy.sh"
+eval "$(
+  declare -f start_verify_and_retain_release |
+    sed '1s/^start_verify_and_retain_release /real_start_verify_and_retain_release /'
+)"
+eval "$(
+  declare -f verify_running_release_identity |
+    sed '1s/^verify_running_release_identity /real_verify_running_release_identity /'
+)"
 
 events=()
 record(){
@@ -34,6 +45,8 @@ test_shared_default_evidence_dir_is_restricted(){
 reset_stubs(){
  events=()
  : >"$TMP/event-log"
+ mkdir -p "$TMP/release-evidence"
+ chmod 0700 "$TMP/release-evidence"
  active_timestamp_fence(){ return 1; }
  acquire_deploy_lock(){ record lock; }
  check_timestamp_apply_env(){ :; }
@@ -98,7 +111,9 @@ reset_stubs(){
  verify_isolated_acceptance_digest(){ record acceptance-digest; }
  stop_isolated_acceptance_hub(){ if [[ -n "${TIMESTAMP_ACCEPTANCE_NAME:-}" ]]; then record acceptance-stop; fi; TIMESTAMP_ACCEPTANCE_NAME=; TIMESTAMP_ACCEPTANCE_URL=; }
  run_migration_preflight(){ record check; }
+ check_release_audit_probe_env(){ record audit-config; }
  backup_and_restore_release_evidence(){
+   RELEASE_EVIDENCE_DIR="$TMP/release-evidence"
    record ordinary-backup-db
    record ordinary-backup-object
    record ordinary-restore-db
@@ -106,6 +121,22 @@ reset_stubs(){
    record ordinary-verify-restore
  }
  run_migrations(){ record ordinary-migrate; }
+ capture_clean_schema_status(){ record schema-capture; printf '162:false'; }
+ capture_release_audit_history(){
+   record audit-capture
+   printf -v "$2" '%s' "$AUDIT_TEST_EXECUTION_ID"
+   printf -v "$3" '%s' "$AUDIT_TEST_SNAPSHOT"
+ }
+ start_verify_and_retain_release(){
+   record start
+   record health
+   record digest
+   record schema
+   record schema-check
+   record audit
+   record postdeploy-evidence
+   record release-bundle
+ }
  require_clean_schema_137(){ record schema-137; }
  validate_source_inspection(){ record source-validate; }
  set_env_var(){ record set-env; }
@@ -130,7 +161,362 @@ reset_stubs(){
 }
 test_capture_order(){ reset_stubs; timestamp_expand_capture "$DISTR_TIMESTAMP_EVIDENCE_DIR"; assert_events 'lock config pull deps fence:PREPARING stop writers-stopped fence:CAPTURED_WRITERS_STOPPED backup-db backup-object restore-db restore-object restore-inspect object-restore-inspect source-inspect compare'; }
 test_apply_order(){ reset_stubs; timestamp_expand_apply "$TMP/approved.json" "$DISTR_TIMESTAMP_EVIDENCE_DIR"; assert_events 'lock require-fence writers-stopped evidence stage-approved validate dry-run migrate-138 apply verify acceptance-start acceptance-health acceptance-digest schema-138 manifest-verified counts audit task-locks sequences acceptance-stop start health digest schema-138 manifest-verified counts audit task-locks sequences compatibility clear-fence'; }
-test_ordinary_release_order(){ reset_stubs; release_from_ecr; assert_events 'lock config pull deps check stop writers-stopped ordinary-backup-db ordinary-backup-object ordinary-restore-db ordinary-restore-object ordinary-verify-restore ordinary-migrate start health'; }
+test_ordinary_release_order(){ reset_stubs; release_from_ecr; assert_events 'lock config pull deps check audit-config stop writers-stopped ordinary-backup-db ordinary-backup-object ordinary-restore-db ordinary-restore-object ordinary-verify-restore ordinary-migrate schema-capture audit-capture start health digest schema schema-check audit postdeploy-evidence release-bundle'; }
+test_ordinary_running_identity_rejects_digest_and_revision_mismatch() (
+  local identity
+  reset_stubs
+  if real_verify_running_release_identity; then
+    printf 'ordinary release unexpectedly accepted a running digest mismatch\n' >&2
+    return 1
+  fi
+
+  running_hub_digest(){ printf '%s' "$DISTR_IMAGE_REF"; }
+  image_release_commit(){ printf '%s' dddddddddddddddddddddddddddddddddddddddd; }
+  if real_verify_running_release_identity; then
+    printf 'ordinary release unexpectedly accepted an OCI revision mismatch\n' >&2
+    return 1
+  fi
+
+  image_release_commit(){ printf '%s' "$DISTR_RELEASE_COMMIT"; }
+  require_image_matches_docker_daemon(){ record platform-check; }
+  docker(){
+    case "$1 $2" in
+      'info --format') printf '%s' linux/x86_64 ;;
+      'image inspect') printf '%s' linux/amd64 ;;
+      *) return 1 ;;
+    esac
+  }
+  identity="$(real_verify_running_release_identity)"
+  [[ "$identity" == \
+    "$DISTR_IMAGE_REF|$DISTR_RELEASE_COMMIT|linux/amd64" ]]
+  assert_events 'platform-check'
+)
+test_ordinary_postdeploy_success_order(){
+  reset_stubs
+  start_hub(){ record start; }
+  health(){ record health; }
+  verify_running_release_identity(){
+    record digest
+    printf '%s|%s|%s' \
+      "$DISTR_IMAGE_REF" "$DISTR_RELEASE_COMMIT" linux/amd64
+  }
+  current_schema_status(){ record schema; printf '162:false'; }
+  run_timestamp_operator(){ record schema-check; }
+  verify_release_audit_history(){
+    record audit
+    printf '11111111-1111-4111-8111-111111111111'
+  }
+  write_release_postdeploy_evidence(){ record postdeploy-evidence; }
+  write_release_evidence_bundle(){ record release-bundle; }
+  stop_hub(){ record stop; }
+  assert_hub_writers_stopped(){ record writers-stopped; }
+  real_start_verify_and_retain_release \
+    "$TMP/release-evidence" 162:false \
+    "$AUDIT_TEST_EXECUTION_ID" "$AUDIT_TEST_SNAPSHOT"
+  assert_events \
+    'start health digest schema schema-check audit postdeploy-evidence release-bundle'
+}
+test_ordinary_postdeploy_digest_failure_stops_writers(){
+  reset_stubs
+  start_hub(){ record start; }
+  health(){ record health; }
+  verify_running_release_identity(){ record digest; return 42; }
+  stop_hub(){ record stop; }
+  assert_hub_writers_stopped(){ record writers-stopped; }
+  if real_start_verify_and_retain_release \
+      "$TMP/release-evidence" 162:false \
+      "$AUDIT_TEST_EXECUTION_ID" "$AUDIT_TEST_SNAPSHOT"; then
+    printf 'ordinary release unexpectedly accepted a digest mismatch\n' >&2
+    return 1
+  fi
+  assert_events 'start health digest stop writers-stopped'
+}
+test_ordinary_postdeploy_schema_failure_stops_writers(){
+  local observed
+  for observed in 162:true 161:false; do
+    reset_stubs
+    start_hub(){ record start; }
+    health(){ record health; }
+    verify_running_release_identity(){
+      record digest
+      printf '%s|%s|%s' \
+        "$DISTR_IMAGE_REF" "$DISTR_RELEASE_COMMIT" linux/amd64
+    }
+    current_schema_status(){ record "schema:$observed"; printf '%s' "$observed"; }
+    run_timestamp_operator(){ record schema-check; }
+    verify_release_audit_history(){ record audit; }
+    write_release_postdeploy_evidence(){ record postdeploy-evidence; }
+    write_release_evidence_bundle(){ record release-bundle; }
+    stop_hub(){ record stop; }
+    assert_hub_writers_stopped(){ record writers-stopped; }
+    if real_start_verify_and_retain_release \
+        "$TMP/release-evidence" 162:false \
+        "$AUDIT_TEST_EXECUTION_ID" "$AUDIT_TEST_SNAPSHOT"; then
+      printf 'ordinary release unexpectedly accepted schema %s\n' "$observed" >&2
+      return 1
+    fi
+    assert_events "start health digest schema:$observed stop writers-stopped"
+  done
+}
+test_ordinary_postdeploy_audit_failure_stops_writers(){
+  reset_stubs
+  start_hub(){ record start; }
+  health(){ record health; }
+  verify_running_release_identity(){
+    record digest
+    printf '%s|%s|%s' \
+      "$DISTR_IMAGE_REF" "$DISTR_RELEASE_COMMIT" linux/amd64
+  }
+  current_schema_status(){ record schema; printf '162:false'; }
+  run_timestamp_operator(){ record schema-check; }
+  verify_release_audit_history(){ record audit; return 42; }
+  write_release_postdeploy_evidence(){ record postdeploy-evidence; }
+  write_release_evidence_bundle(){ record release-bundle; }
+  stop_hub(){ record stop; }
+  assert_hub_writers_stopped(){ record writers-stopped; }
+  if real_start_verify_and_retain_release \
+      "$TMP/release-evidence" 162:false \
+      "$AUDIT_TEST_EXECUTION_ID" "$AUDIT_TEST_SNAPSHOT"; then
+    printf 'ordinary release unexpectedly accepted an audit probe failure\n' >&2
+    return 1
+  fi
+  assert_events \
+    'start health digest schema schema-check audit stop writers-stopped'
+}
+test_ordinary_release_audit_history_requires_exact_authoritative_order() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  local evidence="$TMP/ordinary-release-audit-evidence"
+  local expected_execution_id=11111111-1111-4111-8111-111111111111
+  local wrong_execution_id=99999999-9999-4999-8999-999999999999
+  local event_one=22222222-2222-4222-8222-222222222222
+  local event_two=33333333-3333-4333-8333-333333333333
+  local wrong_event=44444444-4444-4444-8444-444444444444
+  local authoritative captured_execution_id captured_snapshot
+  mkdir -p "$evidence"
+  chmod 0700 "$evidence"
+  printf '{"source":true}\n' >"$evidence/source-inspection.json"
+  verify_sha256_sidecar(){ :; }
+  audit_probe_execution_id(){ printf '%s' "$expected_execution_id"; }
+  require_audit_probe_execution_history(){ :; }
+  need_cmd(){ :; }
+  curl(){
+    local output=''
+    while (($#)); do
+      if [[ "$1" == --output ]]; then
+        output="$2"
+        shift 2
+      else
+        shift
+      fi
+    done
+    printf '%s\n' "$AUDIT_RESPONSE" >"$output"
+  }
+  jq(){
+    local expected='' file="${!#}" previous='' argument
+    for argument in "$@"; do
+      if [[ "$previous" == executionID ]]; then
+        expected="$argument"
+        break
+      fi
+      [[ "$argument" == executionID ]] && previous=executionID
+    done
+    node - "$file" "$expected" <<'NODE'
+const fs = require('node:fs');
+const [file, executionID] = process.argv.slice(2);
+const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+if (
+  !value ||
+  value.id !== executionID ||
+  !Array.isArray(value.events) ||
+  value.events.length === 0 ||
+  !value.events.every(
+    (event) =>
+      typeof event.id === 'string' &&
+      event.id.length > 0 &&
+      Number.isInteger(event.sequence) &&
+      event.sequence > 0,
+  )
+) {
+  process.exit(1);
+}
+process.stdout.write(
+  `${value.events.map((event) => `${event.sequence}|${event.id}`).join('\n')}\n`,
+);
+NODE
+  }
+  DISTR_AUDIT_HISTORY_PROBE_URL="http://127.0.0.1:8080/api/v1/external-executions/$expected_execution_id/"
+  DISTR_AUDIT_HISTORY_PROBE_TOKEN=releaseReadOnlyToken
+  export DISTR_AUDIT_HISTORY_PROBE_URL DISTR_AUDIT_HISTORY_PROBE_TOKEN
+  authoritative="$(printf '1|%s\n2|%s' "$event_one" "$event_two")"
+  postgres_scalar(){
+    printf '%s\n' "$1" >"$TMP/ordinary-release-audit-sql"
+    printf '%s' "$authoritative"
+  }
+  capture_release_audit_history \
+    "$evidence" captured_execution_id captured_snapshot
+  [[ "$captured_execution_id" == "$expected_execution_id" &&
+     "$captured_snapshot" == "$authoritative" ]]
+  grep -Fq \
+    "WHERE external_execution_id = '$expected_execution_id'::uuid ORDER BY sequence, id" \
+    "$TMP/ordinary-release-audit-sql"
+
+  expect_audit_rejection(){
+    local label="$1" response="$2"
+    AUDIT_RESPONSE="$response"
+    export AUDIT_RESPONSE
+    if verify_release_audit_history \
+        "$evidence" "$expected_execution_id" "$authoritative"; then
+      printf 'ordinary release audit unexpectedly accepted %s\n' "$label" >&2
+      return 1
+    fi
+  }
+
+  expect_audit_rejection partial \
+    "{\"id\":\"$expected_execution_id\",\"events\":[{\"id\":\"$event_one\",\"sequence\":1}]}"
+  expect_audit_rejection duplicate-sequence \
+    "{\"id\":\"$expected_execution_id\",\"events\":[{\"id\":\"$event_one\",\"sequence\":1},{\"id\":\"$event_two\",\"sequence\":1}]}"
+  expect_audit_rejection duplicate-id \
+    "{\"id\":\"$expected_execution_id\",\"events\":[{\"id\":\"$event_one\",\"sequence\":1},{\"id\":\"$event_one\",\"sequence\":2}]}"
+  expect_audit_rejection reversed-order \
+    "{\"id\":\"$expected_execution_id\",\"events\":[{\"id\":\"$event_two\",\"sequence\":2},{\"id\":\"$event_one\",\"sequence\":1}]}"
+  expect_audit_rejection wrong-execution-id \
+    "{\"id\":\"$wrong_execution_id\",\"events\":[{\"id\":\"$event_one\",\"sequence\":1},{\"id\":\"$event_two\",\"sequence\":2}]}"
+  expect_audit_rejection wrong-event-id \
+    "{\"id\":\"$expected_execution_id\",\"events\":[{\"id\":\"$event_one\",\"sequence\":1},{\"id\":\"$wrong_event\",\"sequence\":2}]}"
+
+  AUDIT_RESPONSE="{\"id\":\"$expected_execution_id\",\"events\":[{\"id\":\"$event_one\",\"sequence\":1},{\"id\":\"$event_two\",\"sequence\":2}]}"
+  export AUDIT_RESPONSE
+  [[ "$(verify_release_audit_history \
+    "$evidence" "$expected_execution_id" "$authoritative")" == "$expected_execution_id" ]]
+)
+test_ordinary_postdeploy_evidence_is_create_new_and_checksummed() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  jq(){
+    [[ "${1:-}" == -n ]] || return 2
+    shift
+    local image_ref image_digest release_commit platform schema_version
+    local audit_execution_id verified_at key value
+    while (($#)); do
+      case "$1" in
+        --arg|--argjson)
+          key="$2"
+          value="$3"
+          shift 3
+          case "$key" in
+            imageRef) image_ref="$value" ;;
+            imageDigest) image_digest="$value" ;;
+            releaseCommit) release_commit="$value" ;;
+            platform) platform="$value" ;;
+            schemaVersion) schema_version="$value" ;;
+            auditExecutionId) audit_execution_id="$value" ;;
+            verifiedAt) verified_at="$value" ;;
+          esac
+          ;;
+        *) shift ;;
+      esac
+    done
+    node - \
+      "$image_ref" "$image_digest" "$release_commit" "$platform" \
+      "$schema_version" "$audit_execution_id" "$verified_at" <<'NODE'
+const [
+  imageRef,
+  imageDigest,
+  releaseCommit,
+  platform,
+  schemaVersion,
+  auditExecutionId,
+  verifiedAt,
+] = process.argv.slice(2);
+process.stdout.write(`${JSON.stringify({
+  status: 'PASS',
+  imageRef,
+  imageDigest,
+  releaseCommit,
+  platform,
+  schemaVersion: Number(schemaVersion),
+  schemaDirty: false,
+  sameImageMigrationCheck: 'PASS',
+  readiness: 'PASS',
+  auditExecutionId,
+  auditHistory: 'PASS',
+  verifiedAt,
+})}\n`);
+NODE
+  }
+  local evidence="$TMP/ordinary-postdeploy-evidence"
+  local release_id=release_20260729T120000Z_aaaaaaaaaaaaaaaa
+  local postdeploy="$evidence/post-deploy-inspection.json"
+  local bundle="$evidence/release-evidence-bundle.sha256"
+  local postdeploy_before bundle_before bundle_corrupt
+  rm -rf -- "$evidence"
+  mkdir -p "$evidence" "$BACKUP_DIR"
+  chmod 0700 "$evidence" "$BACKUP_DIR"
+  printf '%s\n' "$release_id" >"$evidence/release-id"
+  printf 'database backup\n' >"$BACKUP_DIR/postgres-$release_id.dump"
+  printf 'object backup\n' >"$BACKUP_DIR/rustfs-$release_id.tar.gz"
+  printf '{"source":true}\n' >"$evidence/source-inspection.json"
+  printf '{"restore":true}\n' >"$evidence/restore-inspection.json"
+  printf '{"objectRestore":true}\n' >"$evidence/object-restore-inspection.json"
+  chmod 0600 \
+    "$evidence/release-id" \
+    "$BACKUP_DIR/postgres-$release_id.dump" \
+    "$BACKUP_DIR/rustfs-$release_id.tar.gz" \
+    "$evidence/source-inspection.json" \
+    "$evidence/restore-inspection.json" \
+    "$evidence/object-restore-inspection.json"
+  write_sha256_sidecar_create_new "$evidence/release-id"
+  write_sha256_sidecar_create_new "$BACKUP_DIR/postgres-$release_id.dump"
+  write_sha256_sidecar_create_new "$BACKUP_DIR/rustfs-$release_id.tar.gz"
+  write_sha256_sidecar_create_new "$evidence/source-inspection.json"
+  write_sha256_sidecar_create_new "$evidence/restore-inspection.json"
+  write_sha256_sidecar_create_new "$evidence/object-restore-inspection.json"
+
+  write_release_postdeploy_evidence \
+    "$evidence" \
+    162:false \
+    "$DISTR_IMAGE_REF|$DISTR_RELEASE_COMMIT|linux/amd64" \
+    11111111-1111-4111-8111-111111111111
+  verify_sha256_sidecar "$postdeploy"
+  node - "$postdeploy" "$DISTR_IMAGE_REF" "$DISTR_RELEASE_COMMIT" <<'NODE'
+const fs = require('node:fs');
+const [file, imageRef, releaseCommit] = process.argv.slice(2);
+const document = JSON.parse(fs.readFileSync(file, 'utf8'));
+if (
+  document.status !== 'PASS' ||
+  document.imageRef !== imageRef ||
+  document.releaseCommit !== releaseCommit ||
+  document.platform !== 'linux/amd64' ||
+  document.schemaVersion !== 162 ||
+  document.schemaDirty !== false ||
+  document.auditExecutionId !== '11111111-1111-4111-8111-111111111111'
+) {
+  process.exit(1);
+}
+NODE
+  postdeploy_before="$(cat "$postdeploy")"
+  if write_release_postdeploy_evidence \
+      "$evidence" \
+      162:false \
+      "$DISTR_IMAGE_REF|$DISTR_RELEASE_COMMIT|linux/amd64" \
+      11111111-1111-4111-8111-111111111111; then
+    printf 'post-deploy evidence unexpectedly replaced an existing file\n' >&2
+    return 1
+  fi
+  [[ "$(cat "$postdeploy")" == "$postdeploy_before" ]]
+
+  write_release_evidence_bundle "$evidence"
+  verify_release_evidence_bundle "$evidence" >/dev/null
+  bundle_before="$(cat "$bundle")"
+  printf 'sha256:%064d  release-evidence-bundle-v1\n' 0 >"$bundle"
+  chmod 0600 "$bundle"
+  bundle_corrupt="$(cat "$bundle")"
+  if write_release_evidence_bundle "$evidence"; then
+    printf 'corrupt release evidence bundle unexpectedly replaced\n' >&2
+    return 1
+  fi
+  [[ "$(cat "$bundle")" == "$bundle_corrupt" &&
+     "$bundle_corrupt" != "$bundle_before" ]]
+)
 test_backup_command_fences_and_restores_hub_order(){
   reset_stubs
   need_cmd(){ :; }
@@ -245,7 +631,7 @@ test_ordinary_restore_failure_prevents_migration(){
     return 42
   }
   if release_from_ecr; then return 1; fi
-  assert_events 'lock config pull deps check stop writers-stopped ordinary-backup-db ordinary-backup-object ordinary-restore-db'
+  assert_events 'lock config pull deps check audit-config stop writers-stopped ordinary-backup-db ordinary-backup-object ordinary-restore-db'
   [[ " ${events[*]} " != *' ordinary-migrate '* && " ${events[*]} " != *' start '* ]]
 }
 test_nonempty_137_preflight_keeps_old_hub_running(){
@@ -3241,10 +3627,51 @@ if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == resume ]]; then
   exit 0
 fi
 
+if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == ordinary-release ]]; then
+  test_ordinary_release_order
+  test_ordinary_running_identity_rejects_digest_and_revision_mismatch
+  test_ordinary_postdeploy_success_order
+  test_ordinary_postdeploy_digest_failure_stops_writers
+  test_ordinary_postdeploy_schema_failure_stops_writers
+  test_ordinary_postdeploy_audit_failure_stops_writers
+  test_ordinary_release_audit_history_requires_exact_authoritative_order
+  test_ordinary_postdeploy_evidence_is_create_new_and_checksummed
+  printf 'ordinary release post-deploy tests passed\n'
+  exit 0
+fi
+
+if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == audit-release ]]; then
+  test_ordinary_release_audit_history_requires_exact_authoritative_order
+  printf 'ordinary release authoritative audit-history tests passed\n'
+  exit 0
+fi
+
+if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == audit-focused ]]; then
+  test_post_start_audit_helper_checks_readiness_and_authenticated_history
+  test_audit_history_probe_is_bound_authenticated_and_rejects_empty_history
+  test_audit_probe_uses_canonical_table_and_requires_bound_history
+  test_ordinary_release_audit_history_requires_exact_authoritative_order
+  printf 'timestamp and ordinary release audit-history tests passed\n'
+  exit 0
+fi
+
+if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == operator-identity ]]; then
+  test_operator_uses_deployment_identity_and_env_override
+  printf 'timestamp operator deployment identity test passed\n'
+  exit 0
+fi
+
 test_shared_default_evidence_dir_is_restricted
 test_capture_order
 test_apply_order
 test_ordinary_release_order
+test_ordinary_running_identity_rejects_digest_and_revision_mismatch
+test_ordinary_postdeploy_success_order
+test_ordinary_postdeploy_digest_failure_stops_writers
+test_ordinary_postdeploy_schema_failure_stops_writers
+test_ordinary_postdeploy_audit_failure_stops_writers
+test_ordinary_release_audit_history_requires_exact_authoritative_order
+test_ordinary_postdeploy_evidence_is_create_new_and_checksummed
 test_backup_command_fences_and_restores_hub_order
 test_public_migrate_fences_and_backs_up_before_migration
 test_backup_prepares_parent_and_refuses_image_drift_before_outage

@@ -79,6 +79,10 @@ Set at least:
 - `DISTR_RELEASE_COMMIT=<40-lowercase-hex-source-commit>` from the same archived Jenkins release artifact.
 - `DISTR_IMAGE_DIGEST=sha256:<64-lowercase-hex-image-digest>` from that same artifact; it must match `DISTR_IMAGE_REF`.
 - `DISTR_CALLBACK_PROBE_URL` set to a non-`CHANGE_ME` loopback callbacks route for one known historical execution.
+- `DISTR_AUDIT_HISTORY_PROBE_URL` set to the exact loopback history route, including the trailing slash, for one
+  known historical execution that is present in the release source inspection.
+- `DISTR_AUDIT_HISTORY_PROBE_TOKEN` set to a read-only token that can retrieve that execution history. The helper
+  passes it to `curl` through standard input and does not retain it in release evidence.
 - `DISTR_HOST=https://distr.example.com`
 - `REGISTRY_HOST=registry.example.com`
 - `REGISTRATION=enabled` for first admin setup, then change to `hidden` or `disabled`.
@@ -149,7 +153,7 @@ sequence:
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
 | 1. Focused local preflight | Run the focused validators, tests, build, migration/recovery checks, and diff/privacy checks applicable to the completed checkpoint.                                                                                                                         | None.                                                  |
 | 2. Exact tree              | Commit the exact complete tree that passed preflight. Record the commit and reviewed range.                                                                                                                                                                  | None.                                                  |
-| 3. Immutable ECR candidate | Build once from that commit and publish one immutable ECR digest tied to the source commit, OCI revision, and target platform. Retain the complete checksummed handoff and evidence; copy its runtime identity triplet atomically.                                                           | None. Publishing a candidate is not promotion.         |
+| 3. Immutable ECR candidate | Build once from that commit and publish one immutable ECR digest tied to the source commit, OCI revision, and target platform. Retain the complete checksummed handoff and evidence; copy its runtime identity triplet atomically.                           | None. Publishing a candidate is not promotion.         |
 | 4. Isolated server proof   | Run that exact digest on an isolated server runtime against a PostgreSQL 18 clone. Retain checksummed database/object backup, restore, schema, migration, recovery, health, audit, image, and platform evidence. Do not mutate a live or client environment. | None. Isolated validation is not live promotion.       |
 | 5. Acceptance gates        | Require the functional, migration, dirty-recovery, backup/restore, platform, and dependency gates to pass for that same commit and digest.                                                                                                                   | None.                                                  |
 | 6. Live promotion          | Treat promotion as a distinct recorded action. Use only the already proven digest, and proceed only when environment policy, required authorization, and every live precondition pass. This runbook grants no promotion authority.                           | The approved environment changes to the proven digest. |
@@ -169,11 +173,36 @@ after the exact digest has passed checkpoints 1-5 and the required policy and au
 
 `release` acquires the deployment lock, refuses an active timestamp fence, validates Compose and the immutable
 release identity, pulls the digest-pinned image, and verifies that its normalized Linux platform matches the Docker
-daemon before starting dependencies. It then runs the read-only migration
-preflight while the existing Hub writers remain online. A non-empty schema 137 database is refused at that point,
-before the Hub is stopped, and must use the staged migration-138 procedure below. Only when preflight allows an
-ordinary release does the script stop and fence Hub writers, verify they are stopped, back up PostgreSQL and object
-storage, migrate explicitly, start Hub with `serve --migrate=false`, and run the health check.
+daemon before starting dependencies. It then runs the read-only migration preflight and validates the configured
+audit-history probe while the existing Hub writers remain online. A non-empty schema 137 database is refused at
+that point, before the Hub is stopped, and must use the staged migration-138 procedure below.
+
+Only when preflight allows an ordinary release does the script:
+
+1. stop Hub and prove its application writers are stopped;
+2. create checksummed PostgreSQL and object-storage backups and restore-verify both in isolation;
+3. inspect and retain the protected source state, including the historical execution selected by the audit probe;
+4. run migrations explicitly, then capture the actual single clean `schema_migrations` row and the selected
+   execution's exact ordered event IDs/sequences from `ExternalExecutionEvent` while Hub is still stopped, without
+   assuming a repository or host-derived schema version;
+5. start Hub with `serve --migrate=false` and require readiness;
+6. prove the running image is the configured digest, its OCI revision is `DISTR_RELEASE_COMMIT`, and its platform
+   matches the Docker daemon;
+7. require the post-start schema row to be the same clean row captured after migration and run `migrate --check`
+   through the same digest-pinned image;
+8. retrieve the configured historical execution through the authenticated API and require its execution ID, exact
+   event count, event IDs, and strictly ordered unique sequences to equal the authoritative pre-start database
+   snapshot; and
+9. retain create-new post-deploy proof and a canonical checksum bundle.
+
+The accepted directory is printed as `retained accepted release evidence: <path>`. It contains `release-id`,
+`source-inspection.json`, `restore-inspection.json`, `object-restore-inspection.json`,
+`post-deploy-inspection.json`, their SHA-256 sidecars, and `release-evidence-bundle.sha256`. The bundle also binds
+the database and object backup sidecars in the parent backup directory. Existing proof files are never replaced.
+
+If readiness, image identity, platform, schema, same-image migration check, audit history, or evidence publication
+fails after startup, the command stops Hub again and proves its writers are stopped. The release remains failed and
+the partial evidence is retained for diagnosis; do not manually restart Hub and call that deployment accepted.
 
 ## External-Execution Timestamp Expand (Migration 138)
 
