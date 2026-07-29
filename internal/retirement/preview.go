@@ -38,7 +38,7 @@ type PreviewStore interface {
 	SaveSampleRetirementPreview(
 		context.Context,
 		*types.SampleRetirementPreview,
-	) error
+	) (*types.SampleRetirementPreview, error)
 }
 
 func PreviewSampleRetirement(
@@ -129,6 +129,7 @@ func PreviewSampleRetirement(
 			Ordinal:                 ordinal + 1,
 			SubjectType:             candidate.Subject.SubjectType,
 			SubjectID:               candidate.Subject.SubjectID,
+			OwnershipEvidenceID:     candidate.OwnershipEvidenceID,
 			OwnershipMarker:         candidate.OwnershipMarker,
 			OwnershipChecksum:       candidate.OwnershipChecksum,
 			ExpectedChecksum:        candidate.CurrentChecksum,
@@ -167,11 +168,14 @@ func PreviewSampleRetirement(
 		CreatedAt:        now,
 	}
 
-	persisted := clonePreview(preview)
-	if err := store.SaveSampleRetirementPreview(ctx, persisted); err != nil {
+	persisted, err := store.SaveSampleRetirementPreview(ctx, clonePreview(preview))
+	if err != nil {
 		return nil, fmt.Errorf("save sample retirement preview: %w", err)
 	}
-	return clonePreview(preview), nil
+	if persisted == nil {
+		return nil, errors.New("save sample retirement preview: persisted preview is missing")
+	}
+	return clonePreview(persisted), nil
 }
 
 func validateRequest(request types.SampleRetirementRequest) error {

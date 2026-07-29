@@ -140,6 +140,70 @@ func TestValidateSampleRetirementApprovalBinding(t *testing.T) {
 	}
 }
 
+func TestSampleRetirementFourEyesPolicyRequiresRequesterSeparationOnEveryRule(
+	t *testing.T,
+) {
+	policy := types.EffectivePolicy{
+		ApprovalRules: []types.ApprovalRule{
+			{
+				Key: "operations",
+				SeparationConstraints: []types.SeparationConstraint{
+					types.SeparationConstraintRequesterCannotApprove,
+				},
+			},
+			{
+				Key: "security",
+				SeparationConstraints: []types.SeparationConstraint{
+					types.SeparationConstraintDistinctApprovers,
+				},
+			},
+		},
+	}
+
+	g := NewWithT(t)
+	g.Expect(validateSampleRetirementFourEyesPolicy(policy)).To(
+		MatchError(ContainSubstring(
+			"every sample retirement approval rule must prevent requester approval",
+		)),
+	)
+
+	policy.ApprovalRules[1].SeparationConstraints = append(
+		policy.ApprovalRules[1].SeparationConstraints,
+		types.SeparationConstraintRequesterCannotApprove,
+	)
+	g.Expect(validateSampleRetirementFourEyesPolicy(policy)).To(Succeed())
+}
+
+func TestSampleRetirementRequesterCannotRecordApprovingDecision(t *testing.T) {
+	requesterID := uuid.New()
+	request := types.ApprovalRequest{
+		SubjectType:            types.ApprovalSubjectSampleRetirement,
+		RequesterUserAccountID: requesterID,
+	}
+	input := types.ApprovalDecisionInput{
+		ActorUserAccountID: requesterID,
+		Decision:           types.ApprovalDecisionApprove,
+	}
+
+	g := NewWithT(t)
+	g.Expect(validateSampleRetirementDecisionActor(request, input)).To(
+		MatchError(ContainSubstring(
+			"sample retirement requester cannot approve",
+		)),
+	)
+
+	input.Decision = types.ApprovalDecisionReject
+	g.Expect(validateSampleRetirementDecisionActor(request, input)).To(Succeed())
+
+	input.Decision = types.ApprovalDecisionApprove
+	input.ActorUserAccountID = uuid.New()
+	g.Expect(validateSampleRetirementDecisionActor(request, input)).To(Succeed())
+
+	request.SubjectType = types.ApprovalSubjectDeploymentPlan
+	input.ActorUserAccountID = requesterID
+	g.Expect(validateSampleRetirementDecisionActor(request, input)).To(Succeed())
+}
+
 func TestApprovalMigrationDefinesImmutableChecksumBoundWorkflow(t *testing.T) {
 	g := NewWithT(t)
 	up, err := os.ReadFile("../migrations/sql/150_approval_workflow.up.sql")

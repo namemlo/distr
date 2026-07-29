@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -262,10 +263,8 @@ func RequestSampleRetirementApproval(
 				"sample retirement approval policy is invalid",
 			)
 		}
-		if len(effectivePolicy.ApprovalRules) == 0 {
-			return apierrors.NewConflict(
-				"sample retirement approval policy has no approval requirements",
-			)
+		if err := validateSampleRetirementFourEyesPolicy(effectivePolicy); err != nil {
+			return err
 		}
 		if err := input.Authorize(ctx, types.ApprovalAuthorizationContext{
 			OrganizationID:        input.OrganizationID,
@@ -409,6 +408,9 @@ func RecordApprovalDecision(
 		authorizationContext.ApprovalRequestID = request.ID
 		authorizationContext.ApprovalRequirementID = input.ApprovalRequirementID
 		if err := input.Authorize(ctx, authorizationContext); err != nil {
+			return err
+		}
+		if err := validateSampleRetirementDecisionActor(*request, input); err != nil {
 			return err
 		}
 		existing, err := getIdempotentApprovalDecision(ctx, input)
@@ -805,6 +807,41 @@ func validateSampleRetirementApprovalRequestInput(
 	}
 	if input.Authorize == nil {
 		return apierrors.ErrForbidden
+	}
+	return nil
+}
+
+func validateSampleRetirementFourEyesPolicy(
+	policy types.EffectivePolicy,
+) error {
+	if len(policy.ApprovalRules) == 0 {
+		return apierrors.NewConflict(
+			"sample retirement approval policy has no approval requirements",
+		)
+	}
+	for _, rule := range policy.ApprovalRules {
+		if !slices.Contains(
+			rule.SeparationConstraints,
+			types.SeparationConstraintRequesterCannotApprove,
+		) {
+			return apierrors.NewConflict(
+				"every sample retirement approval rule must prevent requester approval",
+			)
+		}
+	}
+	return nil
+}
+
+func validateSampleRetirementDecisionActor(
+	request types.ApprovalRequest,
+	input types.ApprovalDecisionInput,
+) error {
+	if request.SubjectType == types.ApprovalSubjectSampleRetirement &&
+		input.Decision == types.ApprovalDecisionApprove &&
+		input.ActorUserAccountID == request.RequesterUserAccountID {
+		return apierrors.NewForbidden(
+			"sample retirement requester cannot approve their own request",
+		)
 	}
 	return nil
 }

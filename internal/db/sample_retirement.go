@@ -170,7 +170,7 @@ func (SampleRetirementRepository) VerifyRetirementReverseReferences(
 func (SampleRetirementRepository) SaveSampleRetirementPreview(
 	ctx context.Context,
 	preview *types.SampleRetirementPreview,
-) error {
+) (*types.SampleRetirementPreview, error) {
 	return SaveSampleRetirementPreview(ctx, preview)
 }
 
@@ -503,34 +503,40 @@ func VerifyRetirementReverseReferences(
 func SaveSampleRetirementPreview(
 	ctx context.Context,
 	preview *types.SampleRetirementPreview,
-) error {
+) (*types.SampleRetirementPreview, error) {
 	if err := validateSampleRetirementPreview(preview); err != nil {
-		return err
+		return nil, err
 	}
-	return RunTx(ctx, func(txCtx context.Context) error {
+	persisted := *preview
+	persisted.Items = append([]types.SampleRetirementItem(nil), preview.Items...)
+	persisted.ReferenceReports = append(
+		[]types.ReferenceReport(nil),
+		preview.ReferenceReports...,
+	)
+	err := RunTx(ctx, func(txCtx context.Context) error {
 		database := internalctx.GetDb(txCtx)
 		backupEvidenceID, err := resolveSampleRetirementRecoveryEvidence(
 			txCtx,
-			preview.Job.OrganizationID,
+			persisted.Job.OrganizationID,
 			"backup",
-			preview.Job.BackupReference,
-			preview.Job.BackupChecksum,
+			persisted.Job.BackupReference,
+			persisted.Job.BackupChecksum,
 		)
 		if err != nil {
 			return err
 		}
 		restoreProofEvidenceID, err := resolveSampleRetirementRecoveryEvidence(
 			txCtx,
-			preview.Job.OrganizationID,
+			persisted.Job.OrganizationID,
 			"restore_proof",
-			preview.Job.RestoreProofReference,
-			preview.Job.RestoreProofChecksum,
+			persisted.Job.RestoreProofReference,
+			persisted.Job.RestoreProofChecksum,
 		)
 		if err != nil {
 			return err
 		}
-		preview.Job.BackupEvidenceID = backupEvidenceID
-		preview.Job.RestoreProofEvidenceID = restoreProofEvidenceID
+		persisted.Job.BackupEvidenceID = backupEvidenceID
+		persisted.Job.RestoreProofEvidenceID = restoreProofEvidenceID
 		tag, err := database.Exec(txCtx, `
 			INSERT INTO SampleRetirementJob (
 				id, organization_id, requested_by_useraccount_id, state,
@@ -547,20 +553,20 @@ func SaveSampleRetirementPreview(
 			)
 			ON CONFLICT (id) DO NOTHING`,
 			pgx.NamedArgs{
-				"id":                     preview.Job.ID,
-				"organizationID":         preview.Job.OrganizationID,
-				"requestedBy":            preview.Job.RequestedByUserAccountID,
-				"state":                  preview.Job.State,
-				"backupReference":        preview.Job.BackupReference,
-				"backupChecksum":         preview.Job.BackupChecksum,
-				"restoreProofReference":  preview.Job.RestoreProofReference,
-				"restoreProofChecksum":   preview.Job.RestoreProofChecksum,
-				"backupEvidenceID":       preview.Job.BackupEvidenceID,
-				"restoreProofEvidenceID": preview.Job.RestoreProofEvidenceID,
-				"allowlistChecksum":      preview.Job.AllowlistChecksum,
-				"previewChecksum":        preview.Job.PreviewChecksum,
-				"requestedItemCount":     preview.Job.RequestedItemCount,
-				"previewedItemCount":     preview.Job.PreviewedItemCount,
+				"id":                     persisted.Job.ID,
+				"organizationID":         persisted.Job.OrganizationID,
+				"requestedBy":            persisted.Job.RequestedByUserAccountID,
+				"state":                  persisted.Job.State,
+				"backupReference":        persisted.Job.BackupReference,
+				"backupChecksum":         persisted.Job.BackupChecksum,
+				"restoreProofReference":  persisted.Job.RestoreProofReference,
+				"restoreProofChecksum":   persisted.Job.RestoreProofChecksum,
+				"backupEvidenceID":       persisted.Job.BackupEvidenceID,
+				"restoreProofEvidenceID": persisted.Job.RestoreProofEvidenceID,
+				"allowlistChecksum":      persisted.Job.AllowlistChecksum,
+				"previewChecksum":        persisted.Job.PreviewChecksum,
+				"requestedItemCount":     persisted.Job.RequestedItemCount,
+				"previewedItemCount":     persisted.Job.PreviewedItemCount,
 			},
 		)
 		if err != nil {
@@ -569,8 +575,8 @@ func SaveSampleRetirementPreview(
 		if tag.RowsAffected() != 1 {
 			return apierrors.NewConflict("sample retirement preview is immutable")
 		}
-		for index := range preview.Items {
-			item := &preview.Items[index]
+		for index := range persisted.Items {
+			item := &persisted.Items[index]
 			_, err = database.Exec(txCtx, `
 				INSERT INTO SampleRetirementItem (
 					id, organization_id, retirement_job_id, ordinal,
@@ -603,8 +609,33 @@ func SaveSampleRetirementPreview(
 				return fmt.Errorf("persist sample retirement item: %w", err)
 			}
 		}
+		job, err := getSampleRetirementJob(
+			txCtx,
+			persisted.Job.OrganizationID,
+			persisted.Job.ID,
+			false,
+		)
+		if err != nil {
+			return err
+		}
+		items, err := listSampleRetirementItems(
+			txCtx,
+			persisted.Job.OrganizationID,
+			persisted.Job.ID,
+			false,
+		)
+		if err != nil {
+			return err
+		}
+		persisted.Job = *job
+		persisted.Items = items
+		persisted.CreatedAt = job.CreatedAt
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &persisted, nil
 }
 
 func GetSampleRetirementDetail(

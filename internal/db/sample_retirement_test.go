@@ -248,12 +248,29 @@ func TestSampleRetirementPersistsImmutableOrganizationScopedPreview(t *testing.T
 		candidates[0],
 		reports[0],
 	)
-	g.Expect(db.SaveSampleRetirementPreview(database.ctx, &preview)).To(Succeed())
+	persisted, err := db.SaveSampleRetirementPreview(database.ctx, &preview)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(persisted).NotTo(BeNil())
+	g.Expect(persisted.Job.BackupEvidenceID).NotTo(Equal(uuid.Nil))
+	g.Expect(persisted.Job.RestoreProofEvidenceID).NotTo(Equal(uuid.Nil))
+	g.Expect(persisted.Items).To(HaveLen(1))
+	g.Expect(persisted.Items[0].OwnershipEvidenceID).To(Equal(
+		candidates[0].OwnershipEvidenceID,
+	))
+	g.Expect(preview.Job.BackupEvidenceID).To(Equal(uuid.Nil))
+	g.Expect(preview.Job.RestoreProofEvidenceID).To(Equal(uuid.Nil))
 
 	detail, err := db.GetSampleRetirementDetail(database.ctx, organizationID, preview.Job.ID)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(detail.Job.PreviewChecksum).To(Equal(preview.PreviewChecksum))
+	g.Expect(detail.Job.BackupEvidenceID).To(Equal(persisted.Job.BackupEvidenceID))
+	g.Expect(detail.Job.RestoreProofEvidenceID).To(Equal(
+		persisted.Job.RestoreProofEvidenceID,
+	))
 	g.Expect(detail.Items).To(HaveLen(1))
+	g.Expect(detail.Items[0].OwnershipEvidenceID).To(Equal(
+		persisted.Items[0].OwnershipEvidenceID,
+	))
 	g.Expect(detail.Items[0].SubjectID).To(Equal(environmentID))
 	g.Expect(detail.Items[0].ExpectedChecksum).To(Equal(candidates[0].CurrentChecksum))
 
@@ -263,7 +280,7 @@ func TestSampleRetirementPersistsImmutableOrganizationScopedPreview(t *testing.T
 	changed := preview
 	changed.Job.PreviewChecksum = sampleRetirementChecksum("changed-preview")
 	changed.PreviewChecksum = changed.Job.PreviewChecksum
-	err = db.SaveSampleRetirementPreview(database.ctx, &changed)
+	_, err = db.SaveSampleRetirementPreview(database.ctx, &changed)
 	g.Expect(err).To(MatchError(ContainSubstring("immutable")))
 
 	reloaded, err := db.GetSampleRetirementDetail(database.ctx, organizationID, preview.Job.ID)
@@ -360,7 +377,8 @@ func TestSampleRetirementApplyIsAtomicRestartableAndRetainsAudit(t *testing.T) {
 		candidates[0],
 		reports[0],
 	)
-	g.Expect(db.SaveSampleRetirementPreview(database.ctx, &preview)).To(Succeed())
+	_, err = db.SaveSampleRetirementPreview(database.ctx, &preview)
+	g.Expect(err).NotTo(HaveOccurred())
 	approval := insertSampleRetirementApprovalFixture(
 		t,
 		database,
@@ -494,24 +512,35 @@ INSERT INTO SampleRetirementRecoveryEvidence (
 func insertSampleRetirementApprovalFixture(
 	t *testing.T,
 	database *task4TestDatabase,
-	organizationID, actorID, jobID uuid.UUID,
+	organizationID, requesterID, jobID uuid.UUID,
 ) types.SampleRetirementApprovalBinding {
 	t.Helper()
 	g := NewWithT(t)
+	approverID := uuid.New()
+	_, err := database.pool.Exec(context.Background(), `
+INSERT INTO UserAccount (id, email) VALUES ($1, $2);
+INSERT INTO Organization_UserAccount (
+  organization_id, user_account_id, user_role
+) VALUES ($3, $1, 'admin')`,
+		approverID,
+		approverID.String()+"@example.test",
+		organizationID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
 	group := types.PrincipalGroup{
 		OrganizationID:  organizationID,
 		Key:             "sample-retirement-approvers",
 		DisplayName:     "Sample retirement approvers",
 		Description:     "Test approval authority",
-		CreatedByUserID: &actorID,
+		CreatedByUserID: &requesterID,
 	}
 	g.Expect(db.CreateAuthorizationPrincipalGroup(database.ctx, &group)).To(Succeed())
 	member := types.PrincipalGroupMember{
 		OrganizationID: organizationID,
 		GroupID:        group.ID,
-		UserAccountID:  actorID,
+		UserAccountID:  approverID,
 		EffectiveFrom:  time.Now().UTC().Add(-time.Hour),
-		AddedByUserID:  &actorID,
+		AddedByUserID:  &requesterID,
 		Reason:         "sample retirement approval fixture",
 	}
 	g.Expect(db.AddAuthorizationPrincipalGroupMember(database.ctx, &member)).To(Succeed())
@@ -526,13 +555,16 @@ func insertSampleRetirementApprovalFixture(
 	version := types.DeploymentPolicyVersion{
 		OrganizationID:         organizationID,
 		PolicyID:               policy.ID,
-		CreatedByUserAccountID: actorID,
+		CreatedByUserAccountID: requesterID,
 		Document: types.DeploymentPolicyDocument{
 			Schema: types.DeploymentPolicySchemaV1,
 			ApprovalRules: []types.ApprovalRule{{
 				Key:              "retirement-approval",
 				PrincipalGroupID: group.ID,
 				Quorum:           1,
+				SeparationConstraints: []types.SeparationConstraint{
+					types.SeparationConstraintRequesterCannotApprove,
+				},
 			}},
 			AdmissionRules: types.AdmissionRules{
 				AllowedResolutionModes: []types.RequirementResolutionMode{
@@ -555,7 +587,7 @@ func insertSampleRetirementApprovalFixture(
 		database.ctx,
 		version.ID,
 		organizationID,
-		actorID,
+		requesterID,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(issues).To(BeEmpty())
@@ -568,7 +600,7 @@ func insertSampleRetirementApprovalFixture(
 			ScopeKind:              types.DeploymentPolicyBindingScopeOrganization,
 			ScopeID:                organizationID,
 			Role:                   types.DeploymentPolicyBindingRoleOwner,
-			CreatedByUserAccountID: actorID,
+			CreatedByUserAccountID: requesterID,
 		},
 	)).To(Succeed())
 
@@ -580,7 +612,7 @@ func insertSampleRetirementApprovalFixture(
 		types.SampleRetirementApprovalRequestInput{
 			OrganizationID:           organizationID,
 			SampleRetirementJobID:    jobID,
-			RequestedByUserAccountID: actorID,
+			RequestedByUserAccountID: requesterID,
 			ExpiresAt:                time.Now().UTC().Add(time.Hour),
 			Authorize:                authorize,
 		},
@@ -593,7 +625,7 @@ func insertSampleRetirementApprovalFixture(
 			OrganizationID:          organizationID,
 			ApprovalRequestID:       request.ID,
 			ApprovalRequirementID:   request.Requirements[0].ID,
-			ActorUserAccountID:      actorID,
+			ActorUserAccountID:      approverID,
 			Decision:                types.ApprovalDecisionApprove,
 			Comment:                 "Approved for retirement integration test",
 			ExpectedRequestRevision: request.Revision,

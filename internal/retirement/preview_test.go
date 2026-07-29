@@ -229,6 +229,29 @@ func TestPreviewSampleRetirementAcceptsVersionedEvidenceReferences(t *testing.T)
 	g.Expect(preview.Job.RestoreProofReference).To(Equal(request.RestoreProofReference))
 }
 
+func TestPreviewSampleRetirementPersistsProductionCandidateEvidence(t *testing.T) {
+	g := NewWithT(t)
+	request := validRequest()
+	store := newPreviewStore(request)
+	candidate := store.current[0]
+
+	preview, err := retirement.PreviewSampleRetirement(
+		context.Background(),
+		store,
+		request,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(preview.Items).To(HaveLen(1))
+	g.Expect(preview.Items[0].OwnershipEvidenceID).To(Equal(candidate.OwnershipEvidenceID))
+	g.Expect(preview.Items[0].OwnershipMarker).To(Equal(candidate.OwnershipMarker))
+	g.Expect(preview.Items[0].OwnershipChecksum).To(Equal(candidate.OwnershipChecksum))
+	g.Expect(preview.Job.BackupEvidenceID).NotTo(Equal(uuid.Nil))
+	g.Expect(preview.Job.RestoreProofEvidenceID).NotTo(Equal(uuid.Nil))
+	g.Expect(preview.Job.BackupEvidenceID).To(Equal(store.saved.Job.BackupEvidenceID))
+	g.Expect(preview.Job.RestoreProofEvidenceID).To(Equal(store.saved.Job.RestoreProofEvidenceID))
+}
+
 func TestPreviewSampleRetirementRejectsStaleOrChangedOwnershipFacts(t *testing.T) {
 	base := validRequest()
 	tests := []struct {
@@ -583,13 +606,15 @@ func TestPreviewSampleRetirementDoesNotPersistDependencyFailures(t *testing.T) {
 }
 
 type previewStore struct {
-	current       []types.SampleRetirementCandidate
-	reports       []types.ReferenceReport
-	inspectErr    error
-	referencesErr error
-	saveErr       error
-	inspectCalls  int
-	saved         *types.SampleRetirementPreview
+	current                []types.SampleRetirementCandidate
+	reports                []types.ReferenceReport
+	inspectErr             error
+	referencesErr          error
+	saveErr                error
+	inspectCalls           int
+	saved                  *types.SampleRetirementPreview
+	backupEvidenceID       uuid.UUID
+	restoreProofEvidenceID uuid.UUID
 }
 
 func newPreviewStore(request types.SampleRetirementRequest) *previewStore {
@@ -599,7 +624,12 @@ func newPreviewStore(request types.SampleRetirementRequest) *previewStore {
 		current = append(current, validCandidate(subject))
 		reports = append(reports, validReport(subject))
 	}
-	return &previewStore{current: current, reports: reports}
+	return &previewStore{
+		current:                current,
+		reports:                reports,
+		backupEvidenceID:       uuid.MustParse("77777777-7777-4777-8777-777777777777"),
+		restoreProofEvidenceID: uuid.MustParse("88888888-8888-4888-8888-888888888888"),
+	}
 }
 
 func (store *previewStore) InspectSampleRetirementSubjects(
@@ -622,18 +652,25 @@ func (store *previewStore) VerifyRetirementReverseReferences(
 func (store *previewStore) SaveSampleRetirementPreview(
 	_ context.Context,
 	preview *types.SampleRetirementPreview,
-) error {
+) (*types.SampleRetirementPreview, error) {
 	if store.saveErr != nil {
-		return store.saveErr
+		return nil, store.saveErr
+	}
+	for _, item := range preview.Items {
+		if item.OwnershipEvidenceID == uuid.Nil {
+			return nil, errors.New("persist sample retirement item: ownership evidence is required")
+		}
 	}
 	copy := *preview
+	copy.Job.BackupEvidenceID = store.backupEvidenceID
+	copy.Job.RestoreProofEvidenceID = store.restoreProofEvidenceID
 	copy.Items = append([]types.SampleRetirementItem(nil), preview.Items...)
 	copy.ReferenceReports = append(
 		[]types.ReferenceReport(nil),
 		preview.ReferenceReports...,
 	)
 	store.saved = &copy
-	return nil
+	return &copy, nil
 }
 
 func validRequest() types.SampleRetirementRequest {
@@ -674,13 +711,16 @@ func validReport(subject types.SampleRetirementSubject) types.ReferenceReport {
 
 func validCandidate(subject types.SampleRetirementSubject) types.SampleRetirementCandidate {
 	return types.SampleRetirementCandidate{
-		Subject:           subject,
-		OrganizationID:    organizationID,
-		CurrentChecksum:   subject.ExpectedChecksum,
-		OwnershipMarker:   subject.OwnershipMarker,
-		OwnershipChecksum: subject.OwnershipChecksum,
-		BeforeCount:       1,
-		Immutable:         true,
+		Subject:                  subject,
+		OrganizationID:           organizationID,
+		CurrentChecksum:          subject.ExpectedChecksum,
+		OwnershipEvidenceID:      uuid.MustParse("66666666-6666-4666-8666-666666666666"),
+		OwnershipMarker:          subject.OwnershipMarker,
+		OwnershipChecksum:        subject.OwnershipChecksum,
+		OwnershipSourceReference: "inventory://sample/application/" + subject.SubjectID.String(),
+		OwnershipSourceChecksum:  checksum("e"),
+		BeforeCount:              1,
+		Immutable:                true,
 	}
 }
 
