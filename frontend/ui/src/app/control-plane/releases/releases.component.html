@@ -154,6 +154,45 @@
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Release history</h2>
         <button type="button" class="distr-btn-secondary px-3 py-2 text-sm" (click)="loadList()">Refresh</button>
       </div>
+      <form class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-7" [formGroup]="filterForm" (ngSubmit)="applyFilters()">
+        <label class="distr-label">
+          Client ID
+          <input class="distr-input mt-1 w-full" formControlName="customerOrganizationId" autocomplete="off" />
+        </label>
+        <label class="distr-label">
+          Application ID
+          <input class="distr-input mt-1 w-full" formControlName="applicationId" autocomplete="off" />
+        </label>
+        <label class="distr-label">
+          Deployment unit ID
+          <input class="distr-input mt-1 w-full" formControlName="deploymentUnitId" autocomplete="off" />
+        </label>
+        <label class="distr-label">
+          Kind
+          <select class="distr-input mt-1 w-full" formControlName="kind">
+            <option value="">All kinds</option>
+            <option value="component">Component</option>
+            <option value="product">Product</option>
+            <option value="legacy">Legacy</option>
+          </select>
+        </label>
+        <label class="distr-label">
+          Status
+          <select class="distr-input mt-1 w-full" formControlName="status">
+            <option value="">All statuses</option>
+            <option value="DRAFT">Draft</option>
+            <option value="VALIDATING">Validating</option>
+            <option value="PUBLISHED">Published</option>
+            <option value="BLOCKED">Blocked</option>
+            <option value="ARCHIVED">Archived</option>
+          </select>
+        </label>
+        <label class="distr-label">
+          Search
+          <input class="distr-input mt-1 w-full" formControlName="search" autocomplete="off" />
+        </label>
+        <button type="submit" class="distr-btn-primary self-end">Apply filters</button>
+      </form>
       <div class="mt-4 overflow-x-auto">
         <table class="distr-table">
           <caption class="sr-only">
@@ -175,6 +214,16 @@
                 <td class="px-4 py-3">
                   <div class="font-medium text-gray-900 dark:text-white">
                     {{ release.version || 'Unknown version' }}
+                  </div>
+                  <div class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    {{ release.application || release.applicationId }}
+                  </div>
+                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    @for (client of release.clients; track client.id) {
+                      <span>{{ client.name }}{{ $last ? '' : ', ' }}</span>
+                    } @empty {
+                      <span>No client deployment yet</span>
+                    }
                   </div>
                   <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {{ release.publishedAt || release.createdAt }}
@@ -206,7 +255,7 @@
                   {{ release.checksum || 'Not available' }}
                 </td>
                 <td class="px-4 py-3 text-right">
-                  <a class="distr-btn-secondary inline-flex px-3 py-2 text-sm" [attr.href]="'/releases/' + release.id">
+                  <a class="distr-btn-secondary inline-flex px-3 py-2 text-sm" [attr.href]="releaseHref(release.id)">
                     Open
                   </a>
                 </td>
@@ -252,6 +301,22 @@
           <dd class="mt-1 text-gray-900 dark:text-white">{{ releaseDetail.release.kind }}</dd>
         </div>
         <div>
+          <dt class="text-gray-500 dark:text-gray-400">Application</dt>
+          <dd class="mt-1 text-gray-900 dark:text-white">
+            {{ releaseDetail.release.application || releaseDetail.release.applicationId }}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-gray-500 dark:text-gray-400">Clients</dt>
+          <dd class="mt-1 text-gray-900 dark:text-white">
+            @for (client of releaseDetail.release.clients; track client.id) {
+              <span>{{ client.name }}{{ $last ? '' : ', ' }}</span>
+            } @empty {
+              <span>No client deployment yet</span>
+            }
+          </dd>
+        </div>
+        <div>
           <dt class="text-gray-500 dark:text-gray-400">Source revision</dt>
           <dd class="mt-1 break-all font-mono text-xs text-gray-900 dark:text-white">
             {{ releaseDetail.release.sourceRevision || 'Not available' }}
@@ -268,6 +333,99 @@
           <dd class="mt-1 text-gray-900 dark:text-white">{{ evidenceLabel(releaseDetail.release) }}</dd>
         </div>
       </dl>
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Source and build proof</h2>
+      <div class="mt-4 grid gap-3 xl:grid-cols-2">
+        @for (proof of releaseDetail.sourceBuildProof; track proof.component) {
+          <article class="rounded-lg border border-gray-200 p-4 text-sm dark:border-gray-700">
+            <div class="font-medium text-gray-900 dark:text-white">{{ proof.component }} · {{ proof.schema }}</div>
+            <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              <dt class="text-gray-500">Verification</dt>
+              <dd>{{ proof.verificationState }}</dd>
+              <dt class="text-gray-500">Declared source</dt>
+              <dd class="break-all">{{ proof.declaredRepository }}</dd>
+              <dt class="text-gray-500">Declared ref</dt>
+              <dd class="break-all font-mono text-xs">{{ proof.declaredRequestedRef }}</dd>
+              <dt class="text-gray-500">Declared commit</dt>
+              <dd class="break-all font-mono text-xs">{{ proof.declaredSourceCommit }}</dd>
+              <dt class="text-gray-500">Declared builder / build</dt>
+              <dd>{{ proof.declaredBuilderId }} / {{ proof.declaredBuildId }}</dd>
+              @if (proof.verifiedSourceCommit) {
+                <dt class="text-gray-500">Verified source URI</dt>
+                <dd class="break-all">{{ proof.verifiedSourceUri }}</dd>
+                <dt class="text-gray-500">Verified commit</dt>
+                <dd class="break-all font-mono text-xs">{{ proof.verifiedSourceCommit }}</dd>
+                <dt class="text-gray-500">Verified builder / build</dt>
+                <dd>{{ proof.verifiedBuilderId }} / {{ proof.verifiedBuildId }}</dd>
+                <dt class="text-gray-500">Verified build type</dt>
+                <dd>{{ proof.verifiedBuildType }}</dd>
+              }
+              @if (proof.provenanceDigest) {
+                <dt class="text-gray-500">Provenance</dt>
+                <dd class="break-all font-mono text-xs">{{ proof.provenanceDigest }}</dd>
+              }
+              @if (proof.sbomReference) {
+                <dt class="text-gray-500">SBOM reference</dt>
+                <dd class="break-all font-mono text-xs">{{ proof.sbomReference }}</dd>
+                @if (proof.sbomDigest) {
+                  <dt class="text-gray-500">SBOM digest</dt>
+                  <dd class="break-all font-mono text-xs">{{ proof.sbomDigest }}</dd>
+                }
+              }
+            </dl>
+          </article>
+        } @empty {
+          <p class="text-sm text-gray-500 dark:text-gray-400">No source or build proof is recorded.</p>
+        }
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Accumulated changelog</h2>
+      @if (releaseDetail.changeContext.state !== 'READY') {
+        <div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {{ releaseDetail.changeContext.message || 'Select a deployment unit to resolve its independently verified baseline.' }}
+          <span class="font-mono">({{ releaseDetail.changeContext.state }})</span>
+        </div>
+      }
+      <div class="mt-4 grid gap-4 xl:grid-cols-2">
+        <ul class="space-y-3">
+          @for (
+            change of releaseDetail.changelog;
+            track change.category + ':' + change.component + ':' + change.reference
+          ) {
+            <li class="rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-700">
+              <div class="font-medium text-gray-900 dark:text-white">
+                {{ change.category }} · {{ change.component }}
+              </div>
+              <div class="mt-1 text-gray-700 dark:text-gray-300">{{ change.summary }}</div>
+              @if (change.reference) {
+                <div class="mt-1 break-all font-mono text-xs text-gray-500">{{ change.reference }}</div>
+              }
+            </li>
+          } @empty {
+            <li class="text-sm text-gray-500 dark:text-gray-400">No accumulated changes are recorded.</li>
+          }
+        </ul>
+        <div>
+          <h3 class="text-sm font-medium text-gray-900 dark:text-white">Skipped releases included in this change</h3>
+          <ul class="mt-3 space-y-3">
+            @for (skipped of releaseDetail.skippedReleases; track skipped.component + ':' + skipped.version) {
+              <li class="rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-700">
+                <div class="font-medium">{{ skipped.summary || 'Skipped release ' + skipped.version }}</div>
+                <div class="mt-1">{{ skipped.component }} · {{ skipped.version }}</div>
+                <div class="mt-1 break-all font-mono text-xs text-gray-500">
+                  {{ skipped.releaseId }} · {{ skipped.sourceRevision }}
+                </div>
+              </li>
+            } @empty {
+              <li class="text-sm text-gray-500 dark:text-gray-400">No skipped releases are recorded.</li>
+            }
+          </ul>
+        </div>
+      </div>
     </section>
 
     @if (evidenceIncomplete()) {
@@ -348,6 +506,34 @@
               <span class="font-medium text-gray-900 dark:text-white">{{ edge.from }}</span>
               <span class="mx-2 text-gray-500 dark:text-gray-400">{{ edge.kind }}</span>
               <span class="font-medium text-gray-900 dark:text-white">{{ edge.to }}</span>
+              <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                <dt class="text-gray-500">Consumer</dt>
+                <dd>{{ edge.consumerComponent }}</dd>
+                <dt class="text-gray-500">Provider</dt>
+                <dd>{{ edge.providerComponent || 'Resolved at target' }}</dd>
+                <dt class="text-gray-500">Capability</dt>
+                <dd>{{ edge.capability }}</dd>
+                <dt class="text-gray-500">Range</dt>
+                <dd>{{ edge.versionRange }}</dd>
+                <dt class="text-gray-500">Resolved version</dt>
+                <dd>{{ edge.providerVersion || 'Resolved at target' }}</dd>
+                <dt class="text-gray-500">Provider artifacts</dt>
+                <dd>
+                  @for (artifact of edge.providerArtifacts; track artifact.artifactKey + ':' + artifact.platform) {
+                    <div class="break-all font-mono">
+                      {{ artifact.artifactKey }} · {{ artifact.platform }} · {{ artifact.platformDigest }}
+                    </div>
+                  } @empty {
+                    <span>Resolved at target</span>
+                  }
+                </dd>
+                <dt class="text-gray-500">Stage</dt>
+                <dd>{{ edge.resolutionStage }}</dd>
+                <dt class="text-gray-500">Modes</dt>
+                <dd>{{ edge.allowedModes.join(', ') || 'Not applicable' }}</dd>
+                <dt class="text-gray-500">Ordering</dt>
+                <dd>{{ edge.ordering || 'No fixed ordering' }}</dd>
+              </dl>
             </li>
           } @empty {
             <li class="text-sm text-gray-500 dark:text-gray-400">No graph edges are recorded.</li>

@@ -38,15 +38,15 @@ type ProductReleaseProvenanceEligibilityHook func(
 type ProductReleaseDependencyPolicyEligibilityHook func(
 	context.Context,
 	uuid.UUID,
-	uuid.UUID,
+	types.ProductReleaseManifest,
 ) (*types.ProductReleaseValidationIssue, error)
 
 var (
 	productReleaseProvenanceHookMu sync.RWMutex
-	productReleaseProvenanceHook   ProductReleaseProvenanceEligibilityHook = unavailableProductReleaseProvenance
+	productReleaseProvenanceHook   ProductReleaseProvenanceEligibilityHook = persistedProductReleaseProvenanceEligibility
 
 	productReleaseDependencyPolicyHookMu sync.RWMutex
-	productReleaseDependencyPolicyHook   ProductReleaseDependencyPolicyEligibilityHook = unavailableProductReleaseDependencyPolicy //nolint:lll
+	productReleaseDependencyPolicyHook   ProductReleaseDependencyPolicyEligibilityHook = persistedProductReleaseDependencyPolicyEligibility //nolint:lll
 )
 
 type productReleaseOrganizationContextKey struct{}
@@ -58,11 +58,11 @@ func WithProductReleaseOrganizationID(ctx context.Context, organizationID uuid.U
 // SetProductReleaseProvenanceEligibilityHook is PR-061's narrow integration
 // point. Its verifier must prove immutable provenance for the exact
 // organization/component pair using the caller's transaction. A nil hook
-// restores the fail-closed default. The returned function restores the prior
+// restores the repository-backed production default. The returned function restores the prior
 // hook and is intended for focused tests.
 func SetProductReleaseProvenanceEligibilityHook(hook ProductReleaseProvenanceEligibilityHook) func() {
 	if hook == nil {
-		hook = unavailableProductReleaseProvenance
+		hook = persistedProductReleaseProvenanceEligibility
 	}
 	productReleaseProvenanceHookMu.Lock()
 	previous := productReleaseProvenanceHook
@@ -78,12 +78,13 @@ func SetProductReleaseProvenanceEligibilityHook(hook ProductReleaseProvenanceEli
 // SetProductReleaseDependencyPolicyEligibilityHook is PR-067's narrow
 // integration point. Its resolver must prove that the exact policy version is
 // immutable, published, and owned by the supplied organization using the
-// caller's transaction. A nil hook restores the fail-closed default.
+// caller's transaction. A nil hook restores the repository-backed production
+// default.
 func SetProductReleaseDependencyPolicyEligibilityHook(
 	hook ProductReleaseDependencyPolicyEligibilityHook,
 ) func() {
 	if hook == nil {
-		hook = unavailableProductReleaseDependencyPolicy
+		hook = persistedProductReleaseDependencyPolicyEligibility
 	}
 	productReleaseDependencyPolicyHookMu.Lock()
 	previous := productReleaseDependencyPolicyHook
@@ -100,9 +101,18 @@ func CreateProductReleaseDraft(
 	ctx context.Context,
 	manifest *types.ProductReleaseManifest,
 ) (*types.ReleaseBundle, error) {
+	return CreateProductReleaseDraftWithIdempotency(ctx, manifest, "")
+}
+
+func CreateProductReleaseDraftWithIdempotency(
+	ctx context.Context,
+	manifest *types.ProductReleaseManifest,
+	key string,
+) (*types.ReleaseBundle, error) {
 	if manifest == nil {
 		return nil, apierrors.NewBadRequest("product release manifest is required")
 	}
+	key = strings.TrimSpace(key)
 	normalizeProductReleaseBoundary(manifest)
 	if err := validateProductReleaseDraftBoundary(*manifest); err != nil {
 		return nil, err
@@ -147,6 +157,45 @@ func CreateProductReleaseDraft(
 		bundle.ReleaseContract = productReleaseContract(*manifest)
 		bundle.CanonicalPayload = initialPayload
 		bundle.CanonicalChecksum = initialChecksum
+		if key != "" {
+			keyHash := hashReleaseBundleIdempotencyKey(key)
+			if err := lockReleaseBundleIdempotencyKey(ctx, manifest.OrganizationID, keyHash); err != nil {
+				return err
+			}
+			existingID, existingChecksum, found, err := getReleaseBundleIdempotencyRecord(
+				ctx,
+				manifest.OrganizationID,
+				keyHash,
+			)
+			if err != nil {
+				return err
+			}
+			if found {
+				if existingChecksum != initialChecksum {
+					return fmt.Errorf(
+						"%w: different canonical Product Release request checksum",
+						ErrReleaseBundleIdempotencyConflict,
+					)
+				}
+				existing, err := getReleaseBundle(ctx, existingID, manifest.OrganizationID, false)
+				if err != nil {
+					return err
+				}
+				if existing.Kind != types.ReleaseBundleKindProduct {
+					return fmt.Errorf(
+						"%w: idempotency key belongs to another release kind",
+						ErrReleaseBundleIdempotencyConflict,
+					)
+				}
+				storedManifest, err := loadProductReleaseManifest(ctx, *existing)
+				if err != nil {
+					return err
+				}
+				*manifest = *storedManifest
+				created = existing
+				return nil
+			}
+		}
 		if err := insertReleaseBundle(ctx, bundle); err != nil {
 			return err
 		}
@@ -171,6 +220,17 @@ func CreateProductReleaseDraft(
 		}
 		if err := insertProductReleaseFacts(ctx, *manifest); err != nil {
 			return err
+		}
+		if key != "" {
+			if err := insertReleaseBundleIdempotencyRecord(
+				ctx,
+				manifest.OrganizationID,
+				hashReleaseBundleIdempotencyKey(key),
+				initialChecksum,
+				bundle.ID,
+			); err != nil {
+				return err
+			}
 		}
 		created, err = getReleaseBundle(ctx, bundle.ID, bundle.OrganizationID, false)
 		if err != nil {
@@ -969,18 +1029,18 @@ func unavailableProductReleaseProvenance(
 func productReleaseDependencyPolicyEligibility(
 	ctx context.Context,
 	organizationID uuid.UUID,
-	dependencyPolicyVersionID uuid.UUID,
+	manifest types.ProductReleaseManifest,
 ) (*types.ProductReleaseValidationIssue, error) {
 	productReleaseDependencyPolicyHookMu.RLock()
 	hook := productReleaseDependencyPolicyHook
 	productReleaseDependencyPolicyHookMu.RUnlock()
-	return hook(ctx, organizationID, dependencyPolicyVersionID)
+	return hook(ctx, organizationID, manifest)
 }
 
 func unavailableProductReleaseDependencyPolicy(
 	context.Context,
 	uuid.UUID,
-	uuid.UUID,
+	types.ProductReleaseManifest,
 ) (*types.ProductReleaseValidationIssue, error) {
 	return &types.ProductReleaseValidationIssue{
 		Field:   "dependencyPolicyVersion",
@@ -1012,7 +1072,7 @@ func validateProductReleaseEligibility(
 	policyIssue, err := productReleaseDependencyPolicyEligibility(
 		ctx,
 		organizationID,
-		manifest.DependencyPolicyVersion,
+		manifest,
 	)
 	if err != nil {
 		return nil, err

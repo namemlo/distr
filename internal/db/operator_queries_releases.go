@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -101,6 +102,45 @@ const operatorReleaseProjectionSQL = `
     rb.created_at,
     rb.kind,
     rb.application_id,
+    application.name AS application,
+    COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'id', customer.id,
+        'name', customer.name
+      ) ORDER BY customer.name, customer.id)
+      FROM (
+        SELECT DISTINCT customer_organization.id, customer_organization.name
+        FROM DeploymentPlan client_plan
+        JOIN DeploymentUnit client_unit
+          ON client_unit.id = client_plan.deployment_unit_id
+         AND client_unit.organization_id = client_plan.organization_id
+        JOIN DeploymentScope client_scope
+          ON client_scope.id = client_unit.deployment_scope_id
+         AND client_scope.organization_id = client_unit.organization_id
+        LEFT JOIN DeploymentUnitSubscriber client_subscriber
+          ON client_subscriber.deployment_unit_id = client_unit.id
+         AND client_subscriber.organization_id = client_unit.organization_id
+         AND client_subscriber.retired_at IS NULL
+        CROSS JOIN LATERAL unnest(array_remove(ARRAY[
+          client_scope.customer_organization_id,
+          client_subscriber.customer_organization_id
+        ]::uuid[], NULL)) client_customer_id
+        JOIN CustomerOrganization customer_organization
+          ON customer_organization.id = client_customer_id
+         AND customer_organization.organization_id = client_plan.organization_id
+        WHERE client_plan.organization_id = rb.organization_id
+          AND (
+            client_plan.release_bundle_id = rb.id
+            OR EXISTS (
+              SELECT 1
+              FROM ProductReleaseComponent client_pin
+              WHERE client_pin.organization_id = client_plan.organization_id
+                AND client_pin.product_release_bundle_id = client_plan.release_bundle_id
+                AND client_pin.component_release_bundle_id = rb.id
+            )
+          )
+      ) customer
+    ), '[]'::jsonb) AS clients,
     NULL::bigint AS release_number,
     rb.release_number AS version,
     rb.status,
@@ -124,6 +164,9 @@ const operatorReleaseProjectionSQL = `
       WHERE edge.organization_id = rb.organization_id
         AND edge.product_release_bundle_id = rb.id) AS graph_edge_count
   FROM ReleaseBundle rb
+  JOIN Application application
+    ON application.id = rb.application_id
+   AND application.organization_id = rb.organization_id
   WHERE rb.organization_id = @organizationID`
 
 const operatorReleaseListSQL = `
@@ -131,13 +174,64 @@ WITH visible_releases AS (` + operatorReleaseProjectionSQL + operatorReleaseVisi
 ), filtered_releases AS (
   SELECT *
   FROM visible_releases release
-  WHERE (@applicationID::uuid IS NULL OR release.application_id = @applicationID)
+  WHERE (
+      @customerOrganizationID::uuid IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM DeploymentPlan plan
+        JOIN DeploymentUnit unit
+          ON unit.id = plan.deployment_unit_id
+         AND unit.organization_id = plan.organization_id
+        JOIN DeploymentScope deployment_scope
+          ON deployment_scope.id = unit.deployment_scope_id
+         AND deployment_scope.organization_id = unit.organization_id
+        LEFT JOIN DeploymentUnitSubscriber subscriber
+          ON subscriber.deployment_unit_id = unit.id
+         AND subscriber.organization_id = unit.organization_id
+         AND subscriber.retired_at IS NULL
+        WHERE plan.organization_id = release.organization_id
+          AND (
+            plan.release_bundle_id = release.id
+            OR EXISTS (
+              SELECT 1
+              FROM ProductReleaseComponent customer_pin
+              WHERE customer_pin.organization_id = plan.organization_id
+                AND customer_pin.product_release_bundle_id = plan.release_bundle_id
+                AND customer_pin.component_release_bundle_id = release.id
+            )
+          )
+          AND @customerOrganizationID::uuid IN (
+            deployment_scope.customer_organization_id,
+            subscriber.customer_organization_id
+          )
+      )
+    )
+    AND (@applicationID::uuid IS NULL OR release.application_id = @applicationID)
+    AND (
+      @deploymentUnitID::uuid IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM DeploymentPlan unit_plan
+        WHERE unit_plan.organization_id = release.organization_id
+          AND unit_plan.deployment_unit_id = @deploymentUnitID
+          AND (
+            unit_plan.release_bundle_id = release.id
+            OR EXISTS (
+              SELECT 1
+              FROM ProductReleaseComponent unit_pin
+              WHERE unit_pin.organization_id = unit_plan.organization_id
+                AND unit_pin.product_release_bundle_id = unit_plan.release_bundle_id
+                AND unit_pin.component_release_bundle_id = release.id
+            )
+          )
+      )
+    )
     AND (@kind = '' OR release.kind = @kind)
     AND (@status = '' OR release.status = @status)
     AND (
       @searchPattern = ''
       OR concat_ws(
-        ' ', release.version, release.kind, release.status,
+        ' ', release.application, release.clients::text, release.version, release.kind, release.status,
         release.source_revision, release.checksum
       ) ILIKE @searchPattern ESCAPE '\'
     )
@@ -161,6 +255,8 @@ SELECT jsonb_build_object(
         'createdAt', release.created_at,
         'kind', release.kind,
         'applicationId', release.application_id,
+        'application', release.application,
+        'clients', release.clients,
         'releaseNumber', release.release_number,
         'version', release.version,
         'status', release.status,
@@ -180,6 +276,47 @@ const operatorReleaseDetailSQL = `
 WITH release_row AS (` + operatorReleaseProjectionSQL + `
     AND rb.id = @releaseID
 ` + operatorReleaseVisibleScopeSQL + `
+),
+selected_plan AS (
+  SELECT plan.id, plan.deployment_unit_id, plan.release_bundle_id
+  FROM DeploymentPlan plan
+  JOIN release_row release
+    ON release.organization_id = plan.organization_id
+  JOIN DeploymentUnit unit
+    ON unit.id = plan.deployment_unit_id
+   AND unit.organization_id = plan.organization_id
+  JOIN DeploymentScope scope
+    ON scope.id = unit.deployment_scope_id
+   AND scope.organization_id = unit.organization_id
+  WHERE @deploymentUnitID::uuid IS NOT NULL
+    AND plan.deployment_unit_id = @deploymentUnitID
+    AND plan.plan_schema = 'distr.target-deployment-plan/v2'
+    AND (
+      plan.release_bundle_id = release.id
+      OR EXISTS (
+        SELECT 1
+        FROM ProductReleaseComponent selected_pin
+        WHERE selected_pin.organization_id = release.organization_id
+          AND selected_pin.product_release_bundle_id = plan.release_bundle_id
+          AND selected_pin.component_release_bundle_id = release.id
+      )
+    )
+    AND (
+      @organizationWide
+      OR unit.id = ANY(@deploymentUnitScopeIDs::uuid[])
+      OR plan.environment_id = ANY(@environmentScopeIDs::uuid[])
+      OR scope.customer_organization_id = ANY(@customerScopeIDs::uuid[])
+      OR EXISTS (
+        SELECT 1
+        FROM DeploymentUnitSubscriber subscriber
+        WHERE subscriber.organization_id = unit.organization_id
+          AND subscriber.deployment_unit_id = unit.id
+          AND subscriber.retired_at IS NULL
+          AND subscriber.customer_organization_id = ANY(@customerScopeIDs::uuid[])
+      )
+    )
+  ORDER BY plan.created_at DESC, plan.id DESC
+  LIMIT 1
 )
 SELECT jsonb_build_object(
   'release', jsonb_build_object(
@@ -187,6 +324,8 @@ SELECT jsonb_build_object(
     'createdAt', release.created_at,
     'kind', release.kind,
     'applicationId', release.application_id,
+    'application', release.application,
+    'clients', release.clients,
     'releaseNumber', release.release_number,
     'version', release.version,
     'status', release.status,
@@ -243,12 +382,181 @@ SELECT jsonb_build_object(
     SELECT jsonb_agg(jsonb_build_object(
       'from', edge.from_node_key,
       'to', edge.to_node_key,
-      'kind', edge.capability_name
+      'kind', edge.capability_name,
+      'consumerComponent', edge.consumer_component_key,
+      'providerComponent', COALESCE(edge.provider_component_key, ''),
+      'capability', edge.capability_name,
+      'versionRange', edge.version_range,
+      'providerVersion', edge.provider_version,
+      'providerArtifacts', COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'artifactKey', artifact.artifact_key,
+          'artifactType', artifact.artifact_type,
+          'manifestDigest', artifact.manifest_digest,
+          'platform', artifact.platform,
+          'platformDigest', artifact.platform_digest
+        ) ORDER BY artifact.artifact_key, artifact.platform, artifact.id)
+        FROM ProductReleaseComponent provider_pin
+        JOIN ComponentReleaseArtifact artifact
+          ON artifact.organization_id = provider_pin.organization_id
+         AND artifact.release_bundle_id = provider_pin.component_release_bundle_id
+        WHERE provider_pin.organization_id = edge.organization_id
+          AND provider_pin.product_release_bundle_id = edge.product_release_bundle_id
+          AND provider_pin.component_key = edge.provider_component_key
+      ), '[]'::jsonb),
+      'resolutionStage', edge.resolution_stage,
+      'allowedModes', edge.allowed_modes,
+      'ordering', edge.ordering
     ) ORDER BY edge.edge_key, edge.id)
     FROM ProductReleaseCapabilityEdge edge
     WHERE edge.organization_id = release.organization_id
       AND edge.product_release_bundle_id = release.id
   ), '[]'::jsonb),
+  'sourceBuildProof', COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'component', contract.component,
+      'schema', contract.document ->> 'schema',
+      'declaredRepository', contract.document -> 'source' ->> 'repository',
+      'declaredRequestedRef', contract.document -> 'source' ->> 'requestedRef',
+      'declaredSourceCommit', contract.document -> 'source' ->> 'commit',
+      'declaredBuilderId', contract.document -> 'build' ->> 'builder',
+      'declaredBuildId', contract.document -> 'build' ->> 'id',
+      'verifiedSourceUri', verification.source_uri,
+      'verifiedSourceCommit', verification.source_commit,
+      'verifiedBuilderId', verification.builder_id,
+      'verifiedBuildId', verification.build_id,
+      'verifiedBuildType', verification.build_type,
+      'provenanceReference', verification.evidence_reference,
+      'provenanceDigest', verification.evidence_digest,
+      'sbomReference', COALESCE(sbom.reference, ''),
+      'sbomDigest', COALESCE(substring(sbom.reference from '(sha256:[0-9a-f]{64})$'), ''),
+      'verificationState', CASE WHEN verification.id IS NULL THEN 'UNVERIFIED' ELSE 'VERIFIED' END
+    ) ORDER BY contract.component)
+    FROM (
+      SELECT
+        direct.release_contract ->> 'componentKey' AS component,
+        direct.release_contract AS document,
+        direct.id AS component_release_id
+      FROM ReleaseBundle direct
+      WHERE direct.id = release.id
+        AND direct.organization_id = release.organization_id
+        AND direct.kind = 'component'
+      UNION ALL
+      SELECT pin.component_key, pin.contract_snapshot, pin.component_release_bundle_id
+      FROM ProductReleaseComponent pin
+      WHERE pin.organization_id = release.organization_id
+        AND pin.product_release_bundle_id = release.id
+    ) contract
+    LEFT JOIN LATERAL (
+      SELECT candidate.id, candidate.source_uri, candidate.source_commit,
+             candidate.builder_id, candidate.build_id, candidate.build_type,
+             candidate.evidence_reference, candidate.evidence_digest
+      FROM ComponentReleaseEvidenceVerification candidate
+      WHERE candidate.organization_id = release.organization_id
+        AND candidate.release_bundle_id = contract.component_release_id
+      ORDER BY candidate.verified_at DESC, candidate.id DESC
+      LIMIT 1
+    ) verification ON true
+    LEFT JOIN LATERAL (
+      SELECT evidence.reference
+      FROM ComponentReleaseEvidence evidence
+      WHERE evidence.organization_id = release.organization_id
+        AND evidence.release_bundle_id = contract.component_release_id
+        AND evidence.evidence_type = 'sbom'
+      ORDER BY evidence.reference, evidence.id
+      LIMIT 1
+    ) sbom ON true
+  ), '[]'::jsonb),
+  'changelog', jsonb_build_array(),
+  'skippedReleases', jsonb_build_array(),
+  'changeContext', jsonb_build_object(
+    'state', CASE WHEN @deploymentUnitID::uuid IS NULL THEN 'CONTEXT_REQUIRED' ELSE 'NOT_FOUND' END
+  ),
+  'changeContextSource', CASE WHEN selected_plan.id IS NULL THEN NULL ELSE jsonb_build_object(
+    'deploymentPlanId', selected_plan.id,
+    'deploymentUnitId', selected_plan.deployment_unit_id,
+    'plannedComponents', CASE
+      WHEN release.kind = 'component' THEN COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'componentKey', planned.component_key,
+          'releaseBundleId', planned.release_bundle_id
+        ) ORDER BY planned.component_key)
+        FROM (
+          SELECT pin.component_key, pin.component_release_bundle_id AS release_bundle_id
+          FROM ProductReleaseComponent pin
+          WHERE pin.organization_id = release.organization_id
+            AND pin.product_release_bundle_id = selected_plan.release_bundle_id
+            AND pin.component_release_bundle_id = release.id
+          UNION
+          SELECT direct.component_key, release.id
+          FROM (
+            SELECT component_release.release_contract ->> 'componentKey' AS component_key
+            FROM ReleaseBundle component_release
+            WHERE component_release.organization_id = release.organization_id
+              AND component_release.id = release.id
+            UNION
+            SELECT artifact.component_key
+            FROM ComponentReleaseArtifact artifact
+            WHERE artifact.organization_id = release.organization_id
+              AND artifact.release_bundle_id = release.id
+          ) direct
+          WHERE selected_plan.release_bundle_id = release.id
+            AND COALESCE(direct.component_key, '') <> ''
+        ) planned
+      ), '[]'::jsonb)
+      ELSE COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'componentKey', pin.component_key,
+          'releaseBundleId', pin.component_release_bundle_id
+        ) ORDER BY pin.component_key, pin.id)
+        FROM ProductReleaseComponent pin
+        WHERE pin.organization_id = release.organization_id
+          AND pin.product_release_bundle_id = release.id
+      ), '[]'::jsonb)
+    END,
+    'baselines', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'componentKey', baseline.component_key,
+        'releaseBundleId', baseline.release_bundle_id,
+        'observationId', baseline.observation_id,
+        'observationChecksum', baseline.observation_checksum,
+        'independentlyHealthy', EXISTS (
+          SELECT 1
+          FROM TargetComponentObservation healthy_observation
+          JOIN TargetComponentState healthy_state
+            ON healthy_state.id = healthy_observation.target_component_state_id
+           AND healthy_state.organization_id = healthy_observation.organization_id
+          WHERE healthy_observation.id = baseline.observation_id
+            AND healthy_observation.organization_id = baseline.organization_id
+            AND healthy_observation.component_instance_id = baseline.component_instance_id
+            AND healthy_observation.health = 'HEALTHY'
+            AND healthy_observation.state_version = baseline.desired_revision
+            AND healthy_observation.state_checksum = baseline.desired_checksum
+            AND healthy_observation.release_bundle_id = baseline.release_bundle_id
+            AND healthy_state.state_version = baseline.desired_revision
+            AND healthy_state.state_checksum = baseline.desired_checksum
+            AND healthy_state.release_bundle_id = baseline.release_bundle_id
+        )
+      ) ORDER BY baseline.sort_order, baseline.component_key)
+      FROM DeploymentPlanBaseline baseline
+      WHERE baseline.organization_id = release.organization_id
+        AND baseline.deployment_plan_id = selected_plan.id
+    ), '[]'::jsonb),
+    'changes', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'componentKey', change_entry.component_key,
+        'kind', change_entry.kind,
+        'before', change_entry.before_value,
+        'after', change_entry.after_value,
+        'releaseNotes', change_entry.release_notes,
+        'forwardOnly', change_entry.forward_only,
+        'sortOrder', change_entry.sort_order
+      ) ORDER BY change_entry.sort_order, change_entry.id)
+      FROM DeploymentPlanChangeEntry change_entry
+      WHERE change_entry.organization_id = release.organization_id
+        AND change_entry.deployment_plan_id = selected_plan.id
+    ), '[]'::jsonb)
+  ) END,
   'evidence', COALESCE((
     SELECT jsonb_agg(jsonb_build_object(
       'id', evidence.id,
@@ -279,7 +587,8 @@ SELECT jsonb_build_object(
       AND evidence.release_bundle_id = release.id
   ), '[]'::jsonb)
 )::text
-FROM release_row release`
+FROM release_row release
+LEFT JOIN selected_plan ON true`
 
 type OperatorReleaseCursor struct {
 	CreatedAt time.Time
@@ -296,6 +605,8 @@ type OperatorReleaseQuery struct {
 	ComponentScopeIDs      []uuid.UUID
 	CampaignScopeIDs       []uuid.UUID
 	ApplicationID          *uuid.UUID
+	DeploymentUnitID       *uuid.UUID
+	CustomerOrganizationID *uuid.UUID
 	Kind                   string
 	Status                 string
 	SearchPattern          string
@@ -349,7 +660,21 @@ func GetOperatorReleaseDetail(
 	scope types.OperatorScopeFilter,
 	releaseID uuid.UUID,
 ) (*types.OperatorReleaseDetail, error) {
+	return GetOperatorReleaseDetailWithContext(
+		ctx, scope, releaseID, types.OperatorReleaseDetailContext{},
+	)
+}
+
+func GetOperatorReleaseDetailWithContext(
+	ctx context.Context,
+	scope types.OperatorScopeFilter,
+	releaseID uuid.UUID,
+	detailContext types.OperatorReleaseDetailContext,
+) (*types.OperatorReleaseDetail, error) {
 	if releaseID == uuid.Nil || validateOperatorReleaseScope(scope) != nil {
+		return nil, apierrors.ErrBadRequest
+	}
+	if detailContext.DeploymentUnitID != nil && *detailContext.DeploymentUnitID == uuid.Nil {
 		return nil, apierrors.ErrBadRequest
 	}
 	query := OperatorReleaseQuery{
@@ -361,6 +686,7 @@ func GetOperatorReleaseDetail(
 	}
 	args := operatorReleaseNamedArgs(query, nil, nil)
 	args["releaseID"] = releaseID
+	args["deploymentUnitID"] = detailContext.DeploymentUnitID
 	var payload string
 	err := internalctx.GetDb(ctx).QueryRow(ctx, operatorReleaseDetailSQL, args).Scan(&payload)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -369,9 +695,16 @@ func GetOperatorReleaseDetail(
 	if err != nil {
 		return nil, fmt.Errorf("could not query operator release detail: %w", err)
 	}
-	var detail types.OperatorReleaseDetail
-	if err := json.Unmarshal([]byte(payload), &detail); err != nil {
+	var decoded operatorReleaseDetailPayload
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
 		return nil, fmt.Errorf("could not decode operator release detail: %w", err)
+	}
+	detail := decoded.OperatorReleaseDetail
+	if decoded.ChangeContextSource != nil {
+		changeResult := buildOperatorReleaseChangelog(*decoded.ChangeContextSource, releaseID)
+		detail.ChangeContext = changeResult.Context
+		detail.Changelog = changeResult.Changelog
+		detail.SkippedReleases = changeResult.SkippedReleases
 	}
 	if detail.Artifacts == nil {
 		detail.Artifacts = []types.OperatorReleaseArtifact{}
@@ -382,10 +715,193 @@ func GetOperatorReleaseDetail(
 	if detail.GraphEdges == nil {
 		detail.GraphEdges = []types.OperatorReleaseGraphEdge{}
 	}
+	if detail.SourceBuildProof == nil {
+		detail.SourceBuildProof = []types.OperatorReleaseSourceBuildProof{}
+	}
+	for index := range detail.SourceBuildProof {
+		if digest := immutableEvidenceDigest(detail.SourceBuildProof[index].SBOMReference); digest != "" {
+			detail.SourceBuildProof[index].SBOMDigest = digest
+		}
+	}
+	if detail.Changelog == nil {
+		detail.Changelog = []types.OperatorReleaseChange{}
+	}
+	if detail.SkippedReleases == nil {
+		detail.SkippedReleases = []types.OperatorReleaseSkippedRelease{}
+	}
 	if detail.Evidence == nil {
 		detail.Evidence = []types.OperatorEvidenceRef{}
 	}
 	return &detail, nil
+}
+
+var (
+	immutableColonDigestPattern = regexp.MustCompile(
+		`@((?:sha256):[0-9a-f]{64})(?:$|/)`,
+	)
+	immutablePathDigestPattern = regexp.MustCompile(
+		`/sha256/([0-9a-f]{64})(?:$|/)`,
+	)
+)
+
+func immutableEvidenceDigest(reference string) string {
+	if matches := immutableColonDigestPattern.FindStringSubmatch(reference); len(matches) == 2 {
+		return matches[1]
+	}
+	if matches := immutablePathDigestPattern.FindStringSubmatch(reference); len(matches) == 2 {
+		return "sha256:" + matches[1]
+	}
+	return ""
+}
+
+type operatorReleaseDetailPayload struct {
+	types.OperatorReleaseDetail
+	ChangeContextSource *operatorReleaseChangeContextSource `json:"changeContextSource"`
+}
+
+type operatorReleaseChangeContextSource struct {
+	DeploymentPlanID  uuid.UUID                         `json:"deploymentPlanId"`
+	DeploymentUnitID  uuid.UUID                         `json:"deploymentUnitId"`
+	PlannedComponents []operatorReleasePlannedComponent `json:"plannedComponents"`
+	Baselines         []operatorReleaseBaselineSource   `json:"baselines"`
+	Changes           []types.DeploymentPlanChangeEntry `json:"changes"`
+}
+
+type operatorReleasePlannedComponent struct {
+	ComponentKey    string    `json:"componentKey"`
+	ReleaseBundleID uuid.UUID `json:"releaseBundleId"`
+}
+
+type operatorReleaseBaselineSource struct {
+	ComponentKey         string     `json:"componentKey"`
+	ReleaseBundleID      *uuid.UUID `json:"releaseBundleId,omitempty"`
+	ObservationID        *uuid.UUID `json:"observationId,omitempty"`
+	ObservationChecksum  string     `json:"observationChecksum"`
+	IndependentlyHealthy bool       `json:"independentlyHealthy"`
+}
+
+type operatorReleaseChangelogResult struct {
+	Context         types.OperatorReleaseChangeContext
+	Changelog       []types.OperatorReleaseChange
+	SkippedReleases []types.OperatorReleaseSkippedRelease
+}
+
+func buildOperatorReleaseChangelog(
+	source operatorReleaseChangeContextSource,
+	_ uuid.UUID,
+) operatorReleaseChangelogResult {
+	planID := source.DeploymentPlanID
+	unitID := source.DeploymentUnitID
+	result := operatorReleaseChangelogResult{
+		Context: types.OperatorReleaseChangeContext{
+			DeploymentPlanID: &planID,
+			DeploymentUnitID: &unitID,
+			State:            types.OperatorReleaseChangeContextReady,
+		},
+		Changelog:       []types.OperatorReleaseChange{},
+		SkippedReleases: []types.OperatorReleaseSkippedRelease{},
+	}
+	plannedByComponent := make(map[string]uuid.UUID, len(source.PlannedComponents))
+	for _, planned := range source.PlannedComponents {
+		plannedByComponent[planned.ComponentKey] = planned.ReleaseBundleID
+	}
+	selectedBaselines := 0
+	for _, baseline := range source.Baselines {
+		if _, selected := plannedByComponent[baseline.ComponentKey]; !selected {
+			continue
+		}
+		selectedBaselines++
+		if !baseline.IndependentlyHealthy ||
+			baseline.ObservationID == nil ||
+			baseline.ObservationChecksum == "" {
+			result.Context.State = types.OperatorReleaseChangeContextBaselineUnverified
+			result.Context.Message = "the selected target has no independently verified healthy baseline"
+			return result
+		}
+	}
+	if selectedBaselines == 0 {
+		result.Context.State = types.OperatorReleaseChangeContextBaselineUnverified
+		result.Context.Message = "the selected target has no independently verified healthy baseline"
+		return result
+	}
+	notesByComponent := make(map[string][]types.ReleaseNote)
+	for _, change := range source.Changes {
+		if change.ComponentKey != "" {
+			if _, selected := plannedByComponent[change.ComponentKey]; !selected {
+				continue
+			}
+		}
+		if change.Kind == types.DeploymentPlanChangeLimitExceeded {
+			result.Context.State = types.OperatorReleaseChangeContextDivergentHistory
+			result.Context.Message = "release history diverges from the selected target baseline"
+			return operatorReleaseChangelogResult{
+				Context: result.Context, Changelog: []types.OperatorReleaseChange{},
+				SkippedReleases: []types.OperatorReleaseSkippedRelease{},
+			}
+		}
+		switch change.Kind {
+		case types.DeploymentPlanChangeSourceNotes:
+			notesByComponent[change.ComponentKey] = change.ReleaseNotes
+			for _, note := range change.ReleaseNotes {
+				result.Changelog = append(result.Changelog, types.OperatorReleaseChange{
+					Category: "code", Component: change.ComponentKey,
+					Summary: note.Summary, Reference: note.ReleaseBundleID.String(),
+				})
+			}
+			for _, note := range change.ReleaseNotes[:max(0, len(change.ReleaseNotes)-1)] {
+				result.SkippedReleases = append(result.SkippedReleases, types.OperatorReleaseSkippedRelease{
+					Component: change.ComponentKey, ReleaseID: note.ReleaseBundleID,
+					Version: note.Version, SourceRevision: note.SourceRevision, Summary: note.Summary,
+				})
+			}
+		case types.DeploymentPlanChangeConfig:
+			result.Changelog = append(result.Changelog, types.OperatorReleaseChange{
+				Category: "config", Component: change.ComponentKey,
+				Summary: "configuration changed", Reference: change.After,
+			})
+		case types.DeploymentPlanChangeSchema:
+			result.Changelog = append(result.Changelog, types.OperatorReleaseChange{
+				Category: "migration", Component: change.ComponentKey,
+				Summary: "schema changed", Reference: change.After,
+			})
+		case types.DeploymentPlanChangeProvider:
+			result.Changelog = append(result.Changelog, types.OperatorReleaseChange{
+				Category: "dependency", Component: change.ComponentKey,
+				Summary: "provider binding changed", Reference: change.After,
+			})
+		}
+	}
+	for _, baseline := range source.Baselines {
+		plannedReleaseID, selected := plannedByComponent[baseline.ComponentKey]
+		if !selected {
+			continue
+		}
+		if baseline.ReleaseBundleID == nil {
+			continue
+		}
+		if *baseline.ReleaseBundleID == plannedReleaseID {
+			continue
+		}
+		notes := notesByComponent[baseline.ComponentKey]
+		if len(notes) == 0 {
+			return divergentOperatorReleaseChangelog(result.Context)
+		}
+		if notes[len(notes)-1].ReleaseBundleID != plannedReleaseID {
+			return divergentOperatorReleaseChangelog(result.Context)
+		}
+	}
+	return result
+}
+
+func divergentOperatorReleaseChangelog(
+	context types.OperatorReleaseChangeContext,
+) operatorReleaseChangelogResult {
+	context.State = types.OperatorReleaseChangeContextDivergentHistory
+	context.Message = "release history diverges from the selected target baseline"
+	return operatorReleaseChangelogResult{
+		Context: context, Changelog: []types.OperatorReleaseChange{},
+		SkippedReleases: []types.OperatorReleaseSkippedRelease{},
+	}
 }
 
 func operatorReleaseNamedArgs(
@@ -400,8 +916,10 @@ func operatorReleaseNamedArgs(
 		"deploymentUnitScopeIDs": operatorReleaseNonNilUUIDs(query.DeploymentUnitScopeIDs),
 		"componentScopeIDs":      operatorReleaseNonNilUUIDs(query.ComponentScopeIDs),
 		"campaignScopeIDs":       operatorReleaseNonNilUUIDs(query.CampaignScopeIDs),
+		"customerOrganizationID": query.CustomerOrganizationID,
 		"applicationID":          query.ApplicationID, "kind": query.Kind, "status": query.Status,
-		"searchPattern": query.SearchPattern, "cursorCreatedAt": cursorCreatedAt,
+		"deploymentUnitID": query.DeploymentUnitID,
+		"searchPattern":    query.SearchPattern, "cursorCreatedAt": cursorCreatedAt,
 		"cursorID": cursorID, "fetchLimit": query.Limit,
 	}
 }
@@ -417,7 +935,9 @@ func validateOperatorReleaseQuery(query OperatorReleaseQuery) error {
 		return err
 	}
 	if query.Limit < 1 || query.Limit > types.OperatorMaximumPageLimit+1 ||
-		(query.ApplicationID != nil && *query.ApplicationID == uuid.Nil) {
+		(query.ApplicationID != nil && *query.ApplicationID == uuid.Nil) ||
+		(query.DeploymentUnitID != nil && *query.DeploymentUnitID == uuid.Nil) ||
+		(query.CustomerOrganizationID != nil && *query.CustomerOrganizationID == uuid.Nil) {
 		return apierrors.ErrBadRequest
 	}
 	if query.Cursor != nil && (query.Cursor.CreatedAt.IsZero() || query.Cursor.ID == uuid.Nil) {

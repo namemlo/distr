@@ -50,6 +50,12 @@
           <dd>{{ result.execution.adapterRevision || 'Unknown' }}</dd>
           <dt class="text-gray-500">Reconciliation</dt>
           <dd>{{ result.execution.reconciliation || 'Unknown' }}</dd>
+          <dt class="text-gray-500">Fence generation</dt>
+          <dd>{{ result.execution.fenceGeneration }}</dd>
+          <dt class="text-gray-500">Fence resource</dt>
+          <dd class="break-all font-mono">{{ result.execution.fenceResourceKey }}</dd>
+          <dt class="text-gray-500">Idempotency key</dt>
+          <dd class="break-all font-mono">{{ result.execution.idempotencyKey || 'Not recorded for this execution' }}</dd>
         </dl>
       </article>
 
@@ -73,6 +79,69 @@
         }
       </article>
     </div>
+
+    <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+      <h2 class="font-semibold text-gray-900 dark:text-white">Execution contract facts</h2>
+      <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        @if (result.intent; as fact) {
+          <section class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+            <h3 class="font-medium">Intent</h3>
+            <div>{{ factStatusLabel(fact) }}</div>
+            <div class="mt-2 text-xs">
+              Key ID: <span class="break-all font-mono">{{ fact.keyId || 'Unavailable' }}</span>
+            </div>
+            <div class="text-xs">
+              Evidence: <span class="break-all font-mono">{{ fact.checksum || 'Unavailable' }}</span>
+            </div>
+          </section>
+        }
+        @if (result.adapter; as fact) {
+          <section class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+            <h3 class="font-medium">Adapter</h3>
+            <div>{{ factStatusLabel(fact) }}</div>
+            <div class="mt-2 text-xs">
+              Expected: <span class="break-all font-mono">{{ fact.expected || 'Unavailable' }}</span>
+            </div>
+            <div class="text-xs">
+              Actual: <span class="break-all font-mono">{{ fact.actual || 'Unavailable' }}</span>
+            </div>
+            <div class="text-xs">
+              Evidence: <span class="break-all font-mono">{{ fact.checksum || 'Unavailable' }}</span>
+            </div>
+          </section>
+        }
+        @if (result.cancellation; as fact) {
+          <section class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+            <h3 class="font-medium">Cancellation</h3>
+            <div>{{ factStatusLabel(fact) }}</div>
+            <div class="mt-2 text-xs">
+              Expected: <span class="break-all font-mono">{{ fact.expected || 'Unavailable' }}</span>
+            </div>
+            <div class="text-xs">
+              Actual: <span class="break-all font-mono">{{ fact.actual || 'Unavailable' }}</span>
+            </div>
+            <div class="text-xs">
+              Evidence: <span class="break-all font-mono">{{ fact.checksum || 'Unavailable' }}</span>
+            </div>
+          </section>
+        }
+        @if (result.reconciliation; as fact) {
+          <section class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+            <h3 class="font-medium">Reconciliation</h3>
+            <div>{{ factStatusLabel(fact) }}</div>
+            <div class="mt-2 text-xs">
+              Expected: <span class="break-all font-mono">{{ fact.expected || 'Unavailable' }}</span>
+            </div>
+            <div class="text-xs">
+              Actual: <span class="break-all font-mono">{{ fact.actual || 'Unavailable' }}</span>
+            </div>
+            <div class="text-xs">
+              Evidence: <span class="break-all font-mono">{{ fact.checksum || 'Unavailable' }}</span>
+            </div>
+          </section>
+        }
+      </div>
+    </article>
 
     <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
       <h2 class="font-semibold text-gray-900 dark:text-white">Task and attempt correlation</h2>
@@ -106,12 +175,19 @@
         <section>
           <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Attempts</h3>
           <div class="mt-2 space-y-2">
-            @for (fact of result.attempts; track fact.id ?? fact.key) {
+            @for (fact of result.attempts; track fact.id) {
               <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
-                <div class="font-medium">{{ fact.id || fact.key }}</div>
+                <div class="font-medium">{{ fact.id }} · attempt {{ fact.attemptNumber }}</div>
                 <div class="text-xs text-gray-500">
-                  {{ factStatusLabel(fact) }} · {{ fact.message || 'No message' }}
+                  {{ fact.status || 'Unknown' }} · {{ fact.message || 'No message' }}
                 </div>
+                <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 text-xs">
+                  <dt>Plan checksum</dt><dd class="break-all font-mono">{{ fact.planChecksum }}</dd>
+                  <dt>Artifact digest</dt><dd class="break-all font-mono">{{ fact.artifactDigest }}</dd>
+                  <dt>Config checksum</dt><dd class="break-all font-mono">{{ fact.configChecksum }}</dd>
+                  <dt>Fence</dt><dd class="break-all font-mono">{{ fact.fenceResourceKey }} #{{ fact.fenceGeneration }}</dd>
+                  <dt>Idempotency key</dt><dd class="break-all font-mono">{{ fact.idempotencyKey || 'Not recorded' }}</dd>
+                </dl>
               </div>
             } @empty {
               <div class="text-sm text-gray-500">Attempt correlation unavailable.</div>
@@ -131,6 +207,14 @@
             @if (fact.message) {
               <div class="text-xs text-gray-500">{{ fact.message }}</div>
             }
+            <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 text-xs">
+              <dt>Expected</dt>
+              <dd class="break-all font-mono">{{ fact.expected || 'Unavailable' }}</dd>
+              <dt>Actual</dt>
+              <dd class="break-all font-mono">{{ fact.actual || 'Unavailable' }}</dd>
+              <dt>Evidence</dt>
+              <dd class="break-all font-mono">{{ fact.checksum || 'Unavailable' }}</dd>
+            </dl>
           </div>
         } @empty {
           <div class="text-sm text-gray-500">No observations recorded.</div>

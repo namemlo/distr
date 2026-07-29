@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/gomega"
 )
 
@@ -112,6 +114,14 @@ func TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution
 		"desired.execution_id = attempt.execution_id",
 		"ORDER BY retry.attempt_number, retry.created_at, retry.id",
 		"ORDER BY event.event_sequence, event.id",
+		"JOIN ExecutionFence AS fence",
+		"'fenceGeneration', fence.generation",
+		"'fenceResourceKey', fence.resource_key",
+		"'idempotencyKey', external.idempotency_key",
+		"'keyId', intent.key_id",
+		"'planChecksum', retry.plan_checksum",
+		"'artifactDigest', retry.artifact_digest",
+		"'configChecksum', retry.config_checksum",
 	} {
 		g.Expect(operatorExecutionDetailSQL).To(ContainSubstring(required))
 	}
@@ -170,4 +180,128 @@ func TestOperatorExecutionRepositoryScopeValidationFailsClosed(t *testing.T) {
 		validateOperatorExecutionRepositoryInput(unsorted),
 		apierrors.ErrForbidden,
 	)).To(BeTrue())
+}
+
+func TestOperatorExecutionDetailReadsPersistedFenceIntentIdempotencyAndRetries(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 159)
+	g := NewWithT(t)
+	organizationID, applicationID, channelID := createOperatorReleaseDependencies(t, ctx)
+	environmentID := createDeploymentRegistryEnvironment(t, ctx, organizationID)
+	targetID := createDeploymentRegistryTarget(t, ctx, organizationID)
+	releaseID := insertOperatorReleaseFixture(
+		t, ctx, organizationID, applicationID, channelID,
+		types.ReleaseBundleKindComponent, "3.0.0", time.Now().UTC(),
+	)
+	planID, planTargetID, planStepID := uuid.New(), uuid.New(), uuid.New()
+	taskID, stepRunID, externalID := uuid.New(), uuid.New(), uuid.New()
+	firstAttemptID, secondAttemptID, intentID := uuid.New(), uuid.New(), uuid.New()
+	planChecksum := "sha256:" + strings.Repeat("1", 64)
+	artifactDigest := "sha256:" + strings.Repeat("2", 64)
+	configChecksum := "sha256:" + strings.Repeat("3", 64)
+	intentKeyID := "sha256:" + strings.Repeat("4", 64)
+	payload := []byte(`{}`)
+	now := time.Now().UTC()
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO DeploymentPlan (
+		  id, organization_id, release_bundle_id, application_id, channel_id,
+		  environment_id, status, canonical_checksum, canonical_payload
+		) VALUES (
+		  @planID, @organizationID, @releaseID, @applicationID, @channelID,
+		  @environmentID, 'READY', @planChecksum, @payload
+		);
+		INSERT INTO DeploymentPlanTarget (
+		  id, deployment_plan_id, organization_id, deployment_target_id, name, type
+		) VALUES (@planTargetID, @planID, @organizationID, @targetID, 'execution target', 'docker');
+		INSERT INTO DeploymentPlanStep (
+		  id, deployment_plan_id, organization_id, step_key, name, action_type,
+		  action_name, execution_location, sort_order
+		) VALUES (
+		  @planStepID, @planID, @organizationID, 'deploy', 'Deploy', 'deploy',
+		  'deploy', 'target', 0
+		);
+		INSERT INTO Task (
+		  id, organization_id, deployment_plan_id, deployment_plan_target_id,
+		  deployment_target_id, application_id, release_bundle_id, channel_id,
+		  environment_id, status
+		) VALUES (
+		  @taskID, @organizationID, @planID, @planTargetID,
+		  @targetID, @applicationID, @releaseID, @channelID, @environmentID, 'RUNNING'
+		);
+		INSERT INTO StepRun (
+		  id, organization_id, task_id, deployment_plan_id, deployment_plan_step_id,
+		  step_key, name, action_type, status, sort_order
+		) VALUES (
+		  @stepRunID, @organizationID, @taskID, @planID, @planStepID,
+		  'deploy', 'Deploy', 'deploy', 'RUNNING', 0
+		);
+		INSERT INTO ExternalExecution (
+		  id, callback_deadline_at, organization_id, step_run_id, task_id,
+		  deployment_plan_id, deployment_plan_target_id, deployment_target_id,
+		  application_id, release_bundle_id, component, plan_checksum,
+		  idempotency_key, expected_state_version, expected_version, expected_image,
+		  expected_platform, expected_config_reference, expected_config_checksum, status
+		) VALUES (
+		  @externalID, @deadline, @organizationID, @stepRunID, @taskID,
+		  @planID, @planTargetID, @targetID, @applicationID, @releaseID,
+		  'worker', @planChecksum, 'external:worker:deploy', 1, '3.0.0',
+		  'registry.example/worker@' || @artifactDigest, 'linux/amd64',
+		  'config://worker', @configChecksum, 'RUNNING'
+		);
+		INSERT INTO ExecutionAttempt (
+		  id, created_at, organization_id, deployment_target_id, task_id, step_run_id,
+		  execution_id, attempt_number, step_key, status, plan_checksum,
+		  artifact_digest, config_checksum, adapter_revision, intent_issued_at,
+		  intent_expires_at, completed_at, cancellable, retry_safe, failure_reason
+		) VALUES
+		  (@firstAttemptID, @firstCreatedAt, @organizationID, @targetID, @taskID, @stepRunID,
+		   @externalID, 1, 'deploy', 'FAILED', @planChecksum, @artifactDigest,
+		   @configChecksum, 'adapter.compose@2', @issuedAt, @expiresAt, @firstCompletedAt, false, true,
+		   'retryable provider timeout'),
+		  (@secondAttemptID, @secondCreatedAt, @organizationID, @targetID, @taskID, @stepRunID,
+		   @externalID, 2, 'deploy', 'RUNNING', @planChecksum, @artifactDigest,
+		   @configChecksum, 'adapter.compose@2', @issuedAt, @expiresAt, NULL, true, true, '');
+		INSERT INTO ExecutionFence (
+		  execution_attempt_id, organization_id, resource_key, generation, released_at
+		) VALUES
+		  (@firstAttemptID, @organizationID, 'target:' || @targetID::text, 41, @secondCreatedAt),
+		  (@secondAttemptID, @organizationID, 'target:' || @targetID::text, 42, NULL);
+		INSERT INTO ExecutionIntent (
+		  id, organization_id, execution_attempt_id, payload, checksum, key_id, signature
+		) VALUES (
+		  @intentID, @organizationID, @secondAttemptID, @payload,
+		  'sha256:' || encode(sha256(@payload), 'hex'), @intentKeyID, repeat('s', 80)
+		)`, pgx.NamedArgs{
+		"organizationID": organizationID, "applicationID": applicationID,
+		"channelID": channelID, "environmentID": environmentID, "targetID": targetID,
+		"releaseID": releaseID, "planID": planID, "planTargetID": planTargetID,
+		"planStepID": planStepID, "taskID": taskID, "stepRunID": stepRunID,
+		"externalID": externalID, "firstAttemptID": firstAttemptID,
+		"secondAttemptID": secondAttemptID, "intentID": intentID,
+		"planChecksum": planChecksum, "artifactDigest": artifactDigest,
+		"configChecksum": configChecksum, "intentKeyID": intentKeyID, "payload": payload,
+		"deadline": now.Add(time.Hour), "issuedAt": now.Add(-time.Minute),
+		"expiresAt": now.Add(time.Hour), "firstCreatedAt": now.Add(-time.Minute),
+		"firstCompletedAt": now.Add(-30 * time.Second), "secondCreatedAt": now,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	detail, err := (OperatorExecutionRepository{}).GetOperatorExecution(
+		ctx,
+		types.OperatorScopeFilter{
+			OrganizationID: organizationID, DecisionAt: now, OrganizationWide: true,
+			CustomerIDs: []uuid.UUID{}, EnvironmentIDs: []uuid.UUID{},
+			DeploymentUnitIDs: []uuid.UUID{}, ComponentIDs: []uuid.UUID{},
+			CampaignIDs: []uuid.UUID{},
+		},
+		secondAttemptID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(detail.Execution.FenceGeneration).To(Equal(int64(42)))
+	g.Expect(detail.Execution.IdempotencyKey).To(Equal("external:worker:deploy"))
+	g.Expect(detail.Intent).NotTo(BeNil())
+	g.Expect(detail.Intent.KeyID).To(Equal(intentKeyID))
+	g.Expect(detail.Attempts).To(HaveLen(2))
+	g.Expect(detail.Attempts[0].FenceGeneration).To(Equal(int64(41)))
+	g.Expect(detail.Attempts[1].FenceGeneration).To(Equal(int64(42)))
+	g.Expect(detail.Attempts[1].IdempotencyKey).To(Equal("external:worker:deploy"))
 }

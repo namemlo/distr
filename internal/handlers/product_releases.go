@@ -70,7 +70,10 @@ func ProductReleasesRouter(r chiopenapi.Router) {
 			middleware.BlockSuperAdmin,
 		).Post("/", createProductReleaseHandler()).
 			With(option.Description("Create a target-neutral Product Release draft")).
-			With(option.Request(api.CreateProductReleaseRequest{})).
+			With(option.Request(struct {
+				IdempotencyKey string `header:"Idempotency-Key"`
+				api.CreateProductReleaseRequest
+			}{})).
 			With(option.Response(http.StatusOK, api.ProductRelease{})).
 			With(option.Response(http.StatusBadRequest, api.ErrorResponse{})).
 			With(option.Response(http.StatusConflict, api.ErrorResponse{})).
@@ -92,7 +95,11 @@ func createProductReleaseHandler() http.HandlerFunc {
 			return
 		}
 		manifest := mapping.ProductReleaseManifestFromCreateRequest(*authentication.CurrentOrgID(), request)
-		bundle, err := db.CreateProductReleaseDraft(ctx, &manifest)
+		bundle, err := db.CreateProductReleaseDraftWithIdempotency(
+			ctx,
+			&manifest,
+			r.Header.Get("Idempotency-Key"),
+		)
 		if err != nil {
 			var validationErr *db.ProductReleaseValidationError
 			if errors.As(err, &validationErr) {
@@ -255,6 +262,8 @@ func productReleasePublicError(err error) (int, string) {
 	case errors.Is(err, apierrors.ErrBadRequest):
 		return http.StatusBadRequest, "product release request is invalid"
 	case errors.Is(err, apierrors.ErrConflict), errors.Is(err, apierrors.ErrAlreadyExists):
+		return http.StatusConflict, "product release conflicts with immutable state"
+	case errors.Is(err, db.ErrReleaseBundleIdempotencyConflict):
 		return http.StatusConflict, "product release conflicts with immutable state"
 	case errors.Is(err, apierrors.ErrForbidden):
 		return http.StatusForbidden, "product release operation is forbidden"

@@ -74,64 +74,120 @@ export function buildScaleFixture(parameters) {
     }
   }
 
-  const primaryOrganization = {
-    id: stableUUID('organization', 0),
-    name: 'tenant-primary',
-  };
+  const clientOrganizationCount = 25;
+  const servicesPerOrganization = 25;
+  const clientOrganizations = Array.from({length: clientOrganizationCount}, (_, index) => ({
+    id: stableUUID('organization', index),
+    name: numbered('client-organization', index, 2),
+  }));
+  const primaryOrganization = clientOrganizations[0];
   const sentinelOrganization = {
-    id: stableUUID('organization', 1),
+    id: stableUUID('organization', clientOrganizationCount),
     name: 'tenant-isolation-sentinel',
   };
-  const environments = Array.from({length: 25}, (_, index) => ({
+  const environments = clientOrganizations.map((organization, index) => ({
     id: stableUUID('environment', index),
-    organizationId: primaryOrganization.id,
+    organizationId: organization.id,
     name: numbered('environment', index, 2),
     lifecycle: ['development', 'test', 'staging', 'production'][index % 4],
   }));
-  const components = Array.from({length: parameters.components}, (_, index) => ({
-    id: stableUUID('component', index),
-    organizationId: primaryOrganization.id,
-    key: numbered('component', index, 3),
-    releaseDigest: digest('component-release', index),
+  const componentDefinitionCount = Math.max(parameters.components, clientOrganizationCount * servicesPerOrganization);
+  const components = Array.from({length: componentDefinitionCount}, (_, index) => {
+    const organizationIndex = index % clientOrganizationCount;
+    const serviceIndex = Math.floor(index / clientOrganizationCount);
+    return {
+      id: stableUUID('component', index),
+      organizationId: clientOrganizations[organizationIndex].id,
+      key: numbered('service', serviceIndex, 3),
+      releaseDigest: digest('component-release', index),
+    };
+  });
+  const serviceCatalogByOrganization = new Map(
+    clientOrganizations.map((organization) => [
+      organization.id,
+      components.filter((component) => component.organizationId === organization.id),
+    ])
+  );
+  const agentRows = Array.from({length: parameters.agents}, (_, index) => {
+    const organization = clientOrganizations[index % clientOrganizationCount];
+    return {
+      id: stableUUID('agent', index),
+      organizationId: organization.id,
+      name: numbered('agent', index, 3),
+    };
+  });
+  const agentsByOrganization = new Map(
+    clientOrganizations.map((organization) => [
+      organization.id,
+      agentRows.filter((agent) => agent.organizationId === organization.id),
+    ])
+  );
+  const targets = Array.from({length: parameters.targets}, (_, index) => {
+    const organizationIndex = index % clientOrganizationCount;
+    const organization = clientOrganizations[organizationIndex];
+    const organizationAgents = agentsByOrganization.get(organization.id);
+    const localIndex = Math.floor(index / clientOrganizationCount);
+    return {
+      id: stableUUID('target', index),
+      organizationId: organization.id,
+      environmentId: environments[organizationIndex].id,
+      agentId: organizationAgents[localIndex % organizationAgents.length].id,
+      name: numbered('target', index),
+      status: ['online', 'online', 'online', 'offline'][index % 4],
+    };
+  });
+  const agents = agentRows.map((agent) => ({
+    ...agent,
+    targetIds: targets.filter((target) => target.agentId === agent.id).map((target) => target.id),
   }));
-  const targets = Array.from({length: parameters.targets}, (_, index) => ({
-    id: stableUUID('target', index),
-    organizationId: primaryOrganization.id,
-    environmentId: environments[index % environments.length].id,
-    agentId: stableUUID('agent', index % parameters.agents),
-    name: numbered('target', index),
-    status: ['online', 'online', 'online', 'offline'][index % 4],
-  }));
-  const agents = Array.from({length: parameters.agents}, (_, index) => ({
-    id: stableUUID('agent', index),
-    organizationId: primaryOrganization.id,
-    name: numbered('agent', index, 3),
-    targetIds: targets.filter((_, targetIndex) => targetIndex % parameters.agents === index).map((row) => row.id),
-  }));
-  const placements = Array.from({length: parameters.placements}, (_, index) => ({
-    id: stableUUID('placement', index),
-    organizationId: primaryOrganization.id,
-    targetId: targets[index % targets.length].id,
-    componentId: components[index % components.length].id,
-    unitKey: numbered('unit', index),
-    ordinal: index + 1,
-  }));
+  const targetsByOrganization = new Map(
+    clientOrganizations.map((organization) => [
+      organization.id,
+      targets.filter((target) => target.organizationId === organization.id),
+    ])
+  );
+  const placements = Array.from({length: parameters.placements}, (_, index) => {
+    const organizationIndex = index % clientOrganizationCount;
+    const organization = clientOrganizations[organizationIndex];
+    const localIndex = Math.floor(index / clientOrganizationCount);
+    const organizationTargets = targetsByOrganization.get(organization.id);
+    const organizationComponents = serviceCatalogByOrganization.get(organization.id);
+    return {
+      id: stableUUID('placement', index),
+      organizationId: organization.id,
+      targetId: organizationTargets[localIndex % organizationTargets.length].id,
+      componentId: organizationComponents[localIndex % organizationComponents.length].id,
+      unitKey: numbered('unit', index),
+      ordinal: index + 1,
+    };
+  });
+  const placementsByOrganization = new Map(
+    clientOrganizations.map((organization) => [
+      organization.id,
+      placements.filter((placement) => placement.organizationId === organization.id),
+    ])
+  );
+  const componentByID = new Map(components.map((component) => [component.id, component]));
+  const primaryTargets = targetsByOrganization.get(primaryOrganization.id);
+  const primaryComponents = serviceCatalogByOrganization.get(primaryOrganization.id);
   const steps = Array.from({length: parameters.steps}, (_, index) => ({
     id: stableUUID('step', index),
     organizationId: primaryOrganization.id,
     key: numbered('step', index),
     memberId: stableUUID('campaign-member', index),
-    targetId: targets[index % targets.length].id,
-    componentId: components[index % components.length].id,
+    targetId: primaryTargets[index % primaryTargets.length].id,
+    componentId: primaryComponents[index % primaryComponents.length].id,
     order: index + 1,
   }));
 
   const tieInstant = '2025-12-31T23:59:00.000Z';
   const fleetRows = targets.map((target, index) => {
-    const placement = placements[index % placements.length];
-    const component = components[index % components.length];
+    const organizationPlacements = placementsByOrganization.get(target.organizationId);
+    const localIndex = Math.floor(index / clientOrganizationCount);
+    const placement = organizationPlacements[localIndex % organizationPlacements.length];
+    const component = componentByID.get(placement.componentId);
     return {
-      organizationId: primaryOrganization.id,
+      organizationId: target.organizationId,
       environmentId: target.environmentId,
       targetId: target.id,
       targetName: target.name,
@@ -182,10 +238,13 @@ export function buildScaleFixture(parameters) {
   const waveMembers = Array.from({length: 500}, (_, index) => ({
     id: stableUUID('campaign-member', index),
     planId: stableUUID('plan', index),
-    targetId: targets[index].id,
+    targetId: primaryTargets[index % primaryTargets.length].id,
     order: index + 1,
   }));
   const environmentFilter = environments[0];
+  const otherClientTargetIDs = clientOrganizations
+    .slice(1)
+    .map((organization) => targetsByOrganization.get(organization.id)[0].id);
 
   return {
     schemaVersion,
@@ -193,6 +252,7 @@ export function buildScaleFixture(parameters) {
     generatedAt: deterministicInstant,
     parameters: {...parameters},
     primaryOrganization,
+    clientOrganizations,
     isolationSentinel: {
       organization: sentinelOrganization,
       target: sentinelTarget,
@@ -221,6 +281,11 @@ export function buildScaleFixture(parameters) {
     },
     expectations: {
       maximumPageSize: 100,
+      multiClient: {
+        organizationCount: clientOrganizationCount,
+        minimumPlacementsPerOrganization: servicesPerOrganization,
+        minimumDistinctServicesPerOrganization: servicesPerOrganization,
+      },
       cursorTie: {
         sortField: 'lastExecutionAt',
         value: tieInstant,
@@ -244,7 +309,11 @@ export function buildScaleFixture(parameters) {
     },
     benchmark: {
       remoteRequests: [
-        {name: 'fleet-list', path: '/api/v1/control-plane/fleet?limit=100', forbiddenResourceIds: [sentinelTarget.id]},
+        {
+          name: 'fleet-list',
+          path: '/api/v1/control-plane/fleet?limit=100',
+          forbiddenResourceIds: [...otherClientTargetIDs, sentinelTarget.id],
+        },
         {
           name: 'campaign-list',
           path: '/api/v1/control-plane/campaigns?limit=100',

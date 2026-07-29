@@ -183,6 +183,23 @@
                 <div class="text-xs text-gray-500">
                   Quorum {{ requirement.quorum }} · {{ decisionFor(approval, requirement.id) }}
                 </div>
+                <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                  <dt class="text-gray-500">Authority</dt>
+                  <dd>
+                    {{ requirement.authorityKind }} · <span class="font-mono">{{ requirement.authorityId }}</span>
+                  </dd>
+                  <dt class="text-gray-500">Principal group</dt>
+                  <dd class="font-mono">{{ requirement.principalGroupId || 'Not constrained' }}</dd>
+                </dl>
+                <ul class="mt-2 space-y-1 text-xs text-gray-700 dark:text-gray-300">
+                  @for (constraint of requirement.separationConstraints; track constraint) {
+                    <li>
+                      {{ constraint === 'requester_cannot_approve' ? 'Requester cannot approve' : constraint }}
+                    </li>
+                  } @empty {
+                    <li>No separation-of-duty constraint.</li>
+                  }
+                </ul>
               </div>
               <div class="flex gap-2">
                 <button

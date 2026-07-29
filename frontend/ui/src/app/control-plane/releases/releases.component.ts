@@ -13,6 +13,7 @@ import {
   OperatorProductReleaseValidation,
   OperatorReleaseCompare,
   OperatorReleaseDetail,
+  OperatorReleaseFilters,
   OperatorReleaseRow,
 } from '../../types/operator-control-plane';
 import {
@@ -38,6 +39,14 @@ export class ReleasesComponent {
   private requestVersion = 0;
 
   protected readonly compareReleaseId = new FormControl('', {nonNullable: true, validators: Validators.required});
+  protected readonly filterForm = new FormGroup({
+    customerOrganizationId: new FormControl('', {nonNullable: true}),
+    applicationId: new FormControl('', {nonNullable: true}),
+    deploymentUnitId: new FormControl('', {nonNullable: true}),
+    kind: new FormControl('', {nonNullable: true}),
+    status: new FormControl('', {nonNullable: true}),
+    search: new FormControl('', {nonNullable: true}),
+  });
   protected readonly componentReleaseRequest = new FormControl('', {
     nonNullable: true,
     validators: Validators.required,
@@ -90,7 +99,7 @@ export class ReleasesComponent {
     this.error.set('');
     this.evidenceIncomplete.set(false);
     try {
-      const page = await firstValueFrom(this.controlPlane.listReleases({limit: 50}));
+      const page = await firstValueFrom(this.controlPlane.listReleases(this.releaseFilters()));
       if (version !== this.requestVersion) return;
       this.releases.set(page.items);
       this.nextCursor.set(page.nextCursor);
@@ -111,7 +120,7 @@ export class ReleasesComponent {
     this.loadingMore.set(true);
     this.error.set('');
     try {
-      const page = await firstValueFrom(this.controlPlane.listReleases({cursor, limit: 50}));
+      const page = await firstValueFrom(this.controlPlane.listReleases({...this.releaseFilters(), cursor}));
       this.releases.update((current) => {
         const knownIds = new Set(current.map((release) => release.id));
         return [...current, ...page.items.filter((release) => !knownIds.has(release.id))];
@@ -124,12 +133,22 @@ export class ReleasesComponent {
     }
   }
 
+  protected async applyFilters(): Promise<void> {
+    this.nextCursor.set(undefined);
+    await this.loadList();
+  }
+
   protected async loadDetail(releaseId: string): Promise<void> {
     const version = ++this.requestVersion;
     this.loading.set(true);
     this.error.set('');
     try {
-      const response = await firstValueFrom(this.controlPlane.getRelease(releaseId));
+      const deploymentUnitId = this.route.snapshot?.queryParamMap?.get('deploymentUnitId') ?? undefined;
+      const response = await firstValueFrom(
+        deploymentUnitId
+          ? this.controlPlane.getRelease(releaseId, deploymentUnitId)
+          : this.controlPlane.getRelease(releaseId)
+      );
       if (version !== this.requestVersion) return;
       this.detail.set(response.detail);
       this.evidence.set(this.dedupeEvidence(response.detail.evidence));
@@ -312,6 +331,26 @@ export class ReleasesComponent {
 
   protected platformEntries(platformDigests: Record<string, string>): [string, string][] {
     return Object.entries(platformDigests).sort(([left], [right]) => left.localeCompare(right));
+  }
+
+  protected releaseHref(releaseId: string): string {
+    const deploymentUnitId = this.filterForm.controls.deploymentUnitId.value.trim();
+    return deploymentUnitId
+      ? `/releases/${releaseId}?deploymentUnitId=${encodeURIComponent(deploymentUnitId)}`
+      : `/releases/${releaseId}`;
+  }
+
+  private releaseFilters(): OperatorReleaseFilters {
+    const raw = this.filterForm.getRawValue();
+    return {
+      ...(raw.customerOrganizationId.trim() ? {customerOrganizationId: raw.customerOrganizationId.trim()} : {}),
+      ...(raw.applicationId.trim() ? {applicationId: raw.applicationId.trim()} : {}),
+      ...(raw.deploymentUnitId.trim() ? {deploymentUnitId: raw.deploymentUnitId.trim()} : {}),
+      ...(raw.kind ? {kind: raw.kind} : {}),
+      ...(raw.status ? {status: raw.status} : {}),
+      ...(raw.search.trim() ? {search: raw.search.trim()} : {}),
+      limit: 50,
+    };
   }
 
   private resetSelection(): void {

@@ -86,6 +86,12 @@ type operatorControlPlaneDependencies struct {
 		types.OperatorScopeFilter,
 		uuid.UUID,
 	) (*types.OperatorReleaseDetail, error)
+	getReleaseWithContext func(
+		context.Context,
+		types.OperatorScopeFilter,
+		uuid.UUID,
+		types.OperatorReleaseDetailContext,
+	) (*types.OperatorReleaseDetail, error)
 	compareReleases func(
 		context.Context,
 		types.OperatorScopeFilter,
@@ -199,8 +205,9 @@ func defaultOperatorControlPlaneDependencies() operatorControlPlaneDependencies 
 		) (types.OperatorPage[types.OperatorReleaseRow], error) {
 			return operatorqueries.ListOperatorReleases(ctx, filter, page, cursorCodec)
 		},
-		getRelease:      operatorqueries.GetOperatorRelease,
-		compareReleases: operatorqueries.CompareOperatorReleases,
+		getRelease:            operatorqueries.GetOperatorRelease,
+		getReleaseWithContext: operatorqueries.GetOperatorReleaseWithContext,
+		compareReleases:       operatorqueries.CompareOperatorReleases,
 		listPlans: func(
 			ctx context.Context,
 			filter types.OperatorPlanFilter,
@@ -664,13 +671,23 @@ func operatorReleaseListRequestFromHTTP(
 	if err != nil {
 		return api.OperatorReleaseListRequest{}, err
 	}
+	customerOrganizationID, err := operatorOptionalUUID(r, "customerOrganizationId")
+	if err != nil {
+		return api.OperatorReleaseListRequest{}, err
+	}
+	deploymentUnitID, err := operatorOptionalUUID(r, "deploymentUnitId")
+	if err != nil {
+		return api.OperatorReleaseListRequest{}, err
+	}
 	query := r.URL.Query()
 	return api.OperatorReleaseListRequest{
-		OperatorPageRequest: page,
-		ApplicationID:       applicationID,
-		Kind:                query.Get("kind"),
-		Status:              query.Get("status"),
-		Search:              query.Get("search"),
+		OperatorPageRequest:    page,
+		CustomerOrganizationID: customerOrganizationID,
+		ApplicationID:          applicationID,
+		DeploymentUnitID:       deploymentUnitID,
+		Kind:                   query.Get("kind"),
+		Status:                 query.Get("status"),
+		Search:                 query.Get("search"),
 	}, nil
 }
 
@@ -1003,13 +1020,26 @@ func operatorReleaseDetailHandler(dependencies operatorControlPlaneDependencies)
 			writeOperatorReadError(w, r, err)
 			return
 		}
-		if dependencies.getRelease == nil {
+		if dependencies.getRelease == nil && dependencies.getReleaseWithContext == nil {
 			writeOperatorReadError(w, r, errors.New("operator release query is unavailable"))
 			return
 		}
-		detail, err := dependencies.getRelease(
-			r.Context(), operatorScopeFilter(scopes), releaseID,
-		)
+		deploymentUnitID, parseErr := operatorOptionalUUID(r, "deploymentUnitId")
+		if parseErr != nil {
+			http.Error(w, parseErr.Error(), http.StatusBadRequest)
+			return
+		}
+		var detail *types.OperatorReleaseDetail
+		if dependencies.getReleaseWithContext != nil {
+			detail, err = dependencies.getReleaseWithContext(
+				r.Context(), operatorScopeFilter(scopes), releaseID,
+				types.OperatorReleaseDetailContext{DeploymentUnitID: deploymentUnitID},
+			)
+		} else {
+			detail, err = dependencies.getRelease(
+				r.Context(), operatorScopeFilter(scopes), releaseID,
+			)
+		}
 		if err != nil {
 			writeOperatorReadError(w, r, err)
 			return

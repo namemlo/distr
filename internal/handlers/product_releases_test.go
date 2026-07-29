@@ -70,4 +70,6 @@ func TestProductReleaseRoutesHaveV2AndMutationGuards(t *testing.T) {
 	g.Expect(text).To(ContainSubstring("middleware.BlockSuperAdmin"))
 	g.Expect(text).To(ContainSubstring(`Post("/publish"`))
 	g.Expect(text).To(ContainSubstring(`Post("/", createProductReleaseHandler())`))
+	g.Expect(text).To(ContainSubstring(`Idempotency-Key`))
+	g.Expect(text).To(ContainSubstring("CreateProductReleaseDraftWithIdempotency"))
 }

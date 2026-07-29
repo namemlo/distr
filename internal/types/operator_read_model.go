@@ -76,10 +76,12 @@ type FleetFilter struct {
 
 type ReleaseFilter struct {
 	OperatorScopeFilter
-	ApplicationID *uuid.UUID `json:"applicationId,omitempty"`
-	Kind          string     `json:"kind,omitempty"`
-	Status        string     `json:"status,omitempty"`
-	Search        string     `json:"search,omitempty"`
+	CustomerOrganizationID *uuid.UUID `json:"customerOrganizationId,omitempty"`
+	ApplicationID          *uuid.UUID `json:"applicationId,omitempty"`
+	DeploymentUnitID       *uuid.UUID `json:"deploymentUnitId,omitempty"`
+	Kind                   string     `json:"kind,omitempty"`
+	Status                 string     `json:"status,omitempty"`
+	Search                 string     `json:"search,omitempty"`
 }
 
 type OperatorPlanFilter struct {
@@ -151,20 +153,27 @@ type FleetRow struct {
 }
 
 type OperatorReleaseRow struct {
-	ID             uuid.UUID  `db:"id" json:"id"`
-	CreatedAt      time.Time  `db:"created_at" json:"createdAt"`
-	Kind           string     `db:"kind" json:"kind"`
-	ApplicationID  uuid.UUID  `db:"application_id" json:"applicationId"`
-	ReleaseNumber  *int64     `db:"release_number" json:"releaseNumber,omitempty"`
-	Version        string     `db:"version" json:"version"`
-	Status         string     `db:"status" json:"status"`
-	Checksum       string     `db:"checksum" json:"checksum"`
-	SourceRevision string     `db:"source_revision" json:"sourceRevision"`
-	PublishedAt    *time.Time `db:"published_at" json:"publishedAt,omitempty"`
-	ArtifactCount  int        `db:"artifact_count" json:"artifactCount"`
-	EvidenceCount  int        `db:"evidence_count" json:"evidenceCount"`
-	ComponentCount int        `db:"component_count" json:"componentCount"`
-	GraphEdgeCount int        `db:"graph_edge_count" json:"graphEdgeCount"`
+	ID             uuid.UUID               `db:"id" json:"id"`
+	CreatedAt      time.Time               `db:"created_at" json:"createdAt"`
+	Kind           string                  `db:"kind" json:"kind"`
+	ApplicationID  uuid.UUID               `db:"application_id" json:"applicationId"`
+	Application    string                  `db:"application" json:"application"`
+	Clients        []OperatorReleaseClient `db:"clients" json:"clients"`
+	ReleaseNumber  *int64                  `db:"release_number" json:"releaseNumber,omitempty"`
+	Version        string                  `db:"version" json:"version"`
+	Status         string                  `db:"status" json:"status"`
+	Checksum       string                  `db:"checksum" json:"checksum"`
+	SourceRevision string                  `db:"source_revision" json:"sourceRevision"`
+	PublishedAt    *time.Time              `db:"published_at" json:"publishedAt,omitempty"`
+	ArtifactCount  int                     `db:"artifact_count" json:"artifactCount"`
+	EvidenceCount  int                     `db:"evidence_count" json:"evidenceCount"`
+	ComponentCount int                     `db:"component_count" json:"componentCount"`
+	GraphEdgeCount int                     `db:"graph_edge_count" json:"graphEdgeCount"`
+}
+
+type OperatorReleaseClient struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
 }
 
 type OperatorReleaseArtifact struct {
@@ -184,9 +193,82 @@ type OperatorReleaseComponentPin struct {
 }
 
 type OperatorReleaseGraphEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Kind string `json:"kind"`
+	From              string                                    `json:"from"`
+	To                string                                    `json:"to"`
+	Kind              string                                    `json:"kind"`
+	ConsumerComponent string                                    `json:"consumerComponent"`
+	ProviderComponent string                                    `json:"providerComponent,omitempty"`
+	Capability        string                                    `json:"capability"`
+	VersionRange      string                                    `json:"versionRange"`
+	ProviderVersion   string                                    `json:"providerVersion,omitempty"`
+	ProviderArtifacts []OperatorReleaseProviderArtifactIdentity `json:"providerArtifacts"`
+	ResolutionStage   string                                    `json:"resolutionStage"`
+	AllowedModes      []string                                  `json:"allowedModes"`
+	Ordering          string                                    `json:"ordering,omitempty"`
+}
+
+type OperatorReleaseProviderArtifactIdentity struct {
+	ArtifactKey    string `json:"artifactKey"`
+	ArtifactType   string `json:"artifactType"`
+	ManifestDigest string `json:"manifestDigest"`
+	Platform       string `json:"platform"`
+	PlatformDigest string `json:"platformDigest"`
+}
+
+type OperatorReleaseSourceBuildProof struct {
+	Component            string `json:"component"`
+	Schema               string `json:"schema"`
+	DeclaredRepository   string `json:"declaredRepository"`
+	DeclaredRequestedRef string `json:"declaredRequestedRef"`
+	DeclaredSourceCommit string `json:"declaredSourceCommit"`
+	DeclaredBuilderID    string `json:"declaredBuilderId"`
+	DeclaredBuildID      string `json:"declaredBuildId"`
+	VerifiedSourceURI    string `json:"verifiedSourceUri,omitempty"`
+	VerifiedSourceCommit string `json:"verifiedSourceCommit,omitempty"`
+	VerifiedBuilderID    string `json:"verifiedBuilderId,omitempty"`
+	VerifiedBuildID      string `json:"verifiedBuildId,omitempty"`
+	VerifiedBuildType    string `json:"verifiedBuildType,omitempty"`
+	ProvenanceReference  string `json:"provenanceReference,omitempty"`
+	ProvenanceDigest     string `json:"provenanceDigest,omitempty"`
+	SBOMReference        string `json:"sbomReference,omitempty"`
+	SBOMDigest           string `json:"sbomDigest,omitempty"`
+	VerificationState    string `json:"verificationState"`
+}
+
+type OperatorReleaseChange struct {
+	Category  string `json:"category"`
+	Component string `json:"component"`
+	Summary   string `json:"summary"`
+	Reference string `json:"reference,omitempty"`
+}
+
+type OperatorReleaseSkippedRelease struct {
+	Component      string    `json:"component"`
+	ReleaseID      uuid.UUID `json:"releaseId"`
+	Version        string    `json:"version"`
+	SourceRevision string    `json:"sourceRevision"`
+	Summary        string    `json:"summary"`
+}
+
+type OperatorReleaseChangeContextState string
+
+const (
+	OperatorReleaseChangeContextReady              OperatorReleaseChangeContextState = "READY"
+	OperatorReleaseChangeContextRequired           OperatorReleaseChangeContextState = "CONTEXT_REQUIRED"
+	OperatorReleaseChangeContextNotFound           OperatorReleaseChangeContextState = "NOT_FOUND"
+	OperatorReleaseChangeContextBaselineUnverified OperatorReleaseChangeContextState = "BASELINE_UNVERIFIED"
+	OperatorReleaseChangeContextDivergentHistory   OperatorReleaseChangeContextState = "DIVERGENT_HISTORY"
+)
+
+type OperatorReleaseChangeContext struct {
+	DeploymentPlanID *uuid.UUID                        `json:"deploymentPlanId,omitempty"`
+	DeploymentUnitID *uuid.UUID                        `json:"deploymentUnitId,omitempty"`
+	State            OperatorReleaseChangeContextState `json:"state"`
+	Message          string                            `json:"message,omitempty"`
+}
+
+type OperatorReleaseDetailContext struct {
+	DeploymentUnitID *uuid.UUID `json:"deploymentUnitId,omitempty"`
 }
 
 type OperatorEvidenceRef struct {
@@ -199,11 +281,15 @@ type OperatorEvidenceRef struct {
 }
 
 type OperatorReleaseDetail struct {
-	Release       OperatorReleaseRow            `json:"release"`
-	Artifacts     []OperatorReleaseArtifact     `json:"artifacts"`
-	ComponentPins []OperatorReleaseComponentPin `json:"componentPins"`
-	GraphEdges    []OperatorReleaseGraphEdge    `json:"graphEdges"`
-	Evidence      []OperatorEvidenceRef         `json:"evidence"`
+	Release          OperatorReleaseRow                `json:"release"`
+	Artifacts        []OperatorReleaseArtifact         `json:"artifacts"`
+	ComponentPins    []OperatorReleaseComponentPin     `json:"componentPins"`
+	GraphEdges       []OperatorReleaseGraphEdge        `json:"graphEdges"`
+	SourceBuildProof []OperatorReleaseSourceBuildProof `json:"sourceBuildProof"`
+	Changelog        []OperatorReleaseChange           `json:"changelog"`
+	SkippedReleases  []OperatorReleaseSkippedRelease   `json:"skippedReleases"`
+	ChangeContext    OperatorReleaseChangeContext      `json:"changeContext"`
+	Evidence         []OperatorEvidenceRef             `json:"evidence"`
 }
 
 type OperatorReleaseCompareFact struct {
@@ -253,6 +339,7 @@ type OperatorPlanFact struct {
 	Actual   string     `json:"actual,omitempty"`
 	Checksum string     `json:"checksum,omitempty"`
 	Message  string     `json:"message,omitempty"`
+	KeyID    string     `json:"keyId,omitempty"`
 	Blocking bool       `json:"blocking"`
 	Order    int        `json:"order"`
 }
@@ -376,20 +463,38 @@ type OperatorExecutionRow struct {
 	Cancellable        bool       `db:"cancellable" json:"cancellable"`
 	Reconciliation     string     `db:"reconciliation" json:"reconciliation"`
 	Observation        string     `db:"observation" json:"observation"`
+	FenceGeneration    int64      `db:"fence_generation" json:"fenceGeneration,omitempty"`
+	FenceResourceKey   string     `db:"fence_resource_key" json:"fenceResourceKey,omitempty"`
+	IdempotencyKey     string     `db:"idempotency_key" json:"idempotencyKey,omitempty"`
+}
+
+type OperatorExecutionAttemptFact struct {
+	ID               uuid.UUID `json:"id"`
+	StepKey          string    `json:"stepKey"`
+	Status           string    `json:"status"`
+	AttemptNumber    int       `json:"attemptNumber"`
+	PlanChecksum     string    `json:"planChecksum"`
+	ArtifactDigest   string    `json:"artifactDigest"`
+	ConfigChecksum   string    `json:"configChecksum"`
+	FenceGeneration  int64     `json:"fenceGeneration"`
+	FenceResourceKey string    `json:"fenceResourceKey"`
+	IdempotencyKey   string    `json:"idempotencyKey,omitempty"`
+	Message          string    `json:"message,omitempty"`
+	Blocking         bool      `json:"blocking"`
 }
 
 type OperatorExecutionDetail struct {
-	Execution      OperatorExecutionRow  `json:"execution"`
-	Intent         *OperatorPlanFact     `json:"intent,omitempty"`
-	Adapter        *OperatorPlanFact     `json:"adapter,omitempty"`
-	Cancellation   *OperatorPlanFact     `json:"cancellation,omitempty"`
-	Reconciliation *OperatorPlanFact     `json:"reconciliation,omitempty"`
-	PreviousState  *OperatorPlanFact     `json:"previousState,omitempty"`
-	Tasks          []OperatorPlanFact    `json:"tasks"`
-	Steps          []OperatorPlanFact    `json:"steps"`
-	Attempts       []OperatorPlanFact    `json:"attempts"`
-	Observations   []OperatorPlanFact    `json:"observations"`
-	Evidence       []OperatorEvidenceRef `json:"evidence"`
+	Execution      OperatorExecutionRow           `json:"execution"`
+	Intent         *OperatorPlanFact              `json:"intent,omitempty"`
+	Adapter        *OperatorPlanFact              `json:"adapter,omitempty"`
+	Cancellation   *OperatorPlanFact              `json:"cancellation,omitempty"`
+	Reconciliation *OperatorPlanFact              `json:"reconciliation,omitempty"`
+	PreviousState  *OperatorPlanFact              `json:"previousState,omitempty"`
+	Tasks          []OperatorPlanFact             `json:"tasks"`
+	Steps          []OperatorPlanFact             `json:"steps"`
+	Attempts       []OperatorExecutionAttemptFact `json:"attempts"`
+	Observations   []OperatorPlanFact             `json:"observations"`
+	Evidence       []OperatorEvidenceRef          `json:"evidence"`
 }
 
 type OperatorReconciliationRow struct {

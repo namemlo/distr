@@ -302,10 +302,11 @@ func TestOperatorCollectionRequestParsersApplyEndpointFilters(t *testing.T) {
 
 	release, err := operatorReleaseListRequestFromHTTP(httptest.NewRequest(
 		http.MethodGet,
-		"/releases?limit=100&applicationId="+id.String()+"&kind=component&status=published&search=v1",
+		"/releases?limit=100&customerOrganizationId="+id.String()+"&applicationId="+id.String()+"&kind=component&status=published&search=v1",
 		nil,
 	))
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(release.CustomerOrganizationID).To(Equal(&id))
 	g.Expect(release.ApplicationID).To(Equal(&id))
 	g.Expect(release.Kind).To(Equal("component"))
 	g.Expect(release.ToPageRequest().Limit).To(Equal(100))

@@ -70,21 +70,25 @@ func (request OperatorFleetListRequest) ToFilter(
 
 type OperatorReleaseListRequest struct {
 	OperatorPageRequest
-	ApplicationID *uuid.UUID `query:"applicationId"`
-	Kind          string     `query:"kind"`
-	Status        string     `query:"status"`
-	Search        string     `query:"search"`
+	CustomerOrganizationID *uuid.UUID `query:"customerOrganizationId"`
+	ApplicationID          *uuid.UUID `query:"applicationId"`
+	DeploymentUnitID       *uuid.UUID `query:"deploymentUnitId"`
+	Kind                   string     `query:"kind"`
+	Status                 string     `query:"status"`
+	Search                 string     `query:"search"`
 }
 
 func (request OperatorReleaseListRequest) ToFilter(
 	scope types.OperatorScopeFilter,
 ) types.ReleaseFilter {
 	return types.ReleaseFilter{
-		OperatorScopeFilter: scope,
-		ApplicationID:       request.ApplicationID,
-		Kind:                request.Kind,
-		Status:              request.Status,
-		Search:              request.Search,
+		OperatorScopeFilter:    scope,
+		CustomerOrganizationID: request.CustomerOrganizationID,
+		ApplicationID:          request.ApplicationID,
+		DeploymentUnitID:       request.DeploymentUnitID,
+		Kind:                   request.Kind,
+		Status:                 request.Status,
+		Search:                 request.Search,
 	}
 }
 
@@ -197,7 +201,8 @@ func (request OperatorAuditListRequest) ToFilter(
 }
 
 type OperatorReleaseIDRequest struct {
-	ReleaseID uuid.UUID `path:"releaseId"`
+	ReleaseID        uuid.UUID  `path:"releaseId"`
+	DeploymentUnitID *uuid.UUID `query:"deploymentUnitId"`
 }
 
 type OperatorReleaseCompareRequest struct {

@@ -7,12 +7,177 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/gomega"
 )
+
+func TestCreateProductReleaseDraftIdempotencyReplaysAndConflicts(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 144)
+	g := NewWithT(t)
+	organizationID, applicationID, channelID := createOperatorReleaseDependencies(t, ctx)
+	componentID := insertOperatorReleaseFixture(
+		t,
+		ctx,
+		organizationID,
+		applicationID,
+		channelID,
+		types.ReleaseBundleKindComponent,
+		"2.0.0",
+		time.Now().UTC(),
+	)
+	componentChecksum := "sha256:" + strings.Repeat("a", 64)
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+		UPDATE ReleaseBundle
+		SET release_contract = @contract::jsonb
+		WHERE id = @componentID AND organization_id = @organizationID`, pgx.NamedArgs{
+		"componentID": componentID, "organizationID": organizationID,
+		"contract": `{
+		  "schema":"distr.component-release/v2",
+		  "componentKey":"worker",
+		  "version":"2.0.0",
+		  "source":{"repository":"https://example.invalid/worker.git","requestedRef":"refs/tags/2.0.0","commit":"0123456789012345678901234567890123456789"},
+		  "build":{"id":"build-200","builder":"ci-provider"},
+		  "artifacts":[],
+		  "provides":[],
+		  "requires":[],
+		  "migrations":[],
+		  "changes":{"summary":"Worker release","commits":["0123456789012345678901234567890123456789"]},
+		  "evidence":{"provenance":[],"sbom":[],"signatures":[],"tests":[]}
+		}`,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	newManifest := func(version string) types.ProductReleaseManifest {
+		return types.ProductReleaseManifest{
+			Schema: types.ProductReleaseSchemaV1, OrganizationID: organizationID,
+			ApplicationID: applicationID, ChannelID: channelID, Product: "worker-suite",
+			Version: version, DependencyPolicyVersion: uuid.New(),
+			Components: []types.ProductReleaseComponent{{
+				ComponentReleaseID: componentID, ComponentReleaseChecksum: componentChecksum,
+			}},
+			RequiredPlatforms: []string{}, Requirements: []types.CapabilityRequirement{},
+		}
+	}
+	firstManifest := newManifest("2026.7.1")
+	policyVersion := firstManifest.DependencyPolicyVersion
+	first, err := CreateProductReleaseDraftWithIdempotency(ctx, &firstManifest, " product-create-1 ")
+	g.Expect(err).NotTo(HaveOccurred())
+
+	replayManifest := newManifest("2026.7.1")
+	replayManifest.DependencyPolicyVersion = policyVersion
+	replayed, err := CreateProductReleaseDraftWithIdempotency(ctx, &replayManifest, "product-create-1")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(replayed.ID).To(Equal(first.ID))
+	g.Expect(replayManifest.ReleaseBundleID).To(Equal(first.ID))
+
+	conflictManifest := newManifest("2026.7.2")
+	conflictManifest.DependencyPolicyVersion = policyVersion
+	_, err = CreateProductReleaseDraftWithIdempotency(ctx, &conflictManifest, "product-create-1")
+	g.Expect(errors.Is(err, ErrReleaseBundleIdempotencyConflict)).To(BeTrue())
+
+	var releases, pins int
+	g.Expect(internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM ReleaseBundle WHERE organization_id = @organizationID AND kind = 'product'),
+		  (SELECT count(*) FROM ProductReleaseComponent WHERE organization_id = @organizationID)`,
+		pgx.NamedArgs{"organizationID": organizationID},
+	).Scan(&releases, &pins)).To(Succeed())
+	g.Expect(releases).To(Equal(1))
+	g.Expect(pins).To(Equal(1))
+}
+
+func TestPublishProductReleaseUsesPersistedProductionEligibilityWithoutHooks(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 149)
+	g := NewWithT(t)
+	organizationID, applicationID, channelID := createOperatorReleaseDependencies(t, ctx)
+	actorID := createProductReleaseEligibilityTestUser(t, ctx, organizationID)
+	component, publication, verifier := productReleasePublicationComponentFixture(
+		organizationID,
+		applicationID,
+		channelID,
+	)
+	g.Expect(CreateReleaseBundle(ctx, &component)).To(Succeed())
+	publishedComponent, result, err := PublishReleaseBundleWithProvenance(
+		ctx,
+		component.ID,
+		organizationID,
+		actorID,
+		publication,
+		verifier,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+
+	policy := types.DeploymentPolicy{
+		OrganizationID: organizationID,
+		Key:            "product-release-dependencies",
+		Name:           "Product Release dependencies",
+	}
+	g.Expect(CreateDeploymentPolicy(ctx, &policy)).To(Succeed())
+	policyVersion := types.DeploymentPolicyVersion{
+		OrganizationID:         organizationID,
+		PolicyID:               policy.ID,
+		CreatedByUserAccountID: actorID,
+		Document: types.DeploymentPolicyDocument{
+			Schema: types.DeploymentPolicySchemaV1,
+			AdmissionRules: types.AdmissionRules{
+				AllowedResolutionModes: []types.RequirementResolutionMode{
+					types.RequirementResolutionModeIncluded,
+				},
+			},
+			CampaignRules: types.CampaignRules{
+				MaximumWaveSize:    1,
+				MaximumConcurrency: 1,
+			},
+			OverrideRules: types.OverrideRules{Allowed: false},
+			BootstrapRules: types.BootstrapRules{
+				Mode: types.BootstrapModeAllowAfterPreflight,
+			},
+		},
+	}
+	g.Expect(CreateDeploymentPolicyVersion(ctx, &policyVersion)).To(Succeed())
+	publishedPolicy, issues, err := PublishDeploymentPolicyVersion(
+		ctx,
+		policyVersion.ID,
+		organizationID,
+		actorID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(issues).To(BeEmpty())
+
+	manifest := types.ProductReleaseManifest{
+		Schema:                  types.ProductReleaseSchemaV1,
+		OrganizationID:          organizationID,
+		ApplicationID:           applicationID,
+		ChannelID:               channelID,
+		Product:                 "payments-suite",
+		Version:                 "2026.7.29",
+		DependencyPolicyVersion: publishedPolicy.ID,
+		RequiredPlatforms:       []string{"linux/amd64"},
+		Components: []types.ProductReleaseComponent{{
+			ComponentReleaseID:       publishedComponent.ID,
+			ComponentReleaseChecksum: publishedComponent.CanonicalChecksum,
+		}},
+	}
+	draft, err := CreateProductReleaseDraft(ctx, &manifest)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	publishedProduct, err := PublishProductRelease(
+		WithProductReleaseOrganizationID(ctx, organizationID),
+		draft.ID,
+		actorID,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(publishedProduct).NotTo(BeNil())
+	g.Expect(publishedProduct.Status).To(Equal(types.ReleaseBundleStatusPublished))
+}
 
 func TestProductReleaseMigrationIsTenantScopedAndImmutable(t *testing.T) {
 	g := NewWithT(t)
@@ -97,7 +262,17 @@ func TestProductReleaseValidationErrorIsBadRequest(t *testing.T) {
 	g.Expect(errors.Is(err, apierrors.ErrBadRequest)).To(BeTrue())
 }
 
-func TestProductReleaseExternalEligibilityDefaultsFailClosed(t *testing.T) {
+func TestProductReleaseExternalEligibilityNilRestoresPersistedProductionResolvers(t *testing.T) {
+	organizationID := uuid.New()
+	componentReleaseID := uuid.New()
+	manifest, source := productReleaseEligibilityTestMaterial(organizationID, componentReleaseID)
+	previousRepository := productionProductReleaseEligibilityRepository
+	productionProductReleaseEligibilityRepository = persistedProductReleaseEligibilityRepository{
+		source: source,
+	}
+	defer func() {
+		productionProductReleaseEligibilityRepository = previousRepository
+	}()
 	restoreProvenance := SetProductReleaseProvenanceEligibilityHook(nil)
 	defer restoreProvenance()
 	restorePolicy := SetProductReleaseDependencyPolicyEligibilityHook(nil)
@@ -106,21 +281,19 @@ func TestProductReleaseExternalEligibilityDefaultsFailClosed(t *testing.T) {
 	g := NewWithT(t)
 	provenanceIssue, err := productReleaseProvenanceEligibility(
 		context.Background(),
-		uuid.New(),
-		uuid.New(),
+		organizationID,
+		componentReleaseID,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(provenanceIssue).NotTo(BeNil())
-	g.Expect(provenanceIssue.Rule).To(Equal("provenanceVerifierUnavailable"))
+	g.Expect(provenanceIssue).To(BeNil())
 
 	policyIssue, err := productReleaseDependencyPolicyEligibility(
 		context.Background(),
-		uuid.New(),
-		uuid.New(),
+		organizationID,
+		manifest,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(policyIssue).NotTo(BeNil())
-	g.Expect(policyIssue.Rule).To(Equal("publishedPolicyUnavailable"))
+	g.Expect(policyIssue).To(BeNil())
 }
 
 func TestProductReleaseExternalEligibilityAdaptersReceiveExactScopedPins(t *testing.T) {
@@ -142,10 +315,10 @@ func TestProductReleaseExternalEligibilityAdaptersReceiveExactScopedPins(t *test
 	restorePolicy := SetProductReleaseDependencyPolicyEligibilityHook(func(
 		_ context.Context,
 		gotOrganizationID uuid.UUID,
-		gotPolicyVersionID uuid.UUID,
+		gotManifest types.ProductReleaseManifest,
 	) (*types.ProductReleaseValidationIssue, error) {
 		g.Expect(gotOrganizationID).To(Equal(organizationID))
-		g.Expect(gotPolicyVersionID).To(Equal(policyVersionID))
+		g.Expect(gotManifest.DependencyPolicyVersion).To(Equal(policyVersionID))
 		return nil, nil
 	})
 	defer restorePolicy()
@@ -160,7 +333,7 @@ func TestProductReleaseExternalEligibilityAdaptersReceiveExactScopedPins(t *test
 	issue, err = productReleaseDependencyPolicyEligibility(
 		context.Background(),
 		organizationID,
-		policyVersionID,
+		types.ProductReleaseManifest{DependencyPolicyVersion: policyVersionID},
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(issue).To(BeNil())

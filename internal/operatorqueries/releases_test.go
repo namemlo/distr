@@ -15,11 +15,13 @@ func TestNormalizeReleaseQueryBindsCursorToScopeAndFilters(t *testing.T) {
 
 	organizationID := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 	decisionAt := time.Date(2026, time.July, 22, 9, 0, 0, 0, time.UTC)
+	customerID := uuid.MustParse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 	filter := types.ReleaseFilter{
-		OperatorScopeFilter: organizationWideReleaseScope(organizationID, decisionAt),
-		Kind:                string(types.ReleaseBundleKindComponent),
-		Status:              string(types.ReleaseBundleStatusPublished),
-		Search:              " 100%_ready ",
+		OperatorScopeFilter:    organizationWideReleaseScope(organizationID, decisionAt),
+		CustomerOrganizationID: &customerID,
+		Kind:                   string(types.ReleaseBundleKindComponent),
+		Status:                 string(types.ReleaseBundleStatusPublished),
+		Search:                 " 100%_ready ",
 	}
 
 	query, err := NormalizeReleaseQuery(filter, types.PageRequest{}, testCursorCodec())
@@ -27,6 +29,7 @@ func TestNormalizeReleaseQueryBindsCursorToScopeAndFilters(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(query.Limit).To(Equal(types.OperatorDefaultPageLimit))
 	g.Expect(query.SearchPattern).To(Equal(`%100\%\_ready%`))
+	g.Expect(query.CustomerOrganizationID).To(Equal(&customerID))
 	g.Expect(query.Scopes.OrganizationWide).To(BeTrue())
 	g.Expect(query.Cursor).To(BeNil())
 
@@ -43,6 +46,12 @@ func TestNormalizeReleaseQueryBindsCursorToScopeAndFilters(t *testing.T) {
 	g.Expect(query.Cursor).NotTo(BeNil())
 
 	filter.Status = string(types.ReleaseBundleStatusBlocked)
+	_, err = NormalizeReleaseQuery(filter, types.PageRequest{Cursor: encoded, Limit: 50}, testCursorCodec())
+	g.Expect(err).To(MatchError(ContainSubstring("cursor is invalid")))
+
+	filter.Status = string(types.ReleaseBundleStatusPublished)
+	otherCustomer := uuid.MustParse("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+	filter.CustomerOrganizationID = &otherCustomer
 	_, err = NormalizeReleaseQuery(filter, types.PageRequest{Cursor: encoded, Limit: 50}, testCursorCodec())
 	g.Expect(err).To(MatchError(ContainSubstring("cursor is invalid")))
 }
@@ -68,6 +77,7 @@ func TestNormalizeReleaseQueryFailsClosed(t *testing.T) {
 			filter.ComponentIDs = []uuid.UUID{uuid.Nil}
 		}, want: "operator scope filter is invalid"},
 		{name: "invalid application", mutate: func(filter *types.ReleaseFilter) { filter.ApplicationID = new(uuid.UUID) }, want: "applicationId is invalid"},
+		{name: "invalid customer", mutate: func(filter *types.ReleaseFilter) { filter.CustomerOrganizationID = new(uuid.UUID) }, want: "customerOrganizationId is invalid"},
 		{name: "invalid kind", mutate: func(filter *types.ReleaseFilter) { filter.Kind = "COMPONENT" }, want: "kind is invalid"},
 		{name: "invalid status", mutate: func(filter *types.ReleaseFilter) { filter.Status = "published" }, want: "status is invalid"},
 		{name: "oversized page", mutate: func(*types.ReleaseFilter) {}, page: types.PageRequest{Limit: 101}, want: "limit must be between 1 and 100"},

@@ -42,7 +42,7 @@ describe('OperatorControlPlaneService', () => {
         observedState: 'RUNNING',
         drift: 'DRIFTED',
         enrollment: 'ENROLLED',
-        search: 'choice tp',
+        search: 'sample tenant',
       })
       .subscribe();
     expectRequest('/api/v1/control-plane/fleet', {
@@ -56,7 +56,7 @@ describe('OperatorControlPlaneService', () => {
       observedState: 'RUNNING',
       drift: 'DRIFTED',
       enrollment: 'ENROLLED',
-      search: 'choice tp',
+      search: 'sample tenant',
     });
 
     service
@@ -64,6 +64,7 @@ describe('OperatorControlPlaneService', () => {
         cursor: 'release_cursor',
         limit: 25,
         applicationId: 'app-1',
+        deploymentUnitId: 'unit-1',
         kind: 'PRODUCT',
         status: 'PUBLISHED',
         search: '2026.7',
@@ -73,6 +74,7 @@ describe('OperatorControlPlaneService', () => {
       cursor: 'release_cursor',
       limit: '25',
       applicationId: 'app-1',
+      deploymentUnitId: 'unit-1',
       kind: 'PRODUCT',
       status: 'PUBLISHED',
       search: '2026.7',
@@ -166,7 +168,7 @@ describe('OperatorControlPlaneService', () => {
         actorUserAccountId: 'user-1',
         from: '2026-07-01T00:00:00.000Z',
         to: '2026-07-31T23:59:59.000Z',
-        search: 'choice tp',
+        search: 'sample tenant',
       })
       .subscribe();
     expectRequest('/api/v1/control-plane/audit', {
@@ -178,7 +180,7 @@ describe('OperatorControlPlaneService', () => {
       actorUserAccountId: 'user-1',
       from: '2026-07-01T00:00:00.000Z',
       to: '2026-07-31T23:59:59.000Z',
-      search: 'choice tp',
+      search: 'sample tenant',
     });
   });
 
@@ -233,6 +235,11 @@ describe('OperatorControlPlaneService', () => {
       call();
       expectRequest(url, {});
     }
+  });
+
+  it('loads release detail in an explicit deployment-unit baseline context', () => {
+    service.getRelease('release-1', 'unit-1').subscribe();
+    expectRequest('/api/v1/control-plane/releases/release-1', {deploymentUnitId: 'unit-1'});
   });
 
   it('reuses the generated campaign request id when retry resubscribes', () => {
@@ -317,6 +324,21 @@ describe('OperatorControlPlaneService', () => {
     retried.flush({});
   });
 
+  it('sends one retained product-release idempotency header across retries', () => {
+    service
+      .createProductRelease({product: 'sample-suite', version: '2026.7'} as never, 'provided-product-key')
+      .pipe(retry(1))
+      .subscribe();
+
+    const first = http.expectOne('/api/v1/product-releases');
+    expect(first.request.headers.get('Idempotency-Key')).toBe('provided-product-key');
+    first.flush('temporary failure', {status: 503, statusText: 'Unavailable'});
+
+    const retried = http.expectOne('/api/v1/product-releases');
+    expect(retried.request.headers.get('Idempotency-Key')).toBe('provided-product-key');
+    retried.flush({});
+  });
+
   it('uses only existing mutation endpoints and exact request bodies', () => {
     service.resolveDriftCase('drift-1', {action: 'CREATE_PLAN', reason: 'replace drift'}).subscribe();
     expectMutation('/api/v1/drift-cases/drift-1/resolve', 'POST', {
@@ -328,9 +350,9 @@ describe('OperatorControlPlaneService', () => {
     expectMutation('/api/v1/deployment-registry/imports/preview', 'POST', {sourceKind: 'manifest'});
     service.getRegistryImport('import-1').subscribe();
     expectRequest('/api/v1/deployment-registry/imports/import-1', {});
-    service.classifyRegistryImport('import-1', {rootKey: 'choice-tp', classification: 'standard'}).subscribe();
+    service.classifyRegistryImport('import-1', {rootKey: 'sample-suite', classification: 'standard'}).subscribe();
     expectMutation('/api/v1/deployment-registry/imports/import-1/decisions', 'POST', {
-      rootKey: 'choice-tp',
+      rootKey: 'sample-suite',
       classification: 'standard',
     });
     service.applyRegistryImport('import-1', 'sha256:preview').subscribe();
@@ -349,8 +371,12 @@ describe('OperatorControlPlaneService', () => {
     service.publishComponentRelease('component-1').subscribe();
     expectMutation('/api/v1/release-bundles/component-1/publish', 'POST', {});
 
-    service.createProductRelease({product: 'choice-tp', version: '2026.7'} as never).subscribe();
-    expectMutation('/api/v1/product-releases', 'POST', {product: 'choice-tp', version: '2026.7'});
+    service.createProductRelease({product: 'sample-suite', version: '2026.7'} as never, 'product-key-1').subscribe();
+    const productCreate = http.expectOne('/api/v1/product-releases');
+    expect(productCreate.request.method).toBe('POST');
+    expect(productCreate.request.headers.get('Idempotency-Key')).toBe('product-key-1');
+    expect(productCreate.request.body).toEqual({product: 'sample-suite', version: '2026.7'});
+    productCreate.flush({});
     service.validateProductRelease('product-1').subscribe();
     expectMutation('/api/v1/product-releases/product-1/validate', 'POST', {});
     service.publishProductRelease('product-1').subscribe();
@@ -420,7 +446,7 @@ describe('OperatorControlPlaneService', () => {
 
     service
       .createAuditExportSink({
-        name: 'EMLO SIEM',
+        name: 'Community SIEM',
         kind: 'siem',
         endpointReference: 'secret://audit/siem',
         configChecksum: 'sha256:config',
@@ -428,7 +454,7 @@ describe('OperatorControlPlaneService', () => {
       })
       .subscribe();
     expectMutation('/api/v1/control-plane-audit/export-sinks', 'POST', {
-      name: 'EMLO SIEM',
+      name: 'Community SIEM',
       kind: 'siem',
       endpointReference: 'secret://audit/siem',
       configChecksum: 'sha256:config',

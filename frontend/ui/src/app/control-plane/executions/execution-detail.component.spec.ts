@@ -38,16 +38,67 @@ describe('ExecutionDetailComponent', () => {
       cancellable: true,
       reconciliation: 'PENDING',
       observation: 'STALE',
+      fenceGeneration: 42,
+      fenceResourceKey: 'target:target-1',
+      idempotencyKey: 'external:execution-1',
     },
-    intent: {key: 'intent', status: 'VERIFIED', checksum: 'sha256:intent', blocking: false, order: 1},
+    intent: {
+      key: 'intent',
+      status: 'VERIFIED',
+      checksum: 'sha256:intent',
+      keyId: 'sha256:intent-key',
+      blocking: false,
+      order: 1,
+    },
+    adapter: {
+      key: 'adapter',
+      status: 'VERIFIED',
+      expected: 'compose-v4',
+      actual: 'compose-v4',
+      checksum: 'sha256:adapter-proof',
+      blocking: false,
+      order: 2,
+    },
+    cancellation: {
+      key: 'cancellation',
+      status: 'NOT_REQUESTED',
+      checksum: 'sha256:cancellation-proof',
+      blocking: false,
+      order: 3,
+    },
+    reconciliation: {
+      key: 'reconciliation',
+      status: 'PENDING',
+      expected: 'CONVERGED',
+      actual: 'PENDING',
+      checksum: 'sha256:reconciliation-proof',
+      blocking: true,
+      order: 4,
+    },
     tasks: [{id: 'task-1', key: 'task-1', status: 'RUNNING', blocking: false, order: 1}],
     steps: [{id: 'step-run-1', key: 'deploy', status: 'RUNNING', blocking: false, order: 1}],
-    attempts: [{id: 'attempt-2', key: 'attempt-2', status: 'RUNNING', message: 'leased', blocking: false, order: 2}],
+    attempts: [{
+      id: 'attempt-2',
+      stepKey: 'deploy',
+      status: 'RUNNING',
+      attemptNumber: 2,
+      planChecksum: 'sha256:attempt-plan',
+      artifactDigest: 'sha256:attempt-artifact',
+      configChecksum: 'sha256:attempt-config',
+      fenceGeneration: 42,
+      fenceResourceKey: 'target:target-1',
+      idempotencyKey: 'external:execution-1',
+      message: 'leased',
+      blocking: false,
+    }],
     observations: [
       {
         id: 'observation-1',
         key: 'callback',
         status: 'WAITING_FOR_ORACLE',
+        expected: 'healthy',
+        actual: 'unknown',
+        checksum: 'sha256:observation-proof',
         message: 'No current callback',
         blocking: false,
         order: 1,
@@ -111,6 +162,26 @@ describe('ExecutionDetailComponent', () => {
     expect(service.getExecutionEvidence).toHaveBeenCalledWith('execution-1');
     expect(fixture.nativeElement.textContent).toContain('Attempt 2 started');
     expect(fixture.nativeElement.textContent).not.toContain('Load more evidence');
+  });
+
+  it('renders execution contract facts with expected, actual, and evidence checksums', () => {
+    const {fixture} = createComponent();
+    const text = fixture.nativeElement.textContent;
+
+    expect(text).toContain('Intent');
+    expect(text).toContain('Adapter');
+    expect(text).toContain('Cancellation');
+    expect(text).toContain('Reconciliation');
+    expect(text).toContain('sha256:intent-key');
+    expect(text).toContain('target:target-1');
+    expect(text).toContain('external:execution-1');
+    expect(text).toContain('sha256:attempt-plan');
+    expect(text).toContain('sha256:attempt-artifact');
+    expect(text).toContain('sha256:attempt-config');
+    expect(text).toContain('sha256:adapter-proof');
+    expect(text).toContain('sha256:cancellation-proof');
+    expect(text).toContain('sha256:reconciliation-proof');
+    expect(text).toContain('sha256:observation-proof');
   });
 
   it('keeps the detail usable and marks evidence partial when evidence fails', () => {

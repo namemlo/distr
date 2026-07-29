@@ -17,14 +17,16 @@ import (
 const maximumReleaseSearchBytes = 256
 
 type ReleaseQuery struct {
-	ApplicationID *uuid.UUID
-	Kind          string
-	Status        string
-	SearchPattern string
-	Limit         int
-	Cursor        *CursorTuple
-	Scopes        AuditViewScopes
-	CursorScope   CursorScope
+	CustomerOrganizationID *uuid.UUID
+	ApplicationID          *uuid.UUID
+	DeploymentUnitID       *uuid.UUID
+	Kind                   string
+	Status                 string
+	SearchPattern          string
+	Limit                  int
+	Cursor                 *CursorTuple
+	Scopes                 AuditViewScopes
+	CursorScope            CursorScope
 }
 
 func ListOperatorReleases(
@@ -46,8 +48,10 @@ func ListOperatorReleases(
 		DeploymentUnitScopeIDs: query.Scopes.DeploymentUnitIDs,
 		ComponentScopeIDs:      query.Scopes.ComponentIDs,
 		CampaignScopeIDs:       query.Scopes.CampaignIDs,
+		CustomerOrganizationID: query.CustomerOrganizationID,
 		ApplicationID:          query.ApplicationID, Kind: query.Kind, Status: query.Status,
-		SearchPattern: query.SearchPattern, Limit: query.Limit + 1,
+		DeploymentUnitID: query.DeploymentUnitID,
+		SearchPattern:    query.SearchPattern, Limit: query.Limit + 1,
 	}
 	if query.Cursor != nil {
 		dbQuery.Cursor = &db.OperatorReleaseCursor{
@@ -87,6 +91,24 @@ func GetOperatorRelease(
 	return db.GetOperatorReleaseDetail(ctx, scopes.ToOperatorScopeFilter(), releaseID)
 }
 
+func GetOperatorReleaseWithContext(
+	ctx context.Context,
+	scopeFilter types.OperatorScopeFilter,
+	releaseID uuid.UUID,
+	detailContext types.OperatorReleaseDetailContext,
+) (*types.OperatorReleaseDetail, error) {
+	scopes, err := AuditViewScopesFromOperatorScopeFilter(scopeFilter)
+	if err != nil {
+		return nil, err
+	}
+	if scopes.Empty() {
+		return nil, apierrors.ErrForbidden
+	}
+	return db.GetOperatorReleaseDetailWithContext(
+		ctx, scopes.ToOperatorScopeFilter(), releaseID, detailContext,
+	)
+}
+
 func CompareOperatorReleases(
 	ctx context.Context,
 	scopeFilter types.OperatorScopeFilter,
@@ -124,6 +146,12 @@ func NormalizeReleaseQuery(
 	if filter.ApplicationID != nil && *filter.ApplicationID == uuid.Nil {
 		return query, apierrors.NewBadRequest("applicationId is invalid")
 	}
+	if filter.DeploymentUnitID != nil && *filter.DeploymentUnitID == uuid.Nil {
+		return query, apierrors.NewBadRequest("deploymentUnitId is invalid")
+	}
+	if filter.CustomerOrganizationID != nil && *filter.CustomerOrganizationID == uuid.Nil {
+		return query, apierrors.NewBadRequest("customerOrganizationId is invalid")
+	}
 	if filter.Kind != "" && !types.ReleaseBundleKind(filter.Kind).IsValid() {
 		return query, apierrors.NewBadRequest("kind is invalid")
 	}
@@ -139,11 +167,16 @@ func NormalizeReleaseQuery(
 		return query, err
 	}
 	filterChecksum, err := CanonicalFilterChecksum(struct {
-		ApplicationID *uuid.UUID `json:"applicationId,omitempty"`
-		Kind          string     `json:"kind,omitempty"`
-		Status        string     `json:"status,omitempty"`
-		Search        string     `json:"search,omitempty"`
-	}{filter.ApplicationID, filter.Kind, filter.Status, search})
+		CustomerOrganizationID *uuid.UUID `json:"customerOrganizationId,omitempty"`
+		ApplicationID          *uuid.UUID `json:"applicationId,omitempty"`
+		DeploymentUnitID       *uuid.UUID `json:"deploymentUnitId,omitempty"`
+		Kind                   string     `json:"kind,omitempty"`
+		Status                 string     `json:"status,omitempty"`
+		Search                 string     `json:"search,omitempty"`
+	}{
+		filter.CustomerOrganizationID, filter.ApplicationID, filter.DeploymentUnitID,
+		filter.Kind, filter.Status, search,
+	})
 	if err != nil {
 		return query, fmt.Errorf("could not checksum release filters: %w", err)
 	}
@@ -159,14 +192,16 @@ func NormalizeReleaseQuery(
 		return query, err
 	}
 	query = ReleaseQuery{
-		ApplicationID: filter.ApplicationID,
-		Kind:          filter.Kind,
-		Status:        filter.Status,
-		SearchPattern: releaseSearchPattern(search),
-		Limit:         limit,
-		Cursor:        cursor,
-		Scopes:        scopes,
-		CursorScope:   cursorScope,
+		CustomerOrganizationID: filter.CustomerOrganizationID,
+		ApplicationID:          filter.ApplicationID,
+		DeploymentUnitID:       filter.DeploymentUnitID,
+		Kind:                   filter.Kind,
+		Status:                 filter.Status,
+		SearchPattern:          releaseSearchPattern(search),
+		Limit:                  limit,
+		Cursor:                 cursor,
+		Scopes:                 scopes,
+		CursorScope:            cursorScope,
 	}
 	return query, nil
 }

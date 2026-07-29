@@ -232,7 +232,10 @@ attempt AS (
     step.action_type,
     step.sort_order,
 	campaign.campaign_id,
-    plan.previous_state_source_plan_id
+    plan.previous_state_source_plan_id,
+    fence.generation AS fence_generation,
+    fence.resource_key AS fence_resource_key,
+    COALESCE(external.idempotency_key, '') AS idempotency_key
   FROM ExecutionAttempt AS candidate
   JOIN Task AS task
     ON task.id = candidate.task_id
@@ -244,6 +247,12 @@ attempt AS (
   JOIN DeploymentPlan AS plan
     ON plan.id = task.deployment_plan_id
    AND plan.organization_id = task.organization_id
+  JOIN ExecutionFence AS fence
+    ON fence.execution_attempt_id = candidate.id
+   AND fence.organization_id = candidate.organization_id
+  LEFT JOIN ExternalExecution AS external
+    ON external.id = candidate.execution_id
+   AND external.organization_id = candidate.organization_id
   LEFT JOIN campaign
     ON campaign.task_id = candidate.task_id
    AND campaign.organization_id = candidate.organization_id
@@ -307,12 +316,15 @@ detail AS (
         WHEN observation.id IS NULL THEN 'UNKNOWN'
         WHEN observation.fresh_until < @decisionAt THEN 'STALE'
         ELSE observation.outcome
-      END
+      END,
+      'fenceGeneration', attempt.fence_generation,
+      'fenceResourceKey', attempt.fence_resource_key,
+      'idempotencyKey', attempt.idempotency_key
     ),
     'intent', CASE WHEN intent.id IS NULL THEN NULL ELSE jsonb_build_object(
       'id', intent.id, 'key', 'intent', 'kind', 'signed-intent',
       'status', attempt.status, 'checksum', intent.checksum,
-      'message', intent.key_id, 'blocking', false, 'order', 0
+      'keyId', intent.key_id, 'blocking', false, 'order', 0
     ) END,
     'adapter', CASE WHEN adapter.id IS NULL THEN NULL ELSE jsonb_build_object(
       'id', adapter.id, 'key', adapter.step_key, 'kind', 'adapter',
@@ -391,13 +403,24 @@ detail AS (
   ) AS observation ON TRUE
   LEFT JOIN LATERAL (
     SELECT COALESCE(jsonb_agg(jsonb_build_object(
-      'id', retry.id, 'key', retry.step_key, 'kind', 'attempt',
-      'status', retry.status, 'expected', retry.plan_checksum,
-      'actual', retry.artifact_digest, 'checksum', retry.config_checksum,
-      'message', retry.failure_reason, 'blocking', retry.status IN ('UNKNOWN', 'FENCED'),
-      'order', retry.attempt_number
+      'id', retry.id, 'stepKey', retry.step_key,
+      'status', retry.status, 'attemptNumber', retry.attempt_number,
+      'planChecksum', retry.plan_checksum,
+      'artifactDigest', retry.artifact_digest,
+      'configChecksum', retry.config_checksum,
+      'fenceGeneration', fence.generation,
+      'fenceResourceKey', fence.resource_key,
+      'idempotencyKey', external.idempotency_key,
+      'message', retry.failure_reason,
+      'blocking', retry.status IN ('UNKNOWN', 'FENCED')
     ) ORDER BY retry.attempt_number, retry.created_at, retry.id), '[]'::jsonb) AS items
     FROM ExecutionAttempt AS retry
+    JOIN ExecutionFence AS fence
+      ON fence.execution_attempt_id = retry.id
+     AND fence.organization_id = retry.organization_id
+    LEFT JOIN ExternalExecution AS external
+      ON external.id = retry.execution_id
+     AND external.organization_id = retry.organization_id
     WHERE retry.organization_id = attempt.organization_id
       AND retry.execution_id = attempt.execution_id
       AND retry.step_key = attempt.step_key
@@ -559,7 +582,7 @@ func (OperatorExecutionRepository) GetOperatorExecution(
 		detail.Steps = []types.OperatorPlanFact{}
 	}
 	if detail.Attempts == nil {
-		detail.Attempts = []types.OperatorPlanFact{}
+		detail.Attempts = []types.OperatorExecutionAttemptFact{}
 	}
 	if detail.Observations == nil {
 		detail.Observations = []types.OperatorPlanFact{}

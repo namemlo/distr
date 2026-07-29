@@ -104,8 +104,11 @@ export class OperatorControlPlaneService {
     return this.getPage<OperatorReleaseRow>(`${controlPlaneUrl}/releases`, filters);
   }
 
-  getRelease(releaseId: string): Observable<OperatorReleaseDetailResponse> {
-    return this.get<OperatorReleaseDetailResponse>(`${controlPlaneUrl}/releases/${pathId(releaseId)}`);
+  getRelease(releaseId: string, deploymentUnitId?: string): Observable<OperatorReleaseDetailResponse> {
+    return this.get<OperatorReleaseDetailResponse>(
+      `${controlPlaneUrl}/releases/${pathId(releaseId)}`,
+      deploymentUnitId ? {deploymentUnitId} : {}
+    );
   }
 
   compareReleases(releaseId: string, otherReleaseId: string): Observable<OperatorReleaseCompareResponse> {
@@ -288,8 +291,15 @@ export class OperatorControlPlaneService {
     return this.post<ReleaseBundle>(`/api/v1/release-bundles/${pathId(releaseId)}/publish`, {});
   }
 
-  createProductRelease(request: OperatorCreateProductReleaseRequest): Observable<OperatorProductRelease> {
-    return this.post<OperatorProductRelease>('/api/v1/product-releases', request);
+  createProductRelease(
+    request: OperatorCreateProductReleaseRequest,
+    idempotencyKey = this.newActionKey()
+  ): Observable<OperatorProductRelease> {
+    return this.safe(
+      this.httpClient.post<OperatorProductRelease>('/api/v1/product-releases', request, {
+        headers: {'Idempotency-Key': idempotencyKey},
+      })
+    );
   }
 
   validateProductRelease(productReleaseId: string): Observable<OperatorProductReleaseValidation> {

@@ -36,7 +36,9 @@ export interface OperatorFleetFilters extends OperatorPageRequest {
 }
 
 export interface OperatorReleaseFilters extends OperatorPageRequest {
+  customerOrganizationId?: string | null;
   applicationId?: string | null;
+  deploymentUnitId?: string | null;
   kind?: string | null;
   status?: string | null;
   search?: string | null;
@@ -110,6 +112,8 @@ export interface OperatorReleaseRow {
   createdAt: string;
   kind: string;
   applicationId: string;
+  application: string;
+  clients: OperatorReleaseClient[];
   releaseNumber?: number;
   version: string;
   status: string;
@@ -120,6 +124,11 @@ export interface OperatorReleaseRow {
   evidenceCount: number;
   componentCount: number;
   graphEdgeCount: number;
+}
+
+export interface OperatorReleaseClient {
+  id: string;
+  name: string;
 }
 
 export interface OperatorReleaseArtifact {
@@ -142,6 +151,65 @@ export interface OperatorReleaseGraphEdge {
   from: string;
   to: string;
   kind: string;
+  consumerComponent: string;
+  providerComponent?: string;
+  capability: string;
+  versionRange: string;
+  providerVersion?: string;
+  providerArtifacts: OperatorReleaseProviderArtifactIdentity[];
+  resolutionStage: string;
+  allowedModes: string[];
+  ordering?: string;
+}
+
+export interface OperatorReleaseProviderArtifactIdentity {
+  artifactKey: string;
+  artifactType: string;
+  manifestDigest: string;
+  platform: string;
+  platformDigest: string;
+}
+
+export interface OperatorReleaseSourceBuildProof {
+  component: string;
+  schema: string;
+  declaredRepository: string;
+  declaredRequestedRef: string;
+  declaredSourceCommit: string;
+  declaredBuilderId: string;
+  declaredBuildId: string;
+  verifiedSourceUri?: string;
+  verifiedSourceCommit?: string;
+  verifiedBuilderId?: string;
+  verifiedBuildId?: string;
+  verifiedBuildType?: string;
+  provenanceReference?: string;
+  provenanceDigest?: string;
+  sbomReference?: string;
+  sbomDigest?: string;
+  verificationState: string;
+}
+
+export interface OperatorReleaseChange {
+  category: 'code' | 'config' | 'migration' | 'dependency' | string;
+  component: string;
+  summary: string;
+  reference?: string;
+}
+
+export interface OperatorReleaseSkippedRelease {
+  component: string;
+  releaseId: string;
+  version: string;
+  sourceRevision: string;
+  summary: string;
+}
+
+export interface OperatorReleaseChangeContext {
+  deploymentPlanId?: string;
+  deploymentUnitId?: string;
+  state: 'READY' | 'CONTEXT_REQUIRED' | 'NOT_FOUND' | 'BASELINE_UNVERIFIED' | 'DIVERGENT_HISTORY' | string;
+  message?: string;
 }
 
 export interface OperatorReleaseDetail {
@@ -149,6 +217,10 @@ export interface OperatorReleaseDetail {
   artifacts: OperatorReleaseArtifact[];
   componentPins: OperatorReleaseComponentPin[];
   graphEdges: OperatorReleaseGraphEdge[];
+  sourceBuildProof: OperatorReleaseSourceBuildProof[];
+  changelog: OperatorReleaseChange[];
+  skippedReleases: OperatorReleaseSkippedRelease[];
+  changeContext: OperatorReleaseChangeContext;
   evidence: OperatorEvidenceRef[];
 }
 
@@ -199,6 +271,7 @@ export interface OperatorPlanFact {
   actual?: string;
   checksum?: string;
   message?: string;
+  keyId?: string;
   blocking: boolean;
   order: number;
 }
@@ -322,6 +395,24 @@ export interface OperatorExecutionRow {
   cancellable: boolean;
   reconciliation: string;
   observation: string;
+  fenceGeneration?: number;
+  fenceResourceKey?: string;
+  idempotencyKey?: string;
+}
+
+export interface OperatorExecutionAttemptFact {
+  id: string;
+  stepKey: string;
+  status: string;
+  attemptNumber: number;
+  planChecksum: string;
+  artifactDigest: string;
+  configChecksum: string;
+  fenceGeneration: number;
+  fenceResourceKey: string;
+  idempotencyKey?: string;
+  message?: string;
+  blocking: boolean;
 }
 
 export interface OperatorExecutionDetail {
@@ -333,7 +424,7 @@ export interface OperatorExecutionDetail {
   previousState?: OperatorPlanFact;
   tasks: OperatorPlanFact[];
   steps: OperatorPlanFact[];
-  attempts: OperatorPlanFact[];
+  attempts: OperatorExecutionAttemptFact[];
   observations: OperatorPlanFact[];
   evidence: OperatorEvidenceRef[];
 }
@@ -431,7 +522,7 @@ export interface OperatorApprovalRequirement {
   authorityId: string;
   principalGroupId: string;
   quorum: number;
-  separationConstraints: unknown[];
+  separationConstraints: string[];
   sortOrder: number;
 }
 

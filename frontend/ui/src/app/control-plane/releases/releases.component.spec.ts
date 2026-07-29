@@ -92,6 +92,33 @@ describe('ReleasesComponent', () => {
     expect(service.listReleases).toHaveBeenCalledWith({cursor: 'cursor-2', limit: 50});
   });
 
+  it('applies scalable customer, application, deployment-unit, kind, status, and search filters to every page', async () => {
+    service.listReleases.mockReturnValue(of({items: [releaseRow()], nextCursor: 'cursor-2'}));
+    const {component} = await createListComponent();
+
+    const controls = (component as any).filterForm.controls;
+    controls.customerOrganizationId.setValue('customer-1');
+    controls.applicationId.setValue('application-1');
+    controls.deploymentUnitId.setValue('unit-1');
+    controls.kind.setValue('product');
+    controls.status.setValue('PUBLISHED');
+    controls.search.setValue('payments');
+    await (component as any).applyFilters();
+    await (component as any).loadMore();
+
+    const filters = {
+      customerOrganizationId: 'customer-1',
+      applicationId: 'application-1',
+      deploymentUnitId: 'unit-1',
+      kind: 'product',
+      status: 'PUBLISHED',
+      search: 'payments',
+      limit: 50,
+    };
+    expect(service.listReleases.mock.calls[1][0]).toEqual(filters);
+    expect(service.listReleases.mock.calls.at(-1)?.[0]).toEqual({...filters, cursor: 'cursor-2'});
+  });
+
   it('uses releaseId route changes to render immutable release detail and evidence', async () => {
     service.getRelease.mockImplementation((id: string) =>
       of(releaseDetailResponse({id, version: id === 'release-2' ? '2026.7.2' : '2026.7.1'}))
@@ -107,6 +134,15 @@ describe('ReleasesComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('payments-api');
     expect(fixture.nativeElement.textContent).toContain('linux/amd64');
     expect(fixture.nativeElement.textContent).toContain('requires');
+    expect(fixture.nativeElement.textContent).toContain('Payments application');
+    expect(fixture.nativeElement.textContent).toContain('Acme Thailand');
+    expect(fixture.nativeElement.textContent).toContain('ci-provider');
+    expect(fixture.nativeElement.textContent).toContain('build-17');
+    expect(fixture.nativeElement.textContent).toContain('Payments retry behavior');
+    expect(fixture.nativeElement.textContent).toContain('Skipped release 2026.6.9');
+    expect(fixture.nativeElement.textContent).toContain('shared_provider');
+    expect(fixture.nativeElement.textContent).toContain('sha256:database-provider');
+    expect(fixture.nativeElement.textContent).toContain('provider_deploy_and_health_before_consumer');
     expect(fixture.nativeElement.textContent).toContain('Signed build provenance');
 
     params$.next(convertToParamMap({releaseId: 'release-2'}));
@@ -116,6 +152,23 @@ describe('ReleasesComponent', () => {
     expect(service.getRelease).toHaveBeenCalledWith('release-2');
     expect(service.getReleaseEvidence).toHaveBeenCalledWith('release-2');
     expect(fixture.nativeElement.textContent).toContain('2026.7.2');
+  });
+
+  it('renders an immutable HTTPS SBOM reference when no digest was derived', async () => {
+    const response = releaseDetailResponse();
+    response.detail.sourceBuildProof[0].sbomReference =
+      'https://evidence.example.invalid/payments/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sbom.spdx.json';
+    response.detail.sourceBuildProof[0].sbomDigest = '';
+    service.getRelease.mockReturnValue(of(response));
+    service.getReleaseEvidence.mockReturnValue(of(evidencePage()));
+    params$.next(convertToParamMap({releaseId: 'release-1'}));
+
+    const {fixture} = await createCurrentComponent();
+
+    expect(fixture.nativeElement.textContent).toContain('SBOM');
+    expect(fixture.nativeElement.textContent).toContain(
+      'https://evidence.example.invalid/payments/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sbom.spdx.json'
+    );
   });
 
   it('compares the routed release with another release and renders checksum facts', async () => {
@@ -389,6 +442,8 @@ function releaseRow(overrides: Partial<OperatorReleaseRow> = {}): OperatorReleas
     createdAt: '2026-07-28T01:00:00Z',
     kind: 'PRODUCT',
     applicationId: 'application-1',
+    application: 'Payments application',
+    clients: [{id: 'customer-1', name: 'Acme Thailand'}],
     releaseNumber: 17,
     version: '2026.7.1',
     status: 'PUBLISHED',
@@ -425,7 +480,76 @@ function releaseDetailResponse(releaseOverrides: Partial<OperatorReleaseRow> = {
           digest: 'sha256:manifest',
         },
       ],
-      graphEdges: [{from: 'payments-api', to: 'database', kind: 'requires'}],
+      graphEdges: [
+        {
+          from: 'payments-api',
+          to: 'database',
+          kind: 'requires',
+          consumerComponent: 'payments-api',
+          providerComponent: 'database',
+          capability: 'database.write',
+          versionRange: '>=4.0.0',
+          providerVersion: '4.2.0',
+          providerArtifacts: [
+            {
+              artifactKey: 'database',
+              artifactType: 'oci-image',
+              manifestDigest: 'sha256:database-manifest',
+              platform: 'linux/amd64',
+              platformDigest: 'sha256:database-provider',
+            },
+          ],
+          resolutionStage: 'product',
+          allowedModes: ['shared_provider'],
+          ordering: 'provider_deploy_and_health_before_consumer',
+        },
+      ],
+      sourceBuildProof: [
+        {
+          component: 'payments-api',
+          schema: 'distr.component-release/v2',
+          declaredRepository: 'https://example.invalid/payments.git',
+          declaredRequestedRef: 'refs/tags/2026.7.1',
+          declaredSourceCommit: '0123456789abcdef',
+          declaredBuilderId: 'declared-ci',
+          declaredBuildId: 'declared-build-17',
+          verifiedSourceUri: 'https://example.invalid/payments.git',
+          verifiedSourceCommit: 'fedcba9876543210fedcba9876543210fedcba98',
+          verifiedBuilderId: 'ci-provider',
+          verifiedBuildId: 'build-17',
+          verifiedBuildType: 'https://slsa.dev/provenance/v1',
+          provenanceReference: 'oci://evidence/provenance',
+          provenanceDigest: 'sha256:provenance',
+          sbomReference: 'oci://evidence/sbom@sha256:sbom',
+          sbomDigest: 'sha256:sbom',
+          verificationState: 'VERIFIED',
+        },
+      ],
+      changelog: [
+        {category: 'code', component: 'payments-api', summary: 'Payments retry behavior'},
+        {category: 'config', component: 'payments-api', summary: 'Increase retry window'},
+        {category: 'migration', component: 'payments-api', summary: 'Add retry index', reference: 'retry-index'},
+        {
+          category: 'dependency',
+          component: 'payments-api',
+          summary: 'database.write >=4.0.0',
+          reference: 'product',
+        },
+      ],
+      skippedReleases: [
+        {
+          component: 'payments-api',
+          releaseId: 'release-skipped',
+          version: '2026.6.9',
+          sourceRevision: 'abcdef0123456789',
+          summary: 'Skipped release 2026.6.9',
+        },
+      ],
+      changeContext: {
+        deploymentPlanId: 'plan-1',
+        deploymentUnitId: 'unit-1',
+        state: 'READY',
+      },
       evidence: evidencePage().items,
     },
   };
@@ -462,7 +586,7 @@ function componentReleaseRequest() {
         requestedRef: 'refs/tags/2026.7.1',
         commit: '0123456789abcdef',
       },
-      build: {id: 'build-17', builder: 'jenkins'},
+      build: {id: 'build-17', builder: 'ci-provider'},
       artifacts: [
         {
           key: 'payments-api',

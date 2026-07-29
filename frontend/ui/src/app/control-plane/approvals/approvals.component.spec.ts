@@ -95,6 +95,18 @@ describe('ApprovalsComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('sha256:policy-1');
   });
 
+  it('renders approval authority, principal group, and requester separation constraints', async () => {
+    const {fixture, component} = await createComponent();
+    await (component as any).openApproval('approval-1');
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('group');
+    expect(text).toContain('authority-1');
+    expect(text).toContain('approvers');
+    expect(text).toContain('Requester cannot approve');
+  });
+
   it('confirms a decision and submits the loaded request revision with one persistent idempotency key', async () => {
     const {component} = await createComponent();
     await (component as any).openApproval('approval-1');
@@ -223,7 +235,7 @@ const requirement = {
   authorityId: 'authority-1',
   principalGroupId: 'approvers',
   quorum: 1,
-  separationConstraints: [],
+  separationConstraints: ['requester_cannot_approve'],
   sortOrder: 1,
 };
 
