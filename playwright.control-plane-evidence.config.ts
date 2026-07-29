@@ -1,0 +1,26 @@
+import {defineConfig} from '@playwright/test';
+import baseConfig from './playwright.control-plane.config';
+
+export default defineConfig({
+  ...baseConfig,
+  grep: /@evidence/,
+  timeout: 90_000,
+  outputDir: 'output/playwright/control-plane-evidence',
+  reporter: [
+    ['line'],
+    ['html', {outputFolder: 'output/playwright/control-plane-evidence-html', open: 'never'}],
+    ['junit', {outputFile: 'output/playwright/control-plane-evidence-junit.xml'}],
+  ],
+  projects: [{name: 'chromium'}],
+  use: {
+    ...baseConfig.use,
+    viewport: {width: 1440, height: 1200},
+    locale: 'en-US',
+    timezoneId: 'UTC',
+    colorScheme: 'light',
+    reducedMotion: 'reduce',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    video: 'off',
+  },
+});

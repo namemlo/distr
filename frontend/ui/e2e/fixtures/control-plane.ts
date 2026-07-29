@@ -1,4 +1,5 @@
 import {test as base, expect, type Page, type Route, type TestInfo} from '@playwright/test';
+import {createHash} from 'node:crypto';
 
 export type OperatorActor = 'vendorAdmin' | 'scopedApprover' | 'executorOperator' | 'auditViewer' | 'unauthorized';
 export type ControlPlaneScenario = 'ready' | 'loading' | 'empty' | 'error' | 'disabled';
@@ -9,9 +10,26 @@ export interface RecordedAction {
   body?: unknown;
 }
 
+export interface VisualCheckpointInput {
+  sequence: number;
+  slug: string;
+  actor: OperatorActor;
+  entityIds: Record<string, string>;
+  checksums: Record<string, string>;
+}
+
+export interface VisualCheckpointRecord extends VisualCheckpointInput {
+  route: string;
+  filename: string;
+  sha256: string;
+}
+
 interface ControlPlaneMock {
   actions: RecordedAction[];
+  successfulActions: RecordedAction[];
+  externalAttempts: string[];
   setScenario(scenario: ControlPlaneScenario): void;
+  signInAs(actor: OperatorActor): Promise<void>;
 }
 
 interface ControlPlaneFixtures {
@@ -190,6 +208,8 @@ const releases = [
     createdAt: timestamp,
     kind: 'component',
     applicationId: fixtureIds.applicationPayments,
+    application: 'Ledger service',
+    clients: [],
     releaseNumber: 24,
     version: '2.4.0',
     status: 'published',
@@ -206,8 +226,10 @@ const releases = [
     createdAt: timestamp,
     kind: 'product',
     applicationId: fixtureIds.applicationSuite,
-    releaseNumber: 7,
-    version: '2026.07',
+    application: 'Reference Suite',
+    clients: [{id: fixtureIds.customerA, name: 'Reference Client DEV'}],
+    releaseNumber: 8,
+    version: '2026.08.0',
     status: 'published',
     checksum: checksums.canonical,
     sourceRevision: 'fedcba9876543210',
@@ -252,6 +274,186 @@ const fact = (key: string, message: string, blocking = false, checksum?: string)
   blocking,
   order: 1,
 });
+
+function approvalSatisfied(actions: RecordedAction[]): boolean {
+  return actions.some(
+    (action) =>
+      action.path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions` &&
+      (action.body as {decision?: string} | undefined)?.decision === 'APPROVE'
+  );
+}
+
+function approvalRejected(actions: RecordedAction[]): boolean {
+  return actions.some(
+    (action) =>
+      action.path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions` &&
+      (action.body as {decision?: string} | undefined)?.decision === 'REJECT'
+  );
+}
+
+function previousStateCreated(actions: RecordedAction[]): boolean {
+  return actions.some((action) => action.path === `/api/v1/deployment-plans/${fixtureIds.plan}/previous-state`);
+}
+
+function recordSuccessfulAction(actions: RecordedAction[], successfulActions: RecordedAction[], path: string): void {
+  const action = actions.findLast((candidate) => candidate.path === path);
+  if (action) {
+    successfulActions.push(action);
+  }
+}
+
+function baselinePlanRow() {
+  return {
+    ...planRow,
+    id: fixtureIds.publishedPlan,
+    status: 'EXECUTED',
+    productReleaseVersion: '2026.07.0',
+    canonicalChecksum: checksums.baseline,
+    issueCount: 0,
+    blockingIssueCount: 0,
+    approvalBlockerCount: 0,
+    preflightBlockerCount: 0,
+  };
+}
+
+function previousStatePlanRow() {
+  return {
+    ...planRow,
+    id: fixtureIds.previousPlan,
+    status: 'READY',
+    productReleaseVersion: '2026.07.0',
+    canonicalChecksum: checksums.migration,
+    issueCount: 0,
+    blockingIssueCount: 0,
+    approvalBlockerCount: 0,
+    preflightBlockerCount: 0,
+  };
+}
+
+function planDetail(planId: string, successfulActions: RecordedAction[]) {
+  const previousState = planId === fixtureIds.previousPlan;
+  const baseline = planId === fixtureIds.publishedPlan;
+  const approved = approvalSatisfied(successfulActions);
+  const rejected = approvalRejected(successfulActions);
+  const releaseVersion = previousState || baseline ? '2026.07.0' : '2026.08.0';
+  const plan = previousState ? previousStatePlanRow() : baseline ? baselinePlanRow() : {...planRow, id: planId};
+
+  return {
+    plan: {...plan, productReleaseVersion: releaseVersion},
+    productReleaseChecksum: previousState || baseline ? checksums.baseline : checksums.product,
+    targetConfigChecksum: checksums.config,
+    effectivePolicyChecksum: checksums.policy,
+    subscriberSetChecksum: checksums.subscriber,
+    graphChecksum: checksums.graph,
+    changeChecksum: checksums.change,
+    baselineChecksum: previousState ? checksums.product : checksums.baseline,
+    providerResolutionChecksum: checksums.provider,
+    migrationChecksum: checksums.migration,
+    riskChecksum: checksums.risk,
+    approvalChecksum: checksums.approval,
+    windowChecksum: checksums.window,
+    adapterChecksum: checksums.adapter,
+    intentChecksum: checksums.intent,
+    targets: [fact('target', 'Reference Client DEV deployment unit is selected')],
+    baselines: [
+      fact(
+        'baseline',
+        previousState
+          ? 'Release B 2026.08.0 is the current independently observed state'
+          : 'Release A 2026.07.0 is the last independently verified healthy state',
+        false,
+        previousState ? checksums.product : checksums.baseline
+      ),
+    ],
+    config: [
+      fact(
+        'configuration',
+        previousState
+          ? 'Restore the immutable Release A configuration snapshot'
+          : 'Apply immutable configuration snapshot B',
+        false,
+        checksums.config
+      ),
+    ],
+    requirements: [
+      {
+        ...fact(
+          'provider',
+          previousState
+            ? 'ledger.transaction.v1 >=4.2.0 <5.0.0 resolves to ledger-api 4.2.0'
+            : 'ledger.transaction.v1 >=4.2.0 <5.0.0 resolves to ledger-api 4.3.0',
+          false,
+          checksums.provider
+        ),
+        expected: 'ledger.transaction.v1 >=4.2.0 <5.0.0',
+        actual: previousState ? 'ledger-api 4.2.0' : 'ledger-api 4.3.0',
+      },
+    ],
+    migrations: [
+      fact(
+        'migration',
+        previousState
+          ? 'Restore schema compatibility from revision 8 to revision 7 using the verified recovery procedure'
+          : 'Expand ledger schema from revision 7 to revision 8 after backup verification',
+        false,
+        checksums.migration
+      ),
+    ],
+    changes: [
+      fact(
+        'orders-api',
+        previousState ? 'orders-api 2.5.0 to 2.4.0' : 'orders-api 2.4.0 to 2.5.0',
+        false,
+        checksums.change
+      ),
+      fact(
+        'ledger-api',
+        previousState ? 'ledger-api 4.3.0 to 4.2.0' : 'ledger-api 4.2.0 to 4.3.0',
+        false,
+        checksums.provider
+      ),
+    ],
+    risks: [fact('risk', 'Shared-host blast radius requires approval', !approved && !previousState, checksums.risk)],
+    approvals: [
+      fact(
+        'approval',
+        approved || previousState
+          ? 'Production approval is satisfied'
+          : rejected
+            ? 'Production approval was rejected'
+            : 'Production approval is pending',
+        !approved && !previousState,
+        checksums.approval
+      ),
+    ],
+    windows: [fact('window', 'Inside maintenance window', false, checksums.window)],
+    adapters: [fact('adapter', 'Compose adapter revision is pinned', false, checksums.adapter)],
+    steps: previousState
+      ? [
+          fact('revert consumer', '1. Restore orders-api 2.4.0'),
+          fact('verify consumer', '2. Verify orders-api health'),
+          fact('restore provider', '3. Restore ledger-api 4.2.0'),
+        ]
+      : [
+          fact('deploy provider', '1. Deploy ledger-api 4.3.0'),
+          fact('verify provider', '2. Verify ledger-api health before orders-api'),
+          fact('deploy consumer', '3. Deploy orders-api 2.5.0'),
+        ],
+    edges: [
+      fact(
+        'dependency',
+        'orders-api requires ledger.transaction.v1; provider deploy and health precede consumer deployment'
+      ),
+    ],
+    issues:
+      approved || previousState ? [] : [fact('blocking issue', 'Approval must be satisfied before execution', true)],
+    intentBlockers:
+      approved || previousState
+        ? []
+        : [fact('intent blocker', 'Approval checksum is not satisfied', true, checksums.intent)],
+    evidence,
+  };
+}
 
 const evidence = [
   {
@@ -324,13 +526,31 @@ const auditRow = {
   id: fixtureIds.audit,
   createdAt: timestamp,
   sequence: 42,
-  action: 'deployment_plan.approved',
+  action: 'approval.decided',
   subjectType: 'deployment_plan',
   subjectId: fixtureIds.plan,
   actorUserAccountId: fixtureIds.scopedApprover,
-  outcome: 'accepted',
+  outcome: 'APPROVE',
   correlationCount: 2,
   payloadChecksum: checksums.approval,
+};
+
+const approvalAuditPayload = {
+  decisionId: fixtureIds.approvalDecision,
+  requirementId: fixtureIds.approvalRequirement,
+  requestRevision: 3,
+  approvalRequestState: 'APPROVED',
+};
+
+const previousStateAuditRow = {
+  ...auditRow,
+  id: fixtureIds.priorAudit,
+  sequence: 43,
+  action: 'deployment_plan.previous_state_created',
+  subjectId: fixtureIds.previousPlan,
+  actorUserAccountId: fixtureIds.vendorAdmin,
+  outcome: 'accepted',
+  payloadChecksum: checksums.migration,
 };
 
 const approvalRequest = {
@@ -346,7 +566,7 @@ const approvalRequest = {
   requesterUserAccountId: fixtureIds.vendorAdmin,
   state: 'PENDING',
   revision: 3,
-  expiresAt: '2026-07-29T08:00:00Z',
+  expiresAt: '2099-07-29T08:00:00Z',
   requirements: [
     {
       id: fixtureIds.approvalRequirement,
@@ -378,12 +598,16 @@ export const test = base.extend<ControlPlaneFixtures>({
   controlPlane: [
     async ({page, actor}, use) => {
       let scenario: ControlPlaneScenario = 'ready';
+      let activeActor = actor;
       const actions: RecordedAction[] = [];
+      const successfulActions: RecordedAction[] = [];
+      const externalAttempts: string[] = [];
 
       await seedBrowserIdentity(page, actor);
       await page.route('**/*', async (route) => {
         const url = new URL(route.request().url());
         if (!isLocalHost(url.hostname)) {
+          externalAttempts.push(`${url.origin}${url.pathname}`);
           await route.abort('blockedbyclient');
           return;
         }
@@ -410,13 +634,19 @@ export const test = base.extend<ControlPlaneFixtures>({
           );
           return;
         }
-        await handleApi(route, actor, scenario, actions);
+        await handleApi(route, activeActor, scenario, actions, successfulActions);
       });
 
       await use({
         actions,
+        successfulActions,
+        externalAttempts,
         setScenario(next) {
           scenario = next;
+        },
+        async signInAs(nextActor) {
+          activeActor = nextActor;
+          await replaceBrowserIdentity(page, nextActor);
         },
       });
     },
@@ -433,6 +663,29 @@ export async function attachContractEvidence(testInfo: TestInfo, name: string, v
   });
 }
 
+export async function attachVisualCheckpoint(
+  page: Page,
+  testInfo: TestInfo,
+  checkpoint: VisualCheckpointInput
+): Promise<VisualCheckpointRecord> {
+  const filename = `${checkpoint.sequence.toString().padStart(2, '0')}-${checkpoint.slug}.png`;
+  const path = testInfo.outputPath(filename);
+  const screenshot = await page.screenshot({
+    path,
+    fullPage: true,
+    animations: 'disabled',
+    caret: 'hide',
+  });
+  const sha256 = `sha256:${createHash('sha256').update(screenshot).digest('hex')}`;
+  await testInfo.attach(filename, {path, contentType: 'image/png'});
+  return {
+    ...checkpoint,
+    route: new URL(page.url()).pathname,
+    filename,
+    sha256,
+  };
+}
+
 async function seedBrowserIdentity(page: Page, actor: OperatorActor): Promise<void> {
   const token = createFixtureToken(actor);
   await page.addInitScript(
@@ -445,6 +698,17 @@ async function seedBrowserIdentity(page: Page, actor: OperatorActor): Promise<vo
     },
     {jwt: token}
   );
+}
+
+async function replaceBrowserIdentity(page: Page, actor: OperatorActor): Promise<void> {
+  const token = createFixtureToken(actor);
+  await page.addInitScript(
+    ({jwt}) => {
+      localStorage.setItem('cloud_token', jwt);
+    },
+    {jwt: token}
+  );
+  await page.evaluate((jwt) => localStorage.setItem('cloud_token', jwt), token);
 }
 
 function createFixtureToken(actor: OperatorActor): string {
@@ -467,7 +731,8 @@ async function handleApi(
   route: Route,
   actor: OperatorActor,
   scenario: ControlPlaneScenario,
-  actions: RecordedAction[]
+  actions: RecordedAction[],
+  successfulActions: RecordedAction[]
 ): Promise<void> {
   const request = route.request();
   const url = new URL(request.url());
@@ -518,22 +783,153 @@ async function handleApi(
         artifacts: [
           {
             id: fixtureIds.artifact,
-            name: 'payments-api',
-            version: '2.5.0',
+            name: 'ledger-api',
+            version: '4.3.0',
             manifestDigest: executionRow.artifactDigest,
-            platformDigests: {'linux/amd64': executionRow.artifactDigest},
+            platformDigests: {
+              'linux/amd64': executionRow.artifactDigest,
+              'linux/arm64': 'sha256:acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac',
+            },
+          },
+          {
+            id: '00000000-0000-4000-8000-000000000806',
+            name: 'orders-api',
+            version: '2.5.0',
+            manifestDigest: 'sha256:bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc',
+            platformDigests: {
+              'linux/amd64': 'sha256:bdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbd',
+              'linux/arm64': 'sha256:bebebebebebebebebebebebebebebebebebebebebebebebebebebebebebebebe',
+            },
           },
         ],
         componentPins: [
           {
             componentReleaseId: fixtureIds.componentRelease,
-            component: 'payments-api',
-            version: '2.5.0',
+            component: 'ledger-api',
+            version: '4.3.0',
             checksum: checksums.product,
             digest: executionRow.artifactDigest,
           },
+          {
+            componentReleaseId: fixtureIds.pendingComponentRelease,
+            component: 'orders-api',
+            version: '2.5.0',
+            checksum: checksums.change,
+            digest: 'sha256:bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc',
+          },
         ],
-        graphEdges: [{from: 'gateway', to: 'payments-api', kind: 'requires'}],
+        graphEdges: [
+          {
+            from: 'orders-api',
+            to: 'ledger-api',
+            kind: 'requires',
+            consumerComponent: 'orders-api',
+            providerComponent: 'ledger-api',
+            capability: 'ledger.transaction.v1',
+            versionRange: '>=4.2.0 <5.0.0',
+            providerVersion: '4.3.0',
+            providerArtifacts: [
+              {
+                artifactKey: 'ledger-api-image',
+                artifactType: 'oci-image',
+                manifestDigest: executionRow.artifactDigest,
+                platform: 'linux/amd64',
+                platformDigest: executionRow.artifactDigest,
+              },
+            ],
+            resolutionStage: 'product',
+            allowedModes: ['included', 'shared_provider'],
+            ordering: 'provider_deploy_and_health_before_consumer',
+          },
+        ],
+        sourceBuildProof: [
+          {
+            component: 'ledger-api',
+            schema: 'distr.component-release/v2',
+            declaredRepository: 'https://example.invalid/ledger-api.git',
+            declaredRequestedRef: 'refs/tags/4.3.0',
+            declaredSourceCommit: '1111111111111111111111111111111111111111',
+            declaredBuilderId: 'fixture-ci',
+            declaredBuildId: 'fixture-build-ledger-43',
+            verifiedSourceUri: 'https://example.invalid/ledger-api.git',
+            verifiedSourceCommit: '1111111111111111111111111111111111111111',
+            verifiedBuilderId: 'fixture-ci',
+            verifiedBuildId: 'fixture-build-ledger-43',
+            verifiedBuildType: 'https://slsa.dev/provenance/v1',
+            provenanceReference: 'evidence://provenance/ledger-api/4.3.0',
+            provenanceDigest: checksums.provider,
+            sbomReference: `oci://evidence.example.invalid/ledger-api/sbom@${checksums.product}`,
+            sbomDigest: checksums.product,
+            verificationState: 'VERIFIED',
+          },
+          {
+            component: 'orders-api',
+            schema: 'distr.component-release/v2',
+            declaredRepository: 'https://example.invalid/orders-api.git',
+            declaredRequestedRef: 'refs/tags/2.5.0',
+            declaredSourceCommit: '2222222222222222222222222222222222222222',
+            declaredBuilderId: 'fixture-ci',
+            declaredBuildId: 'fixture-build-orders-25',
+            verifiedSourceUri: 'https://example.invalid/orders-api.git',
+            verifiedSourceCommit: '2222222222222222222222222222222222222222',
+            verifiedBuilderId: 'fixture-ci',
+            verifiedBuildId: 'fixture-build-orders-25',
+            verifiedBuildType: 'https://slsa.dev/provenance/v1',
+            provenanceReference: 'evidence://provenance/orders-api/2.5.0',
+            provenanceDigest: checksums.change,
+            sbomReference: `oci://evidence.example.invalid/orders-api/sbom@${checksums.canonical}`,
+            sbomDigest: checksums.canonical,
+            verificationState: 'VERIFIED',
+          },
+        ],
+        changelog: [
+          {
+            category: 'code',
+            component: 'orders-api',
+            summary: 'Add idempotent transaction submission.',
+            reference: 'change://orders-api/2.5.0',
+          },
+          {
+            category: 'config',
+            component: 'orders-api',
+            summary: 'Pin retry and timeout policy for ledger requests.',
+            reference: 'config://orders-api/2026.08.0',
+          },
+          {
+            category: 'migration',
+            component: 'ledger-api',
+            summary: 'Expand ledger schema from revision 7 to revision 8.',
+            reference: 'migration://ledger-api/7-to-8',
+          },
+          {
+            category: 'dependency',
+            component: 'orders-api',
+            summary: 'Resolve ledger.transaction.v1 to ledger-api 4.3.0.',
+            reference: 'dependency://ledger.transaction.v1/4.3.0',
+          },
+        ],
+        skippedReleases: [
+          {
+            component: 'orders-api',
+            releaseId: '00000000-0000-4000-8000-000000000811',
+            version: '2.4.1',
+            sourceRevision: '3333333333333333333333333333333333333333',
+            summary: 'Included skipped maintenance release 2.4.1.',
+          },
+          {
+            component: 'orders-api',
+            releaseId: '00000000-0000-4000-8000-000000000812',
+            version: '2.4.2',
+            sourceRevision: '4444444444444444444444444444444444444444',
+            summary: 'Included skipped maintenance release 2.4.2.',
+          },
+        ],
+        changeContext: {
+          deploymentPlanId: fixtureIds.plan,
+          deploymentUnitId: fixtureIds.unitA,
+          state: 'READY',
+          message: 'Compared with independently verified release 2026.07.0.',
+        },
         evidence,
       },
     });
@@ -568,38 +964,35 @@ async function handleApi(
     ].includes(path)
   ) {
     const planId = path.split('/').at(-1) ?? fixtureIds.plan;
+    if (planId === fixtureIds.previousPlan && !previousStateCreated(successfulActions)) {
+      await json(route, {code: 'NOT_FOUND', message: 'Previous-state plan has not been created.'}, 404);
+      return;
+    }
     await json(route, {
-      detail: {
-        plan: {...planRow, id: planId},
-        productReleaseChecksum: checksums.product,
-        targetConfigChecksum: checksums.config,
-        effectivePolicyChecksum: checksums.policy,
-        subscriberSetChecksum: checksums.subscriber,
-        graphChecksum: checksums.graph,
-        changeChecksum: checksums.change,
-        baselineChecksum: checksums.baseline,
-        providerResolutionChecksum: checksums.provider,
-        migrationChecksum: checksums.migration,
-        riskChecksum: checksums.risk,
-        approvalChecksum: checksums.approval,
-        windowChecksum: checksums.window,
-        adapterChecksum: checksums.adapter,
-        intentChecksum: checksums.intent,
-        targets: [fact('target', 'Shared production host is selected')],
-        baselines: [fact('baseline', 'Last healthy release is 2.4.0', false, checksums.baseline)],
-        config: [fact('configuration', 'Configuration snapshot is immutable', false, checksums.config)],
-        requirements: [fact('provider', 'Compose adapter v2 is available', false, checksums.provider)],
-        migrations: [fact('migration', 'Forward migration is reversible', false, checksums.migration)],
-        changes: [fact('change', 'payments-api changes from 2.4.0 to 2.5.0', false, checksums.change)],
-        risks: [fact('risk', 'Shared-host blast radius requires approval', true, checksums.risk)],
-        approvals: [fact('approval', 'Production approval is pending', true, checksums.approval)],
-        windows: [fact('window', 'Inside maintenance window', false, checksums.window)],
-        adapters: [fact('adapter', 'Compose adapter revision is pinned', false, checksums.adapter)],
-        steps: [fact('deploy', 'Deploy payments-api')],
-        edges: [fact('dependency', 'gateway requires payments-api')],
-        issues: [fact('blocking issue', 'Approval must be satisfied before execution', true)],
-        intentBlockers: [fact('intent blocker', 'Approval checksum is not satisfied', true, checksums.intent)],
-        evidence,
+      detail: planDetail(planId, successfulActions),
+    });
+  } else if (
+    method === 'GET' &&
+    path === `/api/v1/control-plane/plans/${fixtureIds.previousPlan}/compare/${fixtureIds.plan}`
+  ) {
+    if (!previousStateCreated(successfulActions)) {
+      await json(route, {code: 'NOT_FOUND', message: 'Previous-state plan has not been created.'}, 404);
+      return;
+    }
+    await json(route, {
+      comparison: {
+        left: previousStatePlanRow(),
+        right: planRow,
+        changes: [
+          fact(
+            'previous-state direction',
+            'Previous-state plan restores release A while preserving release B',
+            false,
+            checksums.baseline
+          ),
+          fact('orders-api', 'orders-api 2.5.0 to 2.4.0', false, checksums.change),
+          fact('ledger-api', 'ledger-api 4.3.0 to 4.2.0', false, checksums.provider),
+        ],
       },
     });
   } else if (method === 'GET' && path === '/api/v1/control-plane/campaigns') {
@@ -666,9 +1059,9 @@ async function handleApi(
       },
     });
   } else if (method === 'GET' && path === '/api/v1/approval-requests') {
-    await json(route, {items: empty ? [] : [currentApproval(actions), invalidatedApproval]});
+    await json(route, {items: empty ? [] : [currentApproval(successfulActions), invalidatedApproval]});
   } else if (method === 'GET' && path === `/api/v1/approval-requests/${fixtureIds.approval}`) {
-    await json(route, currentApproval(actions));
+    await json(route, currentApproval(successfulActions));
   } else if (method === 'GET' && path === '/api/v1/control-plane/reconciliation') {
     await json(route, pageOf(empty ? [] : [reconciliationRow]));
   } else if (method === 'GET' && path === `/api/v1/control-plane/reconciliation/${fixtureIds.reconciliation}`) {
@@ -682,17 +1075,42 @@ async function handleApi(
       },
     });
   } else if (method === 'GET' && path === '/api/v1/control-plane/audit') {
-    await json(route, pageOf(empty ? [] : [auditRow]));
+    const auditItems = [
+      ...(approvalSatisfied(successfulActions) ? [auditRow] : []),
+      ...(previousStateCreated(successfulActions) ? [previousStateAuditRow] : []),
+    ];
+    await json(route, pageOf(empty ? [] : auditItems));
   } else if (method === 'GET' && path === `/api/v1/control-plane/audit/${fixtureIds.audit}`) {
+    if (!approvalSatisfied(successfulActions)) {
+      await json(route, {code: 'NOT_FOUND', message: 'Approval audit event has not been recorded.'}, 404);
+      return;
+    }
     await json(route, {
       detail: {
         event: auditRow,
         correlations: [
-          {id: '00000000-0000-4000-8000-000000000803', kind: 'deployment_plan', value: fixtureIds.plan},
-          {id: '00000000-0000-4000-8000-000000000804', kind: 'campaign', value: fixtureIds.campaign},
+          {kind: 'deployment_plan', id: fixtureIds.plan},
+          {kind: 'approval', id: fixtureIds.approval},
         ],
-        payload: {planChecksum: checksums.canonical},
-        evidence,
+        payload: approvalAuditPayload,
+        evidence: [
+          {
+            id: fixtureIds.plan,
+            kind: 'deployment_plan',
+            label: 'Deployment plan',
+            href: `/api/v1/control-plane/audit?subjectType=deployment_plan&subjectId=${fixtureIds.plan}`,
+            checksum: checksums.canonical,
+            createdAt: timestamp,
+          },
+          {
+            id: fixtureIds.approval,
+            kind: 'approval',
+            label: 'Approval',
+            href: `/api/v1/control-plane/audit?subjectType=approval&subjectId=${fixtureIds.approval}`,
+            checksum: checksums.approval,
+            createdAt: timestamp,
+          },
+        ],
       },
     });
   } else if (method === 'GET' && path === '/api/v1/control-plane-audit/export-sinks') {
@@ -730,8 +1148,8 @@ async function handleApi(
         },
         lastExportedSequence: 41,
         lastExportedEventId: fixtureIds.priorAudit,
-        latestSequence: 42,
-        checkpointLag: 1,
+        latestSequence: approvalSatisfied(successfulActions) ? 42 : 41,
+        checkpointLag: approvalSatisfied(successfulActions) ? 1 : 0,
         alert: false,
         lastAttemptStatus: 'succeeded',
         lastAttemptCompletedAt: timestamp,
@@ -741,18 +1159,26 @@ async function handleApi(
     await json(route, {
       version: 'v1',
       deploymentPlanId: fixtureIds.plan,
-      events: [
-        {
-          id: fixtureIds.audit,
-          sequence: 42,
-          eventType: 'deployment_plan.approved',
-          outcome: 'accepted',
-          deploymentPlanId: fixtureIds.plan,
-          payloadRedacted: false,
-          payloadTruncated: false,
-          createdAt: timestamp,
-        },
-      ],
+      events: approvalSatisfied(successfulActions)
+        ? [
+            {
+              id: fixtureIds.audit,
+              sequence: 42,
+              eventType: 'approval.decided',
+              actorId: fixtureIds.scopedApprover,
+              outcome: 'APPROVE',
+              deploymentPlanId: fixtureIds.plan,
+              approvalId: fixtureIds.approval,
+              deploymentPlanChecksum: checksums.canonical,
+              policyChecksum: checksums.policy,
+              approvalChecksum: checksums.approval,
+              payload: approvalAuditPayload,
+              payloadRedacted: false,
+              payloadTruncated: false,
+              createdAt: timestamp,
+            },
+          ]
+        : [],
       checksum: checksums.canonical,
     });
   } else if (method === 'POST' && path === '/api/v1/deployment-registry/imports/preview') {
@@ -832,8 +1258,10 @@ async function handleApi(
     await json(route, {...planRow, id: fixtureIds.publishedPlan, status: 'PUBLISHED'});
   } else if (method === 'POST' && path === `/api/v1/deployment-plans/${fixtureIds.plan}/previous-state`) {
     await json(route, {...planRow, id: fixtureIds.previousPlan, status: 'READY'});
+    recordSuccessfulAction(actions, successfulActions, path);
   } else if (method === 'POST' && path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions`) {
     await json(route, approvalDecision(actions));
+    recordSuccessfulAction(actions, successfulActions, path);
   } else if (
     method === 'POST' &&
     new RegExp(`^/api/v1/deployment-campaigns/${fixtureIds.campaignRun}/(pause|resume|cancel)$`).test(path)
@@ -1036,29 +1464,19 @@ function registryCoverage() {
 }
 
 function currentApproval(actions: RecordedAction[]) {
-  const approved = actions.some(
-    (action) => action.path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions`
+  const action = actions.findLast(
+    (candidate) => candidate.path === `/api/v1/approval-requests/${fixtureIds.approval}/decisions`
   );
-  return approved
-    ? {
-        ...approvalRequest,
-        state: 'APPROVED',
-        resolvedAt: timestamp,
-        decisions: [
-          {
-            id: fixtureIds.approvalDecision,
-            createdAt: timestamp,
-            approvalRequestId: fixtureIds.approval,
-            approvalRequirementId: fixtureIds.approvalRequirement,
-            decision: 'APPROVE',
-            comment: 'Reviewed production checksum and blockers',
-            actorUserAccountId: fixtureIds.scopedApprover,
-            requestRevision: 3,
-            idempotencyKey: 'fixture-approval-decision',
-          },
-        ],
-      }
-    : approvalRequest;
+  if (!action) {
+    return approvalRequest;
+  }
+  const decision = approvalDecision(actions);
+  return {
+    ...approvalRequest,
+    state: decision.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+    resolvedAt: timestamp,
+    decisions: [decision],
+  };
 }
 
 function approvalDecision(actions: RecordedAction[]) {

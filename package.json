@@ -16,6 +16,7 @@
     "watch": "pnpm buildconfig && pnpm agent-changelog && ng build --watch --configuration=development",
     "test": "pnpm buildconfig && pnpm agent-changelog && ng test",
     "test:e2e:control-plane": "playwright test --config playwright.control-plane.config.ts",
+    "test:e2e:control-plane:evidence": "playwright test --config playwright.control-plane-evidence.config.ts",
     "lint": "prettier --check .",
     "format": "prettier --write --list-different ."
   },
