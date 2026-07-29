@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createHmac} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {createServer as createHttpServer} from 'node:http';
 import {createServer} from 'node:net';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {fileURLToPath} from 'node:url';
@@ -1257,6 +1258,170 @@ test('component v2 publication declares immutable SBOM and submits production-ve
   assert.ok(publication.evidence[0].bundle.verificationMaterial.tlogEntries.length);
   assert.ok(
     publication.evidence[0].bundle.verificationMaterial.timestampVerificationData.rfc3161Timestamps.length
+  );
+});
+
+test('provenance helper builds once with local offline Go resolution before executing the cached binary', async (t) => {
+  const resolvedRoot = spawnSync('go', ['env', 'GOROOT'], {
+    encoding: 'utf8',
+  });
+  assert.equal(resolvedRoot.status, 0, resolvedRoot.stderr);
+  const realGo = path.join(
+    resolvedRoot.stdout.trim(),
+    'bin',
+    process.platform === 'win32' ? 'go.exe' : 'go'
+  );
+  const workDir = await mkdtemp(path.join(tmpdir(), 'distr-provenance-spawn-'));
+  t.after(() => rm(workDir, {recursive: true, force: true}));
+  const invocationLog = path.join(workDir, 'invocations.jsonl');
+  const wrapperSource = path.join(workDir, 'go-wrapper.go');
+  const wrapperBinary = path.join(workDir, process.platform === 'win32' ? 'go.exe' : 'go');
+  await writeFile(
+    wrapperSource,
+    `package main
+
+import (
+  "encoding/json"
+  "os"
+  "os/exec"
+)
+
+func main() {
+  record := map[string]any{
+    "args": os.Args[1:],
+    "env": map[string]string{
+      "GOTOOLCHAIN": os.Getenv("GOTOOLCHAIN"),
+      "GOPROXY": os.Getenv("GOPROXY"),
+      "GOSUMDB": os.Getenv("GOSUMDB"),
+      "GONOPROXY": os.Getenv("GONOPROXY"),
+      "GONOSUMDB": os.Getenv("GONOSUMDB"),
+      "GOPRIVATE": os.Getenv("GOPRIVATE"),
+      "GOVCS": os.Getenv("GOVCS"),
+      "GOFLAGS": os.Getenv("GOFLAGS"),
+    },
+  }
+  encoded, _ := json.Marshal(record)
+  logFile, _ := os.OpenFile(os.Getenv("DISTR_CP_TEST_GO_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+  _, _ = logFile.Write(append(encoded, '\\n'))
+  _ = logFile.Close()
+
+  command := exec.Command(os.Getenv("DISTR_CP_TEST_REAL_GO"), os.Args[1:]...)
+  command.Env = os.Environ()
+  command.Stdin = os.Stdin
+  command.Stdout = os.Stdout
+  command.Stderr = os.Stderr
+  if err := command.Run(); err != nil {
+    if exitError, ok := err.(*exec.ExitError); ok {
+      os.Exit(exitError.ExitCode())
+    }
+    os.Exit(1)
+  }
+}
+`
+  );
+  const wrapperBuild = spawnSync(realGo, ['build', '-trimpath', '-o', wrapperBinary, wrapperSource], {
+    cwd: workDir,
+    env: {...process.env, GOTOOLCHAIN: 'local', GOPROXY: 'off', GOSUMDB: 'off'},
+    encoding: 'utf8',
+  });
+  assert.equal(wrapperBuild.status, 0, wrapperBuild.stderr || wrapperBuild.stdout);
+  const runModule = new URL('./run.mjs', import.meta.url).href;
+  const helperInput = {
+    artifactKey: 'catalog-provider',
+    platform: 'linux/amd64',
+    digest: `sha256:${'a'.repeat(64)}`,
+    sourceRepository: 'https://code.fixture.invalid/neutral-product',
+    sourceCommit: 'a'.repeat(40),
+    buildId: 'build-catalog-provider-A',
+    builderId: 'https://build.fixture.invalid/workers/release',
+  };
+  const child = spawnSync(
+    node,
+    [
+      '--input-type=module',
+      '--eval',
+      `import {buildComponentPublicationEvidence} from ${JSON.stringify(runModule)};
+const input = ${JSON.stringify(helperInput)};
+buildComponentPublicationEvidence(input);
+buildComponentPublicationEvidence({...input, artifactKey: 'gateway-consumer', digest: 'sha256:${'b'.repeat(64)}'});
+`,
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: workDir,
+        DISTR_CP_TEST_GO_LOG: invocationLog,
+        DISTR_CP_TEST_REAL_GO: realGo,
+        GOTOOLCHAIN: 'auto',
+        GOPROXY: 'https://ambient-proxy.invalid',
+        GOSUMDB: 'sum.golang.org',
+        GONOPROXY: 'example.invalid',
+        GONOSUMDB: 'example.invalid',
+        GOPRIVATE: 'example.invalid',
+        GOVCS: '*:all',
+        GOFLAGS: '-mod=mod',
+      },
+      encoding: 'utf8',
+    }
+  );
+  assert.equal(child.status, 0, child.stderr || child.stdout);
+  const invocations = (await readFile(invocationLog, 'utf8'))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  const buildInvocations = invocations.filter((invocation) => invocation.args[0] === 'build');
+  assert.equal(buildInvocations.length, 1);
+  assert.ok(buildInvocations[0].args.includes('-trimpath'));
+  assert.equal(buildInvocations[0].args.at(-1), './examples/control-plane-e2e/provenance-fixture');
+  assert.deepEqual(buildInvocations[0].env, {
+    GOTOOLCHAIN: 'go1.26.5',
+    GOPROXY: 'off',
+    GOSUMDB: 'off',
+    GONOPROXY: '',
+    GONOSUMDB: '',
+    GOPRIVATE: '',
+    GOVCS: '*:off',
+    GOFLAGS: '-p=1 -mod=readonly',
+  });
+});
+
+test('provenance helper reports missing local toolchain before attempting publication', async (t) => {
+  const emptyPath = await mkdtemp(path.join(tmpdir(), 'distr-provenance-no-go-'));
+  t.after(() => rm(emptyPath, {recursive: true, force: true}));
+  const runModule = new URL('./run.mjs', import.meta.url).href;
+  const child = spawnSync(
+    node,
+    [
+      '--input-type=module',
+      '--eval',
+      `import {buildComponentPublicationEvidence} from ${JSON.stringify(runModule)};
+try {
+  buildComponentPublicationEvidence(${JSON.stringify({
+    artifactKey: 'catalog-provider',
+    platform: 'linux/amd64',
+    digest: `sha256:${'a'.repeat(64)}`,
+    sourceRepository: 'https://code.fixture.invalid/neutral-product',
+    sourceCommit: 'a'.repeat(40),
+    buildId: 'build-catalog-provider-A',
+    builderId: 'https://build.fixture.invalid/workers/release',
+  })});
+} catch (error) {
+  process.stderr.write(error.message);
+  process.exit(23);
+}
+`,
+    ],
+    {
+      cwd: repoRoot,
+      env: {...process.env, PATH: emptyPath},
+      encoding: 'utf8',
+    }
+  );
+  assert.equal(child.status, 23, child.stderr || child.stdout);
+  assert.match(
+    child.stderr,
+    /offline provenance helper build failed: required Go toolchain or module cache is unavailable/
   );
 });
 

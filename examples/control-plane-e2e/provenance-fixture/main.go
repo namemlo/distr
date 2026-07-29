@@ -56,6 +56,9 @@ type verification struct {
 }
 
 func main() {
+	if err := validateOfflineEnvironment(); err != nil {
+		fail(err)
+	}
 	var request input
 	if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
 		fail(fmt.Errorf("decode input: %w", err))
@@ -69,6 +72,28 @@ func main() {
 	if err := encoder.Encode(result); err != nil {
 		fail(fmt.Errorf("encode output: %w", err))
 	}
+}
+
+func validateOfflineEnvironment() error {
+	requiredToolchain := os.Getenv("DISTR_CP_REQUIRED_GO_TOOLCHAIN")
+	if !strings.HasPrefix(requiredToolchain, "go") {
+		return fmt.Errorf("offline provenance helper requires an exact Go toolchain")
+	}
+	required := map[string]string{
+		"GOTOOLCHAIN": requiredToolchain,
+		"GOPROXY":     "off",
+		"GOSUMDB":     "off",
+		"GONOPROXY":   "",
+		"GONOSUMDB":   "",
+		"GOPRIVATE":   "",
+		"GOVCS":       "*:off",
+	}
+	for name, expected := range required {
+		if actual := os.Getenv(name); actual != expected {
+			return fmt.Errorf("offline provenance helper requires %s=%q", name, expected)
+		}
+	}
+	return nil
 }
 
 func fail(err error) {

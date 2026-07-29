@@ -2,8 +2,10 @@
 
 import {spawnSync} from 'node:child_process';
 import {createHash, generateKeyPairSync, randomBytes} from 'node:crypto';
+import {existsSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:net';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -12,6 +14,9 @@ const repoRoot = path.resolve(fixtureDir, '../..');
 const fixturePath = path.join(fixtureDir, 'fixture.json');
 const composePath = path.join(fixtureDir, 'compose.yaml');
 const checksumPattern = /^sha256:[0-9a-f]{64}$/;
+let provenanceFixtureBinaryPath;
+let provenanceFixtureWorkDir;
+let requiredGoToolchain;
 const canonicalCases = [
   ['duplicate-dispatch', 'IDEMPOTENT_REPLAY'],
   ['duplicate-event', 'IDEMPOTENT_REPLAY'],
@@ -354,6 +359,120 @@ function run(command, args, {env = {}, allowFailure = false} = {}) {
   return result;
 }
 
+function offlineGoEnvironment() {
+  if (!requiredGoToolchain) {
+    const goDirective = readFileSync(path.join(repoRoot, 'go.mod'), 'utf8').match(/^go\s+(\d+\.\d+\.\d+)\s*$/m);
+    assert(goDirective, 'go.mod must declare an exact Go toolchain version');
+    requiredGoToolchain = `go${goDirective[1]}`;
+  }
+  return {
+    ...process.env,
+    GOTOOLCHAIN: requiredGoToolchain,
+    DISTR_CP_REQUIRED_GO_TOOLCHAIN: requiredGoToolchain,
+    GOPROXY: 'off',
+    GOSUMDB: 'off',
+    GONOPROXY: '',
+    GONOSUMDB: '',
+    GOPRIVATE: '',
+    GOVCS: '*:off',
+    GOFLAGS: '-p=1 -mod=readonly',
+    GOMAXPROCS: process.env.GOMAXPROCS || '2',
+  };
+}
+
+function resolveRequiredGoCommand(workDir) {
+  const discovery = spawnSync('go', ['env', 'GOVERSION', 'GOMODCACHE', 'GOOS', 'GOARCH'], {
+    cwd: workDir,
+    env: {...offlineGoEnvironment(), GOTOOLCHAIN: 'local'},
+    encoding: 'utf8',
+    stdio: 'pipe',
+    shell: false,
+    windowsHide: true,
+  });
+  if (discovery.status !== 0 || discovery.error) {
+    const detail = [discovery.error?.message, discovery.stderr, discovery.stdout]
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    throw new Error(
+      `offline provenance helper build failed: required Go toolchain or module cache is unavailable${
+        detail ? `: ${detail}` : ''
+      }`
+    );
+  }
+  const [installedVersion, moduleCache, goos, goarch] = discovery.stdout.trim().split(/\r?\n/);
+  if (installedVersion === requiredGoToolchain) {
+    return 'go';
+  }
+  const cachedToolchain = path.join(
+    moduleCache,
+    'golang.org',
+    `toolchain@v0.0.1-${requiredGoToolchain}.${goos}-${goarch}`,
+    'bin',
+    process.platform === 'win32' ? 'go.exe' : 'go'
+  );
+  if (!existsSync(cachedToolchain)) {
+    throw new Error(
+      `offline provenance helper build failed: required Go toolchain or module cache is unavailable: ${requiredGoToolchain} is not installed or cached`
+    );
+  }
+  return cachedToolchain;
+}
+
+function ensureProvenanceFixtureBinary() {
+  if (provenanceFixtureBinaryPath) {
+    return provenanceFixtureBinaryPath;
+  }
+  const workDir = mkdtempSync(path.join(tmpdir(), 'distr-provenance-fixture-'));
+  const binaryPath = path.join(
+    workDir,
+    process.platform === 'win32' ? 'provenance-fixture.exe' : 'provenance-fixture'
+  );
+  let goCommand;
+  try {
+    goCommand = resolveRequiredGoCommand(workDir);
+  } catch (error) {
+    rmSync(workDir, {recursive: true, force: true});
+    throw error;
+  }
+  const built = spawnSync(
+    goCommand,
+    [
+      'build',
+      '-buildvcs=false',
+      '-trimpath',
+      '-o',
+      binaryPath,
+      './examples/control-plane-e2e/provenance-fixture',
+    ],
+    {
+      cwd: repoRoot,
+      env: offlineGoEnvironment(),
+      encoding: 'utf8',
+      stdio: 'pipe',
+      shell: false,
+      windowsHide: true,
+    }
+  );
+  if (built.status !== 0 || built.error) {
+    rmSync(workDir, {recursive: true, force: true});
+    const detail = [built.error?.message, built.stderr, built.stdout].filter(Boolean).join('\n').trim();
+    throw new Error(
+      `offline provenance helper build failed: required Go toolchain or module cache is unavailable${
+        detail ? `: ${detail}` : ''
+      }`
+    );
+  }
+  provenanceFixtureWorkDir = workDir;
+  provenanceFixtureBinaryPath = binaryPath;
+  process.once('exit', () => {
+    if (provenanceFixtureWorkDir) {
+      rmSync(provenanceFixtureWorkDir, {recursive: true, force: true});
+    }
+  });
+  return provenanceFixtureBinaryPath;
+}
+
 function liveStackBlocker() {
   if (process.env.DISTR_CP_FORCE_CONTRACT === 'true') {
     return 'forced contract mode by DISTR_CP_FORCE_CONTRACT=true';
@@ -374,7 +493,17 @@ function liveStackBlocker() {
       return `required local image ${image} is unavailable; preload it without using this runner`;
     }
   }
-  if (run('go', ['env', 'GOMODCACHE'], {allowFailure: true}).status !== 0) {
+  try {
+    ensureProvenanceFixtureBinary();
+  } catch (error) {
+    return `${error.message}; install the required Go toolchain locally and preload the module cache before clean mode`;
+  }
+  if (
+    run('go', ['env', 'GOMODCACHE'], {
+      env: offlineGoEnvironment(),
+      allowFailure: true,
+    }).status !== 0
+  ) {
     return 'local Go module cache is unavailable for the offline reference executor build';
   }
   return null;
@@ -614,20 +743,25 @@ export async function bootstrapLiveHub({hubURL, runId, fixture}) {
 }
 
 export function buildComponentPublicationEvidence(input) {
-  const generated = spawnSync('go', ['run', './examples/control-plane-e2e/provenance-fixture'], {
+  const generated = spawnSync(ensureProvenanceFixtureBinary(), [], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      GOMAXPROCS: process.env.GOMAXPROCS || '2',
-      GOFLAGS: process.env.GOFLAGS || '-p=1',
-    },
+    env: offlineGoEnvironment(),
     input: JSON.stringify(input),
     encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    shell: false,
     windowsHide: true,
   });
   assert(
-    generated.status === 0,
-    `signed provenance fixture generation failed: ${(generated.stderr || generated.stdout || '').trim()}`
+    generated.status === 0 && !generated.error,
+    `signed provenance fixture execution failed: ${[
+      generated.error?.message,
+      generated.stderr,
+      generated.stdout,
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .trim()}`
   );
   let result;
   try {
@@ -1958,7 +2092,9 @@ async function runDisposableStack(fixture) {
   };
   const {signing, observer, signingKeyId, signingVersionFingerprint, observerKeyFingerprint} =
     createRuntimeKeyMaterial();
-  const goModuleCache = run('go', ['env', 'GOMODCACHE']).stdout.trim();
+  const goModuleCache = run('go', ['env', 'GOMODCACHE'], {
+    env: offlineGoEnvironment(),
+  }).stdout.trim();
   const composeEnv = {
     DISTR_CP_POSTGRES_PORT: String(ports.postgres),
     DISTR_CP_EXTERNAL_EXECUTOR_PORT: String(ports.external),
