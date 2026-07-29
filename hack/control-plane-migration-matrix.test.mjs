@@ -98,6 +98,44 @@ if ($callerJwt -cne [Environment]::GetEnvironmentVariable('JWT_SECRET', 'Process
   );
 }
 
+function runScriptWithCallerDistrHost(args, callerDistrHost, env = {}) {
+  const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+  const invocation = args
+    .map((value) => (String(value).startsWith('-') ? String(value) : quote(value)))
+    .join(' ');
+  const command = `
+$callerDistrHost = [Environment]::GetEnvironmentVariable('DISTR_HOST', 'Process')
+& ${quote(script)} ${invocation}
+$scriptSucceeded = $?
+if (-not $scriptSucceeded) { exit 92 }
+if ($callerDistrHost -cne [Environment]::GetEnvironmentVariable('DISTR_HOST', 'Process')) {
+  [Console]::Error.WriteLine('DISTR_HOST was not restored to its exact caller value')
+  exit 91
+}
+`;
+  return spawnSync(
+    pwsh,
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(command, 'utf16le').toString('base64'),
+    ],
+    {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        DATABASE_URL: '',
+        DISTR_TEST_DATABASE_URL: '',
+        ...env,
+        DISTR_HOST: callerDistrHost,
+      },
+    }
+  );
+}
+
 function sha256(text) {
   return `sha256:${createHash('sha256').update(text).digest('hex')}`;
 }
@@ -145,6 +183,10 @@ func main() {
       len(jwtSecret),
       fmt.Sprintf("%x", fingerprint) != expectedCallerFingerprint,
     )
+    return
+  }
+  if os.Getenv("MATRIX_FAKE_INSPECT_DISTR_HOST") == "true" {
+    fmt.Printf("distr-host=%s\\n", os.Getenv("DISTR_HOST"))
     return
   }
   fmt.Println(os.Getenv("MATRIX_FAKE_GO_OUTPUT"))
@@ -418,6 +460,31 @@ test('non-plan execution replaces a caller JWT_SECRET for children and restores 
         /jwt-present=true jwt-length=64 jwt-differs-from-caller=true/.test(commandOutput)
       )
     );
+  } finally {
+    await rm(output, {force: true});
+    await rm(fakeTools.directory, {recursive: true, force: true});
+  }
+});
+
+test('non-plan execution overrides DISTR_HOST for children and restores the caller value', async () => {
+  const fakeTools = await createFakeToolchain();
+  const output = path.join(repositoryRoot, 'work', `matrix-distr-host-${process.pid}-${Date.now()}.json`);
+  try {
+    const result = runScriptWithCallerDistrHost(
+      ['-DatabaseUrl', safeURL, '-OutputPath', path.relative(repositoryRoot, output)],
+      'https://caller.invalid',
+      {
+        ...fakeTools.environment,
+        MATRIX_FAKE_INSPECT_DISTR_HOST: 'true',
+        PATH: `${fakeTools.directory}${path.delimiter}${process.env.PATH ?? ''}`,
+      }
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const retainedOutputs = JSON.parse(await readFile(output, 'utf8')).scenarios
+      .flatMap(({checks}) => checks.map(({output: commandOutput}) => commandOutput))
+      .filter((commandOutput) => typeof commandOutput === 'string' && commandOutput.includes('distr-host='));
+    assert.ok(retainedOutputs.length > 0);
+    assert.ok(retainedOutputs.every((commandOutput) => commandOutput.trim() === 'distr-host=http://127.0.0.1'));
   } finally {
     await rm(output, {force: true});
     await rm(fakeTools.directory, {recursive: true, force: true});

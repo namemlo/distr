@@ -506,6 +506,8 @@ if ($PlanOnly) {
         $script:MatrixJwtSecret = [Convert]::ToBase64String($randomJwtBytes)
         Set-ProcessEnvironment -Name 'JWT_SECRET' -Value $script:MatrixJwtSecret `
             -Original $environmentOriginals
+        Set-ProcessEnvironment -Name 'DISTR_HOST' -Value 'http://127.0.0.1' `
+            -Original $environmentOriginals
         $newSchema = {
             return 'cp_matrix_' + [Guid]::NewGuid().ToString('N')
         }
