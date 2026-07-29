@@ -89,14 +89,34 @@ func TestWorkerRecordsUnsupportedHubActionAsFailed(t *testing.T) {
 
 func TestWorkerExecutesBuiltInTargetConfigVerification(t *testing.T) {
 	lease := hubWebhookLease("https://unused.example.com")
+	snapshotID := uuid.New()
+	configChecksum := "sha256:" + strings.Repeat("a", 64)
 	lease.Steps[0].StepKey = "config:verify"
 	lease.Steps[0].ActionType = "builtin"
 	lease.Steps[0].ActionName = "target-config.verify"
 	lease.Steps[0].InputBindings = map[string]any{
-		"snapshotId": uuid.New().String(),
-		"checksum":   "sha256:" + strings.Repeat("a", 64),
+		"snapshotId": snapshotID.String(),
+		"checksum":   configChecksum,
 	}
-	store := &recordingStore{}
+	store := &recordingStore{builtinAuthority: &builtinVerificationAuthority{
+		PlanID: uuid.New(),
+		TargetConfig: &targetConfigVerificationAuthority{
+			SnapshotID: snapshotID, CanonicalChecksum: configChecksum,
+			Objects: []types.TargetConfigSnapshotObjectDraft{{
+				Key: "compose", Reference: "s3://config/compose.yaml",
+				MediaType: "application/yaml", SizeBytes: 42,
+				Checksum: configChecksum,
+			}},
+			VerificationFacts: []types.ConfigVerificationFact{{
+				ObjectKey: "compose", Reference: "s3://config/compose.yaml",
+				MediaType: "application/yaml", SizeBytes: 42, Checksum: configChecksum,
+				ObservedReference: "s3://config/compose.yaml",
+				ObservedMediaType: "application/yaml", ObservedSizeBytes: 42,
+				ObservedChecksum: configChecksum, Verified: true,
+				VerificationCode: "verified",
+			}},
+		},
+	}}
 	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
 
 	err := worker.executeLease(context.Background(), lease)
@@ -116,14 +136,45 @@ func TestWorkerExecutesBuiltInTargetConfigVerification(t *testing.T) {
 
 func TestWorkerExecutesBuiltInRequirementVerification(t *testing.T) {
 	lease := hubWebhookLease("https://unused.example.com")
+	observationID := uuid.New()
+	providerReleaseID := uuid.New()
+	componentInstanceID := uuid.New()
+	bindingChecksum := "sha256:" + strings.Repeat("b", 64)
+	stateChecksum := "sha256:" + strings.Repeat("c", 64)
 	lease.Steps[0].StepKey = "requirement:catalog:verify"
 	lease.Steps[0].ActionType = "builtin"
 	lease.Steps[0].ActionName = "requirement.verify"
 	lease.Steps[0].InputBindings = map[string]any{
-		"mode":            "included",
-		"bindingChecksum": "sha256:" + strings.Repeat("b", 64),
+		"mode":            "pinned_existing",
+		"bindingChecksum": bindingChecksum,
+		"observationId":   observationID.String(),
 	}
-	store := &recordingStore{}
+	store := &recordingStore{builtinAuthority: &builtinVerificationAuthority{
+		PlanID: uuid.New(),
+		Requirement: &requirementVerificationAuthority{
+			Resolution: types.RequirementResolution{
+				Mode:              types.RequirementResolutionModePinnedExisting,
+				ProviderReleaseID: &providerReleaseID, ObservationID: &observationID,
+				ComponentInstanceID:  &componentInstanceID,
+				ProviderPlatform:     string(types.DeploymentTargetPlatformLinuxAMD64),
+				ExpectedStateVersion: 7, ExpectedStateChecksum: stateChecksum,
+				BindingChecksum: bindingChecksum,
+			},
+			Observation: &types.TargetComponentObservation{
+				ID: observationID, ComponentInstanceID: &componentInstanceID,
+				StateVersion: 7, StateChecksum: stateChecksum,
+				ReleaseBundleID: providerReleaseID,
+				Platform:        types.DeploymentTargetPlatformLinuxAMD64,
+				Health:          types.TargetComponentHealthHealthy,
+			},
+			CurrentState: &types.TargetComponentState{
+				StateVersion: 7, StateChecksum: stateChecksum,
+				ReleaseBundleID: providerReleaseID,
+				Platform:        types.DeploymentTargetPlatformLinuxAMD64,
+				Health:          types.TargetComponentHealthHealthy,
+			},
+		},
+	}}
 	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
 
 	err := worker.executeLease(context.Background(), lease)
@@ -135,6 +186,120 @@ func TestWorkerExecutesBuiltInRequirementVerification(t *testing.T) {
 		store.events[1].Type != types.StepRunEventTypeSucceeded ||
 		!containsOutput(store.events[1].Outputs, "verifiedAction", "requirement.verify") {
 		t.Fatalf("unexpected built-in result: %#v", store.events)
+	}
+}
+
+func TestWorkerRejectsWellFormedBuiltInFactsThatMismatchAuthority(t *testing.T) {
+	lease := hubWebhookLease("https://unused.example.com")
+	snapshotID := uuid.New()
+	lease.Steps[0].StepKey = "config:verify"
+	lease.Steps[0].ActionType = "builtin"
+	lease.Steps[0].ActionName = "target-config.verify"
+	lease.Steps[0].InputBindings = map[string]any{
+		"snapshotId": snapshotID.String(),
+		"checksum":   "sha256:" + strings.Repeat("a", 64),
+	}
+	store := &recordingStore{builtinAuthority: &builtinVerificationAuthority{
+		PlanID: uuid.New(),
+		TargetConfig: &targetConfigVerificationAuthority{
+			SnapshotID:        snapshotID,
+			CanonicalChecksum: "sha256:" + strings.Repeat("b", 64),
+		},
+	}}
+	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
+
+	err := worker.executeLease(context.Background(), lease)
+
+	if err == nil || !strings.Contains(err.Error(), "authoritative target config") {
+		t.Fatalf("expected authoritative mismatch failure, got %v", err)
+	}
+	if len(store.events) != 2 || store.events[1].Type != types.StepRunEventTypeFailed {
+		t.Fatalf("unexpected authoritative mismatch events: %#v", store.events)
+	}
+}
+
+func TestWorkerRejectsTargetConfigWhenAuthoritativeReceiptMismatchesObject(t *testing.T) {
+	lease := hubWebhookLease("https://unused.example.com")
+	snapshotID := uuid.New()
+	configChecksum := "sha256:" + strings.Repeat("a", 64)
+	lease.Steps[0].StepKey = "config:verify"
+	lease.Steps[0].ActionType = "builtin"
+	lease.Steps[0].ActionName = "target-config.verify"
+	lease.Steps[0].InputBindings = map[string]any{
+		"snapshotId": snapshotID.String(),
+		"checksum":   configChecksum,
+	}
+	store := &recordingStore{builtinAuthority: &builtinVerificationAuthority{
+		PlanID: uuid.New(),
+		TargetConfig: &targetConfigVerificationAuthority{
+			SnapshotID: snapshotID, CanonicalChecksum: configChecksum,
+			Objects: []types.TargetConfigSnapshotObjectDraft{{
+				Key: "compose", Reference: "s3://config/compose.yaml",
+				MediaType: "application/yaml", SizeBytes: 42,
+				Checksum: configChecksum,
+			}},
+			VerificationFacts: []types.ConfigVerificationFact{{
+				ObjectKey: "compose", Reference: "s3://config/compose.yaml",
+				MediaType: "application/yaml", SizeBytes: 42, Checksum: configChecksum,
+				ObservedReference: "s3://config/compose.yaml",
+				ObservedMediaType: "application/yaml", ObservedSizeBytes: 42,
+				ObservedChecksum: "sha256:" + strings.Repeat("b", 64),
+				Verified:         true, VerificationCode: "verified",
+			}},
+		},
+	}}
+	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
+
+	err := worker.executeLease(context.Background(), lease)
+
+	if err == nil || !strings.Contains(err.Error(), "verification receipt mismatched") {
+		t.Fatalf("expected verification receipt mismatch, got %v", err)
+	}
+	if len(store.events) != 2 || store.events[1].Type != types.StepRunEventTypeFailed {
+		t.Fatalf("unexpected verification receipt events: %#v", store.events)
+	}
+}
+
+func TestWorkerRejectsRequirementWhenFrozenObservationIsNoLongerCurrent(t *testing.T) {
+	lease := hubWebhookLease("https://unused.example.com")
+	observationID := uuid.New()
+	bindingChecksum := "sha256:" + strings.Repeat("b", 64)
+	frozenChecksum := "sha256:" + strings.Repeat("c", 64)
+	currentChecksum := "sha256:" + strings.Repeat("d", 64)
+	lease.Steps[0].StepKey = "requirement:catalog:verify"
+	lease.Steps[0].ActionType = "builtin"
+	lease.Steps[0].ActionName = "requirement.verify"
+	lease.Steps[0].InputBindings = map[string]any{
+		"mode": "pinned_existing", "bindingChecksum": bindingChecksum,
+		"observationId": observationID.String(),
+	}
+	store := &recordingStore{builtinAuthority: &builtinVerificationAuthority{
+		PlanID: uuid.New(),
+		Requirement: &requirementVerificationAuthority{
+			Resolution: types.RequirementResolution{
+				Mode:          types.RequirementResolutionModePinnedExisting,
+				ObservationID: &observationID, ExpectedStateVersion: 7,
+				ExpectedStateChecksum: frozenChecksum, BindingChecksum: bindingChecksum,
+			},
+			Observation: &types.TargetComponentObservation{
+				ID: observationID, StateVersion: 7, StateChecksum: frozenChecksum,
+				Health: types.TargetComponentHealthHealthy,
+			},
+			CurrentState: &types.TargetComponentState{
+				StateVersion: 8, StateChecksum: currentChecksum,
+				Health: types.TargetComponentHealthHealthy,
+			},
+		},
+	}}
+	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
+
+	err := worker.executeLease(context.Background(), lease)
+
+	if err == nil || !strings.Contains(err.Error(), "current provider state") {
+		t.Fatalf("expected current observation mismatch, got %v", err)
+	}
+	if len(store.events) != 2 || store.events[1].Type != types.StepRunEventTypeFailed {
+		t.Fatalf("unexpected stale observation events: %#v", store.events)
 	}
 }
 
@@ -489,6 +654,18 @@ type recordingStore struct {
 	completeOnTrigger bool
 	claimConflict     bool
 	succeedOnFail     bool
+	builtinAuthority  *builtinVerificationAuthority
+	builtinLoadError  error
+}
+
+func (s *recordingStore) LoadBuiltinVerificationAuthority(
+	context.Context,
+	builtinVerificationRequest,
+) (*builtinVerificationAuthority, error) {
+	if s.builtinLoadError != nil {
+		return nil, s.builtinLoadError
+	}
+	return s.builtinAuthority, nil
 }
 
 func (s *recordingStore) PrepareExternalExecution(

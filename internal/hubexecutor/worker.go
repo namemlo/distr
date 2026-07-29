@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,8 +28,6 @@ const (
 	defaultMaxConcurrency       = 4
 )
 
-var hubBuiltinChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-
 type Options struct {
 	PollInterval         time.Duration
 	HeartbeatInterval    time.Duration
@@ -52,6 +49,10 @@ type taskStore interface {
 	GetExternalExecution(context.Context, uuid.UUID, uuid.UUID) (*types.ExternalExecution, error)
 	TimeoutExternalExecution(context.Context, types.TimeoutExternalExecutionRequest) (*types.ExternalExecution, error)
 	FailExternalExecution(context.Context, types.FailExternalExecutionRequest) (*types.ExternalExecution, error)
+	LoadBuiltinVerificationAuthority(
+		context.Context,
+		builtinVerificationRequest,
+	) (*builtinVerificationAuthority, error)
 }
 
 type Worker struct {
@@ -208,7 +209,7 @@ func (w *Worker) executeStep(
 		return runErr
 	}
 	if step.ActionType == "builtin" {
-		outputs, err := verifyBuiltinStep(step)
+		outputs, err := w.verifyBuiltinStep(ctx, lease, step)
 		if err != nil {
 			return recordFailure(err, nil)
 		}
@@ -389,55 +390,6 @@ func (w *Worker) executeStep(
 	return w.record(
 		ctx, lease, step, sequence, types.StepRunEventTypeSucceeded, "Hub webhook succeeded", recordOutputs,
 	)
-}
-
-func verifyBuiltinStep(step types.TaskLeaseStep) ([]types.RecordStepRunOutputRequest, error) {
-	if step.ActionVersion != types.AgentActionVersionV1 {
-		return nil, fmt.Errorf("unsupported Hub built-in actionVersion %q", step.ActionVersion)
-	}
-	switch step.ActionName {
-	case "target-config.verify":
-		snapshotID, ok := step.InputBindings["snapshotId"].(string)
-		if !ok {
-			return nil, errors.New("target-config.verify snapshotId is required")
-		}
-		if _, err := uuid.Parse(strings.TrimSpace(snapshotID)); err != nil {
-			return nil, errors.New("target-config.verify snapshotId is invalid")
-		}
-		if err := requireBuiltinChecksum(step.InputBindings, "checksum"); err != nil {
-			return nil, fmt.Errorf("target-config.verify: %w", err)
-		}
-	case "requirement.verify":
-		mode, ok := step.InputBindings["mode"].(string)
-		if !ok || !types.RequirementResolutionMode(strings.TrimSpace(mode)).IsValid() {
-			return nil, errors.New("requirement.verify mode is invalid")
-		}
-		if err := requireBuiltinChecksum(step.InputBindings, "bindingChecksum"); err != nil {
-			return nil, fmt.Errorf("requirement.verify: %w", err)
-		}
-		if observationID, exists := step.InputBindings["observationId"]; exists && observationID != nil {
-			value, ok := observationID.(string)
-			if !ok {
-				return nil, errors.New("requirement.verify observationId is invalid")
-			}
-			if _, err := uuid.Parse(strings.TrimSpace(value)); err != nil {
-				return nil, errors.New("requirement.verify observationId is invalid")
-			}
-		}
-	default:
-		return nil, fmt.Errorf("unsupported Hub built-in actionName %q", step.ActionName)
-	}
-	return []types.RecordStepRunOutputRequest{{
-		Name: "verifiedAction", Value: step.ActionName,
-	}}, nil
-}
-
-func requireBuiltinChecksum(input map[string]any, key string) error {
-	value, ok := input[key].(string)
-	if !ok || !hubBuiltinChecksumPattern.MatchString(strings.TrimSpace(value)) {
-		return fmt.Errorf("%s must be an immutable sha256 checksum", key)
-	}
-	return nil
 }
 
 func externalExecutionError(execution types.ExternalExecution) error {
