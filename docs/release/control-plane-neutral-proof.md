@@ -35,13 +35,15 @@ worktree on 2026-07-28:
   campaign, protocol-v2 execution, independent-observation, and fleet-read-model
   path for A-B-A. That branch was not executed on this host. Source re-review
   at committed revision `156a87b0` found three unresolved live-path blockers.
-  Follow-up commit `5af87c8b` addresses them in source: required evidence now
-  has a pre-admission producer and explicit provenance/SBOM mappings; Hub
-  built-ins and typed migration/deploy/health adapters are executable; and
-  target leases use bounded retry with terminal-state evidence. Focused Go,
-  vet, and all 23 Node contract tests pass. The follow-up still requires
-  independent source re-review, and it has not been runtime-executed; the
-  intended A-B-A result is not acceptance evidence.
+  Follow-up commit `5af87c8b` addressed the original three findings, but its
+  independent review found that Hub built-ins still trusted syntactically valid
+  inputs and the live fixture could not publish production-valid provenance and
+  SBOM evidence. Commits `5d364174` and `08738155` address those additional
+  source findings with repository-backed verification and an offline,
+  production-verified Sigstore publication fixture. Focused Go, vet, and all 24
+  Node contract tests pass. The round-five changes still require independent
+  source re-review, and they have not been runtime-executed; the intended A-B-A
+  result is not acceptance evidence.
 - The default failure-matrix fixture simulation evaluated all 14 expected cases
   but reported `SIMULATION_ONLY`, `acceptanceEligible: false`, and
   `NON_ACCEPTANCE_FIXTURE_SIMULATION`. Its report checksum was
@@ -357,21 +359,30 @@ to live evidence or prove that an unrecorded external dependency participated.
 - Follow-up commit `5af87c8b` executes the Hub built-in verification actions,
   projects exact action names into leases, and freezes distinct typed
   migration, deploy, and health adapter scopes and revisions in dependency
-  order. This closes the source-level graph mismatch; it does not prove that a
-  deployed target agent executed those adapters.
+  order. Commit `5d364174` additionally loads and compares the sealed plan,
+  exact target-config objects and receipts, frozen requirement resolution and
+  observation, and current component state instead of trusting formatted lease
+  input. These changes close the source-level graph and authority mismatch; they
+  do not prove that a deployed target agent executed those adapters.
 - Follow-up commit `5af87c8b` adds a bounded target-attempt/lease readiness phase.
   Normal transient `204 No Content` responses retry while real campaign, task,
   plan, and preflight state remains non-terminal; terminal states fail with an
   actionable snapshot. This closes the source-level readiness race.
+- Commit `08738155` makes the live fixture publish immutable SBOM and signed
+  provenance evidence through the exact production Sigstore verifier before it
+  submits the Component Release. It also reconciles target-neutral identity
+  validation so neutral credential-free HTTPS and digest-pinned OCI identities
+  can satisfy the production provenance contract while local, credentialed, or
+  mutable identities remain rejected.
 - If Docker, its daemon, or a Hub binary is unavailable, clean mode deliberately
   falls back to fixture-contract mode and can still exit successfully. Inspect
   `proofMode`, `liveStack.started`, `liveStack.blocker`, `nonLocalCalls`, and
   cleanup metadata before classifying the result. The recorded run on this host
   took this fallback because the Docker CLI was unavailable; it did not attempt
   the live branch.
-- Live A-B-A acceptance remains pending until commit `5af87c8b` passes
-  independent source re-review and a retained clean run actually completes the
-  `live-hub-api` path against the runtime contracts. No retained live A-B-A
+- Live A-B-A acceptance remains pending until commits `5d364174` and `08738155`
+  pass independent source re-review and a retained clean run actually completes
+  the `live-hub-api` path against the runtime contracts. No retained live A-B-A
   evidence exists. Availability of Docker or a zero exit from fixture fallback
   is not sufficient.
 - The failure matrix emits
