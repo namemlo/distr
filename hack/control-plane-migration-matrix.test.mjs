@@ -10,6 +10,8 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 const script = path.join(repositoryRoot, 'hack', 'control-plane-migration-matrix.ps1');
 const pwsh = process.platform === 'win32' ? 'pwsh.exe' : 'pwsh';
 const safeURL = 'postgres://matrix_user:matrix-secret@127.0.0.1:5432/control_plane_test?sslmode=disable';
+const passwordlessSafeURL =
+  'postgres://matrix_user@127.0.0.1:5432/control_plane_test?sslmode=disable';
 
 function runScript(args, env = {}) {
   return spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', script, ...args], {
@@ -197,6 +199,31 @@ test('non-plan report retains complete redacted command output and its checksum'
     assert.ok(command.diagnostic.length < command.output.length);
     assert.equal(report.cleanup.checks.length, report.cleanup.attemptedSchemas);
     assert.ok(report.cleanup.checks.every(({exitCode}) => exitCode === 0));
+  } finally {
+    await rm(output, {force: true});
+    await rm(fakeTools.directory, {recursive: true, force: true});
+  }
+});
+
+test('non-plan report supports an isolated passwordless test database', async () => {
+  const fakeTools = await createFakeToolchain();
+  const output = path.join(
+    repositoryRoot,
+    'work',
+    `matrix-passwordless-${process.pid}-${Date.now()}.json`
+  );
+  try {
+    const result = runScript(
+      ['-DatabaseUrl', passwordlessSafeURL, '-OutputPath', path.relative(repositoryRoot, output)],
+      {
+        ...fakeTools.environment,
+        PATH: `${fakeTools.directory}${path.delimiter}${process.env.PATH ?? ''}`,
+      }
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const report = JSON.parse(await readFile(output, 'utf8'));
+    assert.equal(report.status, 'PASS');
+    assert.equal(report.database.passwordPresent, false);
   } finally {
     await rm(output, {force: true});
     await rm(fakeTools.directory, {recursive: true, force: true});

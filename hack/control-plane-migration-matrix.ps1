@@ -344,7 +344,7 @@ function Invoke-MatrixScenario {
     param(
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][scriptblock]$Operation,
-        [Parameter(Mandatory)][string]$Password
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Password
     )
 
     $started = [DateTimeOffset]::UtcNow
