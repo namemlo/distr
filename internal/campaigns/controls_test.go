@@ -192,6 +192,9 @@ type campaignControlStoreFake struct {
 	applied       int
 	excluded      int
 	retryPrepared int
+	v2RetryInput  types.CampaignMemberControlInput
+	v2Authorizer  types.AdmissionAuthorizer
+	v2Plan        *types.DeploymentPlan
 }
 
 func (s *campaignControlStoreFake) PersistCampaignMemberRetry(
@@ -201,6 +204,17 @@ func (s *campaignControlStoreFake) PersistCampaignMemberRetry(
 ) (*types.DeploymentPlan, error) {
 	s.retryPrepared++
 	return creator.CreateSupersedingPlan(ctx, input)
+}
+
+func (s *campaignControlStoreFake) PersistCampaignV2MemberRetry(
+	_ context.Context,
+	input types.CampaignMemberControlInput,
+	authorizer types.AdmissionAuthorizer,
+) (*types.DeploymentPlan, error) {
+	s.retryPrepared++
+	s.v2RetryInput = input
+	s.v2Authorizer = authorizer
+	return s.v2Plan, nil
 }
 
 func (s *campaignControlStoreFake) ApplyCampaignControl(
@@ -260,10 +274,22 @@ func (f supersedingPlanCreatorFake) CreateSupersedingPlan(
 	return f.plan, nil
 }
 
-func TestRetryCampaignSplitKeepsV1SupersedingPlanAndBlocksV2(t *testing.T) {
+func TestRetryCampaignSplitKeepsV1AndMaterializesV2ThroughRetryStore(t *testing.T) {
 	g := gomega.NewWithT(t)
-	expected := &types.DeploymentPlan{ID: uuid.New()}
-	controller := NewCampaignController(nil, supersedingPlanCreatorFake{plan: expected})
+	v1Plan := &types.DeploymentPlan{ID: uuid.New()}
+	v2Plan := &types.DeploymentPlan{ID: uuid.New()}
+	store := &campaignControlStoreFake{v2Plan: v2Plan}
+	authorizer := types.AdmissionAuthorizer(func(
+		context.Context,
+		types.AdmissionAuthorizationContext,
+	) error {
+		return nil
+	})
+	controller := NewCampaignControllerWithAdmissionAuthorizer(
+		store,
+		supersedingPlanCreatorFake{plan: v1Plan},
+		authorizer,
+	)
 	input := types.CampaignMemberControlInput{
 		CampaignControlInput: types.CampaignControlInput{
 			RequestID: uuid.New(),
@@ -276,12 +302,47 @@ func TestRetryCampaignSplitKeepsV1SupersedingPlanAndBlocksV2(t *testing.T) {
 	input.ProtocolVersion = "v1"
 	plan, err := controller.RetryCampaignMember(context.Background(), input)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(plan).To(gomega.Equal(expected))
+	g.Expect(plan).To(gomega.Equal(v1Plan))
 
 	input.ProtocolVersion = "v2"
 	plan, err = controller.RetryCampaignMember(context.Background(), input)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(plan).To(gomega.Equal(v2Plan))
+	g.Expect(store.retryPrepared).To(gomega.Equal(2))
+	g.Expect(store.v2RetryInput.Kind).To(gomega.Equal(types.CampaignControlKindRetry))
+	g.Expect(store.v2Authorizer).NotTo(gomega.BeNil())
+}
+
+func TestRetryCampaignV2FailsClosedWithoutStoreOrAuthorizer(t *testing.T) {
+	g := gomega.NewWithT(t)
+	input := types.CampaignMemberControlInput{
+		CampaignControlInput: types.CampaignControlInput{
+			RequestID: uuid.New(),
+			RunID:     uuid.New(),
+			Reason:    "delivery cannot be proven",
+		},
+		MemberRunID: uuid.New(), ProtocolVersion: "v2",
+	}
+
+	plan, err := NewCampaignController(
+		&campaignControlStoreFake{},
+		supersedingPlanCreatorFake{},
+	).RetryCampaignMember(context.Background(), input)
 	g.Expect(plan).To(gomega.BeNil())
-	g.Expect(errors.Is(err, ErrCampaignV2RetryUnavailable)).To(gomega.BeTrue())
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("authorizer")))
+
+	plan, err = NewCampaignControllerWithAdmissionAuthorizer(
+		nil,
+		supersedingPlanCreatorFake{},
+		types.AdmissionAuthorizer(func(
+			context.Context,
+			types.AdmissionAuthorizationContext,
+		) error {
+			return nil
+		}),
+	).RetryCampaignMember(context.Background(), input)
+	g.Expect(plan).To(gomega.BeNil())
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("retry store")))
 }
 
 func TestCampaignMemberRetryOnlyAllowsFailedMember(t *testing.T) {

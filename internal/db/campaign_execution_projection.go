@@ -14,8 +14,12 @@ import (
 
 const campaignMemberExecutionProjectionSQL = `
 WITH target_member AS (
-  SELECT lineage.organization_id, lineage.campaign_member_run_id
+  SELECT lineage.organization_id, lineage.campaign_member_run_id,
+         target_task.execution_occurrence_id
   FROM CampaignMemberTaskExecution lineage
+  JOIN Task target_task
+    ON target_task.id = lineage.task_id
+   AND target_task.organization_id = lineage.organization_id
   WHERE lineage.organization_id = @organizationId
     AND lineage.task_id = @taskId
 ), active_attempts AS (
@@ -25,9 +29,13 @@ WITH target_member AS (
   JOIN ExecutionAttempt attempt
     ON attempt.organization_id = lineage.organization_id
    AND attempt.task_id = lineage.task_id
+  JOIN Task task
+    ON task.id = lineage.task_id
+   AND task.organization_id = lineage.organization_id
   JOIN target_member target
     ON target.organization_id = lineage.organization_id
    AND target.campaign_member_run_id = lineage.campaign_member_run_id
+   AND task.execution_occurrence_id = target.execution_occurrence_id
   WHERE attempt.status IN ('CLAIMED', 'RUNNING')
   GROUP BY lineage.organization_id, lineage.campaign_member_run_id
 ), aggregate AS (
@@ -43,6 +51,7 @@ WITH target_member AS (
   JOIN target_member target
     ON target.organization_id = lineage.organization_id
    AND target.campaign_member_run_id = lineage.campaign_member_run_id
+   AND task.execution_occurrence_id = target.execution_occurrence_id
   GROUP BY lineage.organization_id, lineage.campaign_member_run_id
 )
 UPDATE DeploymentCampaignMemberRun member
@@ -98,11 +107,14 @@ WHERE wave.id = aggregate.wave_run_id
 const campaignExecutionRunningProjectionSQL = `
 WITH target AS (
   SELECT lineage.organization_id, lineage.campaign_member_run_id,
-		 member.wave_run_id
+		 member.wave_run_id, target_task.execution_occurrence_id
   FROM CampaignMemberTaskExecution lineage
   JOIN ExecutionAttempt attempt
     ON attempt.organization_id = lineage.organization_id
    AND attempt.task_id = lineage.task_id
+  JOIN Task target_task
+    ON target_task.id = lineage.task_id
+   AND target_task.organization_id = lineage.organization_id
   JOIN DeploymentCampaignMemberRun member
     ON member.id = lineage.campaign_member_run_id
    AND member.organization_id = lineage.organization_id
@@ -116,9 +128,13 @@ WITH target AS (
   JOIN ExecutionAttempt attempt
     ON attempt.organization_id = lineage.organization_id
    AND attempt.task_id = lineage.task_id
+  JOIN Task member_task
+    ON member_task.id = lineage.task_id
+   AND member_task.organization_id = lineage.organization_id
   JOIN target
     ON target.organization_id = lineage.organization_id
    AND target.campaign_member_run_id = lineage.campaign_member_run_id
+   AND member_task.execution_occurrence_id = target.execution_occurrence_id
   WHERE attempt.status IN ('CLAIMED', 'RUNNING')
   GROUP BY lineage.organization_id, lineage.campaign_member_run_id
 ), projected_member AS (

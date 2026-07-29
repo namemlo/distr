@@ -9,6 +9,7 @@ import (
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/auth"
+	"github.com/distr-sh/distr/internal/campaignruntime"
 	"github.com/distr-sh/distr/internal/campaigns"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/featureflags"
@@ -25,7 +26,11 @@ import (
 // environment scope before calling the runtime service.
 func DeploymentCampaignControlRoutes(r chiopenapi.Router) {
 	repository := db.CampaignRepository{}
-	service := campaigns.NewCampaignControlService(repository, repository)
+	service := campaigns.NewCampaignControlServiceWithAdmissionAuthorizer(
+		repository,
+		repository,
+		campaignruntime.NewDatabaseBackgroundAdmissionAuthorizer(),
+	)
 	featureGate := middleware.ExperimentalFeatureFlagMiddleware(
 		featureflags.KeyOperatorControlPlaneV2,
 	)
@@ -232,8 +237,6 @@ func writeCampaignControlError(
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, apierrors.ErrConflict):
 		http.Error(w, err.Error(), http.StatusConflict)
-	case errors.Is(err, campaigns.ErrCampaignV2RetryUnavailable):
-		http.Error(w, err.Error(), http.StatusNotImplemented)
 	case errors.Is(err, apierrors.ErrForbidden):
 		http.Error(w, err.Error(), http.StatusForbidden)
 	default:

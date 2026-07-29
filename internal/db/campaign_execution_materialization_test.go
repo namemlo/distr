@@ -112,6 +112,80 @@ func TestCampaignTaskBindingsPreserveEveryExactTargetTuple(t *testing.T) {
 	}
 }
 
+func TestCampaignRetryTaskCreationUsesRequestOccurrenceAndImmutableLineage(t *testing.T) {
+	g := NewWithT(t)
+	requestID := uuid.New()
+	candidate := types.CampaignMemberCandidate{
+		OrganizationID:     uuid.New(),
+		ActorUserAccountID: uuid.New(),
+		MemberRunID:        uuid.New(),
+		PlanID:             uuid.New(),
+		CampaignEvidence: types.AdmissionCampaignEvidence{
+			ID: uuid.New(), Revision: 7, Checksum: "sha256:" + strings.Repeat("c", 64),
+		},
+	}
+	admission := types.CampaignMemberAdmission{
+		RunID:       uuid.New(),
+		MemberRunID: candidate.MemberRunID,
+		PlanID:      candidate.PlanID,
+	}
+	authorizer := types.AdmissionAuthorizer(func(
+		context.Context,
+		types.AdmissionAuthorizationContext,
+	) error {
+		return nil
+	})
+
+	request, err := campaignRetryTaskCreationRequest(
+		candidate,
+		admission,
+		requestID,
+		authorizer,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(request.ExecutionOccurrenceID).To(Equal(requestID))
+	g.Expect(request.SchedulerIdempotencyKey).To(Equal(
+		"retry:" + admission.RunID.String() + ":" + requestID.String(),
+	))
+	g.Expect(request.Campaign).To(Equal(&candidate.CampaignEvidence))
+	g.Expect(request.Authorize).NotTo(BeNil())
+}
+
+func TestCampaignRetryBindingsAcceptNewOccurrenceAndRetainMemberRun(t *testing.T) {
+	g := NewWithT(t)
+	organizationID := uuid.New()
+	runID := uuid.New()
+	memberRunID := uuid.New()
+	planID := uuid.New()
+	retryOccurrenceID := uuid.New()
+	task := types.Task{
+		ID:                    uuid.New(),
+		OrganizationID:        organizationID,
+		DeploymentPlanID:      planID,
+		ExecutionOccurrenceID: retryOccurrenceID,
+		DeploymentTargetID:    uuid.New(),
+	}
+
+	bindings, err := campaignTaskBindingsForOccurrence(
+		types.CampaignMemberCandidate{
+			OrganizationID: organizationID,
+			MemberRunID:    memberRunID,
+			PlanID:         planID,
+		},
+		types.CampaignMemberAdmission{
+			RunID: runID, MemberRunID: memberRunID, PlanID: planID,
+		},
+		retryOccurrenceID,
+		[]types.Task{task},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(bindings).To(HaveLen(1))
+	g.Expect(bindings[0].CampaignMemberRunID).To(Equal(memberRunID))
+	g.Expect(bindings[0].TaskID).To(Equal(task.ID))
+}
+
 func TestPendingCampaignDispatchQueryIsTenantLeaseAndAttemptFenced(t *testing.T) {
 	g := NewWithT(t)
 	for _, fragment := range []string{
@@ -119,12 +193,15 @@ func TestPendingCampaignDispatchQueryIsTenantLeaseAndAttemptFenced(t *testing.T)
 		"run.fencing_token = @fencing_token",
 		"run.lease_expires_at > clock_timestamp()",
 		"member_run.status IN ('ADMITTED', 'RUNNING')",
-		"t.execution_occurrence_id = member_run.id",
+		"lineage.campaign_member_run_id",
 		"NOT EXISTS",
 		"FROM ExecutionAttempt",
 	} {
 		g.Expect(loadPendingCampaignDispatchTasksSQL).To(ContainSubstring(fragment))
 	}
+	g.Expect(loadPendingCampaignDispatchTasksSQL).NotTo(ContainSubstring(
+		"t.execution_occurrence_id = member_run.id",
+	))
 }
 
 func TestPendingCampaignDispatchQueryRecoversTasksWithAReadyUnattemptedStep(t *testing.T) {

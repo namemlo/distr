@@ -25,7 +25,6 @@ JOIN DeploymentCampaignMemberRun AS member_run
  AND member_run.organization_id = lineage.organization_id
  AND member_run.campaign_run_id = lineage.campaign_run_id
  AND member_run.deployment_plan_id = lineage.deployment_plan_id
- AND t.execution_occurrence_id = member_run.id
 JOIN DeploymentCampaignRun AS run
   ON run.id = lineage.campaign_run_id
  AND run.organization_id = lineage.organization_id
@@ -73,13 +72,50 @@ func campaignTaskCreationRequest(
 	admission types.CampaignMemberAdmission,
 	authorizer types.AdmissionAuthorizer,
 ) (types.CreateTasksForAdmittedV2PlanRequest, error) {
+	return campaignTaskCreationRequestForOccurrence(
+		candidate,
+		admission,
+		candidate.MemberRunID,
+		fmt.Sprintf("campaign:%s:member:%s", admission.RunID, candidate.MemberRunID),
+		authorizer,
+	)
+}
+
+func campaignRetryTaskCreationRequest(
+	candidate types.CampaignMemberCandidate,
+	admission types.CampaignMemberAdmission,
+	requestID uuid.UUID,
+	authorizer types.AdmissionAuthorizer,
+) (types.CreateTasksForAdmittedV2PlanRequest, error) {
+	if requestID == uuid.Nil {
+		return types.CreateTasksForAdmittedV2PlanRequest{}, apierrors.NewConflict(
+			"campaign retry task materialization requires a request occurrence",
+		)
+	}
+	return campaignTaskCreationRequestForOccurrence(
+		candidate,
+		admission,
+		requestID,
+		fmt.Sprintf("retry:%s:%s", admission.RunID, requestID),
+		authorizer,
+	)
+}
+
+func campaignTaskCreationRequestForOccurrence(
+	candidate types.CampaignMemberCandidate,
+	admission types.CampaignMemberAdmission,
+	occurrenceID uuid.UUID,
+	schedulerIdempotencyKey string,
+	authorizer types.AdmissionAuthorizer,
+) (types.CreateTasksForAdmittedV2PlanRequest, error) {
 	if candidate.OrganizationID == uuid.Nil || candidate.ActorUserAccountID == uuid.Nil ||
 		candidate.MemberRunID == uuid.Nil || candidate.PlanID == uuid.Nil ||
 		candidate.CampaignEvidence.ID == uuid.Nil ||
 		candidate.CampaignEvidence.Revision <= 0 ||
 		strings.TrimSpace(candidate.CampaignEvidence.Checksum) == "" ||
 		admission.RunID == uuid.Nil || admission.MemberRunID != candidate.MemberRunID ||
-		admission.PlanID != candidate.PlanID || authorizer == nil {
+		admission.PlanID != candidate.PlanID || occurrenceID == uuid.Nil ||
+		strings.TrimSpace(schedulerIdempotencyKey) == "" || authorizer == nil {
 		return types.CreateTasksForAdmittedV2PlanRequest{}, apierrors.NewConflict(
 			"campaign task materialization requires immutable tenant evidence and authorization",
 		)
@@ -88,9 +124,9 @@ func campaignTaskCreationRequest(
 	return types.CreateTasksForAdmittedV2PlanRequest{
 		OrganizationID:          candidate.OrganizationID,
 		DeploymentPlanID:        candidate.PlanID,
-		ExecutionOccurrenceID:   candidate.MemberRunID,
+		ExecutionOccurrenceID:   occurrenceID,
 		ActorUserAccountID:      candidate.ActorUserAccountID,
-		SchedulerIdempotencyKey: fmt.Sprintf("campaign:%s:member:%s", admission.RunID, candidate.MemberRunID),
+		SchedulerIdempotencyKey: schedulerIdempotencyKey,
 		ConcurrencyPolicy:       types.TaskConcurrencyPolicyQueue,
 		Campaign:                &evidence,
 		Authorize:               authorizer,
@@ -102,6 +138,25 @@ func campaignTaskBindings(
 	admission types.CampaignMemberAdmission,
 	tasks []types.Task,
 ) ([]CampaignMemberTaskExecutionBinding, error) {
+	return campaignTaskBindingsForOccurrence(
+		candidate,
+		admission,
+		candidate.MemberRunID,
+		tasks,
+	)
+}
+
+func campaignTaskBindingsForOccurrence(
+	candidate types.CampaignMemberCandidate,
+	admission types.CampaignMemberAdmission,
+	occurrenceID uuid.UUID,
+	tasks []types.Task,
+) ([]CampaignMemberTaskExecutionBinding, error) {
+	if occurrenceID == uuid.Nil {
+		return nil, apierrors.NewConflict(
+			"campaign task execution occurrence is required",
+		)
+	}
 	if len(tasks) == 0 {
 		return nil, apierrors.NewConflict("campaign admission produced no tasks")
 	}
@@ -109,7 +164,7 @@ func campaignTaskBindings(
 	for _, task := range tasks {
 		if task.ID == uuid.Nil || task.OrganizationID != candidate.OrganizationID ||
 			task.DeploymentPlanID != candidate.PlanID ||
-			task.ExecutionOccurrenceID != candidate.MemberRunID ||
+			task.ExecutionOccurrenceID != occurrenceID ||
 			task.DeploymentTargetID == uuid.Nil {
 			return nil, apierrors.NewConflict(
 				"campaign task does not match exact member execution lineage",
@@ -147,6 +202,43 @@ func materializeAdmittedCampaignTasks(
 		return nil, err
 	}
 	bindings, err := campaignTaskBindings(candidate, admission, tasks)
+	if err != nil {
+		return nil, err
+	}
+	for _, binding := range bindings {
+		if err := BindCampaignMemberTaskExecution(ctx, binding); err != nil {
+			return nil, err
+		}
+	}
+	return tasks, nil
+}
+
+func materializeAdmittedCampaignRetryTasks(
+	ctx context.Context,
+	candidate types.CampaignMemberCandidate,
+	admission types.CampaignMemberAdmission,
+	requestID uuid.UUID,
+	authorizer types.AdmissionAuthorizer,
+) ([]types.Task, error) {
+	request, err := campaignRetryTaskCreationRequest(
+		candidate,
+		admission,
+		requestID,
+		authorizer,
+	)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := CreateTasksForAdmittedV2Plan(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	bindings, err := campaignTaskBindingsForOccurrence(
+		candidate,
+		admission,
+		requestID,
+		tasks,
+	)
 	if err != nil {
 		return nil, err
 	}

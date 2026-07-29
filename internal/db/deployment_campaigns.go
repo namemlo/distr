@@ -1433,7 +1433,7 @@ const loadCampaignCandidatesSQL = `
 SELECT
   campaign_run.organization_id,
   campaign_run.started_by_useraccount_id,
-  revision.campaign_draft_id,
+  revision.deployment_campaign_draft_id,
   revision.revision_number,
   revision.canonical_checksum,
   member_run.id,
@@ -1691,6 +1691,28 @@ WHERE id = @run_id
   AND organization_id = @organization_id
   AND version = @expected_version
   AND state NOT IN ('FAILED', 'COMPLETED', 'CANCELED')`
+
+const reactivateCampaignV2RetryMemberSQL = `
+WITH reactivated_member AS (
+  UPDATE DeploymentCampaignMemberRun
+  SET status = 'ADMITTED',
+      admitted_at = @retried_at,
+      admitted_fencing_token = NULLIF(@fencing_token, 0),
+      completed_at = NULL
+  WHERE id = @member_run_id
+    AND campaign_run_id = @run_id
+    AND organization_id = @organization_id
+    AND deployment_plan_id = @deployment_plan_id
+    AND status IN ('FAILED', 'CANCELED')
+  RETURNING wave_run_id, organization_id
+)
+UPDATE DeploymentCampaignWaveRun AS wave_run
+SET status = 'RUNNING',
+    completed_at = NULL
+FROM reactivated_member
+WHERE wave_run.id = reactivated_member.wave_run_id
+  AND wave_run.organization_id = reactivated_member.organization_id
+  AND wave_run.status IN ('FAILED', 'CANCELED', 'RUNNING')`
 
 const instantiateCampaignRunSQL = `
 WITH selected_revision AS (
@@ -2295,6 +2317,216 @@ FOR UPDATE`, pgx.NamedArgs{
 	auditInput.CampaignControlChecksum = checksum
 	if err := recordCampaignAuditMutation(txCtx, auditInput); err != nil {
 		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func (CampaignRepository) PersistCampaignV2MemberRetry(
+	ctx context.Context,
+	input types.CampaignMemberControlInput,
+	authorizer types.AdmissionAuthorizer,
+) (*types.DeploymentPlan, error) {
+	if authorizer == nil {
+		return nil, errors.New("campaign v2 retry admission authorizer is not wired")
+	}
+	if input.RequestedAt.IsZero() {
+		input.RequestedAt = time.Now().UTC()
+	}
+	input.Kind = types.CampaignControlKindRetry
+	checksum := campaignRetryChecksum(input)
+	tx, err := internalctx.GetDb(ctx).Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	txCtx := internalctx.WithDb(ctx, tx)
+	if _, err := tx.Exec(ctx, lockCampaignControlRequestSQL, pgx.NamedArgs{
+		"organization_id": input.OrganizationID,
+		"request_id":      input.RequestID,
+	}); err != nil {
+		return nil, err
+	}
+	if plan, found, err := lookupCampaignRetryReplay(ctx, tx, input, checksum); err != nil {
+		return nil, err
+	} else if found {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return plan, nil
+	}
+	run, err := scanCampaignRun(tx.QueryRow(ctx, lockCampaignRunForControlSQL, pgx.NamedArgs{
+		"run_id": input.RunID, "organization_id": input.OrganizationID,
+	}))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	updatedRun, err := campaigns.DecideCampaignMemberMutation(*run, input)
+	if err != nil {
+		return nil, apierrors.NewConflict(err.Error())
+	}
+	candidate := types.CampaignMemberCandidate{
+		OrganizationID:     input.OrganizationID,
+		ActorUserAccountID: input.ActorID,
+		MemberRunID:        input.MemberRunID,
+	}
+	var memberStatus string
+	err = tx.QueryRow(ctx, `
+SELECT
+  member_run.status,
+  member_run.wave_run_id,
+  member_run.wave_order,
+  member_run.member_order,
+  member_run.deployment_plan_id,
+  revision.deployment_campaign_draft_id,
+  revision.revision_number,
+  revision.canonical_checksum
+FROM DeploymentCampaignMemberRun AS member_run
+JOIN DeploymentCampaignRun AS campaign_run
+  ON campaign_run.id = member_run.campaign_run_id
+ AND campaign_run.organization_id = member_run.organization_id
+JOIN DeploymentCampaignRevision AS revision
+  ON revision.id = campaign_run.campaign_revision_id
+ AND revision.organization_id = campaign_run.organization_id
+WHERE member_run.id = @member_run_id
+  AND member_run.campaign_run_id = @run_id
+  AND member_run.organization_id = @organization_id
+FOR UPDATE OF member_run`, pgx.NamedArgs{
+		"member_run_id":   input.MemberRunID,
+		"run_id":          input.RunID,
+		"organization_id": input.OrganizationID,
+	}).Scan(
+		&memberStatus,
+		&candidate.WaveRunID,
+		&candidate.WaveOrder,
+		&candidate.MemberOrder,
+		&candidate.PlanID,
+		&candidate.CampaignEvidence.ID,
+		&candidate.CampaignEvidence.Revision,
+		&candidate.CampaignEvidence.Checksum,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := campaigns.ValidateCampaignMemberRetryStatus(memberStatus); err != nil {
+		return nil, apierrors.NewConflict(err.Error())
+	}
+	admission := types.CampaignMemberAdmission{
+		RunID:        input.RunID,
+		WaveRunID:    candidate.WaveRunID,
+		MemberRunID:  candidate.MemberRunID,
+		PlanID:       candidate.PlanID,
+		WaveOrder:    candidate.WaveOrder,
+		MemberOrder:  candidate.MemberOrder,
+		AdmittedAt:   input.RequestedAt,
+		FencingToken: run.FencingToken,
+	}
+	tasks, err := materializeAdmittedCampaignRetryTasks(
+		txCtx,
+		candidate,
+		admission,
+		input.RequestID,
+		authorizer,
+	)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := getDeploymentPlan(txCtx, candidate.PlanID, input.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	response, err := json.Marshal(plan)
+	if err != nil {
+		return nil, err
+	}
+	result := types.CampaignControlResult{
+		RequestID: input.RequestID,
+		Status:    types.CampaignControlStatusApplied,
+		Run:       updatedRun,
+	}
+	controlID := uuid.New()
+	tag, err := tx.Exec(ctx, insertCampaignControlSQL, campaignControlArgs(
+		controlID,
+		input.CampaignControlInput,
+		input.MemberRunID,
+		checksum,
+		result,
+		response,
+	))
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, apierrors.NewConflict("campaign retry idempotency serialization failed")
+	}
+	tag, err = tx.Exec(ctx, reactivateCampaignV2RetryMemberSQL, pgx.NamedArgs{
+		"retried_at":         input.RequestedAt,
+		"fencing_token":      run.FencingToken,
+		"member_run_id":      input.MemberRunID,
+		"run_id":             input.RunID,
+		"organization_id":    input.OrganizationID,
+		"deployment_plan_id": candidate.PlanID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, apierrors.NewConflict("campaign retry member changed during materialization")
+	}
+	tag, err = tx.Exec(ctx, applyCampaignExclusionVersionSQL, pgx.NamedArgs{
+		"updated_at":       input.RequestedAt,
+		"request_id":       input.RequestID,
+		"control_kind":     input.Kind,
+		"member_run_id":    input.MemberRunID,
+		"reason":           input.Reason,
+		"run_id":           input.RunID,
+		"organization_id":  input.OrganizationID,
+		"expected_version": input.ExpectedVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, apierrors.NewConflict("campaign retry lost optimistic update")
+	}
+	lineage, err := loadCampaignMemberAuditLineage(
+		txCtx,
+		input.OrganizationID,
+		input.MemberRunID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	auditInput := campaignMemberAuditInput(
+		lineage,
+		"campaign.member.retried",
+		&input.ActorID,
+	)
+	auditInput.CampaignControlRequestID = &controlID
+	auditInput.CampaignControlChecksum = checksum
+	if err := recordCampaignAuditMutation(txCtx, auditInput); err != nil {
+		return nil, err
+	}
+	for index := range tasks {
+		taskInput := campaignMemberAuditInput(
+			lineage,
+			"campaign.member.task.materialized",
+			&input.ActorID,
+		)
+		taskInput.TaskID = &tasks[index].ID
+		taskInput.CampaignControlRequestID = &controlID
+		taskInput.CampaignControlChecksum = checksum
+		if err := recordCampaignAuditMutation(txCtx, taskInput); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err

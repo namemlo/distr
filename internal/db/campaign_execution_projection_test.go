@@ -7,9 +7,15 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestCampaignExecutionProjectionAggregatesAllBoundTasksBeforeMemberSuccess(t *testing.T) {
+func TestCampaignExecutionProjectionAggregatesOnlyTheTriggeredRetryOccurrence(t *testing.T) {
 	g := NewWithT(t)
 
+	g.Expect(campaignMemberExecutionProjectionSQL).To(ContainSubstring(
+		"target_task.execution_occurrence_id",
+	))
+	g.Expect(campaignMemberExecutionProjectionSQL).To(ContainSubstring(
+		"task.execution_occurrence_id = target.execution_occurrence_id",
+	))
 	g.Expect(campaignMemberExecutionProjectionSQL).To(ContainSubstring(
 		"GROUP BY lineage.organization_id, lineage.campaign_member_run_id",
 	))
@@ -31,6 +37,13 @@ func TestCampaignExecutionProjectionAggregatesAllBoundTasksBeforeMemberSuccess(t
 	g.Expect(activeAt).To(BeNumerically(">=", 0))
 	g.Expect(failedAt).To(BeNumerically(">", activeAt))
 	g.Expect(canceledAt).To(BeNumerically(">", activeAt))
+
+	g.Expect(campaignExecutionRunningProjectionSQL).To(ContainSubstring(
+		"target_task.execution_occurrence_id",
+	))
+	g.Expect(campaignExecutionRunningProjectionSQL).To(ContainSubstring(
+		"member_task.execution_occurrence_id = target.execution_occurrence_id",
+	))
 }
 
 func TestCampaignWaveProjectionDoesNotCompleteUntilEveryMemberIsTerminal(t *testing.T) {

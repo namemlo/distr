@@ -11,7 +11,6 @@ import (
 )
 
 var (
-	ErrCampaignV2RetryUnavailable  = errors.New("campaign v2 retry unavailable until PR-075")
 	ErrCampaignControlUnauthorized = errors.New("campaign control not authorized")
 )
 
@@ -201,9 +200,18 @@ type CampaignRetryStore interface {
 	) (*types.DeploymentPlan, error)
 }
 
+type CampaignV2RetryStore interface {
+	PersistCampaignV2MemberRetry(
+		context.Context,
+		types.CampaignMemberControlInput,
+		types.AdmissionAuthorizer,
+	) (*types.DeploymentPlan, error)
+}
+
 type CampaignController struct {
-	store       CampaignControlStore
-	planCreator SupersedingPlanCreator
+	store               CampaignControlStore
+	planCreator         SupersedingPlanCreator
+	admissionAuthorizer types.AdmissionAuthorizer
 }
 
 type CampaignControlService struct {
@@ -215,9 +223,21 @@ func NewCampaignControlService(
 	store CampaignControlStore,
 	planCreator SupersedingPlanCreator,
 ) *CampaignControlService {
+	return NewCampaignControlServiceWithAdmissionAuthorizer(store, planCreator, nil)
+}
+
+func NewCampaignControlServiceWithAdmissionAuthorizer(
+	store CampaignControlStore,
+	planCreator SupersedingPlanCreator,
+	authorizer types.AdmissionAuthorizer,
+) *CampaignControlService {
 	return &CampaignControlService{
-		controller: NewCampaignController(store, planCreator),
-		store:      store,
+		controller: NewCampaignControllerWithAdmissionAuthorizer(
+			store,
+			planCreator,
+			authorizer,
+		),
+		store: store,
 	}
 }
 
@@ -246,7 +266,19 @@ func NewCampaignController(
 	store CampaignControlStore,
 	planCreator SupersedingPlanCreator,
 ) *CampaignController {
-	return &CampaignController{store: store, planCreator: planCreator}
+	return NewCampaignControllerWithAdmissionAuthorizer(store, planCreator, nil)
+}
+
+func NewCampaignControllerWithAdmissionAuthorizer(
+	store CampaignControlStore,
+	planCreator SupersedingPlanCreator,
+	authorizer types.AdmissionAuthorizer,
+) *CampaignController {
+	return &CampaignController{
+		store:               store,
+		planCreator:         planCreator,
+		admissionAuthorizer: authorizer,
+	}
 }
 
 func (c *CampaignController) PauseCampaign(
@@ -306,7 +338,18 @@ func (c *CampaignController) RetryCampaignMember(
 		}
 		return c.planCreator.CreateSupersedingPlan(ctx, input)
 	case "v2":
-		return nil, ErrCampaignV2RetryUnavailable
+		if c.admissionAuthorizer == nil {
+			return nil, errors.New("campaign v2 retry admission authorizer is not wired")
+		}
+		retryStore, ok := c.store.(CampaignV2RetryStore)
+		if !ok {
+			return nil, errors.New("campaign v2 retry store is not wired")
+		}
+		return retryStore.PersistCampaignV2MemberRetry(
+			ctx,
+			input,
+			c.admissionAuthorizer,
+		)
 	default:
 		return nil, fmt.Errorf("unsupported campaign retry protocol %q", input.ProtocolVersion)
 	}

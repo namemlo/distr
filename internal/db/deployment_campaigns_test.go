@@ -545,3 +545,28 @@ func TestCampaignControlSQLDeduplicatesAndSerializesConflicts(t *testing.T) {
 	g.Expect(applyCampaignExclusionVersionSQL).To(ContainSubstring("version = version + 1"))
 	g.Expect(lockCampaignControlRequestSQL).To(ContainSubstring("pg_advisory_xact_lock"))
 }
+
+func TestCampaignV2RetryReactivatesOnlyTheLockedFrozenMember(t *testing.T) {
+	g := NewWithT(t)
+	for _, fragment := range []string{
+		"status = 'ADMITTED'",
+		"admitted_at = @retried_at",
+		"completed_at = NULL",
+		"id = @member_run_id",
+		"campaign_run_id = @run_id",
+		"organization_id = @organization_id",
+		"deployment_plan_id = @deployment_plan_id",
+		"status IN ('FAILED', 'CANCELED')",
+		"UPDATE DeploymentCampaignWaveRun AS wave_run",
+		"completed_at = NULL",
+		"wave_run.status IN ('FAILED', 'CANCELED', 'RUNNING')",
+	} {
+		g.Expect(reactivateCampaignV2RetryMemberSQL).To(ContainSubstring(fragment))
+	}
+	g.Expect(loadCampaignCandidatesSQL).To(ContainSubstring(
+		"revision.deployment_campaign_draft_id",
+	))
+	g.Expect(loadCampaignCandidatesSQL).NotTo(ContainSubstring(
+		"revision.campaign_draft_id",
+	))
+}
