@@ -163,11 +163,11 @@ events, and the absence of application-audit deletion.
 
 Migration 162 was applied and exercised directly against isolated PostgreSQL
 16 prerequisites; its append-only evidence guards, approval binding, refusal
-paths, and empty up/down path passed. The repository's full fresh-schema
-migration harness is not green: it stops before migration 162 at the historical
-migration-142 constraint-name collision
-`releasecontractv1extractionlineage_status_check already exists`
-(`SQLSTATE 42710`). Migration 142 was not changed by PR-082.
+paths, and empty up/down path passed. PR-082 did not change the historical
+migration-142 constraint-name collision. PR-083 subsequently gives the inline
+status-value check a distinct explicit name while preserving both status
+constraints. A PostgreSQL 16.14 and 18.4 full-chain rerun remains required;
+the isolated migration-162 result does not certify it.
 
 These tests are community proof only. They do not demonstrate a live cleanup,
 restore drill, staging result, or production result.

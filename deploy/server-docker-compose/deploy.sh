@@ -579,32 +579,111 @@ detect_goarch() {
   printf '%s' "${arch}" || return
 }
 
-ensure_local_sbom() {
-  shopt -s nullglob || return
-  local sboms=(dist/*.spdx.json)
-  shopt -u nullglob || return
-  if ((${#sboms[@]} > 0)); then
-    return
-  fi
-
-  local namespace_stamp created_at
-  namespace_stamp="$(date -u +%Y%m%dT%H%M%SZ)" || return
-  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return
-
-  cat > dist/local-build.spdx.json <<JSON
-{
-  "spdxVersion": "SPDX-2.3",
-  "dataLicense": "CC0-1.0",
-  "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "distr-local-source-build",
-  "documentNamespace": "https://distr.example.invalid/spdx/local-${namespace_stamp}",
-  "creationInfo": {
-    "created": "${created_at}",
-    "creators": ["Tool: deploy/server-docker-compose/deploy.sh"]
+generate_hub_content_sbom() {
+  local binary="$1" commit="$2" sbom sidecar temporary binary_sha
+  need_cmd node || return
+  need_cmd sha256sum || return
+  sbom="dist/release-${DISTR_IMAGE_TAG}.spdx.json"
+  sidecar="${sbom}.sha256"
+  temporary="${sbom}.tmp"
+  [[ -f "$binary" && ! -L "$binary" ]] || {
+    die "built Hub binary is missing before content SBOM generation"
+    return 1
+  }
+  [[ ! -e "$sbom" && ! -e "$sidecar" && ! -e "$temporary" ]] || {
+    die "refusing to replace existing Hub content SBOM evidence"
+    return 1
+  }
+  binary_sha="$(sha256sum "$binary" | awk '{print $1}')" || return
+  [[ "$binary_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  node - "$temporary" "$DISTR_IMAGE_TAG" "$commit" "$binary_sha" <<'NODE' || return
+const fs = require('node:fs');
+const [file, version, commit, binarySha] = process.argv.slice(2);
+const document = {
+  spdxVersion: 'SPDX-2.3',
+  dataLicense: 'CC0-1.0',
+  SPDXID: 'SPDXRef-DOCUMENT',
+  name: `distr-hub-content-${version}`,
+  documentNamespace: `https://distr.sh/spdx/hub/${commit}/${version}`,
+  creationInfo: {
+    created: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    creators: ['Tool: deploy/server-docker-compose/deploy.sh'],
   },
-  "packages": []
+  documentDescribes: ['SPDXRef-Package-distr-hub'],
+  packages: [{
+    name: 'distr-hub',
+    SPDXID: 'SPDXRef-Package-distr-hub',
+    versionInfo: version,
+    downloadLocation: 'NOASSERTION',
+    filesAnalyzed: true,
+  }],
+  files: [{
+    fileName: '/distr',
+    SPDXID: 'SPDXRef-File-distr',
+    checksums: [{algorithm: 'SHA256', checksumValue: binarySha}],
+  }],
+  relationships: [{
+    spdxElementId: 'SPDXRef-Package-distr-hub',
+    relationshipType: 'CONTAINS',
+    relatedSpdxElement: 'SPDXRef-File-distr',
+  }],
+};
+fs.writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`, {mode: 0o600});
+NODE
+  mv -- "$temporary" "$sbom" || return
+  (
+    cd "$(dirname "$sbom")" || return
+    sha256sum "$(basename "$sbom")" >"$(basename "$sidecar")" || return
+    sha256sum -c --status "$(basename "$sidecar")" || return
+  ) || return
 }
-JSON
+
+generate_image_sbom() {
+  local image_ref="$1" sbom temporary sidecar
+  need_cmd node || return
+  need_cmd sha256sum || return
+  sbom="dist/release-${DISTR_IMAGE_TAG}.spdx.json"
+  sidecar="${sbom}.sha256"
+  temporary="${sbom}.tmp"
+  [[ -f "$sbom" && ! -L "$sbom" && -f "$sidecar" && ! -L "$sidecar" && ! -e "$temporary" ]] || {
+    die "checksummed Hub content SBOM is required before the image build"
+    return 1
+  }
+  (
+    cd "$(dirname "$sbom")" || return
+    sha256sum -c --status "$(basename "$sidecar")" || return
+  ) || return
+
+  info "generating SPDX SBOM from Hub image content ${image_ref}" || return
+  docker sbom "$image_ref" --format spdx-json >"$temporary" || {
+    rm -f -- "$temporary"
+    die "Docker SBOM generation failed closed"
+    return 1
+  }
+  node - "$temporary" <<'NODE' || {
+const fs = require('node:fs');
+const document = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (
+  document.spdxVersion !== 'SPDX-2.3' ||
+  document.SPDXID !== 'SPDXRef-DOCUMENT' ||
+  !Array.isArray(document.documentDescribes) ||
+  document.documentDescribes.length === 0 ||
+  !Array.isArray(document.packages) ||
+  document.packages.length === 0
+) {
+  throw new Error('SPDX document must describe at least one image package');
+}
+NODE
+    rm -f -- "$temporary"
+    die "SPDX document must describe at least one image package"
+    return 1
+  }
+  mv -- "$temporary" "$sbom" || return
+  (
+    cd "$(dirname "$sbom")" || return
+    sha256sum "$(basename "$sbom")" >"$(basename "$sidecar")" || return
+    sha256sum -c --status "$(basename "$sidecar")" || return
+  ) || return
 }
 
 build_image() {
@@ -630,7 +709,7 @@ build_image() {
   info "building community Hub from source for commit ${short_commit}" || return
   VERSION="${DISTR_IMAGE_TAG}" mise run build:hub:community || return
   cp dist/distr "dist/distr-${arch}" || return
-  ensure_local_sbom || return
+  generate_hub_content_sbom "dist/distr-${arch}" "$commit" || return
 
   info "building Hub image ${image_ref}" || return
   docker build \
@@ -640,6 +719,7 @@ build_image() {
     -f Dockerfile.hub \
     -t "${image_ref}" \
     . || return
+  generate_image_sbom "$image_ref" || return
 }
 
 push_image() {

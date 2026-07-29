@@ -16,6 +16,36 @@ compatibility, or clear the fence. Resume the applicable normal timestamp-expand
 finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
 migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
 
+## PR-083 Integrated Upgrade Through Migration 162
+
+PR-083 certifies an ordered upgrade from migration 138 through migration 162; it does not add another migration.
+Before a release can be signed, retain separate results for clean install, upgrade, safe down/refusal, checkpoint
+restart, v1-only flags-off, mixed v1/v2, and retained-v2-history flags-off paths on the supported PostgreSQL 16.14
+and 18.4 images. The required matrix and current pending status are recorded in the
+[community release readiness package](../release/community-release-readiness.md#integrated-control-plane-release-gate).
+
+Migration 162 adds `SampleRetirementJob`, `SampleRetirementItem`, `SampleRetirementCheckpoint`, and
+`AuditSubjectTombstone`. It does not run cleanup during upgrade. Do not create or apply a retirement job merely to
+prove that the migration exists. Any later sample retirement requires the independent
+[backup, restore, preview, approval, apply, and verify procedure](../operations/sample-domain-retirement.md).
+Downgrade must refuse rather than delete retirement jobs, checkpoints, tombstones, or retained audit evidence.
+
+The operator workflow remains default-off:
+
+- `operator_control_plane_v2` gates new operator control-plane admission.
+- `executor_protocol_v2` is effective only with the umbrella flag.
+- Disabling both flags preserves untouched v1 behavior and retained v2 history; it does not convert in-flight work
+  or authorize schema downgrade.
+
+Follow the [v1/v2 rollback procedure](../operations/control-plane-v1-v2-rollback.md) for binary and flag rollback,
+and the [backup and restore procedure](../operations/control-plane-backup-restore.md) for database recovery. A
+restore is a separate approved recovery operation, not an automatic consequence of disabling a flag.
+
+The immutable handoff for an integrated upgrade must bind the source commit and dirty state, OCI revision, platform,
+Hub image digest, SBOM and signed provenance references, database backup and isolated-restore checksums, migration
+report, previous-known-good image, and post-deployment verification. Pending Docker, migration, security, artifact,
+or deployment evidence must remain labeled pending; fixture proof is not a substitute.
+
 ## PR-049 Compatibility Metadata
 
 Supported source range: any fork build before PR-049 that has direct `Deployment` and `DeploymentRevision`

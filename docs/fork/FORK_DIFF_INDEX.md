@@ -4,12 +4,14 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-PR-000 through PR-056 and the speculative PR-058 backend slice are implemented locally. PR-054A timestamp-expand runtime, migration, audited dirty-marker
-recovery, and operator documentation are implemented locally; final acceptance remains pending. PR-055 establishes
-default-off, layered kill switches for the operator control plane and executor protocol v2 without changing v1
-behavior. PR-056 adds the organization-scoped canonical deployment registry; its isolated PostgreSQL integration
-legs remain mandatory in CI. PR-058 adds immutable target configuration snapshots and bounded object verification;
-it remains based directly on the PR-056 checkpoint until PR-057 is accepted and migration 140 is available.
+Entries through PR-083 are recorded below; each entry's status and evidence
+boundary remain authoritative. PR-054A timestamp-expand runtime, migration,
+audited dirty-marker recovery, and operator documentation are implemented
+locally, while final acceptance remains pending. PR-055 through PR-082 build
+the default-off integrated control plane through migration 162. PR-083 adds
+the release, evidence, operations, and cutover contract; its PostgreSQL matrix,
+full build/test suite, Docker/live proof, security scans, immutable image
+evidence, and post-deployment sign-off remain pending.
 
 ## Tracking Template
 
@@ -1554,6 +1556,7 @@ Use one entry per pull request:
   provider or adopter semantics.
 - Compatibility notes: V1 callbacks and retry rules remain unchanged. V2
   unknown evidence remains explicit and cannot be projected as success.
+
 ### PR-077 - Desired state, independent observation, and drift
 
 - Status: Implemented and review-hardened on the prepared synthetic branch; focused backend, vet, new-diff lint,
@@ -1587,6 +1590,7 @@ Use one entry per pull request:
 - Compatibility notes: v1 execution, `TargetComponentState`, and `TargetComponentObservation` remain unchanged.
   The PR-072 scheduler wires `internal/observation.CampaignResolver` and `CampaignVerifier` structurally during
   ordered integration after bridging its plan-local provider placement to canonical `ComponentInstance.id`.
+
 ### PR-078 - Correlated control-plane audit and external export
 
 - Status: Audit/export core implemented on an isolated synthetic branch; cross-domain instrumentation and the
@@ -1698,3 +1702,78 @@ Use one entry per pull request:
   proprietary artifacts.
 - Compatibility notes: Existing v1 behavior remains a regression gate. A
   disabled v2 feature fails closed and does not silently fall back to v1.
+
+### PR-082 - Allowlisted sample-domain retirement and audit tombstones
+
+- Status: Implementation and focused community evidence are present locally;
+  the integrated migration, Docker, security, staging, live, and external
+  rollout gates remain open.
+- Upstream base: PR-081 checkpoint.
+- Feature flags: Uses the default-off operator control-plane boundary; no
+  general cleanup or retention-apply flag is introduced.
+- User-facing behavior: Operators can preview, inspect, apply, resume, and
+  verify one exact-ID, ownership-proven sample-retirement job. Apply binds
+  `previewChecksum`, `approvalId`, and `approvalChecksum`; repeated completed
+  apply is a read-only no-op.
+- Database changes: Migration 162 adds `SampleRetirementJob`,
+  `SampleRetirementItem`, `SampleRetirementCheckpoint`, and
+  `AuditSubjectTombstone`. It does not delete application audit events or run
+  cleanup during migration.
+- API changes: Adds organization-scoped
+  `/api/v1/sample-retirements` preview, detail, apply, and verify routes.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Adds
+  [PR-082 fork notes](PR-082_SAMPLE_DOMAIN_RETIREMENT.md) and the
+  [sample-domain retirement procedure](../operations/sample-domain-retirement.md).
+- Tests: The focused type, domain, repository, handler, CLI, migration, and
+  neutral-fixture verification plan covers exact allowlists, ownership,
+  protected reverse references, backup/restore proof, immutable checksums,
+  interruption, idempotency, counts, tombstone lineage, and audit retention.
+  A complete integrated result is not recorded here, and no live backup,
+  restore, cleanup, staging, or production result is claimed.
+- Upstream contribution notes: Closed, generic removable subject types and
+  exact-ID safety contracts; no broad delete, age/name selection, provider
+  assumption, private identity, or credential.
+- Compatibility notes: Existing release, deployment, execution, observation,
+  reconciliation, and audit reads remain unchanged unless an operator
+  explicitly applies a reviewed retirement job. Downgrade must not erase jobs,
+  checkpoints, tombstones, or retained audit evidence.
+
+### PR-083 - Integrated control-plane hardening and cutover contract
+
+- Status: Release contract, operations/API documentation, acceptance ledger,
+  and local validation tooling are present. PostgreSQL migration matrix, full
+  build/test suite, Docker Compose/live proof, security scans, immutable image,
+  SBOM/provenance, migration report, and post-deployment sign-off remain
+  explicitly pending.
+- Upstream base: PR-082 checkpoint.
+- Feature flags: `operator_control_plane_v2` remains the default-off umbrella;
+  `executor_protocol_v2` is effective only with it. Disabling v2 prevents new
+  admission while preserving untouched v1 behavior and retained v2 history.
+- User-facing behavior: No new deployment abstraction. Consolidates the
+  build-once/publish-only, capability-DAG, immutable-config, plan/approval,
+  campaign, signed/fenced execution, independent-observation, reconciliation,
+  previous-state, audit, backup/recovery, incident, and rollback contracts.
+- Database changes: No PR-083 migration; certifies the ordered chain through
+  migration 162.
+- API changes: No new PR-083 route family; indexes and verifies the integrated
+  operator, executor, observer, audit, and retirement contracts.
+- UI changes: No new workspace; retains the PR-080 control room and legacy
+  deployment compatibility.
+- Agent protocol changes: No silent protocol conversion or fallback; protocol
+  version remains frozen in each plan.
+- Documentation: Adds the [PR-083 hardening
+  contract](PR-083_ENTERPRISE_CONTROL_PLANE_HARDENING.md), AC-01 through AC-80
+  ledger, operator API guide, deployment, backup/restore, rollback, campaign
+  incident procedures, and updates the community release/upgrade/API/security
+  indexes.
+- Tests: The ledger checker validates one primary owner and retained community
+  evidence per acceptance row. It does not satisfy pending environment,
+  artifact, security, Docker, staging, live, or post-deployment gates.
+- Upstream contribution notes: Community-neutral operating contract and
+  evidence schema; external environment inventory and mutation remain separate
+  authorized work.
+- Compatibility notes: Existing direct/v1 deployment behavior remains
+  supported. Binary rollback, flag disablement, schema downgrade, and database
+  restore are separate operations with distinct evidence and refusal rules.

@@ -1,7 +1,16 @@
 # Community Release Readiness
 
-This document is the release-readiness package for the roadmap through PR-050. It is community-neutral and
-does not depend on adopter-specific infrastructure.
+This document is the release-readiness package for the community roadmap through PR-083. It is community-neutral
+and does not depend on a particular deployment environment. PR-083 defines the integrated release gate; it does not
+convert focused or fixture evidence into a completed Docker, staging, live, or security gate.
+
+The authoritative integrated references are:
+
+- [PR-081 neutral control-plane proof](../fork/PR-081_NEUTRAL_CONTROL_PLANE_PROOF.md);
+- [PR-082 sample-domain retirement](../fork/PR-082_SAMPLE_DOMAIN_RETIREMENT.md);
+- [PR-083 control-plane hardening](../fork/PR-083_ENTERPRISE_CONTROL_PLANE_HARDENING.md);
+- [operator control-plane API](../api/operator-control-plane-api.md); and
+- [AC-01 through AC-80 acceptance ledger](enterprise-control-plane-acceptance.md).
 
 ## Release Notes
 
@@ -46,26 +55,33 @@ the generic body `Internal Server Error\n` instead of exposing database details.
 
 Keep experimental flags enabled only for the surfaces being evaluated.
 
-| Flag                        | Area                       | Release note                                                             |
-| --------------------------- | -------------------------- | ------------------------------------------------------------------------ |
-| `environments`              | Environments               | Required by lifecycle and release workflows.                             |
-| `lifecycles`                | Lifecycles                 | Requires environments for phase selection.                               |
-| `channels`                  | Channels                   | Used by release rules and Config as Code examples.                       |
-| `release_bundles`           | Release bundles            | Required by CI release API and release UI.                               |
-| `deployment_processes`      | Deployment processes       | Required by process revisions and planning.                              |
-| `scoped_variables_v2`       | Variable sets and resolver | Required by snapshots, drift, and planning.                              |
-| `deployment_plans`          | Deployment plans           | Required by plan preview and task creation.                              |
-| `task_queue`                | Durable tasks              | Required by task execution.                                              |
-| `agent_capabilities`        | Agent capabilities         | Required when advanced plans validate target action support.             |
-| `agent_task_leases`         | Agent task leases          | Required when agents claim queued tasks.                                 |
-| `step_events`               | Step events                | Required for task timeline, logs, and bounded outputs.                   |
-| `deployment_timeline`       | Timeline and compare       | Requires advanced task and compatibility data.                           |
-| `retention_policies`        | Retention                  | Preview and dry-run only until destructive apply is separately reviewed. |
-| `observability_metrics`     | Metrics                    | Requires `METRICS_ENABLED=true` for metrics exposure.                    |
-| `observability_tracing`     | Tracing                    | Emits spans only when enabled.                                           |
-| `observability_dashboards`  | Dashboard catalog          | Static dashboard catalog API.                                            |
-| `observability_correlation` | Correlation links          | Adds link and query templates where supported.                           |
-| `config_as_code`            | Config as Code             | Validation and authority guards only; no sync/apply workflow.            |
+| Flag                        | Area                       | Release note                                                               |
+| --------------------------- | -------------------------- | -------------------------------------------------------------------------- |
+| `environments`              | Environments               | Required by lifecycle and release workflows.                               |
+| `lifecycles`                | Lifecycles                 | Requires environments for phase selection.                                 |
+| `channels`                  | Channels                   | Used by release rules and Config as Code examples.                         |
+| `release_bundles`           | Release bundles            | Required by CI release API and release UI.                                 |
+| `deployment_processes`      | Deployment processes       | Required by process revisions and planning.                                |
+| `scoped_variables_v2`       | Variable sets and resolver | Required by snapshots, drift, and planning.                                |
+| `deployment_plans`          | Deployment plans           | Required by plan preview and task creation.                                |
+| `task_queue`                | Durable tasks              | Required by task execution.                                                |
+| `agent_capabilities`        | Agent capabilities         | Required when advanced plans validate target action support.               |
+| `agent_task_leases`         | Agent task leases          | Required when agents claim queued tasks.                                   |
+| `step_events`               | Step events                | Required for task timeline, logs, and bounded outputs.                     |
+| `deployment_timeline`       | Timeline and compare       | Requires advanced task and compatibility data.                             |
+| `retention_policies`        | Retention                  | Preview and dry-run only until destructive apply is separately reviewed.   |
+| `observability_metrics`     | Metrics                    | Requires `METRICS_ENABLED=true` for metrics exposure.                      |
+| `observability_tracing`     | Tracing                    | Emits spans only when enabled.                                             |
+| `observability_dashboards`  | Dashboard catalog          | Static dashboard catalog API.                                              |
+| `observability_correlation` | Correlation links          | Adds link and query templates where supported.                             |
+| `config_as_code`            | Config as Code             | Validation and authority guards only; no sync/apply workflow.              |
+| `operator_control_plane_v2` | Operator control plane     | Default-off umbrella; requires scoped organization/environment enrollment. |
+| `executor_protocol_v2`      | Protocol-v2 execution      | Effective only with `operator_control_plane_v2`; no silent v1 fallback.    |
+
+Disabling the v2 flags blocks new v2 admission while preserving existing v1 behavior and retained v2 history.
+Protocol version remains frozen in each immutable plan. Follow the
+[v1/v2 rollback procedure](../operations/control-plane-v1-v2-rollback.md) before changing either flag in an
+environment with controlled history.
 
 ## Compatibility Matrix
 
@@ -79,6 +95,31 @@ Keep experimental flags enabled only for the surfaces being evaluated.
 | Downgrade after data backfill  | Limited                                    | Schema rollback and data rollback are different operations; do not promise automatic reverse migration.                                              |
 | Provider-neutral demo          | Yes                                        | See `examples/community-e2e/`; live mode uses isolated Compose dependencies and an API-only release-to-task journey through Hub and agent endpoints. |
 | Provider-specific integrations | Out of scope                               | Keep cloud, CI, and traffic-provider examples outside core unless generic.                                                                           |
+
+The PR-081 reference proof is deterministic local evidence. Its clean runner used `fixture-contract` fallback
+because Docker was unavailable; race, live Compose/remote Hub, staging, and production gates remain open. See the
+[recorded proof status](../fork/PR-081_NEUTRAL_CONTROL_PLANE_PROOF.md#root-verified-result).
+
+## Integrated Control-Plane Release Gate
+
+Migration 162 adds the exact-ID, checkpointed sample-retirement and audit-tombstone schema. It is part of the
+ordered 138-to-162 migration matrix and is not a general retention or bulk-delete facility. Before invoking it,
+follow the [sample-domain retirement procedure](../operations/sample-domain-retirement.md), including an immutable
+backup, isolated restore proof, exact allowlist review, checksum-bound approval, and post-apply verification.
+
+The following PR-083 release-level gates are still pending and must have retained, checksummed evidence before a
+release is signed:
+
+| Gate                                                                                                       | Current status                   | Required evidence                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL 16.14 and 18.4 clean install, upgrade 138-to-162, safe down/refusal, and restart matrix         | Pending environment execution    | Database identity, commands, schema checkpoints, exact results, and migration-report checksum                       |
+| Full Go, Angular, Playwright, Hub/agent builds, Docker Compose, failure, scale, and ten-minute load suites | Pending environment execution    | Complete outputs and report checksums; focused tests do not substitute                                              |
+| Dependency, license, vulnerability, secret, and changed-file terminology scans                             | Pending security execution       | Tool versions, inputs, raw outputs, reviewed exceptions, and checksums                                              |
+| Immutable community Hub image                                                                              | Pending artifact publication     | OCI source revision, platform and image digest, SBOM and signed provenance references                               |
+| Post-deployment release verification                                                                       | Pending deployment authorization | Running digest, schema, health/readiness, audit/export status, observation/reconciliation, and checksummed sign-off |
+
+The acceptance-ledger checker validates ownership and checked-in evidence references only. A successful ledger check
+does not satisfy any pending row above and is not a release sign-off.
 
 ## Release-Execution Checkpoints
 

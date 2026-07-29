@@ -4,18 +4,22 @@ Use this checklist before tagging or proposing upstream contribution slices.
 
 ## Boundary Review
 
-| Boundary               | Expected control                                                                                      | Evidence surface                                                                |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Organization isolation | Cross-organization resources are rejected.                                                            | `internal/db/*_test.go`, `internal/handlers/*_test.go`                          |
-| RBAC                   | Mutations require scoped permissions or admin compatibility.                                          | `internal/middleware/permissions_test.go`, `internal/types/permissions_test.go` |
-| Agent authentication   | Agent clients send bearer tokens and agent endpoints verify token scope.                              | `internal/agentclient/*_test.go`, agent handler tests                           |
-| Leases and replay      | Task leases are explicit, expiring, and heartbeat-controlled.                                         | `internal/db/*lease*_test.go`, `internal/agentclient/task_leases_test.go`       |
-| Secret redaction       | Secret values are redacted from events, logs, errors, metadata, and demo output.                      | `internal/stepredaction`, action adapter tests                                  |
-| File-system safety     | File-render and OCI job actions reject traversal and symlink escapes.                                 | `cmd/agent/docker/*_action_test.go`                                             |
-| Webhooks               | Signed requests, replay protection, and network hardening remain covered.                             | `internal/actionregistry`, webhook policy tests                                 |
-| Config as Code         | Unknown fields, wrong reference shapes, drive-relative paths, and plaintext secrets are rejected.     | `internal/configascode/validation_test.go`                                      |
-| Compatibility metadata | Legacy projections omit secrets and do not rewrite source rows.                                       | `internal/deploymentcompat`, `internal/db/deployment_compatibility_test.go`     |
-| Timestamp provenance   | Historical wall clocks are converted only with explicit per-cell evidence; provenance is append-only. | `internal/externalexecutiontimestamp`, timestamp migration/repository tests     |
+| Boundary                | Expected control                                                                                        | Evidence surface                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Organization isolation  | Cross-organization resources are rejected.                                                              | `internal/db/*_test.go`, `internal/handlers/*_test.go`                          |
+| RBAC                    | Mutations require scoped permissions or admin compatibility.                                            | `internal/middleware/permissions_test.go`, `internal/types/permissions_test.go` |
+| Agent authentication    | Agent clients send bearer tokens and agent endpoints verify token scope.                                | `internal/agentclient/*_test.go`, agent handler tests                           |
+| Leases and replay       | Task leases are explicit, expiring, and heartbeat-controlled.                                           | `internal/db/*lease*_test.go`, `internal/agentclient/task_leases_test.go`       |
+| Secret redaction        | Secret values are redacted from events, logs, errors, metadata, and demo output.                        | `internal/stepredaction`, action adapter tests                                  |
+| File-system safety      | File-render and OCI job actions reject traversal and symlink escapes.                                   | `cmd/agent/docker/*_action_test.go`                                             |
+| Webhooks                | Signed requests, replay protection, and network hardening remain covered.                               | `internal/actionregistry`, webhook policy tests                                 |
+| Config as Code          | Unknown fields, wrong reference shapes, drive-relative paths, and plaintext secrets are rejected.       | `internal/configascode/validation_test.go`                                      |
+| Compatibility metadata  | Legacy projections omit secrets and do not rewrite source rows.                                         | `internal/deploymentcompat`, `internal/db/deployment_compatibility_test.go`     |
+| Timestamp provenance    | Historical wall clocks are converted only with explicit per-cell evidence; provenance is append-only.   | `internal/externalexecutiontimestamp`, timestamp migration/repository tests     |
+| Operator authorization  | Operator reads and mutations remain organization-scoped, enrolled, and permission checked.              | `internal/authorization`, `internal/operatorqueries`, handler tests             |
+| Protocol-v2 execution   | Signed intents bind plan/task/step/target/adapter/config, expiry, and monotonically increasing fence.   | `internal/executionworker`, `internal/db/execution_v2*_test.go`                 |
+| Independent observation | Executor self-report cannot satisfy observation, desired-state, or reconciliation gates.                | `internal/observation`, `internal/desiredstate`                                 |
+| Sample retirement       | Exact ownership and reverse references are revalidated; tombstones precede deletion; audit is retained. | `internal/retirement`, `internal/db/sample_retirement_test.go`                  |
 
 ## Required Scans
 
@@ -52,6 +56,38 @@ If a scanner reports a finding, record:
 - whether the finding is reachable in Community edition;
 - fix version or accepted-risk rationale;
 - owner and follow-up PR.
+
+## PR-083 Integrated Security Gate
+
+Run and retain the complete PR-083 security evidence set before signing an integrated control-plane release:
+
+```shell
+set -e
+SCAN_BASE="${SCAN_BASE:?set SCAN_BASE to the reviewed ancestor commit or ref}"
+node --test hack/control-plane-adopter-term-scan.test.mjs
+node hack/control-plane-adopter-term-scan.mjs --base "$SCAN_BASE"
+node hack/control-plane-acceptance-check.mjs docs/release/enterprise-control-plane-acceptance.md
+pnpm audit --prod --audit-level high
+govulncheck ./...
+node hack/pr050-license-scan.mjs
+trivy fs --scanners vuln,secret,license --exit-code 1 .
+```
+
+Run the block in one fail-fast shell. `set -e` propagates a nonzero
+adopter-term scanner result and prevents every later release check from
+misreporting the chain as successful. The scanner's historical command name
+does not authorize environment-specific language in community documentation or
+code.
+
+Retain tool versions, exact inputs, raw outputs, reviewed exceptions, and checksums. The gate remains pending until
+all commands run against the exact release tree and immutable artifact. A passing AC-01 through AC-80 ledger, local
+fixture, or Docker fallback does not prove dependency, license, vulnerability, secret, or image safety.
+
+The release handoff must bind the OCI source revision and platform to the immutable Hub image digest, SBOM, signed
+provenance, migration report, and post-deployment verification. Post-deployment evidence includes the running image
+digest, schema and clean migration state, health/readiness, audit-export status, independent observation, and
+reconciliation state. Do not mark these gates complete when Docker, a database matrix, scanner, signing service, or
+deployment window was unavailable.
 
 ### Reviewed Go vulnerability exception
 

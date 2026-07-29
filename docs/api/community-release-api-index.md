@@ -29,6 +29,33 @@ embedded bundles; it remains optional for v1 and is required for Component Relea
 - Agent task leases and heartbeats.
 - Structured step events and log chunk ingestion.
 
+## Operator Control Plane
+
+The [operator control-plane API guide](operator-control-plane-api.md) is the human-readable index for the integrated
+PR-055 through PR-082 route families. The generated OpenAPI document remains authoritative for request and response
+shapes.
+
+- Registry import and enrollment: exact organization-scoped inventory, classification, and enrollment.
+- Component and Product Releases: immutable source/build identity, capability graph, migration DAG, provenance,
+  SBOM, signatures, tests, and accumulated change metadata.
+- Target configuration, plans, approvals, calendars, and overrides: immutable checksum-bound planning and admission.
+- Campaigns, executions, executor callbacks, observations, desired state, and reconciliation: cursor-paged operator
+  reads plus scoped mutation routes.
+- Audit list, correlated detail, export sinks, and export status: retained source events remain retryable when an
+  external export fails.
+- Sample retirement: append-only ownership/recovery evidence registration under
+  `/api/v1/sample-retirement-evidence`, followed by exact-ID preview, detail, approval-bound apply, checkpoint
+  restart, and verification under `/api/v1/sample-retirements`.
+
+`operator_control_plane_v2` is the default-off umbrella. `executor_protocol_v2` is effective only when the umbrella
+is enabled. Both require scoped authorization/enrollment; disabling them blocks new v2 admission without deleting
+retained history or silently executing through v1.
+
+Sample retirement is backed by migration 162. Apply requires `previewChecksum`, `approvalId`, and
+`approvalChecksum`; it is not a generic delete or retention endpoint. Application audit events remain retained and
+removed subjects resolve through audit tombstones. See the
+[sample-retirement contract](../fork/PR-082_SAMPLE_DOMAIN_RETIREMENT.md).
+
 ## Governance
 
 - Approvals and manual intervention APIs.
@@ -55,8 +82,18 @@ plan preflight remain fail-closed.
 Before release, verify:
 
 ```shell
+set -e
+SCAN_BASE="${SCAN_BASE:?set SCAN_BASE to the reviewed ancestor commit or ref}"
+node --test hack/control-plane-adopter-term-scan.test.mjs
+node hack/control-plane-adopter-term-scan.mjs --base "$SCAN_BASE"
 curl -sf http://localhost:8080/docs/openapi.json -o /tmp/distr-openapi.json
 node hack/pr050-validate-release-hardening.mjs
+node hack/control-plane-acceptance-check.mjs docs/release/enterprise-control-plane-acceptance.md
 ```
 
-API examples must use placeholder credentials and secret references only.
+Run the validation block in one fail-fast shell so a nonzero scanner result
+stops the chain. API examples must use placeholder credentials and secret
+references only. The acceptance-ledger check validates evidence ownership and
+links; it does not satisfy the pending migration, Docker, security, artifact,
+or post-deployment gates in the
+[release-readiness package](../release/community-release-readiness.md).

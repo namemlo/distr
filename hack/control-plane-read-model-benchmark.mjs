@@ -107,7 +107,12 @@ export function validateFixture(fixture) {
   }
   for (const field of ['targets', 'placements', 'agents', 'components', 'steps']) {
     assertArray(fixture[field], `fixture.${field}`);
-    if (fixture[field].length !== fixture.parameters?.[field]) {
+    const requestedCount = fixture.parameters?.[field];
+    if (
+      !Number.isSafeInteger(requestedCount) ||
+      (field === 'components' && fixture[field].length < requestedCount) ||
+      (field !== 'components' && fixture[field].length !== requestedCount)
+    ) {
       fail(`fixture.${field} count does not match parameters.${field}`);
     }
   }
@@ -293,8 +298,11 @@ async function runRemoteBenchmark(fixture, options) {
         fail('remote benchmark request name or path is invalid');
       }
       const forbiddenResourceIDs = request.forbiddenResourceIds;
-      if (!Array.isArray(forbiddenResourceIDs) || forbiddenResourceIDs.length === 0 ||
-        !forbiddenResourceIDs.every((id) => typeof id === 'string' && id !== '')) {
+      if (
+        !Array.isArray(forbiddenResourceIDs) ||
+        forbiddenResourceIDs.length === 0 ||
+        !forbiddenResourceIDs.every((id) => typeof id === 'string' && id !== '')
+      ) {
         fail('remote benchmark request forbiddenResourceIds is invalid');
       }
       const url = new URL(request.path, options.baseURL);

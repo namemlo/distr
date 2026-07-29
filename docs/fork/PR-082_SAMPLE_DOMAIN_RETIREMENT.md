@@ -177,12 +177,12 @@ passed. Migration 162 was also applied directly against isolated PostgreSQL 16
 prerequisites, where append-only evidence, checksum-bound approval, refusal
 paths, and empty up/down behavior passed.
 
-The repository's full fresh-schema migration harness is explicitly not green.
-It stops before migration 162 at the historical migration-142
-constraint-name collision
-`releasecontractv1extractionlineage_status_check already exists`
-(`SQLSTATE 42710`). PR-082 did not change migration 142, and the isolated
-migration-162 pass does not clear that full-harness blocker.
+PR-082 did not change the historical migration-142 constraint-name collision,
+and its isolated migration-162 pass did not clear that full-harness blocker.
+PR-083 subsequently gives the inline status-value check a distinct explicit
+name while preserving the intended value and state checks. The PostgreSQL
+16.14 and 18.4 full-chain matrix must still run before the migration gate can
+be marked green.
 
 No live cleanup, live restore drill, staging result, production result, or
 adopter mutation is claimed by this document.

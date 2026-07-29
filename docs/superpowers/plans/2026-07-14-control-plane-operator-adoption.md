@@ -415,6 +415,64 @@ This and later adopter tasks run only after PR-083 is accepted.
 - [ ] Run deterministic waves with threshold/bake/pause/resume/restart evidence.
 - [ ] Report remaining mutable/direct deploy paths; cutover requires zero or a dated owner-approved exception.
 
+### Choice TP DEV UI/API evidence package template
+
+**Status: `PENDING — TEMPLATE ONLY`.** This section is not deployment
+evidence, does not authorize a client mutation, and must not be changed to
+`VERIFIED` from fixture, local, isolated-restore, or historical pilot results.
+Populate it only after PR-083 is accepted, the named external/client scopes are
+approved, and the fresh protocol-v2 run is observed through the deployed UI and
+API.
+
+Create these files in the isolated adopter worktree:
+
+```text
+control-plane/evidence/choice-tp-dev-ui-api-proof.md
+control-plane/evidence/choice-tp-dev-ui-api-artifacts.json
+control-plane/evidence/screenshots/
+control-plane/evidence/api/
+```
+
+The Markdown evidence file starts with:
+
+```markdown
+# Choice TP DEV controlled deployment evidence
+
+Status: PENDING
+Environment: choice-tp-dev
+Run type: fresh protocol-v2 UI/API proof
+Historical pilot reused as new evidence: NO
+Client runtime approval ID/checksum: PENDING
+Companion-service approval IDs/checksums: PENDING
+Client workload database approval ID/checksum: NOT REQUESTED or PENDING
+PR-083 source commit/image digest/schema: PENDING
+Independent reviewer and review timestamp: PENDING
+```
+
+For each checkpoint below, retain the UI route and screenshot checksum, API
+route and redacted response checksum, immutable object IDs/checksums, actor and
+UTC timestamp, explicit result, and blocker when pending:
+
+| Checkpoint               | Required fresh evidence                                                                                                              | Initial status |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| Registry coverage        | Import preview/apply checksum, classified 28-service inventory, zero unclassified placements                                         | `PENDING`      |
+| Component Release        | Human version, source/built commits, build ID, platform digest, SBOM/provenance, release checksum                                    | `PENDING`      |
+| Changelog                | Last healthy observed baseline and accumulated code/config/migration/dependency delta, including divergence evidence when applicable | `PENDING`      |
+| Product Release          | Exact component releases, transaction capability constraint, resolution mode, provider-first DAG, manifest checksum                  | `PENDING`      |
+| Target configuration     | Source commit, object versions/checksums, placement bindings, secret fingerprints only                                               | `PENDING`      |
+| Plan and preflight       | Baseline/observation checksum, changes, migration/backup/recovery nodes, blockers, policy, adapter, plan checksum                    | `PENDING`      |
+| Four-eyes approval       | Distinct requester/approver, decision and policy checksums, approved client/companion/database scope                                 | `PENDING`      |
+| Campaign                 | Immutable membership, wave, bake/threshold policy, prerequisites, pause/resume evidence                                              | `PENDING`      |
+| Execution                | Signed intent, attempt/fence/idempotency, executor correlation, status/cancel/reconciliation evidence                                | `PENDING`      |
+| Independent observation  | Actual digest/config/schema/capability/health, desired-state promotion or drift case                                                 | `PENDING`      |
+| Previous state and audit | New B-to-A plan/task, retained B history, deterministic correlated audit bundle                                                      | `PENDING`      |
+
+The JSON artifact index records file-relative paths and SHA-256 checksums only;
+it contains no credentials, secret values, private keys, connection strings, or
+unredacted configuration. A missing artifact, approval, independently observed
+result, or reviewer keeps the package `PENDING`. Do not invent IDs, screenshots,
+checksums, API responses, timestamps, or success states.
+
 ## Task 11: ADOPTER-06 — Preserve Choice TP and Retire Only Demo Data
 
 **Files:**

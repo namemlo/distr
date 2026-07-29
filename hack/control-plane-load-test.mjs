@@ -128,7 +128,12 @@ function validateFixture(fixture) {
     if (!Array.isArray(fixture[field]) || fixture[field].length < minimum) {
       fail(`fixture.${field} must contain at least ${minimum} rows`);
     }
-    if (fixture.parameters?.[field] !== fixture[field].length) {
+    const requestedCount = fixture.parameters?.[field];
+    if (
+      !Number.isSafeInteger(requestedCount) ||
+      (field === 'components' && fixture[field].length < requestedCount) ||
+      (field !== 'components' && fixture[field].length !== requestedCount)
+    ) {
       fail(`fixture.${field} count does not match parameters.${field}`);
     }
   }
@@ -186,11 +191,13 @@ function currentCommit() {
 
 function workingTreeDirty() {
   try {
-    return execFileSync('git', ['status', '--porcelain'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim().length > 0;
+    return (
+      execFileSync('git', ['status', '--porcelain'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim().length > 0
+    );
   } catch {
     return true;
   }
@@ -210,7 +217,9 @@ function reportMetadata(fixture, fixtureBytes) {
     build: {
       commit: currentCommit(),
       workingTreeDirty: workingTreeDirty(),
-      harnessSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
+      harnessSha256: createHash('sha256')
+        .update(readFileSync(fileURLToPath(import.meta.url)))
+        .digest('hex'),
       nodeVersion: process.version,
     },
     dataset: {
@@ -238,7 +247,9 @@ function acceptanceProfile(fixture, options) {
 function simulatedSamples(fixture, options) {
   const planningChecksum = stablePlanningChecksum(fixture);
   const planningChecksums = Array.from({length: 5}, () => stablePlanningChecksum(fixture));
-  const planning = planningChecksums.map((_, index) => rounded(4.8 + fixture.components.length * 0.018 + index * 0.061));
+  const planning = planningChecksums.map((_, index) =>
+    rounded(4.8 + fixture.components.length * 0.018 + index * 0.061)
+  );
 
   const memberIDs = fixture.campaign.waves[0].members.map((member) => member.id);
   const uniqueMemberIDs = new Set(memberIDs);
@@ -246,10 +257,7 @@ function simulatedSamples(fixture, options) {
   const wave = [rounded(8.5 + memberIDs.length * 0.024)];
 
   const requestedEvents = options.durationSeconds * options.rate;
-  const eventAcknowledgements = Array.from(
-    {length: requestedEvents},
-    (_, index) => rounded(4 + (index % 97) * 0.017)
-  );
+  const eventAcknowledgements = Array.from({length: requestedEvents}, (_, index) => rounded(4 + (index % 97) * 0.017));
 
   const logPageCount = 100;
   const logFirstPage = [7.125];
@@ -417,9 +425,7 @@ function containsForbiddenID(value, forbiddenIDs) {
   if (typeof value === 'string') return forbiddenIDs.has(value);
   if (Array.isArray(value)) return value.some((item) => containsForbiddenID(item, forbiddenIDs));
   return Boolean(
-    value &&
-      typeof value === 'object' &&
-      Object.values(value).some((item) => containsForbiddenID(item, forbiddenIDs))
+    value && typeof value === 'object' && Object.values(value).some((item) => containsForbiddenID(item, forbiddenIDs))
   );
 }
 
@@ -564,10 +570,7 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
   const isolationSamples = [];
   let crossOrganizationRecords = 0;
   for (const isolationRequest of fixture.benchmark.remoteRequests) {
-    if (
-      !Array.isArray(isolationRequest.forbiddenResourceIds) ||
-      isolationRequest.forbiddenResourceIds.length === 0
-    ) {
+    if (!Array.isArray(isolationRequest.forbiddenResourceIds) || isolationRequest.forbiddenResourceIds.length === 0) {
       fail('fixture benchmark isolation request must define forbiddenResourceIds');
     }
     const isolationStarted = performance.now();
@@ -588,8 +591,7 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
   const acknowledgedEvents = acknowledgedEventIDs.size;
   const acceptedEvents = acceptedEventIDs.size;
   const lostAcceptedEvents = [...acceptedEventIDs].filter((eventID) => !acknowledgedEventIDs.has(eventID)).length;
-  const stableOrder =
-    wavePayload?.stepCount === fixture.loadProof.wave.stepCount && wavePayload?.stableOrder === true;
+  const stableOrder = wavePayload?.stepCount === fixture.loadProof.wave.stepCount && wavePayload?.stableOrder === true;
   const duplicateAdmissions = Number.isSafeInteger(wavePayload?.duplicateAdmissions)
     ? wavePayload.duplicateAdmissions
     : fixture.loadProof.wave.stepCount;

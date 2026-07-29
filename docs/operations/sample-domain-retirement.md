@@ -92,12 +92,13 @@ Read access to the frozen job uses `audit.view`. Keep the requester and
 approver credentials separate. Stop if the policy has no requirement, is
 invalid, or cannot enforce the separation rule.
 
-The full fresh-schema migration harness currently stops at the historical
-migration-142 constraint-name collision
-`releasecontractv1extractionlineage_status_check already exists`
-(`SQLSTATE 42710`). Isolated PostgreSQL 16 execution of migration 162 passed,
-but that focused result is not a full-chain migration certification. Do not use
-this runbook to claim that the full migration gate is green.
+PR-083 removes the historical migration-142 constraint-name collision by
+giving the inline status-value check a distinct explicit name; the existing
+value and state constraints retain their original semantics. Isolated
+PostgreSQL 16 execution of migration 162 passed previously, but no PostgreSQL
+16.14 or 18.4 full-chain rerun is claimed by that focused result or this
+runbook. Require the checksummed non-PlanOnly matrix evidence before treating
+the full migration gate as green.
 
 ## 3. Build and register the exact allowlist
 
