@@ -1,12 +1,42 @@
 #!/usr/bin/env node
 
+import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
+import {cpus, platform, release, totalmem} from 'node:os';
 import path from 'node:path';
 import {performance} from 'node:perf_hooks';
 import {fileURLToPath} from 'node:url';
 
 const fixtureSchema = 'distr.control-plane-scale-fixture/v1';
 const reportSchema = 'distr.control-plane-read-model-benchmark/v1';
+const workloadNames = [
+  'registry-list',
+  'registry-detail',
+  'matrix-list',
+  'matrix-detail',
+  'comparison-list',
+  'comparison-detail',
+  'history-list',
+  'history-detail',
+  'campaign-list',
+  'campaign-detail',
+];
+const smokeWorkloadNames = [
+  'fleet-list',
+  'fleet-environment-filter',
+  'fleet-stable-cursor',
+  'campaign-wave-members',
+  'fleet-detail',
+];
+const acceptanceBlocker =
+  'AC-50 requires truthful registry, matrix, comparison, history, and campaign list/detail descriptors in remote acceptance mode';
+const acceptanceDiagnosticBlockers = [
+  'AC-50 canonical fixed endpoints and response schemas are not yet enforced',
+  'AC-50 known primary resource IDs, minimum response counts, and complete tenant-isolation checks are not yet enforced',
+  'AC-50 requires a clean known source commit bound to the live server version and immutable image digest',
+];
 
 function fail(message) {
   throw new Error(message);
@@ -53,6 +83,9 @@ export function parseBenchmarkArgs(argv) {
     '--base-url',
     '--auth-env',
     '--timeout-ms',
+    '--build-version',
+    '--image-digest',
+    '--profile',
   ]);
   for (const option of values.keys()) {
     if (!allowed.has(option)) {
@@ -84,6 +117,18 @@ export function parseBenchmarkArgs(argv) {
       fail('--base-url must not contain a query or fragment');
     }
   }
+  const buildVersion = values.get('--build-version');
+  if (buildVersion !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(buildVersion)) {
+    fail('--build-version must be a non-secret build identifier');
+  }
+  const imageDigest = values.get('--image-digest');
+  if (imageDigest !== undefined && !/^sha256:[0-9a-f]{64}$/.test(imageDigest)) {
+    fail('--image-digest must be a lowercase SHA-256 digest');
+  }
+  const profile = values.get('--profile') ?? 'smoke';
+  if (!['smoke', 'acceptance'].includes(profile)) {
+    fail('--profile must be smoke or acceptance');
+  }
   return {
     fixture: path.resolve(values.get('--fixture')),
     runs: integerOption(values.get('--runs') ?? '20', '--runs', 20, 10000),
@@ -92,6 +137,9 @@ export function parseBenchmarkArgs(argv) {
     baseURL,
     authEnv,
     timeoutMs: integerOption(values.get('--timeout-ms') ?? '10000', '--timeout-ms', 1, 300000),
+    buildVersion,
+    imageDigest,
+    profile,
   };
 }
 
@@ -101,7 +149,16 @@ function assertArray(value, label) {
   }
 }
 
-export function validateFixture(fixture) {
+function validateAcceptanceWorkloads(remoteRequests) {
+  if (
+    remoteRequests.length !== workloadNames.length ||
+    workloadNames.some((name, index) => remoteRequests[index]?.name !== name)
+  ) {
+    fail('fixture benchmark must define exactly the ten required read-model workloads in contract order');
+  }
+}
+
+export function validateFixture(fixture, options = {}) {
   if (!fixture || fixture.schemaVersion !== fixtureSchema) {
     fail(`fixture schema must be ${fixtureSchema}`);
   }
@@ -135,11 +192,29 @@ export function validateFixture(fixture) {
   }
   const remoteRequests = fixture.benchmark?.remoteRequests;
   assertArray(remoteRequests, 'fixture.benchmark.remoteRequests');
-  const expectedSentinels = new Map([
-    ['fleet-list', fixture.isolationSentinel?.target?.id],
-    ['campaign-list', fixture.isolationSentinel?.campaign?.id],
-    ['execution-list', fixture.isolationSentinel?.execution?.id],
-  ]);
+  const profile = options.profile ?? 'smoke';
+  if (profile === 'acceptance') {
+    validateAcceptanceWorkloads(remoteRequests);
+  }
+  const expectedSentinels =
+    profile === 'acceptance'
+      ? new Map([
+          ['registry-list', fixture.isolationSentinel?.target?.id],
+          ['registry-detail', fixture.isolationSentinel?.target?.id],
+          ['matrix-list', fixture.isolationSentinel?.target?.id],
+          ['matrix-detail', fixture.isolationSentinel?.target?.id],
+          ['comparison-list', fixture.isolationSentinel?.target?.id],
+          ['comparison-detail', fixture.isolationSentinel?.target?.id],
+          ['campaign-list', fixture.isolationSentinel?.campaign?.id],
+          ['campaign-detail', fixture.isolationSentinel?.campaign?.id],
+          ['history-list', fixture.isolationSentinel?.execution?.id],
+          ['history-detail', fixture.isolationSentinel?.execution?.id],
+        ])
+      : new Map([
+          ['fleet-list', fixture.isolationSentinel?.target?.id],
+          ['campaign-list', fixture.isolationSentinel?.campaign?.id],
+          ['execution-list', fixture.isolationSentinel?.execution?.id],
+        ]);
   for (const request of remoteRequests) {
     if (
       !Array.isArray(request?.forbiddenResourceIds) ||
@@ -243,8 +318,20 @@ function isolationViolations(rows, forbiddenResourceIDs) {
   return rows.filter(containsForbiddenID).length;
 }
 
+function responseCountMap(names) {
+  return new Map(names.map((name) => [name, {responses: 0, items: 0, maxItems: 0}]));
+}
+
+function recordResponse(counts, name, itemCount) {
+  const count = counts.get(name);
+  count.responses++;
+  count.items += itemCount;
+  count.maxItems = Math.max(count.maxItems, itemCount);
+}
+
 async function runFixtureBenchmark(fixture, options) {
   const samples = new Map();
+  const responseCounts = responseCountMap(smokeWorkloadNames);
   let violations = 0;
   for (const workload of fixtureWorkloads(fixture, options.pageSize)) {
     samples.set(workload.name, []);
@@ -257,14 +344,21 @@ async function runFixtureBenchmark(fixture, options) {
       if (rows.length > options.pageSize) {
         fail(`${workload.name} returned more than ${options.pageSize} rows`);
       }
+      recordResponse(responseCounts, workload.name, rows.length);
       violations += isolationViolations(rows, [fixture.isolationSentinel.target.id]);
       samples.get(workload.name).push(elapsed);
     }
   }
-  return {samples, violations};
+  return {samples, violations, responseCounts, isolationChecks: options.runs * smokeWorkloadNames.length};
 }
 
-function responseRows(payload) {
+function responseRows(payload, workloadName) {
+  if (workloadName.endsWith('-detail')) {
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return [payload];
+    }
+    fail('remote read-model detail response must be an object');
+  }
   if (Array.isArray(payload)) {
     return payload;
   }
@@ -280,12 +374,16 @@ async function runRemoteBenchmark(fixture, options) {
   if (requests.length === 0) {
     fail('fixture.benchmark.remoteRequests must not be empty');
   }
+  if ((options.profile ?? 'smoke') === 'acceptance') {
+    validateAcceptanceWorkloads(requests);
+  }
   const token = process.env[options.authEnv];
   const headers = {accept: 'application/json'};
   if (token) {
     headers.authorization = `Bearer ${token}`;
   }
   const samples = new Map(requests.map((request) => [request.name, []]));
+  const responseCounts = responseCountMap(requests.map((request) => request.name));
   let violations = 0;
   for (let run = 0; run < options.runs; run++) {
     for (const request of requests) {
@@ -309,7 +407,9 @@ async function runRemoteBenchmark(fixture, options) {
       if (url.origin !== options.baseURL.origin) {
         fail('remote benchmark request name or path is invalid');
       }
-      url.searchParams.set('limit', String(options.pageSize));
+      if (request.name.endsWith('-list')) {
+        url.searchParams.set('limit', String(options.pageSize));
+      }
       const started = performance.now();
       let response;
       try {
@@ -329,18 +429,100 @@ async function runRemoteBenchmark(fixture, options) {
       } catch {
         fail(`remote workload ${request.name} did not return JSON`);
       }
-      const rows = responseRows(payload);
+      const rows = responseRows(payload, request.name);
       if (rows.length > options.pageSize) {
         fail(`remote workload ${request.name} returned more than ${options.pageSize} rows`);
       }
+      recordResponse(responseCounts, request.name, rows.length);
       violations += isolationViolations(rows, forbiddenResourceIDs);
       samples.get(request.name).push(performance.now() - started);
     }
   }
-  return {samples, violations};
+  return {samples, violations, responseCounts, isolationChecks: options.runs * requests.length};
+}
+
+function currentCommit() {
+  try {
+    const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return /^[a-f0-9]{40}$/.test(commit) ? commit : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function workingTreeDirty() {
+  try {
+    return (
+      execFileSync('git', ['status', '--porcelain'], {
+        cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim().length > 0
+    );
+  } catch {
+    return true;
+  }
+}
+
+function reportMetadata(fixture, options) {
+  const cpuRows = cpus();
+  return {
+    dataset: {
+      fixtureSchema: fixture.schemaVersion,
+      fixtureSeed: fixture.seed,
+      fixtureSha256: `sha256:${createHash('sha256').update(JSON.stringify(fixture)).digest('hex')}`,
+      targets: fixture.targets.length,
+      placements: fixture.placements.length,
+      onlineExecutors: fixture.agents.length,
+      components: fixture.components.length,
+      steps: fixture.steps.length,
+    },
+    hardware: {
+      os: `${platform()} ${release()}`,
+      architecture: process.arch,
+      cpu: cpuRows[0]?.model ?? 'unknown',
+      logicalCores: cpuRows.length,
+      memoryBytes: totalmem(),
+    },
+    image: {
+      digest: options.imageDigest ?? null,
+    },
+    build: {
+      version: options.buildVersion ?? 'unknown',
+      artifactDigest: options.imageDigest ?? null,
+      commit: currentCommit(),
+      workingTreeDirty: workingTreeDirty(),
+      harnessSha256: `sha256:${createHash('sha256')
+        .update(readFileSync(fileURLToPath(import.meta.url)))
+        .digest('hex')}`,
+      nodeVersion: process.version,
+    },
+  };
+}
+
+function rawSampleSeries(samples) {
+  const series = {};
+  for (const [name, values] of samples) {
+    const retained = values.map(rounded);
+    series[`${name}-p95-ms`] = retained;
+    series[`${name}-p99-ms`] = [...retained];
+  }
+  return {series};
+}
+
+function responseCountObject(responseCounts) {
+  return Object.fromEntries(responseCounts);
 }
 
 export async function benchmark(fixture, options) {
+  const profile = options.profile ?? 'smoke';
+  if (profile === 'acceptance' && !options.baseURL) {
+    fail('--profile acceptance requires --base-url');
+  }
   const outcome = options.baseURL
     ? await runRemoteBenchmark(fixture, options)
     : await runFixtureBenchmark(fixture, options);
@@ -355,6 +537,8 @@ export async function benchmark(fixture, options) {
       fail(`${metric.name} exceeded benchmark thresholds: p95=${metric.p95Ms}ms p99=${metric.p99Ms}ms`);
     }
   }
+  const responseCounts = responseCountObject(outcome.responseCounts);
+  const maxResponseItems = Math.max(...Object.values(responseCounts).map((count) => count.maxItems));
   return {
     schemaVersion: reportSchema,
     fixtureSchema: fixture.schemaVersion,
@@ -365,6 +549,24 @@ export async function benchmark(fixture, options) {
     samples: aggregateSamples.length,
     thresholds: options.thresholds,
     isolationViolations: outcome.violations,
+    qualification: {
+      profile,
+      acceptanceEligible: false,
+      blockers: profile === 'acceptance' ? [...acceptanceDiagnosticBlockers] : [acceptanceBlocker],
+    },
+    ...reportMetadata(fixture, options),
+    facts: {
+      pageSize: options.pageSize,
+      boundedResponses: true,
+      workloads: [...outcome.samples.keys()],
+      maxResponseItems,
+      responseCounts,
+      isolation: {
+        checks: outcome.isolationChecks,
+        violations: outcome.violations,
+      },
+    },
+    rawSamples: rawSampleSeries(outcome.samples),
     aggregate,
     workloads,
   };
@@ -378,7 +580,7 @@ async function main() {
   } catch {
     fail('fixture must be readable valid JSON');
   }
-  validateFixture(fixture);
+  validateFixture(fixture, options);
   const report = await benchmark(fixture, options);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }

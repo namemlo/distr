@@ -166,6 +166,7 @@ test('fixture benchmark runs twenty deterministic tenant-isolated pages', async 
   const report = JSON.parse(result.stdout);
   assert.equal(report.schemaVersion, 'distr.control-plane-read-model-benchmark/v1');
   assert.equal(report.mode, 'fixture');
+  assert.equal(report.qualification.acceptanceEligible, false);
   assert.equal(report.runs, 20);
   assert.equal(report.pageSize, 100);
   assert.equal(report.isolationViolations, 0);
