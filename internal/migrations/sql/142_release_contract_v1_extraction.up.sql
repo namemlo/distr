@@ -179,7 +179,7 @@ CREATE TABLE ReleaseContractV1ExtractionLineage (
   extractor_version TEXT NOT NULL CHECK (
     extractor_version ~ '^[a-z0-9][a-z0-9._/-]{0,127}$'
   ),
-  status TEXT NOT NULL CHECK (
+  status TEXT NOT NULL CONSTRAINT releasecontractv1extractionlineage_status_value_check CHECK (
     status IN ('candidate', 'applied', 'blocked')
   ),
   blocked_reason_code TEXT NOT NULL DEFAULT '' CHECK (

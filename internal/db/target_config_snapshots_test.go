@@ -376,6 +376,10 @@ func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
 	g.Expect(upSQL).To(MatchRegexp(
 		`(?s)FOREIGN KEY \(\s*derived_snapshot_id,\s*organization_id,\s*derived_snapshot_checksum\s*\)`,
 	))
+	g.Expect(upSQL).To(MatchRegexp(
+		`status TEXT NOT NULL CONSTRAINT\s+` +
+			`releasecontractv1extractionlineage_status_value_check\s+CHECK`,
+	))
 	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER BackfillCheckpoint_immutable"))
 	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER BackfillCheckpointSourceMembership_immutable"))
 	g.Expect(upSQL).To(ContainSubstring("CREATE TRIGGER ReleaseContractV1ExtractionLineage_immutable"))

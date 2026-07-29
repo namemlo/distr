@@ -59,13 +59,40 @@ pipeline {
       }
     }
 
+    stage('Community neutrality and operator guide gates') {
+      steps {
+        sh(
+          label: 'Run adopter-term scanner and operator guide gate',
+          script: '''
+            set -eu
+            test -s docs/api/operator-control-plane-api.md
+            node --test hack/control-plane-adopter-term-scan.test.mjs
+            scan_base="$(git rev-parse "${RELEASE_COMMIT}^")"
+            node hack/control-plane-adopter-term-scan.mjs --base "$scan_base"
+          '''
+        )
+      }
+    }
+
     stage('Build once and publish') {
       steps {
         withCredentials([
           [
             $class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: env.AWS_CREDENTIALS_ID
-          ]
+          ],
+          file(
+            credentialsId: env.PROVENANCE_SIGNING_KEY_CREDENTIALS_ID,
+            variable: 'PROVENANCE_SIGNING_KEY'
+          ),
+          file(
+            credentialsId: env.PROVENANCE_SIGNING_PUBLIC_KEY_CREDENTIALS_ID,
+            variable: 'PROVENANCE_SIGNING_PUBLIC_KEY'
+          ),
+          string(
+            credentialsId: env.PROVENANCE_SIGNING_PASSWORD_CREDENTIALS_ID,
+            variable: 'COSIGN_PASSWORD'
+          )
         ]) {
           sh(
             label: 'Publish immutable Hub image',
@@ -78,19 +105,134 @@ pipeline {
       }
     }
 
-    stage('Archive release identity') {
+    stage('Migration and post-deploy acceptance evidence') {
       steps {
-        archiveArtifacts(
-          artifacts: "dist/release-${env.DISTR_IMAGE_TAG}.env,dist/release-${env.DISTR_IMAGE_TAG}.env.sha256",
-          fingerprint: true,
-          onlyIfSuccessful: true
-        )
+        withCredentials([
+          file(
+            credentialsId: env.PROVENANCE_SIGNING_PUBLIC_KEY_CREDENTIALS_ID,
+            variable: 'PROVENANCE_SIGNING_PUBLIC_KEY'
+          )
+        ]) {
+          sh(
+            label: 'Generate fail-closed release evidence',
+            script: '''
+            set -eu
+            set +x
+            work_evidence_dir="work/release-evidence-${DISTR_IMAGE_TAG}"
+            evidence_dir="dist/release-evidence-${DISTR_IMAGE_TAG}"
+            migration16_report="${work_evidence_dir}/migration-postgresql-16.14.json"
+            migration18_report="${work_evidence_dir}/migration-postgresql-18.4.json"
+            postdeploy_report="${evidence_dir}/post-deploy.json"
+            raw_ui_report="${work_evidence_dir}/playwright.json"
+            ui_report="${evidence_dir}/ui.json"
+            handoff="dist/release-${DISTR_IMAGE_TAG}.env"
+            publisher="$(find deploy -type f -name publish-hub-image.sh -print -quit)"
+            test -n "$publisher"
+            test -f "$handoff"
+            image_ref="$(sed -n 's/^DISTR_IMAGE_REF=//p' "$handoff")"
+            test -n "$image_ref"
+            test "$(grep -c '^DISTR_IMAGE_REF=' "$handoff")" -eq 1
+            install -d -m 0700 "$work_evidence_dir" "$evidence_dir"
+
+            database_container=''
+            database_password=''
+            cleanup_database() {
+              if [ -n "$database_container" ]; then
+                docker rm -f "$database_container" >/dev/null 2>&1 || true
+              fi
+              database_container=''
+              database_password=''
+            }
+            trap cleanup_database EXIT HUP INT TERM
+            run_migration_matrix() {
+              postgres_version="$1"
+              postgres_image="$2"
+              matrix_report="$3"
+              safe_version="$(printf '%s' "$postgres_version" | tr -cd '0-9')"
+              database_container="distr-release-evidence-${BUILD_NUMBER}-${safe_version}"
+              database_password="$(openssl rand -hex 24)"
+              docker run --detach \
+                --name "$database_container" \
+                --publish 127.0.0.1::5432 \
+                --env POSTGRES_USER=release_ci \
+                --env POSTGRES_PASSWORD="$database_password" \
+                --env POSTGRES_DB=control_plane_ci \
+                "$postgres_image" >/dev/null
+              database_port="$(docker port "$database_container" 5432/tcp | sed -n 's/.*://p')"
+              case "$database_port" in
+                ''|*[!0-9]*) exit 1 ;;
+              esac
+              ready=0
+              for attempt in $(seq 1 30); do
+                if docker exec "$database_container" pg_isready -U release_ci -d control_plane_ci >/dev/null 2>&1; then
+                  ready=1
+                  break
+                fi
+                sleep 2
+              done
+              test "$ready" -eq 1
+              database_url="postgres://release_ci:${database_password}@127.0.0.1:${database_port}/control_plane_ci?sslmode=disable"
+              pwsh -NoLogo -NoProfile -NonInteractive \
+                -File hack/control-plane-migration-matrix.ps1 \
+                -DatabaseUrl "$database_url" \
+                -ExpectedPostgresVersion "$postgres_version" \
+                -OutputPath "$matrix_report"
+              database_url=''
+              node hack/pr050-validate-control-plane-evidence.mjs migration \
+                "$matrix_report" \
+                "$RELEASE_COMMIT" \
+                "$postgres_version"
+              install -m 0600 "$matrix_report" "${evidence_dir}/migration-postgresql-${postgres_version}.json"
+              cleanup_database
+            }
+            run_migration_matrix '16.14' 'postgres:16.14-alpine3.23' "$migration16_report"
+            run_migration_matrix '18.4' 'postgres:18.4-alpine3.23' "$migration18_report"
+
+            DISTR_CP_HUB_IMAGE="$image_ref" \
+              node examples/control-plane-e2e/run.mjs --mode clean --json >"$postdeploy_report"
+            node hack/pr050-validate-control-plane-evidence.mjs postdeploy "$postdeploy_report"
+
+            pnpm exec playwright install chromium
+            pnpm exec playwright test \
+              --config playwright.control-plane.config.ts \
+              --reporter=json >"$raw_ui_report"
+            node -e '
+              const fs = require("node:fs");
+              const [input, output] = process.argv.slice(1);
+              const raw = JSON.parse(fs.readFileSync(input, "utf8"));
+              const report = {
+                schemaVersion: "distr.control-plane-ui-report/v1",
+                status: "PASS",
+                stats: {
+                  expected: raw.stats?.expected,
+                  unexpected: raw.stats?.unexpected,
+                  flaky: raw.stats?.flaky,
+                  skipped: Number.isInteger(raw.stats?.skipped) ? raw.stats.skipped : 0,
+                },
+              };
+              fs.writeFileSync(output, JSON.stringify(report, null, 2) + "\\n", {mode: 0o600});
+            ' "$raw_ui_report" "$ui_report"
+            node hack/pr050-validate-control-plane-evidence.mjs ui "$ui_report"
+            "$publisher" finalize-evidence \
+              "$migration16_report" \
+              "$migration18_report" \
+              "$postdeploy_report" \
+              "$ui_report"
+          '''
+          )
+        }
       }
     }
   }
 
   post {
     always {
+      archiveArtifacts(
+        artifacts: 'dist/release-*,dist/release-evidence-*/**,work/release-evidence-*/**',
+        allowEmptyArchive: true,
+        fingerprint: true,
+        onlyIfSuccessful: false
+      )
       deleteDir()
     }
   }

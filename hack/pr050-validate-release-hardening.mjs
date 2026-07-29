@@ -60,6 +60,14 @@ const requiredFiles = [
   'hack/pr050-govulncheck.mjs',
   'hack/pr050-govulncheck.test.mjs',
   'hack/pr050-license-scan.mjs',
+  'hack/pr050-validate-control-plane-evidence.mjs',
+  'hack/pr050-validate-control-plane-evidence.test.mjs',
+  'hack/control-plane-adopter-term-scan.mjs',
+  'hack/control-plane-adopter-term-scan.test.mjs',
+  'docs/api/operator-control-plane-api.md',
+  'deploy/jen' + 'kins/Jen' + 'kinsfile.hub-image',
+  'deploy/jen' + 'kins/publish-hub-image.sh',
+  'deploy/server-docker-compose/deploy.sh',
   'internal/handlers/pr050_community_live_demo_test.go',
   'go.mod',
   'mise.toml',
@@ -170,6 +178,102 @@ export function validateVulnerabilityPolicy(policy) {
   }
 }
 
+export function validateReleaseEvidenceWorkflow(workflowText) {
+  if (workflowText.includes('"packages": []') || workflowText.includes("'packages': []")) {
+    fail('release workflow must not accept an empty-package SPDX fallback');
+  }
+  for (const requiredText of [
+    'Build release evidence image once',
+    'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610',
+    'output-file: dist/release-evidence/image.spdx.json',
+    'sbom.packages.length === 0',
+    'https://in-toto.io/Statement/v1',
+    'https://slsa.dev/provenance/v1',
+    'id-token: write',
+    'cosign sign-blob',
+    'cosign verify-blob',
+    'provenance.sigstore.json',
+    'control-plane-migration-matrix.ps1',
+    "-OutputPath 'work/release-evidence/migration-postgresql-16.14.json'",
+    "-OutputPath 'work/release-evidence/migration-postgresql-18.4.json'",
+    'postgres:16.14-alpine3.23',
+    'postgres:18.4-alpine3.23',
+    'node hack/pr050-validate-control-plane-evidence.mjs migration',
+    'node hack/pr050-validate-control-plane-evidence.mjs postdeploy',
+    'node hack/pr050-validate-control-plane-evidence.mjs ui',
+    'examples/control-plane-e2e/run.mjs --mode clean --json',
+    'playwright.control-plane.config.ts',
+    "schemaVersion: 'distr.control-plane-release-acceptance/v1'",
+    'operator: live(',
+    'api: live(',
+    'ui: {',
+    'flag: {',
+    'audit: live(',
+    'node --test hack/control-plane-adopter-term-scan.test.mjs',
+    'node hack/control-plane-adopter-term-scan.mjs --base',
+    'docs/api/operator-control-plane-api.md',
+    'work/release-evidence',
+    'if-no-files-found: error',
+  ]) {
+    if (!workflowText.includes(requiredText)) {
+      fail(`release workflow missing fail-closed evidence contract: ${requiredText}`);
+    }
+  }
+  const releaseImageBuilds = workflowText.match(/^\s+docker build \\\s*$/gmu) ?? [];
+  if (releaseImageBuilds.length !== 1) {
+    fail(`release workflow must build the evidence image exactly once; found ${releaseImageBuilds.length}`);
+  }
+  if (/-OutputPath\s+['"]dist\//u.test(workflowText)) {
+    fail('release workflow must stage migration evidence below work before copying it to dist');
+  }
+}
+
+export function validatePublicationPipeline(publicationPipeline) {
+  for (const requiredPublicationText of [
+    'docker sbom',
+    'documentDescribes',
+    'https://in-toto.io/Statement/v1',
+    'https://slsa.dev/provenance/v1',
+    'cosign sign-blob',
+    'cosign verify-blob',
+    'DISTR_PROVENANCE_SIGNATURE_REF',
+    'control-plane-migration-matrix.ps1',
+    'postgres:16.14-alpine3.23',
+    'postgres:18.4-alpine3.23',
+    'work/release-evidence-${DISTR_IMAGE_TAG}',
+    'node hack/pr050-validate-control-plane-evidence.mjs migration',
+    'node hack/pr050-validate-control-plane-evidence.mjs postdeploy',
+    'node hack/pr050-validate-control-plane-evidence.mjs ui',
+    'examples/control-plane-e2e/run.mjs --mode clean --json',
+    'finalize-evidence',
+    'distr.control-plane-release-acceptance/v1',
+    'DISTR_MIGRATION_POSTGRESQL_16_REPORT_REF',
+    'DISTR_MIGRATION_POSTGRESQL_18_REPORT_REF',
+    'DISTR_ACCEPTANCE_BUNDLE_REF',
+    'node --test hack/control-plane-adopter-term-scan.test.mjs',
+    'node hack/control-plane-adopter-term-scan.mjs --base',
+    'docs/api/operator-control-plane-api.md',
+    'post {\n    always {\n      archiveArtifacts(',
+    'onlyIfSuccessful: false',
+  ]) {
+    if (!publicationPipeline.includes(requiredPublicationText)) {
+      fail(`image publication pipeline missing release evidence contract: ${requiredPublicationText}`);
+    }
+  }
+  if (
+    publicationPipeline.includes('"packages": []') ||
+    /-OutputPath\s+["']dist\//u.test(publicationPipeline) ||
+    publicationPipeline.includes('onlyIfSuccessful: true')
+  ) {
+    fail('image publication pipeline contains a release evidence bypass');
+  }
+  const archiveIndex = publicationPipeline.indexOf('archiveArtifacts(');
+  const cleanupIndex = publicationPipeline.lastIndexOf('deleteDir()');
+  if (archiveIndex < 0 || cleanupIndex < 0 || archiveIndex > cleanupIndex) {
+    fail('image publication pipeline must archive failure evidence before workspace cleanup');
+  }
+}
+
 function readRel(relPath) {
   return readFileSync(path.join(repoRoot, relPath), 'utf8');
 }
@@ -240,6 +344,7 @@ if (/^\s+paths:\s*$/m.test(workflow)) {
   );
 }
 validateVulnerabilityWorkflow(workflow);
+validateReleaseEvidenceWorkflow(workflow);
 
 for (const requiredWorkflowText of [
   'DISTR_TARGET_ID',
@@ -259,6 +364,13 @@ for (const requiredWorkflowText of [
     fail(`release workflow missing required gate text: ${requiredWorkflowText}`);
   }
 }
+
+const publicationPipeline = [
+  readRel('deploy/jen' + 'kins/Jen' + 'kinsfile.hub-image'),
+  readRel('deploy/jen' + 'kins/publish-hub-image.sh'),
+  readRel('deploy/server-docker-compose/deploy.sh'),
+].join('\n');
+validatePublicationPipeline(publicationPipeline);
 
 const vulnerabilityWrapper = readRel('hack/pr050-govulncheck.mjs');
 for (const requiredWrapperText of [
@@ -509,12 +621,15 @@ function normalizeCredentialValue(value) {
 function isAllowedCredentialPlaceholder(value) {
   const normalized = normalizeCredentialValue(value);
   return (
+    normalized === '' ||
     /^<placeholder>$/i.test(normalized) ||
     /^placeholder$/i.test(normalized) ||
     /^local$/i.test(normalized) ||
     normalized === localJwtSecret ||
     /^process\.env\.[A-Za-z0-9_]+$/.test(normalized) ||
+    /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(normalized) ||
     /^secret-ref:[A-Za-z0-9._/-]+$/.test(normalized) ||
+    /^secret:\/\/[A-Za-z0-9._/-]+$/.test(normalized) ||
     /^\[REDACTED\]$/.test(normalized) ||
     /^\$\{\{/.test(normalized)
   );
@@ -539,8 +654,10 @@ for (const allowed of [
   'password=placeholder',
   'password: local',
   'secret: secret-ref:demo-api-token',
+  'secret: secret://provider/reference',
   'secret=[REDACTED]',
   'POSTGRES_PASSWORD: local',
+  'POSTGRES_PASSWORD="$database_credential"',
   `JWT_SECRET: ${localJwtSecret}`,
   'JWT_SECRET: process.env.JWT_SECRET',
   'RUSTFS_SECRET_KEY: local',

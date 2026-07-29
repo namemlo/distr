@@ -414,6 +414,74 @@ test('the PR-050 validator rejects enclosing release-job execution bypasses', ()
   }
 });
 
+test('the PR-050 validator seals executable release evidence and rejects empty SBOM acceptance', () => {
+  assert.equal(typeof releaseValidator.validateReleaseEvidenceWorkflow, 'function');
+  const workflow = readFileSync(
+    new URL('../.github/workflows/community-release-hardening.yaml', import.meta.url),
+    'utf8'
+  );
+  assert.doesNotThrow(() => releaseValidator.validateReleaseEvidenceWorkflow(workflow));
+  assert.throws(
+    () =>
+      releaseValidator.validateReleaseEvidenceWorkflow(
+        workflow.replace('sbom.packages.length === 0', '"packages": []')
+      ),
+    /empty-package SPDX fallback/
+  );
+  assert.throws(
+    () =>
+      releaseValidator.validateReleaseEvidenceWorkflow(
+        workflow.replaceAll(
+          'node hack/pr050-validate-control-plane-evidence.mjs postdeploy',
+          'node hack/pr050-validate-control-plane-evidence.mjs fixture'
+        )
+      ),
+    /missing fail-closed evidence contract/
+  );
+  for (const requiredGate of [
+    'cosign sign-blob',
+    'cosign verify-blob',
+    "-OutputPath 'work/release-evidence/migration-postgresql-16.14.json'",
+    "-OutputPath 'work/release-evidence/migration-postgresql-18.4.json'",
+    'node hack/pr050-validate-control-plane-evidence.mjs migration',
+    'node --test hack/control-plane-adopter-term-scan.test.mjs',
+    'node hack/control-plane-adopter-term-scan.mjs --base',
+    'docs/api/operator-control-plane-api.md',
+  ]) {
+    assert.throws(
+      () => releaseValidator.validateReleaseEvidenceWorkflow(workflow.replaceAll(requiredGate, 'REMOVED_GATE')),
+      /missing fail-closed evidence contract/
+    );
+  }
+});
+
+test('the PR-050 validator seals Jenkins signed evidence, matrix, adopter scan, and failure retention', () => {
+  assert.equal(typeof releaseValidator.validatePublicationPipeline, 'function');
+  const publicationPipeline = [
+    readFileSync(new URL('../deploy/jenkins/Jenkinsfile.hub-image', import.meta.url), 'utf8'),
+    readFileSync(new URL('../deploy/jenkins/publish-hub-image.sh', import.meta.url), 'utf8'),
+    readFileSync(new URL('../deploy/server-docker-compose/deploy.sh', import.meta.url), 'utf8'),
+  ].join('\n');
+  assert.doesNotThrow(() => releaseValidator.validatePublicationPipeline(publicationPipeline));
+  for (const requiredGate of [
+    'cosign sign-blob',
+    'cosign verify-blob',
+    'postgres:16.14-alpine3.23',
+    'postgres:18.4-alpine3.23',
+    'work/release-evidence-${DISTR_IMAGE_TAG}',
+    'node hack/pr050-validate-control-plane-evidence.mjs migration',
+    'node --test hack/control-plane-adopter-term-scan.test.mjs',
+    'node hack/control-plane-adopter-term-scan.mjs --base',
+    'docs/api/operator-control-plane-api.md',
+    'post {\n    always {\n      archiveArtifacts(',
+  ]) {
+    assert.throws(
+      () => releaseValidator.validatePublicationPipeline(publicationPipeline.replaceAll(requiredGate, 'REMOVED_GATE')),
+      /image publication pipeline missing release evidence contract/
+    );
+  }
+});
+
 test('the PR-050 validator seals the exact committed policy and submitted links', () => {
   assert.equal(typeof releaseValidator.validateVulnerabilityPolicy, 'function');
   assert.doesNotThrow(() => releaseValidator.validateVulnerabilityPolicy(makePolicy()));

@@ -154,13 +154,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     services:
       postgres:
         image: postgres:18.4-alpine3.23
         env:
           POSTGRES_USER: local
           POSTGRES_PASSWORD: local
-          POSTGRES_DB: distr
+          POSTGRES_DB: control_plane_ci
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -169,7 +170,8 @@ jobs:
         ports:
           - 5432:5432
     env:
-      DATABASE_URL: postgres://local:local@localhost:5432/distr?sslmode=disable
+      DATABASE_URL: postgres://local:local@localhost:5432/control_plane_ci?sslmode=disable
+      DISTR_TEST_DATABASE_URL: postgres://local:local@localhost:5432/control_plane_ci?sslmode=disable
       JWT_SECRET: bG9jYWwtand0LXNlY3JldC1wbGFjZWhvbGRlci0zMi1ieXRlcw==
       DISTR_HOST: http://localhost:8080
       USER_EMAIL_VERIFICATION_REQUIRED: 'false'
@@ -198,6 +200,25 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
+      - name: Install cosign for signed provenance
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Run adopter-term scanner and operator guide gate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -Eeuo pipefail
+          test -s docs/api/operator-control-plane-api.md
+          node --test hack/control-plane-adopter-term-scan.test.mjs
+          case "$EVENT_NAME" in
+            pull_request) scan_base="$PULL_REQUEST_BASE_SHA" ;;
+            push) scan_base="$PUSH_BEFORE_SHA" ;;
+            *) exit 2 ;;
+          esac
+          [[ "$scan_base" =~ ^[0-9a-f]{40}$ ]]
+          node hack/control-plane-adopter-term-scan.mjs --base "$scan_base"
       - name: Check committed patch whitespace
         shell: bash
         env:
@@ -375,6 +396,340 @@ jobs:
         run: go build -o dist/docker-agent ./cmd/agent/docker
       - name: Build Kubernetes agent
         run: go build -o dist/kubernetes-agent ./cmd/agent/kubernetes
+      - name: Build release evidence image once
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          evidence_dir=dist/release-evidence
+          install -d -m 0700 "$evidence_dir"
+          binary_sha="$(sha256sum dist/distr-amd64 | awk '{print $1}')"
+          [[ "$binary_sha" =~ ^[0-9a-f]{64}$ ]]
+          BINARY_SHA="$binary_sha" node - <<'NODE'
+          const fs = require('node:fs');
+          const commit = process.env.GITHUB_SHA;
+          const document = {
+            spdxVersion: 'SPDX-2.3',
+            dataLicense: 'CC0-1.0',
+            SPDXID: 'SPDXRef-DOCUMENT',
+            name: `distr-hub-content-${commit}`,
+            documentNamespace: `https://distr.sh/spdx/hub/${commit}`,
+            creationInfo: {
+              created: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+              creators: ['Tool: community-release-hardening'],
+            },
+            documentDescribes: ['SPDXRef-Package-distr-hub'],
+            packages: [{
+              name: 'distr-hub',
+              SPDXID: 'SPDXRef-Package-distr-hub',
+              versionInfo: commit,
+              downloadLocation: 'NOASSERTION',
+              filesAnalyzed: true,
+            }],
+            files: [{
+              fileName: '/distr',
+              SPDXID: 'SPDXRef-File-distr',
+              checksums: [{algorithm: 'SHA256', checksumValue: process.env.BINARY_SHA}],
+            }],
+            relationships: [{
+              spdxElementId: 'SPDXRef-Package-distr-hub',
+              relationshipType: 'CONTAINS',
+              relatedSpdxElement: 'SPDXRef-File-distr',
+            }],
+          };
+          fs.writeFileSync('dist/hub-content.spdx.json', `${JSON.stringify(document, null, 2)}\n`, {mode: 0o600});
+          NODE
+          docker build \
+            --build-arg TARGETARCH=amd64 \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --file Dockerfile.hub \
+            --tag "distr-control-plane-release:${GITHUB_SHA}" \
+            .
+          image_id="$(docker image inspect --format='{{.Id}}' "distr-control-plane-release:${GITHUB_SHA}")"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$image_id" >"$evidence_dir/image-id.txt"
+      - name: Generate real image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: distr-control-plane-release:${{ github.sha }}
+          output-file: dist/release-evidence/image.spdx.json
+          artifact-name: control-plane-release.spdx.json
+          format: spdx-json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Validate SBOM and emit signed digest-bound provenance attestation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const sbom = JSON.parse(fs.readFileSync('dist/release-evidence/image.spdx.json', 'utf8'));
+          if (
+            sbom.spdxVersion !== 'SPDX-2.3' ||
+            sbom.SPDXID !== 'SPDXRef-DOCUMENT' ||
+            !Array.isArray(sbom.documentDescribes) ||
+            sbom.documentDescribes.length === 0 ||
+            !Array.isArray(sbom.packages) ||
+            sbom.packages.length === 0
+          ) {
+            throw new Error('release SBOM must describe at least one image package');
+          }
+          const imageId = fs.readFileSync('dist/release-evidence/image-id.txt', 'utf8').trim();
+          if (!/^sha256:[0-9a-f]{64}$/.test(imageId)) throw new Error('invalid immutable image ID');
+          const commit = process.env.GITHUB_SHA;
+          if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('invalid source commit');
+          const source = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}`;
+          const statement = {
+            _type: 'https://in-toto.io/Statement/v1',
+            subject: [{
+              name: `distr-control-plane-release:${commit}`,
+              digest: {sha256: imageId.slice('sha256:'.length)},
+            }],
+            predicateType: 'https://slsa.dev/provenance/v1',
+            predicate: {
+              buildDefinition: {
+                buildType: 'https://distr.sh/build-types/community-hub-image/v1',
+                externalParameters: {platform: 'linux/amd64'},
+                internalParameters: {},
+                resolvedDependencies: [{uri: source, digest: {sha1: commit}}],
+              },
+              runDetails: {
+                builder: {id: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`},
+                metadata: {invocationId: `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`},
+              },
+            },
+          };
+          fs.writeFileSync(
+            'dist/release-evidence/provenance.intoto.json',
+            `${JSON.stringify(statement, null, 2)}\n`,
+            {mode: 0o600}
+          );
+          NODE
+          (
+            cd dist/release-evidence
+            sha256sum image.spdx.json >image.spdx.json.sha256
+            sha256sum provenance.intoto.json >provenance.intoto.json.sha256
+            sha256sum -c --status image.spdx.json.sha256
+            sha256sum -c --status provenance.intoto.json.sha256
+          )
+          provenance=dist/release-evidence/provenance.intoto.json
+          bundle=dist/release-evidence/provenance.sigstore.json
+          certificate_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/community-release-hardening.yaml@${GITHUB_REF}"
+          cosign sign-blob --yes --bundle "$bundle" "$provenance"
+          cosign verify-blob \
+            --bundle "$bundle" \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$provenance"
+          (
+            cd dist/release-evidence
+            sha256sum provenance.sigstore.json >provenance.sigstore.json.sha256
+            sha256sum -c --status provenance.sigstore.json.sha256
+          )
+      - name: Run executable control-plane migration matrix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          set +x
+          install -d -m 0700 work/release-evidence dist/release-evidence
+          pwsh -NoLogo -NoProfile -NonInteractive \
+            -File hack/control-plane-migration-matrix.ps1 \
+            -DatabaseUrl "$DATABASE_URL" \
+            -ExpectedPostgresVersion '18.4' \
+            -OutputPath 'work/release-evidence/migration-postgresql-18.4.json'
+          node hack/pr050-validate-control-plane-evidence.mjs migration \
+            work/release-evidence/migration-postgresql-18.4.json \
+            "$GITHUB_SHA" \
+            '18.4'
+          install -m 0600 \
+            work/release-evidence/migration-postgresql-18.4.json \
+            dist/release-evidence/migration-postgresql-18.4.json
+
+          database_container="distr-release-matrix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          database_credential="$(openssl rand -hex 24)"
+          cleanup_database() {
+            docker rm -f "$database_container" >/dev/null 2>&1 || true
+            database_credential=''
+          }
+          trap cleanup_database EXIT HUP INT TERM
+          docker run --detach \
+            --name "$database_container" \
+            --publish 127.0.0.1::5432 \
+            --env POSTGRES_USER=release_ci \
+            --env POSTGRES_PASSWORD="$database_credential" \
+            --env POSTGRES_DB=control_plane_ci \
+            postgres:16.14-alpine3.23 >/dev/null
+          database_port="$(docker port "$database_container" 5432/tcp | sed -n 's/.*://p')"
+          [[ "$database_port" =~ ^[0-9]+$ ]]
+          ready=0
+          for attempt in $(seq 1 30); do
+            if docker exec "$database_container" pg_isready -U release_ci -d control_plane_ci >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          [[ "$ready" -eq 1 ]]
+          database_url="postgres://release_ci:${database_credential}@127.0.0.1:${database_port}/control_plane_ci?sslmode=disable"
+          pwsh -NoLogo -NoProfile -NonInteractive \
+            -File hack/control-plane-migration-matrix.ps1 \
+            -DatabaseUrl "$database_url" \
+            -ExpectedPostgresVersion '16.14' \
+            -OutputPath 'work/release-evidence/migration-postgresql-16.14.json'
+          database_url=''
+          node hack/pr050-validate-control-plane-evidence.mjs migration \
+            work/release-evidence/migration-postgresql-16.14.json \
+            "$GITHUB_SHA" \
+            '16.14'
+          install -m 0600 \
+            work/release-evidence/migration-postgresql-16.14.json \
+            dist/release-evidence/migration-postgresql-16.14.json
+          cleanup_database
+          trap - EXIT HUP INT TERM
+      - name: Run control-plane UI acceptance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          raw_ui_report="$RUNNER_TEMP/control-plane-ui-report.json"
+          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright test \
+            --config playwright.control-plane.config.ts \
+            --reporter=json >"$raw_ui_report"
+          node - "$raw_ui_report" <<'NODE'
+          const fs = require('node:fs');
+          const raw = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (
+            !Number.isInteger(raw.stats?.expected) ||
+            raw.stats.expected < 1 ||
+            raw.stats.unexpected !== 0 ||
+            raw.stats.flaky !== 0
+          ) {
+            throw new Error('UI report must contain passing non-flaky Playwright results');
+          }
+          const report = {
+            schemaVersion: 'distr.control-plane-ui-report/v1',
+            status: 'PASS',
+            stats: {
+              expected: raw.stats.expected,
+              unexpected: raw.stats.unexpected,
+              flaky: raw.stats.flaky,
+              skipped: Number.isInteger(raw.stats.skipped) ? raw.stats.skipped : 0,
+            },
+          };
+          fs.writeFileSync(
+            'dist/release-evidence/ui.json',
+            `${JSON.stringify(report, null, 2)}\n`,
+            {mode: 0o600}
+          );
+          NODE
+          node hack/pr050-validate-control-plane-evidence.mjs ui dist/release-evidence/ui.json
+      - name: Run post-deploy operator and API acceptance
+        shell: bash
+        env:
+          DISTR_CP_HUB_IMAGE: distr-control-plane-release:${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          node examples/control-plane-e2e/run.mjs --mode clean --json >dist/release-evidence/post-deploy.json
+          node hack/pr050-validate-control-plane-evidence.mjs postdeploy dist/release-evidence/post-deploy.json
+      - name: Assemble checksummed five-domain acceptance bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node hack/pr050-validate-control-plane-evidence.mjs migration \
+            dist/release-evidence/migration-postgresql-16.14.json \
+            "$GITHUB_SHA" \
+            '16.14'
+          node hack/pr050-validate-control-plane-evidence.mjs migration \
+            dist/release-evidence/migration-postgresql-18.4.json \
+            "$GITHUB_SHA" \
+            '18.4'
+          node hack/pr050-validate-control-plane-evidence.mjs postdeploy dist/release-evidence/post-deploy.json
+          node hack/pr050-validate-control-plane-evidence.mjs ui dist/release-evidence/ui.json
+          node - <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const directory = 'dist/release-evidence';
+          const checksum = (name) =>
+            `sha256:${crypto.createHash('sha256').update(fs.readFileSync(`${directory}/${name}`)).digest('hex')}`;
+          const live = (selector) => ({
+            status: 'PASS',
+            reference: 'post-deploy.json',
+            sha256: checksum('post-deploy.json'),
+            selector,
+          });
+          const matrix = (postgresVersion) => {
+            const reference = `migration-postgresql-${postgresVersion}.json`;
+            return {
+              status: 'PASS',
+              postgresVersion,
+              reference,
+              sha256: checksum(reference),
+              selectors: [
+                'range=138..162',
+                'v1-flags-off=PASS',
+                'mixed-v1-v2=PASS',
+                'v2-history-flags-off=PASS',
+              ],
+            };
+          };
+          const bundle = {
+            schemaVersion: 'distr.control-plane-release-acceptance/v1',
+            status: 'PASS',
+            sourceCommit: process.env.GITHUB_SHA,
+            imageId: fs.readFileSync(`${directory}/image-id.txt`, 'utf8').trim(),
+            sbom: {reference: 'image.spdx.json', sha256: checksum('image.spdx.json')},
+            provenance: {
+              status: 'PASS',
+              reference: 'provenance.intoto.json',
+              sha256: checksum('provenance.intoto.json'),
+              signatureReference: 'provenance.sigstore.json',
+              signatureSha256: checksum('provenance.sigstore.json'),
+              verification: 'cosign verify-blob',
+            },
+            migrations: [matrix('16.14'), matrix('18.4')],
+            evidence: {
+              operator: live('liveStack.started=true,loopbackOnly=true,required services present,cleanup complete'),
+              api: live('proofMode=live-hub-api,targets>=2,v2 migration attempts succeeded'),
+              ui: {
+                status: 'PASS',
+                reference: 'ui.json',
+                sha256: checksum('ui.json'),
+                selector: 'stats.expected>0,unexpected=0,flaky=0',
+              },
+              flag: {
+                status: 'PASS',
+                references: [
+                  'migration-postgresql-16.14.json',
+                  'migration-postgresql-18.4.json',
+                ],
+                sha256: [
+                  checksum('migration-postgresql-16.14.json'),
+                  checksum('migration-postgresql-18.4.json'),
+                ],
+                selector: 'v1-flags-off,mixed-v1-v2,v2-history-flags-off all PASS on PostgreSQL 16.14 and 18.4',
+              },
+              audit: live('trusted current ACCEPTED observer evidence,A-B-A reconciliation,fleet rows,verified flowChecksum'),
+            },
+          };
+          fs.writeFileSync(
+            `${directory}/acceptance.json`,
+            `${JSON.stringify(bundle, null, 2)}\n`,
+            {mode: 0o600}
+          );
+          NODE
+          (
+            cd dist/release-evidence
+            sha256sum migration-postgresql-16.14.json >migration-postgresql-16.14.json.sha256
+            sha256sum migration-postgresql-18.4.json >migration-postgresql-18.4.json.sha256
+            sha256sum post-deploy.json >post-deploy.json.sha256
+            sha256sum ui.json >ui.json.sha256
+            sha256sum acceptance.json >acceptance.json.sha256
+            sha256sum -c --status migration-postgresql-16.14.json.sha256
+            sha256sum -c --status migration-postgresql-18.4.json.sha256
+            sha256sum -c --status post-deploy.json.sha256
+            sha256sum -c --status ui.json.sha256
+            sha256sum -c --status acceptance.json.sha256
+          )
       - name: Start Hub and run live community demo
         shell: bash
         run: |
@@ -390,3 +745,13 @@ jobs:
         run: node hack/pr050-license-scan.mjs
       - name: Run PR-050 release package validation
         run: node hack/pr050-validate-release-hardening.mjs
+      - name: Retain enforced release evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-plane-release-evidence-${{ github.sha }}
+          path: |
+            dist/release-evidence
+            work/release-evidence
+          if-no-files-found: error
+          retention-days: 30
