@@ -8,7 +8,24 @@
       "allowedProofClasses": [
         "adopter-execution"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestRegistryImportPreviewIsDeterministicAndNoOpOnCanonicalReimport",
+        "TestRegistryImportPreviewRejectsInvalidEvidenceAndSecretBearingInput",
+        "TestRegistryImportPreviewRejectsDuplicateAndUnaliasedRenameWithoutSilentOmission",
+        "TestRegistryImportClassificationMappingAndCoverageAreExact",
+        "TestRegistryImportSourceBaselineProducesExactNonzeroOmissions",
+        "TestRegistryImportSourceBaselineKeepsRetirementsSeparateFromOmissions",
+        "TestRegistryImportRejectsMappedPlacementOutsideSourceBaseline",
+        "TestRegistryImportDiagnosticsAreStableAndBounded",
+        "TestRegistryImportNeutralRoadmapScaleFixtureHasExactCoverage",
+        "TestRegistryImportNormalizesEveryReturnedFieldAndSubscriberSet",
+        "TestRegistryImportSanitizesEveryPlacementStringOnEveryOS",
+        "TestRegistryImportRejectsUnsafeExistingBaselineBeforeDiff",
+        "TestRegistryImportRejectsUnpersistableIdentityBeforeDiagnostics",
+        "TestRegistryImportDiffSeparatesPlacementCreateAndMetadataUpdate",
+        "TestRegistryImportCoverageBlocksEveryUnapplyableTopology"
+      ]
     },
     "pr057-import": {
       "automatedTest": "internal/deploymentregistry/import_test.go",
@@ -16,7 +33,24 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestRegistryImportPreviewIsDeterministicAndNoOpOnCanonicalReimport",
+        "TestRegistryImportPreviewRejectsInvalidEvidenceAndSecretBearingInput",
+        "TestRegistryImportPreviewRejectsDuplicateAndUnaliasedRenameWithoutSilentOmission",
+        "TestRegistryImportClassificationMappingAndCoverageAreExact",
+        "TestRegistryImportSourceBaselineProducesExactNonzeroOmissions",
+        "TestRegistryImportSourceBaselineKeepsRetirementsSeparateFromOmissions",
+        "TestRegistryImportRejectsMappedPlacementOutsideSourceBaseline",
+        "TestRegistryImportDiagnosticsAreStableAndBounded",
+        "TestRegistryImportNeutralRoadmapScaleFixtureHasExactCoverage",
+        "TestRegistryImportNormalizesEveryReturnedFieldAndSubscriberSet",
+        "TestRegistryImportSanitizesEveryPlacementStringOnEveryOS",
+        "TestRegistryImportRejectsUnsafeExistingBaselineBeforeDiff",
+        "TestRegistryImportRejectsUnpersistableIdentityBeforeDiagnostics",
+        "TestRegistryImportDiffSeparatesPlacementCreateAndMetadataUpdate",
+        "TestRegistryImportCoverageBlocksEveryUnapplyableTopology"
+      ]
     },
     "pr056-validation": {
       "automatedTest": "internal/deploymentregistry/validation_test.go",
@@ -24,7 +58,19 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestValidateDeploymentRegistryPlacementAcceptsDedicatedTopology",
+        "TestValidateDeploymentRegistryPlacementAcceptsSharedTopologyWithStableSubscriberChecksum",
+        "TestValidateDeploymentRegistryPlacementRejectsAmbiguousActiveEnvironment",
+        "TestValidateDeploymentRegistryPlacementRejectsDuplicatePhysicalIdentity",
+        "TestValidateDeploymentRegistryPlacementRequiresSharedSubscriber",
+        "TestValidateDeploymentRegistryPlacementRejectsOrphanInstance",
+        "TestValidateDeploymentRegistryPlacementRequiresAliasForRename",
+        "TestValidateDeploymentRegistryPlacementRejectsCrossOrganizationSubstitution",
+        "TestValidateDeploymentRegistryPlacementReturnsStableOrderedIssueCodes",
+        "TestDeploymentRegistryEnumValuesRemainExact"
+      ]
     },
     "pr058-config-canonical": {
       "automatedTest": "internal/targetconfig/canonical_test.go",
@@ -32,7 +78,13 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestTargetConfigCanonicalizeIsStableAcrossInputOrder",
+        "TestTargetConfigCanonicalizeChangesChecksumForMaterialChange",
+        "TestTargetConfigCanonicalizeTreatsNilAndEmptyCollectionsEqually",
+        "TestTargetConfigCanonicalizeRejectsDuplicateStableKeys"
+      ]
     },
     "pr060-release-contract": {
       "automatedTest": "internal/releasebundles/release_contract_v2_test.go",
@@ -40,7 +92,27 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestParseReleaseContractV2StrictlyDispatchesBySchema",
+        "TestParseReleaseContractPreservesV1Shape",
+        "TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData",
+        "TestValidateComponentReleaseContractV2AcceptsVersionedAdapterRequirements",
+        "TestValidateComponentReleaseContractV2RejectsUnresolvedBackupAdapterRequirement",
+        "TestValidateComponentReleaseContractV2AllowsOnlyOneAdapterPerStepKind",
+        "TestNormalizeReleaseContractV2SortsOnlySetLikeCollections",
+        "TestNormalizeReleaseContractV2TreatsNullOmittedAndEmptyCollectionsEqually",
+        "TestNormalizeReleaseContractV2TreatsNestedNullAndEmptyCollectionsEqually",
+        "TestValidateComponentReleaseContractV2RejectsCredentialBearingTextAndReferences",
+        "TestValidateComponentReleaseContractV2RejectsEmbeddedAbsolutePaths",
+        "TestValidateComponentReleaseContractV2RequiresPortableImmutableEvidenceReferences",
+        "TestValidateComponentReleaseContractV2AcceptsCredentialFreeImmutableReferences",
+        "TestValidateComponentReleaseContractV2AcceptsNeutralProvenanceURIIdentities",
+        "TestValidateComponentReleaseContractV2RejectsTargetSpecificOrMutableURIIdentities",
+        "TestValidateComponentReleaseContractV2BoundsEveryCollection",
+        "TestValidateComponentReleaseContractV2BoundsFreeTextAndReferences",
+        "TestValidateComponentReleaseContractV2BoundsCanonicalPayload"
+      ]
     },
     "pr058-config-validation": {
       "automatedTest": "internal/targetconfig/validation_test.go",
@@ -48,7 +120,21 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestTargetConfigValidateDraftRejectsUnsafeInputs",
+        "TestTargetConfigVersionIDValidationIsConsistentAtCreationAndVerification",
+        "TestTargetConfigValidateDraftBoundsDiagnostics",
+        "TestTargetConfigValidateDraftAcceptsOpaqueManagedSecretReference",
+        "TestTargetConfigVerifyObjectsReturnsBoundedTamperFacts",
+        "TestTargetConfigVerifyObjectsReturnsBoundedUnavailableFact",
+        "TestS3ObjectVerifierPinsVersionAndComputesDigestWithoutReturningBody",
+        "TestS3ObjectVerifierRejectsUnsafeProviderMetadata",
+        "TestS3ObjectVerifierAcceptsProviderMetadataAtExactLimits",
+        "TestTargetConfigVerifyObjectsDropsUnsafeObservedMetadata",
+        "TestTargetConfigVerifyObjectsPreservesObservedZeroSizePresence",
+        "TestS3ObjectVerifierRejectsObjectsOutsideConfiguredBucket"
+      ]
     },
     "pr061-provenance": {
       "automatedTest": "internal/releasebundles/provenance_test.go",
@@ -56,7 +142,19 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestVerifySignedProvenanceAcceptsTrustedFrozenPolicy",
+        "TestVerifySignedProvenanceFailsClosedForUntrustedWrongAndExpiredEvidence",
+        "TestSigstoreProvenanceVerifierRejectsMalformedAndOversizedWithoutNetwork",
+        "TestSigstoreProvenanceVerifierRejectsMalformedEvidenceWithValidFrozenRoot",
+        "TestVerifySignedProvenanceRejectsDuplicateSignedStatementMembers",
+        "TestCanonicalJSONRejectsTrailingOrNonObjectExternalParameters",
+        "TestVerifyComponentReleasePublicationRequiresEveryPlatformAndReturnsBoundedFacts",
+        "TestProvenancePreflightRequiresExactArtifactDigestAndPolicy",
+        "TestVerifySignedProvenanceBindsExactReleaseSourceAndBuildFacts",
+        "TestValidateProvenanceStatementRejectsMissingReleaseBindings"
+      ]
     },
     "pr059-v1-config": {
       "automatedTest": "internal/targetconfig/v1_extraction_test.go",
@@ -64,7 +162,20 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory",
+        "TestExtractV1TargetConfigNeverOmitsUnsupportedV1VariableMaterial",
+        "TestExtractV1TargetConfigBindsExactProviderObjectEvidenceAndVerifies",
+        "TestExtractV1TargetConfigBlocksUnavailableOrMismatchedObjectEvidence",
+        "TestExtractV1TargetConfigRequiresScopedImmutableSecretEvidence",
+        "TestExtractV1TargetConfigSecretRotationChangesSnapshotChecksum",
+        "TestExtractV1TargetConfigResolvesLogicalComponentIdentityAndActiveAliases",
+        "TestExtractV1TargetConfigBlocksChangedHistoricalBytesOrChecksums",
+        "TestExtractV1TargetConfigBlocksUnsupportedOrAmbiguousTopology",
+        "TestExtractV1TargetConfigBlocksMutableOrAmbiguousConfigObjects",
+        "TestExtractV1TargetConfigBlocksPlaintextSecretsAndUnsafeReferences"
+      ]
     },
     "pr062-product-graph": {
       "automatedTest": "internal/productrelease/graph_test.go",
@@ -72,7 +183,14 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestProductReleaseGraphProviderBeforeConsumer",
+        "TestProductReleaseGraphRetainsTargetDeferredRequirement",
+        "TestProductReleaseValidationFailures",
+        "TestProductReleaseDuplicateMigrationRequiresEveryFunctionalFieldToMatch",
+        "TestProductReleaseGraphRejectsUnboundedAggregateRequirements"
+      ]
     },
     "pr063-resolver": {
       "automatedTest": "internal/planning/resolver_test.go",
@@ -80,7 +198,22 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestResolveTargetRequirementsAllModesDeterministically",
+        "TestResolveTargetRequirementsBlocksAmbiguousAndUnresolvedBindings",
+        "TestResolvePlanStepAdaptersUsesReleaseDeclaredRequirements",
+        "TestResolvePlanStepAdaptersDoesNotAcceptAssignmentCapabilityOverride",
+        "TestResolvePlanStepAdaptersRejectsMoreThanOneRequirementPerConcreteStep",
+        "TestAdapterRequirementsFromReleasePinsUsesTypedMigrationAndHealthScopes",
+        "TestAdapterRequirementsFromReleasePinsRejectsMissingTypedScopeBinding",
+        "TestValidatePlanDraftRequiresOneExactActivePlacement",
+        "TestValidatePlanDraftBlocksForeignConfigPlatformProvenanceAndStaleState",
+        "TestValidatePlanDraftRejectsV1IncompatibleResolution",
+        "TestValidatePlanDraftAcceptsSelectedPlatformInMultiPlatformSet",
+        "TestValidatePlanDraftRejectsPlanSizeBeforeGraphConstruction",
+        "TestResolveTargetRequirementsRequiresFrozenDisabledFeatureFlag"
+      ]
     },
     "pr065-migration-validation": {
       "automatedTest": "internal/migrationplanning/validation_test.go",
@@ -88,7 +221,16 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestValidateMigrationContractAcceptsBoundedRetrySafeContract",
+        "TestValidateMigrationContractRejectsUnsafeBackupAndRetryContract",
+        "TestValidateMigrationContractRejectsForwardOnlyReverseShortcut",
+        "TestValidateMigrationContractRequiresResultingSchemaChecksum",
+        "TestValidatePreviousReleaseCompatibilityBlocksForwardOnlySchema",
+        "TestValidatePreviousReleaseCompatibilityRequiresExactKnownState",
+        "TestValidateMigrationContractBoundsDependencyIDsAndCount"
+      ]
     },
     "pr065-migration-recovery": {
       "automatedTest": "internal/migrationplanning/recovery_test.go",
@@ -96,7 +238,15 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestBuildRecoveryPlanReversesMigrationDependencies",
+        "TestBuildRecoveryPlanBlocksAutomaticReverseForForwardOnlyMigration",
+        "TestBuildRecoveryPlanFailsClosedForUnresolvedReverseGraph",
+        "TestBuildRecoveryPlanSupportsManualForwardFix",
+        "TestBuildRecoveryPlanRequiresSeparateRestoreApprovalAndFrozenBackup",
+        "TestBuildRestoreGraphIsDeterministicForFrozenRecoveryPlanID"
+      ]
     },
     "pr064-changeset": {
       "automatedTest": "internal/planning/changeset_test.go",
@@ -104,7 +254,13 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestBuildTargetChangeSetReturnsExactStableChangesAndSkippedNotes",
+        "TestBuildTargetChangeSetLabelsBootstrapAndIncludesExactTargetFacts",
+        "TestBuildTargetChangeSetFailsClosedWhenBoundedNotesOmitTarget",
+        "TestBuildTargetChangeSetBoundsNotesAndRetainsTarget"
+      ]
     },
     "pr064-baseline": {
       "automatedTest": "internal/planning/baseline_test.go",
@@ -112,7 +268,13 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestSelectVerifiedBaselinePinsNewestHealthyObservationForActiveDesiredRevision",
+        "TestSelectVerifiedBaselineReturnsBootstrapWithoutCandidate",
+        "TestSelectVerifiedBaselineAuthorizesOnlyExactV2PlanFacts",
+        "TestSelectVerifiedBaselineObservationChecksumPinsPlatform"
+      ]
     },
     "pr063-baseline": {
       "automatedTest": "internal/planning/baseline_test.go",
@@ -120,7 +282,13 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestSelectVerifiedBaselinePinsNewestHealthyObservationForActiveDesiredRevision",
+        "TestSelectVerifiedBaselineReturnsBootstrapWithoutCandidate",
+        "TestSelectVerifiedBaselineAuthorizesOnlyExactV2PlanFacts",
+        "TestSelectVerifiedBaselineObservationChecksumPinsPlatform"
+      ]
     },
     "pr067-policy": {
       "automatedTest": "internal/governance/policy_test.go",
@@ -128,7 +296,16 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestValidateDeploymentPolicyVersionRejectsInvalidRestrictedExpression",
+        "TestValidateDeploymentPolicyVersionRejectsDerivedRiskGateAuthority",
+        "TestValidateDeploymentPolicyVersionRequiresConcreteBootstrapApproval",
+        "TestComposeEffectivePolicyUsesStrictConjunction",
+        "TestComposeEffectivePolicyBlocksConflictingModesAndWindows",
+        "TestComposeEffectivePolicyIsDeterministicAcrossInputOrdering",
+        "TestComposeEffectivePolicySubscriberMembershipChangesChecksum"
+      ]
     },
     "pr068-approval": {
       "automatedTest": "internal/governance/approval_test.go",
@@ -136,7 +313,16 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestApprovalDecisionDeniesRequesterSelfApproval",
+        "TestApprovalDecisionDeniesActorOutsideRequiredGroup",
+        "TestApprovalEvaluationRequiresIndependentSubscriberQuorums",
+        "TestApprovalWithoutRequirementsFailsClosed",
+        "TestApprovalDecisionRejectsConflictingOptimisticRevision",
+        "TestApprovalInvalidationDetectsExpiryAndMaterialChanges",
+        "TestUnapprovedCampaignMemberIsBlocked"
+      ]
     },
     "pr069-calendar": {
       "automatedTest": "internal/scheduling/calendar_test.go",
@@ -144,7 +330,20 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestEvaluateCalendarOrdinaryAllowAndDeny",
+        "TestRemainingCalendarWaitSecondsUsesNextTrustedOpenMinute",
+        "TestEvaluateCalendarEvidenceUsesImmutableVersionRuleIdentity",
+        "TestEvaluateCalendarOvernightWindowUsesPreviousWeekday",
+        "TestEvaluateCalendarDSTGapRecordsActualLocalEvidence",
+        "TestEvaluateCalendarRepeatedHourIsDeterministicWithoutIdentityCollision",
+        "TestEvaluateCalendarRejectsRuleBindingDrift",
+        "TestEvaluateCalendarRuleVersionUpdateChangesDecisionIdentity",
+        "TestCanonicalizeCalendarVersionIsOrderStableAndContentBound",
+        "TestEvaluateFreezeOverlapUsesHighestPriorityAndStableTieBreak",
+        "TestCanonicalizeFreezeRevisionNormalizesExactInstants"
+      ]
     },
     "pr070-admission": {
       "automatedTest": "internal/scheduling/admission_test.go",
@@ -152,7 +351,19 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestEvaluateAdmissionWaitsForClosedWindowAndActiveFreeze",
+        "TestEvaluateAdmissionBlocksMissingApproval",
+        "TestEvaluateAdmissionMaterialChecksumIgnoresClockButPinsMaterialFacts",
+        "TestEmergencyOverrideAcceleratesOnlyWhitelistedWaits",
+        "TestEmergencyOverrideRequiresApprovedApprovalEvidence",
+        "TestEmergencyOverrideCannotExceedRemainingWait",
+        "TestEmergencyOverrideCannotExceedRemainingFreeze",
+        "TestEmergencyOverrideCannotAccelerateApprovalWithoutTrustedRemainingWait",
+        "TestEvaluateAdmissionNeverOverridesMandatoryGateEvidence",
+        "TestEvaluateAdmissionRejectsOverrideOutsideItsExactLifetime"
+      ]
     },
     "pr075-execution": {
       "automatedTest": "internal/db/execution_v2_test.go",
@@ -160,7 +371,20 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestExecutionV2RepositoryRequestValidation",
+        "TestExecutionV2AttemptInsertValidation",
+        "TestExecutionV2AttemptRequiresCanonicalCompleteTaskResourceSet",
+        "TestExecutionV2AttemptRejectsMissingTaskResourceLocks",
+        "TestExecutionV2AuditEventCarriesFrozenExecutionCorrelations",
+        "TestExecutionV2ReconciliationAllowsOnlySafeStatusTransitions",
+        "TestPendingDesiredInputForExecutionAttemptUsesFrozenDeployStep",
+        "TestExecutionAttemptOutcomeMappingIsFailClosed",
+        "TestDesiredTerminalStatusMapsToExactAttemptProjection",
+        "TestTerminalExecutionEventIsAuditOnly",
+        "TestCancelStatusAndReconciliationRepositoryValidation"
+      ]
     },
     "pr072-state-machine": {
       "automatedTest": "internal/campaigns/state_machine_test.go",
@@ -168,7 +392,12 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestCampaignRunHappyPathAndTerminalTransitions",
+        "TestCampaignRunRejectsIllegalAndStaleTransitions",
+        "TestPublicCampaignLifecycleOnlyAllowsExactPreRunChain"
+      ]
     },
     "pr072-thresholds": {
       "automatedTest": "internal/campaigns/thresholds_test.go",
@@ -176,7 +405,11 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestBakeDurationsMustBeNonDecreasing",
+        "TestThresholdBreachStopsAdmissionAtomically"
+      ]
     },
     "pr073-controls": {
       "automatedTest": "internal/campaigns/controls_test.go",
@@ -184,7 +417,20 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestPauseCampaignBlocksAdmissionsBeforeSafePointAndResumeSurvivesRestart",
+        "TestScheduledCampaignPauseResumesToScheduled",
+        "TestCancelCampaignOnlyCancellableWorkAndReconcilesUncertainState",
+        "TestCampaignControlRejectsStaleAndConflictingState",
+        "TestExcludeCampaignMemberIsAuthorizedAndVisibleAsIncompleteDrift",
+        "TestCampaignControlsRejectWhitespacePaddedReason",
+        "TestCampaignMemberMutationRejectsTerminalRunAndAdvancesVersion",
+        "TestCompositeCampaignControlServiceIsRouteCompatible",
+        "TestRetryCampaignSplitKeepsV1AndMaterializesV2ThroughRetryStore",
+        "TestRetryCampaignV2FailsClosedWithoutStoreOrAuthorizer",
+        "TestCampaignMemberRetryOnlyAllowsFailedMember"
+      ]
     },
     "pr076-recovery": {
       "automatedTest": "internal/db/execution_v2_recovery_test.go",
@@ -192,7 +438,13 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestExecutionV2ReadyTaskRecoveryQueryIsBoundedStableFairAndExact",
+        "TestExecutionV2ReadyTaskRecoveryLoadsEverySelectedReadyStepInOneBatch",
+        "TestExecutionV2ReadyTaskRecoveryRejectsNonPositiveBatch",
+        "TestExecutionV2ReadyTaskRecoveryRejectsUnboundedBatch"
+      ]
     },
     "pr071-campaign-canonical": {
       "automatedTest": "internal/campaigns/canonical_test.go",
@@ -200,7 +452,15 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestCanonicalizeCampaignRevisionIsStableAcrossRecreation",
+        "TestCanonicalizeCampaignRevisionBindsMemberPlanChecksum",
+        "TestCanonicalizeCampaignRevisionBindsAllMemberEvidenceChecksums",
+        "TestCanonicalizeCampaignRevisionBindsCanonicalProviderIdentity",
+        "TestCampaignRuntimeExpectationChecksumUsesStableDesiredRuntimeFields",
+        "TestCampaignRuntimeExpectationChecksumRejectsMutableImageTag"
+      ]
     },
     "pr077-drift": {
       "automatedTest": "internal/reconciliation/drift_test.go",
@@ -208,7 +468,14 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestClassifyDriftSeparatesArtifactConfigSchemaAndRuntimeHealth",
+        "TestClassifyDriftFlagsExecutorSuccessRuntimeWrong",
+        "TestClassifyDriftUsesFreshUntilBoundary",
+        "TestAcceptedDeviationIsTimeBoundAndDoesNotRewriteDesiredState",
+        "TestReconciliationDecisionStatusRequiresPlanOrOutcomeEvidence"
+      ]
     },
     "pr077-desired-state": {
       "automatedTest": "internal/desiredstate/state_test.go",
@@ -216,7 +483,14 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestDesiredStateAdmissionDoesNotReplaceActiveRevision",
+        "TestDesiredStateAdvancesOnlyAfterIndependentVerification",
+        "TestDesiredStateTerminalFailurePreservesPriorActive",
+        "TestDesiredStateCancellationPreservesPriorActive",
+        "TestDesiredStateRejectsUnprovenNonTimeoutTerminalOutcome"
+      ]
     },
     "pr078-audit-bundle": {
       "automatedTest": "internal/auditexport/bundle_test.go",
@@ -224,7 +498,17 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestBuildDeploymentEvidenceBundleIsDeterministicAndCorrelated",
+        "TestBuildDeploymentEvidenceBundleChecksumCommitsToSchemaVersion",
+        "TestBuildDeploymentEvidenceBundleRejectsCrossOrganizationEvent",
+        "TestRedactAuditPayloadRemovesSecretsAndBoundsPayload",
+        "TestBuildDeploymentEvidenceBundleFollowsTypedCorrelationGraph",
+        "TestBuildDeploymentEvidenceBundleRejectsDisconnectedSameTenantEvent",
+        "TestRedactAuditPayloadPreservesJSONNumbersAndCoversCredentialShapes",
+        "TestRedactAuditPayloadRejectsTrailingJSONDocuments"
+      ]
     },
     "pr078-audit-worker": {
       "automatedTest": "internal/auditexport/worker_test.go",
@@ -232,7 +516,15 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestAuditExportBatchRetriesInOrderAndIsIdempotent",
+        "TestAuditExportBatchRecordsFailureWithoutAdvancingCheckpoint",
+        "TestAuditExportBatchRecordsSinkResolutionFailureAsAttempt",
+        "TestAuditExportBatchRetainsFailedAttemptWhenRetrySucceeds",
+        "TestAuditExportBatchPersistsCancellationFailureWithDetachedContext",
+        "TestAuditExportBatchPersistsCommitFailure"
+      ]
     },
     "adopter-cleanup": {
       "automatedTest": "internal/retirement/apply_test.go",
@@ -240,7 +532,15 @@
       "allowedProofClasses": [
         "adopter-execution"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestApplyRejectsUnsafeFactsBeforeMutation",
+        "TestApplyResumesAfterInterruptionAndCommitsOnlyPendingItems",
+        "TestApplyCompletedJobIsNoOpOnlyForIdenticalApprovalBinding",
+        "TestApplyPassesExactTombstoneAndCountFencesToAtomicStore",
+        "TestVerifyRequiresExactLineageCountsAndRetainedApplicationAudit",
+        "TestVerifyReturnsVerifiedReport"
+      ]
     },
     "pr081-scale": {
       "automatedTest": "hack/control-plane-scale-harness.test.mjs",
@@ -252,26 +552,166 @@
       "proofRequirements": {
         "performanceScenario": "fleet-api-slos",
         "performanceMetrics": [
-          {"name": "registry-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "registry-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "registry-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "registry-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "matrix-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "matrix-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "matrix-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "matrix-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "comparison-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "comparison-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "comparison-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "comparison-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "history-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "history-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "history-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "history-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "campaign-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "campaign-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
-          {"name": "campaign-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
-          {"name": "campaign-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20}
+          {
+            "name": "registry-list-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "registry-list-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "registry-detail-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "registry-detail-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "matrix-list-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "matrix-list-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "matrix-detail-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "matrix-detail-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "comparison-list-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "comparison-list-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "comparison-detail-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "comparison-detail-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "history-list-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "history-list-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "history-detail-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "history-detail-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "campaign-list-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "campaign-list-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "campaign-detail-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 20
+          },
+          {
+            "name": "campaign-detail-p99-ms",
+            "aggregation": "p99",
+            "operator": "lte",
+            "limit": 5000,
+            "unit": "ms",
+            "minSamples": 20
+          }
         ],
         "performanceFacts": {
           "exact": {
@@ -304,13 +744,62 @@
       "proofRequirements": {
         "performanceScenario": "roadmap-scale-load",
         "performanceMetrics": [
-          {"name": "plan-create-validate-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 10000, "unit": "ms", "minSamples": 5},
-          {"name": "wave-materialize-schedule-duration-ms", "aggregation": "max", "operator": "lte", "limit": 30000, "unit": "ms", "minSamples": 1},
-          {"name": "event-ingest-ack-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 1000, "unit": "ms", "minSamples": 60000},
-          {"name": "lost-accepted-events", "aggregation": "sum", "operator": "eq", "limit": 0, "unit": "count", "minSamples": 1},
-          {"name": "log-first-page-indexed-ms", "aggregation": "max", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 1},
-          {"name": "cross-organization-records", "aggregation": "sum", "operator": "eq", "limit": 0, "unit": "count", "minSamples": 1},
-          {"name": "non-policy-error-rate", "aggregation": "max", "operator": "lt", "limit": 0.01, "unit": "ratio", "minSamples": 1}
+          {
+            "name": "plan-create-validate-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 10000,
+            "unit": "ms",
+            "minSamples": 5
+          },
+          {
+            "name": "wave-materialize-schedule-duration-ms",
+            "aggregation": "max",
+            "operator": "lte",
+            "limit": 30000,
+            "unit": "ms",
+            "minSamples": 1
+          },
+          {
+            "name": "event-ingest-ack-p95-ms",
+            "aggregation": "p95",
+            "operator": "lte",
+            "limit": 1000,
+            "unit": "ms",
+            "minSamples": 60000
+          },
+          {
+            "name": "lost-accepted-events",
+            "aggregation": "sum",
+            "operator": "eq",
+            "limit": 0,
+            "unit": "count",
+            "minSamples": 1
+          },
+          {
+            "name": "log-first-page-indexed-ms",
+            "aggregation": "max",
+            "operator": "lte",
+            "limit": 2000,
+            "unit": "ms",
+            "minSamples": 1
+          },
+          {
+            "name": "cross-organization-records",
+            "aggregation": "sum",
+            "operator": "eq",
+            "limit": 0,
+            "unit": "count",
+            "minSamples": 1
+          },
+          {
+            "name": "non-policy-error-rate",
+            "aggregation": "max",
+            "operator": "lt",
+            "limit": 0.01,
+            "unit": "ratio",
+            "minSamples": 1
+          }
         ],
         "performanceFacts": {
           "exact": {
@@ -347,7 +836,20 @@
       "allowedProofClasses": [
         "neutral-live-execution"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestReferenceExecutorDerivesOperationFromSignedIntentWithoutUnsignedSpec",
+        "TestReferenceExecutorRejectsUnsignedOperationSpec",
+        "TestReferenceExecutorVerifiesSignedIntentAndAllBindings",
+        "TestReferenceExecutorFencesStaleOperationsAndReplaysExactDispatch",
+        "TestReferenceExecutorReportsStatusAndCancelsIdempotently",
+        "TestReferenceExecutorBoundsPersistedAndReturnedLogs",
+        "TestReferenceExecutorRecoversOperationsAndResourceFencesAfterRestart",
+        "TestReferenceExecutorBoundsHTTPAccessAndRequestBodies",
+        "TestReferenceExecutorExposesIdentityOnlyReadinessWithoutAuthorization",
+        "TestReferenceExecutorHandlesConcurrentExactDispatchOnce",
+        "TestNoSensitiveFixtureValuesArePersisted"
+      ]
     },
     "adopter-aba": {
       "automatedTest": "examples/control-plane-e2e/reference-executor/main_test.go",
@@ -355,7 +857,20 @@
       "allowedProofClasses": [
         "adopter-execution"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestReferenceExecutorDerivesOperationFromSignedIntentWithoutUnsignedSpec",
+        "TestReferenceExecutorRejectsUnsignedOperationSpec",
+        "TestReferenceExecutorVerifiesSignedIntentAndAllBindings",
+        "TestReferenceExecutorFencesStaleOperationsAndReplaysExactDispatch",
+        "TestReferenceExecutorReportsStatusAndCancelsIdempotently",
+        "TestReferenceExecutorBoundsPersistedAndReturnedLogs",
+        "TestReferenceExecutorRecoversOperationsAndResourceFencesAfterRestart",
+        "TestReferenceExecutorBoundsHTTPAccessAndRequestBodies",
+        "TestReferenceExecutorExposesIdentityOnlyReadinessWithoutAuthorization",
+        "TestReferenceExecutorHandlesConcurrentExactDispatchOnce",
+        "TestNoSensitiveFixtureValuesArePersisted"
+      ]
     },
     "adopter-provenance": {
       "automatedTest": "internal/releasebundles/provenance_test.go",
@@ -363,7 +878,19 @@
       "allowedProofClasses": [
         "adopter-execution"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestVerifySignedProvenanceAcceptsTrustedFrozenPolicy",
+        "TestVerifySignedProvenanceFailsClosedForUntrustedWrongAndExpiredEvidence",
+        "TestSigstoreProvenanceVerifierRejectsMalformedAndOversizedWithoutNetwork",
+        "TestSigstoreProvenanceVerifierRejectsMalformedEvidenceWithValidFrozenRoot",
+        "TestVerifySignedProvenanceRejectsDuplicateSignedStatementMembers",
+        "TestCanonicalJSONRejectsTrailingOrNonObjectExternalParameters",
+        "TestVerifyComponentReleasePublicationRequiresEveryPlatformAndReturnsBoundedFacts",
+        "TestProvenancePreflightRequiresExactArtifactDigestAndPolicy",
+        "TestVerifySignedProvenanceBindsExactReleaseSourceAndBuildFacts",
+        "TestValidateProvenanceStatementRejectsMissingReleaseBindings"
+      ]
     },
     "pr077-observation-gate": {
       "automatedTest": "internal/observation/gate_test.go",
@@ -371,7 +898,23 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestObservationGateRequiresIndependentExactMatch",
+        "TestObservationGateDoesNotInventSuccessForPartialUnknownCancelOrFailure",
+        "TestObservationGateQuarantinesTimeoutAndConflictingObservers",
+        "TestObservationGateAcceptsIndependentObserversThatAgree",
+        "TestObservationGateFencesTrustedSameSequenceConflictEvidence",
+        "TestObservationGateDoesNotVerifyEvidenceCapturedAfterDeadline",
+        "TestObservationGateRequiresFreshEvidenceCapturedAfterAdmission",
+        "TestObservationGatePreservesEligiblePreDeadlineEvidenceAfterLaterSample",
+        "TestObservationGateRequiresAcceptedTrustedEvidenceForTerminalOutcome",
+        "TestObservationGateTerminalEvidenceRetainsTrustedObservationIdentity",
+        "TestObservationGateRejectsExecutorSuccessWhenRuntimeIsWrong",
+        "TestObservationGateDoesNotAdvanceTerminalExecutorFailure",
+        "TestCampaignObservationVerifierBindsTrustedIdentityAndChecksum",
+        "TestCampaignObservationResolverUsesCanonicalComponentPlacement"
+      ]
     },
     "pr075-recovery": {
       "automatedTest": "internal/db/execution_v2_recovery_test.go",
@@ -379,7 +922,13 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestExecutionV2ReadyTaskRecoveryQueryIsBoundedStableFairAndExact",
+        "TestExecutionV2ReadyTaskRecoveryLoadsEverySelectedReadyStepInOneBatch",
+        "TestExecutionV2ReadyTaskRecoveryRejectsNonPositiveBatch",
+        "TestExecutionV2ReadyTaskRecoveryRejectsUnboundedBatch"
+      ]
     },
     "pr080-browser-e2e": {
       "automatedTest": "frontend/ui/e2e/control-plane.spec.ts",
@@ -395,7 +944,16 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestObservationAdmissionAcceptsTrustedFreshInScopeEnvelope",
+        "TestObservationAdmissionRejectsObserverMismatchAndUntrustedCredential",
+        "TestObservationAdmissionRejectsStaleEvidenceByCapturedTime",
+        "TestObservationAdmissionMakesReplayIdempotentAndRetainsOutOfOrderEvidence",
+        "TestObservationAdmissionRetainsConflictingReplayForReconciliation",
+        "TestObservationReplayRequiresExactMaterialAndComponentScope",
+        "TestRuntimeStateChecksumMatchesCampaignExpectationAndIgnoresEvidenceMetadata"
+      ]
     },
     "pr074-adapter-resolution": {
       "automatedTest": "internal/adapterresolution/resolver_test.go",
@@ -403,7 +961,17 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestResolveStepAdapterFreezesExactReleaseCapabilityAndVersion",
+        "TestResolveStepAdapterRejectsMissingAndAmbiguousImplementation",
+        "TestResolveStepAdapterRequiresExactTargetScopeAndConfigSnapshot",
+        "TestResolveStepAdapterRejectsDisabledAssignment",
+        "TestResolveStepAdapterKeepsReleaseRequirementAuthoritative",
+        "TestVerifyAdapterAtStartRejectsVersionAndFingerprintDrift",
+        "TestVerifyAdapterAtStartAcceptsExactFrozenState",
+        "TestVerifyAdapterAtStartSeparatelyRejectsAssignmentAndSnapshotChecksumDrift"
+      ]
     },
     "pr071-campaign-scheduler": {
       "automatedTest": "internal/campaigns/scheduler_test.go",
@@ -411,7 +979,26 @@
       "allowedProofClasses": [
         "community-focused-test"
       ],
-      "testRunner": "go-test"
+      "testRunner": "go-test",
+      "selectedTests": [
+        "TestSchedulerUsesDeterministicAdmissionOrderAndDeduplicatesTick",
+        "TestSchedulerFailsClosedWhenObservationVerifierIsUnwired",
+        "TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch",
+        "TestSchedulerResolvesFrozenPrerequisiteByCanonicalProviderIdentity",
+        "TestSchedulerBlocksForBakeConcurrencyRiskAndHealth",
+        "TestSchedulerStopsForThresholdPauseAndLeaseLoss",
+        "TestSchedulerCompletesFinalCampaignAfterThresholdAndBake",
+        "TestSchedulerCompletesAllExcludedFinalWaveWithZeroSampleEvidence",
+        "TestSchedulerDoesNotCompleteFinalCampaignBeforeBake",
+        "TestSchedulerPausesUnhealthyFinalCampaignInsteadOfLeavingItRunning",
+        "TestSchedulerDoesNotExposeWhilePausedOrLeaseUnavailable",
+        "TestPauseCampaignCompletesAtSafePointAfterRestart",
+        "TestSchedulerDispatchesRecoveryBeforeMaterializedAdmissionTasks",
+        "TestSchedulerStopsBeforeAdmissionWhenRecoveryDispatchFails",
+        "TestSchedulerNeverDispatchesWhilePaused",
+        "TestSchedulerDoesNotCallDispatcherWhenNothingWasAdmittedOrRecovered",
+        "TestNilCampaignTaskDispatcherFunctionFailsClosed"
+      ]
     }
   },
   "acceptance": {

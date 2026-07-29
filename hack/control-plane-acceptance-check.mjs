@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 
-import {execFile} from 'node:child_process';
+import {execFile, spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {readFile, stat} from 'node:fs/promises';
+import {mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const goTestDeclarationsHelper = fileURLToPath(
+  new URL('./control-plane-go-test-declarations/main.go', import.meta.url)
+);
+const goTestDeclarationCache = new Map();
 const expectedHeader = [
   'Acceptance ID',
   'Owning PR',
@@ -38,12 +43,136 @@ const supportedProofClasses = new Set([
   'adopter-execution',
 ]);
 
+export function controlledGoEnvironment() {
+  return {
+    ...process.env,
+    GOENV: 'off',
+    GOFLAGS: '-mod=readonly',
+    GOWORK: 'off',
+  };
+}
+
 function fail(message) {
   throw new Error(message);
 }
 
 function sha256(value) {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function runGoTestDeclarationHelper(sources) {
+  const sourcePaths = sources.map((source) => source.path);
+  return new Promise((resolve, reject) => {
+    const child = spawn('go', ['run', goTestDeclarationsHelper], {
+      env: controlledGoEnvironment(),
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const stdout = [];
+    const stderr = [];
+    let retainedBytes = 0;
+    const retain = (target) => (chunk) => {
+      retainedBytes += chunk.length;
+      if (retainedBytes > 4 * 1024 * 1024) {
+        child.kill();
+        reject(new Error('Go AST declaration helper output exceeded its limit'));
+        return;
+      }
+      target.push(chunk);
+    };
+    child.stdout.on('data', retain(stdout));
+    child.stderr.on('data', retain(stderr));
+    child.on('error', reject);
+    child.on('close', (status) => {
+      if (status !== 0) {
+        reject(
+          new Error(
+            `Go AST declaration helper failed for ${sourcePaths.join(', ')}: ${
+              Buffer.concat(stderr).toString('utf8').trim() || `exit ${status}`
+            }`
+          )
+        );
+        return;
+      }
+      try {
+        const parsed = JSON.parse(Buffer.concat(stdout).toString('utf8'));
+        if (!Array.isArray(parsed?.sources) || parsed.sources.length !== sources.length) {
+          throw new Error('unexpected response shape');
+        }
+        const results = new Map();
+        for (const source of parsed.sources) {
+          if (
+            !sourcePaths.includes(source?.path) ||
+            results.has(source.path) ||
+            !Array.isArray(source.tests) ||
+            new Set(source.tests).size !== source.tests.length ||
+            source.tests.some((name) => typeof name !== 'string')
+          ) {
+            throw new Error('unexpected source declaration result');
+          }
+          results.set(source.path, source.tests);
+        }
+        resolve(results);
+      } catch (error) {
+        reject(new Error(`Go AST declaration helper returned invalid JSON: ${error.message}`));
+      }
+    });
+    child.stdin.end(
+      JSON.stringify({
+        sources: sources.map((source) => ({
+          path: source.path,
+          contentBase64: Buffer.from(source.bytes).toString('base64'),
+          rejectBuildConstraints: source.rejectBuildConstraints !== false,
+        })),
+      })
+    );
+  });
+}
+
+export async function declaredGoTestsForSources(sources) {
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return new Map();
+  }
+  const paths = new Set();
+  const missingByChecksum = new Map();
+  for (const source of sources) {
+    if (
+      !source ||
+      typeof source.path !== 'string' ||
+      source.path === '' ||
+      !Buffer.isBuffer(source.bytes) ||
+      paths.has(source.path)
+    ) {
+      fail('Go AST declaration sources must contain unique paths and Buffer content');
+    }
+    paths.add(source.path);
+    const cacheKey = `${source.rejectBuildConstraints !== false}:${sha256(source.bytes)}`;
+    if (!goTestDeclarationCache.has(cacheKey) && !missingByChecksum.has(cacheKey)) {
+      missingByChecksum.set(cacheKey, source);
+    }
+  }
+  const missing = [...missingByChecksum.entries()];
+  if (missing.length > 0) {
+    const batch = runGoTestDeclarationHelper(missing.map(([, source]) => source));
+    for (const [cacheKey, source] of missing) {
+      goTestDeclarationCache.set(
+        cacheKey,
+        batch.then((results) => results.get(source.path))
+      );
+    }
+  }
+  const results = new Map();
+  for (const source of sources) {
+    const cacheKey = `${source.rejectBuildConstraints !== false}:${sha256(source.bytes)}`;
+    results.set(source.path, await goTestDeclarationCache.get(cacheKey));
+  }
+  return results;
+}
+
+export async function declaredGoTests(sourceBytes, sourcePath) {
+  const results = await declaredGoTestsForSources([{path: sourcePath, bytes: Buffer.from(sourceBytes)}]);
+  return results.get(sourcePath);
 }
 
 function cleanCell(value) {
@@ -116,6 +245,11 @@ function gitPath(value) {
   return value.split(path.sep).join('/');
 }
 
+function pathIsWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
+}
+
 async function requireFile(root, value, id, label) {
   const resolved = repositoryPath(root, value, id, label);
   let facts;
@@ -159,7 +293,7 @@ async function loadGitFacts(root) {
       .filter(Boolean)
       .map((value) => gitPath(value))
   );
-  return {tracked, commitChecks: new Map(), sourceBlobs: new Map()};
+  return {tracked, commitChecks: new Map(), sourceBlobs: new Map(), compiledGoPackages: new Map()};
 }
 
 function requireTracked(gitFacts, value, id, label) {
@@ -229,6 +363,23 @@ function requireTimestamp(value, id, label) {
   return parsed;
 }
 
+function selectedGoTests(profile, id) {
+  const selected = profile.selectedTests;
+  if (
+    !Array.isArray(selected) ||
+    selected.length === 0 ||
+    new Set(selected).size !== selected.length ||
+    selected.some((name) => typeof name !== 'string' || !/^Test(?:[A-Z0-9_][A-Za-z0-9_]*)$/.test(name))
+  ) {
+    fail(`${id} contract selectedTests must contain unique Go test names`);
+  }
+  return selected;
+}
+
+function selectedGoTestPattern(selectedTests) {
+  return `^(?:${selectedTests.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`;
+}
+
 async function loadAcceptanceContract(root, gitFacts) {
   const contractFile = await parseJSONFile(root, expectedContractPath, 'contract', 'manifest');
   const contract = contractFile.value;
@@ -244,6 +395,7 @@ async function loadAcceptanceContract(root, gitFacts) {
   if (!contract.acceptance || typeof contract.acceptance !== 'object' || Array.isArray(contract.acceptance)) {
     fail('contract acceptance must be an object');
   }
+  const goProfiles = new Map();
   const contractIDs = Object.keys(contract.acceptance);
   for (const id of expectedIDs) {
     if (!Object.hasOwn(contract.acceptance, id)) {
@@ -325,8 +477,39 @@ async function loadAcceptanceContract(root, gitFacts) {
     if (!supportedTestRunners.has(profile.testRunner)) {
       fail(`${id} contract testRunner must be node-test, go-test, or playwright`);
     }
+    if (profile.testRunner === 'go-test') {
+      selectedGoTests(profile, id);
+      if (!goProfiles.has(rule.profile)) {
+        goProfiles.set(rule.profile, {id, profile});
+      }
+    } else if (Object.hasOwn(profile, 'selectedTests')) {
+      fail(`${id} contract selectedTests is supported only for go-test profiles`);
+    }
     if (typeof rule.pendingAdopter !== 'boolean') {
       fail(`${id} contract pendingAdopter must be boolean`);
+    }
+  }
+  const goSources = new Map();
+  for (const {id, profile} of goProfiles.values()) {
+    if (!goSources.has(profile.automatedTest)) {
+      const resolved = await requireFile(root, profile.automatedTest, id, 'automated test');
+      requireTracked(gitFacts, profile.automatedTest, id, 'automated test');
+      goSources.set(profile.automatedTest, await readFile(resolved));
+    }
+  }
+  const declarationsByPath = await declaredGoTestsForSources(
+    [...goSources].map(([sourcePath, bytes]) => ({path: sourcePath, bytes}))
+  );
+  for (const {id, profile} of goProfiles.values()) {
+    const missing = selectedGoTests(profile, id).filter(
+      (name) => !declarationsByPath.get(profile.automatedTest).includes(name)
+    );
+    if (missing.length > 0) {
+      fail(
+        `${id} selectedTests are not declared top-level Go tests in bound ${profile.automatedTest}: ${missing
+          .slice(0, 20)
+          .join(', ')}`
+      );
     }
   }
   return contract;
@@ -382,6 +565,23 @@ async function validateBoundFile(root, gitFacts, row, sourceCommit, binding, exp
   if (sha256(committedBytes) !== binding.sha256) {
     fail(`${row.id} ${label} checksum mismatch at source commit`);
   }
+  return committedBytes;
+}
+
+async function validateSelectedGoTestDeclarations(row, profile, sourceBytes) {
+  if (profile.testRunner !== 'go-test') {
+    return;
+  }
+  const selectedTests = selectedGoTests(profile, row.id);
+  const declarations = await declaredGoTests(sourceBytes, row.automatedTest);
+  const missing = selectedTests.filter((name) => !declarations.includes(name));
+  if (missing.length > 0) {
+    fail(
+      `${row.id} selectedTests are not declared top-level Go tests in bound ${row.automatedTest}: ${missing
+        .slice(0, 20)
+        .join(', ')}`
+    );
+  }
 }
 
 function validateTestCommand(row, profile, result) {
@@ -412,8 +612,16 @@ function validateTestCommand(row, profile, result) {
     }
   } else if (profile.testRunner === 'go-test') {
     const packagePath = `./${path.posix.dirname(normalizedSource)}`;
-    if (command.argv[0] !== 'go' || command.argv[1] !== 'test' || !command.argv.includes(packagePath)) {
-      fail(`${row.id} go-test argv must execute package ${packagePath}`);
+    const selectedTests = selectedGoTests(profile, row.id);
+    const expectedArgv = ['go', 'test', packagePath, '-run', selectedGoTestPattern(selectedTests), '-count=1', '-json'];
+    if (
+      !Array.isArray(command.selectedTests) ||
+      command.selectedTests.length !== selectedTests.length ||
+      command.selectedTests.some((name, index) => name !== selectedTests[index]) ||
+      command.argv.length !== expectedArgv.length ||
+      command.argv.some((argument, index) => argument !== expectedArgv[index])
+    ) {
+      fail(`${row.id} go-test argv must exactly select the declared tests from ${row.automatedTest}`);
     }
   } else {
     const playwrightIndex = command.argv.indexOf('playwright');
@@ -434,11 +642,174 @@ function validateTestCommand(row, profile, result) {
     !Number.isInteger(tests.expected) ||
     tests.expected <= 0 ||
     !Number.isInteger(tests.passed) ||
-    tests.passed < tests.expected ||
+    tests.passed !== tests.expected ||
     !Number.isInteger(tests.failed) ||
-    tests.failed !== 0
+    tests.failed !== 0 ||
+    !Number.isInteger(tests.skipped) ||
+    tests.skipped !== 0
   ) {
     fail(`${row.id} test result counts must show expected tests greater than zero and zero failures`);
+  }
+  if (profile.testRunner === 'go-test') {
+    const selectedTests = selectedGoTests(profile, row.id);
+    if (
+      !Array.isArray(tests.topLevel) ||
+      tests.topLevel.length !== selectedTests.length ||
+      new Set(tests.topLevel.map((test) => test?.name)).size !== tests.topLevel.length ||
+      tests.topLevel.some(
+        (test) => !test || typeof test.name !== 'string' || test.status !== 'pass' || !selectedTests.includes(test.name)
+      ) ||
+      selectedTests.some((name) => !tests.topLevel.some((test) => test.name === name))
+    ) {
+      fail(`${row.id} observed top-level Go tests must exactly match selectedTests and pass`);
+    }
+  }
+}
+
+async function gitWorktreeCommand(root, args, {allowFailure = false, encoding = 'utf8'} = {}) {
+  try {
+    return await execFileAsync('git', args, {
+      cwd: root,
+      encoding,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch (error) {
+    if (allowFailure) return error;
+    throw error;
+  }
+}
+
+async function requireCleanDetachedCheckout(checkout, sourceCommit, phase) {
+  const {stdout: head} = await gitWorktreeCommand(checkout, ['rev-parse', 'HEAD']);
+  if (head.trim() !== sourceCommit) {
+    fail(`checker isolated source checkout HEAD changed ${phase}`);
+  }
+  const {stdout} = await gitWorktreeCommand(checkout, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+    encoding: 'buffer',
+  });
+  const dirty = stdout.toString('utf8').split('\0').find(Boolean);
+  if (dirty) {
+    fail(`checker isolated source checkout is dirty ${phase}: ${gitPath(dirty.slice(3))}`);
+  }
+}
+
+async function reconstructCompiledGoPackageSources(root, gitFacts, row, profile, sourceCommit) {
+  const packagePath = `./${path.posix.dirname(gitPath(profile.automatedTest))}`;
+  const cacheKey = `${sourceCommit}:${packagePath}`;
+  if (!gitFacts.compiledGoPackages.has(cacheKey)) {
+    gitFacts.compiledGoPackages.set(
+      cacheKey,
+      (async () => {
+        const base = await mkdtemp(path.join(tmpdir(), 'control-plane-checker-source-'));
+        const checkout = path.join(base, 'source');
+        let registered = false;
+        try {
+          await gitWorktreeCommand(root, ['worktree', 'add', '--detach', '--quiet', checkout, sourceCommit]);
+          registered = true;
+          await requireCleanDetachedCheckout(checkout, sourceCommit, 'before go list');
+          const {stdout} = await execFileAsync('go', ['list', '-json', packagePath], {
+            cwd: checkout,
+            env: controlledGoEnvironment(),
+            maxBuffer: 16 * 1024 * 1024,
+          });
+          const metadata = JSON.parse(stdout);
+          const checkoutReal = await realpath(checkout);
+          const packageReal = await realpath(metadata.Dir);
+          if (!pathIsWithin(checkoutReal, packageReal)) {
+            fail(`${row.id} go list package resolves outside the isolated source checkout`);
+          }
+          const names = [...(metadata.TestGoFiles ?? []), ...(metadata.XTestGoFiles ?? [])];
+          const manifest = [];
+          for (const name of names) {
+            const resolved = path.resolve(metadata.Dir, name);
+            if (!pathIsWithin(packageReal, resolved)) {
+              fail(`${row.id} go list test source escapes package: ${name}`);
+            }
+            const sourcePath = gitPath(path.relative(checkout, resolved));
+            const bytes = await sourceBlob(
+              root,
+              gitFacts,
+              sourceCommit,
+              sourcePath,
+              row.id,
+              'compiled Go package source'
+            );
+            manifest.push({path: sourcePath, sha256: sha256(bytes)});
+          }
+          manifest.sort((left, right) => left.path.localeCompare(right.path));
+          await requireCleanDetachedCheckout(checkout, sourceCommit, 'after go list');
+          return manifest;
+        } finally {
+          if (registered) {
+            await gitWorktreeCommand(root, ['worktree', 'remove', '--force', checkout], {allowFailure: true});
+          }
+          await rm(base, {recursive: true, force: true});
+          await gitWorktreeCommand(root, ['worktree', 'prune'], {allowFailure: true});
+        }
+      })()
+    );
+  }
+  return gitFacts.compiledGoPackages.get(cacheKey);
+}
+
+async function validateCompiledGoPackageSources(root, gitFacts, row, profile, sourceCommit, result) {
+  if (profile.testRunner !== 'go-test') {
+    if (Object.hasOwn(result, 'compiledPackageSources')) {
+      fail(`${row.id} compiledPackageSources is supported only for go-test results`);
+    }
+    return;
+  }
+  const manifest = result.compiledPackageSources;
+  if (!Array.isArray(manifest) || new Set(manifest.map((binding) => binding?.path)).size !== manifest.length) {
+    fail(`${row.id} compiled Go package source manifest must contain unique source bindings`);
+  }
+  if (!manifest.some((binding) => binding?.path === row.automatedTest)) {
+    fail(`${row.id} compiled Go package source manifest must include ${row.automatedTest}`);
+  }
+  const packageDirectory = path.posix.dirname(gitPath(row.automatedTest));
+  const sources = [];
+  for (const binding of manifest) {
+    if (
+      !binding ||
+      typeof binding.path !== 'string' ||
+      path.posix.dirname(gitPath(binding.path)) !== packageDirectory ||
+      !binding.path.endsWith('_test.go') ||
+      !checksumPattern.test(binding.sha256 ?? '')
+    ) {
+      fail(`${row.id} compiled Go package source bindings must be checksummed *_test.go files in ${packageDirectory}`);
+    }
+    const resolved = await requireFile(root, binding.path, row.id, 'compiled Go package source');
+    requireTracked(gitFacts, binding.path, row.id, 'compiled Go package source');
+    const currentBytes = await readFile(resolved);
+    const committedBytes = await sourceBlob(
+      root,
+      gitFacts,
+      sourceCommit,
+      binding.path,
+      row.id,
+      'compiled Go package source'
+    );
+    if (sha256(currentBytes) !== binding.sha256 || sha256(committedBytes) !== binding.sha256) {
+      fail(`${row.id} compiled Go package source checksum mismatch for ${binding.path}`);
+    }
+    sources.push({path: binding.path, bytes: committedBytes, rejectBuildConstraints: false});
+  }
+  const expectedManifest = await reconstructCompiledGoPackageSources(root, gitFacts, row, profile, sourceCommit);
+  const actualManifest = manifest
+    .map((binding) => ({path: gitPath(binding.path), sha256: binding.sha256}))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  if (JSON.stringify(actualManifest) !== JSON.stringify(expectedManifest)) {
+    fail(`${row.id} compiled Go package source manifest must exactly match go list at sourceCommit`);
+  }
+  const declarations = await declaredGoTestsForSources(sources);
+  for (const selected of selectedGoTests(profile, row.id)) {
+    let count = 0;
+    for (const tests of declarations.values()) {
+      count += tests.filter((name) => name === selected).length;
+    }
+    if (count !== 1) {
+      fail(`${row.id} compiled Go package manifest must declare ${selected} exactly once; found ${count}`);
+    }
   }
 }
 
@@ -459,6 +830,7 @@ async function validateTestResult(root, gitFacts, row, profile, sourceCommit, bi
     fail(`${row.id} test result sourceCommit must match evidence sourceCommit`);
   }
   validateTestCommand(row, profile, result);
+  await validateCompiledGoPackageSources(root, gitFacts, row, profile, sourceCommit, result);
   if (result.status !== 'passed') {
     fail(`${row.id} test result status must be passed`);
   }
@@ -981,7 +1353,7 @@ async function validateEvidenceArtifact(root, gitFacts, row, profile) {
     fail(`${row.id} proof class ${evidence.proofClass || '<empty>'} is not allowed`);
   }
   await requireSourceCommit(root, gitFacts, evidence.sourceCommit, row.id);
-  await validateBoundFile(
+  const automatedTestBytes = await validateBoundFile(
     root,
     gitFacts,
     row,
@@ -990,6 +1362,7 @@ async function validateEvidenceArtifact(root, gitFacts, row, profile) {
     row.automatedTest,
     'automated test'
   );
+  await validateSelectedGoTestDeclarations(row, profile, automatedTestBytes);
   await validateBoundFile(
     root,
     gitFacts,

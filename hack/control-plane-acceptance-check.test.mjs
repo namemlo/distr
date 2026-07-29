@@ -473,6 +473,139 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
   return {directory, rows, sourceCommit};
 }
 
+async function goSelectedFixtureWorkspace({
+  mutateContract = () => {},
+  mutateResult = () => {},
+  additionalGoSources = {},
+} = {}) {
+  const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-go-acceptance-'));
+  await mkdir(path.join(directory, 'docs', 'release'), {recursive: true});
+  await mkdir(path.join(directory, 'proof'), {recursive: true});
+  await mkdir(path.join(directory, 'results'), {recursive: true});
+  const selectedSource = `package proof
+
+import "testing"
+
+func TestSelected(t *testing.T) {}
+`;
+  const manualEvidence = '# Go selected-test evidence\n';
+  const contract = {
+    schema: 'distr.control-plane-acceptance-contract/v1',
+    normativeSource: 'normative-plan.md',
+    profiles: {
+      'go-community': {
+        automatedTest: 'proof/proof_test.go',
+        manualEvidence: 'evidence.md',
+        allowedProofClasses: ['community-focused-test'],
+        testRunner: 'go-test',
+        selectedTests: ['TestSelected'],
+      },
+      adopter: {
+        automatedTest: 'adopter.test.mjs',
+        manualEvidence: 'adopter.md',
+        allowedProofClasses: ['adopter-execution'],
+        testRunner: 'node-test',
+      },
+    },
+    acceptance: {},
+  };
+  for (let index = 1; index <= 80; index += 1) {
+    const id = `AC-${String(index).padStart(2, '0')}`;
+    contract.acceptance[id] =
+      id === 'AC-03'
+        ? {owner: 'PR-083', profile: 'go-community', pendingAdopter: false}
+        : {owner: 'ADOPTER-FIXTURE', profile: 'adopter', pendingAdopter: true};
+  }
+  mutateContract(contract);
+  await writeFile(path.join(directory, 'proof', 'proof_test.go'), selectedSource);
+  await writeFile(path.join(directory, 'go.mod'), 'module example.invalid/checkerfixture\n\ngo 1.26.5\n');
+  for (const [relativePath, source] of Object.entries(additionalGoSources)) {
+    const resolved = path.join(directory, relativePath);
+    await mkdir(path.dirname(resolved), {recursive: true});
+    await writeFile(resolved, source);
+  }
+  await writeFile(path.join(directory, 'evidence.md'), manualEvidence);
+  await writeFile(
+    path.join(directory, 'adopter.test.mjs'),
+    "import {test} from 'node:test';\ntest('adopter source', () => {});\n"
+  );
+  await writeFile(path.join(directory, 'adopter.md'), '# Adopter evidence\n');
+  await writeFile(path.join(directory, 'normative-plan.md'), '# Normative plan\n');
+  await writeFile(path.join(directory, contractPath), `${JSON.stringify(contract, null, 2)}\n`);
+  await git(directory, 'init', '--quiet');
+  await git(directory, 'config', 'user.email', 'fixture@example.invalid');
+  await git(directory, 'config', 'user.name', 'Acceptance Fixture');
+  await git(directory, 'add', '.');
+  await git(directory, 'commit', '--quiet', '-m', 'fixture source');
+  const {stdout} = await git(directory, 'rev-parse', 'HEAD');
+  const sourceCommit = stdout.trim();
+  const result = {
+    schema: 'distr.control-plane-test-result/v1',
+    sourceCommit,
+    command: {
+      runner: 'go-test',
+      argv: ['go', 'test', './proof', '-run', '^(?:TestSelected)$', '-count=1', '-json'],
+      selectedTestSource: 'proof/proof_test.go',
+      selectedTests: ['TestSelected'],
+    },
+    exitCode: 0,
+    tests: {
+      expected: 1,
+      passed: 1,
+      failed: 0,
+      skipped: 0,
+      topLevel: [{name: 'TestSelected', status: 'pass'}],
+    },
+    compiledPackageSources: [{path: 'proof/proof_test.go', sha256: sha256(selectedSource)}],
+    status: 'passed',
+    startedAt: '2030-01-01T00:00:00.000Z',
+    completedAt: '2030-01-01T00:00:01.000Z',
+  };
+  mutateResult(result);
+  const resultBytes = `${JSON.stringify(result, null, 2)}\n`;
+  await writeFile(path.join(directory, 'results', 'test-result.json'), resultBytes);
+  const artifact = {
+    schema: 'distr.control-plane-acceptance-evidence/v1',
+    acceptanceId: 'AC-03',
+    owner: 'PR-083',
+    proofClass: 'community-focused-test',
+    sourceCommit,
+    automatedTest: {path: 'proof/proof_test.go', sha256: sha256(selectedSource)},
+    manualEvidence: {path: 'evidence.md', sha256: sha256(manualEvidence)},
+    testResult: {path: 'results/test-result.json', sha256: sha256(resultBytes)},
+  };
+  const artifactBytes = `${JSON.stringify(artifact, null, 2)}\n`;
+  await writeFile(path.join(directory, 'results', 'AC-03.json'), artifactBytes);
+  const rows = [];
+  for (let index = 1; index <= 80; index += 1) {
+    const id = `AC-${String(index).padStart(2, '0')}`;
+    rows.push(
+      id === 'AC-03'
+        ? {
+            id,
+            owner: 'PR-083',
+            automatedTest: 'proof/proof_test.go',
+            manualEvidence: 'evidence.md',
+            status: 'community-evidence-retained',
+            artifact: `results/AC-03.json @ ${sha256(artifactBytes)}`,
+          }
+        : {
+            id,
+            owner: 'ADOPTER-FIXTURE',
+            automatedTest: 'adopter.test.mjs',
+            manualEvidence: 'adopter.md',
+            status: 'pending-adopter',
+            artifact: 'pending-adopter:ADOPTER-FIXTURE',
+          }
+    );
+  }
+  await writeFile(path.join(directory, 'ledger.md'), renderLedger(rows));
+  await writeFile(path.join(directory, contractPath), `${JSON.stringify(contract, null, 2)}\n`);
+  await git(directory, 'add', '.');
+  await git(directory, 'commit', '--quiet', '-m', 'retained selected Go evidence');
+  return {directory};
+}
+
 function run(directory) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [checker, 'ledger.md'], {
@@ -1086,6 +1219,97 @@ test('rejects a passed result whose structured command does not execute the decl
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /AC-03 test result runner must be node-test/);
+});
+
+test('rejects a Go community profile without an exact selected test set', async () => {
+  const {directory} = await goSelectedFixtureWorkspace({
+    mutateContract: (contract) => {
+      delete contract.profiles['go-community'].selectedTests;
+    },
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 contract selectedTests must contain unique Go test names/);
+});
+
+test('rejects a Go result whose argv omits the exact anchored selected-test filter', async () => {
+  const {directory} = await goSelectedFixtureWorkspace({
+    mutateResult: (result) => {
+      result.command.argv = ['go', 'test', './proof', '-count=1', '-json'];
+    },
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 go-test argv must exactly select the declared tests from proof\/proof_test\.go/);
+});
+
+test('rejects a Go result whose observed top-level set differs from the declared tests', async () => {
+  const {directory} = await goSelectedFixtureWorkspace({
+    mutateResult: (result) => {
+      result.tests.topLevel = [{name: 'TestOther', status: 'pass'}];
+    },
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 observed top-level Go tests must exactly match selectedTests/);
+});
+
+test('rejects selected Go tests that are not AST declarations in the bound automated test', async () => {
+  const {directory} = await goSelectedFixtureWorkspace({
+    mutateContract: (contract) => {
+      contract.profiles['go-community'].selectedTests = ['TestImaginary'];
+    },
+    mutateResult: (result) => {
+      result.command.argv = ['go', 'test', './proof', '-run', '^(?:TestImaginary)$', '-count=1', '-json'];
+      result.command.selectedTests = ['TestImaginary'];
+      result.tests.topLevel = [{name: 'TestImaginary', status: 'pass'}];
+    },
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /AC-03 selectedTests are not declared top-level Go tests in bound proof\/proof_test\.go: TestImaginary/
+  );
+});
+
+test('rejects a Go result whose compiled package source manifest omits the bound source', async () => {
+  const {directory} = await goSelectedFixtureWorkspace({
+    mutateResult: (result) => {
+      result.compiledPackageSources = [];
+    },
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 compiled Go package source manifest must include proof\/proof_test\.go/);
+});
+
+test('rejects a Go manifest that omits a compiled external test with a duplicate selected declaration', async () => {
+  const {directory} = await goSelectedFixtureWorkspace({
+    additionalGoSources: {
+      'proof/duplicate_external_test.go': `package proof_test
+
+import "testing"
+
+func TestSelected(t *testing.T) {}
+`,
+    },
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 compiled Go package source manifest must exactly match go list at sourceCommit/);
 });
 
 test('rejects verified-adopter without adopter-specific execution identities', async () => {
