@@ -400,6 +400,71 @@ describe('OperatorControlPlaneService', () => {
     });
   });
 
+  it('uses the campaign draft, publication, run, and transition contracts exactly', () => {
+    const planId = '11111111-1111-4111-8111-111111111111';
+    const draftRequest = {
+      name: 'Sample progressive rollout',
+      description: 'Progressive rollout',
+      membership: {planIds: [planId]},
+      waves: [
+        {
+          order: 1,
+          name: 'Canary',
+          planIds: [planId],
+          bakeSeconds: 60,
+          maximumConcurrency: 1,
+        },
+      ],
+      prerequisites: [],
+      riskPolicy: {
+        maximumConcurrency: 1,
+        failureToleranceBasisPoints: 0,
+        minimumHealthyBasisPoints: 10000,
+      },
+    };
+
+    service.createCampaignDraft(draftRequest).subscribe();
+    expectMutation('/api/v1/deployment-campaign-drafts', 'POST', draftRequest);
+
+    service.getCampaignDraft('draft-1').subscribe();
+    expectRequest('/api/v1/deployment-campaign-drafts/draft-1', {});
+
+    service.updateCampaignDraft('draft-1', {...draftRequest, expectedRevision: 2}).subscribe();
+    const update = http.expectOne('/api/v1/deployment-campaign-drafts/draft-1');
+    expect(update.request.method).toBe('PATCH');
+    expect(update.request.body).toEqual({...draftRequest, expectedRevision: 2});
+    update.flush({});
+
+    service.validateCampaignDraft('draft-1').subscribe();
+    expectMutation('/api/v1/deployment-campaign-drafts/draft-1/validate', 'POST', {});
+
+    service.publishCampaignDraft('draft-1').subscribe();
+    expectMutation('/api/v1/deployment-campaign-drafts/draft-1/publish', 'POST', {
+      idempotencyKey: 'action-key-1',
+    });
+
+    service.startCampaignRun('revision-1').subscribe();
+    expectMutation('/api/v1/deployment-campaign-runs', 'POST', {
+      campaignRevisionId: 'revision-1',
+    });
+
+    service.getCampaignRun('run-1').subscribe();
+    expectRequest('/api/v1/deployment-campaign-runs/run-1', {});
+
+    service
+      .transitionCampaignRun('run-1', {
+        expectedVersion: 1,
+        to: 'VALIDATED',
+        reason: 'Validated immutable campaign inputs',
+      })
+      .subscribe();
+    expectMutation('/api/v1/deployment-campaign-runs/run-1/transitions', 'POST', {
+      expectedVersion: 1,
+      to: 'VALIDATED',
+      reason: 'Validated immutable campaign inputs',
+    });
+  });
+
   it('uses existing campaign member, plan approval, and previous-state endpoints', () => {
     service
       .controlCampaignMember('campaign-run-1', 'retry', {

@@ -18,17 +18,23 @@ import {
   OperatorCampaignControlRequest,
   OperatorCampaignControlResult,
   OperatorCampaignDetailResponse,
+  OperatorCampaignDraft,
+  OperatorCampaignDraftValidation,
   OperatorCampaignExclusion,
   OperatorCampaignFilters,
   OperatorCampaignMemberControlAction,
   OperatorCampaignMemberControlRequest,
+  OperatorCampaignRevision,
   OperatorCampaignRow,
+  OperatorCampaignRun,
+  OperatorCampaignTransitionRequest,
   OperatorControlPlaneAuditEventPage,
   OperatorControlPlaneAuditListRequest,
   OperatorControlPlaneEnrollment,
   OperatorControlPlaneEnrollmentPage,
   OperatorControlPlaneError,
   OperatorCreateAuditExportSinkRequest,
+  OperatorCreateCampaignDraftRequest,
   OperatorCreatePlanDraftRequest,
   OperatorCreateProductReleaseRequest,
   OperatorEvidenceBundle,
@@ -69,6 +75,7 @@ import {
   OperatorReleaseRow,
   OperatorSetupReadiness,
   OperatorSetupReadinessRequest,
+  OperatorUpdateCampaignDraftRequest,
   OperatorUpdatePlanDraftRequest,
 } from '../types/operator-control-plane';
 import {
@@ -229,6 +236,51 @@ export class OperatorControlPlaneService {
     return this.post<OperatorCampaignExclusion | DeploymentPlan>(
       `/api/v1/deployment-campaigns/${pathId(campaignRunId)}/${action}`,
       body
+    );
+  }
+
+  createCampaignDraft(request: OperatorCreateCampaignDraftRequest): Observable<OperatorCampaignDraft> {
+    return this.post<OperatorCampaignDraft>('/api/v1/deployment-campaign-drafts', request);
+  }
+
+  getCampaignDraft(draftId: string): Observable<OperatorCampaignDraft> {
+    return this.get<OperatorCampaignDraft>(`/api/v1/deployment-campaign-drafts/${pathId(draftId)}`);
+  }
+
+  updateCampaignDraft(draftId: string, request: OperatorUpdateCampaignDraftRequest): Observable<OperatorCampaignDraft> {
+    return this.safe(
+      this.httpClient.patch<OperatorCampaignDraft>(`/api/v1/deployment-campaign-drafts/${pathId(draftId)}`, request)
+    );
+  }
+
+  validateCampaignDraft(draftId: string): Observable<OperatorCampaignDraftValidation> {
+    return this.post<OperatorCampaignDraftValidation>(
+      `/api/v1/deployment-campaign-drafts/${pathId(draftId)}/validate`,
+      {}
+    );
+  }
+
+  publishCampaignDraft(draftId: string, idempotencyKey = this.newActionKey()): Observable<OperatorCampaignRevision> {
+    return this.post<OperatorCampaignRevision>(`/api/v1/deployment-campaign-drafts/${pathId(draftId)}/publish`, {
+      idempotencyKey,
+    });
+  }
+
+  startCampaignRun(campaignRevisionId: string): Observable<OperatorCampaignRun> {
+    return this.post<OperatorCampaignRun>('/api/v1/deployment-campaign-runs', {campaignRevisionId});
+  }
+
+  getCampaignRun(campaignRunId: string): Observable<OperatorCampaignRun> {
+    return this.get<OperatorCampaignRun>(`/api/v1/deployment-campaign-runs/${pathId(campaignRunId)}`);
+  }
+
+  transitionCampaignRun(
+    campaignRunId: string,
+    request: OperatorCampaignTransitionRequest
+  ): Observable<OperatorCampaignRun> {
+    return this.post<OperatorCampaignRun>(
+      `/api/v1/deployment-campaign-runs/${pathId(campaignRunId)}/transitions`,
+      request
     );
   }
 

@@ -375,6 +375,129 @@ export interface OperatorCampaignDetail {
   evidence: OperatorEvidenceRef[];
 }
 
+export interface OperatorCampaignMembershipRequest {
+  planIds: string[];
+  tagQuery?: string;
+}
+
+export interface OperatorCampaignRiskPolicy {
+  maximumConcurrency: number;
+  failureToleranceBasisPoints: number;
+  minimumHealthyBasisPoints: number;
+}
+
+export interface OperatorCampaignWaveRequest {
+  order: number;
+  name: string;
+  planIds: string[];
+  bakeSeconds: number;
+  maximumConcurrency: number;
+}
+
+export interface OperatorCampaignPrerequisiteRequest {
+  downstreamPlanId: string;
+  upstreamPlanId: string;
+  upstreamStepKey: string;
+  providerPlacementId: string;
+  expectedRuntimeStateChecksum: string;
+}
+
+export interface OperatorCreateCampaignDraftRequest {
+  name: string;
+  description: string;
+  membership: OperatorCampaignMembershipRequest;
+  waves: OperatorCampaignWaveRequest[];
+  prerequisites: OperatorCampaignPrerequisiteRequest[];
+  riskPolicy: OperatorCampaignRiskPolicy;
+}
+
+export interface OperatorUpdateCampaignDraftRequest extends OperatorCreateCampaignDraftRequest {
+  expectedRevision: number;
+}
+
+export interface OperatorCampaignDraft extends OperatorCreateCampaignDraftRequest {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  organizationId: string;
+  revision: number;
+  lastPublishedRevisionId?: string;
+}
+
+export interface OperatorCampaignValidationIssue {
+  code: string;
+  field: string;
+  message: string;
+}
+
+export interface OperatorCampaignDraftValidation {
+  valid: boolean;
+  issues: OperatorCampaignValidationIssue[];
+}
+
+export interface OperatorCampaignRevisionWave {
+  order: number;
+  name: string;
+  bakeSeconds: number;
+  maximumConcurrency: number;
+}
+
+export interface OperatorCampaignRevisionMember {
+  planId: string;
+  deploymentUnitId: string;
+  planChecksum: string;
+  effectivePolicyChecksum: string;
+  approvalRequestId: string;
+  approvalRequestRevision: number;
+  approvalChecksum: string;
+  calendarVersionIds: string[];
+  calendarChecksums: string[];
+  admissionEvaluationId: string;
+  admissionChecksum: string;
+  waveOrder: number;
+  memberOrder: number;
+}
+
+export interface OperatorCampaignRevisionPrerequisite extends OperatorCampaignPrerequisiteRequest {
+  providerDeploymentUnitId: string;
+  providerComponentInstanceId: string;
+}
+
+export interface OperatorCampaignRevision {
+  id: string;
+  publishedAt: string;
+  organizationId: string;
+  campaignDraftId: string;
+  revisionNumber: number;
+  sourceDraftRevision: number;
+  name: string;
+  description: string;
+  membershipTagQuery?: string;
+  riskPolicy: OperatorCampaignRiskPolicy;
+  canonicalChecksum: string;
+  publishedByUserAccountId: string;
+  waves: OperatorCampaignRevisionWave[];
+  members: OperatorCampaignRevisionMember[];
+  prerequisites: OperatorCampaignRevisionPrerequisite[];
+}
+
+export type OperatorCampaignRunState =
+  | 'DRAFT'
+  | 'VALIDATED'
+  | 'AWAITING_APPROVAL'
+  | 'SCHEDULED'
+  | 'RUNNING'
+  | 'PAUSED'
+  | 'FAILED'
+  | 'COMPLETED'
+  | 'CANCELED';
+
+export interface OperatorCampaignTransitionRequest {
+  expectedVersion: number;
+  to: OperatorCampaignRunState;
+  reason: string;
+}
+
 export interface OperatorExecutionRow {
   id: string;
   createdAt: string;
@@ -611,12 +734,12 @@ export interface OperatorCampaignRun {
   createdAt: string;
   updatedAt: string;
   campaignRevisionId: string;
-  state: string;
+  state: OperatorCampaignRunState;
   version: number;
   currentWaveOrder: number;
   currentMemberOrder: number;
   admissionsBlocked: boolean;
-  resumeState?: string;
+  resumeState?: OperatorCampaignRunState;
   pauseRequested: boolean;
   reconciliationRequired: boolean;
   fencingToken: number;

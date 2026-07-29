@@ -7,6 +7,362 @@
     </p>
   </header>
 
+  <section
+    aria-labelledby="campaign-authoring-heading"
+    class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 id="campaign-authoring-heading" class="text-lg font-semibold text-gray-900 dark:text-white">
+          Author a deployment campaign
+        </h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          Create and validate a mutable draft, publish an immutable revision, then advance its run through each guarded
+          pre-run state.
+        </p>
+      </div>
+      @if (draft(); as currentDraft) {
+        <a
+          class="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          [routerLink]="['/deployments/campaigns', currentDraft.id]">
+          Open campaign detail
+        </a>
+      }
+    </div>
+
+    <div class="mt-4 grid gap-4 lg:grid-cols-2">
+      <label class="distr-label">
+        Campaign name
+        <input
+          class="distr-input mt-1 w-full"
+          maxlength="200"
+          [formControl]="campaignName"
+          placeholder="Sample progressive rollout" />
+      </label>
+      <label class="distr-label">
+        Description
+        <textarea
+          class="distr-input mt-1 w-full"
+          rows="2"
+          maxlength="4000"
+          [formControl]="campaignDescription"></textarea>
+      </label>
+    </div>
+
+    <fieldset class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <legend class="px-2 font-semibold text-gray-900 dark:text-white">Campaign membership</legend>
+      <div class="grid gap-4 lg:grid-cols-2">
+        <label class="distr-label">
+          Immutable deployment plan IDs
+          <textarea
+            class="distr-input mt-1 w-full font-mono text-xs"
+            rows="4"
+            [formControl]="membershipPlanIds"
+            placeholder="One plan ID per line"></textarea>
+        </label>
+        <label class="distr-label">
+          Tag query (optional)
+          <input
+            class="distr-input mt-1 w-full"
+            maxlength="1000"
+            [formControl]="membershipTagQuery"
+            placeholder="environment=sample" />
+        </label>
+      </div>
+      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        Provide plan IDs, a tag query, or both. Publication resolves and freezes the final member set.
+      </p>
+    </fieldset>
+
+    <fieldset class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <div class="flex items-center justify-between gap-3">
+        <legend class="px-2 font-semibold text-gray-900 dark:text-white">Rollout waves</legend>
+        <button type="button" class="distr-btn-secondary" (click)="addWave()">Add wave</button>
+      </div>
+      <div class="mt-3 space-y-3">
+        @for (wave of waves(); track wave; let index = $index) {
+          <article class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="font-medium">Wave {{ index + 1 }}</h3>
+              <button
+                type="button"
+                class="text-sm font-medium text-red-700 disabled:opacity-50 dark:text-red-400"
+                [disabled]="waves().length === 1"
+                (click)="removeWave(index)">
+                Remove
+              </button>
+            </div>
+            <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <label class="distr-label">
+                Order
+                <input class="distr-input mt-1 w-full" type="number" min="1" [formControl]="wave.order" />
+              </label>
+              <label class="distr-label">
+                Name
+                <input class="distr-input mt-1 w-full" maxlength="200" [formControl]="wave.name" />
+              </label>
+              <label class="distr-label xl:col-span-1">
+                Plan IDs
+                <textarea
+                  class="distr-input mt-1 w-full font-mono text-xs"
+                  rows="2"
+                  [formControl]="wave.planIds"
+                  placeholder="One plan ID per line"></textarea>
+              </label>
+              <label class="distr-label">
+                Bake seconds
+                <input
+                  class="distr-input mt-1 w-full"
+                  type="number"
+                  min="0"
+                  max="31536000"
+                  [formControl]="wave.bakeSeconds" />
+              </label>
+              <label class="distr-label">
+                Maximum concurrency
+                <input
+                  class="distr-input mt-1 w-full"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  [formControl]="wave.maximumConcurrency" />
+              </label>
+            </div>
+          </article>
+        }
+      </div>
+    </fieldset>
+
+    <fieldset class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <div class="flex items-center justify-between gap-3">
+        <legend class="px-2 font-semibold text-gray-900 dark:text-white">Runtime prerequisites</legend>
+        <button type="button" class="distr-btn-secondary" (click)="addPrerequisite()">Add prerequisite</button>
+      </div>
+      @if (prerequisites().length === 0) {
+        <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">No cross-plan runtime prerequisites.</p>
+      } @else {
+        <div class="mt-3 space-y-3">
+          @for (prerequisite of prerequisites(); track prerequisite; let index = $index) {
+            <article class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="font-medium">Prerequisite {{ index + 1 }}</h3>
+                <button
+                  type="button"
+                  class="text-sm font-medium text-red-700 dark:text-red-400"
+                  (click)="removePrerequisite(index)">
+                  Remove
+                </button>
+              </div>
+              <div class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <label class="distr-label">
+                  Downstream plan ID
+                  <input
+                    class="distr-input mt-1 w-full font-mono text-xs"
+                    [formControl]="prerequisite.downstreamPlanId" />
+                </label>
+                <label class="distr-label">
+                  Upstream plan ID
+                  <input
+                    class="distr-input mt-1 w-full font-mono text-xs"
+                    [formControl]="prerequisite.upstreamPlanId" />
+                </label>
+                <label class="distr-label">
+                  Upstream step key
+                  <input class="distr-input mt-1 w-full" [formControl]="prerequisite.upstreamStepKey" />
+                </label>
+                <label class="distr-label">
+                  Provider placement ID
+                  <input
+                    class="distr-input mt-1 w-full font-mono text-xs"
+                    [formControl]="prerequisite.providerPlacementId" />
+                </label>
+                <label class="distr-label">
+                  Expected runtime checksum
+                  <input
+                    class="distr-input mt-1 w-full font-mono text-xs"
+                    [formControl]="prerequisite.expectedRuntimeStateChecksum" />
+                </label>
+              </div>
+            </article>
+          }
+        </div>
+      }
+    </fieldset>
+
+    <fieldset class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <legend class="px-2 font-semibold text-gray-900 dark:text-white">Risk policy</legend>
+      <div class="grid gap-3 md:grid-cols-3">
+        <label class="distr-label">
+          Maximum concurrency
+          <input
+            class="distr-input mt-1 w-full"
+            type="number"
+            min="1"
+            max="1000"
+            [formControl]="riskMaximumConcurrency" />
+        </label>
+        <label class="distr-label">
+          Failure tolerance (basis points)
+          <input
+            class="distr-input mt-1 w-full"
+            type="number"
+            min="0"
+            max="10000"
+            [formControl]="failureToleranceBasisPoints" />
+        </label>
+        <label class="distr-label">
+          Minimum healthy (basis points)
+          <input
+            class="distr-input mt-1 w-full"
+            type="number"
+            min="0"
+            max="10000"
+            [formControl]="minimumHealthyBasisPoints" />
+        </label>
+      </div>
+    </fieldset>
+
+    <details class="mt-4 rounded-lg bg-gray-50 p-4 text-sm dark:bg-gray-800">
+      <summary class="cursor-pointer font-medium">Advanced: generated API request</summary>
+      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        This preview is generated from the guided fields and cannot be edited directly.
+      </p>
+      <pre
+        data-testid="campaign-request-preview"
+        class="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-all font-mono text-xs"
+        >{{ campaignRequestPreview() }}</pre
+      >
+    </details>
+
+    <div class="mt-4 flex flex-wrap gap-2">
+      <button
+        type="button"
+        class="distr-btn-primary"
+        [disabled]="!authoringValid() || mutationLoading()"
+        (click)="createDraft()">
+        Create draft
+      </button>
+      <button
+        type="button"
+        class="distr-btn-secondary"
+        [disabled]="!draft() || !authoringValid() || mutationLoading()"
+        (click)="updateDraft()">
+        Update draft
+      </button>
+      <button
+        type="button"
+        class="distr-btn-secondary"
+        [disabled]="!draft() || !authoringMatchesDraft() || mutationLoading()"
+        (click)="validateDraft()">
+        Validate draft
+      </button>
+      <button
+        type="button"
+        class="distr-btn-primary"
+        [disabled]="!draft() || !publicationReady() || mutationLoading()"
+        (click)="publishDraft()">
+        Publish immutable revision
+      </button>
+      <button
+        type="button"
+        class="distr-btn-primary"
+        [disabled]="!revision() || mutationLoading()"
+        (click)="createRun()">
+        Create campaign run
+      </button>
+    </div>
+
+    @if (mutationLoading()) {
+      <p class="mt-3 text-sm text-gray-500 dark:text-gray-400" role="status">Applying campaign lifecycle action…</p>
+    }
+    @if (mutationStatus()) {
+      <p class="mt-3 rounded bg-green-50 p-3 text-sm text-green-900 dark:bg-gray-800 dark:text-green-300" role="status">
+        {{ mutationStatus() }}
+      </p>
+    }
+    @if (mutationError()) {
+      <p
+        class="mt-3 rounded p-3 text-sm"
+        [class.bg-yellow-50]="staleRun()"
+        [class.text-yellow-900]="staleRun()"
+        [class.bg-red-50]="!staleRun()"
+        [class.text-red-900]="!staleRun()"
+        role="alert">
+        {{ mutationError() }}
+      </p>
+    }
+
+    <div class="mt-4 grid gap-4 lg:grid-cols-3">
+      <section class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-gray-800">
+        <h3 class="font-semibold text-gray-900 dark:text-white">1. Mutable draft</h3>
+        @if (draft(); as currentDraft) {
+          <p class="mt-2">Draft {{ currentDraft.id }} revision {{ currentDraft.revision }}</p>
+          <p class="mt-1">{{ currentDraft.name }}</p>
+        } @else {
+          <p class="mt-2 text-gray-500 dark:text-gray-400">No campaign draft created in this session.</p>
+        }
+        @if (validation(); as result) {
+          <p class="mt-2 font-medium">
+            {{ result.valid ? 'Campaign draft is valid and ready to publish' : 'Campaign draft validation failed' }}
+          </p>
+          @if (result.issues.length > 0) {
+            <ul class="mt-2 space-y-2">
+              @for (issue of result.issues; track issue.code + issue.field + issue.message) {
+                <li class="rounded border border-yellow-300 bg-yellow-50 p-2 text-yellow-900">
+                  <strong>{{ issue.field || issue.code }}</strong>
+                  <span class="block">{{ issue.message }}</span>
+                </li>
+              }
+            </ul>
+          }
+        }
+        @if (authoringChangedAfterValidation()) {
+          <p class="mt-2 text-yellow-700 dark:text-yellow-300">
+            Authoring fields changed after validation. Update and validate the draft again before publishing.
+          </p>
+        }
+      </section>
+
+      <section class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-gray-800">
+        <h3 class="font-semibold text-gray-900 dark:text-white">2. Immutable revision</h3>
+        @if (revision(); as published) {
+          <p class="mt-2">Revision {{ published.id }} number {{ published.revisionNumber }}</p>
+          <code class="mt-1 block break-all text-xs">{{ published.canonicalChecksum }}</code>
+          <p class="mt-2">{{ published.members.length }} frozen members · {{ published.waves.length }} waves</p>
+        } @else {
+          <p class="mt-2 text-gray-500 dark:text-gray-400">Validate the current draft before publishing.</p>
+        }
+      </section>
+
+      <section class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-gray-800">
+        <h3 class="font-semibold text-gray-900 dark:text-white">3. Version-bound run</h3>
+        @if (run(); as currentRun) {
+          <p class="mt-2">Run {{ currentRun.id }} is {{ currentRun.state }} at version {{ currentRun.version }}</p>
+          @if (currentRun.state === 'RUNNING') {
+            <p class="mt-2 font-medium text-green-700 dark:text-green-300">Campaign rollout is running</p>
+          } @else if (nextRunState(); as nextState) {
+            <label class="distr-label mt-3 block">
+              Transition reason
+              <textarea
+                class="distr-input mt-1 w-full"
+                rows="2"
+                maxlength="4000"
+                [formControl]="transitionReason"></textarea>
+            </label>
+            <button
+              type="button"
+              class="distr-btn-primary mt-3"
+              [disabled]="!transitionReason.value.trim() || mutationLoading()"
+              (click)="advanceRun()">
+              Advance to {{ nextState }}
+            </button>
+          }
+        } @else {
+          <p class="mt-2 text-gray-500 dark:text-gray-400">Publish an immutable revision before creating a run.</p>
+        }
+      </section>
+    </div>
+  </section>
+
   <form
     class="grid gap-3 rounded-lg border border-gray-200 p-4 dark:border-gray-700 lg:grid-cols-4"
     (submit)="$event.preventDefault(); applyFilters()">
