@@ -22,11 +22,11 @@ const exactCommand = [
   'node',
   playwrightCLI,
   'test',
+  automatedTest,
   '--config',
   evidenceConfig,
   '--project',
   project,
-  automatedTest,
   '--grep',
   exactGrep,
   '--reporter',
@@ -45,6 +45,10 @@ const screenshotNames = [
   '10-release-b-history-preserved.png',
   '11-immutable-history-audit.png',
 ];
+
+test('places the test filter before Playwright variadic project options', () => {
+  assert.ok(exactCommand.indexOf(automatedTest) < exactCommand.indexOf('--project'));
+});
 
 function sha256(value) {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
