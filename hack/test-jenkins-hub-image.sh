@@ -426,9 +426,9 @@ function migration(version) {
     migrationFiles: Array.from({length: 25}, (_, index) => ({
       version: 138 + index,
       upFile: `${138 + index}.up.sql`,
-      upSha256: 'b'.repeat(64),
+      upSha256: 'sha256:' + 'b'.repeat(64),
       downFile: `${138 + index}.down.sql`,
-      downSha256: 'c'.repeat(64),
+      downSha256: 'sha256:' + 'c'.repeat(64),
     })),
     scenarios: scenarioIds.map((id) => {
       const output = `${id} complete\n`;

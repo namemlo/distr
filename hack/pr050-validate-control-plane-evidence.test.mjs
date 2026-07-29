@@ -21,7 +21,7 @@ const stableStringify = (value) => {
   return JSON.stringify(value);
 };
 
-function migrationReport() {
+function migrationReport(databaseOverrides = {}) {
   const requiredScenarios = [
     'migration-file-integrity',
     'postgres-runtime-version',
@@ -52,13 +52,14 @@ function migrationReport() {
       sslMode: 'disable',
       expectedServerVersion: '16.14',
       observedServerVersion: '16.14',
+      ...databaseOverrides,
     },
     migrationFiles: Array.from({length: 25}, (_, index) => ({
       version: 138 + index,
       upFile: `${138 + index}_migration.up.sql`,
-      upSha256: 'b'.repeat(64),
+      upSha256: sha('b'.repeat(64)),
       downFile: `${138 + index}_migration.down.sql`,
-      downSha256: 'c'.repeat(64),
+      downSha256: sha('c'.repeat(64)),
     })),
     scenarios: requiredScenarios.map((id) => {
       const output = `${id} complete\n`;
@@ -96,6 +97,12 @@ function migrationReport() {
     },
     cleanup: {attemptedSchemas: 3, droppedSchemas: 3, complete: true},
   };
+  report.reportChecksum = sha(JSON.stringify(report));
+  return report;
+}
+
+function resealMigrationReport(report) {
+  delete report.reportChecksum;
   report.reportChecksum = sha(JSON.stringify(report));
   return report;
 }
@@ -201,6 +208,35 @@ test('migration evidence requires an intact 138-162 executable matrix from a cle
   const checksumTamper = migrationReport();
   checksumTamper.status = 'FAIL';
   assert.throws(() => validateMigrationEvidence(checksumTamper, commit, '16.14'), /checksum/i);
+
+  const bareMigrationFileChecksum = migrationReport();
+  bareMigrationFileChecksum.migrationFiles[0].upSha256 = 'b'.repeat(64);
+  resealMigrationReport(bareMigrationFileChecksum);
+  assert.throws(
+    () => validateMigrationEvidence(bareMigrationFileChecksum, commit, '16.14'),
+    /lowercase SHA-256/
+  );
+});
+
+test('migration evidence permits passwordless access only for an explicit loopback test database identity', () => {
+  assert.doesNotThrow(() =>
+    validateMigrationEvidence(migrationReport({passwordPresent: false}), commit, '16.14')
+  );
+
+  for (const databaseOverrides of [
+    {host: 'db.example.invalid', passwordPresent: false},
+    {name: 'production', passwordPresent: false},
+    {user: 'production_owner', passwordPresent: false},
+    {passwordPresent: false, sslMode: 'require'},
+    {passwordPresent: 'false'},
+    {passwordPresent: null},
+    {passwordPresent: undefined},
+  ]) {
+    assert.throws(
+      () => validateMigrationEvidence(migrationReport(databaseOverrides), commit, '16.14'),
+      /explicit loopback test database/
+    );
+  }
 });
 
 test('post-deploy evidence proves live operator, API, observer, audit, and reconciliation facts', () => {

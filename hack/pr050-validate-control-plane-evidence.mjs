@@ -6,7 +6,6 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const checksumPattern = /^sha256:[0-9a-f]{64}$/;
-const hexChecksumPattern = /^[0-9a-f]{64}$/;
 const commitPattern = /^[0-9a-f]{40}$/;
 const safeDatabaseNamePattern = /(test|ci|fixture|sandbox|control[_-]?plane)/i;
 const requiredMigrationScenarios = Object.freeze([
@@ -74,7 +73,7 @@ function validateMigrationFile(file, expectedVersion, index) {
   }
   for (const side of ['up', 'down']) {
     nonEmptyString(file?.[`${side}File`], `migrationFiles[${index}].${side}File`);
-    if (!hexChecksumPattern.test(file?.[`${side}Sha256`] ?? '')) {
+    if (!checksumPattern.test(file?.[`${side}Sha256`] ?? '')) {
       fail(`migrationFiles[${index}].${side}Sha256 must be a lowercase SHA-256`);
     }
   }
@@ -123,8 +122,8 @@ export function validateMigrationEvidence(report, expectedCommit, expectedPostgr
     report.database.port > 65535 ||
     !safeDatabaseNamePattern.test(report.database?.name ?? '') ||
     typeof report.database?.user !== 'string' ||
-    report.database.user.length === 0 ||
-    report.database?.passwordPresent !== true ||
+    !safeDatabaseNamePattern.test(report.database.user) ||
+    typeof report.database?.passwordPresent !== 'boolean' ||
     report.database?.sslMode !== 'disable'
   ) {
     fail('migration report database identity must be an explicit loopback test database');
