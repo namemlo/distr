@@ -18,12 +18,12 @@ const browserManualEvidence = 'docs/fork/PR-080_OPERATOR_CONTROL_ROOM_UI.md';
 const browserConfig = 'playwright.control-plane-evidence.config.ts';
 const browserFixture = 'frontend/ui/e2e/fixtures/control-plane.ts';
 const browserProject = 'chromium';
+const browserPlaywrightCLI = 'node_modules/@playwright/test/cli.js';
 const browserTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const browserGrep = `${browserTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const browserCommand = [
-  'pnpm',
-  'exec',
-  'playwright',
+  'node',
+  browserPlaywrightCLI,
   'test',
   '--config',
   browserConfig,
@@ -242,21 +242,31 @@ async function git(directory, ...args) {
   return execFileAsync('git', args, {cwd: directory});
 }
 
-async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOverride} = {}) {
+async function fixtureWorkspace({
+  mutateRows = () => {},
+  verifiedAdopter,
+  proofOverride,
+  browserRuntimeBinding = true,
+  browserLockImporterVersion = '1.52.0',
+} = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-acceptance-'));
   await mkdir(path.join(directory, 'docs', 'release'), {recursive: true});
   await mkdir(path.join(directory, 'results'), {recursive: true});
   const evidence = '# Retained fixture evidence\n';
   const automatedTest = "import {test} from 'node:test';\ntest('proof', () => {});\n";
+  const browserRuntimeAssertion = browserRuntimeBinding
+    ? '  const expectedNodeVersion = process.env.DISTR_EVIDENCE_NODE_VERSION;\n  if (expectedNodeVersion !== undefined) {\n    expect(process.versions.node).toBe(expectedNodeVersion);\n  }\n'
+    : '';
   const browserSources = {
-    [browserAutomatedTest]: `test('${browserTitle}', async ({controlPlane}) => {\n  expect(controlPlane.externalAttempts).toEqual([]);\n});\n`,
+    [browserAutomatedTest]: `test('${browserTitle}', async ({controlPlane}) => {\n${browserRuntimeAssertion}  expect(controlPlane.externalAttempts).toEqual([]);\n});\n`,
     [browserManualEvidence]: '# AC-63 browser evidence\n',
     [browserConfig]: `export default {projects: [{name: '${browserProject}'}]};\n`,
     'playwright.control-plane.config.ts': 'export default {};\n',
     [browserFixture]:
       "const externalAttempts = [];\npage.route('**/*', async (route) => {\n  if (!isLocalHost(new URL(route.request().url()).hostname)) {\n    externalAttempts.push(route.request().url());\n    await route.abort('blockedbyclient');\n  }\n});\n",
-    'package.json': '{"name":"acceptance-browser-fixture","private":true,"packageManager":"pnpm@11.7.0"}\n',
-    'pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+    'package.json':
+      '{"name":"acceptance-browser-fixture","private":true,"packageManager":"pnpm@11.7.0","devDependencies":{"@playwright/test":"^1.52.0"}}\n',
+    'pnpm-lock.yaml': `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    devDependencies:\n      '@playwright/test':\n        specifier: ^1.52.0\n        version: ${browserLockImporterVersion}\n\npackages:\n\n  '@playwright/test@1.52.0':\n    resolution: {integrity: sha512-YWN0dWFsLWxvY2tmaWxlLWJvdW5kLXBsYXl3cmlnaHQtdGVzdA==}\n\nsnapshots:\n\n  '@playwright/test@1.52.0': {}\n`,
   };
   const contract = fixtureContract(proofOverride);
   await writeFile(path.join(directory, 'evidence.test.mjs'), automatedTest);
@@ -1610,27 +1620,32 @@ test('rejects browser proof with zero expected tests', async () => {
 });
 
 test('rejects AC-63 generic evidence that did not run the exact purpose-built Playwright command', async () => {
-  const {directory} = await fixtureWorkspace({
-    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
-  });
-  await rewriteArtifact(
-    directory,
-    'AC-63',
-    async (artifact) => {
-      const resultPath = path.join(directory, artifact.testResult.path);
-      const result = JSON.parse(await readFile(resultPath, 'utf8'));
-      result.command.argv = result.command.argv.filter((argument) => argument !== '--project');
-      const bytes = `${JSON.stringify(result, null, 2)}\n`;
-      await writeFile(resultPath, bytes);
-      artifact.testResult.sha256 = sha256(bytes);
-    },
-    'weaken exact browser command'
-  );
+  for (const [name, mutate] of [
+    ['weaken exact browser command', (argv) => argv.filter((argument) => argument !== '--project')],
+    ['leak host-specific Node path', (argv) => [process.execPath, ...argv.slice(1)]],
+  ]) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteArtifact(
+      directory,
+      'AC-63',
+      async (artifact) => {
+        const resultPath = path.join(directory, artifact.testResult.path);
+        const result = JSON.parse(await readFile(resultPath, 'utf8'));
+        result.command.argv = mutate(result.command.argv);
+        const bytes = `${JSON.stringify(result, null, 2)}\n`;
+        await writeFile(resultPath, bytes);
+        artifact.testResult.sha256 = sha256(bytes);
+      },
+      name
+    );
 
-  const result = await run(directory);
+    const result = await run(directory);
 
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /AC-63 playwright argv must exactly run the purpose-built browser evidence test/);
+    assert.notEqual(result.status, 0, name);
+    assert.match(result.stderr, /AC-63 playwright argv must exactly run the purpose-built browser evidence test/, name);
+  }
 });
 
 test('rejects AC-63 browser class evidence with the wrong project, source, or title', async () => {
@@ -1731,6 +1746,33 @@ test('rejects AC-63 browser proof without exact network isolation, source bindin
     assert.notEqual(result.status, 0, field);
     assert.match(result.stderr, expected, field);
   }
+});
+
+test('rejects AC-63 browser source without the Playwright worker Node version binding', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    browserRuntimeBinding: false,
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-63 browser automated test must bind the Playwright worker Node version/);
+});
+
+test('rejects AC-63 browser evidence when the source pnpm lock importer does not match its integrity-bound package', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    browserLockImporterVersion: '1.51.0',
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /AC-63 browser Playwright version must match the source pnpm lock importer and integrity-bound package/
+  );
 });
 
 test('rejects structurally invalid, truncated, bad-CRC, missing-IEND, and secret-bearing PNG evidence', async () => {

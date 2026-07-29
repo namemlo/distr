@@ -17,12 +17,12 @@ const automatedTest = 'frontend/ui/e2e/control-plane.spec.ts';
 const fixtureSource = 'frontend/ui/e2e/fixtures/control-plane.ts';
 const manualEvidence = 'docs/fork/PR-080_OPERATOR_CONTROL_ROOM_UI.md';
 const project = 'chromium';
+const playwrightCLI = 'node_modules/@playwright/test/cli.js';
 const exactTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const exactGrep = `${exactTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const exactCommand = [
-  'pnpm',
-  'exec',
-  'playwright',
+  'node',
+  playwrightCLI,
   'test',
   '--config',
   evidenceConfig,
@@ -265,6 +265,225 @@ async function sourceBinding(root, tracked, sourceCommit, value, label) {
   return {path: value, sha256: sha256(committed)};
 }
 
+function uniqueIndentedBlock(text, indent, headers, label) {
+  const lines = text.replaceAll('\r\n', '\n').split('\n');
+  const prefix = ' '.repeat(indent);
+  const accepted = new Set(headers.map((header) => `${prefix}${header}:`));
+  const matches = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (accepted.has(lines[index])) matches.push(index);
+  }
+  if (matches.length !== 1) fail(`pnpm lock must contain exactly one ${label}`);
+  const start = matches[0] + 1;
+  let end = lines.length;
+  for (let index = start; index < lines.length; index += 1) {
+    if (lines[index].startsWith(prefix) && lines[index].slice(indent).match(/^\S.*:\s*$/)) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+function uniqueLockScalar(block, indent, key, label) {
+  const prefix = `${' '.repeat(indent)}${key}:`;
+  const values = block
+    .split('\n')
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).trim());
+  if (values.length !== 1 || values[0] === '') fail(`pnpm lock must contain exactly one ${label}`);
+  return values[0];
+}
+
+function parsePlaywrightLock(manifestBytes, lockBytes) {
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestBytes.toString('utf8'));
+  } catch {
+    fail('source package manifest must be valid JSON');
+  }
+  const manifestSpecifier = manifest?.devDependencies?.['@playwright/test'];
+  if (typeof manifestSpecifier !== 'string' || manifestSpecifier === '') {
+    fail('source package manifest must declare @playwright/test');
+  }
+  const lock = lockBytes.toString('utf8');
+  const importers = uniqueIndentedBlock(lock, 0, ['importers'], 'importers mapping');
+  const rootImporter = uniqueIndentedBlock(importers, 2, ['.'], 'root importer');
+  const devDependencies = uniqueIndentedBlock(rootImporter, 4, ['devDependencies'], 'root devDependencies');
+  const importer = uniqueIndentedBlock(
+    devDependencies,
+    6,
+    ["'@playwright/test'", '"@playwright/test"', '@playwright/test'],
+    '@playwright/test importer'
+  );
+  const specifier = uniqueLockScalar(importer, 8, 'specifier', '@playwright/test importer specifier');
+  const version = uniqueLockScalar(importer, 8, 'version', '@playwright/test importer version');
+  if (specifier !== manifestSpecifier) {
+    fail('package.json and pnpm lock importer disagree for @playwright/test');
+  }
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+    fail('pnpm lock @playwright/test importer version must be canonical semver');
+  }
+  const packages = uniqueIndentedBlock(lock, 0, ['packages'], 'packages mapping');
+  const packageHeaders = packages
+    .split('\n')
+    .filter((line) => /^  (?:'|")?@playwright\/test@/.test(line) && line.trimEnd().endsWith(':'));
+  if (packageHeaders.length !== 1) {
+    fail('pnpm lock importer version must match one integrity-bound @playwright/test package');
+  }
+  const expectedHeaders = [
+    `'@playwright/test@${version}'`,
+    `"@playwright/test@${version}"`,
+    `@playwright/test@${version}`,
+  ];
+  let packageBlock;
+  try {
+    packageBlock = uniqueIndentedBlock(packages, 2, expectedHeaders, '@playwright/test package');
+  } catch {
+    fail('pnpm lock importer version must match one integrity-bound @playwright/test package');
+  }
+  const resolution = uniqueLockScalar(packageBlock, 4, 'resolution', '@playwright/test package resolution');
+  const integrityMatch = /^\{\s*integrity:\s*(sha512-[A-Za-z0-9+/]+={0,2})\s*\}$/.exec(resolution);
+  if (!integrityMatch) {
+    fail('pnpm lock importer version must match one integrity-bound @playwright/test package');
+  }
+  const packageManagerMatch = /^pnpm@(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(manifest?.packageManager ?? '');
+  if (!packageManagerMatch) fail('source packageManager must pin a canonical pnpm version');
+  return {
+    version,
+    specifier,
+    integrity: integrityMatch[1],
+    pnpmVersion: packageManagerMatch[1],
+  };
+}
+
+async function sourcePlaywrightDependency(root, sourceCommit) {
+  let manifestBytes;
+  let lockBytes;
+  try {
+    ({stdout: manifestBytes} = await git(root, ['show', `${sourceCommit}:package.json`], {encoding: 'buffer'}));
+    ({stdout: lockBytes} = await git(root, ['show', `${sourceCommit}:pnpm-lock.yaml`], {encoding: 'buffer'}));
+  } catch {
+    fail('source commit must contain package.json and pnpm-lock.yaml');
+  }
+  return parsePlaywrightLock(manifestBytes, lockBytes);
+}
+
+function samePath(left, right) {
+  return path.relative(left, right) === '';
+}
+
+async function trustedDependencySource(root) {
+  const source = path.join(root, 'node_modules');
+  let information;
+  try {
+    information = await lstat(source);
+  } catch {
+    fail('repository node_modules must exist before isolated evidence execution');
+  }
+  if (information.isSymbolicLink() || !information.isDirectory()) {
+    fail('repository node_modules must be a real directory before isolated evidence execution');
+  }
+  const sourceReal = await realpath(source);
+  if (!containedPath(await realpath(root), sourceReal)) {
+    fail('repository node_modules resolved outside the trusted source worktree');
+  }
+  return sourceReal;
+}
+
+async function validatePlaywrightDependency(executionRoot, trustedSourceReal, dependency, baseline) {
+  let executionModulesReal;
+  try {
+    executionModulesReal = await realpath(path.join(executionRoot, 'node_modules'));
+  } catch {
+    fail('evidence execution requires the trusted repository node_modules');
+  }
+  if (!samePath(trustedSourceReal, executionModulesReal)) {
+    fail('evidence node_modules must resolve to the trusted dependency source');
+  }
+  const expectedPackage = path.join(
+    trustedSourceReal,
+    '.pnpm',
+    `@playwright+test@${dependency.version}`,
+    'node_modules',
+    '@playwright',
+    'test'
+  );
+  let expectedInformation;
+  try {
+    expectedInformation = await lstat(expectedPackage);
+  } catch {
+    fail('lockfile-bound @playwright/test package is missing from the trusted dependency source');
+  }
+  if (expectedInformation.isSymbolicLink() || !expectedInformation.isDirectory()) {
+    fail('lockfile-bound @playwright/test package must be a real directory');
+  }
+  const expectedPackageReal = await realpath(expectedPackage);
+  if (!containedPath(trustedSourceReal, expectedPackageReal) || !samePath(expectedPackage, expectedPackageReal)) {
+    fail('lockfile-bound @playwright/test package resolved outside the trusted dependency source');
+  }
+  const publicPackage = path.join(executionRoot, 'node_modules', '@playwright', 'test');
+  let publicInformation;
+  try {
+    publicInformation = await lstat(publicPackage);
+  } catch {
+    fail('installed @playwright/test package link is missing');
+  }
+  if (!publicInformation.isSymbolicLink()) fail('installed @playwright/test must be a pnpm dependency link');
+  const publicReal = await realpath(publicPackage);
+  if (!samePath(publicReal, expectedPackageReal)) {
+    fail('installed @playwright/test must resolve to the lockfile package');
+  }
+  const packageManifestPath = path.join(publicPackage, 'package.json');
+  const cliPath = path.join(publicPackage, 'cli.js');
+  let packageInformation;
+  let cliInformation;
+  try {
+    packageInformation = await lstat(packageManifestPath);
+    cliInformation = await lstat(cliPath);
+  } catch {
+    fail('lockfile-bound Playwright package files are missing');
+  }
+  if (packageInformation.isSymbolicLink() || !packageInformation.isFile()) {
+    fail('lockfile-bound Playwright package manifest must be a regular file');
+  }
+  if (cliInformation.isSymbolicLink() || !cliInformation.isFile()) {
+    fail('lockfile-bound Playwright CLI must be a regular file');
+  }
+  const expectedManifestReal = path.join(expectedPackageReal, 'package.json');
+  const expectedCLIReal = path.join(expectedPackageReal, 'cli.js');
+  const [manifestReal, cliReal] = await Promise.all([realpath(packageManifestPath), realpath(cliPath)]);
+  if (!samePath(manifestReal, expectedManifestReal) || !samePath(cliReal, expectedCLIReal)) {
+    fail('lockfile-bound Playwright package files resolved outside the expected package');
+  }
+  const [manifestBytes, cliBytes] = await Promise.all([readFile(packageManifestPath), readFile(cliPath)]);
+  let installedManifest;
+  try {
+    installedManifest = JSON.parse(manifestBytes.toString('utf8'));
+  } catch {
+    fail('installed @playwright/test package manifest must be valid JSON');
+  }
+  if (installedManifest?.name !== '@playwright/test' || installedManifest?.version !== dependency.version) {
+    fail('installed @playwright/test version must match the lockfile');
+  }
+  const fingerprint = {
+    packageReal: expectedPackageReal,
+    manifestSha256: sha256(manifestBytes),
+    cliReal,
+    cliSha256: sha256(cliBytes),
+  };
+  if (
+    baseline &&
+    (!samePath(fingerprint.packageReal, baseline.packageReal) ||
+      fingerprint.manifestSha256 !== baseline.manifestSha256 ||
+      !samePath(fingerprint.cliReal, baseline.cliReal) ||
+      fingerprint.cliSha256 !== baseline.cliSha256)
+  ) {
+    fail('lockfile-bound Playwright CLI changed during evidence execution');
+  }
+  return fingerprint;
+}
+
 async function linkExecutionDependencies(root, isolatedRoot) {
   const source = path.join(root, 'node_modules');
   let information;
@@ -337,32 +556,20 @@ async function requireDependencyLinkUnchanged(dependencyLink) {
   }
 }
 
-function bounded(value) {
-  const text = Buffer.isBuffer(value) ? value.toString('utf8') : String(value ?? '');
-  return text.length > 4000 ? `${text.slice(0, 4000)}…` : text;
-}
-
-async function runPnpm(root, commandArguments, label, environment = process.env) {
-  const logicalCommand = ['pnpm', ...commandArguments];
-  const windows = process.platform === 'win32';
-  const executable = windows ? process.env.ComSpec || 'cmd.exe' : 'pnpm';
-  const arguments_ = windows
-    ? [
-        '/d',
-        '/s',
-        '/c',
-        `"pnpm.cmd ${logicalCommand
-          .slice(1)
-          .map((argument) => `"${argument.replaceAll('"', '""')}"`)
-          .join(' ')}"`,
-      ]
-    : logicalCommand.slice(1);
+async function runCapturedProcess(
+  root,
+  executable,
+  arguments_,
+  label,
+  environment = process.env,
+  windowsVerbatimArguments = false
+) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, arguments_, {
       cwd: root,
       env: environment,
       shell: false,
-      windowsVerbatimArguments: windows,
+      windowsVerbatimArguments,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -389,7 +596,9 @@ async function runPnpm(root, commandArguments, label, environment = process.env)
         stderr.push(chunk);
       }
     });
-    child.on('error', (error) => reject(new Error(`could not execute ${label}: ${error.message}`)));
+    child.on('error', (error) =>
+      reject(new Error(`could not execute ${label}; process error code ${error?.code ?? 'unknown'}`))
+    );
     child.on('close', (exitCode) => {
       if (overflow) {
         reject(new Error(`${label} exceeded the output limit`));
@@ -398,7 +607,11 @@ async function runPnpm(root, commandArguments, label, environment = process.env)
       const stdoutBytes = Buffer.concat(stdout);
       const stderrBytes = Buffer.concat(stderr);
       if (exitCode !== 0) {
-        reject(new Error(`${label} failed with exit code ${exitCode}: ${bounded(stderrBytes || stdoutBytes)}`));
+        reject(
+          new Error(
+            `${label} failed with exit code ${exitCode}; stdout bytes=${stdoutBytes.length}; stderr bytes=${stderrBytes.length}`
+          )
+        );
         return;
       }
       resolve({stdout: stdoutBytes, stderr: stderrBytes});
@@ -406,25 +619,58 @@ async function runPnpm(root, commandArguments, label, environment = process.env)
   });
 }
 
+async function runPnpm(root, commandArguments, label, environment = process.env) {
+  const logicalCommand = ['pnpm', ...commandArguments];
+  const windows = process.platform === 'win32';
+  const executable = windows ? process.env.ComSpec || 'cmd.exe' : 'pnpm';
+  const arguments_ = windows
+    ? [
+        '/d',
+        '/s',
+        '/c',
+        `"pnpm.cmd ${logicalCommand
+          .slice(1)
+          .map((argument) => `"${argument.replaceAll('"', '""')}"`)
+          .join(' ')}"`,
+      ]
+    : logicalCommand.slice(1);
+  return runCapturedProcess(root, executable, arguments_, label, environment, windows);
+}
+
+async function runNode(root, arguments_, label, environment = process.env) {
+  return runCapturedProcess(root, process.execPath, arguments_, label, environment);
+}
+
 async function runPlaywright(root, nodeVersion) {
-  return runPnpm(root, exactCommand.slice(1), 'direct Playwright evidence', {
+  return runNode(root, exactCommand.slice(1), 'direct Playwright evidence', {
     ...process.env,
     DISTR_EVIDENCE_NODE_VERSION: nodeVersion,
   });
 }
 
-async function collectToolVersions(root) {
+async function validateRootPnpm(root, dependency) {
   const pnpmResult = await runPnpm(root, ['--version'], 'pnpm version query');
-  const playwrightResult = await runPnpm(root, ['exec', 'playwright', '--version'], 'Playwright version query');
-  const node = process.versions.node;
   const pnpm = pnpmResult.stdout.toString('utf8').trim();
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(pnpm) || pnpm !== dependency.pnpmVersion) {
+    fail('pnpm tool version must match the source packageManager');
+  }
+  await runPnpm(root, ['store', 'status'], 'pnpm store status');
+  return pnpm;
+}
+
+async function collectToolVersions(root, trustedSourceReal, dependency, baseline, pnpm) {
+  await validatePlaywrightDependency(root, trustedSourceReal, dependency, baseline);
+  const playwrightResult = await runNode(root, [playwrightCLI, '--version'], 'Playwright version query');
+  await validatePlaywrightDependency(root, trustedSourceReal, dependency, baseline);
+  const node = process.versions.node;
   const playwrightOutput = playwrightResult.stdout.toString('utf8').trim();
   const playwrightMatch = /^Version\s+(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(playwrightOutput);
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(node)) {
     fail('Node tool version is not canonical semver');
   }
-  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(pnpm)) fail('pnpm tool version is not canonical semver');
-  if (!playwrightMatch) fail('Playwright tool version is not canonical semver');
+  if (!playwrightMatch || playwrightMatch[1] !== dependency.version) {
+    fail('Playwright tool version must match the source pnpm lock');
+  }
   return {node, pnpm, playwright: playwrightMatch[1]};
 }
 
@@ -698,6 +944,11 @@ async function main() {
   }
   await requireExactHead(root, options.sourceCommit);
   await requireEmptyOutput(outDir);
+  const dependency = await sourcePlaywrightDependency(root, options.sourceCommit);
+  const trustedSourceReal = await trustedDependencySource(root);
+  await validatePlaywrightDependency(root, trustedSourceReal, dependency);
+  const pnpmVersion = await validateRootPnpm(root, dependency);
+  const dependencyBaseline = await validatePlaywrightDependency(root, trustedSourceReal, dependency);
   const isolated = await createIsolatedWorktree(root, options.sourceCommit);
   try {
     const tracked = await trackedSet(isolated.isolatedRoot);
@@ -742,7 +993,15 @@ async function main() {
     let executed;
     let toolVersions;
     try {
-      toolVersions = await collectToolVersions(isolated.isolatedRoot);
+      toolVersions = await collectToolVersions(
+        isolated.isolatedRoot,
+        trustedSourceReal,
+        dependency,
+        dependencyBaseline,
+        pnpmVersion
+      );
+      await validatePlaywrightDependency(root, trustedSourceReal, dependency, dependencyBaseline);
+      await validatePlaywrightDependency(isolated.isolatedRoot, trustedSourceReal, dependency, dependencyBaseline);
       executed = await runPlaywright(isolated.isolatedRoot, toolVersions.node);
     } finally {
       await requireUnchangedHead(root, options.sourceCommit, 'source worktree HEAD drifted during isolated execution');
@@ -757,6 +1016,8 @@ async function main() {
         runnerOutput,
       ]);
       await requireDependencyLinkUnchanged(isolated.dependencyLink);
+      await validatePlaywrightDependency(root, trustedSourceReal, dependency, dependencyBaseline);
+      await validatePlaywrightDependency(isolated.isolatedRoot, trustedSourceReal, dependency, dependencyBaseline);
     }
     const report = parseRawReport(executed.stdout);
     const run = validatePlaywrightReport(isolated.isolatedRoot, report, toolVersions);

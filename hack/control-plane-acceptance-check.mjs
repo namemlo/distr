@@ -38,12 +38,12 @@ const browserAutomatedTest = 'frontend/ui/e2e/control-plane.spec.ts';
 const browserConfig = 'playwright.control-plane-evidence.config.ts';
 const browserFixture = 'frontend/ui/e2e/fixtures/control-plane.ts';
 const browserProject = 'chromium';
+const browserPlaywrightCLI = 'node_modules/@playwright/test/cli.js';
 const browserTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const browserGrep = `${browserTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const browserCommand = [
-  'pnpm',
-  'exec',
-  'playwright',
+  'node',
+  browserPlaywrightCLI,
   'test',
   '--config',
   browserConfig,
@@ -674,13 +674,15 @@ function validateTestCommand(row, profile, result) {
     ) {
       fail(`${row.id} playwright argv must exactly run the purpose-built browser evidence test`);
     }
-    const playwrightIndex = command.argv.indexOf('playwright');
-    if (
-      playwrightIndex < 0 ||
-      command.argv[playwrightIndex + 1] !== 'test' ||
-      !command.argv.map(gitPath).includes(normalizedSource)
-    ) {
-      fail(`${row.id} playwright argv must execute ${row.automatedTest}`);
+    if (row.id !== browserAcceptanceId) {
+      const playwrightIndex = command.argv.indexOf('playwright');
+      if (
+        playwrightIndex < 0 ||
+        command.argv[playwrightIndex + 1] !== 'test' ||
+        !command.argv.map(gitPath).includes(normalizedSource)
+      ) {
+        fail(`${row.id} playwright argv must execute ${row.automatedTest}`);
+      }
     }
   }
   if (result.exitCode !== 0) {
@@ -1558,6 +1560,13 @@ function requireBrowserNetworkSource(row, automatedSource, fixtureSource, networ
   const next = nextTest.exec(automated);
   const evidenceBody = automated.slice(titleOffset, next?.index ?? automated.length);
   if (
+    !/const\s+expectedNodeVersion\s*=\s*process\.env\.DISTR_EVIDENCE_NODE_VERSION\s*;\s*if\s*\(\s*expectedNodeVersion\s*!==\s*undefined\s*\)\s*\{\s*expect\s*\(\s*process\.versions\.node\s*\)\s*\.toBe\s*\(\s*expectedNodeVersion\s*\)\s*;\s*\}/.test(
+      evidenceBody
+    )
+  ) {
+    fail(`${row.id} browser automated test must bind the Playwright worker Node version`);
+  }
+  if (
     !networkProof ||
     !jsonEqual(Object.keys(networkProof).sort(), ['externalAttempts', 'mode', 'testTitle']) ||
     networkProof.mode !== 'bound-test-assertion' ||
@@ -1572,6 +1581,65 @@ function requireBrowserNetworkSource(row, automatedSource, fixtureSource, networ
   ) {
     fail(`${row.id} browser network proof must bind the exact test assertion and zero external attempts`);
   }
+}
+
+function sourcePlaywrightLockVersion(packageManifest, lockBytes) {
+  const block = (text, indent, headers) => {
+    const lines = text.replaceAll('\r\n', '\n').split('\n');
+    const prefix = ' '.repeat(indent);
+    const accepted = new Set(headers.map((header) => `${prefix}${header}:`));
+    const matches = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if (accepted.has(lines[index])) matches.push(index);
+    }
+    if (matches.length !== 1) throw new Error('invalid mapping');
+    const start = matches[0] + 1;
+    let end = lines.length;
+    for (let index = start; index < lines.length; index += 1) {
+      if (lines[index].startsWith(prefix) && /^\S.*:\s*$/.test(lines[index].slice(indent))) {
+        end = index;
+        break;
+      }
+    }
+    return lines.slice(start, end).join('\n');
+  };
+  const scalar = (text, indent, key) => {
+    const prefix = `${' '.repeat(indent)}${key}:`;
+    const values = text
+      .split('\n')
+      .filter((line) => line.startsWith(prefix))
+      .map((line) => line.slice(prefix.length).trim());
+    if (values.length !== 1 || values[0] === '') throw new Error('invalid scalar');
+    return values[0];
+  };
+  const lock = lockBytes.toString('utf8');
+  const importers = block(lock, 0, ['importers']);
+  const rootImporter = block(importers, 2, ['.']);
+  const devDependencies = block(rootImporter, 4, ['devDependencies']);
+  const importer = block(devDependencies, 6, ["'@playwright/test'", '"@playwright/test"', '@playwright/test']);
+  const specifier = scalar(importer, 8, 'specifier');
+  const version = scalar(importer, 8, 'version');
+  if (
+    specifier !== packageManifest?.devDependencies?.['@playwright/test'] ||
+    !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)
+  ) {
+    throw new Error('invalid importer');
+  }
+  const packages = block(lock, 0, ['packages']);
+  const packageHeaders = packages
+    .split('\n')
+    .filter((line) => /^  (?:'|")?@playwright\/test@/.test(line) && line.trimEnd().endsWith(':'));
+  if (packageHeaders.length !== 1) throw new Error('invalid package count');
+  const packageEntry = block(packages, 2, [
+    `'@playwright/test@${version}'`,
+    `"@playwright/test@${version}"`,
+    `@playwright/test@${version}`,
+  ]);
+  const resolution = scalar(packageEntry, 4, 'resolution');
+  if (!/^\{\s*integrity:\s*sha512-[A-Za-z0-9+/]+={0,2}\s*\}$/.test(resolution)) {
+    throw new Error('invalid integrity');
+  }
+  return version;
 }
 
 async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, binding, genericResult) {
@@ -1685,6 +1753,14 @@ async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, bindin
   );
   if (!packageManagerMatch || packageManagerMatch[1] !== report.toolVersions.pnpm) {
     fail(`${row.id} browser pnpm version must match source-bound packageManager`);
+  }
+  try {
+    const lockBytes = await sourceBlob(root, gitFacts, sourceCommit, 'pnpm-lock.yaml', row.id, 'browser pnpm lockfile');
+    if (sourcePlaywrightLockVersion(packageManifest, lockBytes) !== report.toolVersions.playwright) {
+      throw new Error('version mismatch');
+    }
+  } catch {
+    fail(`${row.id} browser Playwright version must match the source pnpm lock importer and integrity-bound package`);
   }
   const [automatedSource, fixtureSource] = await Promise.all([
     sourceBlob(root, gitFacts, sourceCommit, browserAutomatedTest, row.id, 'browser automated test'),

@@ -15,12 +15,12 @@ const evidenceConfig = 'playwright.control-plane-evidence.config.ts';
 const automatedTest = 'frontend/ui/e2e/control-plane.spec.ts';
 const manualEvidence = 'docs/fork/PR-080_OPERATOR_CONTROL_ROOM_UI.md';
 const project = 'chromium';
+const playwrightCLI = 'node_modules/@playwright/test/cli.js';
 const exactTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const exactGrep = `${exactTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const exactCommand = [
-  'pnpm',
-  'exec',
-  'playwright',
+  'node',
+  playwrightCLI,
   'test',
   '--config',
   evidenceConfig,
@@ -54,12 +54,16 @@ async function git(directory, ...args) {
   return execFileAsync('git', args, {cwd: directory});
 }
 
-const fakePnpmSource = String.raw`
+const lockedPlaywrightVersion = '1.52.0';
+const lockedPlaywrightIntegrity = 'sha512-YWN0dWFsLWxvY2tmaWxlLWJvdW5kLXBsYXl3cmlnaHQtdGVzdA==';
+
+const fakePlaywrightCLISource = String.raw`
 import {execFileSync} from 'node:child_process';
 import {appendFile, mkdir, symlink, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
 const actualArguments = process.argv.slice(2);
+const scenario = process.env.FAKE_PLAYWRIGHT_SCENARIO || 'passed';
 if (path.resolve(process.cwd()) === path.resolve(process.env.EXPECTED_ORIGINAL_ROOT)) {
   process.stderr.write('Playwright ran in the mutable source worktree\n');
   process.exit(93);
@@ -71,14 +75,9 @@ if (isolatedHead !== process.env.EXPECTED_SOURCE_COMMIT) {
 }
 await writeFile(process.env.ISOLATED_PATH_RECORD, process.cwd());
 if (JSON.stringify(actualArguments) === JSON.stringify(['--version'])) {
-  process.stdout.write(process.env.EXPECTED_PNPM_VERSION + '\n');
-  process.exit(0);
-}
-if (JSON.stringify(actualArguments) === JSON.stringify(['exec', 'node', '--version'])) {
-  process.stderr.write('browser evidence must bind the already-running Node runtime\n');
-  process.exit(97);
-}
-if (JSON.stringify(actualArguments) === JSON.stringify(['exec', 'playwright', '--version'])) {
+  if (scenario === 'replace-cli-after-version') {
+    await appendFile(new URL(import.meta.url), '\n// replaced after version query\n');
+  }
   process.stdout.write('Version ' + process.env.EXPECTED_PLAYWRIGHT_VERSION + '\n');
   process.exit(0);
 }
@@ -91,7 +90,6 @@ if (process.env.DISTR_EVIDENCE_NODE_VERSION !== process.versions.node) {
   process.stderr.write('direct Playwright Node runtime was not bound to the evidence packager\n');
   process.exit(98);
 }
-const scenario = process.env.FAKE_PLAYWRIGHT_SCENARIO || 'passed';
 const title = process.env.EXACT_EVIDENCE_TITLE;
 const source = process.env.EXACT_EVIDENCE_SOURCE;
 const project = process.env.EXACT_EVIDENCE_PROJECT;
@@ -150,8 +148,12 @@ for (const [index, name] of names.entries()) {
   attachments.push({name, path: target, contentType: 'image/png'});
 }
 if (scenario === 'process-failure') {
-  process.stderr.write('simulated Playwright failure\n');
+  process.stderr.write('password=playwright-stderr-secret cwd=' + process.cwd() + '\n');
   process.exit(92);
+}
+if (scenario === 'process-failure-stdout') {
+  process.stdout.write('password=playwright-stdout-secret cwd=' + process.cwd() + '\n');
+  process.exit(95);
 }
 if (scenario === 'original-source-drift') {
   await appendFile(path.join(process.env.EXPECTED_ORIGINAL_ROOT, source), '\n// concurrent source drift\n');
@@ -170,6 +172,9 @@ if (scenario === 'isolated-head-drift') {
 if (scenario === 'retained-collision') {
   await mkdir(path.dirname(process.env.RETAINED_COLLISION_PATH), {recursive: true});
   await writeFile(process.env.RETAINED_COLLISION_PATH, 'do-not-overwrite');
+}
+if (scenario === 'replace-cli-after-execution') {
+  await appendFile(new URL(import.meta.url), '\n// replaced after evidence execution\n');
 }
 
 const testStatus =
@@ -220,10 +225,35 @@ if (scenario === 'secret-json') raw.config.metadata = {apiToken: 'browser-secret
 process.stdout.write(JSON.stringify(raw));
 `;
 
+const fakePnpmSource = String.raw`
+import path from 'node:path';
+
+const actualArguments = process.argv.slice(2);
+if (JSON.stringify(actualArguments) === JSON.stringify(['--version'])) {
+  process.stdout.write(process.env.EXPECTED_PNPM_VERSION + '\n');
+  process.exit(0);
+}
+if (JSON.stringify(actualArguments) === JSON.stringify(['store', 'status'])) {
+  if (path.resolve(process.cwd()) !== path.resolve(process.env.EXPECTED_ORIGINAL_ROOT)) {
+    process.stdout.write('password=pnpm-store-wrong-root cwd=' + process.cwd() + '\n');
+    process.exit(99);
+  }
+  if (process.env.FAKE_PLAYWRIGHT_SCENARIO === 'store-failure') {
+    process.stdout.write('password=pnpm-store-secret cwd=' + process.cwd() + '\n');
+    process.exit(97);
+  }
+  process.exit(0);
+}
+process.stdout.write('password=unexpected-pnpm-command ' + JSON.stringify(actualArguments) + '\n');
+process.exit(96);
+`;
+
 async function fixtureWorkspace({
   networkAssertion = 'inside',
   fixtureNetworkGuard = true,
   runtimeBinding = 'exact',
+  dependencyVariant = 'valid',
+  lockVariant = 'valid',
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-browser-direct-'));
   const externalDirectory = await mkdtemp(path.join(tmpdir(), 'control-plane-browser-external-'));
@@ -243,10 +273,20 @@ async function fixtureWorkspace({
     fixtureNetworkGuard === true
       ? `const externalAttempts = [];\npage.route('**/*', async (route) => {\n  if (!isLocalHost(new URL(route.request().url()).hostname)) {\n    externalAttempts.push(route.request().url());\n    await route.abort('blockedbyclient');\n  }\n});\n`
       : 'export const externalAttemptRecorder = false;\n';
+  const importerVersion = lockVariant === 'mismatch' ? '1.51.0' : lockedPlaywrightVersion;
   const files = {
-    '.gitignore': 'collision-output/\n',
-    'package.json': '{"name":"browser-evidence-fixture","private":true}\n',
-    'pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+    '.gitignore': 'collision-output/\nnode_modules/\n',
+    'package.json': `${JSON.stringify(
+      {
+        name: 'browser-evidence-fixture',
+        private: true,
+        packageManager: 'pnpm@11.7.0',
+        devDependencies: {'@playwright/test': '^1.52.0'},
+      },
+      null,
+      2
+    )}\n`,
+    'pnpm-lock.yaml': `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    devDependencies:\n      '@playwright/test':\n        specifier: ^1.52.0\n        version: ${importerVersion}\n\npackages:\n\n  '@playwright/test@${lockedPlaywrightVersion}':\n    resolution: {integrity: ${lockedPlaywrightIntegrity}}\n    engines: {node: '>=20'}\n    hasBin: true\n\nsnapshots:\n\n  '@playwright/test@${lockedPlaywrightVersion}': {}\n`,
     [evidenceConfig]: `export default {projects: [{name: '${project}'}]};\n`,
     'playwright.control-plane.config.ts': 'export default {};\n',
     [automatedTest]: evidenceTest,
@@ -257,6 +297,44 @@ async function fixtureWorkspace({
     await mkdir(path.join(directory, path.dirname(relative)), {recursive: true});
     await writeFile(path.join(directory, relative), contents);
   }
+  const dependencySource = path.join(directory, 'node_modules');
+  const expectedPackage = path.join(
+    dependencySource,
+    '.pnpm',
+    `@playwright+test@${lockedPlaywrightVersion}`,
+    'node_modules',
+    '@playwright',
+    'test'
+  );
+  await mkdir(expectedPackage, {recursive: true});
+  await writeFile(
+    path.join(expectedPackage, 'package.json'),
+    `${JSON.stringify({
+      name: '@playwright/test',
+      version: dependencyVariant === 'wrong-version' ? '9.9.9' : lockedPlaywrightVersion,
+    })}\n`
+  );
+  if (dependencyVariant === 'replaced-cli') {
+    const replacement = path.join(externalDirectory, 'replacement-cli');
+    await mkdir(replacement, {recursive: true});
+    await writeFile(path.join(replacement, 'index.mjs'), fakePlaywrightCLISource);
+    await symlink(replacement, path.join(expectedPackage, 'cli.js'), process.platform === 'win32' ? 'junction' : 'dir');
+  } else {
+    await writeFile(path.join(expectedPackage, 'cli.js'), fakePlaywrightCLISource);
+  }
+  let linkedPackage = expectedPackage;
+  if (dependencyVariant === 'out-of-tree') {
+    linkedPackage = path.join(externalDirectory, 'out-of-tree-playwright');
+    await mkdir(linkedPackage, {recursive: true});
+    await writeFile(
+      path.join(linkedPackage, 'package.json'),
+      `${JSON.stringify({name: '@playwright/test', version: lockedPlaywrightVersion})}\n`
+    );
+    await writeFile(path.join(linkedPackage, 'cli.js'), fakePlaywrightCLISource);
+  }
+  const publicPackage = path.join(dependencySource, '@playwright', 'test');
+  await mkdir(path.dirname(publicPackage), {recursive: true});
+  await symlink(linkedPackage, publicPackage, process.platform === 'win32' ? 'junction' : 'dir');
   const bin = path.join(directory, 'bin');
   await mkdir(bin);
   const fakePnpm = path.join(bin, 'fake-pnpm.mjs');
@@ -285,7 +363,7 @@ async function fixtureWorkspace({
     environment: {
       ...process.env,
       PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      EXPECTED_PLAYWRIGHT_ARGV: JSON.stringify(exactCommand.slice(1)),
+      EXPECTED_PLAYWRIGHT_ARGV: JSON.stringify(exactCommand.slice(2)),
       EXACT_EVIDENCE_TITLE: exactTitle,
       EXACT_EVIDENCE_SOURCE: automatedTest,
       EXACT_EVIDENCE_PROJECT: project,
@@ -294,7 +372,7 @@ async function fixtureWorkspace({
       EXPECTED_SOURCE_COMMIT: sourceCommit,
       ALTERNATE_SOURCE_COMMIT: alternateSourceCommit,
       EXPECTED_PNPM_VERSION: '11.7.0',
-      EXPECTED_PLAYWRIGHT_VERSION: '1.52.0',
+      EXPECTED_PLAYWRIGHT_VERSION: lockedPlaywrightVersion,
       EXPECTED_NODE_VERSION: process.versions.node,
       EXTERNAL_TEST_DIRECTORY: externalDirectory,
       ISOLATED_PATH_RECORD: isolatedPathRecord,
@@ -389,6 +467,42 @@ test('directly runs the exact AC-63 evidence test and derives retained raw, PNG,
   assert.equal(staged, '');
 });
 
+for (const [dependencyVariant, expected] of [
+  ['replaced-cli', /lockfile-bound Playwright CLI must be a regular file/],
+  ['out-of-tree', /installed @playwright\/test must resolve to the lockfile package/],
+  ['wrong-version', /installed @playwright\/test version must match the lockfile/],
+]) {
+  test(`rejects ${dependencyVariant} installed Playwright dependency state`, async () => {
+    const fixture = await fixtureWorkspace({dependencyVariant});
+
+    const result = await run(fixture);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, expected);
+  });
+}
+
+test('rejects a Playwright importer version that does not match the integrity-bound lock package', async () => {
+  const fixture = await fixtureWorkspace({lockVariant: 'mismatch'});
+
+  const result = await run(fixture);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /pnpm lock importer version must match one integrity-bound @playwright\/test package/);
+});
+
+for (const scenario of ['replace-cli-after-version', 'replace-cli-after-execution']) {
+  test(`rejects a Playwright CLI replaced during ${scenario}`, async () => {
+    const fixture = await fixtureWorkspace();
+
+    const result = await run(fixture, {scenario});
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /lockfile-bound Playwright CLI changed during evidence execution/);
+    await assertIsolatedWorktreeRemoved(fixture);
+  });
+}
+
 for (const [scenario, message] of [
   ['zero', /direct Playwright evidence returned zero tests/],
   ['skipped', /direct Playwright evidence reported skipped tests/],
@@ -421,9 +535,34 @@ test('cleans transient output when direct Playwright execution fails', async () 
   const result = await run(fixture, {scenario: 'process-failure'});
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /direct Playwright evidence failed with exit code 92/);
+  assert.match(result.stderr, /direct Playwright evidence failed with exit code 92; stdout bytes=0; stderr bytes=\d+/);
+  assert.doesNotMatch(result.stderr, /playwright-stderr-secret/);
+  assert.equal(result.stderr.includes(fixture.directory), false);
   await assert.rejects(stat(path.join(fixture.directory, 'output', 'playwright', 'control-plane-evidence')));
   await assertIsolatedWorktreeRemoved(fixture);
+});
+
+test('reports only stdout byte counts when direct Playwright stderr is empty', async () => {
+  const fixture = await fixtureWorkspace();
+
+  const result = await run(fixture, {scenario: 'process-failure-stdout'});
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /direct Playwright evidence failed with exit code 95; stdout bytes=\d+; stderr bytes=0/);
+  assert.doesNotMatch(result.stderr, /playwright-stdout-secret/);
+  assert.equal(result.stderr.includes(fixture.directory), false);
+  await assertIsolatedWorktreeRemoved(fixture);
+});
+
+test('runs read-only pnpm store status from the original clean root and redacts its failure output', async () => {
+  const fixture = await fixtureWorkspace();
+
+  const result = await run(fixture, {scenario: 'store-failure'});
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /pnpm store status failed with exit code 97; stdout bytes=\d+; stderr bytes=0/);
+  assert.doesNotMatch(result.stderr, /pnpm-store-secret/);
+  assert.equal(result.stderr.includes(fixture.directory), false);
 });
 
 test('rejects imported Playwright JSON and screenshot manifest options', async () => {
