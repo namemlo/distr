@@ -120,7 +120,7 @@ func TestTargetConfigComponentLockContractAcceptsExactIdentity(t *testing.T) {
 }
 
 func TestTargetConfigSnapshotRepositoryCreateReadListAndImmutability(t *testing.T) {
-	ctx, pool := deploymentRegistryIsolatedPool(t, 141)
+	ctx, pool := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	deps := createDeploymentRegistryDependencies(t, ctx)
 	placement := createDeploymentRegistryPlacement(t, ctx, deps, "target-config", time.Now().UTC())
@@ -174,7 +174,7 @@ func TestTargetConfigSnapshotOrganizationRetentionDeletesImmutableGraph(t *testi
 	placement := createDeploymentRegistryPlacement(t, ctx, deps, "retention", time.Now().UTC())
 	creatorID := createTargetConfigSnapshotTestUser(t, ctx, deps.organizationID)
 	draft := targetConfigSnapshotRepositoryFixture(placement, deps.organizationID, creatorID)
-	_, err := CreateTargetConfigSnapshot(ctx, &draft)
+	_, err := createTargetConfigSnapshot(ctx, &draft)
 	g.Expect(err).NotTo(HaveOccurred())
 	_, err = pool.Exec(ctx, `
 		UPDATE Organization
@@ -199,7 +199,7 @@ func TestTargetConfigSnapshotOrganizationRetentionDeletesImmutableGraph(t *testi
 }
 
 func TestTargetConfigSnapshotRepositoryRejectsDuplicateAndCrossPlacementIDs(t *testing.T) {
-	ctx, _ := deploymentRegistryIsolatedPool(t, 141)
+	ctx, _ := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	deps := createDeploymentRegistryDependencies(t, ctx)
 	placement := createDeploymentRegistryPlacement(t, ctx, deps, "primary", time.Now().UTC())
@@ -304,7 +304,7 @@ func TestTargetConfigSnapshotMigration141DowngradeGuard(t *testing.T) {
 	placement := createDeploymentRegistryPlacement(t, ctx, deps, "downgrade", time.Now().UTC())
 	creatorID := createTargetConfigSnapshotTestUser(t, ctx, deps.organizationID)
 	draft := targetConfigSnapshotRepositoryFixture(placement, deps.organizationID, creatorID)
-	_, err := CreateTargetConfigSnapshot(ctx, &draft)
+	_, err := createTargetConfigSnapshot(ctx, &draft)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	down, err := os.ReadFile(filepath.Join("..", "migrations", "sql", "141_target_config_snapshots.down.sql"))

@@ -499,7 +499,11 @@ func TestExtractV1TargetConfigBlocksUnsupportedOrAmbiguousTopology(t *testing.T)
 		{
 			name: "unsupported schema",
 			change: func(input *V1ExtractionInput) {
-				input.ReleaseContract.Schema = "distr.component-release/v2"
+				input.ReleaseContract = &types.ReleaseContract{
+					ComponentV2: &types.ComponentReleaseContractV2{
+						Schema: types.ReleaseContractSchemaV2,
+					},
+				}
 				setV1HistoryPayloads(t, input)
 			},
 			reason: V1ExtractionBlockedReasonUnsupportedSchema,
