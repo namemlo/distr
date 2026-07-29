@@ -91,6 +91,3 @@ DROP TABLE IF EXISTS ActiveDesiredRevision;
 DROP INDEX IF EXISTS PendingDesiredRevision_component_status;
 DROP INDEX IF EXISTS PendingDesiredRevision_pending_deadline;
 DROP TABLE IF EXISTS PendingDesiredRevision;
-
-ALTER TABLE ComponentInstance
-  DROP CONSTRAINT IF EXISTS componentinstance_id_unit_organization_unique;

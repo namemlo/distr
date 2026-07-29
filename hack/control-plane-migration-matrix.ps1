@@ -26,6 +26,7 @@ $MigrationDirectory = Join-Path $RepositoryRoot 'internal/migrations/sql'
 $MaximumDiagnosticCharacters = 4096
 $SafeDatabaseNamePattern = '(?i)(test|testing|ci|fixture|sandbox|control[-_]?plane)'
 $AllowedQueryKeys = @('application_name', 'connect_timeout', 'sslmode')
+$MatrixJwtSecret = ''
 $ScenarioIds = @(
     'postgres-runtime-version',
     'migration-138-to-162-upgrade',
@@ -104,6 +105,9 @@ function Get-RedactedText {
     $redacted = $redacted -replace '(?i)\b(password|secret|token|api[-_]?key)\s*[:=]\s*[^\s;,]+', '$1=[REDACTED]'
     if (-not [string]::IsNullOrEmpty($Password)) {
         $redacted = $redacted -replace [Regex]::Escape($Password), '[REDACTED_SECRET]'
+    }
+    if (-not [string]::IsNullOrEmpty($script:MatrixJwtSecret)) {
+        $redacted = $redacted -replace [Regex]::Escape($script:MatrixJwtSecret), '[REDACTED_SECRET]'
     }
     return $redacted
 }
@@ -497,6 +501,11 @@ if ($PlanOnly) {
 
         Push-Location $RepositoryRoot
         try {
+        $randomJwtBytes = [byte[]]::new(48)
+        [System.Security.Cryptography.RandomNumberGenerator]::Fill($randomJwtBytes)
+        $script:MatrixJwtSecret = [Convert]::ToBase64String($randomJwtBytes)
+        Set-ProcessEnvironment -Name 'JWT_SECRET' -Value $script:MatrixJwtSecret `
+            -Original $environmentOriginals
         $newSchema = {
             return 'cp_matrix_' + [Guid]::NewGuid().ToString('N')
         }
@@ -615,6 +624,7 @@ if ($PlanOnly) {
             foreach ($name in $environmentOriginals.Keys) {
                 [Environment]::SetEnvironmentVariable($name, $environmentOriginals[$name], 'Process')
             }
+            $script:MatrixJwtSecret = ''
         }
     }
 }

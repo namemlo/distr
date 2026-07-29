@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {createHash} from 'node:crypto';
+import {createHash, randomBytes} from 'node:crypto';
 import {copyFile, mkdir, readFile, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,6 +21,83 @@ function runScript(args, env = {}) {
   });
 }
 
+function runScriptWithAbsentCallerJwt(args, env = {}) {
+  const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+  const invocation = args
+    .map((value) => (String(value).startsWith('-') ? String(value) : quote(value)))
+    .join(' ');
+  const command = `
+[Environment]::SetEnvironmentVariable('JWT_SECRET', $null, 'Process')
+& ${quote(script)} ${invocation}
+$scriptSucceeded = $?
+if (-not $scriptSucceeded) { exit 92 }
+if (-not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable('JWT_SECRET', 'Process'))) {
+  [Console]::Error.WriteLine('JWT_SECRET was not restored to its absent caller state')
+  exit 91
+}
+`;
+  const childEnvironment = {
+    ...process.env,
+    DATABASE_URL: '',
+    DISTR_TEST_DATABASE_URL: '',
+    ...env,
+  };
+  delete childEnvironment.JWT_SECRET;
+  return spawnSync(
+    pwsh,
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(command, 'utf16le').toString('base64'),
+    ],
+    {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      env: childEnvironment,
+    }
+  );
+}
+
+function runScriptWithCallerJwt(args, callerJwt, env = {}) {
+  const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+  const invocation = args
+    .map((value) => (String(value).startsWith('-') ? String(value) : quote(value)))
+    .join(' ');
+  const command = `
+$callerJwt = [Environment]::GetEnvironmentVariable('JWT_SECRET', 'Process')
+& ${quote(script)} ${invocation}
+$scriptSucceeded = $?
+if (-not $scriptSucceeded) { exit 92 }
+if ($callerJwt -cne [Environment]::GetEnvironmentVariable('JWT_SECRET', 'Process')) {
+  [Console]::Error.WriteLine('JWT_SECRET was not restored to its exact caller value')
+  exit 91
+}
+`;
+  return spawnSync(
+    pwsh,
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(command, 'utf16le').toString('base64'),
+    ],
+    {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        DATABASE_URL: '',
+        DISTR_TEST_DATABASE_URL: '',
+        ...env,
+        JWT_SECRET: callerJwt,
+      },
+    }
+  );
+}
+
 function sha256(text) {
   return `sha256:${createHash('sha256').update(text).digest('hex')}`;
 }
@@ -35,6 +112,7 @@ async function createFakeToolchain({postgresVersion = '18.4', goOutput = 'go-ok'
       source,
       `package main
 import (
+  "crypto/sha256"
   "fmt"
   "os"
   "path/filepath"
@@ -44,6 +122,29 @@ import (
 func main() {
   if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "psql") {
     fmt.Println(os.Getenv("MATRIX_FAKE_POSTGRES_VERSION"))
+    return
+  }
+  if os.Getenv("MATRIX_FAKE_INSPECT_JWT") == "true" {
+    jwtSecret := os.Getenv("JWT_SECRET")
+    fingerprint := sha256.Sum256([]byte(jwtSecret))
+    fmt.Printf(
+      "jwt-present=%t jwt-length=%d jwt-sha256=%x JWT_SECRET=%s\\n",
+      jwtSecret != "",
+      len(jwtSecret),
+      fingerprint,
+      jwtSecret,
+    )
+    return
+  }
+  if expectedCallerFingerprint := os.Getenv("MATRIX_FAKE_CALLER_JWT_SHA256"); expectedCallerFingerprint != "" {
+    jwtSecret := os.Getenv("JWT_SECRET")
+    fingerprint := sha256.Sum256([]byte(jwtSecret))
+    fmt.Printf(
+      "jwt-present=%t jwt-length=%d jwt-differs-from-caller=%t\\n",
+      jwtSecret != "",
+      len(jwtSecret),
+      fmt.Sprintf("%x", fingerprint) != expectedCallerFingerprint,
+    )
     return
   }
   fmt.Println(os.Getenv("MATRIX_FAKE_GO_OUTPUT"))
@@ -224,6 +325,99 @@ test('non-plan report supports an isolated passwordless test database', async ()
     const report = JSON.parse(await readFile(output, 'utf8'));
     assert.equal(report.status, 'PASS');
     assert.equal(report.database.passwordPresent, false);
+  } finally {
+    await rm(output, {force: true});
+    await rm(fakeTools.directory, {recursive: true, force: true});
+  }
+});
+
+test('non-plan execution injects a fresh ephemeral JWT secret without retaining its value', async () => {
+  const fakeTools = await createFakeToolchain();
+  const reports = [
+    path.join(repositoryRoot, 'work', `matrix-jwt-first-${process.pid}-${Date.now()}.json`),
+    path.join(repositoryRoot, 'work', `matrix-jwt-second-${process.pid}-${Date.now()}.json`),
+  ];
+  try {
+    const fingerprints = [];
+    for (const output of reports) {
+      const result = runScript(['-DatabaseUrl', safeURL, '-OutputPath', path.relative(repositoryRoot, output)], {
+        ...fakeTools.environment,
+        MATRIX_FAKE_INSPECT_JWT: 'true',
+        PATH: `${fakeTools.directory}${path.delimiter}${process.env.PATH ?? ''}`,
+        JWT_SECRET: '',
+      });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const raw = await readFile(output, 'utf8');
+      const report = JSON.parse(raw);
+      const commandOutput = report.scenarios
+        .flatMap(({checks}) => checks)
+        .find(({output: retainedOutput}) => retainedOutput?.includes('jwt-present='))
+        ?.output;
+      assert.match(commandOutput ?? '', /jwt-present=true jwt-length=64 jwt-sha256=[0-9a-f]{64}/);
+      assert.match(commandOutput ?? '', /JWT_SECRET=\[REDACTED_SECRET\]/);
+      const fingerprint = commandOutput.match(/jwt-sha256=([0-9a-f]{64})/)?.[1];
+      assert.ok(fingerprint);
+      fingerprints.push(fingerprint);
+      assert.ok(!raw.includes('JWT_SECRET=') || raw.includes('JWT_SECRET=[REDACTED_SECRET]'));
+    }
+    assert.notEqual(fingerprints[0], fingerprints[1]);
+  } finally {
+    await Promise.all(reports.map((output) => rm(output, {force: true})));
+    await rm(fakeTools.directory, {recursive: true, force: true});
+  }
+});
+
+test('non-plan execution restores an absent caller JWT_SECRET after matrix commands', async () => {
+  const fakeTools = await createFakeToolchain();
+  const output = path.join(repositoryRoot, 'work', `matrix-jwt-restore-${process.pid}-${Date.now()}.json`);
+  try {
+    const result = runScriptWithAbsentCallerJwt(
+      ['-DatabaseUrl', safeURL, '-OutputPath', path.relative(repositoryRoot, output)],
+      {
+        ...fakeTools.environment,
+        MATRIX_FAKE_INSPECT_JWT: 'true',
+        PATH: `${fakeTools.directory}${path.delimiter}${process.env.PATH ?? ''}`,
+      }
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const report = JSON.parse(await readFile(output, 'utf8'));
+    const retainedOutput = report.scenarios
+      .flatMap(({checks}) => checks)
+      .find(({output: commandOutput}) => commandOutput?.includes('jwt-present='))
+      ?.output;
+    assert.match(retainedOutput ?? '', /jwt-present=true/);
+  } finally {
+    await rm(output, {force: true});
+    await rm(fakeTools.directory, {recursive: true, force: true});
+  }
+});
+
+test('non-plan execution replaces a caller JWT_SECRET for children and restores it afterward', async () => {
+  const fakeTools = await createFakeToolchain();
+  const output = path.join(repositoryRoot, 'work', `matrix-jwt-caller-${process.pid}-${Date.now()}.json`);
+  const callerJwt = randomBytes(48).toString('base64');
+  try {
+    const result = runScriptWithCallerJwt(
+      ['-DatabaseUrl', safeURL, '-OutputPath', path.relative(repositoryRoot, output)],
+      callerJwt,
+      {
+        ...fakeTools.environment,
+        MATRIX_FAKE_CALLER_JWT_SHA256: createHash('sha256').update(callerJwt).digest('hex'),
+        PATH: `${fakeTools.directory}${path.delimiter}${process.env.PATH ?? ''}`,
+      }
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const raw = await readFile(output, 'utf8');
+    assert.ok(!raw.includes(callerJwt));
+    const retainedOutputs = JSON.parse(raw).scenarios
+      .flatMap(({checks}) => checks.map(({output: commandOutput}) => commandOutput))
+      .filter((commandOutput) => typeof commandOutput === 'string' && commandOutput.includes('jwt-present='));
+    assert.ok(retainedOutputs.length > 0);
+    assert.ok(
+      retainedOutputs.every((commandOutput) =>
+        /jwt-present=true jwt-length=64 jwt-differs-from-caller=true/.test(commandOutput)
+      )
+    );
   } finally {
     await rm(output, {force: true});
     await rm(fakeTools.directory, {recursive: true, force: true});

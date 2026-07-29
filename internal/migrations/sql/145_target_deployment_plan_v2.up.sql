@@ -20,7 +20,8 @@ CREATE TABLE DeploymentPlanDraft (
   target_config_snapshot_id UUID NOT NULL,
   protocol_version TEXT NOT NULL CHECK (protocol_version IN ('v1', 'v2')),
   supersedes_deployment_plan_id UUID,
-  supersede_reason TEXT NOT NULL DEFAULT '' CHECK (
+  supersede_reason TEXT NOT NULL DEFAULT '' CONSTRAINT
+    deploymentplandraft_supersede_reason_bounds_check CHECK (
     length(supersede_reason) <= 2048
     AND supersede_reason !~ E'[\\r\\n]'
   ),

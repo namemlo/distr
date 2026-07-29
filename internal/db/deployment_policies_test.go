@@ -94,6 +94,30 @@ func TestDeploymentPolicyMigrationDefinesImmutableOrganizationScopedResources(t 
 	))
 }
 
+func TestMigration149PreservesMigration145DeploymentUnitOwnership(t *testing.T) {
+	g := NewWithT(t)
+	up, err := os.ReadFile("../migrations/sql/149_deployment_policies.up.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	down, err := os.ReadFile("../migrations/sql/149_deployment_policies.down.sql")
+	g.Expect(err).NotTo(HaveOccurred())
+	upSQL := strings.ToLower(string(up))
+	downSQL := strings.ToLower(string(down))
+
+	g.Expect(upSQL).NotTo(ContainSubstring("add column deployment_unit_id"))
+	g.Expect(upSQL).NotTo(ContainSubstring("deploymentplan_deployment_unit_fk"))
+	g.Expect(upSQL).To(ContainSubstring(
+		"add column effective_policy jsonb",
+	))
+	g.Expect(upSQL).To(ContainSubstring(
+		"deploymentplan_effective_policy_shape_check",
+	))
+
+	g.Expect(downSQL).NotTo(ContainSubstring("drop column deployment_unit_id"))
+	g.Expect(downSQL).NotTo(ContainSubstring("deploymentplan_deployment_unit_fk"))
+	g.Expect(downSQL).NotTo(ContainSubstring("deployment_unit_id is not null"))
+	g.Expect(downSQL).To(ContainSubstring("drop column effective_policy"))
+}
+
 func TestDeploymentPolicyRepositoryListsAreBoundedAndVersionsUseSummaries(t *testing.T) {
 	g := NewWithT(t)
 	source, err := os.ReadFile("deployment_policies.go")
@@ -125,7 +149,6 @@ func TestDeploymentPolicyMigrationDowngradeRefusesEvidenceLoss(t *testing.T) {
 		"drop index deploymentpolicybinding_organization_order",
 	))
 	for _, field := range []string{
-		"deployment_unit_id is not null",
 		"effective_policy is not null",
 		"effective_policy_checksum is not null",
 		"subscriber_set_checksum is not null",

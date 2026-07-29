@@ -96,10 +96,10 @@ type TargetConfigSnapshot struct {
 	CanonicalPayload   []byte          `db:"canonical_payload" json:"canonicalPayload"`
 	CanonicalChecksum  string          `db:"canonical_checksum" json:"canonicalChecksum"`
 
-	Objects          []TargetConfigSnapshotObject          `json:"objects"`
-	Components       []TargetConfigSnapshotComponent       `json:"components"`
-	SecretReferences []TargetConfigSnapshotSecretReference `json:"secretReferences"`
-	FeatureFlags     []TargetConfigSnapshotFeatureFlag     `json:"featureFlags"`
+	Objects          []TargetConfigSnapshotObject          `db:"-" json:"objects"`
+	Components       []TargetConfigSnapshotComponent       `db:"-" json:"components"`
+	SecretReferences []TargetConfigSnapshotSecretReference `db:"-" json:"secretReferences"`
+	FeatureFlags     []TargetConfigSnapshotFeatureFlag     `db:"-" json:"featureFlags"`
 }
 
 type TargetConfigSnapshotObject struct {

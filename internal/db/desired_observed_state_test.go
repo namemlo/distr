@@ -24,6 +24,10 @@ func TestMigration159CreatesIndependentAppendOnlyStateAndMutableHeads(t *testing
 	g.Expect(err).NotTo(HaveOccurred())
 	down, err := os.ReadFile(filepath.Join(root, "159_desired_observed_reconciliation.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
+	componentInstanceOwner, err := os.ReadFile(
+		filepath.Join(root, "141_target_config_snapshots.up.sql"),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
 	upText := string(up)
 	downText := string(down)
 
@@ -53,8 +57,8 @@ func TestMigration159CreatesIndependentAppendOnlyStateAndMutableHeads(t *testing
 		"FOREIGN KEY (execution_attempt_id, organization_id, execution_id)",
 	))
 	g.Expect(upText).To(ContainSubstring("PendingDesiredRevision_pending_deadline"))
-	g.Expect(upText).To(ContainSubstring(
-		"UNIQUE (id, deployment_unit_id, organization_id)",
+	g.Expect(string(componentInstanceOwner)).To(ContainSubstring(
+		"ADD CONSTRAINT componentinstance_id_unit_organization_unique",
 	))
 	g.Expect(upText).To(ContainSubstring(
 		"component_instance_id, deployment_unit_id, organization_id\n    )\n    REFERENCES ComponentInstance",
@@ -74,6 +78,12 @@ func TestMigration159CreatesIndependentAppendOnlyStateAndMutableHeads(t *testing
 		"NEW.created_at IS DISTINCT FROM OLD.created_at",
 	))
 	g.Expect(upText).NotTo(ContainSubstring("ALTER TABLE TargetComponentState"))
+	g.Expect(upText).NotTo(ContainSubstring(
+		"ADD CONSTRAINT componentinstance_id_unit_organization_unique",
+	))
+	g.Expect(downText).NotTo(ContainSubstring(
+		"DROP CONSTRAINT IF EXISTS componentinstance_id_unit_organization_unique",
+	))
 	g.Expect(downText).To(ContainSubstring("refusing migration 159 rollback"))
 	g.Expect(downText).To(ContainSubstring("LOCK TABLE ObserverRegistration"))
 	g.Expect(downText).To(ContainSubstring("EXISTS (SELECT 1 FROM ObserverRegistration)"))

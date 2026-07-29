@@ -44,7 +44,6 @@ const deploymentPlanOutputExpr = `
 	dp.release_contract,
 	dp.plan_schema,
 	dp.draft_id,
-	dp.deployment_unit_id,
 	dp.target_config_snapshot_id,
 	dp.protocol_version,
 	dp.supersedes_deployment_plan_id,

@@ -1,7 +1,3 @@
-ALTER TABLE ComponentInstance
-  ADD CONSTRAINT componentinstance_id_unit_organization_unique
-  UNIQUE (id, deployment_unit_id, organization_id);
-
 CREATE TABLE PendingDesiredRevision (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -10,8 +10,7 @@ BEGIN
   IF EXISTS (
     SELECT 1
     FROM DeploymentPlan
-    WHERE deployment_unit_id IS NOT NULL
-       OR effective_policy IS NOT NULL
+    WHERE effective_policy IS NOT NULL
        OR effective_policy_checksum IS NOT NULL
        OR subscriber_set_checksum IS NOT NULL
   )
@@ -31,11 +30,9 @@ DROP FUNCTION deployment_plan_policy_evidence_immutable();
 
 ALTER TABLE DeploymentPlan
   DROP CONSTRAINT deploymentplan_effective_policy_shape_check,
-  DROP CONSTRAINT deploymentplan_deployment_unit_fk,
   DROP COLUMN subscriber_set_checksum,
   DROP COLUMN effective_policy_checksum,
-  DROP COLUMN effective_policy,
-  DROP COLUMN deployment_unit_id;
+  DROP COLUMN effective_policy;
 
 DROP TRIGGER DeploymentPolicyBinding_guard ON DeploymentPolicyBinding;
 DROP FUNCTION deployment_policy_binding_guard();

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -390,6 +391,30 @@ func TestMigration142DefinesImmutableV1ExtractionEvidence(t *testing.T) {
 	))
 }
 
+func TestMigration145NamesDeploymentPlanDraftSupersedeReasonBoundsConstraint(t *testing.T) {
+	t.Parallel()
+	g := NewWithT(t)
+	up, err := os.ReadFile(filepath.Join(
+		"..",
+		"migrations",
+		"sql",
+		"145_target_deployment_plan_v2.up.sql",
+	))
+	g.Expect(err).NotTo(HaveOccurred())
+
+	upSQL := string(up)
+	g.Expect(upSQL).To(MatchRegexp(
+		`supersede_reason TEXT NOT NULL DEFAULT '' CONSTRAINT\s+` +
+			`deploymentplandraft_supersede_reason_bounds_check\s+CHECK`,
+	))
+	g.Expect(regexp.MustCompile(
+		`CONSTRAINT\s+deploymentplandraft_supersede_reason_bounds_check`,
+	).FindAllString(upSQL, -1)).To(HaveLen(1))
+	g.Expect(regexp.MustCompile(
+		`CONSTRAINT\s+deploymentplandraft_supersede_reason_check`,
+	).FindAllString(upSQL, -1)).To(HaveLen(1))
+}
+
 func TestV1ExtractionCheckpointIsDeterministicAndStateBound(t *testing.T) {
 	g := NewWithT(t)
 	organizationID := uuid.New()
@@ -572,7 +597,7 @@ func TestV1ExtractionMembershipChecksumAndPagingUseCapturedRowsOnly(t *testing.T
 }
 
 func TestTargetConfigV1ExtractionRequiresCheckpointOrganizationMemberActor(t *testing.T) {
-	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	ctx, pool := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	first := createTargetConfigV1RepositoryFixture(
 		t,
@@ -650,7 +675,7 @@ func TestTargetConfigV1ExtractionRequiresCheckpointOrganizationMemberActor(t *te
 }
 
 func TestTargetConfigV1ExtractionRepositoryDryRunApplyRestartAndNoOp(t *testing.T) {
-	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	ctx, _ := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	fixture := createTargetConfigV1RepositoryFixture(
 		t,
@@ -744,7 +769,7 @@ func TestTargetConfigV1ExtractionRepositoryDryRunApplyRestartAndNoOp(t *testing.
 }
 
 func TestTargetConfigV1ExtractionDistinctCheckpointsConcurrentlyReuseSnapshotChecksum(t *testing.T) {
-	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	ctx, _ := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	fixture := createTargetConfigV1RepositoryFixture(
 		t,
@@ -868,7 +893,7 @@ func TestTargetConfigV1ExtractionDistinctCheckpointsConcurrentlyReuseSnapshotChe
 }
 
 func TestTargetConfigV1ExtractionRejectsRegistryChangeDuringApply(t *testing.T) {
-	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	ctx, pool := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	fixture := createTargetConfigV1RepositoryFixture(
 		t,
@@ -953,7 +978,7 @@ func TestTargetConfigV1ExtractionRejectsRegistryChangeDuringApply(t *testing.T) 
 }
 
 func TestTargetConfigV1ExtractionApplyRollsBackSnapshotWhenLineageFails(t *testing.T) {
-	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	ctx, pool := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	fixture := createTargetConfigV1RepositoryFixture(
 		t,
@@ -1024,7 +1049,7 @@ func TestTargetConfigV1ExtractionApplyRollsBackSnapshotWhenLineageFails(t *testi
 }
 
 func TestTargetConfigV1ExtractionTenantForeignKeysAndDowngradeGuard(t *testing.T) {
-	ctx, pool := deploymentRegistryIsolatedPool(t, 142)
+	ctx, pool := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	first := createTargetConfigV1RepositoryFixture(
 		t,
@@ -1106,7 +1131,7 @@ func TestTargetConfigV1ExtractionTenantForeignKeysAndDowngradeGuard(t *testing.T
 }
 
 func TestTargetConfigV1ExtractionIgnoresV2SourcesInMixedHistory(t *testing.T) {
-	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	ctx, _ := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	v1 := createTargetConfigV1RepositoryFixture(
 		t,
@@ -1138,7 +1163,7 @@ func TestTargetConfigV1ExtractionIgnoresV2SourcesInMixedHistory(t *testing.T) {
 }
 
 func TestTargetConfigV1ExtractionChainsAppliedCreatedAtCursorWithinHighWater(t *testing.T) {
-	ctx, _ := deploymentRegistryIsolatedPool(t, 142)
+	ctx, _ := deploymentRegistryIsolatedPool(t, 162)
 	g := NewWithT(t)
 	fixtures := []targetConfigV1RepositoryFixture{createTargetConfigV1RepositoryFixture(
 		t,
@@ -1488,6 +1513,46 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 			},
 		},
 	}
+	componentType := types.ReleaseBundleComponentTypeExternalArtifact
+	componentPackageRef := "registry.example.invalid/emlo/api@" + componentDigest
+	componentChecksum := componentDigest
+	if schema == types.ReleaseContractSchemaV2 {
+		componentV2 := types.ComponentReleaseContractV2{
+			Schema:       types.ReleaseContractSchemaV2,
+			ComponentKey: componentName,
+			Version:      "1.2.3",
+			Source: types.ComponentReleaseSource{
+				Repository:   "https://git.example.invalid/emlo/config.git",
+				RequestedRef: "refs/heads/main",
+				Commit:       strings.Repeat("1", 40),
+			},
+			Build: types.ComponentReleaseBuild{
+				ID:      "build-" + suffix,
+				Builder: "fixture-ci",
+			},
+			Artifacts: []types.ComponentReleaseArtifact{{
+				Key:       componentName,
+				Type:      "oci-image",
+				MediaType: "application/vnd.oci.image.index.v1+json",
+				Digest:    componentDigest,
+				Platforms: []types.ComponentReleasePlatform{{
+					Platform: string(types.DeploymentTargetPlatformLinuxAMD64),
+					Digest:   componentDigest,
+				}},
+			}},
+			Changes: types.ComponentReleaseChanges{
+				Summary: "Target config extraction mixed-history fixture",
+				Commits: []string{strings.Repeat("1", 40)},
+			},
+		}
+		contract = &types.ReleaseContract{
+			Schema:      types.ReleaseContractSchemaV2,
+			ComponentV2: &componentV2,
+		}
+		componentType = types.ReleaseBundleComponentTypeOCIImage
+		componentPackageRef = "registry.example.invalid/emlo/api"
+		componentChecksum = ""
+	}
 	bundle := types.ReleaseBundle{
 		OrganizationID:  deps.organizationID,
 		ApplicationID:   application.ID,
@@ -1499,14 +1564,14 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 		Components: []types.ReleaseBundleComponent{{
 			Key:        componentName,
 			Name:       componentName,
-			Type:       types.ReleaseBundleComponentTypeExternalArtifact,
+			Type:       componentType,
 			Version:    "1.2.3",
-			PackageRef: "registry.example.invalid/emlo/api@" + componentDigest,
+			PackageRef: componentPackageRef,
 			Digest:     componentDigest,
-			Checksum:   componentDigest,
+			Checksum:   componentChecksum,
 		}},
 	}
-	g.Expect(CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	g.Expect(createReleaseBundle(ctx, &bundle)).To(Succeed())
 	_, err := internalctx.GetDb(ctx).Exec(ctx, `
 		UPDATE ReleaseBundle
 		SET status = 'PUBLISHED'
@@ -1547,6 +1612,7 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 			Version:                "1.2.3",
 			Image:                  "registry.example.invalid/emlo/api@" + componentDigest,
 			Platform:               types.DeploymentTargetPlatformLinuxAMD64,
+			Contracts:              []string{},
 			ConfigChecksum:         serviceChecksum,
 		}},
 		Variables: []types.DeploymentPlanVariable{},

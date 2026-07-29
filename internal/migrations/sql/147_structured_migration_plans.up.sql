@@ -187,8 +187,8 @@ CREATE INDEX DeploymentPlanMigration_database_resource
 
 CREATE TRIGGER DeploymentPlanMigration_append_only
 BEFORE UPDATE OR DELETE ON DeploymentPlanMigration
-FOR EACH ROW EXECUTE FUNCTION deployment_plan_v2_append_only_guard();
+FOR EACH ROW EXECUTE FUNCTION deployment_plan_v2_child_seal_guard();
 
 CREATE TRIGGER DeploymentPlanMigration_no_truncate
 BEFORE TRUNCATE ON DeploymentPlanMigration
-FOR EACH STATEMENT EXECUTE FUNCTION deployment_plan_v2_append_only_guard();
+FOR EACH STATEMENT EXECUTE FUNCTION deployment_plan_v2_no_truncate_guard();

@@ -40,6 +40,13 @@ func TestMigration147DefinesStructuredMigrationEvidence(t *testing.T) {
 	} {
 		g.Expect(sql).To(ContainSubstring(fragment))
 	}
+	g.Expect(sql).To(ContainSubstring(
+		"FOR EACH ROW EXECUTE FUNCTION deployment_plan_v2_child_seal_guard();",
+	))
+	g.Expect(sql).To(ContainSubstring(
+		"FOR EACH STATEMENT EXECUTE FUNCTION deployment_plan_v2_no_truncate_guard();",
+	))
+	g.Expect(sql).NotTo(ContainSubstring("deployment_plan_v2_append_only_guard"))
 	g.Expect(strings.ToLower(sql)).NotTo(ContainSubstring("password"))
 }
 

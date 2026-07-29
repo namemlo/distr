@@ -343,16 +343,9 @@ BEFORE INSERT OR UPDATE OR DELETE ON DeploymentPolicyBinding
 FOR EACH ROW EXECUTE FUNCTION deployment_policy_binding_guard();
 
 ALTER TABLE DeploymentPlan
-  ADD COLUMN deployment_unit_id UUID,
   ADD COLUMN effective_policy JSONB,
   ADD COLUMN effective_policy_checksum TEXT,
   ADD COLUMN subscriber_set_checksum TEXT,
-  ADD CONSTRAINT deploymentplan_deployment_unit_fk
-    FOREIGN KEY (deployment_unit_id, organization_id)
-    REFERENCES DeploymentUnit(id, organization_id)
-    ON UPDATE NO ACTION
-    ON DELETE NO ACTION
-    DEFERRABLE INITIALLY IMMEDIATE,
   ADD CONSTRAINT deploymentplan_effective_policy_shape_check CHECK (COALESCE((
     (
       deployment_unit_id IS NULL

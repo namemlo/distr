@@ -57,7 +57,7 @@ func TestV1TaskCreationFlagsOffRemainsUngatedAndEventCompatible(t *testing.T) {
 	var taskEventCount, admissionRows int
 	err = internalctx.GetDb(ctx).QueryRow(ctx, `
 		SELECT
-		  (SELECT count(*) FROM StepEvent
+		  (SELECT count(*) FROM StepRunEvent
 		   WHERE organization_id = @organizationID),
 		  (SELECT count(*) FROM AdmissionEvaluation
 		   WHERE organization_id = @organizationID)
