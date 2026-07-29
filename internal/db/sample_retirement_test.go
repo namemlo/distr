@@ -12,6 +12,7 @@ import (
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/retirement"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -466,6 +467,195 @@ func TestSampleRetirementApplyIsAtomicRestartableAndRetainsAudit(t *testing.T) {
 	g.Expect(verification.TombstoneLineageValid).To(BeTrue())
 	g.Expect(verification.AuditEventsRetained).To(BeTrue())
 	g.Expect(verification.State).To(Equal(types.SampleRetirementJobVerified))
+}
+
+func TestSampleRetirementProductionRepositoryPreviewApplyVerifyAndReload(
+	t *testing.T,
+) {
+	database := newTask4TestDatabase(t, 162, "UTC")
+	organizationID, requesterID := insertSampleRetirementPrincipal(t, database)
+	environmentID := uuid.New()
+	_, err := database.pool.Exec(
+		context.Background(),
+		`INSERT INTO Environment (id, organization_id, name)
+		 VALUES ($1, $2, 'production-path-environment')`,
+		environmentID,
+		organizationID,
+	)
+	g := NewWithT(t)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	marker := "sample:production-path"
+	ownership, err := db.RegisterSampleRetirementOwnershipEvidence(
+		database.ctx,
+		types.SampleRetirementOwnershipEvidenceRegistrationInput{
+			OrganizationID:          organizationID,
+			RecordedByUserAccountID: requesterID,
+			SubjectType:             types.SampleRetirementSubjectEnvironment,
+			SubjectID:               environmentID,
+			OwnershipMarker:         marker,
+			OwnershipChecksum:       sampleRetirementChecksum(marker),
+			SourceReference:         "inventory:production-path",
+			SourceChecksum: sampleRetirementChecksum(
+				"inventory:production-path",
+			),
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	backupReference := "backup:production-path"
+	backup, err := db.RegisterSampleRetirementRecoveryEvidence(
+		database.ctx,
+		types.SampleRetirementRecoveryEvidenceRegistrationInput{
+			OrganizationID:          organizationID,
+			VerifiedByUserAccountID: requesterID,
+			EvidenceKind:            types.SampleRetirementRecoveryEvidenceBackup,
+			Reference:               backupReference,
+			Checksum:                sampleRetirementChecksum(backupReference),
+			SourceKind:              "backup_catalog",
+			SourceID:                uuid.New(),
+			SourceChecksum: sampleRetirementChecksum(
+				"backup-source:production-path",
+			),
+			VerifiedAt: time.Now().UTC().Add(-time.Minute),
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	restoreReference := "restore:production-path"
+	restore, err := db.RegisterSampleRetirementRecoveryEvidence(
+		database.ctx,
+		types.SampleRetirementRecoveryEvidenceRegistrationInput{
+			OrganizationID:          organizationID,
+			VerifiedByUserAccountID: requesterID,
+			EvidenceKind:            types.SampleRetirementRecoveryEvidenceRestoreProof,
+			Reference:               restoreReference,
+			Checksum:                sampleRetirementChecksum(restoreReference),
+			SourceKind:              "restore_verifier",
+			SourceID:                uuid.New(),
+			SourceChecksum: sampleRetirementChecksum(
+				"restore-source:production-path",
+			),
+			VerifiedAt: time.Now().UTC().Add(-time.Minute),
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	subject := types.SampleRetirementSubject{
+		SubjectType:       types.SampleRetirementSubjectEnvironment,
+		SubjectID:         environmentID,
+		OwnershipMarker:   marker,
+		OwnershipChecksum: sampleRetirementChecksum(marker),
+		ExpectedChecksum:  sampleRetirementChecksum("resolve-current-row"),
+	}
+	current, err := db.InspectSampleRetirementSubjects(
+		database.ctx,
+		organizationID,
+		[]types.SampleRetirementSubject{subject},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(current).To(HaveLen(1))
+	subject.ExpectedChecksum = current[0].CurrentChecksum
+
+	preview, err := retirement.PreviewSampleRetirement(
+		database.ctx,
+		db.SampleRetirementRepository{},
+		types.SampleRetirementRequest{
+			OrganizationID:           organizationID,
+			RequestedByUserAccountID: requesterID,
+			BackupReference:          backup.Reference,
+			BackupChecksum:           backup.Checksum,
+			RestoreProofReference:    restore.Reference,
+			RestoreProofChecksum:     restore.Checksum,
+			Items:                    []types.SampleRetirementSubject{subject},
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(preview).NotTo(BeNil())
+	g.Expect(preview.Job.BackupEvidenceID).To(Equal(backup.ID))
+	g.Expect(preview.Job.RestoreProofEvidenceID).To(Equal(restore.ID))
+	g.Expect(preview.Items).To(HaveLen(1))
+	g.Expect(preview.Items[0].OwnershipEvidenceID).To(Equal(ownership.ID))
+	g.Expect(preview.Items[0].ExpectedChecksum).To(Equal(current[0].CurrentChecksum))
+
+	previewDetail, err := db.GetSampleRetirementDetail(
+		database.ctx,
+		organizationID,
+		preview.Job.ID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(previewDetail.Job.BackupEvidenceID).To(Equal(backup.ID))
+	g.Expect(previewDetail.Job.RestoreProofEvidenceID).To(Equal(restore.ID))
+	g.Expect(previewDetail.Items).To(HaveLen(1))
+	g.Expect(previewDetail.Items[0].OwnershipEvidenceID).To(Equal(ownership.ID))
+	g.Expect(previewDetail.Items[0].ID).To(Equal(preview.Items[0].ID))
+
+	approval := insertSampleRetirementApprovalFixture(
+		t,
+		database,
+		organizationID,
+		requesterID,
+		preview.Job.ID,
+	)
+	applyRequest := types.SampleRetirementApplyRequest{
+		OrganizationID:     organizationID,
+		ActorUserAccountID: requesterID,
+		JobID:              preview.Job.ID,
+		PreviewChecksum:    preview.PreviewChecksum,
+		ApprovalID:         approval.ApprovalRequestID.String(),
+		ApprovalChecksum:   approval.ApprovalChecksum,
+	}
+	service := retirement.NewApplyService(db.SampleRetirementRepository{})
+	result, err := service.Apply(
+		database.ctx,
+		organizationID,
+		preview.Job.ID,
+		applyRequest,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.State).To(Equal(types.SampleRetirementJobApplied))
+	g.Expect(result.AppliedCount).To(Equal(1))
+	g.Expect(result.TombstoneCount).To(Equal(1))
+
+	verification, err := service.Verify(
+		database.ctx,
+		organizationID,
+		preview.Job.ID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(verification.State).To(Equal(types.SampleRetirementJobVerified))
+	g.Expect(verification.ExactCounts).To(BeTrue())
+	g.Expect(verification.TombstoneLineageValid).To(BeTrue())
+	g.Expect(verification.AuditEventsRetained).To(BeTrue())
+	g.Expect(verification.RemainingSubjectCount).To(Equal(0))
+
+	reloaded, err := db.GetSampleRetirementDetail(
+		database.ctx,
+		organizationID,
+		preview.Job.ID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(reloaded.Job.State).To(Equal(types.SampleRetirementJobApplied))
+	g.Expect(reloaded.Job.BackupEvidenceID).To(Equal(backup.ID))
+	g.Expect(reloaded.Job.RestoreProofEvidenceID).To(Equal(restore.ID))
+	g.Expect(reloaded.Items).To(HaveLen(1))
+	g.Expect(reloaded.Items[0].ID).To(Equal(preview.Items[0].ID))
+	g.Expect(reloaded.Items[0].OwnershipEvidenceID).To(Equal(ownership.ID))
+	g.Expect(reloaded.Items[0].State).To(Equal(types.SampleRetirementItemApplied))
+	g.Expect(reloaded.Checkpoints).To(HaveLen(1))
+	g.Expect(reloaded.Tombstones).To(HaveLen(1))
+	g.Expect(reloaded.Tombstones[0].RetirementItemID).To(Equal(
+		reloaded.Items[0].ID,
+	))
+	var remaining int
+	err = database.pool.QueryRow(
+		context.Background(),
+		`SELECT count(*) FROM Environment WHERE id=$1 AND organization_id=$2`,
+		environmentID,
+		organizationID,
+	).Scan(&remaining)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(remaining).To(Equal(0))
 }
 
 type sampleRetirementReferencedEnvironment struct {
