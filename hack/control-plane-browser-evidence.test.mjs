@@ -207,14 +207,18 @@ const attempts = [
 ];
 if (scenario === 'flaky') attempts.unshift({...attempts[0], retry: 0, status: 'failed'});
 const raw = {
-  config: {version: process.env.EXPECTED_PLAYWRIGHT_VERSION, projects: [{name: project}]},
+  config: {
+    version: process.env.EXPECTED_PLAYWRIGHT_VERSION,
+    rootDir: path.join(process.cwd(), 'frontend', 'ui', 'e2e'),
+    projects: [{name: project}]
+  },
   suites: [{
     title: 'operator control room route-mocked contract',
-    file: source,
+    file: path.basename(source),
     specs: [{
       title: scenario === 'wrong-title' ? '@evidence different journey' : title,
       ok: !['unexpected', 'skipped'].includes(scenario),
-      file: scenario === 'wrong-source' ? 'frontend/ui/e2e/other.spec.ts' : source,
+      file: scenario === 'wrong-source' ? 'other.spec.ts' : path.basename(source),
       tests: [{
         projectName: scenario === 'wrong-project' ? 'firefox' : project,
         expectedStatus: 'passed',

@@ -712,9 +712,15 @@ function parseRawReport(bytes) {
   return report;
 }
 
-function normalizedTestFile(root, value) {
+function normalizedTestFile(root, report, value) {
   if (typeof value !== 'string' || value === '') return '';
-  return path.isAbsolute(value) ? gitPath(path.relative(root, value)) : gitPath(value);
+  const configuredRoot = report?.config?.rootDir;
+  const sourceRoot =
+    typeof configuredRoot === 'string' && path.isAbsolute(configuredRoot) && containedPath(root, configuredRoot)
+      ? configuredRoot
+      : root;
+  const resolved = path.isAbsolute(value) ? value : path.resolve(sourceRoot, value);
+  return containedPath(root, resolved) ? gitPath(path.relative(root, resolved)) : '';
 }
 
 function collectSpecs(suite, result = []) {
@@ -749,7 +755,7 @@ function validatePlaywrightReport(root, report, toolVersions) {
   const specs = report.suites.flatMap((suite) => collectSpecs(suite));
   if (specs.length !== 1) fail('direct Playwright evidence must retain exactly one spec');
   const spec = specs[0];
-  if (normalizedTestFile(root, spec.file) !== automatedTest) {
+  if (normalizedTestFile(root, report, spec.file) !== automatedTest) {
     fail(`direct Playwright evidence source must be ${automatedTest}`);
   }
   if (spec.title !== exactTitle) fail('direct Playwright evidence title set mismatch');
