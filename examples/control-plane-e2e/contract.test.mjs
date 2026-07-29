@@ -2439,7 +2439,7 @@ test('contract mode deterministically proves A, B, and previous-state B-to-A wit
     {id: 'target-alpha', activeRelease: 'A', observerId: 'observer-alpha'},
     {id: 'target-beta', activeRelease: 'A', observerId: 'observer-beta'},
   ]);
-  assert.deepEqual(report.releaseHistory, ['A', 'B', 'A']);
+  assert.equal(Object.hasOwn(report, 'releaseHistory'), false);
   assert.equal(report.migration.appliedCount, 1);
   assert.equal(report.secretLeaks, 0);
   assert.match(report.flowChecksum, /^sha256:[0-9a-f]{64}$/);

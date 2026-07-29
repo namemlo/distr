@@ -379,44 +379,48 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
     const releaseLineage = {
       componentReleases: [
         {
-          id: 'component-release-a',
+          id: 'component-release-a-provider',
+          componentKey: 'catalog-provider',
           version: '1.0.0',
           artifactDigest: `sha256:${'a'.repeat(64)}`,
+          canonicalChecksum: `sha256:${'1'.repeat(64)}`,
         },
         {
-          id: 'component-release-b',
-          version: '1.1.0',
+          id: 'component-release-a-consumer',
+          componentKey: 'gateway-consumer',
+          version: '1.0.0',
           artifactDigest: `sha256:${'b'.repeat(64)}`,
+          canonicalChecksum: `sha256:${'2'.repeat(64)}`,
+        },
+        {
+          id: 'component-release-b-provider',
+          componentKey: 'catalog-provider',
+          version: '1.1.0',
+          artifactDigest: `sha256:${'c'.repeat(64)}`,
+          canonicalChecksum: `sha256:${'3'.repeat(64)}`,
+        },
+        {
+          id: 'component-release-b-consumer',
+          componentKey: 'gateway-consumer',
+          version: '1.1.0',
+          artifactDigest: `sha256:${'d'.repeat(64)}`,
+          canonicalChecksum: `sha256:${'4'.repeat(64)}`,
         },
       ],
       productReleases: [
         {
           id: 'product-release-a',
           version: '1.0.0',
-          manifestChecksum: `sha256:${'3'.repeat(64)}`,
-          graphChecksum: `sha256:${'4'.repeat(64)}`,
-          componentReleaseIds: ['component-release-a'],
+          canonicalChecksum: `sha256:${'5'.repeat(64)}`,
+          graphChecksum: `sha256:${'6'.repeat(64)}`,
+          componentReleaseIds: ['component-release-a-provider', 'component-release-a-consumer'],
         },
         {
           id: 'product-release-b',
           version: '1.1.0',
-          manifestChecksum: `sha256:${'5'.repeat(64)}`,
-          graphChecksum: `sha256:${'6'.repeat(64)}`,
-          componentReleaseIds: ['component-release-b'],
-        },
-      ],
-      plans: [
-        {
-          id: 'plan-a-to-b',
-          checksum: `sha256:${'7'.repeat(64)}`,
-          fromProductReleaseId: 'product-release-a',
-          toProductReleaseId: 'product-release-b',
-        },
-        {
-          id: 'plan-b-to-a',
-          checksum: `sha256:${'8'.repeat(64)}`,
-          fromProductReleaseId: 'product-release-b',
-          toProductReleaseId: 'product-release-a',
+          canonicalChecksum: `sha256:${'7'.repeat(64)}`,
+          graphChecksum: `sha256:${'8'.repeat(64)}`,
+          componentReleaseIds: ['component-release-b-provider', 'component-release-b-consumer'],
         },
       ],
     };
@@ -425,33 +429,136 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
       sourceCommit,
       proofMode: 'live-hub-api',
       status: 'passed',
+      acceptanceEligible: true,
       liveStack: {started: true},
       releaseLineage,
+      productReleaseHistory: ['product-release-a', 'product-release-b', 'product-release-a'],
       targets: [
         {
-          targetId: 'target-alpha',
-          configChecksum: `sha256:${'1'.repeat(64)}`,
+          id: 'target-alpha',
+          hubTargetId: 'hub-target-alpha',
+          targetId: 'hub-target-alpha',
+          activeRelease: 'A',
+          configSnapshotId: 'config-alpha',
+          configChecksum: `sha256:${'9'.repeat(64)}`,
           adapterKind: 'external-executor',
           executorId: 'executor-alpha',
           observerId: 'observer-alpha',
-          executionId: 'execution-alpha',
-          observationId: 'observation-alpha',
           status: 'passed',
-          releaseLineage: JSON.parse(JSON.stringify(releaseLineage)),
+          transitions: [
+            {
+              direction: 'A-to-B',
+              targetConfigSnapshotId: 'config-alpha',
+              targetConfigChecksum: `sha256:${'9'.repeat(64)}`,
+              fromProductReleaseId: 'product-release-a',
+              toProductReleaseId: 'product-release-b',
+              planId: 'plan-alpha-a-to-b',
+              planChecksum: `sha256:${'a'.repeat(64)}`,
+              executions: [
+                {
+                  executionId: 'execution-alpha-a-to-b',
+                  executionChecksum: `sha256:${'b'.repeat(64)}`,
+                  stepKey: 'deploy:catalog-provider',
+                },
+              ],
+              observations: [
+                {
+                  observationId: 'observation-alpha-a-to-b',
+                  evidenceChecksum: `sha256:${'c'.repeat(64)}`,
+                  stateChecksum: `sha256:${'d'.repeat(64)}`,
+                  componentKey: 'catalog-provider',
+                },
+              ],
+            },
+            {
+              direction: 'B-to-A',
+              targetConfigSnapshotId: 'config-alpha',
+              targetConfigChecksum: `sha256:${'9'.repeat(64)}`,
+              fromProductReleaseId: 'product-release-b',
+              toProductReleaseId: 'product-release-a',
+              planId: 'plan-alpha-b-to-a',
+              planChecksum: `sha256:${'e'.repeat(64)}`,
+              executions: [
+                {
+                  executionId: 'execution-alpha-b-to-a',
+                  executionChecksum: `sha256:${'f'.repeat(64)}`,
+                  stepKey: 'deploy:catalog-provider',
+                },
+              ],
+              observations: [
+                {
+                  observationId: 'observation-alpha-b-to-a',
+                  evidenceChecksum: `sha256:${'0'.repeat(64)}`,
+                  stateChecksum: `sha256:${'1'.repeat(64)}`,
+                  componentKey: 'catalog-provider',
+                },
+              ],
+            },
+          ],
         },
         {
-          targetId: 'target-beta',
+          id: 'target-beta',
+          hubTargetId: 'hub-target-beta',
+          targetId: 'hub-target-beta',
+          activeRelease: 'A',
+          configSnapshotId: 'config-beta',
           configChecksum: `sha256:${'2'.repeat(64)}`,
           adapterKind: 'reference',
           executorId: 'executor-beta',
           observerId: 'observer-beta',
-          executionId: 'execution-beta',
-          observationId: 'observation-beta',
           status: 'passed',
-          releaseLineage: JSON.parse(JSON.stringify(releaseLineage)),
+          transitions: [
+            {
+              direction: 'A-to-B',
+              targetConfigSnapshotId: 'config-beta',
+              targetConfigChecksum: `sha256:${'2'.repeat(64)}`,
+              fromProductReleaseId: 'product-release-a',
+              toProductReleaseId: 'product-release-b',
+              planId: 'plan-beta-a-to-b',
+              planChecksum: `sha256:${'3'.repeat(64)}`,
+              executions: [
+                {
+                  executionId: 'execution-beta-a-to-b',
+                  executionChecksum: `sha256:${'4'.repeat(64)}`,
+                  stepKey: 'deploy:gateway-consumer',
+                },
+              ],
+              observations: [
+                {
+                  observationId: 'observation-beta-a-to-b',
+                  evidenceChecksum: `sha256:${'5'.repeat(64)}`,
+                  stateChecksum: `sha256:${'6'.repeat(64)}`,
+                  componentKey: 'gateway-consumer',
+                },
+              ],
+            },
+            {
+              direction: 'B-to-A',
+              targetConfigSnapshotId: 'config-beta',
+              targetConfigChecksum: `sha256:${'2'.repeat(64)}`,
+              fromProductReleaseId: 'product-release-b',
+              toProductReleaseId: 'product-release-a',
+              planId: 'plan-beta-b-to-a',
+              planChecksum: `sha256:${'7'.repeat(64)}`,
+              executions: [
+                {
+                  executionId: 'execution-beta-b-to-a',
+                  executionChecksum: `sha256:${'8'.repeat(64)}`,
+                  stepKey: 'deploy:gateway-consumer',
+                },
+              ],
+              observations: [
+                {
+                  observationId: 'observation-beta-b-to-a',
+                  evidenceChecksum: `sha256:${'9'.repeat(64)}`,
+                  stateChecksum: `sha256:${'a'.repeat(64)}`,
+                  componentKey: 'gateway-consumer',
+                },
+              ],
+            },
+          ],
         },
       ],
-      releaseHistory: ['product-release-a', 'product-release-b', 'product-release-a'],
       cleanup: {completed: true},
       nonLocalCalls: 0,
     };
@@ -1306,7 +1413,7 @@ test('rejects neutral-live proof without two successful separately configured ta
   assert.match(result.stderr, /AC-03 neutral-live report must contain exactly two targets/);
 });
 
-test('rejects neutral-live targets that do not share exact immutable release lineage', async () => {
+test('rejects legacy neutral-live target copies of shared release lineage', async () => {
   const {directory} = await fixtureWorkspace({
     proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
   });
@@ -1314,15 +1421,172 @@ test('rejects neutral-live targets that do not share exact immutable release lin
     directory,
     'AC-03',
     (report) => {
-      report.targets[1].releaseLineage.productReleases[1].id = 'different-product-release';
+      report.targets[1].releaseLineage = JSON.parse(JSON.stringify(report.releaseLineage));
     },
-    'split neutral release lineage'
+    'restore obsolete target release lineage copy'
   );
 
   const result = await run(directory);
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /AC-03 neutral-live target target-beta release lineage must match the shared lineage/);
+  assert.match(result.stderr, /AC-03 neutral-live targets must not duplicate shared releaseLineage/);
+});
+
+test('rejects legacy neutral-live shared plans in release lineage', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
+  });
+  await rewriteClassReport(
+    directory,
+    'AC-03',
+    (report) => {
+      report.releaseLineage.plans = [
+        {
+          id: 'fabricated-shared-plan',
+          checksum: `sha256:${'f'.repeat(64)}`,
+          fromProductReleaseId: 'product-release-a',
+          toProductReleaseId: 'product-release-b',
+        },
+      ];
+    },
+    'restore obsolete shared plan'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 neutral-live plans must be retained only in target transitions/);
+});
+
+test('rejects legacy neutral-live synthetic releaseHistory', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
+  });
+  await rewriteClassReport(
+    directory,
+    'AC-03',
+    (report) => {
+      report.releaseHistory = ['A', 'B', 'A'];
+    },
+    'restore obsolete synthetic release history'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 neutral-live report must not retain legacy releaseHistory/);
+});
+
+test('rejects legacy neutral-live scalar execution and observation identities', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
+  });
+  await rewriteClassReport(
+    directory,
+    'AC-03',
+    (report) => {
+      report.targets[0].executionId = 'obsolete-shared-execution';
+      report.targets[0].observationId = 'obsolete-shared-observation';
+    },
+    'restore obsolete scalar execution evidence'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /AC-03 neutral-live execution and observation evidence must be retained only in target transitions/
+  );
+});
+
+test('rejects incomplete or reused neutral-live transition evidence', async () => {
+  const cases = [
+    {
+      name: 'non-qualifying live result',
+      mutate: (report) => {
+        report.acceptanceEligible = false;
+      },
+      message: /acceptance-eligible passed live-hub-api run/,
+    },
+    {
+      name: 'non-local call',
+      mutate: (report) => {
+        report.nonLocalCalls = 1;
+      },
+      message: /complete cleanup and record zero non-local calls/,
+    },
+    {
+      name: 'final release B',
+      mutate: (report) => {
+        report.targets[0].activeRelease = 'B';
+      },
+      message: /passed final-A results/,
+    },
+    {
+      name: 'synthetic release history',
+      mutate: (report) => {
+        report.productReleaseHistory = ['A', 'B', 'A'];
+      },
+      message: /exact Product Release A-B-A history/,
+    },
+    {
+      name: 'reversed target transition',
+      mutate: (report) => {
+        report.targets[0].transitions.reverse();
+      },
+      message: /ordered A-to-B then B-to-A endpoints/,
+    },
+    {
+      name: 'reused target config snapshot',
+      mutate: (report) => {
+        report.targets[1].configSnapshotId = report.targets[0].configSnapshotId;
+      },
+      message: /two distinct configSnapshotId values/,
+    },
+    {
+      name: 'reused target plan',
+      mutate: (report) => {
+        report.targets[1].transitions[0].planId = report.targets[0].transitions[0].planId;
+      },
+      message: /transition plan IDs must be distinct/,
+    },
+    {
+      name: 'reused execution checksum',
+      mutate: (report) => {
+        report.targets[1].transitions[0].executions[0].executionChecksum =
+          report.targets[0].transitions[0].executions[0].executionChecksum;
+      },
+      message: /transition execution checksums must be distinct/,
+    },
+    {
+      name: 'reused observation identity',
+      mutate: (report) => {
+        report.targets[1].transitions[0].observations[0].observationId =
+          report.targets[0].transitions[0].observations[0].observationId;
+      },
+      message: /transition observation IDs must be distinct/,
+    },
+    {
+      name: 'empty observations',
+      mutate: (report) => {
+        report.targets[0].transitions[0].observations = [];
+      },
+      message: /transition observations must be non-empty/,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
+    });
+    await rewriteClassReport(directory, 'AC-03', testCase.mutate, testCase.name);
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, testCase.name);
+    assert.match(result.stderr, testCase.message, testCase.name);
+  }
 });
 
 test('rejects browser proof with zero expected tests', async () => {

@@ -590,7 +590,6 @@ function simulateContractFlow(fixture) {
     ok: true,
     proofMode: 'fixture-contract',
     targets,
-    releaseHistory: fixture.flow.releaseHistory,
     migration: {
       id: fixture.product.migration.id,
       appliedCount: migrationAttempts.filter((attempt) => attempt.result === 'APPLIED').length,
@@ -2301,7 +2300,6 @@ export async function runLiveHubJourney({
     ok: true,
     proofMode: 'live-hub-api',
     ...neutralAcceptance,
-    releaseHistory: ['A', 'B', 'A'],
     migration: {
       id: fixture.product.migration.id,
       appliedCount: migrationAttempts.length,
@@ -2309,7 +2307,7 @@ export async function runLiveHubJourney({
     },
     evidence,
     fleet,
-    flowChecksum: checksum({releaseHistory: ['A', 'B', 'A'], evidence, fleet}),
+    flowChecksum: checksum({evidence, fleet}),
     secretLeaks: 0,
   };
 }

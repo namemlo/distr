@@ -1097,66 +1097,63 @@ function validateNeutralReleaseLineage(row, lineage) {
   if (!lineage || typeof lineage !== 'object' || Array.isArray(lineage)) {
     fail(`${row.id} neutral-live report must retain shared releaseLineage`);
   }
-  if (!Array.isArray(lineage.componentReleases) || lineage.componentReleases.length !== 2) {
-    fail(`${row.id} neutral-live lineage must retain exactly two Component Releases`);
+  if (Object.hasOwn(lineage, 'plans')) {
+    fail(`${row.id} neutral-live plans must be retained only in target transitions`);
+  }
+  if (!Array.isArray(lineage.componentReleases) || lineage.componentReleases.length === 0) {
+    fail(`${row.id} neutral-live lineage must retain Component Releases`);
   }
   const componentIDs = new Set();
+  const componentChecksums = new Set();
   for (const release of lineage.componentReleases) {
     requireString(release?.id, row.id, 'neutral-live Component Release id');
+    requireString(release?.componentKey, row.id, 'neutral-live Component Release componentKey');
     requireString(release?.version, row.id, 'neutral-live Component Release version');
-    if (!checksumPattern.test(release?.artifactDigest ?? '') || componentIDs.has(release.id)) {
-      fail(`${row.id} neutral-live Component Releases must have unique IDs and immutable artifact digests`);
+    if (
+      !checksumPattern.test(release?.artifactDigest ?? '') ||
+      !checksumPattern.test(release?.canonicalChecksum ?? '') ||
+      componentIDs.has(release.id) ||
+      componentChecksums.has(release.canonicalChecksum)
+    ) {
+      fail(
+        `${row.id} neutral-live Component Releases must have unique IDs/canonical checksums and immutable artifact digests`
+      );
     }
     componentIDs.add(release.id);
+    componentChecksums.add(release.canonicalChecksum);
   }
   if (!Array.isArray(lineage.productReleases) || lineage.productReleases.length !== 2) {
     fail(`${row.id} neutral-live lineage must retain exactly two Product Releases`);
   }
   const productIDs = new Set();
+  const productVersions = new Set();
+  const productChecksums = new Set();
+  const graphChecksums = new Set();
   for (const release of lineage.productReleases) {
     requireString(release?.id, row.id, 'neutral-live Product Release id');
     requireString(release?.version, row.id, 'neutral-live Product Release version');
     if (
-      !checksumPattern.test(release?.manifestChecksum ?? '') ||
+      !checksumPattern.test(release?.canonicalChecksum ?? '') ||
       !checksumPattern.test(release?.graphChecksum ?? '') ||
       !Array.isArray(release?.componentReleaseIds) ||
       release.componentReleaseIds.length === 0 ||
+      new Set(release.componentReleaseIds).size !== release.componentReleaseIds.length ||
       release.componentReleaseIds.some((id) => !componentIDs.has(id)) ||
-      productIDs.has(release.id)
+      productIDs.has(release.id) ||
+      productVersions.has(release.version) ||
+      productChecksums.has(release.canonicalChecksum) ||
+      graphChecksums.has(release.graphChecksum)
     ) {
       fail(
-        `${row.id} neutral-live Product Releases must bind unique IDs, manifest/graph checksums, and Component Releases`
+        `${row.id} neutral-live Product Releases must bind unique IDs, versions, canonical/graph checksums, and retained Component Releases`
       );
     }
     productIDs.add(release.id);
+    productVersions.add(release.version);
+    productChecksums.add(release.canonicalChecksum);
+    graphChecksums.add(release.graphChecksum);
   }
-  if (!Array.isArray(lineage.plans) || lineage.plans.length !== 2) {
-    fail(`${row.id} neutral-live lineage must retain exact A-to-B and B-to-A plans`);
-  }
-  const planIDs = new Set();
-  for (const plan of lineage.plans) {
-    requireString(plan?.id, row.id, 'neutral-live plan id');
-    if (
-      !checksumPattern.test(plan?.checksum ?? '') ||
-      !productIDs.has(plan?.fromProductReleaseId) ||
-      !productIDs.has(plan?.toProductReleaseId) ||
-      plan.fromProductReleaseId === plan.toProductReleaseId ||
-      planIDs.has(plan.id)
-    ) {
-      fail(`${row.id} neutral-live plans must have unique IDs/checksums and exact Product Release endpoints`);
-    }
-    planIDs.add(plan.id);
-  }
-  const [releaseA, releaseB] = lineage.productReleases;
-  if (
-    !lineage.plans.some(
-      (plan) => plan.fromProductReleaseId === releaseA.id && plan.toProductReleaseId === releaseB.id
-    ) ||
-    !lineage.plans.some((plan) => plan.fromProductReleaseId === releaseB.id && plan.toProductReleaseId === releaseA.id)
-  ) {
-    fail(`${row.id} neutral-live lineage must retain both A-to-B and B-to-A plan checksums`);
-  }
-  return [releaseA.id, releaseB.id, releaseA.id];
+  return lineage.productReleases;
 }
 
 async function validateNeutralLiveEvidence(root, gitFacts, row, sourceCommit, binding) {
@@ -1167,21 +1164,47 @@ async function validateNeutralLiveEvidence(root, gitFacts, row, sourceCommit, bi
   if (report.sourceCommit !== sourceCommit) {
     fail(`${row.id} neutral-live report sourceCommit must match evidence sourceCommit`);
   }
-  if (report.proofMode !== 'live-hub-api' || report.liveStack?.started !== true || report.status !== 'passed') {
-    fail(`${row.id} neutral-live report must be a passed live-hub-api run with a started live stack`);
+  if (Object.hasOwn(report, 'releaseHistory')) {
+    fail(`${row.id} neutral-live report must not retain legacy releaseHistory`);
+  }
+  if (
+    report.proofMode !== 'live-hub-api' ||
+    report.liveStack?.started !== true ||
+    report.status !== 'passed' ||
+    report.acceptanceEligible !== true
+  ) {
+    fail(
+      `${row.id} neutral-live report must be an acceptance-eligible passed live-hub-api run with a started live stack`
+    );
   }
   if (!Array.isArray(report.targets) || report.targets.length !== 2) {
     fail(`${row.id} neutral-live report must contain exactly two targets`);
   }
-  const uniqueFields = ['targetId', 'configChecksum', 'executorId', 'observerId', 'executionId', 'observationId'];
+  const uniqueFields = [
+    'id',
+    'hubTargetId',
+    'targetId',
+    'configSnapshotId',
+    'configChecksum',
+    'executorId',
+    'observerId',
+  ];
   for (const field of uniqueFields) {
     const values = report.targets.map((target) => target[field]);
     if (values.some((value) => typeof value !== 'string' || value === '') || new Set(values).size !== 2) {
       fail(`${row.id} neutral-live targets must have two distinct ${field} values`);
     }
   }
-  if (report.targets.some((target) => !checksumPattern.test(target.configChecksum) || target.status !== 'passed')) {
-    fail(`${row.id} neutral-live targets must retain passed results and configuration checksums`);
+  if (
+    report.targets.some(
+      (target) =>
+        !checksumPattern.test(target.configChecksum) ||
+        target.status !== 'passed' ||
+        target.activeRelease !== 'A' ||
+        target.targetId !== target.hubTargetId
+    )
+  ) {
+    fail(`${row.id} neutral-live targets must retain passed final-A results and their exact Hub target identity`);
   }
   const adapters = new Set(report.targets.map((target) => target.adapterKind));
   if (!adapters.has('external-executor') || !adapters.has('reference') || adapters.size !== 2) {
@@ -1190,14 +1213,95 @@ async function validateNeutralLiveEvidence(root, gitFacts, row, sourceCommit, bi
   if (report.targets.some((target) => target.observerId === target.executorId)) {
     fail(`${row.id} neutral-live observers must be independent from executors`);
   }
-  const expectedHistory = validateNeutralReleaseLineage(row, report.releaseLineage);
+  const [releaseA, releaseB] = validateNeutralReleaseLineage(row, report.releaseLineage);
+  if (!jsonEqual(report.productReleaseHistory, [releaseA.id, releaseB.id, releaseA.id])) {
+    fail(`${row.id} neutral-live report must retain exact Product Release A-B-A history`);
+  }
+  const planIDs = [];
+  const planChecksums = [];
+  const executionIDs = [];
+  const executionChecksums = [];
+  const observationIDs = [];
+  const observationEvidenceChecksums = [];
+  const observationStateChecksums = [];
   for (const target of report.targets) {
-    if (!jsonEqual(target.releaseLineage, report.releaseLineage)) {
-      fail(`${row.id} neutral-live target ${target.targetId} release lineage must match the shared lineage`);
+    if (Object.hasOwn(target, 'releaseLineage')) {
+      fail(`${row.id} neutral-live targets must not duplicate shared releaseLineage`);
+    }
+    if (Object.hasOwn(target, 'executionId') || Object.hasOwn(target, 'observationId')) {
+      fail(`${row.id} neutral-live execution and observation evidence must be retained only in target transitions`);
+    }
+    if (!Array.isArray(target.transitions) || target.transitions.length !== 2) {
+      fail(`${row.id} neutral-live target ${target.id} must retain exactly two transitions`);
+    }
+    const expectations = [
+      {direction: 'A-to-B', from: releaseA.id, to: releaseB.id},
+      {direction: 'B-to-A', from: releaseB.id, to: releaseA.id},
+    ];
+    for (let index = 0; index < expectations.length; index += 1) {
+      const transition = target.transitions[index];
+      const expected = expectations[index];
+      if (
+        transition?.direction !== expected.direction ||
+        transition?.fromProductReleaseId !== expected.from ||
+        transition?.toProductReleaseId !== expected.to
+      ) {
+        fail(`${row.id} neutral-live target ${target.id} must retain ordered A-to-B then B-to-A endpoints`);
+      }
+      if (
+        transition.targetConfigSnapshotId !== target.configSnapshotId ||
+        transition.targetConfigChecksum !== target.configChecksum
+      ) {
+        fail(`${row.id} neutral-live target ${target.id} transitions must bind its exact configuration`);
+      }
+      requireString(transition.planId, row.id, `neutral-live target ${target.id} plan id`);
+      if (!checksumPattern.test(transition.planChecksum ?? '')) {
+        fail(`${row.id} neutral-live target ${target.id} plan checksum must be SHA-256`);
+      }
+      planIDs.push(transition.planId);
+      planChecksums.push(transition.planChecksum);
+      if (!Array.isArray(transition.executions) || transition.executions.length === 0) {
+        fail(`${row.id} neutral-live target ${target.id} transition executions must be non-empty`);
+      }
+      for (const execution of transition.executions) {
+        requireString(execution?.executionId, row.id, `neutral-live target ${target.id} execution id`);
+        requireString(execution?.stepKey, row.id, `neutral-live target ${target.id} execution stepKey`);
+        if (!checksumPattern.test(execution?.executionChecksum ?? '')) {
+          fail(`${row.id} neutral-live target ${target.id} execution checksum must be SHA-256`);
+        }
+        executionIDs.push(execution.executionId);
+        executionChecksums.push(execution.executionChecksum);
+      }
+      if (!Array.isArray(transition.observations) || transition.observations.length === 0) {
+        fail(`${row.id} neutral-live target ${target.id} transition observations must be non-empty`);
+      }
+      for (const observation of transition.observations) {
+        requireString(observation?.observationId, row.id, `neutral-live target ${target.id} observation id`);
+        requireString(observation?.componentKey, row.id, `neutral-live target ${target.id} observation componentKey`);
+        if (
+          !checksumPattern.test(observation?.evidenceChecksum ?? '') ||
+          !checksumPattern.test(observation?.stateChecksum ?? '')
+        ) {
+          fail(`${row.id} neutral-live target ${target.id} observation checksums must be SHA-256`);
+        }
+        observationIDs.push(observation.observationId);
+        observationEvidenceChecksums.push(observation.evidenceChecksum);
+        observationStateChecksums.push(observation.stateChecksum);
+      }
     }
   }
-  if (!jsonEqual(report.releaseHistory, expectedHistory)) {
-    fail(`${row.id} neutral-live report must retain exact Product Release A-B-A history`);
+  for (const [values, label] of [
+    [planIDs, 'plan IDs'],
+    [planChecksums, 'plan checksums'],
+    [executionIDs, 'execution IDs'],
+    [executionChecksums, 'execution checksums'],
+    [observationIDs, 'observation IDs'],
+    [observationEvidenceChecksums, 'observation evidence checksums'],
+    [observationStateChecksums, 'observation state checksums'],
+  ]) {
+    if (new Set(values).size !== values.length) {
+      fail(`${row.id} neutral-live target transition ${label} must be distinct`);
+    }
   }
   if (report.cleanup?.completed !== true || report.nonLocalCalls !== 0) {
     fail(`${row.id} neutral-live report must complete cleanup and record zero non-local calls`);

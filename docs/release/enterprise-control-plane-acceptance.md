@@ -89,11 +89,18 @@ tracked, checksummed result contracts:
   `distr.control-plane-neutral-live-result/v1`, a passed live Hub stack, two
   separately configured targets using external-executor and reference
   adapters, distinct executors and independent observers, and exact A-B-A
-  history. Both targets must bind the same immutable Component Release IDs,
-  versions, and artifact digests; Product Release IDs, versions, manifest and
-  graph checksums; and A-to-B/B-to-A plan IDs, checksums, and endpoints, while
-  retaining distinct target-configuration checksums. Cleanup must complete and
-  non-local calls must remain zero.
+  history. The retained v1 field shape stores all actual Component Releases and
+  the two Product Releases once in top-level `releaseLineage`, stores actual
+  Product Release IDs in `productReleaseHistory`, and stores each target's
+  ordered A-to-B then B-to-A plan, execution, and observation evidence in
+  `targets[].transitions[]`. Target configurations, plans, executions, and
+  observations must retain distinct IDs and canonical checksums. Legacy
+  top-level shared plans, per-target release-lineage copies, scalar target
+  execution/observation IDs, and `releaseHistory` substitutes are
+  non-qualifying; no schema ID or compatibility converter is introduced.
+  Cleanup must complete, top-level non-local calls must remain zero,
+  `liveStack.started` and `acceptanceEligible` must be true, and both targets
+  must finish on A.
 - `browser-e2e` requires `distr.control-plane-browser-e2e-result/v1` with a
   passed Playwright run, expected tests greater than zero, every expected test
   passed, and zero unexpected or flaky results.

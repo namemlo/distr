@@ -394,6 +394,15 @@ to live evidence or prove that an unrecorded external dependency participated.
   cleanup metadata before classifying the result. The recorded run on this host
   took this fallback because the Docker CLI was unavailable; it did not attempt
   the live branch.
+- Neutral-live acceptance retains the existing
+  `distr.control-plane-neutral-live-result/v1` schema ID with the truthful
+  runner field shape. Shared Component and Product Release facts live only in
+  top-level `releaseLineage`; `productReleaseHistory` contains the actual
+  Product Release A-B-A IDs; and each target owns its ordered A-to-B and B-to-A
+  plans, executions, and observations under `targets[].transitions[]`. Do not
+  recreate top-level shared plans, per-target release-lineage copies, scalar
+  target execution/observation IDs, or a synthetic `releaseHistory`
+  compatibility shape.
 - Live A-B-A acceptance remains pending until a retained clean run completes
   the `live-hub-api` path against the runtime contracts. Commits `14545aef` and
   `0dcd56ff` passed independent source re-review, but no retained live A-B-A
