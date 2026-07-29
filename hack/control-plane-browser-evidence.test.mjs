@@ -75,8 +75,8 @@ if (JSON.stringify(actualArguments) === JSON.stringify(['--version'])) {
   process.exit(0);
 }
 if (JSON.stringify(actualArguments) === JSON.stringify(['exec', 'node', '--version'])) {
-  process.stdout.write('v' + process.env.EXPECTED_NODE_VERSION + '\n');
-  process.exit(0);
+  process.stderr.write('browser evidence must bind the already-running Node runtime\n');
+  process.exit(97);
 }
 if (JSON.stringify(actualArguments) === JSON.stringify(['exec', 'playwright', '--version'])) {
   process.stdout.write('Version ' + process.env.EXPECTED_PLAYWRIGHT_VERSION + '\n');
@@ -86,6 +86,10 @@ const expected = JSON.parse(process.env.EXPECTED_PLAYWRIGHT_ARGV);
 if (JSON.stringify(actualArguments) !== JSON.stringify(expected)) {
   process.stderr.write('unexpected direct Playwright argv: ' + JSON.stringify(actualArguments) + '\n');
   process.exit(91);
+}
+if (process.env.DISTR_EVIDENCE_NODE_VERSION !== process.versions.node) {
+  process.stderr.write('direct Playwright Node runtime was not bound to the evidence packager\n');
+  process.exit(98);
 }
 const scenario = process.env.FAKE_PLAYWRIGHT_SCENARIO || 'passed';
 const title = process.env.EXACT_EVIDENCE_TITLE;
@@ -216,12 +220,24 @@ if (scenario === 'secret-json') raw.config.metadata = {apiToken: 'browser-secret
 process.stdout.write(JSON.stringify(raw));
 `;
 
-async function fixtureWorkspace({networkAssertion = 'inside', fixtureNetworkGuard = true} = {}) {
+async function fixtureWorkspace({
+  networkAssertion = 'inside',
+  fixtureNetworkGuard = true,
+  runtimeBinding = 'exact',
+} = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-browser-direct-'));
   const externalDirectory = await mkdtemp(path.join(tmpdir(), 'control-plane-browser-external-'));
   const evidenceTest =
     networkAssertion === 'inside'
-      ? `test('${exactTitle}', async ({controlPlane}) => {\n  expect(controlPlane.externalAttempts).toEqual([]);\n});\n`
+      ? `test('${exactTitle}', async ({controlPlane}) => {\n${
+          runtimeBinding === 'exact'
+            ? '  const expectedNodeVersion = process.env.DISTR_EVIDENCE_NODE_VERSION;\n  if (expectedNodeVersion !== undefined) {\n    expect(process.versions.node).toBe(expectedNodeVersion);\n  }\n'
+            : runtimeBinding === 'wrong'
+              ? '  const expectedNodeVersion = process.env.DISTR_EVIDENCE_NODE_VERSION;\n  if (expectedNodeVersion !== undefined) {\n    expect(process.versions.node).not.toBe(expectedNodeVersion);\n  }\n'
+              : runtimeBinding === 'noop'
+                ? '  void process.env.DISTR_EVIDENCE_NODE_VERSION;\n  void process.versions.node;\n'
+                : ''
+        }  expect(controlPlane.externalAttempts).toEqual([]);\n});\n`
       : `test('${exactTitle}', async () => {});\ntest('unbound assertion', async ({controlPlane}) => {\n  expect(controlPlane.externalAttempts).toEqual([]);\n});\n`;
   const fixture =
     fixtureNetworkGuard === true
@@ -438,6 +454,17 @@ test('requires the zero-external-attempt assertion inside the exact evidence tes
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /exact browser evidence test must assert zero external attempts/);
+});
+
+test('requires the exact evidence test to compare the Playwright Node runtime', async () => {
+  for (const runtimeBinding of ['missing', 'wrong', 'noop']) {
+    const fixture = await fixtureWorkspace({runtimeBinding});
+
+    const result = await run(fixture);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exact browser evidence test must verify the Playwright Node runtime/);
+  }
 });
 
 test('requires the bound fixture to record and block non-local network attempts', async () => {

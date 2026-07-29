@@ -342,7 +342,7 @@ function bounded(value) {
   return text.length > 4000 ? `${text.slice(0, 4000)}…` : text;
 }
 
-async function runPnpm(root, commandArguments, label) {
+async function runPnpm(root, commandArguments, label, environment = process.env) {
   const logicalCommand = ['pnpm', ...commandArguments];
   const windows = process.platform === 'win32';
   const executable = windows ? process.env.ComSpec || 'cmd.exe' : 'pnpm';
@@ -360,7 +360,7 @@ async function runPnpm(root, commandArguments, label) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, arguments_, {
       cwd: root,
-      env: process.env,
+      env: environment,
       shell: false,
       windowsVerbatimArguments: windows,
       windowsHide: true,
@@ -406,23 +406,26 @@ async function runPnpm(root, commandArguments, label) {
   });
 }
 
-async function runPlaywright(root) {
-  return runPnpm(root, exactCommand.slice(1), 'direct Playwright evidence');
+async function runPlaywright(root, nodeVersion) {
+  return runPnpm(root, exactCommand.slice(1), 'direct Playwright evidence', {
+    ...process.env,
+    DISTR_EVIDENCE_NODE_VERSION: nodeVersion,
+  });
 }
 
 async function collectToolVersions(root) {
   const pnpmResult = await runPnpm(root, ['--version'], 'pnpm version query');
-  const nodeResult = await runPnpm(root, ['exec', 'node', '--version'], 'Node version query');
   const playwrightResult = await runPnpm(root, ['exec', 'playwright', '--version'], 'Playwright version query');
-  const nodeOutput = nodeResult.stdout.toString('utf8').trim();
+  const node = process.versions.node;
   const pnpm = pnpmResult.stdout.toString('utf8').trim();
   const playwrightOutput = playwrightResult.stdout.toString('utf8').trim();
-  const nodeMatch = /^v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(nodeOutput);
   const playwrightMatch = /^Version\s+(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(playwrightOutput);
-  if (!nodeMatch) fail('Node tool version is not canonical semver');
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(node)) {
+    fail('Node tool version is not canonical semver');
+  }
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(pnpm)) fail('pnpm tool version is not canonical semver');
   if (!playwrightMatch) fail('Playwright tool version is not canonical semver');
-  return {node: nodeMatch[1], pnpm, playwright: playwrightMatch[1]};
+  return {node, pnpm, playwright: playwrightMatch[1]};
 }
 
 function secretLikeString(value) {
@@ -675,6 +678,13 @@ function requireBoundNetworkProof(testSource, fixtureText) {
   ) {
     fail('bound control-plane fixture must record and block non-local requests');
   }
+  if (
+    !/const\s+expectedNodeVersion\s*=\s*process\.env\.DISTR_EVIDENCE_NODE_VERSION\s*;\s*if\s*\(\s*expectedNodeVersion\s*!==\s*undefined\s*\)\s*\{\s*expect\s*\(\s*process\.versions\.node\s*\)\s*\.toBe\s*\(\s*expectedNodeVersion\s*\)\s*;\s*\}/.test(
+      evidenceBody
+    )
+  ) {
+    fail('exact browser evidence test must verify the Playwright Node runtime');
+  }
 }
 
 async function main() {
@@ -733,7 +743,7 @@ async function main() {
     let toolVersions;
     try {
       toolVersions = await collectToolVersions(isolated.isolatedRoot);
-      executed = await runPlaywright(isolated.isolatedRoot);
+      executed = await runPlaywright(isolated.isolatedRoot, toolVersions.node);
     } finally {
       await requireUnchangedHead(root, options.sourceCommit, 'source worktree HEAD drifted during isolated execution');
       await requireUnchangedHead(

@@ -120,6 +120,10 @@ test.describe('operator control room route-mocked contract', () => {
       controlPlane,
     }, testInfo) => {
       test.setTimeout(90_000);
+      const expectedNodeVersion = process.env.DISTR_EVIDENCE_NODE_VERSION;
+      if (expectedNodeVersion !== undefined) {
+        expect(process.versions.node).toBe(expectedNodeVersion);
+      }
       const checkpoints = [];
       await page.goto(`/releases/${fixtureIds.productRelease}`);
       await expect(page.getByText('2026.08.0', {exact: true})).toBeVisible();
