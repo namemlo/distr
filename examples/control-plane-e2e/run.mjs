@@ -57,6 +57,273 @@ function checksum(value) {
   return `sha256:${createHash('sha256').update(stableStringify(value)).digest('hex')}`;
 }
 
+export function buildNeutralLiveAcceptance({
+  liveStack,
+  nonLocalCalls,
+  componentReleases,
+  productReleases,
+  targets,
+  transitions,
+}) {
+  const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
+  const requireId = (value, label) => assert(nonempty(value), `neutral live acceptance ${label} is required`);
+  const requireChecksum = (value, label) =>
+    assert(checksumPattern.test(value), `neutral live acceptance ${label} must be a canonical sha256 checksum`);
+  const requireUnique = (values, label) =>
+    assert(new Set(values).size === values.length, `neutral live acceptance ${label} must be distinct`);
+
+  assert(liveStack?.started === true, 'neutral live acceptance live stack must be started');
+  assert(nonLocalCalls === 0, 'neutral live acceptance nonLocalCalls must be zero');
+  assert(
+    Array.isArray(componentReleases) && componentReleases.length > 0,
+    'neutral live acceptance component releases are required'
+  );
+  assert(
+    Array.isArray(productReleases) && productReleases.length === 2,
+    'neutral live acceptance requires exactly two product releases'
+  );
+  assert(Array.isArray(targets) && targets.length === 2, 'neutral live acceptance requires exactly two targets');
+  assert(
+    Array.isArray(transitions?.aToB) && transitions.aToB.length === 2,
+    'neutral live acceptance requires exactly two A-to-B transitions'
+  );
+  assert(
+    Array.isArray(transitions?.bToA) && transitions.bToA.length === 2,
+    'neutral live acceptance requires exactly two B-to-A transitions'
+  );
+
+  for (const release of componentReleases) {
+    requireId(release.id, 'component release id');
+    requireId(release.componentKey, `${release.id} component key`);
+    requireId(release.version, `${release.id} component version`);
+    requireChecksum(release.artifactDigest, `${release.id} artifact digest`);
+    requireChecksum(release.canonicalChecksum, `${release.id} canonical checksum`);
+  }
+  requireUnique(
+    componentReleases.map((release) => release.id),
+    'component release ids'
+  );
+  requireUnique(
+    componentReleases.map((release) => release.canonicalChecksum),
+    'component release canonical checksums'
+  );
+
+  const componentReleaseIds = new Set(componentReleases.map((release) => release.id));
+  for (const release of productReleases) {
+    requireId(release.id, 'product release id');
+    requireId(release.version, `${release.id} product version`);
+    requireChecksum(release.canonicalChecksum, `${release.id} canonical checksum`);
+    requireChecksum(release.graphChecksum, `${release.id} graph checksum`);
+    assert(
+      Array.isArray(release.componentReleaseIds) && release.componentReleaseIds.length > 0,
+      `neutral live acceptance ${release.id} component release ids are required`
+    );
+    requireUnique(release.componentReleaseIds, `${release.id} component release ids`);
+    assert(
+      release.componentReleaseIds.every((id) => componentReleaseIds.has(id)),
+      `neutral live acceptance ${release.id} must reference retained component releases`
+    );
+  }
+  requireUnique(
+    productReleases.map((release) => release.id),
+    'product release ids'
+  );
+  requireUnique(
+    productReleases.map((release) => release.version),
+    'product release versions'
+  );
+  requireUnique(
+    productReleases.map((release) => release.canonicalChecksum),
+    'product release canonical checksums'
+  );
+  requireUnique(
+    productReleases.map((release) => release.graphChecksum),
+    'product release graph checksums'
+  );
+
+  for (const target of targets) {
+    requireId(target.id, 'target id');
+    requireId(target.hubTargetId, `${target.id} Hub target id`);
+    requireId(target.adapterKind, `${target.id} adapter kind`);
+    requireId(target.executorId, `${target.id} executor id`);
+    requireId(target.observerId, `${target.id} observer id`);
+    requireId(target.configSnapshotId, `${target.id} config snapshot id`);
+    requireChecksum(target.configChecksum, `${target.id} config checksum`);
+    assert(target.activeRelease === 'A', `neutral live acceptance ${target.id} must finish on product release A`);
+    assert(
+      target.executorId !== target.observerId,
+      `neutral live acceptance ${target.id} executor and observer ids must be distinct`
+    );
+  }
+  for (const [selector, label] of [
+    [(target) => target.id, 'target ids'],
+    [(target) => target.hubTargetId, 'Hub target ids'],
+    [(target) => target.executorId, 'executor ids'],
+    [(target) => target.observerId, 'observer ids'],
+    [(target) => target.configSnapshotId, 'target config snapshot ids'],
+    [(target) => target.configChecksum, 'target config checksums'],
+  ]) {
+    requireUnique(targets.map(selector), label);
+  }
+
+  const [productA, productB] = productReleases;
+  const targetIds = new Set(targets.map((target) => target.id));
+  const allTransitions = [...transitions.aToB, ...transitions.bToA];
+  for (const transition of allTransitions) {
+    requireId(transition.targetId, 'transition target id');
+    assert(
+      targetIds.has(transition.targetId),
+      `neutral live acceptance transition target ${transition.targetId} is not retained`
+    );
+    requireId(transition.planId, `${transition.targetId} plan id`);
+    requireChecksum(transition.planChecksum, `${transition.targetId} plan checksum`);
+    assert(
+      Array.isArray(transition.executions) && transition.executions.length > 0,
+      `neutral live acceptance ${transition.targetId} transition executions are required`
+    );
+    assert(
+      Array.isArray(transition.observations) && transition.observations.length > 0,
+      `neutral live acceptance ${transition.targetId} transition observations are required`
+    );
+    for (const execution of transition.executions) {
+      requireId(execution.executionId, `${transition.targetId} execution id`);
+      requireChecksum(execution.executionChecksum, `${transition.targetId} execution checksum`);
+      requireId(execution.stepKey, `${transition.targetId} execution step key`);
+    }
+    for (const observation of transition.observations) {
+      requireId(observation.observationId, `${transition.targetId} observation id`);
+      requireChecksum(observation.evidenceChecksum, `${transition.targetId} observation evidence checksum`);
+      requireChecksum(observation.stateChecksum, `${transition.targetId} observation state checksum`);
+      requireId(observation.componentKey, `${transition.targetId} observation component key`);
+    }
+  }
+
+  for (const [direction, candidates, fromProductReleaseId, toProductReleaseId] of [
+    ['A-to-B', transitions.aToB, productA.id, productB.id],
+    ['B-to-A', transitions.bToA, productB.id, productA.id],
+  ]) {
+    for (const target of targets) {
+      const matching = candidates.filter((transition) => transition.targetId === target.id);
+      assert(
+        matching.length === 1,
+        `neutral live acceptance ${target.id} requires exactly one ${direction} transition`
+      );
+      assert(
+        matching[0].fromProductReleaseId === fromProductReleaseId &&
+          matching[0].toProductReleaseId === toProductReleaseId,
+        `neutral live acceptance ${target.id} ${direction} must use the product A-B endpoints`
+      );
+    }
+  }
+
+  requireUnique(
+    allTransitions.map((transition) => transition.planId),
+    'transition plan ids'
+  );
+  requireUnique(
+    allTransitions.map((transition) => transition.planChecksum),
+    'transition plan checksums'
+  );
+  const allExecutions = allTransitions.flatMap((transition) => transition.executions);
+  requireUnique(
+    allExecutions.map((execution) => execution.executionId),
+    'execution ids'
+  );
+  requireUnique(
+    allExecutions.map((execution) => execution.executionChecksum),
+    'execution checksums'
+  );
+  const allObservations = allTransitions.flatMap((transition) => transition.observations);
+  requireUnique(
+    allObservations.map((observation) => observation.observationId),
+    'observation ids'
+  );
+  requireUnique(
+    allObservations.map((observation) => observation.evidenceChecksum),
+    'observation evidence checksums'
+  );
+  requireUnique(
+    allObservations.map((observation) => observation.stateChecksum),
+    'observation state checksums'
+  );
+
+  const transitionFor = (target, direction, candidates) => {
+    const candidate = candidates.find((transition) => transition.targetId === target.id);
+    const {targetId: _targetId, executions, observations, ...facts} = candidate;
+    return {
+      direction,
+      targetConfigSnapshotId: target.configSnapshotId,
+      targetConfigChecksum: target.configChecksum,
+      ...facts,
+      executions: executions.map((execution) => ({...execution})),
+      observations: observations.map((observation) => ({...observation})),
+    };
+  };
+  return {
+    status: 'passed',
+    acceptanceEligible: true,
+    liveStack: {...liveStack},
+    nonLocalCalls,
+    releaseLineage: {
+      componentReleases: componentReleases.map((release) => ({...release})),
+      productReleases: productReleases.map((release) => ({
+        ...release,
+        componentReleaseIds: [...release.componentReleaseIds],
+      })),
+    },
+    productReleaseHistory: [productReleases[0].id, productReleases[1].id, productReleases[0].id],
+    targets: targets.map((target) => ({
+      ...target,
+      targetId: target.targetId ?? target.hubTargetId,
+      status: 'passed',
+      transitions: [
+        transitionFor(target, 'A-to-B', transitions.aToB),
+        transitionFor(target, 'B-to-A', transitions.bToA),
+      ],
+    })),
+  };
+}
+
+export function buildNeutralExecutionEvidence({payload, intentChecksum}) {
+  return {
+    executionId: payload.executionId,
+    executionChecksum: intentChecksum,
+    stepKey: payload.stepKey,
+  };
+}
+
+export function buildNeutralTransitionEvidence({targetId, fromProductReleaseId, toProductReleaseId, evidence}) {
+  const targetEvidence = evidence.filter((item) => item.targetId === targetId);
+  assert(targetEvidence.length > 0, `${targetId} transition must retain runtime evidence`);
+  const [{plan}] = targetEvidence;
+  assert(
+    targetEvidence.every((item) => item.plan?.id === plan.id && item.plan?.checksum === plan.checksum),
+    `${targetId} transition evidence must bind one immutable target plan`
+  );
+  const executions = [
+    ...new Map(
+      targetEvidence
+        .flatMap((item) => item.executions)
+        .map((execution) => [`${execution.executionId}:${execution.executionChecksum}:${execution.stepKey}`, execution])
+    ).values(),
+  ].map((execution) => ({...execution}));
+  const observations = targetEvidence.map((item) => ({
+    observationId: item.observed.id,
+    evidenceChecksum: item.observed.evidenceChecksum,
+    stateChecksum: item.observed.stateChecksum,
+    componentKey: item.component,
+  }));
+  return {
+    targetId,
+    fromProductReleaseId,
+    toProductReleaseId,
+    planId: plan.id,
+    planChecksum: plan.checksum,
+    executions,
+    observations,
+  };
+}
+
 export function deriveFrozenAdapterRevision(adapter) {
   const frozenEvidence = {
     assignmentId: adapter.adapterAssignmentId,
@@ -117,10 +384,7 @@ export function derivePlanLeaseIdentities({plan, target, signingKeyId}) {
       }
     }
   }
-  assert(
-    topologicalOrder.length === plan.steps.length,
-    `${target.id} frozen plan step graph must remain acyclic`
-  );
+  assert(topologicalOrder.length === plan.steps.length, `${target.id} frozen plan step graph must remain acyclic`);
   const adapterByStep = new Map(plan.stepAdapters.map((adapter) => [adapter.stepKey, adapter]));
   const adapters = topologicalOrder
     .filter((stepKey) => adapterByStep.has(stepKey))
@@ -390,10 +654,7 @@ function resolveRequiredGoCommand(workDir) {
     windowsHide: true,
   });
   if (discovery.status !== 0 || discovery.error) {
-    const detail = [discovery.error?.message, discovery.stderr, discovery.stdout]
-      .filter(Boolean)
-      .join('\n')
-      .trim();
+    const detail = [discovery.error?.message, discovery.stderr, discovery.stdout].filter(Boolean).join('\n').trim();
     throw new Error(
       `offline provenance helper build failed: required Go toolchain or module cache is unavailable${
         detail ? `: ${detail}` : ''
@@ -424,10 +685,7 @@ function ensureProvenanceFixtureBinary() {
     return provenanceFixtureBinaryPath;
   }
   const workDir = mkdtempSync(path.join(tmpdir(), 'distr-provenance-fixture-'));
-  const binaryPath = path.join(
-    workDir,
-    process.platform === 'win32' ? 'provenance-fixture.exe' : 'provenance-fixture'
-  );
+  const binaryPath = path.join(workDir, process.platform === 'win32' ? 'provenance-fixture.exe' : 'provenance-fixture');
   let goCommand;
   try {
     goCommand = resolveRequiredGoCommand(workDir);
@@ -437,14 +695,7 @@ function ensureProvenanceFixtureBinary() {
   }
   const built = spawnSync(
     goCommand,
-    [
-      'build',
-      '-buildvcs=false',
-      '-trimpath',
-      '-o',
-      binaryPath,
-      './examples/control-plane-e2e/provenance-fixture',
-    ],
+    ['build', '-buildvcs=false', '-trimpath', '-o', binaryPath, './examples/control-plane-e2e/provenance-fixture'],
     {
       cwd: repoRoot,
       env: offlineGoEnvironment(),
@@ -754,11 +1005,7 @@ export function buildComponentPublicationEvidence(input) {
   });
   assert(
     generated.status === 0 && !generated.error,
-    `signed provenance fixture execution failed: ${[
-      generated.error?.message,
-      generated.stderr,
-      generated.stdout,
-    ]
+    `signed provenance fixture execution failed: ${[generated.error?.message, generated.stderr, generated.stdout]
       .filter(Boolean)
       .join('\n')
       .trim()}`
@@ -871,9 +1118,7 @@ export async function publishComponentRelease({request, token, topology, fixture
 }
 
 export function componentAdapterRequirements(migrations) {
-  const requirements = [
-    {stepKind: 'deploy', capability: 'distr.compose.deploy', version: '1.0.0'},
-  ];
+  const requirements = [{stepKind: 'deploy', capability: 'distr.compose.deploy', version: '1.0.0'}];
   if (migrations.length > 0) {
     requirements.push({
       stepKind: 'migration',
@@ -1350,8 +1595,7 @@ function campaignReadinessSnapshot({campaign, tasks, plans, currentPlans}) {
           task.protocolVersion === 'v2' && expectedTargets.get(task.deploymentPlanTargetId) === task.deploymentTargetId
       );
     const preflight = current && taskIdentitiesMatch ? passedPreflightForTasks(plan, current, planTasks) : undefined;
-    const failedPreflight =
-      current?.preflightRuns?.[0]?.status === 'FAILED' ? current.preflightRuns[0] : undefined;
+    const failedPreflight = current?.preflightRuns?.[0]?.status === 'FAILED' ? current.preflightRuns[0] : undefined;
     if (failedPreflight) {
       const messages = failedPreflight.checks
         ?.filter((check) => check.status === 'FAILED')
@@ -1525,11 +1769,9 @@ export async function waitForTargetExecutionLease({
       return lease;
     }
 
-    const currentCampaign = await topology.request(
-      'GET',
-      `/api/v1/deployment-campaign-runs/${campaign.run.id}`,
-      {token: topology.token}
-    );
+    const currentCampaign = await topology.request('GET', `/api/v1/deployment-campaign-runs/${campaign.run.id}`, {
+      token: topology.token,
+    });
     const tasks = await topology.request('GET', '/api/v1/tasks', {token: topology.token});
     const currentPlan = await topology.request('GET', `/api/v1/deployment-plans/${plan.id}`, {
       token: topology.token,
@@ -1722,7 +1964,7 @@ async function executeLeasedAttempt({topology, target, lease, executorURL, execu
       completedAt: new Date().toISOString(),
     },
   });
-  return {attempt, payload};
+  return {attempt, payload, intentChecksum: lease.intent.checksum};
 }
 
 async function executeAndObserveRelease({
@@ -1752,6 +1994,7 @@ async function executeAndObserveRelease({
     });
     let completed = 0;
     const executedStepKeys = [];
+    const executions = [];
     for (const leaseIdentity of leaseIdentities) {
       const lease = await waitForTargetExecutionLease({
         topology,
@@ -1774,6 +2017,7 @@ async function executeAndObserveRelease({
         `${target.id} leased ${execution.payload.stepKey} while waiting for ${leaseIdentity.stepKey}`
       );
       executedStepKeys.push(execution.payload.stepKey);
+      executions.push(buildNeutralExecutionEvidence(execution));
       completed += 1;
     }
     assert(completed === leaseIdentities.length, `${target.id} must execute every frozen target-step adapter`);
@@ -1834,8 +2078,10 @@ async function executeAndObserveRelease({
         targetId: target.id,
         component: component.key,
         release: label,
+        plan: {id: plan.id, checksum: plan.canonicalChecksum},
         attempts: completed,
         executedStepKeys,
+        executions: executions.map((execution) => ({...execution})),
         observed,
       });
     }
@@ -1848,6 +2094,7 @@ export async function runLiveHubJourney({
   topology,
   fixture,
   runId,
+  liveStack,
   ports,
   secrets,
   signing,
@@ -1875,19 +2122,26 @@ export async function runLiveHubJourney({
     runId,
   });
   const components = {};
+  const componentReleaseLineage = [];
   for (const label of ['A', 'B']) {
     components[label] = [];
     for (const component of fixture.product.components) {
-      components[label].push(
-        await publishComponentRelease({
-          request: live.request,
-          token: live.token,
-          topology: live,
-          fixture,
-          label,
-          component,
-        })
-      );
+      const published = await publishComponentRelease({
+        request: live.request,
+        token: live.token,
+        topology: live,
+        fixture,
+        label,
+        component,
+      });
+      components[label].push(published);
+      componentReleaseLineage.push({
+        id: published.id,
+        componentKey: component.key,
+        version: fixture.releases[label].version,
+        artifactDigest: component.artifactDigest,
+        canonicalChecksum: published.canonicalChecksum,
+      });
     }
   }
   const products = {
@@ -1917,20 +2171,19 @@ export async function runLiveHubJourney({
     runId,
   });
   await advanceCampaignRunToRunning({topology: live, campaign: initialACampaign});
-  evidence.push(
-    ...(await executeAndObserveRelease({
-      topology: live,
-      fixture,
-      label: 'A',
-      ports,
-      secrets,
-      signingKeyId,
-      signingVersionFingerprint,
-      plans: initialAPlans,
-      campaign: initialACampaign,
-      sequence: 1,
-    }))
-  );
+  const initialAEvidence = await executeAndObserveRelease({
+    topology: live,
+    fixture,
+    label: 'A',
+    ports,
+    secrets,
+    signingKeyId,
+    signingVersionFingerprint,
+    plans: initialAPlans,
+    campaign: initialACampaign,
+    sequence: 1,
+  });
+  evidence.push(...initialAEvidence);
   const bPlans = await publishPlans({
     topology: live,
     productRelease: products.B,
@@ -1939,20 +2192,19 @@ export async function runLiveHubJourney({
   await admitPublishedPlans({topology: live, plans: bPlans, runId: `${runId}-b`});
   const bCampaign = await publishCampaign({topology: live, plans: bPlans, label: 'b', runId});
   await advanceCampaignRunToRunning({topology: live, campaign: bCampaign});
-  evidence.push(
-    ...(await executeAndObserveRelease({
-      topology: live,
-      fixture,
-      label: 'B',
-      ports,
-      secrets,
-      signingKeyId,
-      signingVersionFingerprint,
-      plans: bPlans,
-      campaign: bCampaign,
-      sequence: 2,
-    }))
-  );
+  const bEvidence = await executeAndObserveRelease({
+    topology: live,
+    fixture,
+    label: 'B',
+    ports,
+    secrets,
+    signingKeyId,
+    signingVersionFingerprint,
+    plans: bPlans,
+    campaign: bCampaign,
+    sequence: 2,
+  });
+  evidence.push(...bEvidence);
   const previousStatePlans = await publishPlans({
     topology: live,
     productRelease: products.A,
@@ -1966,20 +2218,19 @@ export async function runLiveHubJourney({
     runId,
   });
   await advanceCampaignRunToRunning({topology: live, campaign: previousStateCampaign});
-  evidence.push(
-    ...(await executeAndObserveRelease({
-      topology: live,
-      fixture,
-      label: 'A',
-      ports,
-      secrets,
-      signingKeyId,
-      signingVersionFingerprint,
-      plans: previousStatePlans,
-      campaign: previousStateCampaign,
-      sequence: 3,
-    }))
-  );
+  const previousAEvidence = await executeAndObserveRelease({
+    topology: live,
+    fixture,
+    label: 'A',
+    ports,
+    secrets,
+    signingKeyId,
+    signingVersionFingerprint,
+    plans: previousStatePlans,
+    campaign: previousStateCampaign,
+    sequence: 3,
+  });
+  evidence.push(...previousAEvidence);
 
   const fleet = await live.request('GET', '/api/v1/control-plane/fleet', {token: live.token});
   for (const target of live.targets) {
@@ -2005,15 +2256,51 @@ export async function runLiveHubJourney({
     ).values(),
   ];
   assert(migrationAttempts.length > 0, 'release B must execute its retry-safe migration through v2');
-  return {
-    ok: true,
-    proofMode: 'live-hub-api',
+  const productReleaseLineage = [products.A, products.B].map((product) => ({
+    id: product.id,
+    version: product.manifest.version,
+    canonicalChecksum: product.canonicalChecksum,
+    graphChecksum: product.graphChecksum,
+    componentReleaseIds: product.manifest.components.map((component) => component.componentReleaseId),
+  }));
+  const neutralAcceptance = buildNeutralLiveAcceptance({
+    liveStack,
+    nonLocalCalls: liveStack.nonLocalCalls,
+    componentReleases: componentReleaseLineage,
+    productReleases: productReleaseLineage,
     targets: live.targets.map((target) => ({
       id: target.id,
       hubTargetId: target.hubTargetId,
       activeRelease: 'A',
+      adapterKind: target.adapterKind === 'http-external' ? 'external-executor' : target.adapterKind,
+      executorId: target.executorId,
       observerId: target.observerId,
+      configSnapshotId: target.snapshot.id,
+      configChecksum: target.snapshot.canonicalChecksum,
     })),
+    transitions: {
+      aToB: live.targets.map((target) =>
+        buildNeutralTransitionEvidence({
+          targetId: target.id,
+          fromProductReleaseId: products.A.id,
+          toProductReleaseId: products.B.id,
+          evidence: bEvidence,
+        })
+      ),
+      bToA: live.targets.map((target) =>
+        buildNeutralTransitionEvidence({
+          targetId: target.id,
+          fromProductReleaseId: products.B.id,
+          toProductReleaseId: products.A.id,
+          evidence: previousAEvidence,
+        })
+      ),
+    },
+  });
+  return {
+    ok: true,
+    proofMode: 'live-hub-api',
+    ...neutralAcceptance,
     releaseHistory: ['A', 'B', 'A'],
     migration: {
       id: fixture.product.migration.id,
@@ -2150,10 +2437,18 @@ async function runDisposableStack(fixture) {
       waitForReady(`http://127.0.0.1:${ports.observerBeta}/ready`),
     ]);
 
+    const liveStack = {
+      started: true,
+      project,
+      loopbackOnly: true,
+      services: ['postgres', 'hub', 'external-executor', 'reference-executor', 'observer-alpha', 'observer-beta'],
+      nonLocalCalls: 0,
+    };
     const liveProof = await runLiveHubJourney({
       topology,
       fixture,
       runId,
+      liveStack,
       ports,
       secrets,
       signing,
@@ -2162,13 +2457,7 @@ async function runDisposableStack(fixture) {
     });
     report = {
       ...liveProof,
-      liveStack: {
-        started: true,
-        project,
-        loopbackOnly: true,
-        services: ['postgres', 'hub', 'external-executor', 'reference-executor', 'observer-alpha', 'observer-beta'],
-        nonLocalCalls: 0,
-      },
+      liveStack,
     };
   } catch (error) {
     primaryError = error;
@@ -2198,11 +2487,16 @@ function usage() {
   return `Usage:
   node examples/control-plane-e2e/run.mjs --mode contract [--json]
   node examples/control-plane-e2e/run.mjs --mode clean [--json]
+  node examples/control-plane-e2e/run.mjs --mode clean --acceptance [--json]
 
 Modes:
   contract  Validate and execute the deterministic fixture without Docker or a Hub.
   clean     Reset, start, verify, and remove a uniquely named loopback-only local stack.
             If Docker or a local Hub image is unavailable, run contract proof and report the exact blocker.
+
+Acceptance:
+  --acceptance  Require a validated live local-stack proof. Fixture-contract fallback is non-qualifying
+                and exits nonzero.
 
 Safety:
   The runner rejects unknown modes, generates secrets in memory, never writes them to disk,
@@ -2219,6 +2513,7 @@ async function main() {
   const modeIndex = args.indexOf('--mode');
   const mode = modeIndex >= 0 ? args[modeIndex + 1] : 'contract';
   const json = args.includes('--json');
+  const acceptance = args.includes('--acceptance');
   if (!['contract', 'clean'].includes(mode)) {
     throw new Error(`unsupported mode ${JSON.stringify(mode)}; expected contract or clean`);
   }
@@ -2229,6 +2524,8 @@ async function main() {
     report = {
       ...simulateContractFlow(fixture),
       mode,
+      acceptanceEligible: false,
+      nonLocalCalls: 0,
       liveStack: {started: false, blocker: 'contract mode does not start a Hub', nonLocalCalls: 0},
       cleanup: {completed: true, resourcesRemoved: []},
     };
@@ -2239,6 +2536,8 @@ async function main() {
         ...simulateContractFlow(fixture),
         mode,
         proofMode: 'fixture-contract',
+        acceptanceEligible: false,
+        nonLocalCalls: 0,
         liveStack: {started: false, blocker, nonLocalCalls: 0},
         cleanup: {completed: true, resourcesRemoved: []},
       };
@@ -2248,8 +2547,13 @@ async function main() {
     }
   }
 
+  report.acceptanceEligible = report.acceptanceEligible === true;
+  const acceptanceFailed = acceptance && !report.acceptanceEligible;
   if (json) {
     process.stdout.write(`${JSON.stringify(report)}\n`);
+    if (acceptanceFailed) {
+      process.exitCode = 1;
+    }
     return;
   }
   console.log('Neutral control-plane proof');
@@ -2261,6 +2565,10 @@ async function main() {
     console.log(`BLOCKED live stack: ${report.liveStack.blocker}`);
   } else {
     console.log(`PASS disposable local stack: ${report.liveStack.project}`);
+  }
+  if (acceptanceFailed) {
+    console.log('NON-QUALIFYING acceptance proof: a validated live local stack is required');
+    process.exitCode = 1;
   }
   console.log('PASS cleanup completed');
 }

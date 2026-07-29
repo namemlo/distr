@@ -80,12 +80,781 @@ function passedCampaignPlan({plan, taskId}) {
   };
 }
 
+function validNeutralAcceptanceInput() {
+  const digest = (value) => `sha256:${value.repeat(64)}`;
+  return {
+    liveStack: {started: true},
+    nonLocalCalls: 0,
+    componentReleases: [
+      {
+        id: 'component-release-a',
+        componentKey: 'service',
+        version: '1.0.0',
+        artifactDigest: digest('1'),
+        canonicalChecksum: digest('2'),
+      },
+      {
+        id: 'component-release-b',
+        componentKey: 'service',
+        version: '1.1.0',
+        artifactDigest: digest('3'),
+        canonicalChecksum: digest('4'),
+      },
+    ],
+    productReleases: [
+      {
+        id: 'product-a',
+        version: '1.0.0',
+        canonicalChecksum: digest('5'),
+        graphChecksum: digest('6'),
+        componentReleaseIds: ['component-release-a'],
+      },
+      {
+        id: 'product-b',
+        version: '1.1.0',
+        canonicalChecksum: digest('7'),
+        graphChecksum: digest('8'),
+        componentReleaseIds: ['component-release-b'],
+      },
+    ],
+    targets: [
+      {
+        id: 'target-alpha',
+        hubTargetId: 'hub-target-alpha',
+        activeRelease: 'A',
+        adapterKind: 'external-executor',
+        executorId: 'executor-alpha',
+        observerId: 'observer-alpha',
+        configSnapshotId: 'config-alpha',
+        configChecksum: digest('9'),
+      },
+      {
+        id: 'target-beta',
+        hubTargetId: 'hub-target-beta',
+        activeRelease: 'A',
+        adapterKind: 'reference',
+        executorId: 'executor-beta',
+        observerId: 'observer-beta',
+        configSnapshotId: 'config-beta',
+        configChecksum: digest('a'),
+      },
+    ],
+    transitions: {
+      aToB: [
+        {
+          targetId: 'target-alpha',
+          fromProductReleaseId: 'product-a',
+          toProductReleaseId: 'product-b',
+          planId: 'plan-alpha-a-to-b',
+          planChecksum: digest('b'),
+          executions: [
+            {
+              executionId: 'execution-alpha-a-to-b',
+              executionChecksum: digest('c'),
+              stepKey: 'deploy:alpha',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-alpha-a-to-b',
+              evidenceChecksum: digest('d'),
+              stateChecksum: digest('e'),
+              componentKey: 'service',
+            },
+          ],
+        },
+        {
+          targetId: 'target-beta',
+          fromProductReleaseId: 'product-a',
+          toProductReleaseId: 'product-b',
+          planId: 'plan-beta-a-to-b',
+          planChecksum: digest('f'),
+          executions: [
+            {
+              executionId: 'execution-beta-a-to-b',
+              executionChecksum: digest('0'),
+              stepKey: 'deploy:beta',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-beta-a-to-b',
+              evidenceChecksum: digest('1'),
+              stateChecksum: digest('2'),
+              componentKey: 'service',
+            },
+          ],
+        },
+      ],
+      bToA: [
+        {
+          targetId: 'target-alpha',
+          fromProductReleaseId: 'product-b',
+          toProductReleaseId: 'product-a',
+          planId: 'plan-alpha-b-to-a',
+          planChecksum: digest('3'),
+          executions: [
+            {
+              executionId: 'execution-alpha-b-to-a',
+              executionChecksum: digest('4'),
+              stepKey: 'deploy:alpha',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-alpha-b-to-a',
+              evidenceChecksum: digest('5'),
+              stateChecksum: digest('6'),
+              componentKey: 'service',
+            },
+          ],
+        },
+        {
+          targetId: 'target-beta',
+          fromProductReleaseId: 'product-b',
+          toProductReleaseId: 'product-a',
+          planId: 'plan-beta-b-to-a',
+          planChecksum: digest('7'),
+          executions: [
+            {
+              executionId: 'execution-beta-b-to-a',
+              executionChecksum: digest('8'),
+              stepKey: 'deploy:beta',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-beta-b-to-a',
+              evidenceChecksum: digest('9'),
+              stateChecksum: digest('a'),
+              componentKey: 'service',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 test('runtime trust uses the Hub signing public key and a separate observer key', () => {
   const material = createRuntimeKeyMaterial();
   assert.equal(material.signing.publicKey.length, 32);
   assert.equal(material.observer.publicKey.length, 32);
   assert.notDeepEqual(material.signing.publicKey, material.observer.publicKey);
   assert.notEqual(material.signingVersionFingerprint, material.observerKeyFingerprint);
+});
+
+test('neutral live acceptance requires a started local stack with exactly two targets', async () => {
+  const runtime = await import('./run.mjs');
+  const cases = [
+    {
+      message: /live stack must be started/,
+      mutate: (input) => {
+        input.liveStack.started = false;
+      },
+    },
+    {
+      message: /nonLocalCalls must be zero/,
+      mutate: (input) => {
+        input.nonLocalCalls = 1;
+      },
+    },
+    {
+      message: /exactly two targets/,
+      mutate: (input) => {
+        input.targets.pop();
+        input.transitions.aToB.pop();
+        input.transitions.bToA.pop();
+      },
+    },
+    {
+      message: /exactly two targets/,
+      mutate: (input) => {
+        input.targets.push({...input.targets[0], id: 'target-gamma', hubTargetId: 'hub-target-gamma'});
+      },
+    },
+  ];
+
+  for (const {message, mutate} of cases) {
+    const input = validNeutralAcceptanceInput();
+    mutate(input);
+    assert.throws(() => runtime.buildNeutralLiveAcceptance(input), message);
+  }
+});
+
+test('neutral live acceptance fails closed on ambiguous or synthetic lineage evidence', async () => {
+  const runtime = await import('./run.mjs');
+  const cases = [
+    {
+      message: /product release ids must be distinct/,
+      mutate: (input) => {
+        input.productReleases[1].id = input.productReleases[0].id;
+      },
+    },
+    {
+      message: /canonical checksum must be a canonical sha256 checksum/,
+      mutate: (input) => {
+        input.productReleases[0].canonicalChecksum = 'not-a-checksum';
+      },
+    },
+    {
+      message: /must reference retained component releases/,
+      mutate: (input) => {
+        input.productReleases[0].componentReleaseIds = ['not-retained'];
+      },
+    },
+    {
+      message: /target config checksums must be distinct/,
+      mutate: (input) => {
+        input.targets[1].configChecksum = input.targets[0].configChecksum;
+      },
+    },
+    {
+      message: /must finish on product release A/,
+      mutate: (input) => {
+        input.targets[0].activeRelease = 'B';
+      },
+    },
+    {
+      message: /requires exactly one A-to-B transition/,
+      mutate: (input) => {
+        input.transitions.aToB[1].targetId = 'target-alpha';
+      },
+    },
+    {
+      message: /must use the product A-B endpoints/,
+      mutate: (input) => {
+        input.transitions.bToA[0].fromProductReleaseId = 'product-a';
+      },
+    },
+    {
+      message: /transition plan ids must be distinct/,
+      mutate: (input) => {
+        input.transitions.bToA[0].planId = input.transitions.aToB[0].planId;
+      },
+    },
+    {
+      message: /plan checksum must be a canonical sha256 checksum/,
+      mutate: (input) => {
+        input.transitions.aToB[0].planChecksum = 'invalid';
+      },
+    },
+    {
+      message: /transition executions are required/,
+      mutate: (input) => {
+        input.transitions.aToB[0].executions = [];
+      },
+    },
+    {
+      message: /execution ids must be distinct/,
+      mutate: (input) => {
+        input.transitions.bToA[0].executions[0].executionId = input.transitions.aToB[0].executions[0].executionId;
+      },
+    },
+    {
+      message: /execution checksum must be a canonical sha256 checksum/,
+      mutate: (input) => {
+        input.transitions.aToB[0].executions[0].executionChecksum = 'invalid';
+      },
+    },
+    {
+      message: /transition observations are required/,
+      mutate: (input) => {
+        input.transitions.aToB[0].observations = [];
+      },
+    },
+    {
+      message: /observation ids must be distinct/,
+      mutate: (input) => {
+        input.transitions.bToA[0].observations[0].observationId =
+          input.transitions.aToB[0].observations[0].observationId;
+      },
+    },
+    {
+      message: /observation evidence checksum must be a canonical sha256 checksum/,
+      mutate: (input) => {
+        input.transitions.aToB[0].observations[0].evidenceChecksum = 'invalid';
+      },
+    },
+  ];
+
+  for (const {message, mutate} of cases) {
+    const input = validNeutralAcceptanceInput();
+    mutate(input);
+    assert.throws(() => runtime.buildNeutralLiveAcceptance(input), message);
+  }
+});
+
+test('neutral live acceptance marks only a complete validated A-B-A proof as qualifying', async () => {
+  const runtime = await import('./run.mjs');
+  const result = runtime.buildNeutralLiveAcceptance(validNeutralAcceptanceInput());
+
+  assert.equal(result.status, 'passed');
+  assert.equal(result.acceptanceEligible, true);
+  assert.equal(result.liveStack.started, true);
+  assert.equal(result.nonLocalCalls, 0);
+  assert.deepEqual(result.productReleaseHistory, ['product-a', 'product-b', 'product-a']);
+  assert.equal(result.targets.length, 2);
+  assert.deepEqual(
+    result.targets.map((target) => target.transitions.map((transition) => transition.direction)),
+    [
+      ['A-to-B', 'B-to-A'],
+      ['A-to-B', 'B-to-A'],
+    ]
+  );
+});
+
+test('neutral live acceptance retains every actual shared component and product release', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.buildNeutralLiveAcceptance, 'function');
+  const validInput = validNeutralAcceptanceInput();
+  const result = runtime.buildNeutralLiveAcceptance({
+    ...validInput,
+    componentReleases: [
+      {
+        id: 'component-a-provider',
+        componentKey: 'catalog-provider',
+        version: '1.0.0',
+        artifactDigest: `sha256:${'1'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'2'.repeat(64)}`,
+      },
+      {
+        id: 'component-a-consumer',
+        componentKey: 'gateway-consumer',
+        version: '1.0.0',
+        artifactDigest: `sha256:${'3'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'4'.repeat(64)}`,
+      },
+      {
+        id: 'component-b-provider',
+        componentKey: 'catalog-provider',
+        version: '1.1.0',
+        artifactDigest: `sha256:${'5'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'6'.repeat(64)}`,
+      },
+      {
+        id: 'component-b-consumer',
+        componentKey: 'gateway-consumer',
+        version: '1.1.0',
+        artifactDigest: `sha256:${'7'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'8'.repeat(64)}`,
+      },
+    ],
+    productReleases: [
+      {
+        id: 'product-a',
+        version: '1.0.0',
+        canonicalChecksum: `sha256:${'9'.repeat(64)}`,
+        graphChecksum: `sha256:${'a'.repeat(64)}`,
+        componentReleaseIds: ['component-a-provider', 'component-a-consumer'],
+      },
+      {
+        id: 'product-b',
+        version: '1.1.0',
+        canonicalChecksum: `sha256:${'b'.repeat(64)}`,
+        graphChecksum: `sha256:${'c'.repeat(64)}`,
+        componentReleaseIds: ['component-b-provider', 'component-b-consumer'],
+      },
+    ],
+  });
+
+  assert.deepEqual(result.releaseLineage, {
+    componentReleases: [
+      {
+        id: 'component-a-provider',
+        componentKey: 'catalog-provider',
+        version: '1.0.0',
+        artifactDigest: `sha256:${'1'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'2'.repeat(64)}`,
+      },
+      {
+        id: 'component-a-consumer',
+        componentKey: 'gateway-consumer',
+        version: '1.0.0',
+        artifactDigest: `sha256:${'3'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'4'.repeat(64)}`,
+      },
+      {
+        id: 'component-b-provider',
+        componentKey: 'catalog-provider',
+        version: '1.1.0',
+        artifactDigest: `sha256:${'5'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'6'.repeat(64)}`,
+      },
+      {
+        id: 'component-b-consumer',
+        componentKey: 'gateway-consumer',
+        version: '1.1.0',
+        artifactDigest: `sha256:${'7'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'8'.repeat(64)}`,
+      },
+    ],
+    productReleases: [
+      {
+        id: 'product-a',
+        version: '1.0.0',
+        canonicalChecksum: `sha256:${'9'.repeat(64)}`,
+        graphChecksum: `sha256:${'a'.repeat(64)}`,
+        componentReleaseIds: ['component-a-provider', 'component-a-consumer'],
+      },
+      {
+        id: 'product-b',
+        version: '1.1.0',
+        canonicalChecksum: `sha256:${'b'.repeat(64)}`,
+        graphChecksum: `sha256:${'c'.repeat(64)}`,
+        componentReleaseIds: ['component-b-provider', 'component-b-consumer'],
+      },
+    ],
+  });
+  assert.deepEqual(result.productReleaseHistory, ['product-a', 'product-b', 'product-a']);
+  assert.equal(result.status, 'passed');
+});
+
+test('neutral live acceptance keeps target-specific plans and runtime evidence distinct', async () => {
+  const runtime = await import('./run.mjs');
+  const alphaConfigChecksum = `sha256:${'d'.repeat(64)}`;
+  const betaConfigChecksum = `sha256:${'e'.repeat(64)}`;
+  const result = runtime.buildNeutralLiveAcceptance({
+    liveStack: {started: true},
+    nonLocalCalls: 0,
+    componentReleases: [
+      {
+        id: 'component-a',
+        componentKey: 'service',
+        version: '1.0.0',
+        artifactDigest: `sha256:${'3'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'4'.repeat(64)}`,
+      },
+      {
+        id: 'component-b',
+        componentKey: 'service',
+        version: '1.1.0',
+        artifactDigest: `sha256:${'5'.repeat(64)}`,
+        canonicalChecksum: `sha256:${'6'.repeat(64)}`,
+      },
+    ],
+    productReleases: [
+      {
+        id: 'product-a',
+        version: '1.0.0',
+        canonicalChecksum: `sha256:${'7'.repeat(64)}`,
+        graphChecksum: `sha256:${'8'.repeat(64)}`,
+        componentReleaseIds: ['component-a'],
+      },
+      {
+        id: 'product-b',
+        version: '1.1.0',
+        canonicalChecksum: `sha256:${'9'.repeat(64)}`,
+        graphChecksum: `sha256:${'a'.repeat(64)}`,
+        componentReleaseIds: ['component-b'],
+      },
+    ],
+    targets: [
+      {
+        id: 'target-alpha',
+        hubTargetId: 'hub-target-alpha',
+        activeRelease: 'A',
+        adapterKind: 'external-executor',
+        executorId: 'executor-alpha',
+        observerId: 'observer-alpha',
+        configSnapshotId: 'config-alpha',
+        configChecksum: alphaConfigChecksum,
+      },
+      {
+        id: 'target-beta',
+        hubTargetId: 'hub-target-beta',
+        activeRelease: 'A',
+        adapterKind: 'reference',
+        executorId: 'executor-beta',
+        observerId: 'observer-beta',
+        configSnapshotId: 'config-beta',
+        configChecksum: betaConfigChecksum,
+      },
+    ],
+    transitions: {
+      aToB: [
+        {
+          targetId: 'target-alpha',
+          fromProductReleaseId: 'product-a',
+          toProductReleaseId: 'product-b',
+          planId: 'plan-alpha-a-to-b',
+          planChecksum: `sha256:${'1'.repeat(64)}`,
+          executions: [
+            {
+              executionId: 'execution-alpha-a-to-b',
+              executionChecksum: `sha256:${'2'.repeat(64)}`,
+              stepKey: 'deploy:alpha',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-alpha-a-to-b',
+              evidenceChecksum: `sha256:${'3'.repeat(64)}`,
+              stateChecksum: `sha256:${'4'.repeat(64)}`,
+              componentKey: 'service',
+            },
+          ],
+        },
+        {
+          targetId: 'target-beta',
+          fromProductReleaseId: 'product-a',
+          toProductReleaseId: 'product-b',
+          planId: 'plan-beta-a-to-b',
+          planChecksum: `sha256:${'5'.repeat(64)}`,
+          executions: [
+            {
+              executionId: 'execution-beta-a-to-b',
+              executionChecksum: `sha256:${'6'.repeat(64)}`,
+              stepKey: 'deploy:beta',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-beta-a-to-b',
+              evidenceChecksum: `sha256:${'7'.repeat(64)}`,
+              stateChecksum: `sha256:${'8'.repeat(64)}`,
+              componentKey: 'service',
+            },
+          ],
+        },
+      ],
+      bToA: [
+        {
+          targetId: 'target-alpha',
+          fromProductReleaseId: 'product-b',
+          toProductReleaseId: 'product-a',
+          planId: 'plan-alpha-b-to-a',
+          planChecksum: `sha256:${'9'.repeat(64)}`,
+          executions: [
+            {
+              executionId: 'execution-alpha-b-to-a',
+              executionChecksum: `sha256:${'a'.repeat(64)}`,
+              stepKey: 'deploy:alpha',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-alpha-b-to-a',
+              evidenceChecksum: `sha256:${'b'.repeat(64)}`,
+              stateChecksum: `sha256:${'c'.repeat(64)}`,
+              componentKey: 'service',
+            },
+          ],
+        },
+        {
+          targetId: 'target-beta',
+          fromProductReleaseId: 'product-b',
+          toProductReleaseId: 'product-a',
+          planId: 'plan-beta-b-to-a',
+          planChecksum: `sha256:${'f'.repeat(64)}`,
+          executions: [
+            {
+              executionId: 'execution-beta-b-to-a',
+              executionChecksum: `sha256:${'0'.repeat(64)}`,
+              stepKey: 'deploy:beta',
+            },
+          ],
+          observations: [
+            {
+              observationId: 'observation-beta-b-to-a',
+              evidenceChecksum: `sha256:${'1'.repeat(64)}`,
+              stateChecksum: `sha256:${'2'.repeat(64)}`,
+              componentKey: 'service',
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(result.targets[0], {
+    id: 'target-alpha',
+    hubTargetId: 'hub-target-alpha',
+    targetId: 'hub-target-alpha',
+    activeRelease: 'A',
+    status: 'passed',
+    adapterKind: 'external-executor',
+    executorId: 'executor-alpha',
+    observerId: 'observer-alpha',
+    configSnapshotId: 'config-alpha',
+    configChecksum: alphaConfigChecksum,
+    transitions: [
+      {
+        direction: 'A-to-B',
+        targetConfigSnapshotId: 'config-alpha',
+        targetConfigChecksum: alphaConfigChecksum,
+        fromProductReleaseId: 'product-a',
+        toProductReleaseId: 'product-b',
+        planId: 'plan-alpha-a-to-b',
+        planChecksum: `sha256:${'1'.repeat(64)}`,
+        executions: [
+          {
+            executionId: 'execution-alpha-a-to-b',
+            executionChecksum: `sha256:${'2'.repeat(64)}`,
+            stepKey: 'deploy:alpha',
+          },
+        ],
+        observations: [
+          {
+            observationId: 'observation-alpha-a-to-b',
+            evidenceChecksum: `sha256:${'3'.repeat(64)}`,
+            stateChecksum: `sha256:${'4'.repeat(64)}`,
+            componentKey: 'service',
+          },
+        ],
+      },
+      {
+        direction: 'B-to-A',
+        targetConfigSnapshotId: 'config-alpha',
+        targetConfigChecksum: alphaConfigChecksum,
+        fromProductReleaseId: 'product-b',
+        toProductReleaseId: 'product-a',
+        planId: 'plan-alpha-b-to-a',
+        planChecksum: `sha256:${'9'.repeat(64)}`,
+        executions: [
+          {
+            executionId: 'execution-alpha-b-to-a',
+            executionChecksum: `sha256:${'a'.repeat(64)}`,
+            stepKey: 'deploy:alpha',
+          },
+        ],
+        observations: [
+          {
+            observationId: 'observation-alpha-b-to-a',
+            evidenceChecksum: `sha256:${'b'.repeat(64)}`,
+            stateChecksum: `sha256:${'c'.repeat(64)}`,
+            componentKey: 'service',
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.targets[1].configChecksum, betaConfigChecksum);
+  assert.deepEqual(
+    result.targets[1].transitions.map(({direction, planId, executions, observations}) => ({
+      direction,
+      planId,
+      executionId: executions[0].executionId,
+      observationId: observations[0].observationId,
+    })),
+    [
+      {
+        direction: 'A-to-B',
+        planId: 'plan-beta-a-to-b',
+        executionId: 'execution-beta-a-to-b',
+        observationId: 'observation-beta-a-to-b',
+      },
+      {
+        direction: 'B-to-A',
+        planId: 'plan-beta-b-to-a',
+        executionId: 'execution-beta-b-to-a',
+        observationId: 'observation-beta-b-to-a',
+      },
+    ]
+  );
+});
+
+test('neutral execution evidence binds the actual signed intent identity and checksum', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.buildNeutralExecutionEvidence, 'function');
+
+  assert.deepEqual(
+    runtime.buildNeutralExecutionEvidence({
+      payload: {
+        executionId: 'execution-live-alpha',
+        stepKey: 'deploy:catalog-provider',
+      },
+      intentChecksum: `sha256:${'3'.repeat(64)}`,
+    }),
+    {
+      executionId: 'execution-live-alpha',
+      executionChecksum: `sha256:${'3'.repeat(64)}`,
+      stepKey: 'deploy:catalog-provider',
+    }
+  );
+});
+
+test('neutral transition evidence retains one real target plan with deduplicated executions and observations', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.buildNeutralTransitionEvidence, 'function');
+  const execution = {
+    executionId: 'execution-alpha-b',
+    executionChecksum: `sha256:${'4'.repeat(64)}`,
+    stepKey: 'deploy:catalog-provider',
+  };
+
+  assert.deepEqual(
+    runtime.buildNeutralTransitionEvidence({
+      targetId: 'target-alpha',
+      fromProductReleaseId: 'product-a',
+      toProductReleaseId: 'product-b',
+      evidence: [
+        {
+          targetId: 'target-alpha',
+          component: 'catalog-provider',
+          plan: {id: 'plan-alpha-b', checksum: `sha256:${'5'.repeat(64)}`},
+          executions: [execution],
+          observed: {
+            id: 'observation-alpha-provider-b',
+            evidenceChecksum: `sha256:${'6'.repeat(64)}`,
+            stateChecksum: `sha256:${'7'.repeat(64)}`,
+          },
+        },
+        {
+          targetId: 'target-alpha',
+          component: 'gateway-consumer',
+          plan: {id: 'plan-alpha-b', checksum: `sha256:${'5'.repeat(64)}`},
+          executions: [execution],
+          observed: {
+            id: 'observation-alpha-consumer-b',
+            evidenceChecksum: `sha256:${'8'.repeat(64)}`,
+            stateChecksum: `sha256:${'9'.repeat(64)}`,
+          },
+        },
+        {
+          targetId: 'target-beta',
+          component: 'catalog-provider',
+          plan: {id: 'plan-beta-b', checksum: `sha256:${'a'.repeat(64)}`},
+          executions: [],
+          observed: {
+            id: 'observation-beta-provider-b',
+            evidenceChecksum: `sha256:${'b'.repeat(64)}`,
+            stateChecksum: `sha256:${'c'.repeat(64)}`,
+          },
+        },
+      ],
+    }),
+    {
+      targetId: 'target-alpha',
+      fromProductReleaseId: 'product-a',
+      toProductReleaseId: 'product-b',
+      planId: 'plan-alpha-b',
+      planChecksum: `sha256:${'5'.repeat(64)}`,
+      executions: [execution],
+      observations: [
+        {
+          observationId: 'observation-alpha-provider-b',
+          evidenceChecksum: `sha256:${'6'.repeat(64)}`,
+          stateChecksum: `sha256:${'7'.repeat(64)}`,
+          componentKey: 'catalog-provider',
+        },
+        {
+          observationId: 'observation-alpha-consumer-b',
+          evidenceChecksum: `sha256:${'8'.repeat(64)}`,
+          stateChecksum: `sha256:${'9'.repeat(64)}`,
+          componentKey: 'gateway-consumer',
+        },
+      ],
+    }
+  );
+});
+
+test('neutral live acceptance rejects a missing target transition instead of emitting partial lineage', async () => {
+  const runtime = await import('./run.mjs');
+  const input = validNeutralAcceptanceInput();
+  input.transitions.aToB.pop();
+
+  assert.throws(() => runtime.buildNeutralLiveAcceptance(input), /exactly two A-to-B transitions/);
 });
 
 test('lease adapter revision is the exact server frozen-evidence checksum', async () => {
@@ -994,9 +1763,7 @@ test('lease identities retain each frozen target-step capability, scope, and rev
           },
         ],
       ]),
-      observers: new Map([
-        ['catalog', {id: '77777777-7777-4777-8777-777777777777'}],
-      ]),
+      observers: new Map([['catalog', {id: '77777777-7777-4777-8777-777777777777'}]]),
       snapshot: {id: base.configSnapshotId, canonicalChecksum: base.configChecksum},
     },
     signingKeyId: keyId,
@@ -1046,9 +1813,7 @@ test('component release and target setup cover deploy migration and health adapt
     instances: new Map([
       ['catalog', {id: '33333333-3333-4333-8333-333333333333', databaseBoundary: 'target-alpha-db'}],
     ]),
-    observers: new Map([
-      ['catalog', {id: '77777777-7777-4777-8777-777777777777'}],
-    ]),
+    observers: new Map([['catalog', {id: '77777777-7777-4777-8777-777777777777'}]]),
   };
   assert.deepEqual(runtime.componentAdapterScopes(target, 'catalog'), [
     {
@@ -1256,9 +2021,7 @@ test('component v2 publication declares immutable SBOM and submits production-ve
   assert.equal(publication.evidence[0].bundle.mediaType, 'application/vnd.dev.sigstore.bundle.v0.3+json');
   assert.ok(publication.evidence[0].bundle.dsseEnvelope.signatures[0].sig);
   assert.ok(publication.evidence[0].bundle.verificationMaterial.tlogEntries.length);
-  assert.ok(
-    publication.evidence[0].bundle.verificationMaterial.timestampVerificationData.rfc3161Timestamps.length
-  );
+  assert.ok(publication.evidence[0].bundle.verificationMaterial.timestampVerificationData.rfc3161Timestamps.length);
 });
 
 test('provenance helper builds once with local offline Go resolution before executing the cached binary', async (t) => {
@@ -1266,11 +2029,7 @@ test('provenance helper builds once with local offline Go resolution before exec
     encoding: 'utf8',
   });
   assert.equal(resolvedRoot.status, 0, resolvedRoot.stderr);
-  const realGo = path.join(
-    resolvedRoot.stdout.trim(),
-    'bin',
-    process.platform === 'win32' ? 'go.exe' : 'go'
-  );
+  const realGo = path.join(resolvedRoot.stdout.trim(), 'bin', process.platform === 'win32' ? 'go.exe' : 'go');
   const workDir = await mkdtemp(path.join(tmpdir(), 'distr-provenance-spawn-'));
   t.after(() => rm(workDir, {recursive: true, force: true}));
   const invocationLog = path.join(workDir, 'invocations.jsonl');
@@ -1684,6 +2443,7 @@ test('contract mode deterministically proves A, B, and previous-state B-to-A wit
   assert.equal(report.migration.appliedCount, 1);
   assert.equal(report.secretLeaks, 0);
   assert.match(report.flowChecksum, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(report.acceptanceEligible, false);
 });
 
 test('clean mode forced fallback reports the live blocker and completes scoped cleanup', () => {
@@ -1705,6 +2465,26 @@ test('clean mode forced fallback reports the live blocker and completes scoped c
   assert.equal(report.cleanup.completed, true);
   assert.match(report.liveStack.blocker, /forced contract mode/i);
   assert.equal(report.liveStack.nonLocalCalls, 0);
+  assert.equal(report.acceptanceEligible, false);
+});
+
+test('clean acceptance mode exits nonzero when only fixture fallback is available', () => {
+  const result = spawnSync(node, [path.join(fixtureDir, 'run.mjs'), '--mode', 'clean', '--acceptance', '--json'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      DISTR_CP_FORCE_CONTRACT: 'true',
+      DISTR_CP_ALLOW_LIVE: '',
+    },
+  });
+
+  assert.notEqual(result.status, 0, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, true);
+  assert.equal(report.proofMode, 'fixture-contract');
+  assert.equal(report.acceptanceEligible, false);
+  assert.equal(report.liveStack.started, false);
 });
 
 test('HTTP external executor is target-bound, fenced, idempotent, cancellable, and redacts logs', async () => {
