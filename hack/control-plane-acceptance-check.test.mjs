@@ -1,17 +1,60 @@
 import assert from 'node:assert/strict';
 import {execFile, spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, rm, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
+import {deflateSync} from 'node:zlib';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const checker = path.join(repoRoot, 'hack', 'control-plane-acceptance-check.mjs');
 const contractPath = 'docs/release/control-plane-acceptance-contract.json';
+const browserAutomatedTest = 'frontend/ui/e2e/control-plane.spec.ts';
+const browserManualEvidence = 'docs/fork/PR-080_OPERATOR_CONTROL_ROOM_UI.md';
+const browserConfig = 'playwright.control-plane-evidence.config.ts';
+const browserFixture = 'frontend/ui/e2e/fixtures/control-plane.ts';
+const browserProject = 'chromium';
+const browserTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
+const browserGrep = `${browserTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
+const browserCommand = [
+  'pnpm',
+  'exec',
+  'playwright',
+  'test',
+  '--config',
+  browserConfig,
+  '--project',
+  browserProject,
+  browserAutomatedTest,
+  '--grep',
+  browserGrep,
+  '--reporter',
+  'json',
+];
+const browserScreenshotNames = [
+  '01-version-build.png',
+  '02-accumulated-changelog.png',
+  '03-dependency-constraints.png',
+  '04-plan-approval-pending.png',
+  '05-approval-request.png',
+  '06-approval-approved.png',
+  '07-plan-approval-satisfied.png',
+  '08-previous-state-plan.png',
+  '09-previous-state-comparison.png',
+  '10-release-b-history-preserved.png',
+  '11-immutable-history-audit.png',
+];
+const browserExecutionSourcePaths = [
+  browserConfig,
+  'playwright.control-plane.config.ts',
+  browserFixture,
+  'package.json',
+  'pnpm-lock.yaml',
+];
 const adopterOwners = new Map([
   ['AC-01', 'ADOPTER-01'],
   ['AC-02', 'ADOPTER-01'],
@@ -79,6 +122,44 @@ function sha256(value) {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
+const fixturePNGCache = new Map();
+
+function crc32(bytes) {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const typeBytes = Buffer.from(type);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])));
+  return Buffer.concat([length, typeBytes, data, checksum]);
+}
+
+function fixturePNG(width = 1440, height = 1200, {secret = false} = {}) {
+  const key = `${width}:${height}:${secret}`;
+  if (!fixturePNGCache.has(key)) {
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    const scanlines = Buffer.alloc((width * 4 + 1) * height);
+    const chunks = [pngChunk('IHDR', ihdr)];
+    if (secret) chunks.push(pngChunk('tEXt', Buffer.from('password\0browser-secret-value')));
+    chunks.push(pngChunk('IDAT', deflateSync(scanlines)));
+    chunks.push(pngChunk('IEND', Buffer.alloc(0)));
+    fixturePNGCache.set(key, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), ...chunks]));
+  }
+  return Buffer.from(fixturePNGCache.get(key));
+}
+
 function renderLedger(rows) {
   return [
     '# Acceptance ledger',
@@ -105,6 +186,7 @@ function fixtureContract(proofOverride) {
     };
   }
   if (proofOverride) {
+    const browserProof = proofOverride.proofClass === 'browser-e2e';
     const contract = {
       schema: 'distr.control-plane-acceptance-contract/v1',
       normativeSource: 'normative-plan.md',
@@ -122,16 +204,17 @@ function fixtureContract(proofOverride) {
           testRunner: 'node-test',
         },
         'special-proof': {
-          automatedTest: 'evidence.test.mjs',
-          manualEvidence: 'evidence.md',
+          automatedTest: browserProof ? browserAutomatedTest : 'evidence.test.mjs',
+          manualEvidence: browserProof ? browserManualEvidence : 'evidence.md',
           allowedProofClasses: [proofOverride.proofClass],
-          testRunner: 'node-test',
+          testRunner: browserProof ? 'playwright' : 'node-test',
           proofRequirements: proofOverride.proofRequirements ?? {},
         },
       },
       acceptance,
     };
     contract.acceptance[proofOverride.id].profile = 'special-proof';
+    if (browserProof) contract.acceptance[proofOverride.id].owner = 'PR-080';
     return contract;
   }
   return {
@@ -165,9 +248,24 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
   await mkdir(path.join(directory, 'results'), {recursive: true});
   const evidence = '# Retained fixture evidence\n';
   const automatedTest = "import {test} from 'node:test';\ntest('proof', () => {});\n";
+  const browserSources = {
+    [browserAutomatedTest]: `test('${browserTitle}', async ({controlPlane}) => {\n  expect(controlPlane.externalAttempts).toEqual([]);\n});\n`,
+    [browserManualEvidence]: '# AC-63 browser evidence\n',
+    [browserConfig]: `export default {projects: [{name: '${browserProject}'}]};\n`,
+    'playwright.control-plane.config.ts': 'export default {};\n',
+    [browserFixture]:
+      "const externalAttempts = [];\npage.route('**/*', async (route) => {\n  if (!isLocalHost(new URL(route.request().url()).hostname)) {\n    externalAttempts.push(route.request().url());\n    await route.abort('blockedbyclient');\n  }\n});\n",
+    'package.json': '{"name":"acceptance-browser-fixture","private":true,"packageManager":"pnpm@11.7.0"}\n',
+    'pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+  };
   const contract = fixtureContract(proofOverride);
   await writeFile(path.join(directory, 'evidence.test.mjs'), automatedTest);
   await writeFile(path.join(directory, 'evidence.md'), evidence);
+  for (const [relative, contents] of Object.entries(browserSources)) {
+    const target = path.join(directory, relative);
+    await mkdir(path.dirname(target), {recursive: true});
+    await writeFile(target, contents);
+  }
   await writeFile(path.join(directory, 'normative-plan.md'), '# Normative owner map\n');
   await writeFile(path.join(directory, contractPath), `${JSON.stringify(contract, null, 2)}\n`);
   await git(directory, 'init', '--quiet');
@@ -193,6 +291,25 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
   };
   const resultBytes = `${JSON.stringify(result, null, 2)}\n`;
   await writeFile(path.join(directory, 'results', 'test-result.json'), resultBytes);
+  let browserResultBytes;
+  if (proofOverride?.proofClass === 'browser-e2e') {
+    const browserResult = {
+      schema: 'distr.control-plane-test-result/v1',
+      sourceCommit,
+      command: {
+        runner: 'playwright',
+        argv: browserCommand,
+        selectedTestSource: browserAutomatedTest,
+      },
+      exitCode: 0,
+      tests: {expected: 1, passed: 1, failed: 0, skipped: 0},
+      status: 'passed',
+      startedAt: '2030-01-01T00:00:00.000Z',
+      completedAt: '2030-01-01T00:00:01.000Z',
+    };
+    browserResultBytes = `${JSON.stringify(browserResult, null, 2)}\n`;
+    await writeFile(path.join(directory, 'results', 'browser-test-result.json'), browserResultBytes);
+  }
 
   let classEvidence;
   if (proofOverride?.proofClass === 'performance-measurement') {
@@ -342,12 +459,74 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
     await writeFile(path.join(directory, 'results', 'class-report.json'), bytes);
     classEvidence = {path: 'results/class-report.json', sha256: sha256(bytes)};
   } else if (proofOverride?.proofClass === 'browser-e2e') {
+    await mkdir(path.join(directory, 'results', 'screenshots'), {recursive: true});
+    const attachments = [];
+    const screenshots = [];
+    for (const name of browserScreenshotNames) {
+      const bytes = fixturePNG();
+      const screenshotPath = `results/screenshots/${name}`;
+      await writeFile(path.join(directory, screenshotPath), bytes);
+      attachments.push({
+        name,
+        path: `output/playwright/control-plane-evidence/result/${name}`,
+        contentType: 'image/png',
+      });
+      screenshots.push({name, path: screenshotPath, sha256: sha256(bytes), width: 1440, height: 1200});
+    }
+    const rawReport = {
+      config: {version: '1.52.0', projects: [{name: browserProject}]},
+      suites: [
+        {
+          title: 'operator control room route-mocked contract',
+          file: browserAutomatedTest,
+          specs: [
+            {
+              title: browserTitle,
+              ok: true,
+              file: browserAutomatedTest,
+              tests: [
+                {
+                  projectName: browserProject,
+                  expectedStatus: 'passed',
+                  status: 'expected',
+                  results: [{retry: 0, status: 'passed', errors: [], attachments}],
+                },
+              ],
+            },
+          ],
+          suites: [],
+        },
+      ],
+      errors: [],
+      stats: {
+        startTime: '2030-01-01T00:00:00.000Z',
+        duration: 1000,
+        expected: 1,
+        skipped: 0,
+        flaky: 0,
+        unexpected: 0,
+      },
+    };
+    const rawBytes = `${JSON.stringify(rawReport, null, 2)}\n`;
+    await mkdir(path.join(directory, 'results', 'raw'), {recursive: true});
+    await writeFile(path.join(directory, 'results', 'raw', 'browser-raw.json'), rawBytes);
     const classReport = {
       schema: 'distr.control-plane-browser-e2e-result/v1',
       sourceCommit,
       runner: 'playwright',
       status: 'passed',
-      tests: {expected: 12, passed: 12, unexpected: 0, flaky: 0, skipped: 0},
+      project: browserProject,
+      testSource: browserAutomatedTest,
+      testTitles: [browserTitle],
+      tests: {expected: 1, passed: 1, unexpected: 0, flaky: 0, skipped: 0},
+      rawResult: {path: 'results/raw/browser-raw.json', sha256: sha256(rawBytes)},
+      screenshots,
+      networkProof: {mode: 'bound-test-assertion', testTitle: browserTitle, externalAttempts: 0},
+      executionSources: browserExecutionSourcePaths.map((sourcePath) => ({
+        path: sourcePath,
+        sha256: sha256(browserSources[sourcePath]),
+      })),
+      toolVersions: {node: '26.3.1', pnpm: '11.7.0', playwright: '1.52.0'},
     };
     const bytes = `${JSON.stringify(classReport, null, 2)}\n`;
     await writeFile(path.join(directory, 'results', 'class-report.json'), bytes);
@@ -376,15 +555,22 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
         : adopterOwner
           ? 'adopter-execution'
           : 'community-focused-test';
+    const profile = contract.profiles[rule.profile];
+    const automatedBytes =
+      profile.automatedTest === 'evidence.test.mjs' ? automatedTest : browserSources[profile.automatedTest];
+    const manualBytes = profile.manualEvidence === 'evidence.md' ? evidence : browserSources[profile.manualEvidence];
+    const browserRow = proofClass === 'browser-e2e';
     const artifact = {
       schema: 'distr.control-plane-acceptance-evidence/v1',
       acceptanceId: id,
       owner: rule.owner,
       proofClass,
       sourceCommit,
-      automatedTest: {path: 'evidence.test.mjs', sha256: sha256(automatedTest)},
-      manualEvidence: {path: 'evidence.md', sha256: sha256(evidence)},
-      testResult: {path: 'results/test-result.json', sha256: sha256(resultBytes)},
+      automatedTest: {path: profile.automatedTest, sha256: sha256(automatedBytes)},
+      manualEvidence: {path: profile.manualEvidence, sha256: sha256(manualBytes)},
+      testResult: browserRow
+        ? {path: 'results/browser-test-result.json', sha256: sha256(browserResultBytes)}
+        : {path: 'results/test-result.json', sha256: sha256(resultBytes)},
     };
     if (proofOverride?.id === id) {
       artifact.classEvidence = classEvidence;
@@ -459,8 +645,8 @@ async function fixtureWorkspace({mutateRows = () => {}, verifiedAdopter, proofOv
     rows.push({
       id,
       owner: rule.owner,
-      automatedTest: 'evidence.test.mjs',
-      manualEvidence: 'evidence.md',
+      automatedTest: profile.automatedTest,
+      manualEvidence: profile.manualEvidence,
       status: adopterOwner ? 'verified-adopter' : 'community-evidence-retained',
       artifact: `${artifactPath} @ ${sha256(artifactBytes)}`,
     });
@@ -655,6 +841,27 @@ async function rewriteClassReport(directory, id, mutate, message) {
       const reportPath = path.join(directory, artifact.classEvidence.path);
       const report = JSON.parse(await readFile(reportPath, 'utf8'));
       mutate(report);
+      const reportBytes = `${JSON.stringify(report, null, 2)}\n`;
+      await writeFile(reportPath, reportBytes);
+      artifact.classEvidence.sha256 = sha256(reportBytes);
+    },
+    message
+  );
+}
+
+async function rewriteBrowserEvidence(directory, mutate, message) {
+  await rewriteArtifact(
+    directory,
+    'AC-63',
+    async (artifact) => {
+      const reportPath = path.join(directory, artifact.classEvidence.path);
+      const report = JSON.parse(await readFile(reportPath, 'utf8'));
+      const rawPath = path.join(directory, report.rawResult.path);
+      const raw = JSON.parse(await readFile(rawPath, 'utf8'));
+      await mutate({artifact, report, raw, directory});
+      const rawBytes = `${JSON.stringify(raw, null, 2)}\n`;
+      await writeFile(rawPath, rawBytes);
+      report.rawResult.sha256 = sha256(rawBytes);
       const reportBytes = `${JSON.stringify(report, null, 2)}\n`;
       await writeFile(reportPath, reportBytes);
       artifact.classEvidence.sha256 = sha256(reportBytes);
@@ -1120,11 +1327,11 @@ test('rejects neutral-live targets that do not share exact immutable release lin
 
 test('rejects browser proof with zero expected tests', async () => {
   const {directory} = await fixtureWorkspace({
-    proofOverride: {id: 'AC-03', proofClass: 'browser-e2e'},
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
   });
   await rewriteClassReport(
     directory,
-    'AC-03',
+    'AC-63',
     (report) => {
       report.tests.expected = 0;
       report.tests.passed = 0;
@@ -1135,7 +1342,307 @@ test('rejects browser proof with zero expected tests', async () => {
   const result = await run(directory);
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /AC-03 browser report must have expected tests greater than zero/);
+  assert.match(result.stderr, /AC-63 browser report must contain exactly one passed test/);
+});
+
+test('rejects AC-63 generic evidence that did not run the exact purpose-built Playwright command', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+  });
+  await rewriteArtifact(
+    directory,
+    'AC-63',
+    async (artifact) => {
+      const resultPath = path.join(directory, artifact.testResult.path);
+      const result = JSON.parse(await readFile(resultPath, 'utf8'));
+      result.command.argv = result.command.argv.filter((argument) => argument !== '--project');
+      const bytes = `${JSON.stringify(result, null, 2)}\n`;
+      await writeFile(resultPath, bytes);
+      artifact.testResult.sha256 = sha256(bytes);
+    },
+    'weaken exact browser command'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-63 playwright argv must exactly run the purpose-built browser evidence test/);
+});
+
+test('rejects AC-63 browser class evidence with the wrong project, source, or title', async () => {
+  for (const [field, mutate] of [
+    ['project', ({report}) => (report.project = 'firefox')],
+    ['source', ({report}) => (report.testSource = 'frontend/ui/e2e/other.spec.ts')],
+    ['title', ({report}) => (report.testTitles = ['@evidence another journey'])],
+  ]) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteBrowserEvidence(directory, mutate, `change browser ${field}`);
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, field);
+    assert.match(result.stderr, /AC-63 browser report must bind the exact project, source, and title/, field);
+  }
+});
+
+test('rejects AC-63 raw Playwright evidence with a different title or attachment set', async () => {
+  for (const [field, mutate] of [
+    ['title', ({raw}) => (raw.suites[0].specs[0].title = '@evidence forged journey')],
+    ['attachments', ({raw}) => raw.suites[0].specs[0].tests[0].results[0].attachments.pop()],
+  ]) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteBrowserEvidence(directory, mutate, `change raw browser ${field}`);
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, field);
+    assert.match(
+      result.stderr,
+      /AC-63 raw Playwright report must contain the exact passed test and 11 attachments/,
+      field
+    );
+  }
+});
+
+test('rejects AC-63 retained screenshot checksum or PNG dimension drift', async () => {
+  for (const [field, mutate, expected] of [
+    [
+      'checksum',
+      async ({report, directory}) => {
+        await writeFile(path.join(directory, report.screenshots[0].path), fixturePNG(1200, 1440));
+      },
+      /AC-63 browser screenshot checksum mismatch/,
+    ],
+    [
+      'dimensions',
+      async ({report, directory}) => {
+        const bytes = fixturePNG(1, 1);
+        await writeFile(path.join(directory, report.screenshots[0].path), bytes);
+        report.screenshots[0].sha256 = sha256(bytes);
+      },
+      /AC-63 browser screenshot PNG dimensions must match 1440x1200/,
+    ],
+  ]) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteBrowserEvidence(directory, mutate, `change screenshot ${field}`);
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, field);
+    assert.match(result.stderr, expected, field);
+  }
+});
+
+test('rejects AC-63 browser proof without exact network isolation, source bindings, and tool identity', async () => {
+  for (const [field, mutate, expected] of [
+    [
+      'network',
+      ({report}) => (report.networkProof.externalAttempts = 1),
+      /AC-63 browser network proof must bind the exact test assertion and zero external attempts/,
+    ],
+    [
+      'sources',
+      ({report}) => report.executionSources.pop(),
+      /AC-63 browser execution sources must exactly bind the purpose-built config, fixture, package, and lockfile/,
+    ],
+    [
+      'tools',
+      ({report}) => (report.toolVersions.playwright = '9.9.9'),
+      /AC-63 browser tool versions must be canonical and match the raw Playwright report/,
+    ],
+  ]) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteBrowserEvidence(directory, mutate, `change browser ${field}`);
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, field);
+    assert.match(result.stderr, expected, field);
+  }
+});
+
+test('rejects structurally invalid, truncated, bad-CRC, missing-IEND, and secret-bearing PNG evidence', async () => {
+  const mutations = [
+    [
+      'signature',
+      () => {
+        const bytes = fixturePNG();
+        bytes[0] ^= 0xff;
+        return bytes;
+      },
+      /AC-63 browser screenshot PNG is invalid/,
+    ],
+    ['truncated', () => fixturePNG().subarray(0, fixturePNG().length - 5), /AC-63 browser screenshot PNG is invalid/],
+    [
+      'CRC',
+      () => {
+        const bytes = fixturePNG();
+        bytes[29] ^= 0xff;
+        return bytes;
+      },
+      /AC-63 browser screenshot PNG is invalid/,
+    ],
+    ['IEND', () => fixturePNG().subarray(0, fixturePNG().length - 12), /AC-63 browser screenshot PNG is invalid/],
+    ['secret', () => fixturePNG(1440, 1200, {secret: true}), /AC-63 browser screenshot metadata contains a secret/],
+  ];
+  for (const [name, makeBytes, expected] of mutations) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteBrowserEvidence(
+      directory,
+      async ({report}) => {
+        const bytes = makeBytes();
+        await writeFile(path.join(directory, report.screenshots[0].path), bytes);
+        report.screenshots[0].sha256 = sha256(bytes);
+      },
+      `forge PNG ${name}`
+    );
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, name);
+    assert.match(result.stderr, expected, name);
+  }
+});
+
+test('accepts an absolute raw spec path only when it normalizes through the declared isolated root', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+  });
+  await rewriteBrowserEvidence(
+    directory,
+    ({raw}) => {
+      raw.config.rootDir = path.join(path.parse(directory).root, 'isolated-ac63-source');
+      raw.suites[0].specs[0].file = path.join(raw.config.rootDir, ...browserAutomatedTest.split('/'));
+    },
+    'retain absolute isolated source path'
+  );
+
+  const result = await run(directory);
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('rejects an absolute raw spec path outside the declared isolated root', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+  });
+  await rewriteBrowserEvidence(
+    directory,
+    ({raw}) => {
+      raw.config.rootDir = path.join(path.parse(directory).root, 'isolated-ac63-source');
+      raw.suites[0].specs[0].file = path.join(
+        path.parse(directory).root,
+        'outside',
+        ...browserAutomatedTest.split('/')
+      );
+    },
+    'escape absolute isolated source path'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-63 raw Playwright report source must normalize to the bound automated test/);
+});
+
+test('rejects secret-like values anywhere in retained raw Playwright JSON', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+  });
+  await rewriteBrowserEvidence(
+    directory,
+    ({raw}) => {
+      raw.config.metadata = {nested: [{apiToken: 'browser-secret-value'}]};
+    },
+    'inject retained raw secret'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-63 retained Playwright JSON contains a secret-like value/);
+});
+
+test('rejects retained raw and screenshot bindings through directory junctions', async () => {
+  for (const kind of ['raw', 'screenshots']) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    const sourceDirectory = path.join(directory, 'results', kind);
+    const escaped = await mkdtemp(path.join(tmpdir(), `acceptance-${kind}-escape-`));
+    const files = kind === 'raw' ? ['browser-raw.json'] : browserScreenshotNames;
+    for (const file of files) {
+      await writeFile(path.join(escaped, file), await readFile(path.join(sourceDirectory, file)));
+    }
+    await rm(sourceDirectory, {recursive: true});
+    await symlink(escaped, sourceDirectory, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, kind);
+    assert.match(
+      result.stderr,
+      /AC-63 browser (?:raw Playwright report|screenshot) must not traverse a reparse point/,
+      kind
+    );
+  }
+});
+
+test('rejects generic/raw timestamp drift and a generic AC-63 count other than exactly one pass', async () => {
+  for (const field of ['timestamp', 'count']) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteArtifact(
+      directory,
+      'AC-63',
+      async (artifact) => {
+        const resultPath = path.join(directory, artifact.testResult.path);
+        const generic = JSON.parse(await readFile(resultPath, 'utf8'));
+        if (field === 'timestamp') generic.completedAt = '2030-01-01T00:00:02.000Z';
+        else generic.tests = {expected: 2, passed: 2, failed: 0, skipped: 0};
+        const bytes = `${JSON.stringify(generic, null, 2)}\n`;
+        await writeFile(resultPath, bytes);
+        artifact.testResult.sha256 = sha256(bytes);
+      },
+      `drift browser generic ${field}`
+    );
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, field);
+    assert.match(result.stderr, /AC-63 generic and raw browser result counts and timestamps must exactly match/, field);
+  }
+});
+
+test('rejects a pnpm tool version that differs from the source-bound packageManager', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+  });
+  await rewriteBrowserEvidence(
+    directory,
+    ({report, raw}) => {
+      report.toolVersions.pnpm = '12.0.0';
+      report.toolVersions.playwright = '2.0.0';
+      raw.config.version = '2.0.0';
+    },
+    'drift tool identities'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-63 browser pnpm version must match source-bound packageManager/);
 });
 
 test('accepts valid performance neutral-live and browser class evidence contracts', async () => {
@@ -1146,7 +1653,7 @@ test('accepts valid performance neutral-live and browser class evidence contract
       proofRequirements: fixtureFleetRequirements,
     },
     {id: 'AC-03', proofClass: 'neutral-live-execution'},
-    {id: 'AC-03', proofClass: 'browser-e2e'},
+    {id: 'AC-63', proofClass: 'browser-e2e'},
   ];
   for (const proofOverride of cases) {
     const {directory} = await fixtureWorkspace({proofOverride});

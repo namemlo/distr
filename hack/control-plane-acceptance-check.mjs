@@ -2,11 +2,12 @@
 
 import {execFile, spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises';
+import {lstat, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
+import {inflateSync} from 'node:zlib';
 
 const execFileAsync = promisify(execFile);
 const goTestDeclarationsHelper = fileURLToPath(
@@ -32,6 +33,48 @@ const testResultSchema = 'distr.control-plane-test-result/v1';
 const performanceResultSchema = 'distr.control-plane-performance-result/v1';
 const neutralLiveResultSchema = 'distr.control-plane-neutral-live-result/v1';
 const browserResultSchema = 'distr.control-plane-browser-e2e-result/v1';
+const browserAcceptanceId = 'AC-63';
+const browserAutomatedTest = 'frontend/ui/e2e/control-plane.spec.ts';
+const browserConfig = 'playwright.control-plane-evidence.config.ts';
+const browserFixture = 'frontend/ui/e2e/fixtures/control-plane.ts';
+const browserProject = 'chromium';
+const browserTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
+const browserGrep = `${browserTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
+const browserCommand = [
+  'pnpm',
+  'exec',
+  'playwright',
+  'test',
+  '--config',
+  browserConfig,
+  '--project',
+  browserProject,
+  browserAutomatedTest,
+  '--grep',
+  browserGrep,
+  '--reporter',
+  'json',
+];
+const browserScreenshotNames = [
+  '01-version-build.png',
+  '02-accumulated-changelog.png',
+  '03-dependency-constraints.png',
+  '04-plan-approval-pending.png',
+  '05-approval-request.png',
+  '06-approval-approved.png',
+  '07-plan-approval-satisfied.png',
+  '08-previous-state-plan.png',
+  '09-previous-state-comparison.png',
+  '10-release-b-history-preserved.png',
+  '11-immutable-history-audit.png',
+];
+const browserExecutionSourcePaths = [
+  browserConfig,
+  'playwright.control-plane.config.ts',
+  browserFixture,
+  'package.json',
+];
+const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const adopterBundleSchema = 'distr.control-plane-adopter-execution-bundle/v1';
 const adopterAuditSchema = 'distr.control-plane-adopter-audit-export/v1';
 const supportedTestRunners = new Set(['node-test', 'go-test', 'playwright']);
@@ -624,6 +667,13 @@ function validateTestCommand(row, profile, result) {
       fail(`${row.id} go-test argv must exactly select the declared tests from ${row.automatedTest}`);
     }
   } else {
+    if (
+      row.id === browserAcceptanceId &&
+      (command.argv.length !== browserCommand.length ||
+        command.argv.some((argument, index) => argument !== browserCommand[index]))
+    ) {
+      fail(`${row.id} playwright argv must exactly run the purpose-built browser evidence test`);
+    }
     const playwrightIndex = command.argv.indexOf('playwright');
     if (
       playwrightIndex < 0 ||
@@ -648,6 +698,9 @@ function validateTestCommand(row, profile, result) {
     !Number.isInteger(tests.skipped) ||
     tests.skipped !== 0
   ) {
+    if (row.id === browserAcceptanceId) {
+      fail(`${row.id} generic and raw browser result counts and timestamps must exactly match`);
+    }
     fail(`${row.id} test result counts must show expected tests greater than zero and zero failures`);
   }
   if (profile.testRunner === 'go-test') {
@@ -839,6 +892,7 @@ async function validateTestResult(root, gitFacts, row, profile, sourceCommit, bi
   if (completedAt < startedAt) {
     fail(`${row.id} test result completedAt must not precede startedAt`);
   }
+  return result;
 }
 
 async function readTrackedBinding(root, gitFacts, row, binding, label) {
@@ -1150,40 +1204,398 @@ async function validateNeutralLiveEvidence(root, gitFacts, row, sourceCommit, bi
   }
 }
 
-async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, binding) {
+function requireExactObjectKeys(value, keys, id, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail(`${id} ${label} must be an object`);
+  }
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (!jsonEqual(actual, expected)) fail(`${id} ${label} fields must exactly match the browser evidence schema`);
+}
+
+async function requireNoReparsePath(root, value, row, label) {
+  const resolved = repositoryPath(root, value, row.id, label);
+  const relative = path.relative(root, resolved);
+  let current = root;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    const information = await lstat(current);
+    if (information.isSymbolicLink()) fail(`${row.id} ${label} must not traverse a reparse point`);
+  }
+  const [rootReal, resolvedReal] = await Promise.all([realpath(root), realpath(resolved)]);
+  if (!pathIsWithin(rootReal, resolvedReal)) fail(`${row.id} ${label} must resolve inside the repository`);
+}
+
+async function readTrackedBytesBinding(root, gitFacts, row, binding, label) {
+  if (!binding || typeof binding.path !== 'string' || !checksumPattern.test(binding.sha256 ?? '')) {
+    fail(`${row.id} ${label} must contain a repository path and SHA-256 checksum`);
+  }
+  requireTracked(gitFacts, binding.path, row.id, label);
+  await requireNoReparsePath(root, binding.path, row, label);
+  const resolved = await requireFile(root, binding.path, row.id, label);
+  const bytes = await readFile(resolved);
+  if (sha256(bytes) !== binding.sha256) fail(`${row.id} ${label} checksum mismatch for ${binding.path}`);
+  return bytes;
+}
+
+function collectBrowserSpecs(suite, result = []) {
+  if (!suite || typeof suite !== 'object') return result;
+  if (Array.isArray(suite.specs)) result.push(...suite.specs);
+  if (Array.isArray(suite.suites)) {
+    for (const child of suite.suites) collectBrowserSpecs(child, result);
+  }
+  return result;
+}
+
+function secretLikeString(value) {
+  return (
+    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i.test(value) ||
+    /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/i.test(value) ||
+    /\bAKIA[0-9A-Z]{16}\b/.test(value) ||
+    /\b(?:password|passwd|token|secret|api[_-]?key|private[_-]?key|authorization|cookie)\s*(?:[:=]|\0)\s*\S+/i.test(
+      value
+    )
+  );
+}
+
+function containsJSONSecret(value, key = '') {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') {
+    return (
+      (/(?:password|passwd|token|secret|api[_-]?key|private[_-]?key|authorization|cookie)/i.test(key) &&
+        value.trim() !== '') ||
+      secretLikeString(value)
+    );
+  }
+  if (Array.isArray(value)) return value.some((item) => containsJSONSecret(item));
+  if (typeof value === 'object') {
+    return Object.entries(value).some(([childKey, item]) => containsJSONSecret(item, childKey));
+  }
+  return false;
+}
+
+function normalizedRawBrowserSource(raw, value) {
+  if (typeof value !== 'string' || value === '') return '';
+  if (!path.isAbsolute(value)) return gitPath(value);
+  const rootDir = raw?.config?.rootDir;
+  if (typeof rootDir !== 'string' || !path.isAbsolute(rootDir) || !pathIsWithin(rootDir, value)) return '';
+  return gitPath(path.relative(rootDir, value));
+}
+
+function validateRawBrowserReport(row, raw, toolVersions) {
+  if (containsJSONSecret(raw)) fail(`${row.id} retained Playwright JSON contains a secret-like value`);
+  const stats = raw?.stats;
+  const specs = Array.isArray(raw?.suites) ? raw.suites.flatMap((suite) => collectBrowserSpecs(suite)) : [];
+  const spec = specs[0];
+  const test = spec?.tests?.[0];
+  const attempt = test?.results?.[0];
+  const attachments = attempt?.attachments;
+  if (
+    !Array.isArray(raw?.errors) ||
+    raw.errors.length !== 0 ||
+    stats?.expected !== 1 ||
+    stats?.skipped !== 0 ||
+    stats?.flaky !== 0 ||
+    stats?.unexpected !== 0 ||
+    !Number.isFinite(Date.parse(stats?.startTime)) ||
+    !Number.isFinite(stats?.duration) ||
+    stats.duration < 0 ||
+    specs.length !== 1 ||
+    spec.title !== browserTitle ||
+    spec.ok !== true ||
+    !Array.isArray(spec.tests) ||
+    spec.tests.length !== 1 ||
+    test.projectName !== browserProject ||
+    test.expectedStatus !== 'passed' ||
+    test.status !== 'expected' ||
+    !Array.isArray(test.results) ||
+    test.results.length !== 1 ||
+    attempt.retry !== 0 ||
+    attempt.status !== 'passed' ||
+    !Array.isArray(attempt.errors) ||
+    attempt.errors.length !== 0 ||
+    !Array.isArray(attachments) ||
+    attachments.length !== browserScreenshotNames.length ||
+    attachments.some(
+      (attachment, index) =>
+        attachment?.name !== browserScreenshotNames[index] ||
+        attachment?.contentType !== 'image/png' ||
+        typeof attachment?.path !== 'string' ||
+        path.posix.basename(gitPath(attachment.path)) !== browserScreenshotNames[index]
+    ) ||
+    raw?.config?.version !== toolVersions.playwright
+  ) {
+    fail(`${row.id} raw Playwright report must contain the exact passed test and 11 attachments`);
+  }
+  if (normalizedRawBrowserSource(raw, spec.file) !== browserAutomatedTest) {
+    fail(`${row.id} raw Playwright report source must normalize to the bound automated test`);
+  }
+  const started = Date.parse(stats.startTime);
+  return {
+    startedAt: new Date(started).toISOString(),
+    completedAt: new Date(started + stats.duration).toISOString(),
+  };
+}
+
+function crc32(bytes) {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function pngMetadataText(type, data) {
+  if (type === 'tEXt') return data.toString('latin1');
+  if (type === 'zTXt') {
+    const separator = data.indexOf(0);
+    if (separator < 0 || data[separator + 1] !== 0) return '';
+    try {
+      return `${data.subarray(0, separator).toString('latin1')}\0${inflateSync(data.subarray(separator + 2)).toString(
+        'utf8'
+      )}`;
+    } catch {
+      return '';
+    }
+  }
+  if (type === 'iTXt') return data.toString('utf8');
+  return '';
+}
+
+function pngDimensions(bytes, row, name) {
+  const invalid = () => fail(`${row.id} browser screenshot PNG is invalid: ${name}`);
+  if (bytes.length < pngSignature.length || !bytes.subarray(0, pngSignature.length).equals(pngSignature)) invalid();
+  let offset = pngSignature.length;
+  let width;
+  let height;
+  let ihdrCount = 0;
+  let idatCount = 0;
+  let ended = false;
+  const metadata = [];
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const end = offset + 12 + length;
+    if (end > bytes.length) invalid();
+    const typeBytes = bytes.subarray(offset + 4, offset + 8);
+    const type = typeBytes.toString('ascii');
+    if (!/^[A-Za-z]{4}$/.test(type)) invalid();
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    if (crc32(Buffer.concat([typeBytes, data])) !== bytes.readUInt32BE(offset + 8 + length)) invalid();
+    if (type === 'IHDR') {
+      ihdrCount += 1;
+      if (ihdrCount !== 1 || offset !== pngSignature.length || length !== 13) invalid();
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+    } else if (type === 'IDAT') {
+      if (ihdrCount !== 1 || ended) invalid();
+      idatCount += 1;
+    } else if (type === 'IEND') {
+      if (length !== 0 || ihdrCount !== 1 || idatCount === 0) invalid();
+      ended = true;
+    }
+    if (['tEXt', 'zTXt', 'iTXt'].includes(type)) metadata.push(pngMetadataText(type, data));
+    offset = end;
+    if (ended) break;
+  }
+  if (!ended || offset !== bytes.length || ihdrCount !== 1 || idatCount === 0 || !width || !height) invalid();
+  if (metadata.some((value) => secretLikeString(value))) {
+    fail(`${row.id} browser screenshot metadata contains a secret: ${name}`);
+  }
+  return {width, height};
+}
+
+async function sourcePathExists(root, sourceCommit, value) {
+  try {
+    await execFileAsync('git', ['cat-file', '-e', `${sourceCommit}:${value}`], {cwd: root});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function validateBrowserExecutionSources(root, gitFacts, row, sourceCommit, bindings) {
+  const expectedPaths = [...browserExecutionSourcePaths];
+  if (await sourcePathExists(root, sourceCommit, 'pnpm-lock.yaml')) expectedPaths.push('pnpm-lock.yaml');
+  if (
+    !Array.isArray(bindings) ||
+    bindings.length !== expectedPaths.length ||
+    bindings.some(
+      (binding, index) =>
+        !binding ||
+        Object.keys(binding).length !== 2 ||
+        binding.path !== expectedPaths[index] ||
+        !checksumPattern.test(binding.sha256 ?? '')
+    )
+  ) {
+    fail(
+      `${row.id} browser execution sources must exactly bind the purpose-built config, fixture, package, and lockfile`
+    );
+  }
+  for (const binding of bindings) {
+    requireTracked(gitFacts, binding.path, row.id, 'browser execution source');
+    const currentPath = await requireFile(root, binding.path, row.id, 'browser execution source');
+    const [current, committed] = await Promise.all([
+      readFile(currentPath),
+      sourceBlob(root, gitFacts, sourceCommit, binding.path, row.id, 'browser execution source'),
+    ]);
+    if (sha256(current) !== binding.sha256 || sha256(committed) !== binding.sha256) {
+      fail(`${row.id} browser execution source checksum mismatch for ${binding.path}`);
+    }
+  }
+}
+
+function requireBrowserNetworkSource(row, automatedSource, fixtureSource, networkProof) {
+  const automated = automatedSource.toString('utf8');
+  const fixture = fixtureSource.toString('utf8');
+  const titleOffset = automated.indexOf(browserTitle);
+  const nextTest = /\n\s*test(?:\.(?:only|skip|fixme))?\s*\(/g;
+  nextTest.lastIndex = Math.max(0, titleOffset + browserTitle.length);
+  const next = nextTest.exec(automated);
+  const evidenceBody = automated.slice(titleOffset, next?.index ?? automated.length);
+  if (
+    !networkProof ||
+    !jsonEqual(Object.keys(networkProof).sort(), ['externalAttempts', 'mode', 'testTitle']) ||
+    networkProof.mode !== 'bound-test-assertion' ||
+    networkProof.testTitle !== browserTitle ||
+    networkProof.externalAttempts !== 0 ||
+    titleOffset < 0 ||
+    !/expect\s*\(\s*controlPlane\.externalAttempts\s*\)\s*\.toEqual\s*\(\s*\[\s*\]\s*\)/.test(evidenceBody) ||
+    !/page\.route\s*\(\s*['"]\*\*\/\*['"]/.test(fixture) ||
+    !/!\s*isLocalHost\s*\(/.test(fixture) ||
+    !/externalAttempts\.push\s*\(/.test(fixture) ||
+    !/route\.abort\s*\(/.test(fixture)
+  ) {
+    fail(`${row.id} browser network proof must bind the exact test assertion and zero external attempts`);
+  }
+}
+
+async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, binding, genericResult) {
   const report = await readTrackedBinding(root, gitFacts, row, binding, 'browser report');
   if (report.schema !== browserResultSchema) {
     fail(`${row.id} browser report schema must be ${browserResultSchema}`);
   }
+  requireExactObjectKeys(
+    report,
+    [
+      'schema',
+      'sourceCommit',
+      'runner',
+      'status',
+      'project',
+      'testSource',
+      'testTitles',
+      'tests',
+      'rawResult',
+      'screenshots',
+      'networkProof',
+      'executionSources',
+      'toolVersions',
+    ],
+    row.id,
+    'browser report'
+  );
   if (report.sourceCommit !== sourceCommit) {
     fail(`${row.id} browser report sourceCommit must match evidence sourceCommit`);
   }
   if (report.runner !== 'playwright' || report.status !== 'passed') {
     fail(`${row.id} browser report must be a passed Playwright result`);
   }
-  const tests = report.tests;
-  if (!Number.isInteger(tests?.expected) || tests.expected <= 0) {
-    fail(`${row.id} browser report must have expected tests greater than zero`);
-  }
   if (
-    !Number.isInteger(tests.passed) ||
-    tests.passed !== tests.expected ||
-    !Number.isInteger(tests.unexpected) ||
-    tests.unexpected !== 0 ||
-    !Number.isInteger(tests.flaky) ||
-    tests.flaky !== 0
+    report.project !== browserProject ||
+    report.testSource !== browserAutomatedTest ||
+    !jsonEqual(report.testTitles, [browserTitle])
   ) {
-    fail(`${row.id} browser report must have all expected tests passed with zero unexpected or flaky results`);
+    fail(`${row.id} browser report must bind the exact project, source, and title`);
   }
+  if (!jsonEqual(report.tests, {expected: 1, passed: 1, unexpected: 0, flaky: 0, skipped: 0})) {
+    fail(`${row.id} browser report must contain exactly one passed test`);
+  }
+  requireExactObjectKeys(report.toolVersions, ['node', 'pnpm', 'playwright'], row.id, 'browser toolVersions');
+  const versionPattern = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+  if (Object.values(report.toolVersions).some((version) => !versionPattern.test(version))) {
+    fail(`${row.id} browser tool versions must be canonical and match the raw Playwright report`);
+  }
+  await requireNoReparsePath(root, report.rawResult?.path, row, 'browser raw Playwright report');
+  const raw = await readTrackedBinding(root, gitFacts, row, report.rawResult, 'browser raw Playwright report');
+  if (raw?.config?.version !== report.toolVersions.playwright) {
+    fail(`${row.id} browser tool versions must be canonical and match the raw Playwright report`);
+  }
+  const rawTimes = validateRawBrowserReport(row, raw, report.toolVersions);
+  if (
+    !jsonEqual(genericResult.tests, {expected: 1, passed: 1, failed: 0, skipped: 0}) ||
+    genericResult.startedAt !== rawTimes.startedAt ||
+    genericResult.completedAt !== rawTimes.completedAt
+  ) {
+    fail(`${row.id} generic and raw browser result counts and timestamps must exactly match`);
+  }
+
+  if (
+    !Array.isArray(report.screenshots) ||
+    report.screenshots.length !== browserScreenshotNames.length ||
+    report.screenshots.some(
+      (screenshot, index) =>
+        !screenshot ||
+        !jsonEqual(Object.keys(screenshot).sort(), ['height', 'name', 'path', 'sha256', 'width']) ||
+        screenshot.name !== browserScreenshotNames[index] ||
+        path.posix.basename(gitPath(screenshot.path ?? '')) !== browserScreenshotNames[index] ||
+        screenshot.width !== 1440 ||
+        screenshot.height !== 1200
+    )
+  ) {
+    fail(`${row.id} browser screenshots must exactly match the 11 retained visual checkpoints`);
+  }
+  for (const screenshot of report.screenshots) {
+    let bytes;
+    try {
+      bytes = await readTrackedBytesBinding(root, gitFacts, row, screenshot, 'browser screenshot');
+    } catch (error) {
+      if (error.message.includes('checksum mismatch')) {
+        fail(`${row.id} browser screenshot checksum mismatch for ${screenshot.name}`);
+      }
+      throw error;
+    }
+    const dimensions = pngDimensions(bytes, row, screenshot.name);
+    if (dimensions.width !== screenshot.width || dimensions.height !== screenshot.height) {
+      fail(`${row.id} browser screenshot PNG dimensions must match 1440x1200`);
+    }
+  }
+
+  await validateBrowserExecutionSources(root, gitFacts, row, sourceCommit, report.executionSources);
+  let packageManifest;
+  try {
+    const packageBytes = await sourceBlob(
+      root,
+      gitFacts,
+      sourceCommit,
+      'package.json',
+      row.id,
+      'browser package manifest'
+    );
+    packageManifest = JSON.parse(packageBytes.toString('utf8'));
+  } catch {
+    fail(`${row.id} browser package manifest must be valid JSON`);
+  }
+  const packageManagerMatch = /^pnpm@(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/.exec(
+    packageManifest?.packageManager ?? ''
+  );
+  if (!packageManagerMatch || packageManagerMatch[1] !== report.toolVersions.pnpm) {
+    fail(`${row.id} browser pnpm version must match source-bound packageManager`);
+  }
+  const [automatedSource, fixtureSource] = await Promise.all([
+    sourceBlob(root, gitFacts, sourceCommit, browserAutomatedTest, row.id, 'browser automated test'),
+    sourceBlob(root, gitFacts, sourceCommit, browserFixture, row.id, 'browser fixture'),
+  ]);
+  requireBrowserNetworkSource(row, automatedSource, fixtureSource, report.networkProof);
 }
 
-async function validateProofClassEvidence(root, gitFacts, row, profile, evidence) {
+async function validateProofClassEvidence(root, gitFacts, row, profile, evidence, testResult) {
   if (evidence.proofClass === 'performance-measurement') {
     await validatePerformanceEvidence(root, gitFacts, row, profile, evidence.sourceCommit, evidence.classEvidence);
   } else if (evidence.proofClass === 'neutral-live-execution') {
     await validateNeutralLiveEvidence(root, gitFacts, row, evidence.sourceCommit, evidence.classEvidence);
   } else if (evidence.proofClass === 'browser-e2e') {
-    await validateBrowserEvidence(root, gitFacts, row, evidence.sourceCommit, evidence.classEvidence);
+    await validateBrowserEvidence(root, gitFacts, row, evidence.sourceCommit, evidence.classEvidence, testResult);
   } else if (Object.hasOwn(evidence, 'classEvidence')) {
     fail(`${row.id} proof class ${evidence.proofClass} must not contain classEvidence`);
   }
@@ -1372,8 +1784,8 @@ async function validateEvidenceArtifact(root, gitFacts, row, profile) {
     row.manualEvidence,
     'manual/fixture evidence'
   );
-  await validateTestResult(root, gitFacts, row, profile, evidence.sourceCommit, evidence.testResult);
-  await validateProofClassEvidence(root, gitFacts, row, profile, evidence);
+  const testResult = await validateTestResult(root, gitFacts, row, profile, evidence.sourceCommit, evidence.testResult);
+  await validateProofClassEvidence(root, gitFacts, row, profile, evidence, testResult);
   if (row.status === 'verified-adopter') {
     if (evidence.proofClass !== 'adopter-execution') {
       fail(`${row.id} verified-adopter proof class must be adopter-execution`);
