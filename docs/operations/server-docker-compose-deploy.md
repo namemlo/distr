@@ -26,6 +26,8 @@ Install these on the server:
 
 - Linux server with at least 2 CPU, 4 GB RAM, and enough disk for PostgreSQL, images, logs, and registry artifacts.
 - Docker Engine with the `docker compose` plugin.
+- A Linux AMD64 or ARM64 Docker daemon. The current Jenkins Hub publication job produces only Linux AMD64, so its
+  candidates require an AMD64 daemon.
 - AWS CLI v2 authenticated with permission to pull from ECR.
 - Git.
 - `curl`, `openssl`, `jq`, `sha256sum`, `bash`, and `flock`.
@@ -92,6 +94,10 @@ aws sts get-caller-identity
 
 Do not put production runtime secrets in Jenkins. Keep the full `.env` on the server.
 
+The deployment helper compares the pulled image's normalized Linux platform with the Docker daemon platform. It
+accepts the `amd64`/`x86_64` and `arm64`/`aarch64` aliases, but it does not emulate another architecture. Publish a
+compatible image instead of using QEMU or a Compose `platform` override to bypass this gate.
+
 ## Jenkins Build And Server Deploy
 
 Use this as the normal deployment path for our infrastructure: Jenkins builds the image and pushes it to ECR, while the
@@ -103,7 +109,9 @@ For a production Pipeline-from-SCM job, use
 The existing `examples/ci/jenkins/Jenkinsfile` demonstrates Distr release API publishing. This section is separate: it
 builds and publishes the Distr Hub deployment image itself.
 
-On the Jenkins agent, create a minimal `deploy/server-docker-compose/.env` for the image job only:
+The production Jenkinsfile supplies its job-scoped values and signing credentials without creating the runtime
+environment file. The following commands show the underlying image helper contract for a controlled manual
+publisher; they do not replace the production pipeline or its evidence-finalization stage:
 
 ```bash
 cat > deploy/server-docker-compose/.env <<EOF
@@ -120,10 +128,11 @@ EOF
 ```
 
 Jenkins does not need the production database password, JWT secret, domain settings, or RustFS secrets for `build` and
-`push`. After `push`, archive `dist/release-${DISTR_IMAGE_TAG}.env`; it contains the non-secret release identity that
-the server should deploy.
+`push`. After the production pipeline finalizes and checksums its evidence, use its archived
+`dist/release-${DISTR_IMAGE_TAG}.env` as the non-secret publication handoff.
 
-Treat that file as one immutable handoff artifact and never mix values from different archived artifacts. At the
+Treat the checksummed complete handoff and its referenced evidence as one immutable publication artifact and never
+mix values from different archived artifacts. At the
 isolated-validation checkpoint, copy its `DISTR_IMAGE_REF`, `DISTR_RELEASE_COMMIT`, and
 `DISTR_IMAGE_DIGEST` values together into only the isolated server environment and use a clone-scoped callback probe.
 Do not change a live or client environment. Copy the same three values together into the full production `.env` only
@@ -140,7 +149,7 @@ sequence:
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
 | 1. Focused local preflight | Run the focused validators, tests, build, migration/recovery checks, and diff/privacy checks applicable to the completed checkpoint.                                                                                                                         | None.                                                  |
 | 2. Exact tree              | Commit the exact complete tree that passed preflight. Record the commit and reviewed range.                                                                                                                                                                  | None.                                                  |
-| 3. Immutable ECR candidate | Build once from that commit and publish one immutable ECR digest tied to the source commit, OCI revision, and target platform. Retain the archived three-value handoff.                                                                                      | None. Publishing a candidate is not promotion.         |
+| 3. Immutable ECR candidate | Build once from that commit and publish one immutable ECR digest tied to the source commit, OCI revision, and target platform. Retain the complete checksummed handoff and evidence; copy its runtime identity triplet atomically.                                                           | None. Publishing a candidate is not promotion.         |
 | 4. Isolated server proof   | Run that exact digest on an isolated server runtime against a PostgreSQL 18 clone. Retain checksummed database/object backup, restore, schema, migration, recovery, health, audit, image, and platform evidence. Do not mutate a live or client environment. | None. Isolated validation is not live promotion.       |
 | 5. Acceptance gates        | Require the functional, migration, dirty-recovery, backup/restore, platform, and dependency gates to pass for that same commit and digest.                                                                                                                   | None.                                                  |
 | 6. Live promotion          | Treat promotion as a distinct recorded action. Use only the already proven digest, and proceed only when environment policy, required authorization, and every live precondition pass. This runbook grants no promotion authority.                           | The approved environment changes to the proven digest. |
@@ -159,7 +168,8 @@ after the exact digest has passed checkpoints 1-5 and the required policy and au
 ```
 
 `release` acquires the deployment lock, refuses an active timestamp fence, validates Compose and the immutable
-release identity, pulls the digest-pinned image, and starts dependencies. It then runs the read-only migration
+release identity, pulls the digest-pinned image, and verifies that its normalized Linux platform matches the Docker
+daemon before starting dependencies. It then runs the read-only migration
 preflight while the existing Hub writers remain online. A non-empty schema 137 database is refused at that point,
 before the Hub is stopped, and must use the staged migration-138 procedure below. Only when preflight allows an
 ordinary release does the script stop and fence Hub writers, verify they are stopped, back up PostgreSQL and object
@@ -519,6 +529,9 @@ Pull the configured ECR image:
 ./deploy/server-docker-compose/deploy.sh pull
 ```
 
+`pull` fails if the image and Docker daemon platforms differ. This happens before release dependencies start or any
+Hub writer is stopped.
+
 Validate Compose config:
 
 ```bash
@@ -607,7 +620,8 @@ Application-only rollback to a previous ECR digest reference:
 ./deploy/server-docker-compose/deploy.sh rollback <previous-image-ref>
 ```
 
-This updates `DISTR_IMAGE_REF`, pulls the previous image from ECR, restarts Hub, and runs the health check.
+This validates schema compatibility, pulls the previous image from ECR, rejects a Docker daemon/image platform
+mismatch, updates `DISTR_IMAGE_REF`, restarts Hub, and runs the health check.
 Use it only when the new database schema is backward-compatible with the previous binary.
 
 If a migration is incompatible:

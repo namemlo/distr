@@ -1466,12 +1466,119 @@ test_release_metadata_derives_commit_and_digest_together() (
     "$metadata"
 )
 
+test_image_platform_accepts_linux_architecture_aliases() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  need_cmd(){ :; }
+  local mock_daemon_platform='' mock_image_platform='' platforms=''
+  docker(){
+    case "$1" in
+      info) printf '%s\n' "$mock_daemon_platform" ;;
+      image)
+        [[ "$2" == inspect ]]
+        printf '%s\n' "$mock_image_platform"
+        ;;
+      *) return 97 ;;
+    esac
+  }
+  for platforms in \
+    'linux/x86_64 linux/amd64' \
+    'linux/aarch64 linux/arm64'; do
+    read -r mock_daemon_platform mock_image_platform <<<"$platforms"
+    require_image_matches_docker_daemon "$DISTR_IMAGE_REF"
+  done
+)
+
+test_image_platform_rejects_daemon_image_mismatch() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  need_cmd(){ :; }
+  docker(){
+    case "$1" in
+      info) printf 'linux/aarch64\n' ;;
+      image)
+        [[ "$2" == inspect ]]
+        printf 'linux/amd64\n'
+        ;;
+      *) return 97 ;;
+    esac
+  }
+  local output
+  if output="$(require_image_matches_docker_daemon "$DISTR_IMAGE_REF" 2>&1)"; then
+    printf 'platform preflight unexpectedly accepted an AMD64 image on an ARM64 daemon\n' >&2
+    return 1
+  fi
+  grep -Fq 'image platform linux/amd64 does not match Docker daemon platform linux/arm64' \
+    <<<"$output"
+)
+
+test_image_platform_rejects_unsupported_architecture() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  need_cmd(){ :; }
+  docker(){
+    case "$1" in
+      info) printf 'linux/s390x\n' ;;
+      image)
+        [[ "$2" == inspect ]]
+        printf 'linux/s390x\n'
+        ;;
+      *) return 97 ;;
+    esac
+  }
+  local output
+  if output="$(require_image_matches_docker_daemon "$DISTR_IMAGE_REF" 2>&1)"; then
+    printf 'platform preflight unexpectedly accepted an unsupported architecture\n' >&2
+    return 1
+  fi
+  grep -Fq 'unsupported Docker daemon platform linux/s390x' <<<"$output"
+)
+
+test_pull_image_rejects_platform_before_commit_check_and_outage() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  check_env(){ :; }
+  need_cmd(){ :; }
+  ecr_login(){ :; }
+  compose(){ record "compose:$*"; }
+  require_image_matches_docker_daemon(){
+    record "platform:$1"
+    return 42
+  }
+  image_release_commit(){ record commit-check; printf '%040d' 0; }
+  : >"$TMP/event-log"
+  if pull_image; then
+    printf 'pull unexpectedly continued after platform mismatch\n' >&2
+    return 1
+  fi
+  assert_events \
+    "compose:pull hub compose:--profile migrate pull migrate compose:--profile cleanup pull artifact-blob-cleanup compose:--profile timestamp-operator pull timestamp-operator platform:$DISTR_IMAGE_REF"
+  ! grep -q '^commit-check$' "$TMP/event-log"
+)
+
+test_pull_immutable_image_ref_rejects_platform_before_image_switch() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  need_cmd(){ :; }
+  ecr_login(){ :; }
+  docker(){
+    [[ "$1" == pull ]]
+    record "docker-pull:$2"
+  }
+  require_image_matches_docker_daemon(){
+    record "platform:$1"
+    return 42
+  }
+  : >"$TMP/event-log"
+  if pull_immutable_image_ref "$DISTR_IMAGE_REF"; then
+    printf 'immutable pull unexpectedly accepted a platform mismatch\n' >&2
+    return 1
+  fi
+  assert_events "docker-pull:$DISTR_IMAGE_REF platform:$DISTR_IMAGE_REF"
+)
+
 test_pull_image_rejects_mixed_release_identity_before_fence() (
   source "$ROOT/deploy/server-docker-compose/deploy.sh"
   check_env(){ :; }
   need_cmd(){ :; }
   ecr_login(){ :; }
   compose(){ printf '%s\n' "$*" >>"$TMP/mixed-image-pulls"; }
+  require_image_matches_docker_daemon(){ :; }
   image_release_commit(){ printf dddddddddddddddddddddddddddddddddddddddd; }
   DISTR_RELEASE_COMMIT=cccccccccccccccccccccccccccccccccccccccc
   DISTR_IMAGE_REF='registry.invalid/distr@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -3027,6 +3134,16 @@ test_dirty_recovery_function_never_starts_or_clears_fence() (
     <<<"$body"
 )
 
+if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == image-platform ]]; then
+  test_image_platform_accepts_linux_architecture_aliases
+  test_image_platform_rejects_daemon_image_mismatch
+  test_image_platform_rejects_unsupported_architecture
+  test_pull_image_rejects_platform_before_commit_check_and_outage
+  test_pull_immutable_image_ref_rejects_platform_before_image_switch
+  printf 'server image platform preflight tests passed\n'
+  exit 0
+fi
+
 if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == dirty-recovery ]]; then
   test_dirty_recovery_happy_order_with_manifest
   test_dirty_recovery_happy_order_without_manifest
@@ -3177,6 +3294,11 @@ test_failed_database_backup_leaves_no_partial_publication
 test_failed_cancel_restores_target_image_configuration
 test_failed_cancel_image_switch_still_restores_fenced_identity
 test_release_metadata_derives_commit_and_digest_together
+test_image_platform_accepts_linux_architecture_aliases
+test_image_platform_rejects_daemon_image_mismatch
+test_image_platform_rejects_unsupported_architecture
+test_pull_image_rejects_platform_before_commit_check_and_outage
+test_pull_immutable_image_ref_rejects_platform_before_image_switch
 test_pull_image_rejects_mixed_release_identity_before_fence
 test_capture_pull_identity_failure_precedes_fence_and_outage
 test_nested_command_failure_matrix

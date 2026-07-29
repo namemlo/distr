@@ -375,6 +375,43 @@ EOF
   info "wrote release metadata ${release_file}"
 }
 
+normalize_linux_platform() {
+  local platform="${1:-}" owner="${2:-runtime}"
+  case "$platform" in
+    linux/amd64|linux/x86_64) printf 'linux/amd64' ;;
+    linux/arm64|linux/aarch64) printf 'linux/arm64' ;;
+    *)
+      die "unsupported ${owner} platform ${platform:-<empty>}"
+      return 1
+      ;;
+  esac
+}
+
+require_image_matches_docker_daemon() {
+  local image_ref="${1:-}" daemon_raw image_raw daemon_platform image_platform
+  [[ -n "$image_ref" ]] || {
+    die "image reference is required for platform preflight"
+    return 1
+  }
+  need_cmd docker || return
+  daemon_raw="$(docker info --format '{{.OSType}}/{{.Architecture}}')" || {
+    die "could not inspect Docker daemon platform"
+    return 1
+  }
+  image_raw="$(
+    docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image_ref"
+  )" || {
+    die "could not inspect image platform for ${image_ref}"
+    return 1
+  }
+  daemon_platform="$(normalize_linux_platform "$daemon_raw" "Docker daemon")" || return
+  image_platform="$(normalize_linux_platform "$image_raw" "image")" || return
+  [[ "$image_platform" == "$daemon_platform" ]] || {
+    die "image platform ${image_platform} does not match Docker daemon platform ${daemon_platform}"
+    return 1
+  }
+}
+
 pull_immutable_image_ref() {
   local image_ref="${1:-}"
   [[ "$image_ref" =~ @sha256:[0-9a-f]{64}$ ]] || {
@@ -384,6 +421,7 @@ pull_immutable_image_ref() {
   need_cmd docker || return
   ecr_login || return
   docker pull "$image_ref" || return
+  require_image_matches_docker_daemon "$image_ref" || return
 }
 
 image_release_commit() {
@@ -742,6 +780,7 @@ pull_image() {
   compose --profile migrate pull migrate || return
   compose --profile cleanup pull artifact-blob-cleanup || return
   compose --profile timestamp-operator pull timestamp-operator || return
+  require_image_matches_docker_daemon "$DISTR_IMAGE_REF" || return
   release_commit="$(image_release_commit "$DISTR_IMAGE_REF")" || return
   [[ "$release_commit" == "$DISTR_RELEASE_COMMIT" ]] || {
     die "configured release commit differs from the pulled image"
