@@ -17,12 +17,12 @@ provider, secret store, executor host, observer, or audit sink.
 ## Root-verified local evidence
 
 The following results were independently verified from the integrated PR-081
-worktree on 2026-07-28:
+worktree on 2026-07-29:
 
 - Reference-executor focused Go tests and `go vet` passed. Race verification
   remains blocked: the repository disables CGO by default, and the explicit
   CGO-enabled retry could not find GCC.
-- The combined Node.js suites passed 28 of 28 tests.
+- The current control-plane Node.js contract suite passed 26 of 26 tests.
 - `node examples/control-plane-e2e/run.mjs --mode clean --json` exited zero in
   `fixture-contract` mode. It retained release history A-B-A, flow checksum
   `sha256:fc31db2b0aa7d56fd08622508be575ccc709a5c473c4efa04ca5005b1a8d8dd0`,
@@ -38,12 +38,16 @@ worktree on 2026-07-28:
   Follow-up commit `5af87c8b` addressed the original three findings, but its
   independent review found that Hub built-ins still trusted syntactically valid
   inputs and the live fixture could not publish production-valid provenance and
-  SBOM evidence. Commits `5d364174` and `08738155` address those additional
-  source findings with repository-backed verification and an offline,
-  production-verified Sigstore publication fixture. Focused Go, vet, and all 24
-  Node contract tests pass. The round-five changes still require independent
-  source re-review, and they have not been runtime-executed; the intended A-B-A
-  result is not acceptance evidence.
+  SBOM evidence. Commits `5d364174` and `08738155` address those findings with
+  repository-backed verification and a production-verified Sigstore publication
+  fixture. Round-five review then found that Product Release provenance and
+  dependency-policy eligibility still defaulted to test-only unavailable hooks,
+  and the helper invocation did not enforce offline toolchain resolution.
+  Commits `14545aef` and `0dcd56ff` address those source findings with persisted
+  eligibility resolvers and an exact cached-toolchain, network-disabled helper
+  build. Focused Go, vet, and all 26 Node contract tests pass. The round-six
+  changes still require independent source re-review, and they have not been
+  runtime-executed; the intended A-B-A result is not acceptance evidence.
 - The default failure-matrix fixture simulation evaluated all 14 expected cases
   but reported `SIMULATION_ONLY`, `acceptanceEligible: false`, and
   `NON_ACCEPTANCE_FIXTURE_SIMULATION`. Its report checksum was
@@ -374,17 +378,26 @@ to live evidence or prove that an unrecorded external dependency participated.
   validation so neutral credential-free HTTPS and digest-pinned OCI identities
   can satisfy the production provenance contract while local, credentialed, or
   mutable identities remain rejected.
+- Commit `14545aef` replaces Product Release test-only eligibility defaults with
+  persisted organization-scoped Component Release verification receipts,
+  published deployment-policy facts, and frozen capability-graph checks.
+  Missing, stale, cross-organization, noncanonical, unpublished, or
+  policy-incompatible facts fail closed.
+- Commit `0dcd56ff` builds the provenance fixture once with the exact Go version
+  derived from `go.mod`, uses only a matching installed or cached toolchain, and
+  disables module, checksum, VCS, and private-proxy network fallbacks. A missing
+  local toolchain or module cache fails actionably before publication.
 - If Docker, its daemon, or a Hub binary is unavailable, clean mode deliberately
   falls back to fixture-contract mode and can still exit successfully. Inspect
   `proofMode`, `liveStack.started`, `liveStack.blocker`, `nonLocalCalls`, and
   cleanup metadata before classifying the result. The recorded run on this host
   took this fallback because the Docker CLI was unavailable; it did not attempt
   the live branch.
-- Live A-B-A acceptance remains pending until commits `5d364174` and `08738155`
-  pass independent source re-review and a retained clean run actually completes
-  the `live-hub-api` path against the runtime contracts. No retained live A-B-A
-  evidence exists. Availability of Docker or a zero exit from fixture fallback
-  is not sufficient.
+- Live A-B-A acceptance remains pending until commits `14545aef` and
+  `0dcd56ff` pass independent source re-review and a retained clean run actually
+  completes the `live-hub-api` path against the runtime contracts. No retained
+  live A-B-A evidence exists. Availability of Docker or a zero exit from fixture
+  fallback is not sufficient.
 - The failure matrix emits
   `distr.control-plane-failure-matrix-report/v2`. Its default fixture mode only
   simulates expected outcomes and is explicitly non-acceptance. Clean mode
