@@ -1053,8 +1053,8 @@ const scenarios = [
       updateFixture(fixtureRoot, file, (text) =>
         replaceOnce(
           text,
-          'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
-          'actions/upload-artifact@main'
+          '      - name: Retain PostgreSQL runtime evidence\n        if: ${{ always() }}\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+          '      - name: Retain PostgreSQL runtime evidence\n        if: ${{ always() }}\n        uses: actions/upload-artifact@main'
         )
       );
     },
@@ -1107,7 +1107,11 @@ const scenarios = [
     mutate(fixtureRoot) {
       const file = '.github/workflows/community-release-hardening.yaml';
       updateFixture(fixtureRoot, file, (text) =>
-        replaceOnce(text, 'if-no-files-found: error', 'if-no-files-found: warn')
+        replaceOnce(
+          text,
+          '          path: ${{ runner.temp }}/timestamp-expand-postgresql-evidence\n          if-no-files-found: error',
+          '          path: ${{ runner.temp }}/timestamp-expand-postgresql-evidence\n          if-no-files-found: warn'
+        )
       );
     },
   },
@@ -1444,6 +1448,76 @@ const scenarios = [
     },
   },
   {
+    name: 'release-evidence-retention-requires-always-control',
+    expected: 'release-gates execution control mismatch',
+    mutate(fixtureRoot) {
+      const file = '.github/workflows/community-release-hardening.yaml';
+      updateFixture(fixtureRoot, file, (text) =>
+        replaceOnce(
+          text,
+          '      - name: Retain enforced release evidence\n        if: ${{ always() }}\n        uses:',
+          '      - name: Retain enforced release evidence\n        uses:'
+        )
+      );
+    },
+  },
+  {
+    name: 'release-evidence-always-control-cannot-move-to-another-step',
+    expected: 'release-gates execution control mismatch',
+    mutate(fixtureRoot) {
+      const file = '.github/workflows/community-release-hardening.yaml';
+      updateFixture(fixtureRoot, file, (text) =>
+        replaceOnce(
+          text,
+          '      - name: Run PR-050 release package validation\n        run: node hack/pr050-validate-release-hardening.mjs\n      - name: Retain enforced release evidence\n        if: ${{ always() }}',
+          '      - name: Run PR-050 release package validation\n        if: ${{ always() }}\n        run: node hack/pr050-validate-release-hardening.mjs\n      - name: Retain enforced release evidence'
+        )
+      );
+    },
+  },
+  {
+    name: 'release-evidence-always-control-requires-exact-step-name',
+    expected: 'release-gates execution control mismatch',
+    mutate(fixtureRoot) {
+      const file = '.github/workflows/community-release-hardening.yaml';
+      updateFixture(fixtureRoot, file, (text) =>
+        replaceOnce(
+          text,
+          '      - name: Retain enforced release evidence\n        if: ${{ always() }}',
+          '      - name: Retain optional release evidence\n        if: ${{ always() }}'
+        )
+      );
+    },
+  },
+  {
+    name: 'release-evidence-retention-rejects-wrong-control-expression',
+    expected: 'release-gates execution control mismatch',
+    mutate(fixtureRoot) {
+      const file = '.github/workflows/community-release-hardening.yaml';
+      updateFixture(fixtureRoot, file, (text) =>
+        replaceOnce(
+          text,
+          '      - name: Retain enforced release evidence\n        if: ${{ always() }}',
+          '      - name: Retain enforced release evidence\n        if: ${{ success() }}'
+        )
+      );
+    },
+  },
+  {
+    name: 'release-evidence-retention-rejects-additional-bypass-control',
+    expected: 'release-gates execution control mismatch',
+    mutate(fixtureRoot) {
+      const file = '.github/workflows/community-release-hardening.yaml';
+      updateFixture(fixtureRoot, file, (text) =>
+        replaceOnce(
+          text,
+          '      - name: Retain enforced release evidence\n        if: ${{ always() }}\n        uses:',
+          '      - name: Retain enforced release evidence\n        if: ${{ always() }}\n        continue-on-error: true\n        uses:'
+        )
+      );
+    },
+  },
+  {
     name: 'release-gates-fail-closed-on-prerequisite-failure',
     expected: 'release-gates dependency mismatch',
     mutate(fixtureRoot) {
@@ -1493,6 +1567,20 @@ const scenarios = [
     },
   },
   {
+    name: 'release-gates-rejects-an-additional-event-input-copy',
+    expected: 'release-gates committed diff check mismatch',
+    mutate(fixtureRoot) {
+      const file = '.github/workflows/community-release-hardening.yaml';
+      updateFixture(fixtureRoot, file, (text) =>
+        replaceOnce(
+          text,
+          '      - name: Run adopter-term scanner and operator guide gate\n        shell: bash\n        env:\n          EVENT_NAME: ${{ github.event_name }}',
+          '      - name: Run adopter-term scanner and operator guide gate\n        shell: bash\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          EVENT_NAME: ${{ github.event_name }}'
+        )
+      );
+    },
+  },
+  {
     name: 'git-diff-check-cannot-be-bypassed-by-early-success',
     expected: 'release-gates committed diff check mismatch',
     mutate(fixtureRoot) {
@@ -1534,8 +1622,8 @@ const scenarios = [
       updateFixture(fixtureRoot, file, (text) =>
         replaceOnce(
           text,
-          'PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          PUSH_BEFORE_SHA: ${{ github.event.before }}',
-          'PULL_REQUEST_BASE_SHA: ${{ github.sha }}\n          PUSH_BEFORE_SHA: ${{ github.event.before }}'
+          '      - name: Check committed patch whitespace\n        shell: bash\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          PUSH_BEFORE_SHA: ${{ github.event.before }}',
+          '      - name: Check committed patch whitespace\n        shell: bash\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          PULL_REQUEST_BASE_SHA: ${{ github.sha }}\n          PUSH_BEFORE_SHA: ${{ github.event.before }}'
         )
       );
     },
@@ -1548,8 +1636,8 @@ const scenarios = [
       updateFixture(fixtureRoot, file, (text) =>
         replaceOnce(
           text,
-          'PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          PUSH_BEFORE_SHA: ${{ github.event.before }}',
-          'PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          PUSH_BEFORE_SHA: ${{ github.sha }}'
+          '      - name: Check committed patch whitespace\n        shell: bash\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          PUSH_BEFORE_SHA: ${{ github.event.before }}',
+          '      - name: Check committed patch whitespace\n        shell: bash\n        env:\n          EVENT_NAME: ${{ github.event_name }}\n          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          PUSH_BEFORE_SHA: ${{ github.sha }}'
         )
       );
     },
@@ -1697,6 +1785,20 @@ const scenarios = [
       const file = '.github/workflows/community-release-hardening.yaml';
       updateFixture(fixtureRoot, file, (text) =>
         replaceOnce(text, "printf '[extend]\\nuseDefault = true\\n'", "printf '[extend]\\nuseDefault = false\\n'")
+      );
+    },
+  },
+  {
+    name: 'privacy-step-rejects-an-additional-gitleaks-config-option',
+    expected: 'release-gates privacy gate mismatch',
+    mutate(fixtureRoot) {
+      const file = '.github/workflows/community-release-hardening.yaml';
+      updateFixture(fixtureRoot, file, (text) =>
+        replaceOnce(
+          text,
+          '            --config "$gitleaks_config" \\\n            --gitleaks-ignore-path "$gitleaks_ignore" \\',
+          '            --config "$gitleaks_config" \\\n            --config "$gitleaks_config" \\\n            --gitleaks-ignore-path "$gitleaks_ignore" \\'
+        )
       );
     },
   },

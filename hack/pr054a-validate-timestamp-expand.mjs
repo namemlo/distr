@@ -1325,6 +1325,17 @@ const requireExactNamedStep = (job, lines, name, expectedLines, message) => {
     .filter((line) => line !== '');
   if (!sameValues(actual, expectedLines)) fail(`${workflowFile}: ${job} ${message}`);
 };
+const requireNamedStepExecutionControls = (job, lines, name, expectedControls) => {
+  const heading = `      - name: ${name}`;
+  const starts = lines.flatMap((line, index) => (line === heading ? [index] : []));
+  if (starts.length !== 1) fail(`${workflowFile}: ${job} execution control mismatch`);
+  const start = starts[0];
+  const next = lines.findIndex((line, index) => index > start && line.startsWith('      - '));
+  const controls = lines
+    .slice(start, next < 0 ? lines.length : next)
+    .flatMap((line) => normalizeExecutionControl(line, 8) ?? []);
+  if (!sameValues(controls, expectedControls)) fail(`${workflowFile}: ${job} execution control mismatch`);
+};
 
 const fastReleaseLines = workflowJobLines('fast-release-package');
 requireExecutionControls('fast-release-package', fastReleaseLines, [], []);
@@ -1523,7 +1534,10 @@ requireJobSnippets(
 );
 
 const releaseGateLines = workflowJobLines('release-gates');
-requireExecutionControls('release-gates', releaseGateLines, [], []);
+requireExecutionControls('release-gates', releaseGateLines, [], ['if: ${{ always() }}']);
+requireNamedStepExecutionControls('release-gates', releaseGateLines, 'Retain enforced release evidence', [
+  'if: ${{ always() }}',
+]);
 requireExactNamedStep(
   'release-gates',
   releaseGateLines,
@@ -1628,7 +1642,7 @@ for (const repeatedEventInput of [
   'PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}',
   'PUSH_BEFORE_SHA: ${{ github.event.before }}',
 ]) {
-  if (releaseGateLines.filter((line) => line.trim() === repeatedEventInput).length !== 2) {
+  if (releaseGateLines.filter((line) => line.trim() === repeatedEventInput).length !== 3) {
     fail(`${workflowFile}: release-gates committed diff check mismatch`);
   }
 }
@@ -1679,7 +1693,6 @@ for (const forbidden of [
   'gitleaks:allow',
   '--scan-privacy-diff "$base_object" "$head_commit" --require-private-scope',
   'continue-on-error:',
-  '|| true',
 ]) {
   if (releaseGateText.includes(forbidden)) {
     fail(`${workflowFile}: release-gates privacy gate mismatch`);
@@ -1955,7 +1968,7 @@ for (const [prefix, expected] of [
   ['--gitleaks-ignore-path ', ['--gitleaks-ignore-path "$gitleaks_ignore"']],
   ['--log-opts=', ['--log-opts="$gitleaks_log_opts"']],
 ]) {
-  const actual = releaseGateLines.map(normalizeShellContinuation).filter((line) => line.startsWith(prefix));
+  const actual = privacyStepLines.map(normalizeShellContinuation).filter((line) => line.startsWith(prefix));
   if (!sameValues(actual, expected)) fail(`${workflowFile}: release-gates privacy gate mismatch`);
 }
 
