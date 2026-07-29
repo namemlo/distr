@@ -34,7 +34,7 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 	fixedNow := time.Date(2026, 7, 13, 9, 30, 0, 0, time.UTC)
 	var received map[string]any
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Idempotency-Key") != "choice-tp-loyalty-2026.07.13.1" {
+		if r.Header.Get("Idempotency-Key") != "reference-client-service-2026.07.13.1" {
 			t.Errorf("unexpected idempotency key: %q", r.Header.Get("Idempotency-Key"))
 		}
 		if r.Header.Get("X-Distr-Tenant-ID") != tenantID.String() {
@@ -66,9 +66,9 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 	input, err := DecodeInput(map[string]any{
 		"url":            server.URL,
 		"method":         "POST",
-		"body":           map[string]any{"clientEnv": "choice-tp_dev", "service": "loyalty-api"},
+		"body":           map[string]any{"clientEnv": "reference_client", "service": "loyalty-api"},
 		"signingSecret":  "signing-secret",
-		"idempotencyKey": "choice-tp-loyalty-2026.07.13.1",
+		"idempotencyKey": "reference-client-service-2026.07.13.1",
 		"expectedStatusCodes": []any{
 			http.StatusAccepted,
 		},
@@ -99,7 +99,7 @@ func TestRunUsesHardenedTransportAndCapturesDeclaredOutputs(t *testing.T) {
 	if len(result.Outputs) != 1 || result.Outputs[0].Name != "jenkinsQueueId" || result.Outputs[0].Value != "jenkins-42" {
 		t.Fatalf("unexpected outputs: %#v", result.Outputs)
 	}
-	if received["clientEnv"] != "choice-tp_dev" || received["service"] != "loyalty-api" {
+	if received["clientEnv"] != "reference_client" || received["service"] != "loyalty-api" {
 		t.Fatalf("unexpected body: %#v", received)
 	}
 	if len(progress) != 1 || len(result.AuditTrail.Events) < 3 {

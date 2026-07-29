@@ -784,12 +784,12 @@ func hubWebhookLease(endpoint string) types.TaskLease {
 				Name:           "Trigger Jenkins",
 				ActionType:     "distr.webhook",
 				ActionVersion:  types.AgentActionVersionV1,
-				IdempotencyKey: "sha256:choice-tp-loyalty",
+				IdempotencyKey: "sha256:reference-client-service",
 				InputBindings: map[string]any{
 					"url":            endpoint,
 					"method":         "POST",
 					"signingSecret":  "resolved-signing-secret",
-					"idempotencyKey": "choice-tp-loyalty-2026.07.13.1",
+					"idempotencyKey": "reference-client-service-2026.07.13.1",
 					"expectedStatusCodes": []any{
 						http.StatusAccepted,
 					},

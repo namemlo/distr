@@ -71,7 +71,7 @@ func migrateRecoverDirtyTestPlan() types.TimestampDirtyRecoveryPlan {
 		CreatedAt:             time.Date(2026, 7, 17, 1, 2, 3, 4000, time.UTC),
 		OperatorIdentity:      "release.operator@example.test",
 		Reason:                migrateRecoverDirtyTestReason,
-		WriterFenceIdentifier: "choice-tp-dev-fence-42",
+		WriterFenceIdentifier: "reference-client-dev-fence-42",
 		ExpectedDirtyVersion:  137,
 		CatalogShape:          types.TimestampRecoveryCatalogShapePredecessor137,
 		ForceVersion:          137,
@@ -129,7 +129,7 @@ func TestMigrateRecoverDirtyPlanPublishesCanonicalCreateNewEvidence(t *testing.T
 		"--expected-dirty-version", "137",
 		"--operator-identity", "release.operator@example.test",
 		"--reason", migrateRecoverDirtyTestReason,
-		"--writer-fence-id", "choice-tp-dev-fence-42",
+		"--writer-fence-id", "reference-client-dev-fence-42",
 		"--output", output,
 		"--lock-timeout", "275ms",
 	})
@@ -217,7 +217,7 @@ func TestMigrateRecoverDirtyPlanRejectsReturnedFieldMismatchBeforePublication(
 				"--expected-dirty-version", "137",
 				"--operator-identity", "release.operator@example.test",
 				"--reason", migrateRecoverDirtyTestReason,
-				"--writer-fence-id", "choice-tp-dev-fence-42",
+				"--writer-fence-id", "reference-client-dev-fence-42",
 				"--output", output,
 			})
 
@@ -273,7 +273,7 @@ func TestMigrateRecoverDirtyPlanRejectsReturnedManifestMismatchBeforePublication
 		"--expected-dirty-version", "137",
 		"--operator-identity", "release.operator@example.test",
 		"--reason", migrateRecoverDirtyTestReason,
-		"--writer-fence-id", "choice-tp-dev-fence-42",
+		"--writer-fence-id", "reference-client-dev-fence-42",
 		externalExecutionTimestampManifestFlag, manifestPath,
 		"--output", output,
 	})
@@ -315,7 +315,7 @@ func TestMigrateRecoverDirtyRejectsNonPositiveLockTimeoutBeforeRuntime(
 				"--expected-dirty-version", "137",
 				"--operator-identity", "release.operator@example.test",
 				"--reason", migrateRecoverDirtyTestReason,
-				"--writer-fence-id", "choice-tp-dev-fence-42",
+				"--writer-fence-id", "reference-client-dev-fence-42",
 				"--output", "plan.json",
 				"--lock-timeout=0s",
 			},
@@ -327,7 +327,7 @@ func TestMigrateRecoverDirtyRejectsNonPositiveLockTimeoutBeforeRuntime(
 				"--expected-dirty-version", "137",
 				"--operator-identity", "release.operator@example.test",
 				"--reason", migrateRecoverDirtyTestReason,
-				"--writer-fence-id", "choice-tp-dev-fence-42",
+				"--writer-fence-id", "reference-client-dev-fence-42",
 				"--output", "plan.json",
 				"--lock-timeout=-1ns",
 			},
@@ -338,7 +338,7 @@ func TestMigrateRecoverDirtyRejectsNonPositiveLockTimeoutBeforeRuntime(
 				"apply",
 				"--plan", "plan.json",
 				"--plan-checksum", "sha256:" + strings.Repeat("a", 64),
-				"--writer-fence-id", "choice-tp-dev-fence-42",
+				"--writer-fence-id", "reference-client-dev-fence-42",
 				"--output", "result.json",
 				"--lock-timeout=0s",
 			},
@@ -349,7 +349,7 @@ func TestMigrateRecoverDirtyRejectsNonPositiveLockTimeoutBeforeRuntime(
 				"apply",
 				"--plan", "plan.json",
 				"--plan-checksum", "sha256:" + strings.Repeat("a", 64),
-				"--writer-fence-id", "choice-tp-dev-fence-42",
+				"--writer-fence-id", "reference-client-dev-fence-42",
 				"--output", "result.json",
 				"--lock-timeout=-1ns",
 			},
@@ -404,7 +404,7 @@ func TestMigrateRecoverDirtyRejectsDashInputPathsBeforeRead(t *testing.T) {
 			"--expected-dirty-version", "137",
 			"--operator-identity", "release.operator@example.test",
 			"--reason", migrateRecoverDirtyTestReason,
-			"--writer-fence-id", "choice-tp-dev-fence-42",
+			"--writer-fence-id", "reference-client-dev-fence-42",
 			externalExecutionTimestampManifestFlag, "-",
 			"--output", "plan.json",
 		})
@@ -430,7 +430,7 @@ func TestMigrateRecoverDirtyRejectsDashInputPathsBeforeRead(t *testing.T) {
 			"apply",
 			"--plan", "-",
 			"--plan-checksum", "sha256:" + strings.Repeat("a", 64),
-			"--writer-fence-id", "choice-tp-dev-fence-42",
+			"--writer-fence-id", "reference-client-dev-fence-42",
 			"--output", "result.json",
 		})
 
@@ -574,7 +574,7 @@ func TestMigrateRecoverDirtyRejectsUnknownAndTrailingJSONBeforeRunner(
 				"apply",
 				"--plan", planPath,
 				"--plan-checksum", migrateRecoverDirtyTestChecksum(test.data),
-				"--writer-fence-id", "choice-tp-dev-fence-42",
+				"--writer-fence-id", "reference-client-dev-fence-42",
 				"--output", filepath.Join(directory, "result.json"),
 			})
 

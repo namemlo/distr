@@ -69,7 +69,7 @@ func TestExecutionV2AttemptRequiresCanonicalCompleteTaskResourceSet(t *testing.T
 		},
 		{
 			OrganizationID: orgID, TaskID: taskID,
-			ResourceType: types.TaskLockResourceDeploymentTarget, ResourceKey: "choice-tp-dev",
+			ResourceType: types.TaskLockResourceDeploymentTarget, ResourceKey: "reference-client-dev",
 		},
 	}
 	canonical, err := CanonicalExecutionFenceResourceKey(locks)
@@ -215,7 +215,7 @@ func TestPendingDesiredInputForExecutionAttemptUsesFrozenDeployStep(t *testing.T
 			PlatformDigest: artifactDigest, Platforms: []string{"linux/amd64"},
 		}},
 		ComponentBindings: []types.ConfigComponentBinding{{
-			ComponentKey: "api", ComponentInstanceID: componentID, PhysicalName: "choice-api",
+			ComponentKey: "api", ComponentInstanceID: componentID, PhysicalName: "reference-api",
 		}},
 		Graph: types.TargetPlanGraph{Steps: []types.TargetPlanStep{{
 			StepKey: "component:api:deploy", ComponentKey: "api",

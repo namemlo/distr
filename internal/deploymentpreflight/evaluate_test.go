@@ -184,7 +184,7 @@ func preflightInputFixture() Input {
 			}}},
 		},
 		Targets: []types.DeploymentPlanTarget{{
-			ID: planTargetID, DeploymentTargetID: targetID, Name: "choice-tp-dev",
+			ID: planTargetID, DeploymentTargetID: targetID, Name: "reference-client-dev",
 			Type: types.DeploymentTypeDocker, Platform: types.DeploymentTargetPlatformLinuxAMD64,
 			CustomerOrganizationID: &customerID,
 		}},

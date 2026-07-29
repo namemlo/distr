@@ -42,11 +42,11 @@ func TestExternalExecutionRepositoryRecordsIdempotentCallbacksAndObservedState(t
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(execution.Status).To(Equal(types.ExternalExecutionStatusQueued))
 	g.Expect(execution.ExpectedImage).To(ContainSubstring("@sha256:"))
-	g.Expect(execution.ExpectedConfigReference).To(ContainSubstring("s3://emlo-backend-configs/"))
+	g.Expect(execution.ExpectedConfigReference).To(ContainSubstring("s3://reference-client-configs/"))
 	g.Expect(execution.ExpectedConfigReference).To(ContainSubstring("versionId=v42"))
 	g.Expect(execution.ExpectedComposeReference).To(Equal(
-		"s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
-			"/choice-tp_dev/1/docker-compose.yaml",
+		"s3://reference-client-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
+			"/reference_client/1/docker-compose.yaml",
 	))
 	g.Expect(execution.ExpectedComposeChecksum).To(Equal("sha256:" + strings.Repeat("c", 64)))
 
@@ -314,7 +314,7 @@ func createExternalExecutionPlan(t *testing.T, ctx context.Context) taskQueuePla
 	}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
-	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "reference-client-dev")
 	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
 	_, err := internalctx.GetDb(ctx).Exec(
 		ctx,
@@ -332,12 +332,12 @@ func createExternalExecutionPlan(t *testing.T, ctx context.Context) taskQueuePla
 	bundle.ReleaseContract.Config.ComposeChecksum = "sha256:" + strings.Repeat("c", 64)
 	bundle.ReleaseContract.Config.ImmutableObjects = []types.ReleaseContractConfigObject{
 		{
-			URI: "s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
-				"/choice-tp_dev/1/docker-compose.yaml",
+			URI: "s3://reference-client-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
+				"/reference_client/1/docker-compose.yaml",
 			Checksum: "sha256:" + strings.Repeat("c", 64),
 		},
 		{
-			URI:       "s3://emlo-backend-configs/choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+			URI:       "s3://reference-client-configs/reference_client/1/loyalty-api/appsettings.Production.json",
 			VersionID: "v42", Checksum: "sha256:" + strings.Repeat("b", 64),
 		},
 	}

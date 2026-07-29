@@ -173,8 +173,8 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 		ReleaseContract: &types.ReleaseContract{
 			Schema: types.ReleaseContractSchemaV1,
 			Source: types.ReleaseContractSource{
-				Repository:   "remittance-b2c-backend",
-				Branch:       "customization/emlo-remittance/dev",
+				Repository:   "reference-client-backend",
+				Branch:       "customization/reference-client/dev",
 				SourceCommit: releaseContractTestCommit,
 				BuiltCommit:  releaseContractTestCommit,
 			},
@@ -198,8 +198,8 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 			},
 			Config: types.ReleaseContractConfig{
 				RepositoryCommit:      "2222222222222222222222222222222222222222",
-				ComposePath:           "choice-tp_dev/1/docker-compose.yaml",
-				ServiceConfigPath:     "choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+				ComposePath:           "reference_client/1/docker-compose.yaml",
+				ServiceConfigPath:     "reference_client/1/loyalty-api/appsettings.Production.json",
 				ComposeChecksum:       checksum,
 				ServiceConfigChecksum: checksum,
 				ImmutableObjects: []types.ReleaseContractConfigObject{
@@ -208,7 +208,7 @@ func TestCanonicalizeReleaseContractIsStableForSetLikeOrder(t *testing.T) {
 				},
 			},
 			Changes: types.ReleaseContractChanges{
-				Summary: "Choice TP loyalty pilot", Commits: []string{"repo-b@222", "repo-a@111"},
+				Summary: "Reference client loyalty pilot", Commits: []string{"repo-b@222", "repo-a@111"},
 			},
 		},
 		Components: []types.ReleaseBundleComponent{{

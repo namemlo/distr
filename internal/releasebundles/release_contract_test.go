@@ -67,8 +67,8 @@ func TestValidateReleaseContractAcceptsContentAddressedImmutableConfig(t *testin
 	checksum := "sha256:" + strings.Repeat("c", 64)
 	contract := validReleaseContractForTest(digest)
 	contract.Config.ImmutableObjects = []types.ReleaseContractConfigObject{{
-		URI: "s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
-			"/choice-tp_dev/1/docker-compose.yaml",
+		URI: "s3://reference-client-configs/_immutable/sha256/" + strings.Repeat("c", 64) +
+			"/reference_client/1/docker-compose.yaml",
 		Checksum: checksum,
 	}}
 	bundleComponents := []types.ReleaseBundleComponent{{
@@ -86,8 +86,8 @@ func TestValidateReleaseContractRejectsContentAddressChecksumMismatch(t *testing
 	digest := "sha256:" + strings.Repeat("a", 64)
 	contract := validReleaseContractForTest(digest)
 	contract.Config.ImmutableObjects = []types.ReleaseContractConfigObject{{
-		URI: "s3://emlo-backend-configs/_immutable/sha256/" + strings.Repeat("d", 64) +
-			"/choice-tp_dev/1/docker-compose.yaml",
+		URI: "s3://reference-client-configs/_immutable/sha256/" + strings.Repeat("d", 64) +
+			"/reference_client/1/docker-compose.yaml",
 		Checksum: "sha256:" + strings.Repeat("c", 64),
 	}}
 	bundleComponents := []types.ReleaseBundleComponent{{
@@ -108,7 +108,7 @@ func validReleaseContractForTest(digest string) types.ReleaseContract {
 	return types.ReleaseContract{
 		Schema: types.ReleaseContractSchemaV1,
 		Source: types.ReleaseContractSource{
-			Repository: "remittance-b2c-backend", Branch: "customization/emlo-remittance/dev",
+			Repository: "reference-client-backend", Branch: "customization/reference-client/dev",
 			SourceCommit: releaseContractTestCommit, BuiltCommit: releaseContractTestCommit,
 		},
 		Build: types.ReleaseContractBuild{ExternalID: "42", ExternalURL: "https://ci.example/job/42"},
@@ -120,8 +120,8 @@ func validReleaseContractForTest(digest string) types.ReleaseContract {
 		Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"loyalty-api"}},
 		Config: types.ReleaseContractConfig{
 			RepositoryCommit: "2222222222222222222222222222222222222222",
-			ComposePath:      "choice-tp_dev/1/docker-compose.yaml",
-			ServiceConfigPath: "choice-tp_dev/1/rmt-loyalty-api/" +
+			ComposePath:      "reference_client/1/docker-compose.yaml",
+			ServiceConfigPath: "reference_client/1/loyalty-api/" +
 				"appsettings.Production.json",
 			ComposeChecksum: checksum, ServiceConfigChecksum: checksum,
 		},

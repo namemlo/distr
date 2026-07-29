@@ -88,13 +88,13 @@ func TestDeploymentPlanRepositoryResolvesFrozenTargetScopedVariablesPerPlan(t *t
 	g := NewWithT(t)
 	deps := createReleaseBundleEligibilityDependencies(t, ctx)
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Standard deploy")
-	choiceCustomerID := createVariableSetCustomerOrganizationForOrganization(t, ctx, deps.orgID, "Choice TP")
-	paymitCustomerID := createVariableSetCustomerOrganizationForOrganization(t, ctx, deps.orgID, "Paymit")
-	choiceTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
-	paymitTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "paymit-dev")
+	referenceCustomerID := createVariableSetCustomerOrganizationForOrganization(t, ctx, deps.orgID, "Reference Client")
+	secondaryCustomerID := createVariableSetCustomerOrganizationForOrganization(t, ctx, deps.orgID, "Secondary Client")
+	referenceTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "reference-client-dev")
+	secondaryTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "secondary-client-dev")
 	for targetID, customerID := range map[uuid.UUID]uuid.UUID{
-		choiceTargetID: choiceCustomerID,
-		paymitTargetID: paymitCustomerID,
+		referenceTargetID: referenceCustomerID,
+		secondaryTargetID: secondaryCustomerID,
 	} {
 		_, err := internalctx.GetDb(ctx).Exec(ctx,
 			`UPDATE DeploymentTarget
@@ -119,19 +119,19 @@ func TestDeploymentPlanRepositoryResolvesFrozenTargetScopedVariablesPerPlan(t *t
 			ScopedValues: []types.VariableScopedValue{
 				{
 					Scope: types.VariableScope{
-						CustomerOrganizationID: &choiceCustomerID,
+						CustomerOrganizationID: &referenceCustomerID,
 						EnvironmentID:          &deps.devEnvironmentID,
-						DeploymentTargetID:     &choiceTargetID,
+						DeploymentTargetID:     &referenceTargetID,
 					},
-					Value: json.RawMessage(`"https://choice.example"`),
+					Value: json.RawMessage(`"https://reference.example"`),
 				},
 				{
 					Scope: types.VariableScope{
-						CustomerOrganizationID: &paymitCustomerID,
+						CustomerOrganizationID: &secondaryCustomerID,
 						EnvironmentID:          &deps.devEnvironmentID,
-						DeploymentTargetID:     &paymitTargetID,
+						DeploymentTargetID:     &secondaryTargetID,
 					},
-					Value: json.RawMessage(`"https://paymit.example"`),
+					Value: json.RawMessage(`"https://secondary.example"`),
 				},
 			},
 		}},
@@ -153,20 +153,20 @@ func TestDeploymentPlanRepositoryResolvesFrozenTargetScopedVariablesPerPlan(t *t
 		g.Expect(createErr).NotTo(HaveOccurred())
 		return plan
 	}
-	choicePlan := createPlan(choiceTargetID)
-	paymitPlan := createPlan(paymitTargetID)
-	g.Expect(choicePlan.Status).To(Equal(types.DeploymentPlanStatusReady))
-	g.Expect(paymitPlan.Status).To(Equal(types.DeploymentPlanStatusReady))
-	g.Expect(deploymentPlanVariableByKey(choicePlan.Variables, "api_url").Value).
-		To(MatchJSON(`"https://choice.example"`))
-	g.Expect(deploymentPlanVariableByKey(paymitPlan.Variables, "api_url").Value).
-		To(MatchJSON(`"https://paymit.example"`))
+	referencePlan := createPlan(referenceTargetID)
+	secondaryPlan := createPlan(secondaryTargetID)
+	g.Expect(referencePlan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(secondaryPlan.Status).To(Equal(types.DeploymentPlanStatusReady))
+	g.Expect(deploymentPlanVariableByKey(referencePlan.Variables, "api_url").Value).
+		To(MatchJSON(`"https://reference.example"`))
+	g.Expect(deploymentPlanVariableByKey(secondaryPlan.Variables, "api_url").Value).
+		To(MatchJSON(`"https://secondary.example"`))
 
 	variableSet.Variables[0].ScopedValues[0].Value = json.RawMessage(`"https://changed.example"`)
 	g.Expect(db.UpdateVariableSet(ctx, &variableSet)).To(Succeed())
-	newChoicePlan := createPlan(choiceTargetID)
-	g.Expect(deploymentPlanVariableByKey(newChoicePlan.Variables, "api_url").Value).
-		To(MatchJSON(`"https://choice.example"`))
+	newReferencePlan := createPlan(referenceTargetID)
+	g.Expect(deploymentPlanVariableByKey(newReferencePlan.Variables, "api_url").Value).
+		To(MatchJSON(`"https://reference.example"`))
 
 	missingTargetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "unconfigured-dev")
 	missingPlan := createPlan(missingTargetID)
@@ -316,7 +316,7 @@ func TestDeploymentPlanRepositoryBlocksHubWebhookWithoutReleaseContract(t *testi
 	}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
-	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "reference-client-dev")
 	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
 	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
 	bundle.DeploymentProcessRevisionID = &revision.ID
@@ -349,7 +349,7 @@ func TestDeploymentPlanRepositorySnapshotsTargetComponents(t *testing.T) {
 	}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
-	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "reference-client-dev")
 	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
 	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
 	bundle.DeploymentProcessRevisionID = &revision.ID
@@ -395,7 +395,7 @@ func TestDeploymentPlanRepositoryBlocksTargetPlatformMismatch(t *testing.T) {
 	}
 	g.Expect(db.CreateDeploymentProcessRevision(ctx, &revision)).To(Succeed())
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
-	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-arm-dev")
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "reference-client-arm-dev")
 	_, err := internalctx.GetDb(ctx).Exec(ctx,
 		`UPDATE DeploymentTarget SET platform = @platform WHERE id = @id`,
 		pgx.NamedArgs{"platform": types.DeploymentTargetPlatformLinuxARM64, "id": targetID},

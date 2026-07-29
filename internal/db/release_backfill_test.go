@@ -156,7 +156,7 @@ func TestReleaseBackfillApplyRequiresImmutableReviewedEvidenceDocument(t *testin
 		CheckpointID:              uuid.New(),
 		Apply:                     true,
 		ArtifactEvidence:          []types.ReleaseBackfillArtifactEvidence{legacyReleaseBackfillArtifactEvidence(source)},
-		EvidenceDocumentReference: "review://backfill/choice-tp-dev/2026-07-18",
+		EvidenceDocumentReference: "review://backfill/reference-client-dev/2026-07-18",
 		EvidenceDocumentChecksum:  "sha256:" + strings.Repeat("d", 64),
 	}
 

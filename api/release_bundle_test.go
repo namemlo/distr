@@ -250,12 +250,12 @@ func TestCreateUpdateReleaseBundleRequestValidateReleaseContract(t *testing.T) {
 	request := CreateUpdateReleaseBundleRequest{
 		ApplicationID: uuid.New(),
 		ChannelID:     uuid.New(),
-		ReleaseNumber: "choice-tp-loyalty-42",
+		ReleaseNumber: "reference-client-service-42",
 		ReleaseContract: &types.ReleaseContract{
 			Schema: types.ReleaseContractSchemaV1,
 			Source: types.ReleaseContractSource{
-				Repository:   "remittance-b2c-backend",
-				Branch:       "customization/emlo-remittance/dev",
+				Repository:   "reference-service-backend",
+				Branch:       "customization/reference-client/dev",
 				SourceCommit: "1111111111111111111111111111111111111111",
 				BuiltCommit:  "1111111111111111111111111111111111111111",
 			},
@@ -267,8 +267,8 @@ func TestCreateUpdateReleaseBundleRequestValidateReleaseContract(t *testing.T) {
 			Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"loyalty-api"}},
 			Config: types.ReleaseContractConfig{
 				RepositoryCommit:      "2222222222222222222222222222222222222222",
-				ComposePath:           "choice-tp_dev/1/docker-compose.yaml",
-				ServiceConfigPath:     "choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+				ComposePath:           "reference_client/1/docker-compose.yaml",
+				ServiceConfigPath:     "reference_client/1/loyalty-api/appsettings.Production.json",
 				ComposeChecksum:       checksum,
 				ServiceConfigChecksum: checksum,
 			},

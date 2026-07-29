@@ -22,7 +22,8 @@ worktree on 2026-07-29:
 - Reference-executor focused Go tests and `go vet` passed. Race verification
   remains blocked: the repository disables CGO by default, and the explicit
   CGO-enabled retry could not find GCC.
-- The current control-plane Node.js contract suite passed 26 of 26 tests.
+- At commit `e1532bde`, the then-current control-plane Node.js contract suite
+  passed 26 of 26 tests.
 - `node examples/control-plane-e2e/run.mjs --mode clean --json` exited zero in
   `fixture-contract` mode. It retained release history A-B-A, flow checksum
   `sha256:fc31db2b0aa7d56fd08622508be575ccc709a5c473c4efa04ca5005b1a8d8dd0`,
@@ -45,10 +46,10 @@ worktree on 2026-07-29:
   and the helper invocation did not enforce offline toolchain resolution.
   Commits `14545aef` and `0dcd56ff` address those source findings with persisted
   eligibility resolvers and an exact cached-toolchain, network-disabled helper
-  build. Focused Go, vet, and all 26 Node contract tests pass. Independent
-  round-six source review found no Critical, Important, or Minor findings. The
-  changes have not been runtime-executed; the intended A-B-A result is not
-  acceptance evidence.
+  build. At source-review commit `24225f89`, focused Go, vet, and all 26
+  then-current Node contract tests passed. Independent round-six source review
+  found no Critical, Important, or Minor findings. The changes have not been
+  runtime-executed; the intended A-B-A result is not acceptance evidence.
 - The default failure-matrix fixture simulation evaluated all 14 expected cases
   but reported `SIMULATION_ONLY`, `acceptanceEligible: false`, and
   `NON_ACCEPTANCE_FIXTURE_SIMULATION`. Its report checksum was

@@ -99,9 +99,9 @@ func TestRegistryImportApplyabilityRejectsExactOmissions(t *testing.T) {
 	customerID := uuid.New()
 	preview := types.RegistryImportPreview{
 		Counts:    types.RegistryImportCounts{OmittedPlacements: 1},
-		Omissions: []string{"choice-tp-dev:worker-hidden"},
+		Omissions: []string{"reference-client-dev:worker-hidden"},
 		Roots: []types.RegistryImportCandidateRoot{{
-			Key: "choice-tp-dev", DeliveryModel: types.DeliveryModelDedicated,
+			Key: "reference-client-dev", DeliveryModel: types.DeliveryModelDedicated,
 			Classification:         types.ImportClassificationStandard,
 			CustomerOrganizationID: &customerID,
 			DeploymentTargetID:     uuid.New(), EnvironmentID: uuid.New(),
@@ -119,11 +119,11 @@ func TestRegistryImportRepositoryPersistsDiagnosticsAndRejectsForeignReferences(
 	g := NewWithT(t)
 	deps := createDeploymentRegistryDependencies(t, ctx)
 	actorID := createRegistryImportActor(t, ctx, deps.organizationID)
-	request := registryImportTestRequest(deps, actorID, "choice-tp-dev")
+	request := registryImportTestRequest(deps, actorID, "reference-client-dev")
 	request.Roots[0].EnvironmentID = uuid.Nil
 	request.SourcePlacements = []types.RegistryImportSourcePlacement{
-		{RootKey: "choice-tp-dev", PhysicalName: "choice-api"},
-		{RootKey: "choice-tp-dev", PhysicalName: "choice-worker-unmapped"},
+		{RootKey: "reference-client-dev", PhysicalName: "reference-api"},
+		{RootKey: "reference-client-dev", PhysicalName: "reference-worker-unmapped"},
 	}
 
 	preview, err := deploymentregistry.PreviewImport(ctx, request)
@@ -135,17 +135,17 @@ func TestRegistryImportRepositoryPersistsDiagnosticsAndRejectsForeignReferences(
 	stored, err := GetRegistryImportPreview(ctx, deps.organizationID, preview.ID)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(stored.Diagnostics).To(Equal(preview.Diagnostics))
-	g.Expect(stored.Omissions).To(Equal([]string{"choice-tp-dev:choice-worker-unmapped"}))
+	g.Expect(stored.Omissions).To(Equal([]string{"reference-client-dev:reference-worker-unmapped"}))
 	g.Expect(stored.Roots[0].SubscriberCustomerOrganizationIDs).NotTo(BeNil())
 	g.Expect(stored.Roots[0].Placements[0]).To(Equal(preview.Roots[0].Placements[0]))
 	coverage, err := CoverageReport(ctx, deps.organizationID, preview.ID)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(coverage.OmittedPlacements).To(Equal(1))
-	g.Expect(coverage.Omissions).To(ContainElement("choice-tp-dev:choice-worker-unmapped"))
+	g.Expect(coverage.Omissions).To(ContainElement("reference-client-dev:reference-worker-unmapped"))
 	g.Expect(coverage.Complete).To(BeFalse())
 
 	foreign := createDeploymentRegistryDependencies(t, ctx)
-	request = registryImportTestRequest(deps, actorID, "choice-tp-foreign")
+	request = registryImportTestRequest(deps, actorID, "reference-client-foreign")
 	request.Roots[0].DeploymentTargetID = foreign.deploymentTargetID
 	preview, err = deploymentregistry.PreviewImport(ctx, request)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -158,10 +158,10 @@ func TestRegistryImportApplyRejectsPersistedOmissionWithoutTopologyMutation(t *t
 	g := NewWithT(t)
 	deps := createDeploymentRegistryDependencies(t, ctx)
 	actorID := createRegistryImportActor(t, ctx, deps.organizationID)
-	request := registryImportTestRequest(deps, actorID, "choice-tp-dev")
+	request := registryImportTestRequest(deps, actorID, "reference-client-dev")
 	request.SourcePlacements = []types.RegistryImportSourcePlacement{
-		{RootKey: "choice-tp-dev", PhysicalName: "choice-api"},
-		{RootKey: "choice-tp-dev", PhysicalName: "choice-worker-unmapped"},
+		{RootKey: "reference-client-dev", PhysicalName: "reference-api"},
+		{RootKey: "reference-client-dev", PhysicalName: "reference-worker-unmapped"},
 	}
 	preview, err := deploymentregistry.PreviewImport(ctx, request)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -196,14 +196,14 @@ func TestRegistryImportApplyIsIdempotentAndReusesOpenAssignment(t *testing.T) {
 	deps := createDeploymentRegistryDependencies(t, ctx)
 	actorID := createRegistryImportActor(t, ctx, deps.organizationID)
 	secondCustomerID := createDeploymentRegistryCustomer(t, ctx, deps.organizationID)
-	request := registryImportTestRequest(deps, actorID, "choice-tp-dev")
+	request := registryImportTestRequest(deps, actorID, "reference-client-dev")
 	secondRoot := request.Roots[0]
-	secondRoot.Key = "choice-tp-uat"
-	secondRoot.Name = "choice-tp-uat"
+	secondRoot.Key = "reference-client-uat"
+	secondRoot.Name = "reference-client-uat"
 	secondRoot.CustomerOrganizationID = &secondCustomerID
-	secondRoot.PhysicalIdentity = "compose:choice-tp-uat"
+	secondRoot.PhysicalIdentity = "compose:reference-client-uat"
 	secondRoot.Placements = []types.RegistryImportCandidatePlacement{{
-		ComponentKey: "worker", PhysicalName: "choice-worker",
+		ComponentKey: "worker", PhysicalName: "reference-worker",
 	}}
 	request.Roots = append(request.Roots, secondRoot)
 	preview, err := deploymentregistry.PreviewImport(ctx, request)
@@ -242,7 +242,7 @@ func TestRegistryImportConcurrentApplyHasSingleTopologyWriter(t *testing.T) {
 	g := NewWithT(t)
 	deps := createDeploymentRegistryDependencies(t, ctx)
 	actorID := createRegistryImportActor(t, ctx, deps.organizationID)
-	request := registryImportTestRequest(deps, actorID, "choice-tp-concurrent")
+	request := registryImportTestRequest(deps, actorID, "reference-client-concurrent")
 	preview, err := deploymentregistry.PreviewImport(ctx, request)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(CreateRegistryImportPreview(ctx, request, preview)).To(Succeed())
@@ -293,7 +293,7 @@ func TestRegistryImportCreatePlacementDoesNotRecreateRoot(t *testing.T) {
 	g := NewWithT(t)
 	deps := createDeploymentRegistryDependencies(t, ctx)
 	actorID := createRegistryImportActor(t, ctx, deps.organizationID)
-	request := registryImportTestRequest(deps, actorID, "choice-tp-placement")
+	request := registryImportTestRequest(deps, actorID, "reference-client-placement")
 	preview, err := deploymentregistry.PreviewImport(ctx, request)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(CreateRegistryImportPreview(ctx, request, preview)).To(Succeed())
@@ -304,13 +304,13 @@ func TestRegistryImportCreatePlacementDoesNotRecreateRoot(t *testing.T) {
 
 	baseline, err := RegistryImportBaseline(ctx, deps.organizationID)
 	g.Expect(err).NotTo(HaveOccurred())
-	request = registryImportTestRequest(deps, actorID, "choice-tp-placement")
+	request = registryImportTestRequest(deps, actorID, "reference-client-placement")
 	request.ExistingRoots = baseline
 	request.Roots[0].Placements = append(
 		request.Roots[0].Placements,
 		types.RegistryImportCandidatePlacement{
-			ComponentKey: "worker", PhysicalName: "choice-worker",
-			ConfigNamespace: "choice-worker-config",
+			ComponentKey: "worker", PhysicalName: "reference-worker",
+			ConfigNamespace: "reference-worker-config",
 		},
 	)
 	preview, err = deploymentregistry.PreviewImport(ctx, request)
@@ -384,9 +384,9 @@ func registryImportTestRequest(
 			EnvironmentID:          deps.environmentID,
 			PhysicalIdentity:       "compose:" + rootKey,
 			Placements: []types.RegistryImportCandidatePlacement{{
-				ComponentKey: "api", PhysicalName: "choice-api",
-				ConfigNamespace: "choice-config", DatabaseBoundary: "choice-db",
-				HealthAdapter: "choice-health",
+				ComponentKey: "api", PhysicalName: "reference-api",
+				ConfigNamespace: "reference-config", DatabaseBoundary: "reference-db",
+				HealthAdapter: "reference-health",
 			}},
 		}},
 	}

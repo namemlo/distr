@@ -67,9 +67,9 @@ func TestDeriveFrozenAttemptInputsBindsAdapterLineageAndExactTimeout(t *testing.
 		ImplementationVersion: "2.1.0", Capability: "distr.compose.deploy",
 		CapabilityVersion: "2.0.0", ScopeType: "deployment_target",
 		ScopeReference: uuid.NewString(), ConfigSnapshotID: uuid.New(),
-		ConfigChecksum: "sha256:" + strings.Repeat("c", 64), KeyID: "choice-tp-dev",
+		ConfigChecksum: "sha256:" + strings.Repeat("c", 64), KeyID: "reference-client-dev",
 		PublicKeyFingerprint:         "sha256:" + strings.Repeat("d", 64),
-		SigningKeyReference:          "secret-provider://executor/choice-tp-dev",
+		SigningKeyReference:          "secret-provider://executor/reference-client-dev",
 		SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("e", 64),
 		CancelCapabilityVersion:      "2.0.0",
 		RetrySafeCapabilityVersion:   "2.0.0",
@@ -120,9 +120,9 @@ func TestDeriveFrozenAttemptInputsRequiresVersionedAdapterControlCapabilities(t 
 		ImplementationVersion: "2.1.0", Capability: "distr.compose.deploy",
 		CapabilityVersion: "2.0.0", ScopeType: "deployment_target",
 		ScopeReference: uuid.NewString(), ConfigSnapshotID: uuid.New(),
-		ConfigChecksum: "sha256:" + strings.Repeat("c", 64), KeyID: "choice-tp-dev",
+		ConfigChecksum: "sha256:" + strings.Repeat("c", 64), KeyID: "reference-client-dev",
 		PublicKeyFingerprint:         "sha256:" + strings.Repeat("d", 64),
-		SigningKeyReference:          "secret-provider://executor/choice-tp-dev",
+		SigningKeyReference:          "secret-provider://executor/reference-client-dev",
 		SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("e", 64),
 		TimeoutSeconds:               420,
 	}
@@ -178,7 +178,7 @@ func TestResolveFrozenIntentSignerRequiresExactAdapterKeyLineage(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	provider := &frozenSignerProviderStub{signer: signer}
 	inputs := FrozenAttemptInputs{
-		SigningKeyReference:          "secret-provider://executor/choice-tp-dev",
+		SigningKeyReference:          "secret-provider://executor/reference-client-dev",
 		SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("7", 64),
 		PublicKeyFingerprint:         keyID,
 	}

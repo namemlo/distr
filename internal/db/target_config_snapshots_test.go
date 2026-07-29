@@ -1487,7 +1487,7 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 	contract := &types.ReleaseContract{
 		Schema: schema,
 		Source: types.ReleaseContractSource{
-			Repository:   "https://git.example.invalid/emlo/config.git",
+			Repository:   "https://git.example.invalid/reference-client/config.git",
 			Branch:       "main",
 			SourceCommit: strings.Repeat("1", 40),
 			BuiltCommit:  strings.Repeat("1", 40),
@@ -1495,7 +1495,7 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 		Components: []types.ReleaseContractComponent{{
 			Name:     componentName,
 			Version:  "1.2.3",
-			Image:    "registry.example.invalid/emlo/api@" + componentDigest,
+			Image:    "registry.example.invalid/reference-client/api@" + componentDigest,
 			Platform: string(types.DeploymentTargetPlatformLinuxAMD64),
 		}},
 		Compatibility: types.ReleaseContractCompatibility{
@@ -1514,7 +1514,7 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 		},
 	}
 	componentType := types.ReleaseBundleComponentTypeExternalArtifact
-	componentPackageRef := "registry.example.invalid/emlo/api@" + componentDigest
+	componentPackageRef := "registry.example.invalid/reference-client/api@" + componentDigest
 	componentChecksum := componentDigest
 	if schema == types.ReleaseContractSchemaV2 {
 		componentV2 := types.ComponentReleaseContractV2{
@@ -1522,7 +1522,7 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 			ComponentKey: componentName,
 			Version:      "1.2.3",
 			Source: types.ComponentReleaseSource{
-				Repository:   "https://git.example.invalid/emlo/config.git",
+				Repository:   "https://git.example.invalid/reference-client/config.git",
 				RequestedRef: "refs/heads/main",
 				Commit:       strings.Repeat("1", 40),
 			},
@@ -1550,7 +1550,7 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 			ComponentV2: &componentV2,
 		}
 		componentType = types.ReleaseBundleComponentTypeOCIImage
-		componentPackageRef = "registry.example.invalid/emlo/api"
+		componentPackageRef = "registry.example.invalid/reference-client/api"
 		componentChecksum = ""
 	}
 	bundle := types.ReleaseBundle{
@@ -1610,7 +1610,7 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 			DeploymentTargetID:     deps.deploymentTargetID,
 			Component:              componentName,
 			Version:                "1.2.3",
-			Image:                  "registry.example.invalid/emlo/api@" + componentDigest,
+			Image:                  "registry.example.invalid/reference-client/api@" + componentDigest,
 			Platform:               types.DeploymentTargetPlatformLinuxAMD64,
 			Contracts:              []string{},
 			ConfigChecksum:         serviceChecksum,
@@ -1647,14 +1647,14 @@ func createTargetConfigV1RepositoryFixtureForOrganization(
 			evidence: map[string]types.VerifiedTargetConfigObject{
 				composeReference: {
 					Reference: composeReference,
-					MediaType: "application/vnd.emlo.compose+yaml",
+					MediaType: "application/vnd.example.compose+yaml",
 					SizeBytes: 23,
 					Checksum:  composeChecksum,
 				},
 				serviceReference: {
 					Reference: serviceReference,
 					VersionID: "version-7",
-					MediaType: "application/vnd.emlo.service+json",
+					MediaType: "application/vnd.example.service+json",
 					SizeBytes: 31,
 					Checksum:  serviceChecksum,
 				},

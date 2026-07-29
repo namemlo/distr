@@ -32,7 +32,7 @@ func TestNewExecutionRuntimeDependenciesUsesConfiguredIndependentKeySets(t *test
 	g.Expect(err).NotTo(HaveOccurred())
 	versionFingerprint := executionRuntimeChecksum("intent-key-v7")
 	signingConfig, err := json.Marshal([]configuredExecutionSigningKey{{
-		Reference: "secret-provider://executor/choice-tp-dev", VersionFingerprint: versionFingerprint,
+		Reference: "secret-provider://executor/reference-client-dev", VersionFingerprint: versionFingerprint,
 		PrivateKey: base64.StdEncoding.EncodeToString(intentPrivate),
 	}})
 	g.Expect(err).NotTo(HaveOccurred())

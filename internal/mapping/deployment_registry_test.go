@@ -121,29 +121,29 @@ func TestRegistryImportPreviewToAPIMapsFullPlacementWithoutSourcePath(t *testing
 	g := NewWithT(t)
 	preview := types.RegistryImportPreview{
 		ID: uuid.New(), PreviewChecksum: "sha256:test",
-		Omissions: []string{"choice-tp-dev:choice-worker"},
+		Omissions: []string{"reference-client-dev:reference-worker"},
 		Roots: []types.RegistryImportCandidateRoot{{
-			Key: "choice-tp-dev", Name: "Choice TP DEV",
+			Key: "reference-client-dev", Name: "Reference Client DEV",
 			DeliveryModel:  types.DeliveryModelDedicated,
 			Classification: types.ImportClassificationStandard,
 			SourcePath:     "must-not-leak",
 			Placements: []types.RegistryImportCandidatePlacement{{
-				ComponentKey: "api", PhysicalName: "choice-api",
-				ConfigNamespace: "choice-config", DatabaseBoundary: "choice-db",
-				HealthAdapter: "choice-health", RenamedFrom: "choice-api-old",
+				ComponentKey: "api", PhysicalName: "reference-api",
+				ConfigNamespace: "reference-config", DatabaseBoundary: "reference-db",
+				HealthAdapter: "reference-health", RenamedFrom: "reference-api-old",
 			}},
 		}},
 	}
 
 	result := RegistryImportPreviewToAPI(preview)
 
-	g.Expect(result.Omissions).To(Equal([]string{"choice-tp-dev:choice-worker"}))
+	g.Expect(result.Omissions).To(Equal([]string{"reference-client-dev:reference-worker"}))
 	g.Expect(result.Roots).To(HaveLen(1))
 	g.Expect(result.Roots[0].Placements).To(Equal(
 		[]api.RegistryImportCandidatePlacement{{
-			ComponentKey: "api", PhysicalName: "choice-api",
-			ConfigNamespace: "choice-config", DatabaseBoundary: "choice-db",
-			HealthAdapter: "choice-health", RenamedFrom: "choice-api-old",
+			ComponentKey: "api", PhysicalName: "reference-api",
+			ConfigNamespace: "reference-config", DatabaseBoundary: "reference-db",
+			HealthAdapter: "reference-health", RenamedFrom: "reference-api-old",
 		}},
 	))
 	payload, err := json.Marshal(result)

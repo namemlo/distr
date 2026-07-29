@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const policyPath = path.join(repoRoot, 'docs/security/govulncheck-reviewed-findings.json');
 const expectedIds = ['GO-2026-4883', 'GO-2026-4887', 'GO-2026-5617', 'GO-2026-5668', 'GO-2026-5746'];
-const expectedPolicySha256 = '62c1514dbec86a68c77ece7893e5e7aa41c2f30d68126671efde30a3abbb159a';
+const expectedPolicySha256 = '3be319e8475ddd3e281247f155902e584f2f8a2b60acf9be306da2d68e0acc9f';
 const expectedFeedback = {
   'GO-2026-4883': 'https://github.com/golang/vulndb/issues/4922#issuecomment-4976353536',
   'GO-2026-4887': 'https://github.com/golang/vulndb/issues/4921#issuecomment-4976353689',
@@ -145,11 +145,11 @@ function validatePolicy(policy, now) {
   if (policy.reviewedAt !== '2026-07-17') {
     fail('policy reviewedAt must be 2026-07-17');
   }
-  if (policy.owner !== 'EMLO Platform') {
-    fail('policy owner must be EMLO Platform');
+  if (policy.owner !== 'Distr control-plane maintainers') {
+    fail('policy owner must be Distr control-plane maintainers');
   }
-  if (policy.reviewer !== 'EMLO Platform Owner') {
-    fail('policy reviewer must be EMLO Platform Owner');
+  if (policy.reviewer !== 'Distr community fork maintainers') {
+    fail('policy reviewer must be Distr community fork maintainers');
   }
 
   const expiry = Date.parse(policy.expiresAt);

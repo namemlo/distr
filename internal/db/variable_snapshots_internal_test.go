@@ -16,10 +16,10 @@ func TestVariableSnapshotCanonicalPayloadPreservesTargetScopedCandidates(t *test
 	applicationID := uuid.New()
 	channelID := uuid.New()
 	environmentID := uuid.New()
-	choiceCustomerID := uuid.New()
-	choiceTargetID := uuid.New()
-	paymitCustomerID := uuid.New()
-	paymitTargetID := uuid.New()
+	referenceCustomerID := uuid.New()
+	referenceTargetID := uuid.New()
+	secondaryCustomerID := uuid.New()
+	secondaryTargetID := uuid.New()
 	variable := types.Variable{
 		ID:            uuid.New(),
 		VariableSetID: uuid.New(),
@@ -29,19 +29,19 @@ func TestVariableSnapshotCanonicalPayloadPreservesTargetScopedCandidates(t *test
 		ScopedValues: []types.VariableScopedValue{
 			{
 				Scope: types.VariableScope{
-					CustomerOrganizationID: &choiceCustomerID,
+					CustomerOrganizationID: &referenceCustomerID,
 					EnvironmentID:          &environmentID,
-					DeploymentTargetID:     &choiceTargetID,
+					DeploymentTargetID:     &referenceTargetID,
 				},
-				Value: json.RawMessage(`"https://choice.example"`),
+				Value: json.RawMessage(`"https://reference.example"`),
 			},
 			{
 				Scope: types.VariableScope{
-					CustomerOrganizationID: &paymitCustomerID,
+					CustomerOrganizationID: &secondaryCustomerID,
 					EnvironmentID:          &environmentID,
-					DeploymentTargetID:     &paymitTargetID,
+					DeploymentTargetID:     &secondaryTargetID,
 				},
-				Value: json.RawMessage(`"https://paymit.example"`),
+				Value: json.RawMessage(`"https://secondary.example"`),
 			},
 		},
 	}
@@ -71,8 +71,8 @@ func TestVariableSnapshotCanonicalPayloadPreservesTargetScopedCandidates(t *test
 		g.Expect(resolved).To(HaveLen(1))
 		return resolved[0]
 	}
-	g.Expect(resolve(choiceCustomerID, choiceTargetID).Value).To(MatchJSON(`"https://choice.example"`))
-	g.Expect(resolve(paymitCustomerID, paymitTargetID).Value).To(MatchJSON(`"https://paymit.example"`))
+	g.Expect(resolve(referenceCustomerID, referenceTargetID).Value).To(MatchJSON(`"https://reference.example"`))
+	g.Expect(resolve(secondaryCustomerID, secondaryTargetID).Value).To(MatchJSON(`"https://secondary.example"`))
 	g.Expect(resolve(uuid.New(), uuid.New()).Status).To(Equal(types.VariableResolutionStatusUnresolved))
 }
 
@@ -98,39 +98,39 @@ func TestDeploymentPlanTargetResolutionFreezesOneTargetAndBlocksMixedTargetValue
 	applicationID := uuid.New()
 	channelID := uuid.New()
 	environmentID := uuid.New()
-	choiceCustomerID := uuid.New()
-	choiceTargetID := uuid.New()
-	paymitCustomerID := uuid.New()
-	paymitTargetID := uuid.New()
+	referenceCustomerID := uuid.New()
+	referenceTargetID := uuid.New()
+	secondaryCustomerID := uuid.New()
+	secondaryTargetID := uuid.New()
 	variable := types.Variable{
 		ID: uuid.New(), VariableSetID: uuid.New(), Key: "api_url",
 		Type: types.VariableTypeString, IsRequired: true,
 		ScopedValues: []types.VariableScopedValue{
 			{
 				Scope: types.VariableScope{
-					CustomerOrganizationID: &choiceCustomerID,
+					CustomerOrganizationID: &referenceCustomerID,
 					EnvironmentID:          &environmentID,
-					DeploymentTargetID:     &choiceTargetID,
+					DeploymentTargetID:     &referenceTargetID,
 				},
-				Value: json.RawMessage(`"https://choice.example"`),
+				Value: json.RawMessage(`"https://reference.example"`),
 			},
 			{
 				Scope: types.VariableScope{
-					CustomerOrganizationID: &paymitCustomerID,
+					CustomerOrganizationID: &secondaryCustomerID,
 					EnvironmentID:          &environmentID,
-					DeploymentTargetID:     &paymitTargetID,
+					DeploymentTargetID:     &secondaryTargetID,
 				},
-				Value: json.RawMessage(`"https://paymit.example"`),
+				Value: json.RawMessage(`"https://secondary.example"`),
 			},
 		},
 	}
-	choiceTarget := types.DeploymentPlanTarget{
-		OrganizationID: organizationID, DeploymentTargetID: choiceTargetID,
-		CustomerOrganizationID: &choiceCustomerID,
+	referenceTarget := types.DeploymentPlanTarget{
+		OrganizationID: organizationID, DeploymentTargetID: referenceTargetID,
+		CustomerOrganizationID: &referenceCustomerID,
 	}
-	paymitTarget := types.DeploymentPlanTarget{
-		OrganizationID: organizationID, DeploymentTargetID: paymitTargetID,
-		CustomerOrganizationID: &paymitCustomerID,
+	secondaryTarget := types.DeploymentPlanTarget{
+		OrganizationID: organizationID, DeploymentTargetID: secondaryTargetID,
+		CustomerOrganizationID: &secondaryCustomerID,
 	}
 	newPlan := func(targets ...types.DeploymentPlanTarget) *types.DeploymentPlan {
 		return &types.DeploymentPlan{
@@ -142,11 +142,11 @@ func TestDeploymentPlanTargetResolutionFreezesOneTargetAndBlocksMixedTargetValue
 		}
 	}
 
-	choicePlan := newPlan(choiceTarget)
-	addDeploymentPlanTargetResolvedVariables(choicePlan, []types.Variable{variable})
-	g.Expect(choicePlan.Issues).To(BeEmpty())
-	g.Expect(choicePlan.Variables).To(HaveLen(1))
-	g.Expect(choicePlan.Variables[0].Value).To(MatchJSON(`"https://choice.example"`))
+	referencePlan := newPlan(referenceTarget)
+	addDeploymentPlanTargetResolvedVariables(referencePlan, []types.Variable{variable})
+	g.Expect(referencePlan.Issues).To(BeEmpty())
+	g.Expect(referencePlan.Variables).To(HaveLen(1))
+	g.Expect(referencePlan.Variables[0].Value).To(MatchJSON(`"https://reference.example"`))
 
 	missingPlan := newPlan(types.DeploymentPlanTarget{
 		OrganizationID: organizationID, DeploymentTargetID: uuid.New(),
@@ -158,7 +158,7 @@ func TestDeploymentPlanTargetResolutionFreezesOneTargetAndBlocksMixedTargetValue
 		"Code": Equal("required_variable_unresolved"),
 	})))
 
-	mixedPlan := newPlan(choiceTarget, paymitTarget)
+	mixedPlan := newPlan(referenceTarget, secondaryTarget)
 	addDeploymentPlanTargetResolvedVariables(mixedPlan, []types.Variable{variable})
 	g.Expect(mixedPlan.Variables).To(BeEmpty())
 	g.Expect(mixedPlan.Issues).To(ContainElement(MatchFields(IgnoreExtras, Fields{

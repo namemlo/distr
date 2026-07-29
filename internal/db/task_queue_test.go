@@ -804,7 +804,7 @@ func createReadyDeploymentPlanWithReleaseContractForTaskQueue(
 	deps := createReleaseBundleEligibilityDependencies(t, ctx)
 	_, revision := createReleaseBundleProcessRevision(t, ctx, deps.orgID, deps.applicationID, "Task queue contract deploy")
 	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
-	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "choice-tp-dev")
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "reference-client-dev")
 	actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
 	bundle := ociReleaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID)
 	bundle.DeploymentProcessRevisionID = &revision.ID

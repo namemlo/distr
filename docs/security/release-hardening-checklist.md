@@ -94,8 +94,10 @@ deployment window was unavailable.
 The Go scanner remains mandatory and fail closed. `hack/pr050-govulncheck.mjs` accepts only the exact reviewed
 `github.com/docker/docker` version `v28.5.2+incompatible` initialization traces for `GO-2026-4883`, `GO-2026-4887`,
 `GO-2026-5617`, `GO-2026-5668`, and `GO-2026-5746`. The machine-readable policy is
-`docs/security/govulncheck-reviewed-findings.json`; EMLO Platform reviewed it on 2026-07-17, the EMLO Platform Owner
-is accountable for review, and it expires at 2026-08-17T00:00:00Z. Runtime and static validation seal the complete
+`docs/security/govulncheck-reviewed-findings.json`; its `reviewedAt` date remains the imported review date of
+2026-07-17. The neutral policy now records Distr control-plane maintainers as the current owner and Distr community
+fork maintainers as the reviewer accountable for renewal before it expires at 2026-08-17T00:00:00Z. Runtime and
+static validation seal the complete
 canonical policy with SHA-256, so any package, file, function, frame order, affected/fixed metadata, dependency
 family, ID, or link change requires an explicit reviewed code update.
 

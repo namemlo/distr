@@ -12,8 +12,8 @@ func TestExternalExecutionCallbackRequestValidation(t *testing.T) {
 	request := ExternalExecutionCallbackRequest{
 		Sequence:          1,
 		Status:            types.ExternalExecutionStatusSucceeded,
-		ProviderReference: "jenkins-choice-tp-42",
-		ProviderURL:       "https://jenkins.example/job/choice-tp/42",
+		ProviderReference: "ci-reference-client-42",
+		ProviderURL:       "https://ci.example/jobs/reference-client/42",
 		Message:           "loyalty-api is healthy",
 		ObservedState: &ExternalExecutionObservedState{
 			Version: "1.4.2",
@@ -21,8 +21,8 @@ func TestExternalExecutionCallbackRequestValidation(t *testing.T) {
 				"loyalty-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Platform:  types.DeploymentTargetPlatformLinuxAMD64,
 			Contracts: []string{"loyalty.v1"},
-			ConfigReference: "s3://emlo-backend-configs/choice-tp_dev/1/" +
-				"rmt-loyalty-api/appsettings.Production.json?versionId=v42",
+			ConfigReference: "s3://reference-client-configs/reference_client/1/" +
+				"loyalty-api/appsettings.Production.json?versionId=v42",
 			ConfigChecksum: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			Health:         types.TargetComponentHealthHealthy,
 		},

@@ -56,7 +56,7 @@ func TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory
 			},
 		},
 		Components: []types.TargetConfigSnapshotComponentDraft{{
-			PhysicalName:        "choice-api",
+			PhysicalName:        "reference-api",
 			ComponentInstanceID: input.ComponentInstances[0].ID,
 			DeploymentUnitID:    input.DeploymentUnitID,
 		}},
@@ -409,7 +409,7 @@ func TestExtractV1TargetConfigResolvesLogicalComponentIdentityAndActiveAliases(t
 				secondInstance := input.ComponentInstances[0]
 				secondInstance.ID = uuid.New()
 				secondInstance.ComponentDefinitionID = secondDefinition.ID
-				secondInstance.PhysicalName = "choice-worker"
+				secondInstance.PhysicalName = "reference-worker"
 				input.ComponentInstances = append(input.ComponentInstances, secondInstance)
 			},
 			wantBlocked: V1ExtractionBlockedReasonComponentAmbiguous,
@@ -432,7 +432,7 @@ func TestExtractV1TargetConfigResolvesLogicalComponentIdentityAndActiveAliases(t
 			g.Expect(result.BlockedReasonCode).To(Equal(test.wantBlocked))
 			if test.wantBlocked == "" {
 				g.Expect(result.Draft).NotTo(BeNil())
-				g.Expect(result.Draft.Components[0].PhysicalName).To(Equal("choice-api"))
+				g.Expect(result.Draft.Components[0].PhysicalName).To(Equal("reference-api"))
 			} else {
 				g.Expect(result.Draft).To(BeNil())
 			}
@@ -781,7 +781,7 @@ func validV1ExtractionInput(t *testing.T) V1ExtractionInput {
 			OrganizationID:        organizationID,
 			DeploymentUnitID:      deploymentUnitID,
 			ComponentDefinitionID: componentDefinitionID,
-			PhysicalName:          "choice-api",
+			PhysicalName:          "reference-api",
 			ManagementState:       types.RegistryManagementStateManaged,
 		}},
 		ConfigObjectEvidence: []V1ConfigObjectEvidence{

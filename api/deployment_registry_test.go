@@ -23,16 +23,16 @@ func TestRegistryImportPreviewRequestToDomainNormalizesFullPlacement(t *testing.
 		EvidenceReference: " evidence://sha256/" + checksum + " ",
 		EvidenceChecksum:  " " + checksum + " ",
 		SourcePlacements: []RegistryImportSourcePlacement{{
-			RootKey: " Choice-TP-DEV ", PhysicalName: " api ",
+			RootKey: " Reference-Client-DEV ", PhysicalName: " api ",
 		}},
 		Roots: []RegistryImportCandidateRoot{{
-			Key: " Choice-TP-DEV ", Name: " Choice TP DEV ",
+			Key: " Reference-Client-DEV ", Name: " Reference Client DEV ",
 			DeliveryModel: types.DeliveryModelShared, Classification: types.ImportClassificationShared,
 			DeploymentTargetID: uuid.New(), EnvironmentID: uuid.New(),
 			SubscriberCustomerOrganizationIDs: []uuid.UUID{
 				secondSubscriber, firstSubscriber, secondSubscriber,
 			},
-			PhysicalIdentity: " compose:choice-tp-dev ",
+			PhysicalIdentity: " compose:reference-client-dev ",
 			Placements: []RegistryImportCandidatePlacement{{
 				ComponentKey: " API ", PhysicalName: " api ",
 				ConfigNamespace: " config ", DatabaseBoundary: " database ",
@@ -48,10 +48,10 @@ func TestRegistryImportPreviewRequestToDomainNormalizesFullPlacement(t *testing.
 	g.Expect(domain.SourceKind).To(Equal("compose"))
 	g.Expect(domain.Parameters).To(Equal(map[string]string{"format": "compose"}))
 	g.Expect(domain.SourcePlacements).To(Equal([]types.RegistryImportSourcePlacement{{
-		RootKey: "choice-tp-dev", PhysicalName: "api",
+		RootKey: "reference-client-dev", PhysicalName: "api",
 	}}))
 	g.Expect(domain.Roots).To(HaveLen(1))
-	g.Expect(domain.Roots[0].Key).To(Equal("choice-tp-dev"))
+	g.Expect(domain.Roots[0].Key).To(Equal("reference-client-dev"))
 	g.Expect(domain.Roots[0].SubscriberCustomerOrganizationIDs).To(HaveLen(2))
 	g.Expect(domain.Roots[0].Placements).To(Equal([]types.RegistryImportCandidatePlacement{{
 		ComponentKey: "api", PhysicalName: "api", ConfigNamespace: "config",

@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const localJwtSecret = 'bG9jYWwtand0LXNlY3JldC1wbGFjZWhvbGRlci0zMi1ieXRlcw==';
-const expectedVulnerabilityPolicySha256 = '62c1514dbec86a68c77ece7893e5e7aa41c2f30d68126671efde30a3abbb159a';
+const expectedVulnerabilityPolicySha256 = '3be319e8475ddd3e281247f155902e584f2f8a2b60acf9be306da2d68e0acc9f';
 const expectedVulnerabilityIds = ['GO-2026-4883', 'GO-2026-4887', 'GO-2026-5617', 'GO-2026-5668', 'GO-2026-5746'];
 const expectedFeedback = {
   'GO-2026-4883': 'https://github.com/golang/vulndb/issues/4922#issuecomment-4976353536',
@@ -136,8 +136,8 @@ export function validateVulnerabilityPolicy(policy) {
     policy.schemaVersion !== 1 ||
     policy.reviewedAt !== '2026-07-17' ||
     policy.expiresAt !== '2026-08-17T00:00:00Z' ||
-    policy.owner !== 'EMLO Platform' ||
-    policy.reviewer !== 'EMLO Platform Owner'
+    policy.owner !== 'Distr control-plane maintainers' ||
+    policy.reviewer !== 'Distr community fork maintainers'
   ) {
     fail('Go vulnerability policy review, expiry, owner, or reviewer metadata changed');
   }

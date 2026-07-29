@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "reviewedAt": "2026-07-17",
   "expiresAt": "2026-08-17T00:00:00Z",
-  "owner": "EMLO Platform",
-  "reviewer": "EMLO Platform Owner",
+  "owner": "Distr control-plane maintainers",
+  "reviewer": "Distr community fork maintainers",
   "scanner": {
     "protocolVersion": "v1.0.0",
     "name": "govulncheck",

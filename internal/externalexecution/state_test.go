@@ -87,9 +87,9 @@ func TestValidateCallbackSequenceBoundsHistory(t *testing.T) {
 func TestValidateProviderURLRejectsCredentialBearingURLs(t *testing.T) {
 	g := NewWithT(t)
 
-	g.Expect(ValidateProviderURL("https://jenkins.example/job/choice-tp/42")).To(Succeed())
+	g.Expect(ValidateProviderURL("https://ci.example/jobs/reference-client/42")).To(Succeed())
 	g.Expect(ValidateProviderURL("")).To(Succeed())
-	g.Expect(ValidateProviderURL("https://user:password@jenkins.example/job/42")).
+	g.Expect(ValidateProviderURL("https://user:password@ci.example/jobs/42")).
 		To(MatchError(ContainSubstring("credentials")))
 	g.Expect(ValidateProviderURL("https://jenkins.example/job/42?token=secret")).
 		To(MatchError(ContainSubstring("query")))

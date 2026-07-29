@@ -155,11 +155,12 @@ metadata before classifying the result.
 
 ## Root-verified result
 
-Integrated local verification passed the reference-executor focused tests and
-vet, all 28 Node.js tests, the exact ten-minute/100-rate deterministic load
-simulation, and both failure-matrix classifications: the default non-acceptance
-fixture simulation evaluated all 14 cases, while a separate clean executable
-loopback run passed all 14 ordered-action cases.
+At verification commit `f70259fe`, integrated local verification passed the
+reference-executor focused tests and vet, all 28 then-current Node.js tests, the
+exact ten-minute/100-rate deterministic load simulation, and both
+failure-matrix classifications: the default non-acceptance fixture simulation
+evaluated all 14 cases, while a separate clean executable loopback run passed
+all 14 ordered-action cases.
 
 The clean runner exited zero only in `fixture-contract` mode because the Docker
 CLI was unavailable. It recorded `liveStack.started: false`, zero non-local

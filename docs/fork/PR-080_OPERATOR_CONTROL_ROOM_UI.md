@@ -44,6 +44,8 @@ The suite covers:
 - two deployment units sharing one physical target;
 - all visible plan checksums and blocking facts;
 - scoped approval plus server-reported invalidation;
+- guided campaign draft creation and update, validation, immutable publication,
+  run creation, and allowed version-bound run transitions;
 - campaign pause/resume with server-provided run versions;
 - execution previous-known-state evidence and a current-status request;
 - drift detail, evidence, and reasoned resolution;
@@ -51,6 +53,11 @@ The suite covers:
 - legacy route preservation, disabled feature behavior, unauthorized access, and loading, empty, structured error, partial, stale, and unknown states.
 
 Significant contract evidence is attached to the corresponding Playwright result as JSON. Failures retain a trace, screenshot, and video.
+The current suite contains 26 Playwright tests. AC-63 executes the purpose-built
+`@evidence` reference-client DEV release, approval, and previous-state journey
+through `playwright.control-plane-evidence.config.ts`; its eleven visual
+checkpoints and JSON evidence remain local browser proof, not deployed-client
+evidence.
 
 ## Running the proof
 

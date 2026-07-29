@@ -84,7 +84,7 @@ leaves the deterministic resume cursor before that source:
 ```json
 {
   "schema": "distr.release-backfill-artifact-evidence/v1",
-  "reference": "review://backfill/choice-tp-dev/2026-07-18",
+  "reference": "review://backfill/reference-client-dev/2026-07-18",
   "evidence": [
     {
       "sourceReleaseBundleId": "22222222-2222-2222-2222-222222222222",

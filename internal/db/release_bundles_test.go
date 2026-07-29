@@ -1510,7 +1510,7 @@ func releaseContractFixture(digest string) *types.ReleaseContract {
 	return &types.ReleaseContract{
 		Schema: types.ReleaseContractSchemaV1,
 		Source: types.ReleaseContractSource{
-			Repository: "remittance-b2c-backend", Branch: "customization/emlo-remittance/dev",
+			Repository: "reference-client-backend", Branch: "customization/reference-client/dev",
 			SourceCommit: strings.Repeat("1", 40), BuiltCommit: strings.Repeat("1", 40),
 		},
 		Build: types.ReleaseContractBuild{ExternalID: "jenkins-42", ExternalURL: "https://ci.example/job/42"},
@@ -1520,11 +1520,11 @@ func releaseContractFixture(digest string) *types.ReleaseContract {
 		}},
 		Compatibility: types.ReleaseContractCompatibility{AffectedComponents: []string{"api-image"}},
 		Config: types.ReleaseContractConfig{
-			RepositoryCommit: strings.Repeat("2", 40), ComposePath: "choice-tp_dev/1/docker-compose.yaml",
-			ServiceConfigPath: "choice-tp_dev/1/rmt-loyalty-api/appsettings.Production.json",
+			RepositoryCommit: strings.Repeat("2", 40), ComposePath: "reference_client/1/docker-compose.yaml",
+			ServiceConfigPath: "reference_client/1/loyalty-api/appsettings.Production.json",
 			ComposeChecksum:   checksum, ServiceConfigChecksum: checksum,
 		},
-		Changes: types.ReleaseContractChanges{Summary: "Choice TP loyalty deployment"},
+		Changes: types.ReleaseContractChanges{Summary: "Reference client loyalty deployment"},
 	}
 }
 

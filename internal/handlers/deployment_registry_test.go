@@ -109,24 +109,24 @@ func TestRegistryImportJSONBodyPreservesPlacementMetadataAndRejectsSourcePath(t 
 		"evidenceReference":"evidence://sha256/` + checksum + `",
 		"evidenceChecksum":"` + checksum + `",
 		"sourcePlacements":[{
-			"rootKey":"choice-tp-dev",
-			"physicalName":"choice-api"
+			"rootKey":"reference-client-dev",
+			"physicalName":"reference-api"
 		}],
 		"roots":[{
-			"key":"choice-tp-dev",
-			"name":"Choice TP DEV",
+			"key":"reference-client-dev",
+			"name":"Reference Client DEV",
 			"deliveryModel":"external",
 			"classification":"external",
 			"deploymentTargetId":"` + targetID.String() + `",
 			"environmentId":"` + environmentID.String() + `",
-			"physicalIdentity":"compose:choice-tp-dev",
+			"physicalIdentity":"compose:reference-client-dev",
 			"placements":[{
 				"componentKey":"api",
-				"physicalName":"choice-api",
-				"configNamespace":"choice-config",
-				"databaseBoundary":"choice-db",
-				"healthAdapter":"choice-health",
-				"renamedFrom":"choice-api-old"
+				"physicalName":"reference-api",
+				"configNamespace":"reference-config",
+				"databaseBoundary":"reference-db",
+				"healthAdapter":"reference-health",
+				"renamedFrom":"reference-api-old"
 			}]
 		}]
 	}`
@@ -139,15 +139,15 @@ func TestRegistryImportJSONBodyPreservesPlacementMetadataAndRejectsSourcePath(t 
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(decoded.Roots[0].Placements).To(ConsistOf(api.RegistryImportCandidatePlacement{
-		ComponentKey: "api", PhysicalName: "choice-api",
-		ConfigNamespace: "choice-config", DatabaseBoundary: "choice-db",
-		HealthAdapter: "choice-health", RenamedFrom: "choice-api-old",
+		ComponentKey: "api", PhysicalName: "reference-api",
+		ConfigNamespace: "reference-config", DatabaseBoundary: "reference-db",
+		HealthAdapter: "reference-health", RenamedFrom: "reference-api-old",
 	}))
 
 	withSourcePath := strings.Replace(
 		validBody,
-		`"physicalIdentity":"compose:choice-tp-dev",`,
-		`"physicalIdentity":"compose:choice-tp-dev","sourcePath":"C:\\private\\compose.yaml",`,
+		`"physicalIdentity":"compose:reference-client-dev",`,
+		`"physicalIdentity":"compose:reference-client-dev","sourcePath":"/example/compose.yaml",`,
 		1,
 	)
 	recorder = httptest.NewRecorder()

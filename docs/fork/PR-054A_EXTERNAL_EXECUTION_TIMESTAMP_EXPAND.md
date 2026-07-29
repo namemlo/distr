@@ -92,7 +92,7 @@ ExternalExecutionEvent cascade with all nine execution/event foreign-key objects
 all pre-existing organization graphs are purgeable. A valid modern plan/target/task graph reproduces organization
 cleanup failure at `deploymentplantarget_target_fk` because the target is cascaded while the plan target still
 references it with `ON DELETE RESTRICT`. Full organization purge ordering is a separate functional blocker/backlog
-item and must be assessed before overall EMLO completion.
+item and must be assessed before overall release completion.
 
 ## Audited Dirty-Marker Recovery
 

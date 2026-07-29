@@ -1656,14 +1656,18 @@ Use one entry per pull request:
   includes optional `runVersion` and `memberRunId` fields.
 - UI changes: Adds the Angular operator control room, feature-gated navigation,
   static deployment child routes, query/fragment-preserving legacy redirects,
-  release assembly/publication, plan decisions, campaign/execution controls,
-  reconciliation, audit evidence, and composed setup/import readiness.
+  release assembly/publication, plan decisions, guided campaign draft
+  create/update/validate/publish, run creation and version-bound transitions,
+  campaign/execution controls, reconciliation, audit evidence, and composed
+  setup/import readiness.
 - Agent protocol changes: None.
 - Documentation: Added PR-080 fork notes and a deterministic Playwright
   control-plane configuration.
-- Tests: Added 140 integrated Angular tests and an 18-scenario, single-worker
+- Tests: Added 140 integrated Angular tests and a 26-test, single-worker
   route-mocked Playwright suite with HTML, JUnit, trace, screenshot, video, and
-  JSON evidence artifacts. The community production build passes.
+  JSON evidence artifacts. AC-63 selects one purpose-built `@evidence`
+  reference-client DEV release, approval, and previous-state journey with
+  eleven retained visual checkpoints. The community production build passes.
 - Upstream contribution notes: Community-neutral UI and fixture contracts; no
   adopter, infrastructure, credential, or client-specific core behavior.
 - Compatibility notes: `/deployments` redirects to
@@ -1692,9 +1696,10 @@ Use one entry per pull request:
   the existing signed and fenced protocol-v2 contract.
 - Documentation: Adds the PR-081 fork notes and the neutral-proof reproduction,
   evidence, security, performance, and limitation guide.
-- Tests: Reference-executor focused tests and vet passed; race remains blocked
-  by CGO/GCC availability. All 28 Node.js tests, all 14 deterministic failure
-  cases, and the exact ten-minute/100-rate simulation passed. Clean mode used
+- Tests: At verification commit `f70259fe`, reference-executor focused tests
+  and vet passed; race remained blocked by CGO/GCC availability. All 28
+  then-current Node.js tests, all 14 deterministic failure cases, and the exact
+  ten-minute/100-rate simulation passed. Clean mode used
   fixture-contract fallback because Docker was unavailable; no live
   remote/Compose, Hub API end-to-end, staging, or production result is claimed.
 - Upstream contribution notes: Community-neutral fixtures and harnesses with no

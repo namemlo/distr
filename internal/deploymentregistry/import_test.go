@@ -325,25 +325,25 @@ func TestRegistryImportSanitizesEveryPlacementStringOnEveryOS(t *testing.T) {
 		{
 			name: "physical name windows path",
 			mutate: func(value *types.RegistryImportCandidatePlacement) {
-				value.PhysicalName = `C:\clients\choice-tp\api`
+				value.PhysicalName = `C:\clients\reference-client\api`
 			},
 		},
 		{
 			name: "config namespace unix path",
 			mutate: func(value *types.RegistryImportCandidatePlacement) {
-				value.ConfigNamespace = "/srv/choice-tp/config"
+				value.ConfigNamespace = "/srv/reference-client/config"
 			},
 		},
 		{
 			name: "database boundary hostname",
 			mutate: func(value *types.RegistryImportCandidatePlacement) {
-				value.DatabaseBoundary = "choice-db.internal"
+				value.DatabaseBoundary = "reference-db.internal"
 			},
 		},
 		{
 			name: "health adapter URL",
 			mutate: func(value *types.RegistryImportCandidatePlacement) {
-				value.HealthAdapter = "https://choice-tp.example/health"
+				value.HealthAdapter = "https://reference-client.example/health"
 			},
 		},
 		{
@@ -371,19 +371,19 @@ func TestRegistryImportRejectsUnsafeExistingBaselineBeforeDiff(t *testing.T) {
 		{
 			name: "baseline physical name is a path",
 			mutate: func(root *types.RegistryImportCandidateRoot) {
-				root.Placements[0].PhysicalName = `C:\clients\choice-tp\api`
+				root.Placements[0].PhysicalName = `C:\clients\reference-client\api`
 			},
 		},
 		{
 			name: "baseline database boundary is a hostname",
 			mutate: func(root *types.RegistryImportCandidateRoot) {
-				root.Placements[0].DatabaseBoundary = "choice-db.internal"
+				root.Placements[0].DatabaseBoundary = "reference-db.internal"
 			},
 		},
 		{
 			name: "baseline config namespace is secret looking",
 			mutate: func(root *types.RegistryImportCandidateRoot) {
-				root.Placements[0].ConfigNamespace = "choice-api-token"
+				root.Placements[0].ConfigNamespace = "reference-api-token"
 			},
 		},
 	}
@@ -398,9 +398,9 @@ func TestRegistryImportRejectsUnsafeExistingBaselineBeforeDiff(t *testing.T) {
 
 			g.Expect(preview).To(BeNil())
 			g.Expect(err).To(MatchError("existing registry baseline contains unsafe data"))
-			g.Expect(err.Error()).NotTo(ContainSubstring("choice-db.internal"))
+			g.Expect(err.Error()).NotTo(ContainSubstring("reference-db.internal"))
 			g.Expect(err.Error()).NotTo(ContainSubstring(`C:\clients`))
-			g.Expect(err.Error()).NotTo(ContainSubstring("choice-api-token"))
+			g.Expect(err.Error()).NotTo(ContainSubstring("reference-api-token"))
 		})
 	}
 }

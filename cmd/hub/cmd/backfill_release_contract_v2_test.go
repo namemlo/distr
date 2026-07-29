@@ -50,7 +50,7 @@ func TestBackfillReleaseContractV2ParsesBoundedArtifactEvidenceFile(t *testing.T
 	sourceReleaseID := uuid.New()
 	digest := "sha256:" + strings.Repeat("a", 64)
 	evidenceFile := filepath.Join(t.TempDir(), "artifact-evidence.json")
-	documentReference := "review://backfill/choice-tp-dev/2026-07-18"
+	documentReference := "review://backfill/reference-client-dev/2026-07-18"
 	rawEvidence := []byte(`{
 		"schema":"distr.release-backfill-artifact-evidence/v1",
 		"reference":"` + documentReference + `",
