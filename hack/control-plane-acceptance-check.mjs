@@ -1,0 +1,1084 @@
+#!/usr/bin/env node
+
+import {execFile} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {readFile, stat} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {promisify} from 'node:util';
+
+const execFileAsync = promisify(execFile);
+const expectedHeader = [
+  'Acceptance ID',
+  'Owning PR',
+  'Automated test',
+  'Manual/fixture evidence',
+  'Status',
+  'Artifact/checksum',
+];
+const expectedIDs = Array.from({length: 80}, (_, index) => `AC-${String(index + 1).padStart(2, '0')}`);
+const expectedContractPath = 'docs/release/control-plane-acceptance-contract.json';
+const testPathPattern = /(?:_test\.go|\.test\.mjs|\.spec\.ts)$/;
+const checksumPattern = /^sha256:[0-9a-f]{64}$/;
+const commitPattern = /^[0-9a-f]{40}$/;
+const contractSchema = 'distr.control-plane-acceptance-contract/v1';
+const evidenceSchema = 'distr.control-plane-acceptance-evidence/v1';
+const testResultSchema = 'distr.control-plane-test-result/v1';
+const performanceResultSchema = 'distr.control-plane-performance-result/v1';
+const neutralLiveResultSchema = 'distr.control-plane-neutral-live-result/v1';
+const browserResultSchema = 'distr.control-plane-browser-e2e-result/v1';
+const adopterBundleSchema = 'distr.control-plane-adopter-execution-bundle/v1';
+const adopterAuditSchema = 'distr.control-plane-adopter-audit-export/v1';
+const supportedTestRunners = new Set(['node-test', 'go-test', 'playwright']);
+const supportedProofClasses = new Set([
+  'community-focused-test',
+  'performance-measurement',
+  'neutral-live-execution',
+  'browser-e2e',
+  'adopter-execution',
+]);
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function sha256(value) {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function cleanCell(value) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('`') && trimmed.endsWith('`')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function tableCells(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) {
+    return undefined;
+  }
+  return trimmed.slice(1, -1).split('|').map(cleanCell);
+}
+
+function isSeparator(cells) {
+  return cells?.length === expectedHeader.length && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+export function parseAcceptanceLedger(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  let headerIndex = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const cells = tableCells(lines[index]);
+    if (
+      cells?.length === expectedHeader.length &&
+      cells.every((cell, cellIndex) => cell === expectedHeader[cellIndex])
+    ) {
+      headerIndex = index;
+      break;
+    }
+  }
+  if (headerIndex === -1) {
+    fail(`acceptance table header must be: ${expectedHeader.join(' | ')}`);
+  }
+  if (!isSeparator(tableCells(lines[headerIndex + 1] ?? ''))) {
+    fail('acceptance table must include a Markdown separator row');
+  }
+  const rows = [];
+  for (let index = headerIndex + 2; index < lines.length; index += 1) {
+    const cells = tableCells(lines[index]);
+    if (!cells) {
+      break;
+    }
+    if (cells.length !== expectedHeader.length) {
+      fail(`acceptance table row ${index + 1} must contain exactly ${expectedHeader.length} columns`);
+    }
+    const [id, owner, automatedTest, manualEvidence, status, artifact] = cells;
+    rows.push({id, owner, automatedTest, manualEvidence, status, artifact});
+  }
+  return rows;
+}
+
+function repositoryPath(root, value, id, label) {
+  if (!value || path.isAbsolute(value)) {
+    fail(`${id} ${label} must be a repository-relative path`);
+  }
+  const resolved = path.resolve(root, value);
+  const relative = path.relative(root, resolved);
+  if (relative === '' || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+    fail(`${id} ${label} must be a repository-relative path`);
+  }
+  return resolved;
+}
+
+function gitPath(value) {
+  return value.split(path.sep).join('/');
+}
+
+async function requireFile(root, value, id, label) {
+  const resolved = repositoryPath(root, value, id, label);
+  let facts;
+  try {
+    facts = await stat(resolved);
+  } catch {
+    fail(`${id} ${label} does not exist: ${value}`);
+  }
+  if (!facts.isFile()) {
+    fail(`${id} ${label} is not a file: ${value}`);
+  }
+  return resolved;
+}
+
+async function parseJSONFile(root, value, id, label) {
+  const resolved = await requireFile(root, value, id, label);
+  let bytes;
+  try {
+    bytes = await readFile(resolved);
+    return {resolved, bytes, value: JSON.parse(bytes.toString('utf8'))};
+  } catch (error) {
+    fail(`${id} ${label} must be valid JSON: ${error.message}`);
+  }
+}
+
+async function loadGitFacts(root) {
+  let stdout;
+  try {
+    ({stdout} = await execFileAsync('git', ['ls-files', '-z'], {
+      cwd: root,
+      encoding: 'buffer',
+      maxBuffer: 16 * 1024 * 1024,
+    }));
+  } catch {
+    fail('acceptance evidence requires a git worktree');
+  }
+  const tracked = new Set(
+    stdout
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean)
+      .map((value) => gitPath(value))
+  );
+  return {tracked, commitChecks: new Map(), sourceBlobs: new Map()};
+}
+
+function requireTracked(gitFacts, value, id, label) {
+  const normalized = gitPath(value);
+  if (!gitFacts.tracked.has(normalized)) {
+    fail(`${id} ${label} must be tracked by git: ${value}`);
+  }
+}
+
+async function requireSourceCommit(root, gitFacts, commit, id) {
+  if (!commitPattern.test(commit)) {
+    fail(`${id} sourceCommit must be a full lowercase 40-character git commit`);
+  }
+  if (!gitFacts.commitChecks.has(commit)) {
+    const check = (async () => {
+      try {
+        await execFileAsync('git', ['cat-file', '-e', `${commit}^{commit}`], {cwd: root});
+        await execFileAsync('git', ['merge-base', '--is-ancestor', commit, 'HEAD'], {cwd: root});
+      } catch {
+        fail(`${id} sourceCommit must exist and be an ancestor of HEAD: ${commit}`);
+      }
+    })();
+    gitFacts.commitChecks.set(commit, check);
+  }
+  await gitFacts.commitChecks.get(commit);
+}
+
+async function sourceBlob(root, gitFacts, commit, value, id, label) {
+  const normalized = gitPath(value);
+  const key = `${commit}:${normalized}`;
+  if (!gitFacts.sourceBlobs.has(key)) {
+    const load = (async () => {
+      try {
+        const {stdout} = await execFileAsync('git', ['show', `${commit}:${normalized}`], {
+          cwd: root,
+          encoding: 'buffer',
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        return stdout;
+      } catch {
+        fail(`${id} ${label} is absent from sourceCommit ${commit}: ${value}`);
+      }
+    })();
+    gitFacts.sourceBlobs.set(key, load);
+  }
+  return gitFacts.sourceBlobs.get(key);
+}
+
+function requireString(value, id, label) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    fail(`${id} ${label} must be a non-empty string`);
+  }
+}
+
+function requireStringArray(value, id, label) {
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    fail(`${id} verified-adopter evidence must include non-empty ${label}`);
+  }
+}
+
+function requireTimestamp(value, id, label) {
+  requireString(value, id, label);
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    fail(`${id} ${label} must be an ISO-8601 timestamp`);
+  }
+  return parsed;
+}
+
+async function loadAcceptanceContract(root, gitFacts) {
+  const contractFile = await parseJSONFile(root, expectedContractPath, 'contract', 'manifest');
+  const contract = contractFile.value;
+  if (contract.schema !== contractSchema) {
+    fail(`contract schema must be ${contractSchema}`);
+  }
+  requireString(contract.normativeSource, 'contract', 'normativeSource');
+  await requireFile(root, contract.normativeSource, 'contract', 'normativeSource');
+  requireTracked(gitFacts, contract.normativeSource, 'contract', 'normativeSource');
+  if (!contract.profiles || typeof contract.profiles !== 'object' || Array.isArray(contract.profiles)) {
+    fail('contract profiles must be an object');
+  }
+  if (!contract.acceptance || typeof contract.acceptance !== 'object' || Array.isArray(contract.acceptance)) {
+    fail('contract acceptance must be an object');
+  }
+  const contractIDs = Object.keys(contract.acceptance);
+  for (const id of expectedIDs) {
+    if (!Object.hasOwn(contract.acceptance, id)) {
+      fail(`contract missing acceptance ID ${id}`);
+    }
+  }
+  for (const id of contractIDs) {
+    if (!expectedIDs.includes(id)) {
+      fail(`contract has unexpected acceptance ID ${id}`);
+    }
+    const rule = contract.acceptance[id];
+    requireString(rule?.owner, id, 'contract owner');
+    requireString(rule?.profile, id, 'contract profile');
+    const profile = contract.profiles[rule.profile];
+    if (!profile) {
+      fail(`${id} contract profile does not exist: ${rule.profile}`);
+    }
+    if (!testPathPattern.test(profile.automatedTest ?? '')) {
+      fail(`${id} contract automated test must reference a *_test.go, *.test.mjs, or *.spec.ts file`);
+    }
+    requireString(profile.manualEvidence, id, 'contract manualEvidence');
+    if (
+      !Array.isArray(profile.allowedProofClasses) ||
+      profile.allowedProofClasses.length === 0 ||
+      profile.allowedProofClasses.some((item) => typeof item !== 'string' || !item.trim())
+    ) {
+      fail(`${id} contract allowedProofClasses must contain at least one proof class`);
+    }
+    for (const proofClass of profile.allowedProofClasses) {
+      if (!supportedProofClasses.has(proofClass)) {
+        fail(`${id} contract proof class is unsupported: ${proofClass}`);
+      }
+    }
+    if (
+      profile.allowedProofClasses.includes('performance-measurement') &&
+      (typeof profile.proofRequirements?.performanceScenario !== 'string' ||
+        profile.proofRequirements.performanceScenario.trim() === '')
+    ) {
+      fail(`${id} performance profile must declare proofRequirements.performanceScenario`);
+    }
+    if (profile.allowedProofClasses.includes('performance-measurement')) {
+      const metrics = profile.proofRequirements?.performanceMetrics;
+      if (!Array.isArray(metrics) || metrics.length === 0) {
+        fail(`${id} performance profile must declare performanceMetrics`);
+      }
+      const names = new Set();
+      for (const metric of metrics) {
+        if (
+          typeof metric?.name !== 'string' ||
+          metric.name === '' ||
+          names.has(metric.name) ||
+          !['p95', 'p99', 'max', 'sum'].includes(metric.aggregation) ||
+          !['lte', 'lt', 'eq'].includes(metric.operator) ||
+          !Number.isFinite(metric.limit) ||
+          typeof metric.unit !== 'string' ||
+          metric.unit === '' ||
+          !Number.isInteger(metric.minSamples) ||
+          metric.minSamples <= 0
+        ) {
+          fail(`${id} performanceMetrics must have unique names and valid aggregation, threshold, unit, and samples`);
+        }
+        names.add(metric.name);
+      }
+      const facts = profile.proofRequirements?.performanceFacts;
+      if (
+        !facts ||
+        typeof facts.exact !== 'object' ||
+        facts.exact === null ||
+        Array.isArray(facts.exact) ||
+        typeof facts.minimum !== 'object' ||
+        facts.minimum === null ||
+        Array.isArray(facts.minimum) ||
+        Object.keys(facts.exact).some((key) => Object.hasOwn(facts.minimum, key)) ||
+        Object.values(facts.minimum).some((value) => !Number.isFinite(value))
+      ) {
+        fail(`${id} performance profile must declare non-overlapping exact and minimum performanceFacts`);
+      }
+    }
+    if (!supportedTestRunners.has(profile.testRunner)) {
+      fail(`${id} contract testRunner must be node-test, go-test, or playwright`);
+    }
+    if (typeof rule.pendingAdopter !== 'boolean') {
+      fail(`${id} contract pendingAdopter must be boolean`);
+    }
+  }
+  return contract;
+}
+
+function validateRowContract(row, rule, profile) {
+  if (row.owner !== rule.owner) {
+    fail(`${row.id} owner must be ${rule.owner}`);
+  }
+  if (row.automatedTest !== profile.automatedTest) {
+    fail(`${row.id} automated test must be ${profile.automatedTest}`);
+  }
+  if (row.manualEvidence !== profile.manualEvidence) {
+    fail(`${row.id} manual/fixture evidence must be ${profile.manualEvidence}`);
+  }
+}
+
+function validateStatus(row, rule) {
+  if (row.status === 'pending-adopter') {
+    if (!rule.pendingAdopter) {
+      fail(`${row.id} may not use status pending-adopter`);
+    }
+    if (row.artifact !== `pending-adopter:${rule.owner}`) {
+      fail(`${row.id} pending artifact must be pending-adopter:${rule.owner}`);
+    }
+    return;
+  }
+  if (row.status === 'verified-adopter') {
+    if (!rule.pendingAdopter) {
+      fail(`${row.id} may not use status verified-adopter`);
+    }
+    return;
+  }
+  if (row.status !== 'community-evidence-retained') {
+    fail(`${row.id} has unsupported status ${row.status || '<empty>'}`);
+  }
+  if (rule.pendingAdopter) {
+    fail(`${row.id} must remain pending-adopter until adopter-specific execution evidence is retained`);
+  }
+}
+
+async function validateBoundFile(root, gitFacts, row, sourceCommit, binding, expectedPath, label) {
+  if (!binding || binding.path !== expectedPath || !checksumPattern.test(binding.sha256 ?? '')) {
+    fail(`${row.id} ${label} binding must contain the exact contract path and a SHA-256 checksum`);
+  }
+  const resolved = await requireFile(root, expectedPath, row.id, label);
+  requireTracked(gitFacts, expectedPath, row.id, label);
+  const currentBytes = await readFile(resolved);
+  if (sha256(currentBytes) !== binding.sha256) {
+    fail(`${row.id} ${label} checksum mismatch in the current worktree`);
+  }
+  const committedBytes = await sourceBlob(root, gitFacts, sourceCommit, expectedPath, row.id, label);
+  if (sha256(committedBytes) !== binding.sha256) {
+    fail(`${row.id} ${label} checksum mismatch at source commit`);
+  }
+}
+
+function validateTestCommand(row, profile, result) {
+  const command = result.command;
+  if (!command || typeof command !== 'object' || Array.isArray(command)) {
+    fail(`${row.id} test result command must be a structured object`);
+  }
+  if (command.runner !== profile.testRunner) {
+    fail(`${row.id} test result runner must be ${profile.testRunner}`);
+  }
+  if (command.selectedTestSource !== row.automatedTest) {
+    fail(`${row.id} test result selectedTestSource must be ${row.automatedTest}`);
+  }
+  if (
+    !Array.isArray(command.argv) ||
+    command.argv.length < 3 ||
+    command.argv.some((item) => typeof item !== 'string')
+  ) {
+    fail(`${row.id} test result argv must be a non-empty string array`);
+  }
+  const normalizedSource = gitPath(row.automatedTest);
+  if (profile.testRunner === 'node-test') {
+    if (!/^node(?:\.exe)?$/i.test(path.basename(command.argv[0])) || !command.argv.includes('--test')) {
+      fail(`${row.id} node-test result must execute node --test`);
+    }
+    if (!command.argv.map(gitPath).includes(normalizedSource)) {
+      fail(`${row.id} node-test argv must include ${row.automatedTest}`);
+    }
+  } else if (profile.testRunner === 'go-test') {
+    const packagePath = `./${path.posix.dirname(normalizedSource)}`;
+    if (command.argv[0] !== 'go' || command.argv[1] !== 'test' || !command.argv.includes(packagePath)) {
+      fail(`${row.id} go-test argv must execute package ${packagePath}`);
+    }
+  } else {
+    const playwrightIndex = command.argv.indexOf('playwright');
+    if (
+      playwrightIndex < 0 ||
+      command.argv[playwrightIndex + 1] !== 'test' ||
+      !command.argv.map(gitPath).includes(normalizedSource)
+    ) {
+      fail(`${row.id} playwright argv must execute ${row.automatedTest}`);
+    }
+  }
+  if (result.exitCode !== 0) {
+    fail(`${row.id} test result exitCode must be zero`);
+  }
+  const tests = result.tests;
+  if (
+    !tests ||
+    !Number.isInteger(tests.expected) ||
+    tests.expected <= 0 ||
+    !Number.isInteger(tests.passed) ||
+    tests.passed < tests.expected ||
+    !Number.isInteger(tests.failed) ||
+    tests.failed !== 0
+  ) {
+    fail(`${row.id} test result counts must show expected tests greater than zero and zero failures`);
+  }
+}
+
+async function validateTestResult(root, gitFacts, row, profile, sourceCommit, binding) {
+  if (!binding || typeof binding.path !== 'string' || !checksumPattern.test(binding.sha256 ?? '')) {
+    fail(`${row.id} testResult must contain a repository path and SHA-256 checksum`);
+  }
+  requireTracked(gitFacts, binding.path, row.id, 'test result');
+  const resultFile = await parseJSONFile(root, binding.path, row.id, 'test result');
+  if (sha256(resultFile.bytes) !== binding.sha256) {
+    fail(`${row.id} test result checksum mismatch for ${binding.path}`);
+  }
+  const result = resultFile.value;
+  if (result.schema !== testResultSchema) {
+    fail(`${row.id} test result schema must be ${testResultSchema}`);
+  }
+  if (result.sourceCommit !== sourceCommit) {
+    fail(`${row.id} test result sourceCommit must match evidence sourceCommit`);
+  }
+  validateTestCommand(row, profile, result);
+  if (result.status !== 'passed') {
+    fail(`${row.id} test result status must be passed`);
+  }
+  const startedAt = requireTimestamp(result.startedAt, row.id, 'test result startedAt');
+  const completedAt = requireTimestamp(result.completedAt, row.id, 'test result completedAt');
+  if (completedAt < startedAt) {
+    fail(`${row.id} test result completedAt must not precede startedAt`);
+  }
+}
+
+async function readTrackedBinding(root, gitFacts, row, binding, label) {
+  if (!binding || typeof binding.path !== 'string' || !checksumPattern.test(binding.sha256 ?? '')) {
+    fail(`${row.id} ${label} must contain a repository path and SHA-256 checksum`);
+  }
+  requireTracked(gitFacts, binding.path, row.id, label);
+  const file = await parseJSONFile(root, binding.path, row.id, label);
+  if (sha256(file.bytes) !== binding.sha256) {
+    fail(`${row.id} ${label} checksum mismatch for ${binding.path}`);
+  }
+  return file.value;
+}
+
+function jsonEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function aggregateSamples(samples, aggregation) {
+  if (aggregation === 'sum') {
+    return samples.reduce((total, value) => total + value, 0);
+  }
+  const sorted = [...samples].sort((left, right) => left - right);
+  if (aggregation === 'max') {
+    return sorted[sorted.length - 1];
+  }
+  const percentile = aggregation === 'p95' ? 0.95 : 0.99;
+  return sorted[Math.max(0, Math.ceil(percentile * sorted.length) - 1)];
+}
+
+function thresholdPasses(measured, operator, limit) {
+  if (operator === 'eq') {
+    return measured === limit;
+  }
+  if (operator === 'lt') {
+    return measured < limit;
+  }
+  return measured <= limit;
+}
+
+async function validatePerformanceEvidence(root, gitFacts, row, profile, sourceCommit, binding) {
+  const report = await readTrackedBinding(root, gitFacts, row, binding, 'performance report');
+  if (report.schema !== performanceResultSchema) {
+    fail(`${row.id} performance report schema must be ${performanceResultSchema}`);
+  }
+  if (report.sourceCommit !== sourceCommit) {
+    fail(`${row.id} performance report sourceCommit must match evidence sourceCommit`);
+  }
+  if (report.scenario !== profile.proofRequirements?.performanceScenario) {
+    fail(`${row.id} performance report scenario must be ${profile.proofRequirements?.performanceScenario}`);
+  }
+  if (report.mode !== 'measured-live') {
+    fail(`${row.id} performance report mode must be measured-live`);
+  }
+  if (report.status !== 'passed') {
+    fail(`${row.id} performance report status must be passed`);
+  }
+  const rawSamples = await readTrackedBinding(root, gitFacts, row, report.rawSamples, 'performance raw samples');
+  if (!rawSamples.series || typeof rawSamples.series !== 'object' || Array.isArray(rawSamples.series)) {
+    fail(`${row.id} performance raw samples must contain metric series`);
+  }
+  const hardware = report.hardware;
+  for (const field of ['os', 'architecture', 'cpu']) {
+    requireString(hardware?.[field], row.id, `performance hardware ${field}`);
+  }
+  if (
+    !Number.isInteger(hardware?.logicalCores) ||
+    hardware.logicalCores <= 0 ||
+    !Number.isInteger(hardware?.memoryBytes) ||
+    hardware.memoryBytes <= 0
+  ) {
+    fail(`${row.id} performance hardware must include positive logicalCores and memoryBytes`);
+  }
+  requireString(report.build?.version, row.id, 'performance build version');
+  if (!checksumPattern.test(report.build?.artifactDigest ?? '')) {
+    fail(`${row.id} performance build artifactDigest must be a SHA-256 digest`);
+  }
+  const dataset = report.dataset;
+  const minimums = {targets: 1000, placements: 649, onlineExecutors: 100, components: 100, steps: 500};
+  for (const [field, minimum] of Object.entries(minimums)) {
+    if (!Number.isInteger(dataset?.[field]) || dataset[field] < minimum) {
+      fail(`${row.id} performance dataset ${field} must be at least ${minimum}`);
+    }
+  }
+  const requirements = profile.proofRequirements.performanceMetrics;
+  const expectedNames = requirements.map((requirement) => requirement.name);
+  const thresholds = Array.isArray(report.thresholds) ? report.thresholds : [];
+  const actualNames = thresholds.map((threshold) => threshold?.name);
+  const seriesNames = Object.keys(rawSamples.series);
+  if (
+    actualNames.length !== expectedNames.length ||
+    new Set(actualNames).size !== expectedNames.length ||
+    seriesNames.length !== expectedNames.length ||
+    new Set(seriesNames).size !== expectedNames.length ||
+    expectedNames.some((name) => !actualNames.includes(name) || !seriesNames.includes(name)) ||
+    actualNames.some((name) => !expectedNames.includes(name)) ||
+    seriesNames.some((name) => !expectedNames.includes(name))
+  ) {
+    fail(`${row.id} performance metrics must exactly match the contract`);
+  }
+  for (const requirement of requirements) {
+    const threshold = thresholds.find((candidate) => candidate.name === requirement.name);
+    const samples = rawSamples.series[requirement.name];
+    if (
+      !Array.isArray(samples) ||
+      samples.length < requirement.minSamples ||
+      samples.some((sample) => !Number.isFinite(sample))
+    ) {
+      fail(
+        `${row.id} performance raw series ${requirement.name} must contain finite numeric samples and meet minSamples`
+      );
+    }
+    const measured = aggregateSamples(samples, requirement.aggregation);
+    if (
+      threshold.aggregation !== requirement.aggregation ||
+      threshold.operator !== requirement.operator ||
+      threshold.limit !== requirement.limit ||
+      threshold.unit !== requirement.unit ||
+      threshold.samples !== samples.length ||
+      !Number.isFinite(threshold.measured) ||
+      Math.abs(threshold.measured - measured) > 1e-9 ||
+      !thresholdPasses(measured, requirement.operator, requirement.limit) ||
+      threshold.passed !== true
+    ) {
+      fail(`${row.id} performance threshold ${requirement.name} must match its contract and raw sample series`);
+    }
+  }
+  const factRequirements = profile.proofRequirements.performanceFacts;
+  const facts = report.facts;
+  if (!facts || typeof facts !== 'object' || Array.isArray(facts)) {
+    fail(`${row.id} performance report must retain scenario facts`);
+  }
+  for (const [name, expected] of Object.entries(factRequirements.exact)) {
+    if (!jsonEqual(facts[name], expected)) {
+      fail(`${row.id} performance fact ${name} must equal ${JSON.stringify(expected)}`);
+    }
+  }
+  for (const [name, minimum] of Object.entries(factRequirements.minimum)) {
+    if (!Number.isFinite(facts[name]) || facts[name] < minimum) {
+      fail(`${row.id} performance fact ${name} must be at least ${minimum}`);
+    }
+  }
+  if (report.scenario === 'fleet-api-slos') {
+    if (
+      !Number.isInteger(facts.maxResponseItems) ||
+      facts.maxResponseItems <= 0 ||
+      facts.maxResponseItems > facts.pageSize
+    ) {
+      fail(`${row.id} fleet-api-slos maxResponseItems must be positive and no greater than pageSize`);
+    }
+  }
+  if (report.scenario === 'roadmap-scale-load') {
+    if (facts.authentication !== 'authenticated-live') {
+      fail(`${row.id} roadmap-scale-load authentication must be authenticated-live`);
+    }
+    if (
+      facts.concurrentAgents !== 100 ||
+      !Array.isArray(facts.authenticatedExecutorIds) ||
+      facts.authenticatedExecutorIds.length !== 100 ||
+      new Set(facts.authenticatedExecutorIds).size !== 100 ||
+      facts.authenticatedExecutorIds.some((value) => typeof value !== 'string' || value === '')
+    ) {
+      fail(`${row.id} roadmap-scale-load must retain exactly 100 unique authenticatedExecutorIds`);
+    }
+    const executorIDsChecksum = sha256(JSON.stringify([...facts.authenticatedExecutorIds].sort()));
+    if (
+      !checksumPattern.test(facts.authenticatedExecutorIdsChecksum ?? '') ||
+      facts.authenticatedExecutorIdsChecksum !== executorIDsChecksum
+    ) {
+      fail(`${row.id} roadmap-scale-load authenticatedExecutorIdsChecksum must match the sorted identity set`);
+    }
+    if (
+      !Array.isArray(facts.planChecksums) ||
+      facts.planChecksums.length !== 5 ||
+      facts.planChecksums.some((value) => !checksumPattern.test(value)) ||
+      new Set(facts.planChecksums).size !== 1
+    ) {
+      fail(`${row.id} roadmap-scale-load planChecksums must contain five identical SHA-256 values`);
+    }
+    if (
+      !Array.isArray(facts.waveOrderChecksums) ||
+      facts.waveOrderChecksums.length < 2 ||
+      facts.waveOrderChecksums.some((value) => !checksumPattern.test(value)) ||
+      new Set(facts.waveOrderChecksums).size !== 1
+    ) {
+      fail(`${row.id} roadmap-scale-load waveOrderChecksums must contain repeated identical SHA-256 values`);
+    }
+    if (facts.acceptedEvents < facts.eventDurationSeconds * facts.eventRatePerSecond) {
+      fail(`${row.id} roadmap-scale-load acceptedEvents must cover the full duration and rate`);
+    }
+    if (
+      !Number.isInteger(facts.logPeakBufferBytes) ||
+      facts.logPeakBufferBytes <= 0 ||
+      facts.logPeakBufferBytes >= facts.logBytes
+    ) {
+      fail(`${row.id} roadmap-scale-load logPeakBufferBytes must prove bounded streaming below logBytes`);
+    }
+  }
+}
+
+function validateNeutralReleaseLineage(row, lineage) {
+  if (!lineage || typeof lineage !== 'object' || Array.isArray(lineage)) {
+    fail(`${row.id} neutral-live report must retain shared releaseLineage`);
+  }
+  if (!Array.isArray(lineage.componentReleases) || lineage.componentReleases.length !== 2) {
+    fail(`${row.id} neutral-live lineage must retain exactly two Component Releases`);
+  }
+  const componentIDs = new Set();
+  for (const release of lineage.componentReleases) {
+    requireString(release?.id, row.id, 'neutral-live Component Release id');
+    requireString(release?.version, row.id, 'neutral-live Component Release version');
+    if (!checksumPattern.test(release?.artifactDigest ?? '') || componentIDs.has(release.id)) {
+      fail(`${row.id} neutral-live Component Releases must have unique IDs and immutable artifact digests`);
+    }
+    componentIDs.add(release.id);
+  }
+  if (!Array.isArray(lineage.productReleases) || lineage.productReleases.length !== 2) {
+    fail(`${row.id} neutral-live lineage must retain exactly two Product Releases`);
+  }
+  const productIDs = new Set();
+  for (const release of lineage.productReleases) {
+    requireString(release?.id, row.id, 'neutral-live Product Release id');
+    requireString(release?.version, row.id, 'neutral-live Product Release version');
+    if (
+      !checksumPattern.test(release?.manifestChecksum ?? '') ||
+      !checksumPattern.test(release?.graphChecksum ?? '') ||
+      !Array.isArray(release?.componentReleaseIds) ||
+      release.componentReleaseIds.length === 0 ||
+      release.componentReleaseIds.some((id) => !componentIDs.has(id)) ||
+      productIDs.has(release.id)
+    ) {
+      fail(
+        `${row.id} neutral-live Product Releases must bind unique IDs, manifest/graph checksums, and Component Releases`
+      );
+    }
+    productIDs.add(release.id);
+  }
+  if (!Array.isArray(lineage.plans) || lineage.plans.length !== 2) {
+    fail(`${row.id} neutral-live lineage must retain exact A-to-B and B-to-A plans`);
+  }
+  const planIDs = new Set();
+  for (const plan of lineage.plans) {
+    requireString(plan?.id, row.id, 'neutral-live plan id');
+    if (
+      !checksumPattern.test(plan?.checksum ?? '') ||
+      !productIDs.has(plan?.fromProductReleaseId) ||
+      !productIDs.has(plan?.toProductReleaseId) ||
+      plan.fromProductReleaseId === plan.toProductReleaseId ||
+      planIDs.has(plan.id)
+    ) {
+      fail(`${row.id} neutral-live plans must have unique IDs/checksums and exact Product Release endpoints`);
+    }
+    planIDs.add(plan.id);
+  }
+  const [releaseA, releaseB] = lineage.productReleases;
+  if (
+    !lineage.plans.some(
+      (plan) => plan.fromProductReleaseId === releaseA.id && plan.toProductReleaseId === releaseB.id
+    ) ||
+    !lineage.plans.some((plan) => plan.fromProductReleaseId === releaseB.id && plan.toProductReleaseId === releaseA.id)
+  ) {
+    fail(`${row.id} neutral-live lineage must retain both A-to-B and B-to-A plan checksums`);
+  }
+  return [releaseA.id, releaseB.id, releaseA.id];
+}
+
+async function validateNeutralLiveEvidence(root, gitFacts, row, sourceCommit, binding) {
+  const report = await readTrackedBinding(root, gitFacts, row, binding, 'neutral-live report');
+  if (report.schema !== neutralLiveResultSchema) {
+    fail(`${row.id} neutral-live report schema must be ${neutralLiveResultSchema}`);
+  }
+  if (report.sourceCommit !== sourceCommit) {
+    fail(`${row.id} neutral-live report sourceCommit must match evidence sourceCommit`);
+  }
+  if (report.proofMode !== 'live-hub-api' || report.liveStack?.started !== true || report.status !== 'passed') {
+    fail(`${row.id} neutral-live report must be a passed live-hub-api run with a started live stack`);
+  }
+  if (!Array.isArray(report.targets) || report.targets.length !== 2) {
+    fail(`${row.id} neutral-live report must contain exactly two targets`);
+  }
+  const uniqueFields = ['targetId', 'configChecksum', 'executorId', 'observerId', 'executionId', 'observationId'];
+  for (const field of uniqueFields) {
+    const values = report.targets.map((target) => target[field]);
+    if (values.some((value) => typeof value !== 'string' || value === '') || new Set(values).size !== 2) {
+      fail(`${row.id} neutral-live targets must have two distinct ${field} values`);
+    }
+  }
+  if (report.targets.some((target) => !checksumPattern.test(target.configChecksum) || target.status !== 'passed')) {
+    fail(`${row.id} neutral-live targets must retain passed results and configuration checksums`);
+  }
+  const adapters = new Set(report.targets.map((target) => target.adapterKind));
+  if (!adapters.has('external-executor') || !adapters.has('reference') || adapters.size !== 2) {
+    fail(`${row.id} neutral-live targets must use external-executor and reference adapters`);
+  }
+  if (report.targets.some((target) => target.observerId === target.executorId)) {
+    fail(`${row.id} neutral-live observers must be independent from executors`);
+  }
+  const expectedHistory = validateNeutralReleaseLineage(row, report.releaseLineage);
+  for (const target of report.targets) {
+    if (!jsonEqual(target.releaseLineage, report.releaseLineage)) {
+      fail(`${row.id} neutral-live target ${target.targetId} release lineage must match the shared lineage`);
+    }
+  }
+  if (!jsonEqual(report.releaseHistory, expectedHistory)) {
+    fail(`${row.id} neutral-live report must retain exact Product Release A-B-A history`);
+  }
+  if (report.cleanup?.completed !== true || report.nonLocalCalls !== 0) {
+    fail(`${row.id} neutral-live report must complete cleanup and record zero non-local calls`);
+  }
+}
+
+async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, binding) {
+  const report = await readTrackedBinding(root, gitFacts, row, binding, 'browser report');
+  if (report.schema !== browserResultSchema) {
+    fail(`${row.id} browser report schema must be ${browserResultSchema}`);
+  }
+  if (report.sourceCommit !== sourceCommit) {
+    fail(`${row.id} browser report sourceCommit must match evidence sourceCommit`);
+  }
+  if (report.runner !== 'playwright' || report.status !== 'passed') {
+    fail(`${row.id} browser report must be a passed Playwright result`);
+  }
+  const tests = report.tests;
+  if (!Number.isInteger(tests?.expected) || tests.expected <= 0) {
+    fail(`${row.id} browser report must have expected tests greater than zero`);
+  }
+  if (
+    !Number.isInteger(tests.passed) ||
+    tests.passed !== tests.expected ||
+    !Number.isInteger(tests.unexpected) ||
+    tests.unexpected !== 0 ||
+    !Number.isInteger(tests.flaky) ||
+    tests.flaky !== 0
+  ) {
+    fail(`${row.id} browser report must have all expected tests passed with zero unexpected or flaky results`);
+  }
+}
+
+async function validateProofClassEvidence(root, gitFacts, row, profile, evidence) {
+  if (evidence.proofClass === 'performance-measurement') {
+    await validatePerformanceEvidence(root, gitFacts, row, profile, evidence.sourceCommit, evidence.classEvidence);
+  } else if (evidence.proofClass === 'neutral-live-execution') {
+    await validateNeutralLiveEvidence(root, gitFacts, row, evidence.sourceCommit, evidence.classEvidence);
+  } else if (evidence.proofClass === 'browser-e2e') {
+    await validateBrowserEvidence(root, gitFacts, row, evidence.sourceCommit, evidence.classEvidence);
+  } else if (Object.hasOwn(evidence, 'classEvidence')) {
+    fail(`${row.id} proof class ${evidence.proofClass} must not contain classEvidence`);
+  }
+}
+
+function sameStringSet(left, right) {
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length === right.length &&
+    new Set(left).size === left.length &&
+    left.every((value) => typeof value === 'string' && value !== '' && right.includes(value))
+  );
+}
+
+async function validateAdopterBundle(root, gitFacts, row, evidence, execution) {
+  const bundle = await readTrackedBinding(root, gitFacts, row, execution.bundle, 'adopter execution bundle');
+  if (bundle.schema !== adopterBundleSchema) {
+    fail(`${row.id} adopter execution bundle schema must be ${adopterBundleSchema}`);
+  }
+  if (bundle.sourceCommit !== evidence.sourceCommit) {
+    fail(`${row.id} adopter execution bundle sourceCommit must match evidence sourceCommit`);
+  }
+  for (const field of ['taskOwner', 'organizationId', 'environmentId']) {
+    if (bundle[field] !== execution[field]) {
+      fail(`${row.id} adopter execution bundle ${field} must match adopterExecution`);
+    }
+  }
+  for (const field of ['targetIds', 'campaignIds']) {
+    if (!sameStringSet(bundle[field], execution[field])) {
+      fail(`${row.id} adopter execution bundle ${field} must exactly match adopterExecution`);
+    }
+  }
+  if (bundle.status !== 'passed') {
+    fail(`${row.id} adopter execution bundle status must be passed`);
+  }
+  if (!Array.isArray(bundle.executions) || bundle.executions.length === 0) {
+    fail(`${row.id} adopter execution bundle must contain executions`);
+  }
+  const executionIDs = new Set();
+  for (const item of bundle.executions) {
+    for (const field of ['executionId', 'targetId', 'campaignId', 'executorId']) {
+      requireString(item[field], row.id, `adopter execution ${field}`);
+    }
+    if (
+      !execution.targetIds.includes(item.targetId) ||
+      !execution.campaignIds.includes(item.campaignId) ||
+      !checksumPattern.test(item.artifactDigest ?? '') ||
+      item.status !== 'succeeded' ||
+      executionIDs.has(item.executionId)
+    ) {
+      fail(`${row.id} adopter executions must have unique exact IDs, digests, scope, and succeeded status`);
+    }
+    executionIDs.add(item.executionId);
+  }
+  if (
+    execution.targetIds.some((targetId) => !bundle.executions.some((item) => item.targetId === targetId)) ||
+    execution.campaignIds.some((campaignId) => !bundle.executions.some((item) => item.campaignId === campaignId))
+  ) {
+    fail(`${row.id} adopter executions must cover every retained target and campaign`);
+  }
+  if (!Array.isArray(bundle.observations) || bundle.observations.length === 0) {
+    fail(`${row.id} adopter execution bundle must contain observations`);
+  }
+  const observationIDs = new Set();
+  for (const item of bundle.observations) {
+    const matchingExecution = bundle.executions.find((candidate) => candidate.executionId === item.executionId);
+    for (const field of ['observationId', 'executionId', 'targetId', 'observerId']) {
+      requireString(item[field], row.id, `adopter observation ${field}`);
+    }
+    if (
+      !matchingExecution ||
+      matchingExecution.targetId !== item.targetId ||
+      matchingExecution.executorId === item.observerId ||
+      matchingExecution.artifactDigest !== item.artifactDigest ||
+      !checksumPattern.test(item.configChecksum ?? '') ||
+      item.status !== 'verified' ||
+      observationIDs.has(item.observationId)
+    ) {
+      fail(`${row.id} adopter observations must independently verify exact executions, targets, and checksums`);
+    }
+    observationIDs.add(item.observationId);
+  }
+  if (
+    bundle.executions.some(
+      (item) => !bundle.observations.some((observation) => observation.executionId === item.executionId)
+    )
+  ) {
+    fail(`${row.id} adopter observations must cover every retained execution`);
+  }
+  const audit = await readTrackedBinding(root, gitFacts, row, bundle.auditExport, 'adopter audit export');
+  if (audit.schema !== adopterAuditSchema) {
+    fail(`${row.id} adopter audit export schema must be ${adopterAuditSchema}`);
+  }
+  if (audit.sourceCommit !== evidence.sourceCommit || audit.status !== 'passed') {
+    fail(`${row.id} adopter audit export must be passed and match evidence sourceCommit`);
+  }
+  for (const field of ['taskOwner', 'organizationId', 'environmentId']) {
+    if (audit[field] !== execution[field]) {
+      fail(`${row.id} adopter audit export ${field} must match adopterExecution`);
+    }
+  }
+  const exactSets = {
+    targetIds: execution.targetIds,
+    campaignIds: execution.campaignIds,
+    executionIds: [...executionIDs],
+    observationIds: [...observationIDs],
+  };
+  for (const [field, expected] of Object.entries(exactSets)) {
+    if (!sameStringSet(audit[field], expected)) {
+      fail(`${row.id} adopter audit export ${field} must exactly match the execution bundle`);
+    }
+  }
+  if (!checksumPattern.test(audit.eventChecksum ?? '')) {
+    fail(`${row.id} adopter audit export eventChecksum must be a SHA-256 checksum`);
+  }
+}
+
+async function validateAdopterExecution(root, gitFacts, row, evidence) {
+  const execution = evidence.adopterExecution;
+  if (!execution || typeof execution !== 'object' || Array.isArray(execution)) {
+    fail(`${row.id} verified-adopter evidence must include adopterExecution`);
+  }
+  if (execution.taskOwner !== row.owner) {
+    fail(`${row.id} verified-adopter taskOwner must be ${row.owner}`);
+  }
+  requireString(execution.organizationId, row.id, 'verified-adopter organizationId');
+  requireString(execution.environmentId, row.id, 'verified-adopter environmentId');
+  requireStringArray(execution.targetIds, row.id, 'targetIds');
+  requireStringArray(execution.campaignIds, row.id, 'campaignIds');
+  const startedAt = requireTimestamp(execution.startedAt, row.id, 'verified-adopter startedAt');
+  const completedAt = requireTimestamp(execution.completedAt, row.id, 'verified-adopter completedAt');
+  if (completedAt < startedAt) {
+    fail(`${row.id} verified-adopter completedAt must not precede startedAt`);
+  }
+  if (execution.result !== 'passed') {
+    fail(`${row.id} verified-adopter result must be passed`);
+  }
+  await validateAdopterBundle(root, gitFacts, row, evidence, execution);
+}
+
+async function validateEvidenceArtifact(root, gitFacts, row, profile) {
+  if (row.status === 'pending-adopter') {
+    return;
+  }
+  const match = /^(.*?)\s+@\s+(sha256:[0-9a-f]{64})$/.exec(row.artifact);
+  if (!match) {
+    fail(`${row.id} artifact/checksum must use <repository path> @ sha256:<64 lowercase hex>`);
+  }
+  const [, artifactPath, expectedChecksum] = match;
+  requireTracked(gitFacts, artifactPath, row.id, 'evidence artifact');
+  const artifactFile = await parseJSONFile(root, artifactPath, row.id, 'evidence artifact');
+  if (sha256(artifactFile.bytes) !== expectedChecksum) {
+    fail(`${row.id} artifact checksum mismatch for ${artifactPath}`);
+  }
+  const evidence = artifactFile.value;
+  if (evidence.schema !== evidenceSchema) {
+    fail(`${row.id} evidence artifact schema must be ${evidenceSchema}`);
+  }
+  if (evidence.acceptanceId !== row.id) {
+    fail(`${row.id} evidence artifact acceptanceId must match the ledger row`);
+  }
+  if (evidence.owner !== row.owner) {
+    fail(`${row.id} evidence artifact owner must be ${row.owner}`);
+  }
+  if (!profile.allowedProofClasses.includes(evidence.proofClass)) {
+    fail(`${row.id} proof class ${evidence.proofClass || '<empty>'} is not allowed`);
+  }
+  await requireSourceCommit(root, gitFacts, evidence.sourceCommit, row.id);
+  await validateBoundFile(
+    root,
+    gitFacts,
+    row,
+    evidence.sourceCommit,
+    evidence.automatedTest,
+    row.automatedTest,
+    'automated test'
+  );
+  await validateBoundFile(
+    root,
+    gitFacts,
+    row,
+    evidence.sourceCommit,
+    evidence.manualEvidence,
+    row.manualEvidence,
+    'manual/fixture evidence'
+  );
+  await validateTestResult(root, gitFacts, row, profile, evidence.sourceCommit, evidence.testResult);
+  await validateProofClassEvidence(root, gitFacts, row, profile, evidence);
+  if (row.status === 'verified-adopter') {
+    if (evidence.proofClass !== 'adopter-execution') {
+      fail(`${row.id} verified-adopter proof class must be adopter-execution`);
+    }
+    await validateAdopterExecution(root, gitFacts, row, evidence);
+  } else if (Object.hasOwn(evidence, 'adopterExecution')) {
+    fail(`${row.id} community evidence must not contain adopterExecution`);
+  }
+}
+
+export async function validateAcceptanceLedger(markdown, root) {
+  const rows = parseAcceptanceLedger(markdown);
+  const rowsByID = new Map();
+  for (const row of rows) {
+    if (!/^AC-\d{2}$/.test(row.id)) {
+      fail(`invalid acceptance ID ${row.id || '<empty>'}`);
+    }
+    if (rowsByID.has(row.id)) {
+      fail(`duplicate acceptance ID ${row.id}`);
+    }
+    rowsByID.set(row.id, row);
+  }
+  for (const id of expectedIDs) {
+    if (!rowsByID.has(id)) {
+      fail(`missing acceptance ID ${id}`);
+    }
+  }
+  for (const id of rowsByID.keys()) {
+    if (!expectedIDs.includes(id)) {
+      fail(`unexpected acceptance ID ${id}`);
+    }
+  }
+
+  const gitFacts = await loadGitFacts(root);
+  const contract = await loadAcceptanceContract(root, gitFacts);
+  for (const id of expectedIDs) {
+    const row = rowsByID.get(id);
+    const rule = contract.acceptance[id];
+    const profile = contract.profiles[rule.profile];
+    validateRowContract(row, rule, profile);
+    validateStatus(row, rule);
+    await requireFile(root, row.automatedTest, id, 'automated test');
+    requireTracked(gitFacts, row.automatedTest, id, 'automated test');
+    await requireFile(root, row.manualEvidence, id, 'manual/fixture evidence');
+    requireTracked(gitFacts, row.manualEvidence, id, 'manual/fixture evidence');
+    await validateEvidenceArtifact(root, gitFacts, row, profile);
+  }
+
+  const counts = rows.reduce((result, row) => {
+    result[row.status] = (result[row.status] ?? 0) + 1;
+    return result;
+  }, {});
+  return {rows, counts};
+}
+
+async function main() {
+  const [ledgerPath, ...extra] = process.argv.slice(2);
+  if (!ledgerPath || extra.length > 0) {
+    fail('usage: node hack/control-plane-acceptance-check.mjs <acceptance-ledger.md>');
+  }
+  const root = process.cwd();
+  const resolvedLedger = repositoryPath(root, ledgerPath, 'ledger', 'path');
+  let markdown;
+  try {
+    markdown = await readFile(resolvedLedger, 'utf8');
+  } catch {
+    fail(`acceptance ledger does not exist: ${ledgerPath}`);
+  }
+  const {rows, counts} = await validateAcceptanceLedger(markdown, root);
+  process.stdout.write(
+    `Validated ${rows.length} acceptance rows: ${counts['community-evidence-retained'] ?? 0} community-evidence-retained, ${counts['pending-adopter'] ?? 0} pending-adopter, ${counts['verified-adopter'] ?? 0} verified-adopter.\n`
+  );
+}
+
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (invokedPath === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

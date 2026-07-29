@@ -1,0 +1,819 @@
+{
+  "schema": "distr.control-plane-acceptance-contract/v1",
+  "normativeSource": "docs/superpowers/plans/2026-07-14-enterprise-operator-control-plane-program.md",
+  "profiles": {
+    "adopter-import": {
+      "automatedTest": "internal/deploymentregistry/import_test.go",
+      "manualEvidence": "docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md",
+      "allowedProofClasses": [
+        "adopter-execution"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr057-import": {
+      "automatedTest": "internal/deploymentregistry/import_test.go",
+      "manualEvidence": "docs/fork/PR-057_DEPLOYMENT_REGISTRY_IMPORT.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr056-validation": {
+      "automatedTest": "internal/deploymentregistry/validation_test.go",
+      "manualEvidence": "docs/fork/PR-056_CANONICAL_DEPLOYMENT_REGISTRY.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr058-config-canonical": {
+      "automatedTest": "internal/targetconfig/canonical_test.go",
+      "manualEvidence": "docs/fork/PR-058_TARGET_CONFIG_SNAPSHOTS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr060-release-contract": {
+      "automatedTest": "internal/releasebundles/release_contract_v2_test.go",
+      "manualEvidence": "docs/fork/PR-060_COMPONENT_RELEASE_CONTRACT_V2.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr058-config-validation": {
+      "automatedTest": "internal/targetconfig/validation_test.go",
+      "manualEvidence": "docs/fork/PR-058_TARGET_CONFIG_SNAPSHOTS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr061-provenance": {
+      "automatedTest": "internal/releasebundles/provenance_test.go",
+      "manualEvidence": "docs/fork/PR-061_RELEASE_PROVENANCE_BACKFILL.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr059-v1-config": {
+      "automatedTest": "internal/targetconfig/v1_extraction_test.go",
+      "manualEvidence": "docs/fork/PR-059_V1_CONFIG_EXTRACTION.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr062-product-graph": {
+      "automatedTest": "internal/productrelease/graph_test.go",
+      "manualEvidence": "docs/fork/PR-062_PRODUCT_RELEASE_CAPABILITY_GRAPH.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr063-resolver": {
+      "automatedTest": "internal/planning/resolver_test.go",
+      "manualEvidence": "docs/fork/PR-063_TARGET_DEPLOYMENT_PLAN_V2.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr065-migration-validation": {
+      "automatedTest": "internal/migrationplanning/validation_test.go",
+      "manualEvidence": "docs/fork/PR-065_STRUCTURED_MIGRATION_PLANS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr065-migration-recovery": {
+      "automatedTest": "internal/migrationplanning/recovery_test.go",
+      "manualEvidence": "docs/fork/PR-065_STRUCTURED_MIGRATION_PLANS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr064-changeset": {
+      "automatedTest": "internal/planning/changeset_test.go",
+      "manualEvidence": "docs/fork/PR-064_EXACT_PLAN_CHANGESET.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr064-baseline": {
+      "automatedTest": "internal/planning/baseline_test.go",
+      "manualEvidence": "docs/fork/PR-064_EXACT_PLAN_CHANGESET.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr063-baseline": {
+      "automatedTest": "internal/planning/baseline_test.go",
+      "manualEvidence": "docs/fork/PR-063_TARGET_DEPLOYMENT_PLAN_V2.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr067-policy": {
+      "automatedTest": "internal/governance/policy_test.go",
+      "manualEvidence": "docs/fork/PR-067_VERSIONED_DEPLOYMENT_POLICIES.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr068-approval": {
+      "automatedTest": "internal/governance/approval_test.go",
+      "manualEvidence": "docs/fork/PR-068_CHECKSUM_BOUND_APPROVALS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr069-calendar": {
+      "automatedTest": "internal/scheduling/calendar_test.go",
+      "manualEvidence": "docs/fork/PR-069_MAINTENANCE_CALENDARS_FREEZES.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr070-admission": {
+      "automatedTest": "internal/scheduling/admission_test.go",
+      "manualEvidence": "docs/fork/PR-070_DEPLOYMENT_ADMISSION_OVERRIDES.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr075-execution": {
+      "automatedTest": "internal/db/execution_v2_test.go",
+      "manualEvidence": "docs/fork/PR-075_FENCED_EXECUTOR_PROTOCOL_V2.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr072-state-machine": {
+      "automatedTest": "internal/campaigns/state_machine_test.go",
+      "manualEvidence": "docs/fork/PR-072_CAMPAIGN_SCHEDULER_THRESHOLDS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr072-thresholds": {
+      "automatedTest": "internal/campaigns/thresholds_test.go",
+      "manualEvidence": "docs/fork/PR-072_CAMPAIGN_SCHEDULER_THRESHOLDS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr073-controls": {
+      "automatedTest": "internal/campaigns/controls_test.go",
+      "manualEvidence": "docs/fork/PR-073_CAMPAIGN_OPERATIONAL_CONTROLS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr076-recovery": {
+      "automatedTest": "internal/db/execution_v2_recovery_test.go",
+      "manualEvidence": "docs/fork/PR-076_EXECUTION_CANCEL_STATUS_RECONCILIATION.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr071-campaign-canonical": {
+      "automatedTest": "internal/campaigns/canonical_test.go",
+      "manualEvidence": "docs/fork/PR-071_IMMUTABLE_CAMPAIGN_REVISIONS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr077-drift": {
+      "automatedTest": "internal/reconciliation/drift_test.go",
+      "manualEvidence": "docs/fork/PR-077_DESIRED_OBSERVED_RECONCILIATION.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr077-desired-state": {
+      "automatedTest": "internal/desiredstate/state_test.go",
+      "manualEvidence": "docs/fork/PR-077_DESIRED_OBSERVED_RECONCILIATION.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr078-audit-bundle": {
+      "automatedTest": "internal/auditexport/bundle_test.go",
+      "manualEvidence": "docs/fork/PR-078_CONTROL_PLANE_AUDIT_EXPORT.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr078-audit-worker": {
+      "automatedTest": "internal/auditexport/worker_test.go",
+      "manualEvidence": "docs/fork/PR-078_CONTROL_PLANE_AUDIT_EXPORT.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "adopter-cleanup": {
+      "automatedTest": "internal/retirement/apply_test.go",
+      "manualEvidence": "docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md",
+      "allowedProofClasses": [
+        "adopter-execution"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr081-scale": {
+      "automatedTest": "hack/control-plane-scale-harness.test.mjs",
+      "manualEvidence": "docs/fork/PR-081_NEUTRAL_CONTROL_PLANE_PROOF.md",
+      "allowedProofClasses": [
+        "performance-measurement"
+      ],
+      "testRunner": "node-test",
+      "proofRequirements": {
+        "performanceScenario": "fleet-api-slos",
+        "performanceMetrics": [
+          {"name": "registry-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "registry-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "registry-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "registry-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "matrix-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "matrix-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "matrix-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "matrix-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "comparison-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "comparison-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "comparison-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "comparison-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "history-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "history-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "history-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "history-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "campaign-list-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "campaign-list-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20},
+          {"name": "campaign-detail-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 20},
+          {"name": "campaign-detail-p99-ms", "aggregation": "p99", "operator": "lte", "limit": 5000, "unit": "ms", "minSamples": 20}
+        ],
+        "performanceFacts": {
+          "exact": {
+            "pageSize": 100,
+            "boundedResponses": true,
+            "workloads": [
+              "registry-list",
+              "registry-detail",
+              "matrix-list",
+              "matrix-detail",
+              "comparison-list",
+              "comparison-detail",
+              "history-list",
+              "history-detail",
+              "campaign-list",
+              "campaign-detail"
+            ]
+          },
+          "minimum": {}
+        }
+      }
+    },
+    "pr081-load": {
+      "automatedTest": "hack/control-plane-load-test.test.mjs",
+      "manualEvidence": "docs/fork/PR-081_NEUTRAL_CONTROL_PLANE_PROOF.md",
+      "allowedProofClasses": [
+        "performance-measurement"
+      ],
+      "testRunner": "node-test",
+      "proofRequirements": {
+        "performanceScenario": "roadmap-scale-load",
+        "performanceMetrics": [
+          {"name": "plan-create-validate-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 10000, "unit": "ms", "minSamples": 5},
+          {"name": "wave-materialize-schedule-duration-ms", "aggregation": "max", "operator": "lte", "limit": 30000, "unit": "ms", "minSamples": 1},
+          {"name": "event-ingest-ack-p95-ms", "aggregation": "p95", "operator": "lte", "limit": 1000, "unit": "ms", "minSamples": 60000},
+          {"name": "lost-accepted-events", "aggregation": "sum", "operator": "eq", "limit": 0, "unit": "count", "minSamples": 1},
+          {"name": "log-first-page-indexed-ms", "aggregation": "max", "operator": "lte", "limit": 2000, "unit": "ms", "minSamples": 1},
+          {"name": "cross-organization-records", "aggregation": "sum", "operator": "eq", "limit": 0, "unit": "count", "minSamples": 1},
+          {"name": "non-policy-error-rate", "aggregation": "max", "operator": "lt", "limit": 0.01, "unit": "ratio", "minSamples": 1}
+        ],
+        "performanceFacts": {
+          "exact": {
+            "planRuns": 5,
+            "deterministicPlanChecksum": true,
+            "waveStableOrder": true,
+            "duplicateAdmissions": 0,
+            "eventDurationSeconds": 600,
+            "eventRatePerSecond": 100,
+            "authentication": "authenticated-live",
+            "concurrentAgents": 100,
+            "lostAcceptedEvents": 0,
+            "logBytes": 104857600,
+            "logStreamingBoundedMemory": true,
+            "crossOrganizationRecords": 0
+          },
+          "minimum": {
+            "acceptedEvents": 60000
+          }
+        }
+      }
+    },
+    "adopter-full-placement": {
+      "automatedTest": "hack/control-plane-failure-matrix.test.mjs",
+      "manualEvidence": "docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md",
+      "allowedProofClasses": [
+        "adopter-execution"
+      ],
+      "testRunner": "node-test"
+    },
+    "pr081-neutral-live": {
+      "automatedTest": "examples/control-plane-e2e/reference-executor/main_test.go",
+      "manualEvidence": "docs/fork/PR-081_NEUTRAL_CONTROL_PLANE_PROOF.md",
+      "allowedProofClasses": [
+        "neutral-live-execution"
+      ],
+      "testRunner": "go-test"
+    },
+    "adopter-aba": {
+      "automatedTest": "examples/control-plane-e2e/reference-executor/main_test.go",
+      "manualEvidence": "docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md",
+      "allowedProofClasses": [
+        "adopter-execution"
+      ],
+      "testRunner": "go-test"
+    },
+    "adopter-provenance": {
+      "automatedTest": "internal/releasebundles/provenance_test.go",
+      "manualEvidence": "docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md",
+      "allowedProofClasses": [
+        "adopter-execution"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr077-observation-gate": {
+      "automatedTest": "internal/observation/gate_test.go",
+      "manualEvidence": "docs/fork/PR-077_DESIRED_OBSERVED_RECONCILIATION.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr075-recovery": {
+      "automatedTest": "internal/db/execution_v2_recovery_test.go",
+      "manualEvidence": "docs/fork/PR-075_FENCED_EXECUTOR_PROTOCOL_V2.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr080-browser-e2e": {
+      "automatedTest": "frontend/ui/e2e/control-plane.spec.ts",
+      "manualEvidence": "docs/fork/PR-080_OPERATOR_CONTROL_ROOM_UI.md",
+      "allowedProofClasses": [
+        "browser-e2e"
+      ],
+      "testRunner": "playwright"
+    },
+    "pr077-observation-ingest": {
+      "automatedTest": "internal/observation/ingest_test.go",
+      "manualEvidence": "docs/fork/PR-077_DESIRED_OBSERVED_RECONCILIATION.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr074-adapter-resolution": {
+      "automatedTest": "internal/adapterresolution/resolver_test.go",
+      "manualEvidence": "docs/fork/PR-074_VERSIONED_ADAPTER_RESOLUTION.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    },
+    "pr071-campaign-scheduler": {
+      "automatedTest": "internal/campaigns/scheduler_test.go",
+      "manualEvidence": "docs/fork/PR-071_IMMUTABLE_CAMPAIGN_REVISIONS.md",
+      "allowedProofClasses": [
+        "community-focused-test"
+      ],
+      "testRunner": "go-test"
+    }
+  },
+  "acceptance": {
+    "AC-01": {
+      "owner": "ADOPTER-01",
+      "profile": "adopter-import",
+      "pendingAdopter": true
+    },
+    "AC-02": {
+      "owner": "ADOPTER-01",
+      "profile": "adopter-import",
+      "pendingAdopter": true
+    },
+    "AC-03": {
+      "owner": "PR-057",
+      "profile": "pr057-import",
+      "pendingAdopter": false
+    },
+    "AC-04": {
+      "owner": "PR-057",
+      "profile": "pr057-import",
+      "pendingAdopter": false
+    },
+    "AC-05": {
+      "owner": "PR-056",
+      "profile": "pr056-validation",
+      "pendingAdopter": false
+    },
+    "AC-06": {
+      "owner": "PR-056",
+      "profile": "pr056-validation",
+      "pendingAdopter": false
+    },
+    "AC-07": {
+      "owner": "PR-056",
+      "profile": "pr056-validation",
+      "pendingAdopter": false
+    },
+    "AC-08": {
+      "owner": "PR-058",
+      "profile": "pr058-config-canonical",
+      "pendingAdopter": false
+    },
+    "AC-09": {
+      "owner": "PR-060",
+      "profile": "pr060-release-contract",
+      "pendingAdopter": false
+    },
+    "AC-10": {
+      "owner": "PR-060",
+      "profile": "pr060-release-contract",
+      "pendingAdopter": false
+    },
+    "AC-11": {
+      "owner": "PR-058",
+      "profile": "pr058-config-validation",
+      "pendingAdopter": false
+    },
+    "AC-12": {
+      "owner": "PR-058",
+      "profile": "pr058-config-canonical",
+      "pendingAdopter": false
+    },
+    "AC-13": {
+      "owner": "PR-061",
+      "profile": "pr061-provenance",
+      "pendingAdopter": false
+    },
+    "AC-14": {
+      "owner": "PR-059",
+      "profile": "pr059-v1-config",
+      "pendingAdopter": false
+    },
+    "AC-15": {
+      "owner": "PR-062",
+      "profile": "pr062-product-graph",
+      "pendingAdopter": false
+    },
+    "AC-16": {
+      "owner": "PR-062",
+      "profile": "pr062-product-graph",
+      "pendingAdopter": false
+    },
+    "AC-17": {
+      "owner": "PR-063",
+      "profile": "pr063-resolver",
+      "pendingAdopter": false
+    },
+    "AC-18": {
+      "owner": "PR-062",
+      "profile": "pr062-product-graph",
+      "pendingAdopter": false
+    },
+    "AC-19": {
+      "owner": "PR-063",
+      "profile": "pr063-resolver",
+      "pendingAdopter": false
+    },
+    "AC-20": {
+      "owner": "PR-063",
+      "profile": "pr063-resolver",
+      "pendingAdopter": false
+    },
+    "AC-21": {
+      "owner": "PR-065",
+      "profile": "pr065-migration-validation",
+      "pendingAdopter": false
+    },
+    "AC-22": {
+      "owner": "PR-065",
+      "profile": "pr065-migration-validation",
+      "pendingAdopter": false
+    },
+    "AC-23": {
+      "owner": "PR-065",
+      "profile": "pr065-migration-recovery",
+      "pendingAdopter": false
+    },
+    "AC-24": {
+      "owner": "PR-065",
+      "profile": "pr065-migration-recovery",
+      "pendingAdopter": false
+    },
+    "AC-25": {
+      "owner": "PR-064",
+      "profile": "pr064-changeset",
+      "pendingAdopter": false
+    },
+    "AC-26": {
+      "owner": "PR-064",
+      "profile": "pr064-baseline",
+      "pendingAdopter": false
+    },
+    "AC-27": {
+      "owner": "PR-063",
+      "profile": "pr063-baseline",
+      "pendingAdopter": false
+    },
+    "AC-28": {
+      "owner": "PR-067",
+      "profile": "pr067-policy",
+      "pendingAdopter": false
+    },
+    "AC-29": {
+      "owner": "PR-068",
+      "profile": "pr068-approval",
+      "pendingAdopter": false
+    },
+    "AC-30": {
+      "owner": "PR-068",
+      "profile": "pr068-approval",
+      "pendingAdopter": false
+    },
+    "AC-31": {
+      "owner": "PR-069",
+      "profile": "pr069-calendar",
+      "pendingAdopter": false
+    },
+    "AC-32": {
+      "owner": "PR-070",
+      "profile": "pr070-admission",
+      "pendingAdopter": false
+    },
+    "AC-33": {
+      "owner": "PR-075",
+      "profile": "pr075-execution",
+      "pendingAdopter": false
+    },
+    "AC-34": {
+      "owner": "PR-075",
+      "profile": "pr075-execution",
+      "pendingAdopter": false
+    },
+    "AC-35": {
+      "owner": "PR-075",
+      "profile": "pr075-execution",
+      "pendingAdopter": false
+    },
+    "AC-36": {
+      "owner": "PR-072",
+      "profile": "pr072-state-machine",
+      "pendingAdopter": false
+    },
+    "AC-37": {
+      "owner": "PR-072",
+      "profile": "pr072-state-machine",
+      "pendingAdopter": false
+    },
+    "AC-38": {
+      "owner": "PR-072",
+      "profile": "pr072-thresholds",
+      "pendingAdopter": false
+    },
+    "AC-39": {
+      "owner": "PR-073",
+      "profile": "pr073-controls",
+      "pendingAdopter": false
+    },
+    "AC-40": {
+      "owner": "PR-073",
+      "profile": "pr076-recovery",
+      "pendingAdopter": false
+    },
+    "AC-41": {
+      "owner": "PR-073",
+      "profile": "pr076-recovery",
+      "pendingAdopter": false
+    },
+    "AC-42": {
+      "owner": "PR-071",
+      "profile": "pr071-campaign-canonical",
+      "pendingAdopter": false
+    },
+    "AC-43": {
+      "owner": "PR-077",
+      "profile": "pr077-drift",
+      "pendingAdopter": false
+    },
+    "AC-44": {
+      "owner": "PR-077",
+      "profile": "pr077-drift",
+      "pendingAdopter": false
+    },
+    "AC-45": {
+      "owner": "PR-077",
+      "profile": "pr077-desired-state",
+      "pendingAdopter": false
+    },
+    "AC-46": {
+      "owner": "PR-078",
+      "profile": "pr078-audit-bundle",
+      "pendingAdopter": false
+    },
+    "AC-47": {
+      "owner": "PR-078",
+      "profile": "pr078-audit-worker",
+      "pendingAdopter": false
+    },
+    "AC-48": {
+      "owner": "ADOPTER-06",
+      "profile": "adopter-cleanup",
+      "pendingAdopter": true
+    },
+    "AC-49": {
+      "owner": "ADOPTER-06",
+      "profile": "adopter-cleanup",
+      "pendingAdopter": true
+    },
+    "AC-50": {
+      "owner": "PR-081",
+      "profile": "pr081-scale",
+      "pendingAdopter": false
+    },
+    "AC-51": {
+      "owner": "PR-081",
+      "profile": "pr081-load",
+      "pendingAdopter": false
+    },
+    "AC-52": {
+      "owner": "ADOPTER-05",
+      "profile": "adopter-full-placement",
+      "pendingAdopter": true
+    },
+    "AC-53": {
+      "owner": "PR-081",
+      "profile": "pr081-neutral-live",
+      "pendingAdopter": false
+    },
+    "AC-54": {
+      "owner": "ADOPTER-05",
+      "profile": "adopter-aba",
+      "pendingAdopter": true
+    },
+    "AC-55": {
+      "owner": "ADOPTER-02",
+      "profile": "adopter-provenance",
+      "pendingAdopter": true
+    },
+    "AC-56": {
+      "owner": "PR-064",
+      "profile": "pr064-changeset",
+      "pendingAdopter": false
+    },
+    "AC-57": {
+      "owner": "PR-077",
+      "profile": "pr077-observation-gate",
+      "pendingAdopter": false
+    },
+    "AC-58": {
+      "owner": "PR-075",
+      "profile": "pr075-execution",
+      "pendingAdopter": false
+    },
+    "AC-59": {
+      "owner": "PR-058",
+      "profile": "pr058-config-validation",
+      "pendingAdopter": false
+    },
+    "AC-60": {
+      "owner": "PR-065",
+      "profile": "pr065-migration-validation",
+      "pendingAdopter": false
+    },
+    "AC-61": {
+      "owner": "PR-065",
+      "profile": "pr065-migration-recovery",
+      "pendingAdopter": false
+    },
+    "AC-62": {
+      "owner": "PR-071",
+      "profile": "pr071-campaign-canonical",
+      "pendingAdopter": false
+    },
+    "AC-63": {
+      "owner": "PR-080",
+      "profile": "pr080-browser-e2e",
+      "pendingAdopter": false
+    },
+    "AC-64": {
+      "owner": "ADOPTER-06",
+      "profile": "adopter-cleanup",
+      "pendingAdopter": true
+    },
+    "AC-65": {
+      "owner": "PR-061",
+      "profile": "pr061-provenance",
+      "pendingAdopter": false
+    },
+    "AC-66": {
+      "owner": "PR-072",
+      "profile": "pr072-thresholds",
+      "pendingAdopter": false
+    },
+    "AC-67": {
+      "owner": "PR-067",
+      "profile": "pr067-policy",
+      "pendingAdopter": false
+    },
+    "AC-68": {
+      "owner": "PR-059",
+      "profile": "pr059-v1-config",
+      "pendingAdopter": false
+    },
+    "AC-69": {
+      "owner": "PR-075",
+      "profile": "pr075-recovery",
+      "pendingAdopter": false
+    },
+    "AC-70": {
+      "owner": "PR-076",
+      "profile": "pr076-recovery",
+      "pendingAdopter": false
+    },
+    "AC-71": {
+      "owner": "PR-070",
+      "profile": "pr070-admission",
+      "pendingAdopter": false
+    },
+    "AC-72": {
+      "owner": "PR-077",
+      "profile": "pr077-desired-state",
+      "pendingAdopter": false
+    },
+    "AC-73": {
+      "owner": "PR-077",
+      "profile": "pr077-observation-ingest",
+      "pendingAdopter": false
+    },
+    "AC-74": {
+      "owner": "PR-069",
+      "profile": "pr069-calendar",
+      "pendingAdopter": false
+    },
+    "AC-75": {
+      "owner": "PR-068",
+      "profile": "pr068-approval",
+      "pendingAdopter": false
+    },
+    "AC-76": {
+      "owner": "PR-074",
+      "profile": "pr074-adapter-resolution",
+      "pendingAdopter": false
+    },
+    "AC-77": {
+      "owner": "PR-065",
+      "profile": "pr065-migration-recovery",
+      "pendingAdopter": false
+    },
+    "AC-78": {
+      "owner": "PR-062",
+      "profile": "pr062-product-graph",
+      "pendingAdopter": false
+    },
+    "AC-79": {
+      "owner": "ADOPTER-06",
+      "profile": "adopter-cleanup",
+      "pendingAdopter": true
+    },
+    "AC-80": {
+      "owner": "PR-071",
+      "profile": "pr071-campaign-scheduler",
+      "pendingAdopter": false
+    }
+  }
+}
