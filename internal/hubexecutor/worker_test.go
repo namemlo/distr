@@ -87,6 +87,79 @@ func TestWorkerRecordsUnsupportedHubActionAsFailed(t *testing.T) {
 	}
 }
 
+func TestWorkerExecutesBuiltInTargetConfigVerification(t *testing.T) {
+	lease := hubWebhookLease("https://unused.example.com")
+	lease.Steps[0].StepKey = "config:verify"
+	lease.Steps[0].ActionType = "builtin"
+	lease.Steps[0].ActionName = "target-config.verify"
+	lease.Steps[0].InputBindings = map[string]any{
+		"snapshotId": uuid.New().String(),
+		"checksum":   "sha256:" + strings.Repeat("a", 64),
+	}
+	store := &recordingStore{}
+	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
+
+	err := worker.executeLease(context.Background(), lease)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.events) != 2 ||
+		store.events[0].Type != types.StepRunEventTypeStarted ||
+		store.events[1].Type != types.StepRunEventTypeSucceeded {
+		t.Fatalf("unexpected built-in events: %#v", store.events)
+	}
+	if !containsOutput(store.events[1].Outputs, "verifiedAction", "target-config.verify") {
+		t.Fatalf("missing built-in verification output: %#v", store.events[1].Outputs)
+	}
+}
+
+func TestWorkerExecutesBuiltInRequirementVerification(t *testing.T) {
+	lease := hubWebhookLease("https://unused.example.com")
+	lease.Steps[0].StepKey = "requirement:catalog:verify"
+	lease.Steps[0].ActionType = "builtin"
+	lease.Steps[0].ActionName = "requirement.verify"
+	lease.Steps[0].InputBindings = map[string]any{
+		"mode":            "included",
+		"bindingChecksum": "sha256:" + strings.Repeat("b", 64),
+	}
+	store := &recordingStore{}
+	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
+
+	err := worker.executeLease(context.Background(), lease)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.events) != 2 ||
+		store.events[1].Type != types.StepRunEventTypeSucceeded ||
+		!containsOutput(store.events[1].Outputs, "verifiedAction", "requirement.verify") {
+		t.Fatalf("unexpected built-in result: %#v", store.events)
+	}
+}
+
+func TestWorkerRejectsMalformedBuiltInVerification(t *testing.T) {
+	lease := hubWebhookLease("https://unused.example.com")
+	lease.Steps[0].StepKey = "config:verify"
+	lease.Steps[0].ActionType = "builtin"
+	lease.Steps[0].ActionName = "target-config.verify"
+	lease.Steps[0].InputBindings = map[string]any{
+		"snapshotId": "not-a-uuid",
+		"checksum":   "mutable",
+	}
+	store := &recordingStore{}
+	worker := newWorker(zaptest.NewLogger(t), store, Options{HeartbeatInterval: time.Hour})
+
+	err := worker.executeLease(context.Background(), lease)
+
+	if err == nil || !strings.Contains(err.Error(), "snapshotId") {
+		t.Fatalf("expected exact built-in input failure, got %v", err)
+	}
+	if len(store.events) != 2 || store.events[1].Type != types.StepRunEventTypeFailed {
+		t.Fatalf("unexpected malformed built-in events: %#v", store.events)
+	}
+}
+
 func TestWorkerWaitsForExternalCallbackBeforeSucceeding(t *testing.T) {
 	executionID := uuid.New()
 	var receivedExecutionID, receivedCallbackURL string

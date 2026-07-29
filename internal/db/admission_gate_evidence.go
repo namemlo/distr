@@ -111,6 +111,8 @@ type admissionGateEvidenceSource interface {
 
 type databaseAdmissionGateEvidenceSource struct{}
 
+type databaseAdmissionGateEvidencePreparer struct{}
+
 func (databaseAdmissionGateEvidenceSource) LoadAdmissionGateEvidencePlan(
 	ctx context.Context,
 	evidenceContext admissionGateEvidenceContext,
@@ -198,7 +200,74 @@ func (databaseAdmissionGateEvidenceSource) LoadAdmissionGateEvidencePreflight(
 }
 
 type persistedAdmissionGateEvidenceRepository struct {
-	source admissionGateEvidenceSource
+	source   admissionGateEvidenceSource
+	preparer admissionGateEvidencePreparer
+}
+
+func (repository persistedAdmissionGateEvidenceRepository) PrepareAdmissionGateEvidence(
+	ctx context.Context,
+	evidenceContext admissionGateEvidenceContext,
+	actorUserAccountID uuid.UUID,
+) error {
+	if repository.preparer == nil {
+		return apierrors.NewConflict("trusted gate evidence preparer is unavailable")
+	}
+	return repository.preparer.PrepareAdmissionGateEvidence(
+		ctx,
+		evidenceContext,
+		actorUserAccountID,
+	)
+}
+
+func (databaseAdmissionGateEvidencePreparer) PrepareAdmissionGateEvidence(
+	ctx context.Context,
+	evidenceContext admissionGateEvidenceContext,
+	actorUserAccountID uuid.UUID,
+) error {
+	plan, err := GetDeploymentPlan(
+		ctx,
+		evidenceContext.DeploymentPlanID,
+		evidenceContext.OrganizationID,
+	)
+	if err != nil {
+		return err
+	}
+	if plan.EffectivePolicy == nil {
+		return apierrors.NewConflict("trusted admission policy evidence is missing")
+	}
+	if err := validateAdmissionGateEvidencePlan(admissionGateEvidencePlanRecord{
+		OrganizationID:          plan.OrganizationID,
+		DeploymentPlanID:        plan.ID,
+		PlanRevision:            1,
+		PlanChecksum:            plan.CanonicalChecksum,
+		EffectivePolicyChecksum: plan.EffectivePolicyChecksum,
+		EffectivePolicy:         *plan.EffectivePolicy,
+	}, evidenceContext); err != nil {
+		return err
+	}
+	requiredEvidence, err := normalizedRequiredAdmissionEvidence(
+		plan.EffectivePolicy.RequiredEvidence,
+	)
+	if err != nil {
+		return err
+	}
+	if len(requiredEvidence) == 0 {
+		return nil
+	}
+	_, _, err = evaluateAndPersistDeploymentPreflight(ctx, *plan, actorUserAccountID)
+	return err
+}
+
+type admissionEvidenceCheckMapping struct {
+	exactKey  string
+	keyPrefix string
+}
+
+var trustedAdmissionEvidenceCheckMappings = map[string]admissionEvidenceCheckMapping{
+	string(types.AdmissionGateIntegrity):  {exactKey: "plan_checksum"},
+	string(types.AdmissionGateBackup):     {keyPrefix: "migration_backup:"},
+	string(types.AdmissionGateProvenance): {exactKey: "release_provenance"},
+	"sbom":                                {exactKey: "release_sbom"},
 }
 
 func (repository persistedAdmissionGateEvidenceRepository) ResolveAdmissionGateEvidence(
@@ -245,7 +314,13 @@ func (repository persistedAdmissionGateEvidenceRepository) ResolveAdmissionGateE
 	}
 	result := make([]types.AdmissionGateEvidence, 0, len(requiredEvidence))
 	for _, required := range requiredEvidence {
-		checks := admissionChecksForRequiredEvidence(required, preflight.Checks)
+		mapping, supported := trustedAdmissionEvidenceCheckMappings[required]
+		if !supported {
+			return nil, apierrors.NewConflict(
+				fmt.Sprintf("required trusted admission evidence %q is unsupported", required),
+			)
+		}
+		checks := admissionChecksForRequiredEvidence(mapping, preflight.Checks)
 		if len(checks) == 0 {
 			return nil, apierrors.NewConflict(
 				fmt.Sprintf("required trusted admission evidence %q is missing", required),
@@ -345,20 +420,13 @@ func normalizedRequiredAdmissionEvidence(required []string) ([]string, error) {
 }
 
 func admissionChecksForRequiredEvidence(
-	required string,
+	mapping admissionEvidenceCheckMapping,
 	checks []admissionGateEvidenceCheckRecord,
 ) []admissionGateEvidenceCheckRecord {
 	result := make([]admissionGateEvidenceCheckRecord, 0)
 	for _, check := range checks {
-		matches := check.CheckKey == required
-		switch types.AdmissionGateKey(required) {
-		case types.AdmissionGateIntegrity:
-			matches = check.CheckKey == "plan_checksum"
-		case types.AdmissionGateBackup:
-			matches = strings.HasPrefix(check.CheckKey, "migration_backup:")
-		case types.AdmissionGateProvenance:
-			matches = check.CheckKey == "release_eligibility"
-		}
+		matches := mapping.exactKey != "" && check.CheckKey == mapping.exactKey ||
+			mapping.keyPrefix != "" && strings.HasPrefix(check.CheckKey, mapping.keyPrefix)
 		if matches {
 			result = append(result, check)
 		}
@@ -393,10 +461,28 @@ func admissionEvidenceCheckAuthoritative(
 			actual["verified"] == true &&
 			trustedAdmissionChecksumValid(checksum)
 	case types.AdmissionGateProvenance:
-		return actual["eligible"] == true
+		return admissionReleaseEvidenceCheckAuthoritative(expected, actual)
 	default:
-		return true
+		return required == "sbom" &&
+			admissionReleaseEvidenceCheckAuthoritative(expected, actual)
 	}
+}
+
+func admissionReleaseEvidenceCheckAuthoritative(expected, actual map[string]any) bool {
+	references, referencesValid := actual["references"].([]any)
+	if !referencesValid || len(references) == 0 {
+		return false
+	}
+	for _, item := range references {
+		reference, valid := item.(string)
+		if !valid || strings.TrimSpace(reference) == "" {
+			return false
+		}
+	}
+	return expected["present"] == true &&
+		expected["contractValid"] == true &&
+		actual["present"] == true &&
+		actual["contractValid"] == true
 }
 
 func admissionGateEvidenceChecksum(

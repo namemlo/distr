@@ -101,6 +101,28 @@ func TestBuildTargetPlanGraphUsesTargetDispatcherLocationForExecutableSteps(t *t
 	}
 }
 
+func TestBuildTargetPlanGraphKeepsExecutableStepTimeoutWithinSignedIntentLimit(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: "schema", Type: "database", Order: 1,
+	}}
+	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+
+	graph, err := BuildTargetPlanGraph(context.Background(), draft, resolutions)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	for _, step := range graph.Steps {
+		if step.ExecutionLocation == types.TaskExecutorTypeAgent.ExecutionLocation() {
+			g.Expect(step.TimeoutSeconds).To(
+				BeNumerically("<=", 15*60),
+				step.StepKey,
+			)
+		}
+	}
+}
+
 func TestBuildTargetPlanGraphKeepsVerificationStepsAtHubLocation(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()

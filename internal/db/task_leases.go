@@ -53,6 +53,7 @@ type taskLeaseStepCandidate struct {
 	StepKey           string              `db:"step_key"`
 	Name              string              `db:"name"`
 	ActionType        string              `db:"action_type"`
+	ActionName        string              `db:"action_name"`
 	InputBindings     map[string]any      `db:"input_bindings"`
 	SortOrder         int                 `db:"sort_order"`
 	Status            types.StepRunStatus `db:"status"`
@@ -781,6 +782,7 @@ func getTaskLeaseSteps(ctx context.Context, task types.Task, executionLocation s
 			StepKey:       candidate.StepKey,
 			Name:          candidate.Name,
 			ActionType:    candidate.ActionType,
+			ActionName:    candidate.ActionName,
 			InputBindings: candidate.InputBindings,
 			SortOrder:     candidate.SortOrder,
 		}
@@ -1123,6 +1125,7 @@ func getTaskLeaseStepCandidates(ctx context.Context, taskID, orgID uuid.UUID) ([
 			sr.step_key,
 			sr.name,
 			sr.action_type,
+			dps.action_name,
 			dps.input_bindings,
 			sr.sort_order,
 			sr.status,

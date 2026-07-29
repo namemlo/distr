@@ -485,16 +485,39 @@ func getDeploymentPreflightReleaseFacts(
 	contractValid := true
 	contractMessage := ""
 	if plan.ReleaseContract != nil {
-		validation := releasebundles.ValidateReleaseContractV1(*plan.ReleaseContract, bundle.Components)
-		planContract := releasebundles.NormalizedReleaseContract(plan.ReleaseContract)
-		bundleContract := releasebundles.NormalizedReleaseContract(bundle.ReleaseContract)
-		contractValid = validation.Valid && bundleContract != nil && reflect.DeepEqual(planContract, bundleContract)
+		contractValid = deploymentPreflightReleaseContractValid(
+			plan.ReleaseContract,
+			bundle.ReleaseContract,
+			bundle.Components,
+		)
 		contractMessage = "release contract matches the published immutable components and config"
 		if !contractValid {
 			contractMessage = "release contract no longer matches the published immutable components and config"
 		}
 	}
 	return releaseEligible, eligibilityMessage, contractValid, contractMessage, nil
+}
+
+func deploymentPreflightReleaseContractValid(
+	planContract, bundleContract *types.ReleaseContract,
+	bundleComponents []types.ReleaseBundleComponent,
+) bool {
+	if planContract == nil || bundleContract == nil {
+		return false
+	}
+	valid := false
+	if planContract.ComponentV2 != nil {
+		valid = len(releasebundles.ValidateReleaseContract(planContract)) == 0
+	} else {
+		valid = releasebundles.ValidateReleaseContractV1(
+			*planContract,
+			bundleComponents,
+		).Valid
+	}
+	return valid && reflect.DeepEqual(
+		releasebundles.NormalizedReleaseContract(planContract),
+		releasebundles.NormalizedReleaseContract(bundleContract),
+	)
 }
 
 func insertDeploymentPreflightRun(ctx context.Context, run *types.DeploymentPreflightRun) error {

@@ -68,6 +68,7 @@ type TaskLeaseStep struct {
 	StepKey          string         `db:"step_key" json:"stepKey"`
 	Name             string         `db:"name" json:"name"`
 	ActionType       string         `db:"action_type" json:"actionType"`
+	ActionName       string         `db:"action_name" json:"actionName"`
 	ActionVersion    string         `db:"-" json:"actionVersion"`
 	InputBindings    map[string]any `db:"input_bindings" json:"inputBindings"`
 	SecretReferences []string       `db:"-" json:"secretReferences"`

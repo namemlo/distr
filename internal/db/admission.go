@@ -85,8 +85,17 @@ type admissionGateEvidenceRepository interface {
 	) ([]types.AdmissionGateEvidence, error)
 }
 
+type admissionGateEvidencePreparer interface {
+	PrepareAdmissionGateEvidence(
+		context.Context,
+		admissionGateEvidenceContext,
+		uuid.UUID,
+	) error
+}
+
 var trustedAdmissionGateEvidenceRepository admissionGateEvidenceRepository = persistedAdmissionGateEvidenceRepository{
-	source: databaseAdmissionGateEvidenceSource{},
+	source:   databaseAdmissionGateEvidenceSource{},
+	preparer: databaseAdmissionGateEvidencePreparer{},
 }
 
 type sealedAdmissionEvaluation struct {
@@ -158,6 +167,23 @@ func admitDeploymentPlan(
 		); err != nil {
 			return err
 		}
+		decisionAt, err = prepareAdmissionGateEvidenceBeforeEvaluation(
+			txCtx,
+			gateEvidenceRepository,
+			admissionGateEvidenceContext{
+				OrganizationID:          snapshot.Plan.OrganizationID,
+				DeploymentPlanID:        snapshot.Plan.ID,
+				PlanRevision:            snapshot.PlanRevision,
+				PlanChecksum:            snapshot.Plan.CanonicalChecksum,
+				EffectivePolicyChecksum: snapshot.Plan.EffectivePolicyChecksum,
+				EvaluatedAt:             decisionAt.UTC(),
+			},
+			request.ActorUserAccountID,
+			admissionDatabaseTime,
+		)
+		if err != nil {
+			return err
+		}
 		admissionRequest, err := buildAdmissionRequest(
 			txCtx,
 			snapshot,
@@ -186,6 +212,31 @@ func admitDeploymentPlan(
 		return nil, err
 	}
 	return result, nil
+}
+
+func prepareAdmissionGateEvidenceBeforeEvaluation(
+	ctx context.Context,
+	repository admissionGateEvidenceRepository,
+	evidenceContext admissionGateEvidenceContext,
+	actorUserAccountID uuid.UUID,
+	evaluationTime func(context.Context) (time.Time, error),
+) (time.Time, error) {
+	preparer, preparesEvidence := repository.(admissionGateEvidencePreparer)
+	if !preparesEvidence {
+		return evidenceContext.EvaluatedAt.UTC(), nil
+	}
+	if err := preparer.PrepareAdmissionGateEvidence(
+		ctx,
+		evidenceContext,
+		actorUserAccountID,
+	); err != nil {
+		return time.Time{}, err
+	}
+	evaluatedAt, err := evaluationTime(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return evaluatedAt.UTC(), nil
 }
 
 func CreateEmergencyOverride(
@@ -1275,7 +1326,7 @@ func emergencyOverrideMatchesRequest(
 
 func admissionDatabaseTime(ctx context.Context) (time.Time, error) {
 	var now time.Time
-	if err := internalctx.GetDb(ctx).QueryRow(ctx, "SELECT now()").Scan(&now); err != nil {
+	if err := internalctx.GetDb(ctx).QueryRow(ctx, "SELECT clock_timestamp()").Scan(&now); err != nil {
 		return time.Time{}, fmt.Errorf("get admission database time: %w", err)
 	}
 	return now.UTC(), nil

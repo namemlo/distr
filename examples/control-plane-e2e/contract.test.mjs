@@ -669,6 +669,194 @@ test('campaign readiness polling ignores older terminal evidence while the newes
   assert.deepEqual(sleeps, [100]);
 });
 
+test('target lease readiness tolerates transient 204s while Hub predecessors dispatch the target attempt', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.waitForTargetExecutionLease, 'function');
+  const campaign = {run: {id: '77777777-7777-4777-8777-777777777777'}};
+  const plan = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    canonicalChecksum: `sha256:${'a'.repeat(64)}`,
+  };
+  const target = {
+    hubTargetId: '55555555-5555-4555-8555-555555555555',
+    agentToken: 'agent-token',
+    executorId: 'executor-alpha',
+  };
+  const leaseIdentity = {
+    adapterRevision: `sha256:${'b'.repeat(64)}`,
+    keyId: `sha256:${'c'.repeat(64)}`,
+  };
+  const task = campaignTask({
+    id: '11111111-1111-4111-8111-111111111111',
+    planId: plan.id,
+    planTargetId: '33333333-3333-4333-8333-333333333333',
+    targetId: target.hubTargetId,
+  });
+  const taskSequence = [
+    {
+      ...task,
+      status: 'RUNNING',
+      stepRuns: [{stepKey: 'config:verify', executionLocation: 'hub', status: 'PENDING'}],
+    },
+    {
+      ...task,
+      status: 'RUNNING',
+      stepRuns: [
+        {stepKey: 'config:verify', executionLocation: 'hub', status: 'SUCCEEDED'},
+        {stepKey: 'deploy-provider', executionLocation: 'target', status: 'PENDING'},
+      ],
+    },
+  ];
+  const expectedLease = {
+    attempt: {
+      id: '99999999-9999-4999-8999-999999999999',
+      status: 'CLAIMED',
+    },
+  };
+  let leasePoll = 0;
+  let now = 0;
+  const sleeps = [];
+  const calls = [];
+  const topology = {
+    token: 'operator-token',
+    request: async (method, requestPath, options) => {
+      calls.push({method, path: requestPath, options});
+      if (method === 'POST') {
+        const result = [null, null, expectedLease][leasePoll];
+        leasePoll += 1;
+        return result;
+      }
+      if (requestPath.startsWith('/api/v1/deployment-campaign-runs/')) {
+        return {id: campaign.run.id, state: 'RUNNING', version: 5, admissionsBlocked: false};
+      }
+      if (requestPath === '/api/v1/tasks') {
+        return [taskSequence[leasePoll - 1]];
+      }
+      assert.equal(requestPath, `/api/v1/deployment-plans/${plan.id}`);
+      return {...plan, preflightRuns: []};
+    },
+  };
+
+  const lease = await runtime.waitForTargetExecutionLease({
+    topology,
+    campaign,
+    plan,
+    target,
+    leaseIdentity,
+    timeoutMs: 5_000,
+    intervalMs: 1_000,
+    clock: {
+      now: () => now,
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds);
+        now += milliseconds;
+      },
+    },
+  });
+
+  assert.equal(lease, expectedLease);
+  assert.deepEqual(sleeps, [1_000, 1_000]);
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 3);
+  assert.deepEqual(calls[0], {
+    method: 'POST',
+    path: '/api/executor/v2/executions/lease',
+    options: {
+      token: target.agentToken,
+      body: {
+        executorId: target.executorId,
+        adapterRevision: leaseIdentity.adapterRevision,
+        keyId: leaseIdentity.keyId,
+        leaseSeconds: 60,
+      },
+      expected: [200, 204],
+    },
+  });
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'GET').map((call) => call.path),
+    [
+      `/api/v1/deployment-campaign-runs/${campaign.run.id}`,
+      '/api/v1/tasks',
+      `/api/v1/deployment-plans/${plan.id}`,
+      `/api/v1/deployment-campaign-runs/${campaign.run.id}`,
+      '/api/v1/tasks',
+      `/api/v1/deployment-plans/${plan.id}`,
+    ]
+  );
+});
+
+test('target lease readiness fails immediately with actionable terminal task state', async () => {
+  const runtime = await import('./run.mjs');
+  const campaign = {run: {id: '77777777-7777-4777-8777-777777777777'}};
+  const plan = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    canonicalChecksum: `sha256:${'a'.repeat(64)}`,
+  };
+  const target = {
+    hubTargetId: '55555555-5555-4555-8555-555555555555',
+    agentToken: 'agent-token',
+    executorId: 'executor-alpha',
+  };
+  const failedTask = {
+    ...campaignTask({
+      id: '11111111-1111-4111-8111-111111111111',
+      planId: plan.id,
+      planTargetId: '33333333-3333-4333-8333-333333333333',
+      targetId: target.hubTargetId,
+    }),
+    status: 'FAILED',
+    stepRuns: [
+      {
+        stepKey: 'config:verify',
+        executionLocation: 'hub',
+        status: 'FAILED',
+      },
+    ],
+  };
+  let sleeps = 0;
+
+  await assert.rejects(
+    runtime.waitForTargetExecutionLease({
+      topology: {
+        token: 'operator-token',
+        request: async (method, requestPath) => {
+          if (method === 'POST') {
+            return null;
+          }
+          if (requestPath.startsWith('/api/v1/deployment-campaign-runs/')) {
+            return {id: campaign.run.id, state: 'RUNNING', version: 5, admissionsBlocked: false};
+          }
+          if (requestPath === '/api/v1/tasks') {
+            return [failedTask];
+          }
+          return {...plan, preflightRuns: []};
+        },
+      },
+      campaign,
+      plan,
+      target,
+      leaseIdentity: {
+        adapterRevision: `sha256:${'b'.repeat(64)}`,
+        keyId: `sha256:${'c'.repeat(64)}`,
+      },
+      timeoutMs: 5_000,
+      intervalMs: 1_000,
+      clock: {
+        now: () => 0,
+        sleep: async () => {
+          sleeps += 1;
+        },
+      },
+    }),
+    (error) => {
+      assert.match(error.message, /target lease readiness failed/);
+      assert.match(error.message, /11111111-1111-4111-8111-111111111111:FAILED/);
+      assert.match(error.message, /config:verify:FAILED/);
+      return true;
+    }
+  );
+  assert.equal(sleeps, 0);
+});
+
 test('published plans are manually admitted with exact approval linkage before campaign publication', async () => {
   const runtime = await import('./run.mjs');
   assert.equal(typeof runtime.admitPublishedPlans, 'function');
@@ -730,18 +918,15 @@ test('published plans are manually admitted with exact approval linkage before c
   assert.equal(plans.get('target-beta').admission.id, '44444444-4444-4444-8444-444444444444');
 });
 
-test('lease identity is derived from the target plan frozen adapters, never fixture text', async () => {
+test('lease identities retain each frozen target-step capability, scope, and revision', async () => {
   const runtime = await import('./run.mjs');
-  assert.equal(typeof runtime.derivePlanLeaseIdentity, 'function');
+  assert.equal(typeof runtime.derivePlanLeaseIdentities, 'function');
   const keyId = `sha256:${'b'.repeat(64)}`;
-  const adapter = {
+  const base = {
     adapterAssignmentId: '11111111-1111-4111-8111-111111111111',
     adapterImplementationId: '22222222-2222-4222-8222-222222222222',
     implementationVersion: '1.0.0',
-    capability: 'distr.compose.deploy',
     capabilityVersion: '1.0.0',
-    scopeType: 'deployment_unit',
-    scopeReference: '33333333-3333-4333-8333-333333333333',
     configSnapshotId: '44444444-4444-4444-8444-444444444444',
     configChecksum: `sha256:${'a'.repeat(64)}`,
     keyConfiguration: {
@@ -752,25 +937,135 @@ test('lease identity is derived from the target plan frozen adapters, never fixt
     },
   };
 
-  const identity = runtime.derivePlanLeaseIdentity({
+  const identities = runtime.derivePlanLeaseIdentities({
     plan: {
+      steps: [
+        {
+          stepKey: 'component:catalog:deploy',
+          sortOrder: 1,
+          dependencies: ['component:catalog:migration:schema-v2'],
+        },
+        {
+          stepKey: 'component:catalog:health',
+          sortOrder: 2,
+          dependencies: ['component:catalog:deploy'],
+        },
+        {
+          stepKey: 'component:catalog:migration:schema-v2',
+          sortOrder: 3,
+          dependencies: ['config:verify'],
+        },
+      ],
       stepAdapters: [
-        {stepKey: 'deploy-provider', ...adapter},
-        {stepKey: 'deploy-consumer', ...adapter},
+        {
+          stepKey: 'component:catalog:health',
+          ...base,
+          adapterAssignmentId: '11111111-1111-4111-8111-111111111113',
+          capability: 'health.observe',
+          scopeType: 'observer_registration',
+          scopeReference: '77777777-7777-4777-8777-777777777777',
+        },
+        {
+          stepKey: 'component:catalog:migration:schema-v2',
+          ...base,
+          adapterAssignmentId: '11111111-1111-4111-8111-111111111112',
+          capability: 'database.migrate',
+          scopeType: 'database_resource',
+          scopeReference: 'target-alpha-db',
+        },
+        {
+          stepKey: 'component:catalog:deploy',
+          ...base,
+          capability: 'distr.compose.deploy',
+          scopeType: 'component_instance',
+          scopeReference: '33333333-3333-4333-8333-333333333333',
+        },
       ],
     },
     target: {
       id: 'target-alpha',
-      unit: {id: adapter.scopeReference},
-      snapshot: {id: adapter.configSnapshotId, canonicalChecksum: adapter.configChecksum},
+      instances: new Map([
+        [
+          'catalog',
+          {
+            id: '33333333-3333-4333-8333-333333333333',
+            databaseBoundary: 'target-alpha-db',
+          },
+        ],
+      ]),
+      observers: new Map([
+        ['catalog', {id: '77777777-7777-4777-8777-777777777777'}],
+      ]),
+      snapshot: {id: base.configSnapshotId, canonicalChecksum: base.configChecksum},
     },
     signingKeyId: keyId,
   });
 
-  assert.deepEqual(identity, {
-    adapterRevision: 'sha256:af18ff408f2f5cf1da246880f4c57e5fd10e9e0d1a225af56f7a4bb1b7b7a633',
-    keyId,
-  });
+  assert.deepEqual(
+    identities.map(({stepKey, capability, keyId: identityKeyId}) => ({
+      stepKey,
+      capability,
+      keyId: identityKeyId,
+    })),
+    [
+      {
+        stepKey: 'component:catalog:migration:schema-v2',
+        capability: 'database.migrate',
+        keyId,
+      },
+      {
+        stepKey: 'component:catalog:deploy',
+        capability: 'distr.compose.deploy',
+        keyId,
+      },
+      {
+        stepKey: 'component:catalog:health',
+        capability: 'health.observe',
+        keyId,
+      },
+    ]
+  );
+  assert.equal(new Set(identities.map((identity) => identity.adapterRevision)).size, 3);
+  assert.ok(identities.every((identity) => /^sha256:[0-9a-f]{64}$/.test(identity.adapterRevision)));
+});
+
+test('component release and target setup cover deploy migration and health adapters', async () => {
+  const runtime = await import('./run.mjs');
+  assert.deepEqual(runtime.componentAdapterRequirements([]), [
+    {stepKind: 'deploy', capability: 'distr.compose.deploy', version: '1.0.0'},
+    {stepKind: 'health', capability: 'health.observe', version: '1.0.0'},
+  ]);
+  assert.deepEqual(runtime.componentAdapterRequirements([{key: 'schema-v2'}]), [
+    {stepKind: 'deploy', capability: 'distr.compose.deploy', version: '1.0.0'},
+    {stepKind: 'migration', capability: 'database.migrate', version: '1.0.0'},
+    {stepKind: 'health', capability: 'health.observe', version: '1.0.0'},
+  ]);
+
+  const target = {
+    instances: new Map([
+      ['catalog', {id: '33333333-3333-4333-8333-333333333333', databaseBoundary: 'target-alpha-db'}],
+    ]),
+    observers: new Map([
+      ['catalog', {id: '77777777-7777-4777-8777-777777777777'}],
+    ]),
+  };
+  assert.deepEqual(runtime.componentAdapterScopes(target, 'catalog'), [
+    {
+      capability: 'distr.compose.deploy',
+      scopeType: 'component_instance',
+      scopeReference: '33333333-3333-4333-8333-333333333333',
+    },
+    {
+      capability: 'database.migrate',
+      scopeType: 'database_resource',
+      scopeReference: 'target-alpha-db',
+    },
+    {
+      capability: 'health.observe',
+      scopeType: 'observer_registration',
+      scopeReference: '77777777-7777-4777-8777-777777777777',
+    },
+  ]);
 });
 
 test('live bootstrap captures Hub-created target IDs before target-bound services start', async () => {
@@ -897,6 +1192,8 @@ test('live bootstrap captures Hub-created target IDs before target-bound service
       assert.equal(report.body.protocolVersion, 'v2');
       assert.deepEqual(report.body.supportedActions, [
         {actionType: 'distr.compose.deploy', versions: ['1.0.0']},
+        {actionType: 'database.migrate', versions: ['1.0.0']},
+        {actionType: 'health.observe', versions: ['1.0.0']},
         {actionType: 'distr.preflight', versions: ['1']},
       ]);
     }

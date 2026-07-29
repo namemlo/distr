@@ -101,6 +101,33 @@ func TestEvaluateRejectsCurrentEligibilityAndReleaseContractFailures(t *testing.
 	g.Expect(failedCheckKeys(checks)).To(ContainElements("release_eligibility", "release_contract"))
 }
 
+func TestEvaluateEmitsExplicitComponentReleaseEvidenceChecks(t *testing.T) {
+	g := NewWithT(t)
+	input := preflightInputFixture()
+	input.Plan.ReleaseContract = &types.ReleaseContract{
+		ComponentV2: &types.ComponentReleaseContractV2{
+			Schema: types.ReleaseContractSchemaV2,
+			Evidence: types.ComponentReleaseEvidenceReferences{
+				Provenance: []string{
+					"oci://evidence.example.invalid/provenance@sha256:" + strings.Repeat("c", 64),
+				},
+				SBOM: []string{
+					"oci://evidence.example.invalid/sbom@sha256:" + strings.Repeat("d", 64),
+				},
+			},
+		},
+	}
+
+	checks := Evaluate(input)
+
+	g.Expect(checkKeys(checks)).To(ContainElements("release_provenance", "release_sbom"))
+	g.Expect(failedCheckKeys(checks)).NotTo(ContainElements("release_provenance", "release_sbom"))
+
+	input.Plan.ReleaseContract.ComponentV2.Evidence.SBOM = nil
+	checks = Evaluate(input)
+	g.Expect(failedCheckKeys(checks)).To(ContainElement("release_sbom"))
+}
+
 func TestEvaluateRejectsAdapterDriftAfterPlanApproval(t *testing.T) {
 	g := NewWithT(t)
 	input := preflightInputFixture()

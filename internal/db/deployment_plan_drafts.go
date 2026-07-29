@@ -1079,6 +1079,20 @@ func loadPlanResolutionInput(
 				input.AdapterAssignments = append(input.AdapterAssignments, assignment)
 			}
 		}
+		observers, observerErr := listEnabledObserverRegistrationsForUnit(
+			ctx,
+			draft.OrganizationID,
+			placement.Unit.ID,
+		)
+		if observerErr != nil {
+			return nil, observerErr
+		}
+		input.AdapterScopeBindings = adapterScopeBindingsFromPlacement(
+			input.ReleasePins,
+			input.Config.ComponentBindings,
+			input.ComponentInstances,
+			observers,
+		)
 	}
 	input.Candidates, err = includedAndDisabledCandidates(*input, *manifest)
 	if err != nil {
@@ -1102,6 +1116,104 @@ func loadPlanResolutionInput(
 		}
 	}
 	return input, nil
+}
+
+func listEnabledObserverRegistrationsForUnit(
+	ctx context.Context,
+	organizationID, deploymentUnitID uuid.UUID,
+) ([]types.ObserverRegistration, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+observerRegistrationOutputExpr+`
+		FROM ObserverRegistration r
+		WHERE r.organization_id = @organizationID
+		  AND r.deployment_unit_id = @deploymentUnitID
+		  AND r.enabled
+		ORDER BY r.component_instance_id, r.created_at DESC, r.id DESC`,
+		pgx.NamedArgs{
+			"organizationID":   organizationID,
+			"deploymentUnitID": deploymentUnitID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not query plan observer registrations: %w", err)
+	}
+	records, err := pgx.CollectRows(rows, pgx.RowToStructByName[observerRegistrationRow])
+	if err != nil {
+		return nil, fmt.Errorf("could not collect plan observer registrations: %w", err)
+	}
+	result := make([]types.ObserverRegistration, len(records))
+	for index := range records {
+		result[index] = records[index].toType()
+	}
+	return result, nil
+}
+
+func adapterScopeBindingsFromPlacement(
+	pins []types.ComponentReleasePin,
+	configBindings []types.ConfigComponentBinding,
+	instances []types.ComponentInstance,
+	observers []types.ObserverRegistration,
+) []types.AdapterStepScopeBinding {
+	instanceIDByComponent := make(map[string]uuid.UUID, len(configBindings))
+	for _, binding := range configBindings {
+		instanceIDByComponent[strings.TrimSpace(binding.ComponentKey)] = binding.ComponentInstanceID
+	}
+	instanceByID := make(map[uuid.UUID]types.ComponentInstance, len(instances))
+	for _, instance := range instances {
+		instanceByID[instance.ID] = instance
+	}
+	observersByInstanceID := make(map[uuid.UUID][]types.ObserverRegistration)
+	for _, observer := range observers {
+		if observer.Enabled && observer.ComponentInstanceID != nil {
+			observersByInstanceID[*observer.ComponentInstanceID] = append(
+				observersByInstanceID[*observer.ComponentInstanceID],
+				observer,
+			)
+		}
+	}
+
+	result := make([]types.AdapterStepScopeBinding, 0)
+	for _, pin := range pins {
+		componentKey := strings.TrimSpace(pin.ComponentKey)
+		instanceID, bound := instanceIDByComponent[componentKey]
+		if !bound {
+			continue
+		}
+		for _, requirement := range pin.AdapterRequirements {
+			switch requirement.StepKind {
+			case "migration":
+				databaseBoundary := strings.TrimSpace(instanceByID[instanceID].DatabaseBoundary)
+				if !types.AdapterScopeDatabaseResource.IsValidReference(databaseBoundary) {
+					continue
+				}
+				for _, migration := range pin.Migrations {
+					result = append(result, types.AdapterStepScopeBinding{
+						StepKey:        "component:" + componentKey + ":migration:" + migration.Key,
+						ScopeType:      types.AdapterScopeDatabaseResource,
+						ScopeReference: databaseBoundary,
+					})
+				}
+			case "health":
+				for _, observer := range observersByInstanceID[instanceID] {
+					result = append(result, types.AdapterStepScopeBinding{
+						StepKey:        "component:" + componentKey + ":health",
+						ScopeType:      types.AdapterScopeObserverRegistration,
+						ScopeReference: observer.ID.String(),
+					})
+				}
+			}
+		}
+	}
+	slices.SortFunc(result, func(a, b types.AdapterStepScopeBinding) int {
+		if compare := strings.Compare(a.StepKey, b.StepKey); compare != 0 {
+			return compare
+		}
+		if compare := strings.Compare(string(a.ScopeType), string(b.ScopeType)); compare != 0 {
+			return compare
+		}
+		return strings.Compare(a.ScopeReference, b.ScopeReference)
+	})
+	return result
 }
 
 func releasePinsRequireAdapters(pins []types.ComponentReleasePin) bool {

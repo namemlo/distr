@@ -63,6 +63,48 @@ func TestProjectTargetPlanStepsFreezesDependencies(t *testing.T) {
 	g.Expect(steps[0].ID).NotTo(Equal(uuid.Nil))
 }
 
+func TestAdapterScopeBindingsUsePersistedDatabaseAndObserverBoundaries(t *testing.T) {
+	g := NewWithT(t)
+	instanceID := uuid.New()
+	observerID := uuid.New()
+	pins := []types.ComponentReleasePin{{
+		ComponentKey: "catalog",
+		Migrations: []types.MigrationDeclaration{{
+			Key: "schema-v2",
+		}},
+		AdapterRequirements: []types.AdapterRequirement{
+			{StepKind: "deploy", Capability: "distr.compose.deploy", Version: "1.0.0"},
+			{StepKind: "migration", Capability: "database.migrate", Version: "1.0.0"},
+			{StepKind: "health", Capability: "health.observe", Version: "1.0.0"},
+		},
+	}}
+	bindings := adapterScopeBindingsFromPlacement(
+		pins,
+		[]types.ConfigComponentBinding{{
+			ComponentKey: "catalog", ComponentInstanceID: instanceID,
+		}},
+		[]types.ComponentInstance{{
+			ID: instanceID, DatabaseBoundary: "postgres:catalog",
+		}},
+		[]types.ObserverRegistration{{
+			ID: observerID, ComponentInstanceID: &instanceID, Enabled: true,
+		}},
+	)
+
+	g.Expect(bindings).To(Equal([]types.AdapterStepScopeBinding{
+		{
+			StepKey:        "component:catalog:health",
+			ScopeType:      types.AdapterScopeObserverRegistration,
+			ScopeReference: observerID.String(),
+		},
+		{
+			StepKey:        "component:catalog:migration:schema-v2",
+			ScopeType:      types.AdapterScopeDatabaseResource,
+			ScopeReference: "postgres:catalog",
+		},
+	}))
+}
+
 func TestMigration145HasTenantFencesImmutabilityAndRollbackRefusal(t *testing.T) {
 	g := NewWithT(t)
 	root := filepath.Join("..", "migrations", "sql")

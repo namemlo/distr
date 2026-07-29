@@ -73,29 +73,106 @@ export function deriveFrozenAdapterRevision(adapter) {
   return `sha256:${createHash('sha256').update(JSON.stringify(frozenEvidence)).digest('hex')}`;
 }
 
-export function derivePlanLeaseIdentity({plan, target, signingKeyId}) {
+export function derivePlanLeaseIdentities({plan, target, signingKeyId}) {
   assert(plan.stepAdapters?.length > 0, `${target.id} plan must freeze step adapters`);
-  const revisions = new Set();
-  const keyIds = new Set();
-  for (const adapter of plan.stepAdapters) {
+  assert(plan.steps?.length > 0, `${target.id} plan must expose its frozen step graph`);
+  const stepByKey = new Map(plan.steps.map((step) => [step.stepKey, step]));
+  const indegree = new Map(plan.steps.map((step) => [step.stepKey, 0]));
+  const dependents = new Map();
+  for (const step of plan.steps) {
+    for (const dependency of step.dependencies ?? []) {
+      if (!stepByKey.has(dependency)) {
+        continue;
+      }
+      indegree.set(step.stepKey, indegree.get(step.stepKey) + 1);
+      const children = dependents.get(dependency) ?? [];
+      children.push(step.stepKey);
+      dependents.set(dependency, children);
+    }
+  }
+  const compareStepKeys = (left, right) => {
+    const leftStep = stepByKey.get(left);
+    const rightStep = stepByKey.get(right);
+    return leftStep.sortOrder - rightStep.sortOrder || left.localeCompare(right);
+  };
+  const ready = [...indegree.entries()]
+    .filter(([, count]) => count === 0)
+    .map(([stepKey]) => stepKey)
+    .sort(compareStepKeys);
+  const topologicalOrder = [];
+  while (ready.length > 0) {
+    const stepKey = ready.shift();
+    topologicalOrder.push(stepKey);
+    for (const dependent of (dependents.get(stepKey) ?? []).sort(compareStepKeys)) {
+      const next = indegree.get(dependent) - 1;
+      indegree.set(dependent, next);
+      if (next === 0) {
+        ready.push(dependent);
+        ready.sort(compareStepKeys);
+      }
+    }
+  }
+  assert(
+    topologicalOrder.length === plan.steps.length,
+    `${target.id} frozen plan step graph must remain acyclic`
+  );
+  const adapterByStep = new Map(plan.stepAdapters.map((adapter) => [adapter.stepKey, adapter]));
+  const adapters = topologicalOrder
+    .filter((stepKey) => adapterByStep.has(stepKey))
+    .map((stepKey) => adapterByStep.get(stepKey));
+  assert(
+    adapters.length === plan.stepAdapters.length,
+    `${target.id} every frozen adapter must reference a frozen plan step`
+  );
+  return adapters.map((adapter) => {
+    const componentKey = adapter.stepKey.split(':')[1];
+    const instance = target.instances?.get(componentKey);
+    const observer = target.observers?.get(componentKey);
+    let expected;
+    if (adapter.stepKey.includes(':migration:')) {
+      expected = {
+        capability: 'database.migrate',
+        scopeType: 'database_resource',
+        scopeReference: instance?.databaseBoundary,
+      };
+    } else if (adapter.stepKey.endsWith(':deploy')) {
+      expected = {
+        capability: 'distr.compose.deploy',
+        scopeType: 'component_instance',
+        scopeReference: instance?.id,
+      };
+    } else if (adapter.stepKey.endsWith(':health')) {
+      expected = {
+        capability: 'health.observe',
+        scopeType: 'observer_registration',
+        scopeReference: observer?.id,
+      };
+    } else {
+      throw new Error(`fixture contract: ${target.id} frozen adapter has unsupported step ${adapter.stepKey}`);
+    }
     assert(
-      adapter.capability === 'distr.compose.deploy' && adapter.capabilityVersion === '1.0.0',
-      `${target.id} frozen adapter must match the reported action capability`
+      adapter.capability === expected.capability && adapter.capabilityVersion === '1.0.0',
+      `${target.id} ${adapter.stepKey} frozen adapter must match its reported action capability`
     );
     assert(
-      adapter.scopeType === 'deployment_unit' && adapter.scopeReference === target.unit.id,
-      `${target.id} frozen adapter scope must match the deployment unit`
+      adapter.scopeType === expected.scopeType && adapter.scopeReference === expected.scopeReference,
+      `${target.id} ${adapter.stepKey} frozen adapter scope must match its typed runtime boundary`
     );
     assert(
       adapter.configSnapshotId === target.snapshot.id && adapter.configChecksum === target.snapshot.canonicalChecksum,
       `${target.id} frozen adapter config must match the plan target snapshot`
     );
-    revisions.add(deriveFrozenAdapterRevision(adapter));
-    keyIds.add(adapter.keyConfiguration.keyId);
-  }
-  assert(revisions.size === 1, `${target.id} plan must use one exact frozen adapter revision`);
-  assert(keyIds.size === 1 && keyIds.has(signingKeyId), `${target.id} frozen adapter key must match the signer`);
-  return {adapterRevision: [...revisions][0], keyId: [...keyIds][0]};
+    assert(
+      adapter.keyConfiguration.keyId === signingKeyId,
+      `${target.id} ${adapter.stepKey} frozen adapter key must match the signer`
+    );
+    return {
+      stepKey: adapter.stepKey,
+      capability: adapter.capability,
+      adapterRevision: deriveFrozenAdapterRevision(adapter),
+      keyId: adapter.keyConfiguration.keyId,
+    };
+  });
 }
 
 function createEd25519Material() {
@@ -511,6 +588,8 @@ export async function bootstrapLiveHub({hubURL, runId, fixture}) {
         supportedRuntimes: ['oci'],
         supportedActions: [
           {actionType: 'distr.compose.deploy', versions: ['1.0.0']},
+          {actionType: 'database.migrate', versions: ['1.0.0']},
+          {actionType: 'health.observe', versions: ['1.0.0']},
           {actionType: 'distr.preflight', versions: ['1']},
         ],
         operatingSystem: 'linux',
@@ -590,13 +669,7 @@ async function publishComponentRelease({request, token, topology, fixture, label
         provides: component.key === 'catalog-provider' ? [{name: 'catalog.v1', version: '1.0.0'}] : [],
         requires: requirement,
         migrations,
-        adapterRequirements: [
-          {
-            stepKind: 'deploy',
-            capability: 'distr.compose.deploy',
-            version: '1.0.0',
-          },
-        ],
+        adapterRequirements: componentAdapterRequirements(migrations),
         changes: {summary: `Disposable ${label}`, commits: []},
         evidence: {provenance: [], sbom: [], signatures: [], tests: []},
       },
@@ -617,6 +690,25 @@ async function publishComponentRelease({request, token, topology, fixture, label
     token,
     body: {},
   });
+}
+
+export function componentAdapterRequirements(migrations) {
+  const requirements = [
+    {stepKind: 'deploy', capability: 'distr.compose.deploy', version: '1.0.0'},
+  ];
+  if (migrations.length > 0) {
+    requirements.push({
+      stepKind: 'migration',
+      capability: 'database.migrate',
+      version: '1.0.0',
+    });
+  }
+  requirements.push({
+    stepKind: 'health',
+    capability: 'health.observe',
+    version: '1.0.0',
+  });
+  return requirements;
 }
 
 async function createDependencyPolicy({request, token, topology, runId}) {
@@ -773,7 +865,11 @@ async function freezeConfigsAndRegisterBoundaries({
           key: target.adapterId,
           name: target.adapterId,
           version: '1.0.0',
-          capabilities: [{capability: 'distr.compose.deploy', version: '1.0.0'}],
+          capabilities: [
+            {capability: 'distr.compose.deploy', version: '1.0.0'},
+            {capability: 'database.migrate', version: '1.0.0'},
+            {capability: 'health.observe', version: '1.0.0'},
+          ],
           enabled: true,
         },
       });
@@ -814,23 +910,6 @@ async function freezeConfigsAndRegisterBoundaries({
         featureFlags: [],
       },
     });
-    const adapter = await request('POST', '/api/v1/adapter-assignments', {
-      token,
-      body: {
-        adapterImplementationId: implementationByKind.get(target.adapterKind).id,
-        scopeType: 'deployment_unit',
-        scopeReference: target.unit.id,
-        configSnapshotId: snapshot.id,
-        configChecksum: snapshot.canonicalChecksum,
-        keyConfiguration: {
-          keyId: signingKeyId,
-          publicKeyFingerprint: checksum(signing.publicKey),
-          signingKeyReference: 'secret-provider://fixture/executor-signing',
-          signingKeyVersionFingerprint: signingVersionFingerprint,
-        },
-        enabled: true,
-      },
-    });
     const observerCredential = target.id === fixture.targets[0].id ? secrets.observerAlpha : secrets.observerBeta;
     const observers = new Map();
     for (const [componentKey, instance] of target.instances) {
@@ -851,11 +930,61 @@ async function freezeConfigsAndRegisterBoundaries({
       observers.set(componentKey, observer);
     }
     target.snapshot = snapshot;
-    target.adapter = adapter;
     target.observers = observers;
+    const adapters = new Map();
+    for (const [componentKey] of target.instances) {
+      const componentAdapters = [];
+      for (const scope of componentAdapterScopes(target, componentKey)) {
+        componentAdapters.push(
+          await request('POST', '/api/v1/adapter-assignments', {
+            token,
+            body: {
+              adapterImplementationId: implementationByKind.get(target.adapterKind).id,
+              scopeType: scope.scopeType,
+              scopeReference: scope.scopeReference,
+              configSnapshotId: snapshot.id,
+              configChecksum: snapshot.canonicalChecksum,
+              keyConfiguration: {
+                keyId: signingKeyId,
+                publicKeyFingerprint: checksum(signing.publicKey),
+                signingKeyReference: 'secret-provider://fixture/executor-signing',
+                signingKeyVersionFingerprint: signingVersionFingerprint,
+              },
+              enabled: true,
+            },
+          })
+        );
+      }
+      adapters.set(componentKey, componentAdapters);
+    }
+    target.adapters = adapters;
     target.observerCredential = observerCredential;
   }
   return topology;
+}
+
+export function componentAdapterScopes(target, componentKey) {
+  const instance = target.instances.get(componentKey);
+  const observer = target.observers.get(componentKey);
+  assert(instance, `${target.id ?? 'target'} ${componentKey} component instance is required`);
+  assert(observer, `${target.id ?? 'target'} ${componentKey} observer registration is required`);
+  return [
+    {
+      capability: 'distr.compose.deploy',
+      scopeType: 'component_instance',
+      scopeReference: instance.id,
+    },
+    {
+      capability: 'database.migrate',
+      scopeType: 'database_resource',
+      scopeReference: instance.databaseBoundary,
+    },
+    {
+      capability: 'health.observe',
+      scopeType: 'observer_registration',
+      scopeReference: observer.id,
+    },
+  ];
 }
 
 async function publishProductRelease({topology, fixture, label, componentReleases, policyVersion}) {
@@ -1134,6 +1263,119 @@ export async function waitForCampaignReadiness({
   }
 }
 
+function targetLeaseReadinessSnapshot({campaign, tasks, plan, target}) {
+  const matchingTasks = tasks.filter(
+    (task) => task.deploymentPlanId === plan.id && task.deploymentTargetId === target.hubTargetId
+  );
+  const taskStates = matchingTasks.map((task) => ({
+    id: task.id,
+    status: task.status,
+    steps: (task.stepRuns ?? []).map((step) => ({
+      stepKey: step.stepKey,
+      status: step.status,
+    })),
+  }));
+  const latestPreflight = plan.preflightRuns?.[0];
+  const failures = [];
+  if (['FAILED', 'COMPLETED', 'CANCELED'].includes(campaign.state) || campaign.admissionsBlocked) {
+    failures.push(`campaign state=${campaign.state} admissionsBlocked=${campaign.admissionsBlocked}`);
+  }
+  const failedPreflight = latestPreflight?.status === 'FAILED' ? latestPreflight : undefined;
+  if (failedPreflight) {
+    const messages = failedPreflight.checks
+      ?.filter((check) => check.status === 'FAILED')
+      .map((check) => check.message)
+      .filter(Boolean);
+    failures.push(`plan ${plan.id} preflight FAILED${messages?.length ? `: ${messages.join('; ')}` : ''}`);
+  }
+  const terminalTasks = matchingTasks.filter((task) => ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(task.status));
+  if (terminalTasks.length) {
+    failures.push(
+      `terminal tasks ${terminalTasks
+        .map((task) => {
+          const terminalSteps = (task.stepRuns ?? [])
+            .filter((step) => ['FAILED', 'SKIPPED'].includes(step.status))
+            .map((step) => `${step.stepKey}:${step.status}`);
+          return `${task.id}:${task.status}${terminalSteps.length ? `[${terminalSteps.join(',')}]` : ''}`;
+        })
+        .join(',')}`
+    );
+  }
+  return {
+    failures,
+    campaign: {
+      id: campaign.id,
+      state: campaign.state,
+      version: campaign.version,
+      admissionsBlocked: campaign.admissionsBlocked,
+    },
+    plan: {
+      id: plan.id,
+      canonicalChecksum: plan.canonicalChecksum,
+      preflightStatus: latestPreflight?.status ?? 'MISSING',
+    },
+    targetId: target.hubTargetId,
+    tasks: taskStates,
+  };
+}
+
+export async function waitForTargetExecutionLease({
+  topology,
+  campaign,
+  plan,
+  target,
+  leaseIdentity,
+  timeoutMs = 60_000,
+  intervalMs = 1_000,
+  clock = defaultPollingClock(),
+}) {
+  assert(timeoutMs > 0 && intervalMs > 0, 'target lease readiness polling bounds must be positive');
+  const startedAt = clock.now();
+  let last;
+  while (true) {
+    const lease = await topology.request('POST', '/api/executor/v2/executions/lease', {
+      token: target.agentToken,
+      body: {
+        executorId: target.executorId,
+        adapterRevision: leaseIdentity.adapterRevision,
+        keyId: leaseIdentity.keyId,
+        leaseSeconds: 60,
+      },
+      expected: [200, 204],
+    });
+    if (lease) {
+      return lease;
+    }
+
+    const currentCampaign = await topology.request(
+      'GET',
+      `/api/v1/deployment-campaign-runs/${campaign.run.id}`,
+      {token: topology.token}
+    );
+    const tasks = await topology.request('GET', '/api/v1/tasks', {token: topology.token});
+    const currentPlan = await topology.request('GET', `/api/v1/deployment-plans/${plan.id}`, {
+      token: topology.token,
+    });
+    last = targetLeaseReadinessSnapshot({
+      campaign: currentCampaign,
+      tasks,
+      plan: currentPlan,
+      target,
+    });
+    campaign.run = currentCampaign;
+    if (last.failures.length) {
+      throw new Error(
+        `fixture contract: target lease readiness failed: ${last.failures.join(' | ')}; last state ${JSON.stringify(last)}`
+      );
+    }
+    const elapsed = clock.now() - startedAt;
+    if (elapsed >= timeoutMs) {
+      throw new Error(`fixture contract: target lease readiness timed out; last state ${JSON.stringify(last)}`);
+    }
+    await clock.sleep(Math.min(intervalMs, timeoutMs - elapsed));
+  }
+}
+
 export async function publishCampaign({topology, plans, label, runId}) {
   const planIDs = [...plans.values()].map((plan) => plan.id);
   const draft = await topology.request('POST', '/api/v1/deployment-campaign-drafts', {
@@ -1324,27 +1566,22 @@ async function executeAndObserveRelease({
       campaign,
       plans: new Map([[target.id, plans.get(target.id)]]),
     });
-    const leaseIdentity = derivePlanLeaseIdentity({
-      plan: plans.get(target.id),
+    const plan = plans.get(target.id);
+    const leaseIdentities = derivePlanLeaseIdentities({
+      plan,
       target,
       signingKeyId,
     });
     let completed = 0;
     const executedStepKeys = [];
-    for (let leaseIndex = 0; leaseIndex < 16; leaseIndex += 1) {
-      const lease = await topology.request('POST', '/api/executor/v2/executions/lease', {
-        token: target.agentToken,
-        body: {
-          executorId: target.executorId,
-          adapterRevision: leaseIdentity.adapterRevision,
-          keyId: leaseIdentity.keyId,
-          leaseSeconds: 60,
-        },
-        expected: [200, 204],
+    for (const leaseIdentity of leaseIdentities) {
+      const lease = await waitForTargetExecutionLease({
+        topology,
+        campaign,
+        plan,
+        target,
+        leaseIdentity,
       });
-      if (!lease) {
-        break;
-      }
       const execution = await executeLeasedAttempt({
         topology,
         target,
@@ -1354,10 +1591,14 @@ async function executeAndObserveRelease({
         reference: index !== 0,
         fixture,
       });
+      assert(
+        execution.payload.stepKey === leaseIdentity.stepKey,
+        `${target.id} leased ${execution.payload.stepKey} while waiting for ${leaseIdentity.stepKey}`
+      );
       executedStepKeys.push(execution.payload.stepKey);
       completed += 1;
     }
-    assert(completed > 0, `${target.id} must lease at least one v2 execution attempt`);
+    assert(completed === leaseIdentities.length, `${target.id} must execute every frozen target-step adapter`);
 
     const localObservation = {
       observerId: target.observerId,

@@ -89,6 +89,7 @@ func TestTaskLeaseRepositoryClaimsQueuedHubStepWithoutAgent(t *testing.T) {
 	g.Expect(hubLease.AgentID).To(Equal(tasks[0].DeploymentTargetID))
 	g.Expect(hubLease.Steps).To(HaveLen(1))
 	g.Expect(hubLease.Steps[0].StepKey).To(Equal("trigger"))
+	g.Expect(hubLease.Steps[0].ActionName).To(Equal("Webhook"))
 }
 
 func TestTaskLeaseRepositoryHandsHubTaskToAgentAfterHubBatchCompletes(t *testing.T) {

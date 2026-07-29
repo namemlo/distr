@@ -118,6 +118,25 @@ func Evaluate(input Input) []types.DeploymentPreflightCheck {
 					"migrationRequired":    input.Plan.ReleaseContract.Operations.MigrationRequired,
 					"configChangeRequired": input.Plan.ReleaseContract.Operations.ConfigChangeRequired,
 				}, "migration and configuration-change flags are frozen in the plan"))
+			if component := input.Plan.ReleaseContract.ComponentV2; component != nil {
+				provenancePresent := input.ReleaseContractValid && len(component.Evidence.Provenance) > 0
+				add(targetCheck(target, "release_provenance", statusFor(provenancePresent),
+					map[string]any{"present": true, "contractValid": true},
+					map[string]any{
+						"present":       len(component.Evidence.Provenance) > 0,
+						"contractValid": input.ReleaseContractValid,
+						"references":    slices.Clone(component.Evidence.Provenance),
+					}, "immutable component release provenance evidence is available"))
+
+				sbomPresent := input.ReleaseContractValid && len(component.Evidence.SBOM) > 0
+				add(targetCheck(target, "release_sbom", statusFor(sbomPresent),
+					map[string]any{"present": true, "contractValid": true},
+					map[string]any{
+						"present":       len(component.Evidence.SBOM) > 0,
+						"contractValid": input.ReleaseContractValid,
+						"references":    slices.Clone(component.Evidence.SBOM),
+					}, "immutable component release SBOM evidence is available"))
+			}
 		}
 	}
 	desiredByTargetAndComponent := make(map[StateKey]types.DeploymentPlanTargetComponent, len(input.Plan.TargetComponents))
