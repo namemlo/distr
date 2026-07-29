@@ -50,6 +50,12 @@ test('places the test filter before Playwright variadic project options', () => 
   assert.ok(exactCommand.indexOf(automatedTest) < exactCommand.indexOf('--project'));
 });
 
+test('starts the isolated evidence web server without package-manager execution', async () => {
+  const config = await readFile(path.join(repoRoot, evidenceConfig), 'utf8');
+  assert.match(config, /command:\s*'node node_modules\/@angular\/cli\/bin\/ng\.js serve /);
+  assert.doesNotMatch(config, /pnpm\s+exec\s+ng\s+serve/);
+});
+
 function sha256(value) {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
