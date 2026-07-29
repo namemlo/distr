@@ -491,6 +491,42 @@ func TestValidateComponentReleaseContractV2AcceptsCredentialFreeImmutableReferen
 	g.Expect(issueKeys(issues)).NotTo(ContainElement("changes.summary:targetNeutral"))
 }
 
+func TestValidateComponentReleaseContractV2AcceptsNeutralProvenanceURIIdentities(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	contract.Source.Repository = "https://code.example.invalid/platform/payments-api"
+	contract.Build.Builder = "https://build.example.invalid/workers/release"
+
+	issues := ValidateComponentReleaseContractV2(contract)
+
+	g.Expect(issueKeys(issues)).NotTo(ContainElement("source.repository:targetNeutral"))
+	g.Expect(issueKeys(issues)).NotTo(ContainElement("build.builder:targetNeutral"))
+	g.Expect(issues).To(BeEmpty())
+}
+
+func TestValidateComponentReleaseContractV2RejectsTargetSpecificOrMutableURIIdentities(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "credentialed HTTPS", value: "https://user:secret@code.example.invalid/platform/payments-api"},
+		{name: "loopback HTTPS", value: "https://127.0.0.1/platform/payments-api"},
+		{name: "localhost HTTPS", value: "https://localhost/platform/payments-api"},
+		{name: "mutable OCI tag", value: "oci://registry.example.invalid/builders/release:latest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			contract := validComponentReleaseContract()
+			contract.Source.Repository = tt.value
+
+			issues := ValidateComponentReleaseContractV2(contract)
+
+			g.Expect(issueKeys(issues)).To(ContainElement("source.repository:targetNeutral"))
+		})
+	}
+}
+
 func TestValidateComponentReleaseContractV2BoundsEveryCollection(t *testing.T) {
 	tests := []struct {
 		name     string

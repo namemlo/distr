@@ -3,6 +3,7 @@ package releasebundles
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"path"
 	"regexp"
@@ -654,10 +655,18 @@ func ValidateTargetNeutralContract(contract types.ComponentReleaseContractV2) []
 			})
 		}
 	}
-	addIfUnsafe("source.repository", contract.Source.Repository, false)
+	addIfUnsafeIdentity := func(field, value string) {
+		if containsTargetSpecificIdentity(value) {
+			issues = append(issues, ValidationIssue{
+				Field: field, Rule: "targetNeutral",
+				Message: "component release identities must use neutral credential-free HTTPS or immutable OCI values",
+			})
+		}
+	}
+	addIfUnsafeIdentity("source.repository", contract.Source.Repository)
 	addIfUnsafe("source.requestedRef", contract.Source.RequestedRef, false)
 	addIfUnsafe("build.id", contract.Build.ID, false)
-	addIfUnsafe("build.builder", contract.Build.Builder, false)
+	addIfUnsafeIdentity("build.builder", contract.Build.Builder)
 	addIfUnsafe("changes.summary", contract.Changes.Summary, false)
 	for _, migration := range contract.Migrations {
 		addIfUnsafe("migrations."+migration.Key+".description", migration.Description, false)
@@ -675,6 +684,52 @@ func ValidateTargetNeutralContract(contract types.ComponentReleaseContractV2) []
 		addIfUnsafe("evidence.tests", reference, true)
 	}
 	return issues
+}
+
+func containsTargetSpecificIdentity(value string) bool {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return false
+	}
+	if containsSensitiveComponentReleaseValue(normalized) || containsUnsupportedControlCharacter(normalized) {
+		return true
+	}
+	if !strings.Contains(normalized, "://") {
+		return containsAbsolutePathToken(normalized) || strings.HasPrefix(normalized, "/")
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil ||
+		parsed.String() != normalized ||
+		parsed.User != nil ||
+		parsed.Host == "" ||
+		parsed.Port() != "" ||
+		parsed.RawQuery != "" ||
+		parsed.Fragment != "" ||
+		parsed.RawPath != "" ||
+		strings.Contains(parsed.Path, "//") ||
+		(parsed.Path != "" && path.Clean(parsed.Path) != parsed.Path) {
+		return true
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" ||
+		strings.HasSuffix(host, ".localhost") ||
+		strings.HasSuffix(host, ".local") ||
+		strings.HasSuffix(host, ".internal") ||
+		net.ParseIP(host) != nil {
+		return true
+	}
+	switch parsed.Scheme {
+	case "https":
+		return false
+	case "oci":
+		raw := strings.TrimPrefix(normalized, "oci://")
+		at := strings.LastIndex(raw, "@")
+		return at <= 0 ||
+			!componentDigestPattern.MatchString(raw[at+1:]) ||
+			!isPortableOCIRepository(raw[:at])
+	default:
+		return true
+	}
 }
 
 func containsTargetSpecificValue(value string, allowReference bool) bool {

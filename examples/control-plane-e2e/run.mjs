@@ -613,8 +613,52 @@ export async function bootstrapLiveHub({hubURL, runId, fixture}) {
   };
 }
 
-async function publishComponentRelease({request, token, topology, fixture, label, component}) {
+export function buildComponentPublicationEvidence(input) {
+  const generated = spawnSync('go', ['run', './examples/control-plane-e2e/provenance-fixture'], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      GOMAXPROCS: process.env.GOMAXPROCS || '2',
+      GOFLAGS: process.env.GOFLAGS || '-p=1',
+    },
+    input: JSON.stringify(input),
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert(
+    generated.status === 0,
+    `signed provenance fixture generation failed: ${(generated.stderr || generated.stdout || '').trim()}`
+  );
+  let result;
+  try {
+    result = JSON.parse(generated.stdout);
+  } catch (error) {
+    throw new Error(`fixture contract: signed provenance fixture output is invalid JSON: ${error.message}`);
+  }
+  assert(result.verification?.valid === true, 'signed provenance fixture must pass production verification');
+  assert(checksumPattern.test(result.verification.policyChecksum), 'provenance policy checksum is invalid');
+  assert(checksumPattern.test(result.verification.evidenceDigest), 'provenance evidence checksum is invalid');
+  assert(result.contractEvidence?.provenance?.length === 1, 'component provenance reference is required');
+  assert(result.contractEvidence?.sbom?.length === 1, 'component SBOM reference is required');
+  assert(result.publication?.provenance?.evidence?.length === 1, 'signed publication evidence is required');
+  return result;
+}
+
+export async function publishComponentRelease({request, token, topology, fixture, label, component}) {
   const release = fixture.releases[label];
+  const sourceRepository = 'https://code.fixture.invalid/neutral-product';
+  const sourceCommit = label === 'A' ? 'a'.repeat(40) : 'b'.repeat(40);
+  const buildId = `build-${component.key}-${label}`;
+  const builderId = 'https://build.fixture.invalid/workers/release';
+  const publication = buildComponentPublicationEvidence({
+    artifactKey: component.key,
+    platform: 'linux/amd64',
+    digest: component.artifactDigest,
+    sourceRepository,
+    sourceCommit,
+    buildId,
+    builderId,
+  });
   const requirement =
     component.key === 'gateway-consumer'
       ? [
@@ -652,15 +696,15 @@ async function publishComponentRelease({request, token, topology, fixture, label
         componentKey: component.key,
         version: release.version,
         source: {
-          repository: 'https://fixture.invalid/neutral-product',
+          repository: sourceRepository,
           requestedRef: `refs/tags/${release.version}`,
-          commit: label === 'A' ? 'a'.repeat(40) : 'b'.repeat(40),
+          commit: sourceCommit,
         },
-        build: {id: `build-${component.key}-${label}`, builder: 'neutral-fixture'},
+        build: {id: buildId, builder: builderId},
         artifacts: [
           {
             key: component.key,
-            type: 'oci_image',
+            type: 'oci-image',
             mediaType: 'application/vnd.oci.image.manifest.v1+json',
             digest: component.artifactDigest,
             platforms: [{platform: 'linux/amd64', digest: component.artifactDigest}],
@@ -671,7 +715,7 @@ async function publishComponentRelease({request, token, topology, fixture, label
         migrations,
         adapterRequirements: componentAdapterRequirements(migrations),
         changes: {summary: `Disposable ${label}`, commits: []},
-        evidence: {provenance: [], sbom: [], signatures: [], tests: []},
+        evidence: publication.contractEvidence,
       },
       components: [
         {
@@ -688,7 +732,7 @@ async function publishComponentRelease({request, token, topology, fixture, label
   });
   return request('POST', `/api/v1/release-bundles/${bundle.id}/publish`, {
     token,
-    body: {},
+    body: publication.publication,
   });
 }
 

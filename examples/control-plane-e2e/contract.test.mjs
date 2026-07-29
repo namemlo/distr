@@ -1202,6 +1202,64 @@ test('live bootstrap captures Hub-created target IDs before target-bound service
   }
 });
 
+test('component v2 publication declares immutable SBOM and submits production-verified signed provenance', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.publishComponentRelease, 'function');
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const calls = [];
+  const published = await runtime.publishComponentRelease({
+    request: async (method, requestPath, options) => {
+      calls.push({method, path: requestPath, ...options});
+      if (requestPath === '/api/v1/release-bundles') {
+        return {id: '11111111-1111-4111-8111-111111111111'};
+      }
+      return {id: '11111111-1111-4111-8111-111111111111', status: 'published'};
+    },
+    token: 'operator-token',
+    topology: {
+      application: {id: '22222222-2222-4222-8222-222222222222'},
+      channel: {id: '33333333-3333-4333-8333-333333333333'},
+    },
+    fixture: {
+      releases: {A: {version: '1.0.0'}},
+      product: {migration: {id: 'schema-v2'}},
+    },
+    label: 'A',
+    component: {
+      key: 'catalog-provider',
+      artifactDigest: digest,
+    },
+  });
+
+  assert.equal(published.status, 'published');
+  assert.equal(calls.length, 2);
+  const contract = calls[0].body.releaseContract;
+  assert.equal(calls[0].method, 'POST');
+  assert.match(contract.source.repository, /^https:\/\/[^?#]+$/);
+  assert.match(contract.build.builder, /^https:\/\/[^?#]+$/);
+  assert.equal(contract.evidence.provenance.length, 1);
+  assert.equal(contract.evidence.sbom.length, 1);
+  assert.match(contract.evidence.provenance[0], /^oci:\/\/.+@sha256:[0-9a-f]{64}$/);
+  assert.match(contract.evidence.sbom[0], /^oci:\/\/.+@sha256:[0-9a-f]{64}$/);
+
+  const publication = calls[1].body.provenance;
+  assert.equal(calls[1].path, '/api/v1/release-bundles/11111111-1111-4111-8111-111111111111/publish');
+  assert.equal(publication.policy.version, 'distr.provenance-policy/v1');
+  assert.equal(publication.policy.trustedRoots.length, 1);
+  assert.equal(publication.policy.allowedSignerIdentities.length, 1);
+  assert.equal(publication.evidence.length, 1);
+  assert.equal(publication.evidence[0].artifactKey, 'catalog-provider');
+  assert.equal(publication.evidence[0].platform, 'linux/amd64');
+  assert.equal(publication.evidence[0].reference, contract.evidence.provenance[0]);
+  assert.equal(publication.evidence[0].trustRootId, publication.policy.trustedRoots[0].id);
+  assert.equal(publication.evidence[0].bundle.mediaType, 'application/vnd.dev.sigstore.bundle.v0.3+json');
+  assert.ok(publication.evidence[0].bundle.dsseEnvelope.signatures[0].sig);
+  assert.ok(publication.evidence[0].bundle.verificationMaterial.tlogEntries.length);
+  assert.ok(
+    publication.evidence[0].bundle.verificationMaterial.timestampVerificationData.rfc3161Timestamps.length
+  );
+});
+
 function stableStringify(value) {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
