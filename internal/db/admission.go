@@ -85,16 +85,9 @@ type admissionGateEvidenceRepository interface {
 	) ([]types.AdmissionGateEvidence, error)
 }
 
-type unavailableAdmissionGateEvidenceRepository struct{}
-
-func (unavailableAdmissionGateEvidenceRepository) ResolveAdmissionGateEvidence(
-	context.Context,
-	admissionGateEvidenceContext,
-) ([]types.AdmissionGateEvidence, error) {
-	return nil, apierrors.NewConflict("trusted gate evidence repository is unavailable")
+var trustedAdmissionGateEvidenceRepository admissionGateEvidenceRepository = persistedAdmissionGateEvidenceRepository{
+	source: databaseAdmissionGateEvidenceSource{},
 }
-
-var trustedAdmissionGateEvidenceRepository admissionGateEvidenceRepository = unavailableAdmissionGateEvidenceRepository{}
 
 type sealedAdmissionEvaluation struct {
 	AdmissionRequest        types.AdmissionRequest

@@ -145,7 +145,7 @@ func BuildTargetPlanGraph(
 				componentBindingID(componentBinding),
 				"builtin",
 				"component.migrate",
-				"agent",
+				"target",
 				map[string]any{
 					"migrationKey": migration.Key,
 					"type":         migration.Type, "compatibility": migration.Compatibility,
@@ -177,7 +177,7 @@ func BuildTargetPlanGraph(
 			componentBindingID(componentBinding),
 			"builtin",
 			"component.deploy",
-			"agent",
+			"target",
 			map[string]any{
 				"releaseChecksum":           pin.ReleaseChecksum,
 				"platform":                  input.Config.TargetPlatform,
@@ -209,7 +209,7 @@ func BuildTargetPlanGraph(
 			componentBindingID(componentBinding),
 			"builtin",
 			"component.health",
-			"agent",
+			"target",
 			map[string]any{"releaseChecksum": pin.ReleaseChecksum},
 			targetLockKey(*input),
 			"",

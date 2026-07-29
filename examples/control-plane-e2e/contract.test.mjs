@@ -15,6 +15,70 @@ const repoRoot = path.resolve(fixtureDir, '../..');
 const node = process.execPath;
 const executorSecretForTest = 'executor-memory-secret';
 
+function campaignTask({id, planId, planTargetId, targetId}) {
+  return {
+    id,
+    createdAt: '2026-07-28T00:00:00.000Z',
+    updatedAt: '2026-07-28T00:00:00.000Z',
+    queuedAt: '2026-07-28T00:00:00.000Z',
+    taskType: 'deployment',
+    deploymentPlanId: planId,
+    deploymentPlanTargetId: planTargetId,
+    deploymentTargetId: targetId,
+    applicationId: '10000000-0000-4000-8000-000000000001',
+    releaseBundleId: '10000000-0000-4000-8000-000000000002',
+    channelId: '10000000-0000-4000-8000-000000000003',
+    environmentId: '10000000-0000-4000-8000-000000000004',
+    status: 'QUEUED',
+    protocolVersion: 'v2',
+    queueOrder: 1,
+    locks: [],
+    stepRuns: [],
+  };
+}
+
+function passedCampaignPlan({plan, taskId}) {
+  return {
+    ...plan,
+    preflightRuns: [
+      {
+        id: `preflight-${plan.id}`,
+        createdAt: '2026-07-28T00:00:00.000Z',
+        deploymentPlanId: plan.id,
+        planChecksum: plan.canonicalChecksum,
+        status: 'PASSED',
+        checks: [
+          ...plan.stepAdapters.map((adapter, index) => ({
+            id: `adapter-check-${plan.id}-${index}`,
+            createdAt: '2026-07-28T00:00:00.000Z',
+            deploymentPreflightRunId: `preflight-${plan.id}`,
+            deploymentPlanId: plan.id,
+            checkKey: `adapter:${adapter.stepKey}`,
+            status: 'PASSED',
+            expected: {},
+            actual: {},
+            message: 'adapter evidence matched',
+            sortOrder: index + 1,
+          })),
+          {
+            id: `task-check-${plan.id}`,
+            createdAt: '2026-07-28T00:00:00.000Z',
+            deploymentPreflightRunId: `preflight-${plan.id}`,
+            deploymentPlanId: plan.id,
+            taskId,
+            checkKey: 'plan_checksum',
+            status: 'PASSED',
+            expected: {},
+            actual: {},
+            message: 'task-bound plan evidence matched',
+            sortOrder: 100,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 test('runtime trust uses the Hub signing public key and a separate observer key', () => {
   const material = createRuntimeKeyMaterial();
   assert.equal(material.signing.publicKey.length, 32);
@@ -47,10 +111,567 @@ test('lease adapter revision is the exact server frozen-evidence checksum', asyn
   assert.equal(revision, 'sha256:af18ff408f2f5cf1da246880f4c57e5fd10e9e0d1a225af56f7a4bb1b7b7a633');
 });
 
-test('published plans are admitted and dispatch is gated on task-bound passed preflight', async () => {
+test('campaign run follows the exact public pre-run transition chain with returned revisions', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.advanceCampaignRunToRunning, 'function');
+  const calls = [];
+  const states = ['VALIDATED', 'AWAITING_APPROVAL', 'SCHEDULED', 'RUNNING'];
+  const topology = {
+    token: 'operator-token',
+    request: async (method, requestPath, options) => {
+      calls.push({method, path: requestPath, ...options});
+      const index = calls.length - 1;
+      return {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        state: states[index],
+        version: index + 2,
+        admissionsBlocked: false,
+      };
+    },
+  };
+  const campaign = {
+    run: {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      state: 'DRAFT',
+      version: 1,
+      admissionsBlocked: false,
+    },
+  };
+
+  const running = await runtime.advanceCampaignRunToRunning({topology, campaign});
+
+  assert.equal(running.state, 'RUNNING');
+  assert.equal(running.version, 5);
+  assert.deepEqual(
+    calls.map(({path: requestPath, body}) => ({path: requestPath, body})),
+    states.map((state, index) => ({
+      path: '/api/v1/deployment-campaign-runs/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/transitions',
+      body: {
+        expectedVersion: index + 1,
+        to: state,
+        reason: `Advance disposable campaign to ${state}`,
+      },
+    }))
+  );
+});
+
+test('campaign run fails actionably when a required transition response is missing', async () => {
+  const runtime = await import('./run.mjs');
+  const campaign = {
+    run: {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      state: 'DRAFT',
+      version: 1,
+      admissionsBlocked: false,
+    },
+  };
+
+  await assert.rejects(
+    runtime.advanceCampaignRunToRunning({
+      topology: {
+        token: 'operator-token',
+        request: async () => undefined,
+      },
+      campaign,
+    }),
+    /transition to VALIDATED returned no campaign state/
+  );
+});
+
+test('campaign run identifies the exact required transition when the API rejects it', async () => {
+  const runtime = await import('./run.mjs');
+  await assert.rejects(
+    runtime.advanceCampaignRunToRunning({
+      topology: {
+        token: 'operator-token',
+        request: async () => {
+          throw new Error('409 version conflict');
+        },
+      },
+      campaign: {
+        run: {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          state: 'DRAFT',
+          version: 1,
+          admissionsBlocked: false,
+        },
+      },
+    }),
+    /campaign transition to VALIDATED failed: 409 version conflict/
+  );
+});
+
+test('campaign run refuses to transition from an unexpected initial revision', async () => {
+  const runtime = await import('./run.mjs');
+  await assert.rejects(
+    runtime.advanceCampaignRunToRunning({
+      topology: {
+        token: 'operator-token',
+        request: async () => {
+          throw new Error('transition API must not be called');
+        },
+      },
+      campaign: {
+        run: {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          state: 'DRAFT',
+          version: 2,
+          admissionsBlocked: false,
+        },
+      },
+    }),
+    /new campaign run must begin at DRAFT revision 1/
+  );
+});
+
+test('campaign publication freezes exact approved and admitted members with one idempotency key', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.publishCampaign, 'function');
+  const publishCalls = [];
+  const plans = new Map([
+    [
+      'target-alpha',
+      {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        approval: {
+          id: '11111111-1111-4111-8111-111111111111',
+          revision: 3,
+          subjectChecksum: `sha256:${'1'.repeat(64)}`,
+        },
+        admission: {
+          id: '33333333-3333-4333-8333-333333333333',
+          decisionChecksum: `sha256:${'3'.repeat(64)}`,
+        },
+      },
+    ],
+    [
+      'target-beta',
+      {
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        approval: {
+          id: '22222222-2222-4222-8222-222222222222',
+          revision: 4,
+          subjectChecksum: `sha256:${'2'.repeat(64)}`,
+        },
+        admission: {
+          id: '44444444-4444-4444-8444-444444444444',
+          decisionChecksum: `sha256:${'4'.repeat(64)}`,
+        },
+      },
+    ],
+  ]);
+  const topology = {
+    token: 'operator-token',
+    targets: [{id: 'target-alpha'}, {id: 'target-beta'}],
+    request: async (method, requestPath, options) => {
+      publishCalls.push({method, path: requestPath, ...options});
+      if (requestPath === '/api/v1/deployment-campaign-drafts') {
+        return {id: '55555555-5555-4555-8555-555555555555'};
+      }
+      if (requestPath.endsWith('/validate')) {
+        return {valid: true, issues: []};
+      }
+      if (requestPath.endsWith('/publish')) {
+        return {
+          id: '66666666-6666-4666-8666-666666666666',
+          members: [...plans.values()].map((plan) => ({
+            planId: plan.id,
+            approvalRequestId: plan.approval.id,
+            approvalRequestRevision: plan.approval.revision,
+            approvalChecksum: plan.approval.subjectChecksum,
+            admissionEvaluationId: plan.admission.id,
+            admissionChecksum: plan.admission.decisionChecksum,
+          })),
+        };
+      }
+      return {
+        id: '77777777-7777-4777-8777-777777777777',
+        campaignRevisionId: '66666666-6666-4666-8666-666666666666',
+        state: 'DRAFT',
+        version: 1,
+        admissionsBlocked: false,
+      };
+    },
+  };
+
+  const campaign = await runtime.publishCampaign({
+    topology,
+    plans,
+    label: 'initial-a',
+    runId: 'run-081',
+  });
+
+  assert.equal(campaign.run.state, 'DRAFT');
+  assert.deepEqual(publishCalls.find((call) => call.path.endsWith('/publish')).body, {
+    idempotencyKey: 'neutral-initial-a-run-081',
+  });
+  assert.deepEqual(
+    campaign.revision.members.map((member) => ({
+      planId: member.planId,
+      approvalRequestId: member.approvalRequestId,
+      admissionEvaluationId: member.admissionEvaluationId,
+    })),
+    [
+      {
+        planId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        approvalRequestId: '11111111-1111-4111-8111-111111111111',
+        admissionEvaluationId: '33333333-3333-4333-8333-333333333333',
+      },
+      {
+        planId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        approvalRequestId: '22222222-2222-4222-8222-222222222222',
+        admissionEvaluationId: '44444444-4444-4444-8444-444444444444',
+      },
+    ]
+  );
+});
+
+test('campaign readiness polling waits for delayed campaign tasks and exact task-bound adapter preflight', async () => {
+  const runtime = await import('./run.mjs');
+  assert.equal(typeof runtime.waitForCampaignReadiness, 'function');
+  const alphaPlan = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    canonicalChecksum: `sha256:${'a'.repeat(64)}`,
+    targets: [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        deploymentTargetId: '55555555-5555-4555-8555-555555555555',
+      },
+    ],
+    stepAdapters: [{stepKey: 'deploy-alpha'}],
+  };
+  const betaPlan = {
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    canonicalChecksum: `sha256:${'b'.repeat(64)}`,
+    targets: [
+      {
+        id: '44444444-4444-4444-8444-444444444444',
+        deploymentTargetId: '66666666-6666-4666-8666-666666666666',
+      },
+    ],
+    stepAdapters: [{stepKey: 'deploy-beta'}],
+  };
+  const alphaTask = campaignTask({
+    id: '11111111-1111-4111-8111-111111111111',
+    planId: alphaPlan.id,
+    planTargetId: '33333333-3333-4333-8333-333333333333',
+    targetId: '55555555-5555-4555-8555-555555555555',
+  });
+  const betaTask = campaignTask({
+    id: '22222222-2222-4222-8222-222222222222',
+    planId: betaPlan.id,
+    planTargetId: '44444444-4444-4444-8444-444444444444',
+    targetId: '66666666-6666-4666-8666-666666666666',
+  });
+  const plans = new Map([
+    ['target-alpha', alphaPlan],
+    ['target-beta', betaPlan],
+  ]);
+  const taskSequence = [[], [alphaTask], [alphaTask, betaTask]];
+  const planSequence = [
+    new Map([
+      [alphaPlan.id, {...alphaPlan, preflightRuns: []}],
+      [betaPlan.id, {...betaPlan, preflightRuns: []}],
+    ]),
+    new Map([
+      [alphaPlan.id, {...alphaPlan, preflightRuns: []}],
+      [betaPlan.id, {...betaPlan, preflightRuns: []}],
+    ]),
+    new Map([
+      [alphaPlan.id, passedCampaignPlan({plan: alphaPlan, taskId: alphaTask.id})],
+      [betaPlan.id, passedCampaignPlan({plan: betaPlan, taskId: betaTask.id})],
+    ]),
+  ];
+  let poll = -1;
+  let now = 0;
+  const sleeps = [];
+  const topology = {
+    token: 'operator-token',
+    request: async (method, requestPath) => {
+      assert.equal(method, 'GET');
+      if (requestPath === '/api/v1/deployment-campaign-runs/77777777-7777-4777-8777-777777777777') {
+        poll += 1;
+        return {
+          id: '77777777-7777-4777-8777-777777777777',
+          createdAt: '2026-07-28T00:00:00.000Z',
+          updatedAt: '2026-07-28T00:00:00.000Z',
+          campaignRevisionId: '88888888-8888-4888-8888-888888888888',
+          state: 'RUNNING',
+          version: 5,
+          currentWaveOrder: 1,
+          currentMemberOrder: 1,
+          admissionsBlocked: false,
+          pauseRequested: false,
+          reconciliationRequired: false,
+          fencingToken: 1,
+        };
+      }
+      if (requestPath === '/api/v1/tasks') {
+        return taskSequence[poll];
+      }
+      const planId = requestPath.split('/').at(-1);
+      return planSequence[poll].get(planId);
+    },
+  };
+
+  const result = await runtime.waitForCampaignReadiness({
+    topology,
+    campaign: {run: {id: '77777777-7777-4777-8777-777777777777'}},
+    plans,
+    timeoutMs: 5_000,
+    intervalMs: 1_000,
+    clock: {
+      now: () => now,
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds);
+        now += milliseconds;
+      },
+    },
+  });
+
+  assert.equal(result.campaign.state, 'RUNNING');
+  assert.deepEqual(
+    result.tasks.map((task) => task.id),
+    [alphaTask.id, betaTask.id]
+  );
+  assert.deepEqual(sleeps, [1_000, 1_000]);
+  assert.equal(poll, 2);
+});
+
+test('campaign readiness polling times out at the exact bound with actionable last state', async () => {
+  const runtime = await import('./run.mjs');
+  const plan = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    canonicalChecksum: `sha256:${'a'.repeat(64)}`,
+    targets: [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        deploymentTargetId: '55555555-5555-4555-8555-555555555555',
+      },
+    ],
+    stepAdapters: [{stepKey: 'deploy-alpha'}],
+  };
+  let now = 0;
+  const sleeps = [];
+  const topology = {
+    token: 'operator-token',
+    request: async (method, requestPath) => {
+      assert.equal(method, 'GET');
+      if (requestPath.startsWith('/api/v1/deployment-campaign-runs/')) {
+        return {
+          id: '77777777-7777-4777-8777-777777777777',
+          state: 'DRAFT',
+          version: 1,
+          admissionsBlocked: false,
+        };
+      }
+      if (requestPath === '/api/v1/tasks') {
+        return [];
+      }
+      return {...plan, preflightRuns: []};
+    },
+  };
+
+  await assert.rejects(
+    runtime.waitForCampaignReadiness({
+      topology,
+      campaign: {run: {id: '77777777-7777-4777-8777-777777777777'}},
+      plans: new Map([['target-alpha', plan]]),
+      timeoutMs: 2_500,
+      intervalMs: 1_000,
+      clock: {
+        now: () => now,
+        sleep: async (milliseconds) => {
+          sleeps.push(milliseconds);
+          now += milliseconds;
+        },
+      },
+    }),
+    (error) => {
+      assert.match(error.message, /campaign readiness timed out/);
+      assert.match(error.message, /"state":"DRAFT"/);
+      assert.match(error.message, /"preflightStatus":"MISSING"/);
+      assert.match(error.message, /aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/);
+      return true;
+    }
+  );
+  assert.equal(now, 2_500);
+  assert.deepEqual(sleeps, [1_000, 1_000, 500]);
+});
+
+test('campaign readiness polling fails immediately on a failed adapter preflight', async () => {
+  const runtime = await import('./run.mjs');
+  const plan = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    canonicalChecksum: `sha256:${'a'.repeat(64)}`,
+    targets: [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        deploymentTargetId: '55555555-5555-4555-8555-555555555555',
+      },
+    ],
+    stepAdapters: [{stepKey: 'deploy-alpha'}],
+  };
+  const task = campaignTask({
+    id: '11111111-1111-4111-8111-111111111111',
+    planId: plan.id,
+    planTargetId: plan.targets[0].id,
+    targetId: plan.targets[0].deploymentTargetId,
+  });
+  let sleeps = 0;
+  let now = 0;
+  const topology = {
+    token: 'operator-token',
+    request: async (method, requestPath) => {
+      assert.equal(method, 'GET');
+      if (requestPath.startsWith('/api/v1/deployment-campaign-runs/')) {
+        return {
+          id: '77777777-7777-4777-8777-777777777777',
+          state: 'RUNNING',
+          version: 5,
+          admissionsBlocked: false,
+        };
+      }
+      if (requestPath === '/api/v1/tasks') {
+        return [task];
+      }
+      return {
+        ...plan,
+        preflightRuns: [
+          {
+            id: '99999999-9999-4999-8999-999999999999',
+            deploymentPlanId: plan.id,
+            planChecksum: plan.canonicalChecksum,
+            status: 'FAILED',
+            checks: [
+              {
+                taskId: task.id,
+                checkKey: 'adapter:deploy-alpha',
+                status: 'FAILED',
+                message: 'adapter config changed after publication',
+              },
+            ],
+          },
+        ],
+      };
+    },
+  };
+
+  await assert.rejects(
+    runtime.waitForCampaignReadiness({
+      topology,
+      campaign: {run: {id: '77777777-7777-4777-8777-777777777777'}},
+      plans: new Map([['target-alpha', plan]]),
+      timeoutMs: 10_000,
+      intervalMs: 1_000,
+      clock: {
+        now: () => now,
+        sleep: async (milliseconds) => {
+          sleeps += 1;
+          now += milliseconds;
+        },
+      },
+    }),
+    /campaign readiness failed.*adapter config changed after publication/
+  );
+  assert.equal(sleeps, 0);
+});
+
+test('campaign readiness polling ignores older terminal evidence while the newest preflight is pending', async () => {
+  const runtime = await import('./run.mjs');
+  const plan = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    canonicalChecksum: `sha256:${'a'.repeat(64)}`,
+    targets: [
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        deploymentTargetId: '55555555-5555-4555-8555-555555555555',
+      },
+    ],
+    stepAdapters: [{stepKey: 'deploy-alpha'}],
+  };
+  const task = campaignTask({
+    id: '11111111-1111-4111-8111-111111111111',
+    planId: plan.id,
+    planTargetId: plan.targets[0].id,
+    targetId: plan.targets[0].deploymentTargetId,
+  });
+  const passed = passedCampaignPlan({plan, taskId: task.id});
+  const olderPassed = {
+    ...passed.preflightRuns[0],
+    id: '77777777-7777-4777-8777-777777777779',
+  };
+  const olderFailure = {
+    id: '99999999-9999-4999-8999-999999999999',
+    deploymentPlanId: plan.id,
+    planChecksum: plan.canonicalChecksum,
+    status: 'FAILED',
+    checks: [
+      {
+        taskId: task.id,
+        checkKey: 'adapter:deploy-alpha',
+        status: 'FAILED',
+        message: 'superseded failure',
+      },
+    ],
+  };
+  const pending = {
+    ...plan,
+    preflightRuns: [
+      {
+        id: '88888888-8888-4888-8888-888888888888',
+        deploymentPlanId: plan.id,
+        planChecksum: plan.canonicalChecksum,
+        status: 'PENDING',
+        checks: [],
+      },
+      olderPassed,
+      olderFailure,
+    ],
+  };
+  passed.preflightRuns.push(olderPassed, olderFailure);
+  let poll = -1;
+  let now = 0;
+  const sleeps = [];
+
+  const result = await runtime.waitForCampaignReadiness({
+    topology: {
+      token: 'operator-token',
+      request: async (method, requestPath) => {
+        assert.equal(method, 'GET');
+        if (requestPath.startsWith('/api/v1/deployment-campaign-runs/')) {
+          poll += 1;
+          return {
+            id: '77777777-7777-4777-8777-777777777777',
+            state: 'RUNNING',
+            version: 5,
+            admissionsBlocked: false,
+          };
+        }
+        return requestPath === '/api/v1/tasks' ? [task] : [pending, passed][poll];
+      },
+    },
+    campaign: {run: {id: '77777777-7777-4777-8777-777777777777'}},
+    plans: new Map([['target-alpha', plan]]),
+    timeoutMs: 1_000,
+    intervalMs: 100,
+    clock: {
+      now: () => now,
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds);
+        now += milliseconds;
+      },
+    },
+  });
+
+  assert.equal(result.ready, true);
+  assert.equal(result.plans[0].preflightStatus, 'PASSED');
+  assert.deepEqual(sleeps, [100]);
+});
+
+test('published plans are manually admitted with exact approval linkage before campaign publication', async () => {
   const runtime = await import('./run.mjs');
   assert.equal(typeof runtime.admitPublishedPlans, 'function');
-  assert.equal(typeof runtime.assertPassedPlanPreflights, 'function');
   const calls = [];
   const plans = new Map([
     [
@@ -72,39 +693,20 @@ test('published plans are admitted and dispatch is gated on task-bound passed pr
     token: 'admin-token',
     request: async (method, requestPath, options) => {
       calls.push({method, path: requestPath, ...options});
-      if (method === 'POST') {
-        return {
-          decision: 'ADMIT',
-          approvalRequestId: requestPath.includes('aaaaaaaa')
-            ? '11111111-1111-4111-8111-111111111111'
-            : '22222222-2222-4222-8222-222222222222',
-        };
-      }
       return {
-        preflightRuns: [
-          {
-            status: 'PASSED',
-            checks: [
-              {
-                checkKey: 'adapter:deploy-provider',
-                status: 'PASSED',
-              },
-              {
-                checkKey: 'plan_checksum',
-                status: 'PASSED',
-                taskId: requestPath.includes('aaaaaaaa')
-                  ? '33333333-3333-4333-8333-333333333333'
-                  : '44444444-4444-4444-8444-444444444444',
-              },
-            ],
-          },
-        ],
+        id: requestPath.includes('aaaaaaaa')
+          ? '33333333-3333-4333-8333-333333333333'
+          : '44444444-4444-4444-8444-444444444444',
+        decision: 'ADMIT',
+        approvalRequestId: requestPath.includes('aaaaaaaa')
+          ? '11111111-1111-4111-8111-111111111111'
+          : '22222222-2222-4222-8222-222222222222',
+        decisionChecksum: requestPath.includes('aaaaaaaa') ? `sha256:${'3'.repeat(64)}` : `sha256:${'4'.repeat(64)}`,
       };
     },
   };
 
   await runtime.admitPublishedPlans({topology, plans, runId: 'run-081'});
-  await runtime.assertPassedPlanPreflights({topology, plans});
 
   assert.deepEqual(
     calls
@@ -124,13 +726,8 @@ test('published plans are admitted and dispatch is gated on task-bound passed pr
       },
     ]
   );
-  assert.deepEqual(
-    calls.filter((call) => call.method === 'GET').map((call) => call.path),
-    [
-      '/api/v1/deployment-plans/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      '/api/v1/deployment-plans/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    ]
-  );
+  assert.equal(plans.get('target-alpha').admission.id, '33333333-3333-4333-8333-333333333333');
+  assert.equal(plans.get('target-beta').admission.id, '44444444-4444-4444-8444-444444444444');
 });
 
 test('lease identity is derived from the target plan frozen adapters, never fixture text', async () => {

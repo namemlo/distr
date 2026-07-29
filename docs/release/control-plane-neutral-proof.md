@@ -34,9 +34,11 @@ worktree on 2026-07-28:
   disposable loopback stack and attempts the Hub/API release, plan, approval,
   campaign, protocol-v2 execution, independent-observation, and fleet-read-model
   path for A-B-A. That branch was not executed on this host. Source re-review
-  also found unresolved governance-bootstrap, lease-revision, and Target B
-  checksum-binding contract blockers, so its intended A-B-A result is not
-  acceptance evidence.
+  found unresolved production admission-repository, asynchronous scheduler
+  polling, and execution-location contract blockers. The shared working tree now
+  contains implementations intended to address all three, but they are not
+  committed, runtime-executed, or re-reviewed. They are implemented but
+  unverified, so the intended A-B-A result is not acceptance evidence.
 - The default failure-matrix fixture simulation evaluated all 14 expected cases
   but reported `SIMULATION_ONLY`, `acceptanceEligible: false`, and
   `NON_ACCEPTANCE_FIXTURE_SIMULATION`. Its report checksum was
@@ -340,22 +342,38 @@ to live evidence or prove that an unrecorded external dependency participated.
 - The live branch generates ephemeral executor-signing and observer trust
   material in memory. Its source path attempts signed/fenced leases and intents,
   but source inspection or service readiness is not execution evidence.
-- The live branch remains unaccepted. Re-review found that it omits mandatory
-  organization/environment control-plane enrollments and a protocol-v2 agent
-  capability report, leases with adapter revisions that cannot match the frozen
-  attempt, and gives Target B an operation-spec checksum incompatible with the
-  frozen binding. Those contracts must be corrected and re-reviewed before a
-  live run can qualify as evidence.
+- The prior runner blockers involving organization/environment enrollment,
+  protocol-v2 capability reporting, frozen adapter lease revisions, and the
+  signed reference-executor binding were addressed in the reviewed runner
+  revision. They are not the current reason the live branch remains unaccepted.
+- The reviewed admission path resolved mandatory gate evidence through an
+  unavailable production repository, so manual admission and campaign task
+  materialization could not reach `ADMIT`. The current shared working tree
+  replaces that placeholder with a persisted trusted-evidence repository. This
+  implementation is uncommitted, unexecuted against the disposable stack, and
+  pending re-review.
+- Campaign-run creation is asynchronous, but the reviewed runner immediately
+  read task-bound preflight evidence. The current shared working tree advances
+  the campaign through its public transitions and adds bounded polling for the
+  running campaign, scheduler-materialized tasks, and task-bound passed
+  preflight. This implementation is uncommitted, unexecuted against the
+  disposable stack, and pending re-review.
+- The reviewed planner persisted executable migration, deployment, and health
+  steps at execution location `agent`, while the protocol-v2 dispatcher and
+  target lease queries select `target`. The current shared working tree aligns
+  those executable planner steps with `target`. This implementation is
+  uncommitted, unexecuted against the disposable stack, and pending re-review.
 - If Docker, its daemon, or a Hub binary is unavailable, clean mode deliberately
   falls back to fixture-contract mode and can still exit successfully. Inspect
   `proofMode`, `liveStack.started`, `liveStack.blocker`, `nonLocalCalls`, and
   cleanup metadata before classifying the result. The recorded run on this host
   took this fallback because the Docker CLI was unavailable; it did not attempt
   the live branch.
-- Live A-B-A acceptance remains pending until the contract blockers are fixed
-  and re-reviewed and a retained clean run actually completes the
-  `live-hub-api` path against the runtime contracts. Availability of Docker or a
-  zero exit from fixture fallback is not sufficient.
+- Live A-B-A acceptance remains pending until the shared-tree admission,
+  scheduler-polling, and execution-location implementations are committed and
+  re-reviewed and a retained clean run actually completes the `live-hub-api`
+  path against the runtime contracts. Availability of Docker or a zero exit
+  from fixture fallback is not sufficient.
 - The failure matrix emits
   `distr.control-plane-failure-matrix-report/v2`. Its default fixture mode only
   simulates expected outcomes and is explicitly non-acceptance. Clean mode

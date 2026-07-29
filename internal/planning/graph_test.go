@@ -77,6 +77,50 @@ func TestBuildTargetPlanGraphIsStableAndAcyclic(t *testing.T) {
 	g.Expect(second).To(Equal(graph))
 }
 
+func TestBuildTargetPlanGraphUsesTargetDispatcherLocationForExecutableSteps(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: "schema", Type: "database", Order: 1,
+	}}
+	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+
+	graph, err := BuildTargetPlanGraph(context.Background(), draft, resolutions)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	targetLocation := types.TaskExecutorTypeAgent.ExecutionLocation()
+	for _, stepKey := range []string{
+		"component:consumer:migration:schema",
+		"component:consumer:deploy",
+		"component:consumer:health",
+	} {
+		step, found := findTargetPlanStep(graph.Steps, stepKey)
+		g.Expect(found).To(BeTrue(), stepKey)
+		g.Expect(step.ExecutionLocation).To(Equal(targetLocation), stepKey)
+	}
+}
+
+func TestBuildTargetPlanGraphKeepsVerificationStepsAtHubLocation(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+
+	graph, err := BuildTargetPlanGraph(context.Background(), draft, resolutions)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	hubLocation := types.TaskExecutorTypeHub.ExecutionLocation()
+	config, found := findTargetPlanStep(graph.Steps, "config:verify")
+	g.Expect(found).To(BeTrue())
+	g.Expect(config.ExecutionLocation).To(Equal(hubLocation))
+	for _, step := range graph.Steps {
+		if step.Kind == "requirement_verification" {
+			g.Expect(step.ExecutionLocation).To(Equal(hubLocation), step.StepKey)
+		}
+	}
+}
+
 func TestBuildTargetPlanGraphOrdersProviderHealthBeforeConsumerDeploy(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()
@@ -251,4 +295,16 @@ func indexOf(values []string, target string) int {
 		}
 	}
 	return -1
+}
+
+func findTargetPlanStep(
+	steps []types.TargetPlanStep,
+	stepKey string,
+) (types.TargetPlanStep, bool) {
+	for _, step := range steps {
+		if step.StepKey == stepKey {
+			return step, true
+		}
+	}
+	return types.TargetPlanStep{}, false
 }

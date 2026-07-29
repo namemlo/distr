@@ -46,9 +46,12 @@ When Docker and a prebuilt local Hub image are available, the runner:
    executors and observers with the Hub-returned IDs;
 5. publishes component releases and the product capability DAG, freezes per-target configs, and publishes approved plans;
 6. records two decisions from separately invited approvers, obtains approval-bound `ADMIT` evaluations, publishes
-   two-wave campaigns, and verifies a task-bound `PASSED` preflight before dispatch;
-7. executes and completes the live A-to-B-to-A path, sends independent observations, and verifies final A in the fleet read model;
-8. runs `docker compose down -v --remove-orphans`, enumerates project-labelled containers, volumes, and networks, and
+   two-wave campaigns with the exact approval/admission evidence, and advances each run through the public
+   `DRAFT` → `VALIDATED` → `AWAITING_APPROVAL` → `SCHEDULED` → `RUNNING` transition API using the returned revision;
+7. polls the real campaign, task, and plan APIs with a bounded timeout until campaign-bound task materialization is
+   visible and every exact v2 task is attached to a checksum-matching `PASSED` preflight with all frozen adapter checks;
+8. executes and completes the live A-to-B-to-A path, sends independent observations, and verifies final A in the fleet read model;
+9. runs `docker compose down -v --remove-orphans`, enumerates project-labelled containers, volumes, and networks, and
    fails the run if teardown or absence of retained resources cannot be confirmed.
 
 Set `DISTR_CP_HUB_IMAGE` to a prebuilt local Hub image. The runner uses `pull_policy: never` for every service and checks
@@ -58,6 +61,11 @@ successfully when that proof passes, and reports the exact live-stack blocker. I
 proof.
 
 `DISTR_CP_FORCE_CONTRACT=true` deterministically exercises that fallback in tests.
+
+The source now contains the admission evidence repository, target-located planner steps, explicit campaign lifecycle,
+and bounded scheduler polling needed by the live branch. Those source paths and the runner orchestration are covered by
+contract tests, but that is not a retained `live-hub-api` result. Acceptance still requires a clean-mode run on a host
+with Docker and the prebuilt local images; fallback output remains fixture evidence only.
 
 ## Executor and observer boundaries
 
@@ -103,7 +111,9 @@ The Node contract test starts the real local HTTP executor and observer servers 
 idempotency, signed outer-identity binding, authority expiry, strict fencing, cancellation, bounded redacted logs,
 observer identity/target binding, sequence replay, phased live bootstrap with Hub-created target IDs, separated trust
 keys, organization/environment enrollment, exact agent capability reports, approval-bound admission, task-bound passed
-preflight, frozen-adapter lease identity, and the frozen 14-case failure-matrix schema.
+preflight, frozen-adapter lease identity, exact campaign lifecycle transitions, and fake-clock scheduler sequences for
+delayed success, terminal preflight failure, and bounded timeout with actionable last state. It also verifies the frozen
+14-case failure-matrix schema.
 
 ## Safety boundary
 

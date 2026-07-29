@@ -967,26 +967,174 @@ export async function admitPublishedPlans({topology, plans, runId}) {
   return plans;
 }
 
-export async function assertPassedPlanPreflights({topology, plans}) {
-  for (const [targetId, plan] of plans) {
-    const current = await topology.request('GET', `/api/v1/deployment-plans/${plan.id}`, {
-      token: topology.token,
-    });
-    const passed = current.preflightRuns?.find(
-      (run) =>
-        run.status === 'PASSED' &&
-        run.checks?.length > 0 &&
-        run.checks.every((check) => check.status === 'PASSED') &&
-        run.checks.some((check) => check.taskId) &&
-        run.checks.some((check) => check.checkKey?.startsWith('adapter:'))
-    );
-    assert(passed, `${targetId} dispatch requires task-bound and adapter PASSED preflight evidence`);
-    plan.preflight = passed;
+export async function advanceCampaignRunToRunning({topology, campaign}) {
+  const states = ['VALIDATED', 'AWAITING_APPROVAL', 'SCHEDULED', 'RUNNING'];
+  let current = campaign.run;
+  assert(current.state === 'DRAFT' && current.version === 1, 'new campaign run must begin at DRAFT revision 1');
+  for (const state of states) {
+    const expectedVersion = current.version;
+    let transitioned;
+    try {
+      transitioned = await topology.request('POST', `/api/v1/deployment-campaign-runs/${current.id}/transitions`, {
+        token: topology.token,
+        body: {
+          expectedVersion,
+          to: state,
+          reason: `Advance disposable campaign to ${state}`,
+        },
+      });
+    } catch (error) {
+      throw new Error(`fixture contract: campaign transition to ${state} failed: ${error.message}`);
+    }
+    assert(transitioned, `campaign transition to ${state} returned no campaign state`);
+    assert(transitioned.id === current.id, `campaign transition to ${state} changed the run identity`);
+    assert(transitioned.state === state, `campaign transition did not reach ${state}`);
+    assert(transitioned.version === expectedVersion + 1, `campaign transition to ${state} returned the wrong revision`);
+    assert(transitioned.admissionsBlocked === false, `campaign transition to ${state} blocked admissions`);
+    current = transitioned;
   }
-  return plans;
+  campaign.run = current;
+  return current;
 }
 
-async function publishCampaign({topology, plans, label, runId}) {
+function defaultPollingClock() {
+  return {
+    now: () => Date.now(),
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  };
+}
+
+function passedPreflightForTasks(plan, current, tasks) {
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const adapterCheckKeys = new Set(plan.stepAdapters.map((adapter) => `adapter:${adapter.stepKey}`));
+  const run = current.preflightRuns?.[0];
+  if (
+    run?.status !== 'PASSED' ||
+    run.planChecksum !== plan.canonicalChecksum ||
+    !run.checks?.length ||
+    run.checks.some((check) => check.status !== 'PASSED')
+  ) {
+    return undefined;
+  }
+  const taskChecks = new Set(run.checks.filter((check) => check.taskId).map((check) => check.taskId));
+  const adapterChecks = new Set(run.checks.map((check) => check.checkKey));
+  return [...taskIds].every((taskId) => taskChecks.has(taskId)) &&
+    [...adapterCheckKeys].every((checkKey) => adapterChecks.has(checkKey))
+    ? run
+    : undefined;
+}
+
+function campaignReadinessSnapshot({campaign, tasks, plans, currentPlans}) {
+  const planStates = [];
+  const campaignTasks = [];
+  const failures = [];
+  let ready = campaign.state === 'RUNNING' && campaign.admissionsBlocked === false;
+  if (['PAUSED', 'FAILED', 'COMPLETED', 'CANCELED'].includes(campaign.state) || campaign.admissionsBlocked) {
+    failures.push(`campaign state=${campaign.state} admissionsBlocked=${campaign.admissionsBlocked}`);
+  }
+  for (const [targetId, plan] of plans) {
+    const current = currentPlans.get(plan.id);
+    const planTasks = tasks.filter((task) => task.deploymentPlanId === plan.id);
+    const expectedTargets = new Map((plan.targets ?? []).map((target) => [target.id, target.deploymentTargetId]));
+    const taskIdentitiesMatch =
+      planTasks.length > 0 &&
+      planTasks.every(
+        (task) =>
+          task.protocolVersion === 'v2' && expectedTargets.get(task.deploymentPlanTargetId) === task.deploymentTargetId
+      );
+    const preflight = current && taskIdentitiesMatch ? passedPreflightForTasks(plan, current, planTasks) : undefined;
+    const failedPreflight =
+      current?.preflightRuns?.[0]?.status === 'FAILED' ? current.preflightRuns[0] : undefined;
+    if (failedPreflight) {
+      const messages = failedPreflight.checks
+        ?.filter((check) => check.status === 'FAILED')
+        .map((check) => check.message)
+        .filter(Boolean);
+      failures.push(`plan ${plan.id} preflight FAILED${messages?.length ? `: ${messages.join('; ')}` : ''}`);
+    }
+    const failedTasks = planTasks.filter((task) => ['FAILED', 'CANCELED'].includes(task.status));
+    if (failedTasks.length) {
+      failures.push(
+        `plan ${plan.id} terminal tasks ${failedTasks.map((task) => `${task.id}:${task.status}`).join(',')}`
+      );
+    }
+    ready = ready && taskIdentitiesMatch && Boolean(preflight);
+    campaignTasks.push(...planTasks);
+    planStates.push({
+      targetId,
+      planId: plan.id,
+      taskIds: planTasks.map((task) => task.id),
+      taskStatuses: planTasks.map((task) => task.status),
+      preflightStatus: preflight?.status ?? current?.preflightRuns?.[0]?.status ?? 'MISSING',
+      preflightId: preflight?.id ?? '',
+    });
+    if (preflight) {
+      plan.preflight = preflight;
+    }
+  }
+  return {
+    ready,
+    failures,
+    campaign: {
+      id: campaign.id,
+      state: campaign.state,
+      version: campaign.version,
+      admissionsBlocked: campaign.admissionsBlocked,
+    },
+    tasks: campaignTasks,
+    plans: planStates,
+  };
+}
+
+export async function waitForCampaignReadiness({
+  topology,
+  campaign,
+  plans,
+  timeoutMs = 60_000,
+  intervalMs = 1_000,
+  clock = defaultPollingClock(),
+}) {
+  assert(timeoutMs > 0 && intervalMs > 0, 'campaign readiness polling bounds must be positive');
+  const startedAt = clock.now();
+  let last;
+  while (true) {
+    const currentCampaign = await topology.request('GET', `/api/v1/deployment-campaign-runs/${campaign.run.id}`, {
+      token: topology.token,
+    });
+    const tasks = await topology.request('GET', '/api/v1/tasks', {token: topology.token});
+    const currentPlans = new Map();
+    for (const plan of plans.values()) {
+      currentPlans.set(
+        plan.id,
+        await topology.request('GET', `/api/v1/deployment-plans/${plan.id}`, {
+          token: topology.token,
+        })
+      );
+    }
+    last = campaignReadinessSnapshot({
+      campaign: currentCampaign,
+      tasks,
+      plans,
+      currentPlans,
+    });
+    if (last.ready) {
+      campaign.run = currentCampaign;
+      return last;
+    }
+    if (last.failures.length) {
+      throw new Error(
+        `fixture contract: campaign readiness failed: ${last.failures.join(' | ')}; last state ${JSON.stringify(last)}`
+      );
+    }
+    const elapsed = clock.now() - startedAt;
+    if (elapsed >= timeoutMs) {
+      throw new Error(`fixture contract: campaign readiness timed out; last state ${JSON.stringify(last)}`);
+    }
+    await clock.sleep(Math.min(intervalMs, timeoutMs - elapsed));
+  }
+}
+
+export async function publishCampaign({topology, plans, label, runId}) {
   const planIDs = [...plans.values()].map((plan) => plan.id);
   const draft = await topology.request('POST', '/api/v1/deployment-campaign-drafts', {
     token: topology.token,
@@ -1018,10 +1166,30 @@ async function publishCampaign({topology, plans, label, runId}) {
     token: topology.token,
     body: {idempotencyKey: `neutral-${label}-${runId}`},
   });
+  assert(revision.members?.length === plans.size, `campaign ${label} must freeze every plan member`);
+  const membersByPlan = new Map(revision.members.map((member) => [member.planId, member]));
+  for (const [targetId, plan] of plans) {
+    const member = membersByPlan.get(plan.id);
+    assert(member, `campaign ${label} is missing ${targetId}`);
+    assert(
+      member.approvalRequestId === plan.approval.id &&
+        member.approvalRequestRevision === plan.approval.revision &&
+        member.approvalChecksum === plan.approval.subjectChecksum,
+      `campaign ${label} ${targetId} approval evidence changed during publication`
+    );
+    assert(
+      member.admissionEvaluationId === plan.admission.id &&
+        member.admissionChecksum === plan.admission.decisionChecksum,
+      `campaign ${label} ${targetId} admission evidence changed during publication`
+    );
+  }
   const run = await topology.request('POST', '/api/v1/deployment-campaign-runs', {
     token: topology.token,
     body: {campaignRevisionId: revision.id},
   });
+  assert(run.campaignRevisionId === revision.id, `campaign ${label} run must bind the published revision`);
+  assert(run.state === 'DRAFT' && run.version === 1, `campaign ${label} run must begin at DRAFT revision 1`);
+  assert(run.admissionsBlocked === false, `campaign ${label} run must begin with admissions open`);
   return {draft, revision, run};
 }
 
@@ -1146,10 +1314,16 @@ async function executeAndObserveRelease({
   signingVersionFingerprint,
   signingKeyId,
   plans,
+  campaign,
   sequence,
 }) {
   const evidence = [];
   for (const [index, target] of topology.targets.entries()) {
+    await waitForCampaignReadiness({
+      topology,
+      campaign,
+      plans: new Map([[target.id, plans.get(target.id)]]),
+    });
     const leaseIdentity = derivePlanLeaseIdentity({
       plan: plans.get(target.id),
       target,
@@ -1317,8 +1491,13 @@ export async function runLiveHubJourney({
   const evidence = [];
   const initialAPlans = await publishPlans({topology: live, productRelease: products.A});
   await admitPublishedPlans({topology: live, plans: initialAPlans, runId: `${runId}-initial-a`});
-  await publishCampaign({topology: live, plans: initialAPlans, label: 'initial-a', runId});
-  await assertPassedPlanPreflights({topology: live, plans: initialAPlans});
+  const initialACampaign = await publishCampaign({
+    topology: live,
+    plans: initialAPlans,
+    label: 'initial-a',
+    runId,
+  });
+  await advanceCampaignRunToRunning({topology: live, campaign: initialACampaign});
   evidence.push(
     ...(await executeAndObserveRelease({
       topology: live,
@@ -1329,6 +1508,7 @@ export async function runLiveHubJourney({
       signingKeyId,
       signingVersionFingerprint,
       plans: initialAPlans,
+      campaign: initialACampaign,
       sequence: 1,
     }))
   );
@@ -1338,8 +1518,8 @@ export async function runLiveHubJourney({
     superseded: initialAPlans,
   });
   await admitPublishedPlans({topology: live, plans: bPlans, runId: `${runId}-b`});
-  await publishCampaign({topology: live, plans: bPlans, label: 'b', runId});
-  await assertPassedPlanPreflights({topology: live, plans: bPlans});
+  const bCampaign = await publishCampaign({topology: live, plans: bPlans, label: 'b', runId});
+  await advanceCampaignRunToRunning({topology: live, campaign: bCampaign});
   evidence.push(
     ...(await executeAndObserveRelease({
       topology: live,
@@ -1350,6 +1530,7 @@ export async function runLiveHubJourney({
       signingKeyId,
       signingVersionFingerprint,
       plans: bPlans,
+      campaign: bCampaign,
       sequence: 2,
     }))
   );
@@ -1359,8 +1540,13 @@ export async function runLiveHubJourney({
     superseded: bPlans,
   });
   await admitPublishedPlans({topology: live, plans: previousStatePlans, runId: `${runId}-previous-a`});
-  await publishCampaign({topology: live, plans: previousStatePlans, label: 'previous-a', runId});
-  await assertPassedPlanPreflights({topology: live, plans: previousStatePlans});
+  const previousStateCampaign = await publishCampaign({
+    topology: live,
+    plans: previousStatePlans,
+    label: 'previous-a',
+    runId,
+  });
+  await advanceCampaignRunToRunning({topology: live, campaign: previousStateCampaign});
   evidence.push(
     ...(await executeAndObserveRelease({
       topology: live,
@@ -1371,6 +1557,7 @@ export async function runLiveHubJourney({
       signingKeyId,
       signingVersionFingerprint,
       plans: previousStatePlans,
+      campaign: previousStateCampaign,
       sequence: 3,
     }))
   );
