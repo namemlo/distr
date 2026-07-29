@@ -78,7 +78,7 @@ $ScenarioTests = [ordered]@{
 }
 
 function Get-Sha256Text {
-    param([Parameter(Mandatory)][string]$Text)
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
     $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
@@ -93,7 +93,7 @@ function Get-Sha256File {
 
 function Get-RedactedText {
     param(
-        [AllowNull()][string]$Text,
+        [AllowNull()][AllowEmptyString()][string]$Text,
         [AllowNull()][string]$Password
     )
 
@@ -113,7 +113,7 @@ function Get-RedactedText {
 }
 
 function Get-BoundedDiagnostic {
-    param([AllowNull()][string]$Text)
+    param([AllowNull()][AllowEmptyString()][string]$Text)
 
     if ([string]::IsNullOrEmpty($Text)) {
         return ''

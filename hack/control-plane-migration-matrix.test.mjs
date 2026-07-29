@@ -140,7 +140,12 @@ function sha256(text) {
   return `sha256:${createHash('sha256').update(text).digest('hex')}`;
 }
 
-async function createFakeToolchain({postgresVersion = '18.4', goOutput = 'go-ok', goExitCode = 0} = {}) {
+async function createFakeToolchain({
+  postgresVersion = '18.4',
+  goOutput = 'go-ok',
+  goExitCode = 0,
+  goSilent = false,
+} = {}) {
   const directory = path.join(repositoryRoot, 'work', `matrix-fake-tools-${process.pid}-${Date.now()}`);
   await mkdir(directory, {recursive: true});
   if (process.platform === 'win32') {
@@ -189,6 +194,10 @@ func main() {
     fmt.Printf("distr-host=%s\\n", os.Getenv("DISTR_HOST"))
     return
   }
+  if os.Getenv("MATRIX_FAKE_GO_SILENT") == "true" {
+    exitCode, _ := strconv.Atoi(os.Getenv("MATRIX_FAKE_GO_EXIT_CODE"))
+    os.Exit(exitCode)
+  }
   fmt.Println(os.Getenv("MATRIX_FAKE_GO_OUTPUT"))
   exitCode, _ := strconv.Atoi(os.Getenv("MATRIX_FAKE_GO_EXIT_CODE"))
   os.Exit(exitCode)
@@ -219,6 +228,7 @@ func main() {
       MATRIX_FAKE_POSTGRES_VERSION: postgresVersion,
       MATRIX_FAKE_GO_OUTPUT: goOutput,
       MATRIX_FAKE_GO_EXIT_CODE: String(goExitCode),
+      MATRIX_FAKE_GO_SILENT: String(goSilent),
     },
   };
 }
@@ -367,6 +377,48 @@ test('non-plan report supports an isolated passwordless test database', async ()
     const report = JSON.parse(await readFile(output, 'utf8'));
     assert.equal(report.status, 'PASS');
     assert.equal(report.database.passwordPresent, false);
+  } finally {
+    await rm(output, {force: true});
+    await rm(fakeTools.directory, {recursive: true, force: true});
+  }
+});
+
+test('successful external commands may retain empty output and its checksum', async () => {
+  const fakeTools = await createFakeToolchain({goSilent: true});
+  const output = path.join(repositoryRoot, 'work', `matrix-empty-output-${process.pid}-${Date.now()}.json`);
+  try {
+    const result = runScript(['-DatabaseUrl', safeURL, '-OutputPath', path.relative(repositoryRoot, output)], {
+      ...fakeTools.environment,
+      PATH: `${fakeTools.directory}${path.delimiter}${process.env.PATH ?? ''}`,
+    });
+    const report = JSON.parse(await readFile(output, 'utf8'));
+    assert.equal(
+      result.status,
+      0,
+      JSON.stringify(
+        report.scenarios.filter(({status}) => status !== 'PASS'),
+        null,
+        2
+      )
+    );
+    const goChecks = report.scenarios
+      .flatMap(({checks}) => checks)
+      .filter(
+        ({exitCode, description}) =>
+          Number.isInteger(exitCode) &&
+          !description.startsWith('create isolated schema') &&
+          !description.startsWith('verify PostgreSQL runtime')
+      );
+    assert.ok(goChecks.length > 0);
+    assert.ok(
+      goChecks.every(
+        ({exitCode, output: commandOutput, outputSha256, diagnostic}) =>
+          exitCode === 0 &&
+          commandOutput === '' &&
+          diagnostic === '' &&
+          outputSha256 === 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+      )
+    );
   } finally {
     await rm(output, {force: true});
     await rm(fakeTools.directory, {recursive: true, force: true});
