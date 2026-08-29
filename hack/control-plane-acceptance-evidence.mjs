@@ -609,7 +609,11 @@ function renderPromotedLine(row, artifact) {
 function promoteLedger(markdown, promotions) {
   const lines = markdown.split(/\r?\n/);
   for (const [id, promotion] of promotions) {
-    const index = lines.findIndex((line) => line.trimStart().startsWith(`| \`${id}\` |`));
+    const rowPrefix = `| \`${id}\``;
+    const index = lines.findIndex((line) => {
+      const trimmed = line.trimStart();
+      return trimmed.startsWith(rowPrefix) && /^\s+\|/.test(trimmed.slice(rowPrefix.length));
+    });
     if (index < 0) fail(`ledger row disappeared during generation: ${id}`);
     lines[index] = renderPromotedLine(promotion.row, promotion.artifact);
   }

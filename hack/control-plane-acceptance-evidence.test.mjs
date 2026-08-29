@@ -36,7 +36,7 @@ function renderLedger(rows) {
     '| --- | --- | --- | --- | --- | --- |',
     ...rows.map(
       (row) =>
-        `| \`${row.id}\` | \`${row.owner}\` | \`${row.automatedTest}\` | \`${row.manualEvidence}\` | \`${row.status}\` | \`${row.artifact}\` |`
+        `| \`${row.id}\`       | \`${row.owner}\`     | \`${row.automatedTest}\` | \`${row.manualEvidence}\` | \`${row.status}\` | \`${row.artifact}\` |`
     ),
     '',
   ].join('\n');
