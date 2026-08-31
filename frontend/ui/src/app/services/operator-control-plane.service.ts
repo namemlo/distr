@@ -75,6 +75,9 @@ import {
   OperatorReleaseDetailResponse,
   OperatorReleaseFilters,
   OperatorReleaseRow,
+  OperatorReviewAdmissionDecision,
+  OperatorReviewAdmissionDecisionRequest,
+  OperatorReviewAdmissionMaterial,
   OperatorSetupReadiness,
   OperatorSetupReadinessRequest,
   OperatorUpdateCampaignDraftRequest,
@@ -400,6 +403,21 @@ export class OperatorControlPlaneService {
 
   requestPlanApproval(planId: string, request: OperatorPlanApprovalRequest): Observable<OperatorApprovalRequest> {
     return this.post<OperatorApprovalRequest>(`/api/v1/deployment-plans/${pathId(planId)}/approval-requests`, request);
+  }
+
+  getReviewAdmissionMaterial(planId: string): Observable<OperatorReviewAdmissionMaterial> {
+    return this.get<OperatorReviewAdmissionMaterial>(`/api/v1/deployment-plans/${pathId(planId)}/review-material`);
+  }
+
+  recordReviewAdmissionDecision(
+    planId: string,
+    request: OperatorReviewAdmissionDecisionRequest,
+    idempotencyKey = this.newActionKey()
+  ): Observable<OperatorReviewAdmissionDecision> {
+    return this.post<OperatorReviewAdmissionDecision>(`/api/v1/deployment-plans/${pathId(planId)}/review-decisions`, {
+      ...request,
+      idempotencyKey,
+    });
   }
 
   createPreviousStatePlan(planId: string, request: OperatorPreviousStatePlanRequest): Observable<DeploymentPlan> {

@@ -16,6 +16,32 @@ func EvaluateApproval(
 	decisions []types.ApprovalDecision,
 	now time.Time,
 ) types.ApprovalEvaluation {
+	return evaluateApproval(request, decisions, uuid.Nil, now)
+}
+
+// EvaluateApprovalForAdmission re-evaluates frozen approval evidence for the
+// actor that would execute the plan. Callers must supply only approval
+// decisions whose actors still hold the requirement's current authority.
+func EvaluateApprovalForAdmission(
+	request types.ApprovalRequest,
+	currentlyAuthorizedDecisions []types.ApprovalDecision,
+	executorUserAccountID uuid.UUID,
+	now time.Time,
+) types.ApprovalEvaluation {
+	return evaluateApproval(
+		request,
+		currentlyAuthorizedDecisions,
+		executorUserAccountID,
+		now,
+	)
+}
+
+func evaluateApproval(
+	request types.ApprovalRequest,
+	decisions []types.ApprovalDecision,
+	executorUserAccountID uuid.UUID,
+	now time.Time,
+) types.ApprovalEvaluation {
 	evaluation := types.ApprovalEvaluation{
 		RequestID:             request.ID,
 		State:                 request.State,
@@ -35,7 +61,6 @@ func EvaluateApproval(
 		return evaluation
 	}
 
-	rejected := false
 	requirements := slices.Clone(request.Requirements)
 	sort.Slice(requirements, func(i, j int) bool {
 		if requirements[i].SortOrder != requirements[j].SortOrder {
@@ -43,26 +68,33 @@ func EvaluateApproval(
 		}
 		return requirements[i].ID.String() < requirements[j].ID.String()
 	})
+	approvedActors := approvalActorsByRequirement(request.ID, requirements, decisions)
+	if executorUserAccountID != uuid.Nil {
+		for _, requirement := range requirements {
+			if slices.Contains(
+				requirement.SeparationConstraints,
+				types.SeparationConstraintExecutorCannotApprove,
+			) {
+				delete(approvedActors[requirement.ID], executorUserAccountID)
+			}
+		}
+	}
+	rejected := approvalRejected(request.ID, decisions)
+	distinctApprovedCounts := distinctApprovalCounts(requirements, approvedActors)
 	for _, requirement := range requirements {
-		actors := map[uuid.UUID]struct{}{}
-		for _, decision := range decisions {
-			if decision.ApprovalRequestID != request.ID ||
-				decision.ApprovalRequirementID != requirement.ID {
-				continue
-			}
-			if decision.Decision == types.ApprovalDecisionReject {
-				rejected = true
-				continue
-			}
-			if decision.Decision == types.ApprovalDecisionApprove {
-				actors[decision.ActorUserAccountID] = struct{}{}
-			}
+		actors := approvedActors[requirement.ID]
+		approvedCount := len(actors)
+		if slices.Contains(
+			requirement.SeparationConstraints,
+			types.SeparationConstraintDistinctApprovers,
+		) {
+			approvedCount = distinctApprovedCounts[requirement.ID]
 		}
 		item := types.ApprovalRequirementEvaluation{
 			RequirementID: requirement.ID,
-			ApprovedCount: len(actors),
+			ApprovedCount: approvedCount,
 			RequiredCount: requirement.Quorum,
-			Satisfied:     len(actors) >= requirement.Quorum,
+			Satisfied:     approvedCount >= requirement.Quorum,
 		}
 		evaluation.Requirements = append(evaluation.Requirements, item)
 		if !item.Satisfied {
@@ -83,6 +115,104 @@ func EvaluateApproval(
 		evaluation.State = types.ApprovalRequestStatePending
 	}
 	return evaluation
+}
+
+func approvalActorsByRequirement(
+	requestID uuid.UUID,
+	requirements []types.ApprovalRequirement,
+	decisions []types.ApprovalDecision,
+) map[uuid.UUID]map[uuid.UUID]struct{} {
+	actors := make(map[uuid.UUID]map[uuid.UUID]struct{}, len(requirements))
+	for _, requirement := range requirements {
+		actors[requirement.ID] = map[uuid.UUID]struct{}{}
+	}
+	for _, decision := range decisions {
+		if decision.ApprovalRequestID != requestID ||
+			decision.Decision != types.ApprovalDecisionApprove {
+			continue
+		}
+		if requirementActors, ok := actors[decision.ApprovalRequirementID]; ok {
+			requirementActors[decision.ActorUserAccountID] = struct{}{}
+		}
+	}
+	return actors
+}
+
+func approvalRejected(
+	requestID uuid.UUID,
+	decisions []types.ApprovalDecision,
+) bool {
+	for _, decision := range decisions {
+		if decision.ApprovalRequestID == requestID &&
+			decision.Decision == types.ApprovalDecisionReject {
+			return true
+		}
+	}
+	return false
+}
+
+type approvalSlot struct {
+	requirementID uuid.UUID
+	actors        []uuid.UUID
+}
+
+// distinctApprovalCounts performs a deterministic bipartite matching across
+// every requirement that opts into cross-requirement approver separation.
+func distinctApprovalCounts(
+	requirements []types.ApprovalRequirement,
+	approvedActors map[uuid.UUID]map[uuid.UUID]struct{},
+) map[uuid.UUID]int {
+	counts := make(map[uuid.UUID]int, len(requirements))
+	slots := make([]approvalSlot, 0)
+	for _, requirement := range requirements {
+		if !slices.Contains(
+			requirement.SeparationConstraints,
+			types.SeparationConstraintDistinctApprovers,
+		) {
+			continue
+		}
+		actors := make([]uuid.UUID, 0, len(approvedActors[requirement.ID]))
+		for actorID := range approvedActors[requirement.ID] {
+			actors = append(actors, actorID)
+		}
+		sort.Slice(actors, func(i, j int) bool {
+			return actors[i].String() < actors[j].String()
+		})
+		for range max(requirement.Quorum, 0) {
+			slots = append(slots, approvalSlot{
+				requirementID: requirement.ID,
+				actors:        actors,
+			})
+		}
+	}
+	actorSlots := map[uuid.UUID]int{}
+	for slotIndex := range slots {
+		seenActors := map[uuid.UUID]struct{}{}
+		if matchApprovalSlot(slotIndex, slots, actorSlots, seenActors) {
+			counts[slots[slotIndex].requirementID]++
+		}
+	}
+	return counts
+}
+
+func matchApprovalSlot(
+	slotIndex int,
+	slots []approvalSlot,
+	actorSlots map[uuid.UUID]int,
+	seenActors map[uuid.UUID]struct{},
+) bool {
+	for _, actorID := range slots[slotIndex].actors {
+		if _, seen := seenActors[actorID]; seen {
+			continue
+		}
+		seenActors[actorID] = struct{}{}
+		previousSlot, assigned := actorSlots[actorID]
+		if !assigned || matchApprovalSlot(previousSlot, slots, actorSlots, seenActors) {
+			actorSlots[actorID] = slotIndex
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateApprovalDecision(

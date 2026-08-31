@@ -132,6 +132,185 @@ func ListReviewAdmissionDecisions(
 	return pgx.CollectRows(rows, pgx.RowToStructByName[types.ReviewAdmissionDecisionRecord])
 }
 
+type reviewAdmissionEvaluationMaterial struct {
+	ID                      uuid.UUID
+	PlanRevision            int64
+	PlanChecksum            string
+	EffectivePolicyChecksum string
+	Decision                types.AdmissionDecision
+	EvaluatedAt             time.Time
+	MaterialChecksum        string
+	DecisionChecksum        string
+	ActorUserAccountID      uuid.UUID
+}
+
+func GetReviewAdmissionMaterial(
+	ctx context.Context,
+	organizationID, planID uuid.UUID,
+) (*types.ReviewAdmissionMaterial, error) {
+	if organizationID == uuid.Nil || planID == uuid.Nil {
+		return nil, apierrors.NewBadRequest(
+			"organizationId and deploymentPlanId are required",
+		)
+	}
+	var result *types.ReviewAdmissionMaterial
+	err := RunReadOnlyTxRR(ctx, func(txCtx context.Context) error {
+		plan, err := GetDeploymentPlan(txCtx, planID, organizationID)
+		if err != nil {
+			return err
+		}
+		now, err := admissionDatabaseTime(txCtx)
+		if err != nil {
+			return err
+		}
+		observed, err := loadCurrentPlanObservedStateMaterial(
+			txCtx,
+			organizationID,
+			planID,
+			false,
+		)
+		if err != nil {
+			return err
+		}
+		decisions, err := ListReviewAdmissionDecisions(txCtx, organizationID, planID)
+		if err != nil {
+			return err
+		}
+		var latestDecision *types.ReviewAdmissionDecisionRecord
+		if len(decisions) > 0 {
+			latest := decisions[0]
+			latestDecision = &latest
+		}
+		admission, err := getLatestReviewAdmissionEvaluationMaterial(
+			txCtx,
+			organizationID,
+			planID,
+		)
+		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
+		material := &types.ReviewAdmissionMaterial{
+			DeploymentPlanID:      plan.ID,
+			PlanRevision:          1,
+			PlanChecksum:          plan.CanonicalChecksum,
+			ObservedStateChecksum: observed.Checksum,
+			ReviewMaterialChecksum: reviewadmission.ReviewMaterialChecksum(
+				plan.CanonicalChecksum,
+				observed.Checksum,
+			),
+			State: reviewadmission.MaterialState(
+				latestDecision,
+				plan.CanonicalChecksum,
+				observed.Checksum,
+				now,
+			),
+			Blockers:       []string{},
+			LatestDecision: latestDecision,
+		}
+		material.ReviewMaterialValid =
+			plan.Status == types.DeploymentPlanStatusReady &&
+				plan.PlanSchema == types.TargetDeploymentPlanSchemaV2 &&
+				plan.ProtocolVersion == string(types.ExecutionProtocolVersionV2) &&
+				isLowerSHA256(plan.CanonicalChecksum) &&
+				isLowerSHA256(observed.Checksum) &&
+				isLowerSHA256(material.ReviewMaterialChecksum) &&
+				observed.Complete
+		if !material.ReviewMaterialValid {
+			material.Blockers = append(
+				material.Blockers,
+				"review material is incomplete or the deployment plan is not READY native v2",
+			)
+		}
+		if admission != nil {
+			approvalEligible, err := currentDeploymentPlanApprovalEligibleForAdmission(
+				txCtx,
+				organizationID,
+				planID,
+				admission.ActorUserAccountID,
+				now,
+			)
+			if err != nil {
+				return err
+			}
+			material.AdmissionEvaluationID = &admission.ID
+			material.AdmissionDecision = admission.Decision
+			material.AdmissionDecisionChecksum = admission.DecisionChecksum
+			material.AdmissionValid = currentReviewAdmissionEvaluation(
+				*admission,
+				*plan,
+				observed.LatestReceivedAt,
+				approvalEligible,
+			)
+		}
+		if !material.AdmissionValid {
+			material.Blockers = append(
+				material.Blockers,
+				"latest deployment admission is missing, stale, or not ADMIT",
+			)
+		}
+		material.CanDecide = material.ReviewMaterialValid && material.AdmissionValid
+		result = material
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func getLatestReviewAdmissionEvaluationMaterial(
+	ctx context.Context,
+	organizationID, planID uuid.UUID,
+) (*reviewAdmissionEvaluationMaterial, error) {
+	var value reviewAdmissionEvaluationMaterial
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT id, plan_revision, plan_checksum, effective_policy_checksum,
+		       decision, evaluated_at, material_checksum, decision_checksum,
+		       actor_useraccount_id
+		FROM AdmissionEvaluation
+		WHERE organization_id = @organizationID
+		  AND deployment_plan_id = @planID
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, pgx.NamedArgs{
+		"organizationID": organizationID,
+		"planID":         planID,
+	}).Scan(
+		&value.ID,
+		&value.PlanRevision,
+		&value.PlanChecksum,
+		&value.EffectivePolicyChecksum,
+		&value.Decision,
+		&value.EvaluatedAt,
+		&value.MaterialChecksum,
+		&value.DecisionChecksum,
+		&value.ActorUserAccountID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest review admission evaluation: %w", err)
+	}
+	return &value, nil
+}
+
+func currentReviewAdmissionEvaluation(
+	evaluation reviewAdmissionEvaluationMaterial,
+	plan types.DeploymentPlan,
+	latestObservedAt time.Time,
+	approvalEligible bool,
+) bool {
+	return approvalEligible &&
+		evaluation.PlanRevision == 1 &&
+		evaluation.PlanChecksum == plan.CanonicalChecksum &&
+		evaluation.EffectivePolicyChecksum == plan.EffectivePolicyChecksum &&
+		evaluation.Decision == types.AdmissionDecisionAdmit &&
+		isLowerSHA256(evaluation.MaterialChecksum) &&
+		isLowerSHA256(evaluation.DecisionChecksum) &&
+		(latestObservedAt.IsZero() || !evaluation.EvaluatedAt.Before(latestObservedAt))
+}
+
 func requireCurrentReviewAdmissionGo(
 	ctx context.Context,
 	request types.CreateTasksForDeploymentPlanRequest,
@@ -200,7 +379,48 @@ func lockReviewAdmissionPlan(
 func currentPlanObservedStateChecksum(
 	ctx context.Context, organizationID, planID uuid.UUID,
 ) (string, error) {
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+	material, err := loadCurrentPlanObservedStateMaterial(
+		ctx,
+		organizationID,
+		planID,
+		true,
+	)
+	if err != nil {
+		return "", err
+	}
+	if !material.Complete {
+		return "", apierrors.NewConflict(
+			"deployment plan current observed state set is incomplete",
+		)
+	}
+	return material.Checksum, nil
+}
+
+type currentPlanObservedStateMaterial struct {
+	Checksum         string
+	Complete         bool
+	LatestReceivedAt time.Time
+}
+
+func loadCurrentPlanObservedStateMaterial(
+	ctx context.Context,
+	organizationID, planID uuid.UUID,
+	lockRows bool,
+) (currentPlanObservedStateMaterial, error) {
+	var result currentPlanObservedStateMaterial
+	var baselineCount int
+	if err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT count(*)
+		FROM DeploymentPlanBaseline b
+		WHERE b.organization_id = @organizationID
+		  AND b.deployment_plan_id = @planID
+	`, pgx.NamedArgs{
+		"organizationID": organizationID,
+		"planID":         planID,
+	}).Scan(&baselineCount); err != nil {
+		return result, fmt.Errorf("count deployment plan observed-state baselines: %w", err)
+	}
+	query := `
 		SELECT b.component_key, o.id, o.state_checksum
 		FROM DeploymentPlanBaseline b
 		JOIN ObservedComponentState o
@@ -209,10 +429,17 @@ func currentPlanObservedStateChecksum(
 		 AND o.is_current
 		WHERE b.organization_id = @organizationID
 		  AND b.deployment_plan_id = @planID
-		ORDER BY b.component_key, o.id
-		FOR SHARE OF o`, pgx.NamedArgs{"organizationID": organizationID, "planID": planID})
+		ORDER BY b.component_key, o.id`
+	if lockRows {
+		query += " FOR SHARE OF o"
+	}
+	rows, err := internalctx.GetDb(ctx).Query(
+		ctx,
+		query,
+		pgx.NamedArgs{"organizationID": organizationID, "planID": planID},
+	)
 	if err != nil {
-		return "", fmt.Errorf("lock current observed state: %w", err)
+		return result, fmt.Errorf("load current observed state: %w", err)
 	}
 	defer rows.Close()
 	type item struct {
@@ -224,16 +451,35 @@ func currentPlanObservedStateChecksum(
 	for rows.Next() {
 		var value item
 		if err := rows.Scan(&value.ComponentKey, &value.ObservationID, &value.StateChecksum); err != nil {
-			return "", fmt.Errorf("scan current observed state: %w", err)
+			return result, fmt.Errorf("scan current observed state: %w", err)
 		}
 		items = append(items, value)
 	}
 	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("iterate current observed state: %w", err)
+		return result, fmt.Errorf("iterate current observed state: %w", err)
 	}
 	payload, _ := json.Marshal(items)
 	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	result.Checksum = "sha256:" + hex.EncodeToString(sum[:])
+	result.Complete = len(items) == baselineCount
+	if len(items) > 0 {
+		if err := internalctx.GetDb(ctx).QueryRow(ctx, `
+			SELECT max(o.received_at)
+			FROM DeploymentPlanBaseline b
+			JOIN ObservedComponentState o
+			  ON o.organization_id = b.organization_id
+			 AND o.component_instance_id = b.component_instance_id
+			 AND o.is_current
+			WHERE b.organization_id = @organizationID
+			  AND b.deployment_plan_id = @planID
+		`, pgx.NamedArgs{
+			"organizationID": organizationID,
+			"planID":         planID,
+		}).Scan(&result.LatestReceivedAt); err != nil {
+			return result, fmt.Errorf("read latest current observation time: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func getLatestReviewAdmissionDecisionForUpdate(

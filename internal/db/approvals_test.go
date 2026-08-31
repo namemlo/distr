@@ -319,3 +319,20 @@ func TestApprovalDecisionIdempotencyMatchesOnlyExactRetry(t *testing.T) {
 	input.Decision = types.ApprovalDecisionReject
 	g.Expect(approvalDecisionMatchesInput(decision, input)).To(BeFalse())
 }
+
+func TestAdmissionApprovalRevalidatesCurrentRequirementAuthority(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("approvals.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	code := string(source)
+	for _, fragment := range []string{
+		"currentAuthorizedApprovalDecisions",
+		"PrincipalGroupMemberRevision",
+		"current_revision.state = 'active'",
+		"membership.created_at = member.user_membership_created_at",
+		"governance.EvaluateApprovalForAdmission",
+		"requireCurrentDeploymentPlanApprovalForExecution",
+	} {
+		g.Expect(code).To(ContainSubstring(fragment))
+	}
+}

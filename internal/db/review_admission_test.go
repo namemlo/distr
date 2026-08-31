@@ -32,9 +32,17 @@ func TestReviewAdmissionMigrationAndTaskGateAreFailClosed(t *testing.T) {
 
 	taskSource, err := os.ReadFile("task_queue.go")
 	g.Expect(err).NotTo(HaveOccurred())
+	approvalGate := strings.Index(
+		string(taskSource),
+		"requireCurrentDeploymentPlanApprovalForExecution",
+	)
 	gate := strings.Index(string(taskSource), "requireCurrentReviewAdmissionGo")
 	preflight := strings.Index(string(taskSource), "evaluateAndPersistDeploymentPreflight")
 	insert := strings.Index(string(taskSource), "insertTasksForDeploymentPlan")
+	g.Expect(approvalGate).To(BeNumerically(">", 0))
+	g.Expect(approvalGate).To(BeNumerically("<", gate))
+	g.Expect(approvalGate).To(BeNumerically("<", preflight))
+	g.Expect(approvalGate).To(BeNumerically("<", insert))
 	g.Expect(gate).To(BeNumerically(">", 0))
 	g.Expect(gate).To(BeNumerically("<", preflight))
 	g.Expect(gate).To(BeNumerically("<", insert))
@@ -65,4 +73,48 @@ func TestReviewDecisionReplayMatchesOnlyExactMaterial(t *testing.T) {
 	g.Expect(reviewDecisionMatchesRequest(record, request, snapshot, material, observed)).To(BeTrue())
 	request.Decision = types.ReviewAdmissionDecisionNoGo
 	g.Expect(reviewDecisionMatchesRequest(record, request, snapshot, material, observed)).To(BeFalse())
+}
+
+func TestReviewMaterialRequiresCurrentAdmitAndCurrentApproval(t *testing.T) {
+	g := NewWithT(t)
+	evaluatedAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	plan := types.DeploymentPlan{
+		CanonicalChecksum:       "sha256:" + strings.Repeat("a", 64),
+		EffectivePolicyChecksum: "sha256:" + strings.Repeat("b", 64),
+	}
+	evaluation := reviewAdmissionEvaluationMaterial{
+		ID: uuid.New(), PlanRevision: 1, PlanChecksum: plan.CanonicalChecksum,
+		EffectivePolicyChecksum: plan.EffectivePolicyChecksum,
+		Decision:                types.AdmissionDecisionAdmit,
+		EvaluatedAt:             evaluatedAt,
+		MaterialChecksum:        "sha256:" + strings.Repeat("c", 64),
+		DecisionChecksum:        "sha256:" + strings.Repeat("d", 64),
+		ActorUserAccountID:      uuid.New(),
+	}
+
+	g.Expect(currentReviewAdmissionEvaluation(
+		evaluation,
+		plan,
+		evaluatedAt,
+		true,
+	)).To(BeTrue())
+	g.Expect(currentReviewAdmissionEvaluation(
+		evaluation,
+		plan,
+		evaluatedAt.Add(time.Second),
+		true,
+	)).To(BeFalse())
+	g.Expect(currentReviewAdmissionEvaluation(
+		evaluation,
+		plan,
+		evaluatedAt,
+		false,
+	)).To(BeFalse())
+	evaluation.Decision = types.AdmissionDecisionBlock
+	g.Expect(currentReviewAdmissionEvaluation(
+		evaluation,
+		plan,
+		evaluatedAt,
+		true,
+	)).To(BeFalse())
 }

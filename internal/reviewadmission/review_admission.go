@@ -72,6 +72,31 @@ func ValidateCurrentGo(
 	return nil
 }
 
+func MaterialState(
+	decision *types.ReviewAdmissionDecisionRecord,
+	planChecksum, observedStateChecksum string,
+	now time.Time,
+) types.ReviewAdmissionMaterialState {
+	if decision == nil {
+		return types.ReviewAdmissionMaterialStateMissing
+	}
+	if !decision.Decision.IsValid() ||
+		!now.UTC().Before(decision.ExpiresAt.UTC()) ||
+		decision.PlanChecksum != strings.TrimSpace(planChecksum) ||
+		decision.ObservedStateChecksum != strings.TrimSpace(observedStateChecksum) ||
+		decision.ReviewMaterialChecksum != ReviewMaterialChecksum(
+			planChecksum,
+			observedStateChecksum,
+		) ||
+		decision.CanonicalChecksum != CanonicalChecksum(*decision) {
+		return types.ReviewAdmissionMaterialStateStale
+	}
+	if decision.Decision == types.ReviewAdmissionDecisionNoGo {
+		return types.ReviewAdmissionMaterialStateNoGo
+	}
+	return types.ReviewAdmissionMaterialStateGo
+}
+
 func checksum(payload []byte) string {
 	sum := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(sum[:])

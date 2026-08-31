@@ -139,6 +139,104 @@
         </dl>
       </section>
 
+      <section
+        aria-labelledby="review-decision-heading"
+        class="mt-4 rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="review-decision-heading" class="text-lg font-semibold">GO / NO_GO review</h2>
+            <p class="mt-1 text-sm text-gray-500">
+              Decisions are append-only and bind this plan to the current independently observed runtime state.
+            </p>
+          </div>
+          <span class="rounded bg-gray-100 px-3 py-1 text-sm font-semibold" data-testid="review-decision-state">
+            {{ reviewDecisionStateLabel() }}
+          </span>
+        </div>
+
+        @if (reviewMaterialLoading()) {
+          <p role="status" class="mt-4 text-sm text-gray-500">Loading current review material...</p>
+        } @else if (reviewMaterialError(); as reviewFailure) {
+          <div role="alert" class="mt-4 rounded border border-red-300 bg-red-50 p-3 text-red-900">
+            Review decisions are disabled because current review material could not be loaded.
+            {{ reviewFailure.message }}
+          </div>
+        } @else if (reviewMaterial(); as material) {
+          <dl class="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-3">
+            <div>
+              <dt class="text-gray-500">Observed-state checksum</dt>
+              <dd class="break-all font-mono">{{ material.observedStateChecksum || 'Unavailable' }}</dd>
+            </div>
+            <div>
+              <dt class="text-gray-500">Review-material checksum</dt>
+              <dd class="break-all font-mono">{{ material.reviewMaterialChecksum || 'Unavailable' }}</dd>
+            </div>
+            <div>
+              <dt class="text-gray-500">Admission</dt>
+              <dd>
+                {{ material.admissionValid ? 'Current ADMIT' : material.admissionDecision || 'Invalid or missing' }}
+              </dd>
+            </div>
+          </dl>
+
+          @if (!material.canDecide) {
+            <div role="alert" class="mt-4 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <p class="font-semibold">GO / NO_GO controls are disabled.</p>
+              <ul class="mt-2 list-disc pl-5 text-sm">
+                @for (blocker of material.blockers; track blocker) {
+                  <li>{{ blocker }}</li>
+                } @empty {
+                  <li>Review material or admission is invalid.</li>
+                }
+              </ul>
+            </div>
+          }
+
+          @if (material.latestDecision; as latest) {
+            <div class="mt-4 rounded border p-3 text-sm">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-semibold">Latest {{ latest.decision }}</span>
+                <span>Expires {{ latest.expiresAt | date: 'medium' }}</span>
+              </div>
+              <p class="mt-2">{{ latest.reason }}</p>
+              <p class="mt-2 break-all font-mono text-xs">{{ latest.canonicalChecksum }}</p>
+            </div>
+          }
+
+          <form [formGroup]="reviewDecisionForm" class="mt-4 rounded border p-4">
+            <label class="block text-sm">
+              Review reason
+              <input type="text" formControlName="reason" maxlength="4096" class="distr-input mt-1 w-full" />
+            </label>
+            <label class="mt-3 block text-sm">
+              Decision expires at
+              <input type="datetime-local" formControlName="expiresAt" class="distr-input mt-1 w-full" />
+            </label>
+            <p class="mt-3 text-xs text-gray-500">
+              Confirmation requires the exact review-material checksum shown above.
+            </p>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="record-review-go"
+                (click)="recordReviewDecision('GO')"
+                [disabled]="reviewDecisionForm.invalid || !reviewDecisionEnabled() || actionLoading()"
+                class="distr-btn-primary px-4 py-2">
+                Record GO
+              </button>
+              <button
+                type="button"
+                data-testid="record-review-no-go"
+                (click)="recordReviewDecision('NO_GO')"
+                [disabled]="reviewDecisionForm.invalid || !reviewDecisionEnabled() || actionLoading()"
+                class="distr-btn-secondary px-4 py-2">
+                Record NO_GO
+              </button>
+            </div>
+          </form>
+        }
+      </section>
+
       <div class="mt-4 grid gap-4 lg:grid-cols-2">
         @for (section of factSections(); track section.title) {
           <section class="rounded-lg bg-white p-5 shadow-sm dark:bg-gray-800" [attr.aria-label]="section.title">

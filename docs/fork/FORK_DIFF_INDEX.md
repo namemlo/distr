@@ -1847,21 +1847,27 @@ Use one entry per pull request:
 - Feature flags: Uses the existing default-off `operator_control_plane_v2` and
   `executor_protocol_v2` boundary.
 - User-facing behavior: Authorized operators append persistent `GO` or
-  `NO_GO` decisions bound to the exact plan and current observed state.
+  `NO_GO` decisions bound to the exact plan and complete current observed
+  state. The plan detail UI shows current, negative, stale, and missing states,
+  blockers, and exact checksums; typed checksum confirmation is required.
 - Database changes: Migration 165 adds append-only, expiring, checksum-bound
   `ReviewAdmissionDecision` rows with supersession and revocation lineage.
-- API changes: Adds `GET/POST
-/api/v1/deployment-plans/{id}/review-decisions`.
-- UI changes: None; this is an API-first safety boundary.
+- API changes: Adds `GET/POST /api/v1/deployment-plans/{id}/review-decisions`
+  and `GET /api/v1/deployment-plans/{id}/review-material`.
+- UI changes: Adds checksum-bound `GO/NO_GO` controls to plan detail, including
+  disabled invalid-admission states and supersession/revocation lineage.
 - Agent protocol changes: None.
 - Documentation: Adds ADR-0071 and PR-084 fork notes.
-- Tests: Focused checksum, expiry/staleness, `NO_GO`, API validation, route,
-  migration shape, task mutation ordering, migration lint, and diff checks.
+- Tests: Focused checksum, expiry/staleness, `NO_GO`, current approval
+  authority, executor separation, distinct approver matching, API validation,
+  route, UI state/submission, migration shape, task mutation ordering,
+  migration lint, and diff checks.
 - Upstream contribution notes: Community-neutral review and admission
   primitives with no adopter, CI provider, registry, or runtime assumptions.
 - Compatibility notes: V1 task creation is unchanged. V2 task creation fails
   closed before mutation unless the current decision tip is an authorized,
-  unexpired, observed-state-current `GO`.
+  unexpired, observed-state-current `GO` and approval remains eligible for the
+  executing actor under current active group membership.
 
 ### PR-085 - Native baseline adoption
 

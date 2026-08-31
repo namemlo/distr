@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -188,4 +189,96 @@ func TestAdmissionRoutesRequireBothControlPlaneFlags(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/admission", nil))
 	g.Expect(response.Code).To(Equal(http.StatusNoContent))
 	g.Expect(called).To(BeTrue())
+}
+
+func TestReviewMaterialReadReturnsCurrentDecisionState(t *testing.T) {
+	g := NewWithT(t)
+	planID := uuid.New()
+	material := &types.ReviewAdmissionMaterial{
+		DeploymentPlanID:       planID,
+		PlanRevision:           1,
+		PlanChecksum:           "sha256:" + strings.Repeat("a", 64),
+		ObservedStateChecksum:  "sha256:" + strings.Repeat("b", 64),
+		ReviewMaterialChecksum: "sha256:" + strings.Repeat("c", 64),
+		ReviewMaterialValid:    true,
+		AdmissionValid:         true,
+		State:                  types.ReviewAdmissionMaterialStateNoGo,
+		CanDecide:              true,
+		Blockers:               []string{},
+	}
+	dependencies := admissionHandlerDependencies{
+		getReviewMaterial: func(
+			_ context.Context,
+			organizationID, requestedPlanID uuid.UUID,
+		) (*types.ReviewAdmissionMaterial, error) {
+			g.Expect(organizationID).NotTo(Equal(uuid.Nil))
+			g.Expect(requestedPlanID).To(Equal(planID))
+			return material, nil
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/deployment-plans/"+planID.String()+"/review-material",
+		nil,
+	)
+	request.SetPathValue("deploymentPlanId", planID.String())
+	userAuth := testChannelAuth()
+	userAuth.role = types.UserRoleAdmin
+	request = request.WithContext(auth.Authentication.NewContext(request.Context(), userAuth))
+	response := httptest.NewRecorder()
+
+	getReviewAdmissionMaterialHandlerWithDependencies(dependencies).
+		ServeHTTP(response, request)
+
+	g.Expect(response.Code).To(Equal(http.StatusOK))
+	var decoded types.ReviewAdmissionMaterial
+	g.Expect(json.Unmarshal(response.Body.Bytes(), &decoded)).To(Succeed())
+	g.Expect(decoded.State).To(Equal(types.ReviewAdmissionMaterialStateNoGo))
+	g.Expect(decoded.CanDecide).To(BeTrue())
+}
+
+func TestReviewDecisionPostPreservesChecksumBoundMaterial(t *testing.T) {
+	g := NewWithT(t)
+	planID := uuid.New()
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	planChecksum := "sha256:" + strings.Repeat("a", 64)
+	observedChecksum := "sha256:" + strings.Repeat("b", 64)
+	materialChecksum := "sha256:" + strings.Repeat("c", 64)
+	dependencies := admissionHandlerDependencies{
+		clock: func() time.Time { return now },
+		createReviewDecision: func(
+			_ context.Context,
+			request types.CreateReviewAdmissionDecisionRequest,
+		) (*types.ReviewAdmissionDecisionRecord, error) {
+			g.Expect(request.DeploymentPlanID).To(Equal(planID))
+			g.Expect(request.ExpectedPlanChecksum).To(Equal(planChecksum))
+			g.Expect(request.ObservedStateChecksum).To(Equal(observedChecksum))
+			g.Expect(request.ReviewMaterialChecksum).To(Equal(materialChecksum))
+			g.Expect(request.Decision).To(Equal(types.ReviewAdmissionDecisionGo))
+			return &types.ReviewAdmissionDecisionRecord{
+				ID: uuid.New(), DeploymentPlanID: planID,
+				Decision: types.ReviewAdmissionDecisionGo,
+			}, nil
+		},
+	}
+	body := `{"expectedPlanChecksum":"` + planChecksum +
+		`","reviewMaterialChecksum":"` + materialChecksum +
+		`","observedStateChecksum":"` + observedChecksum +
+		`","decision":"GO","reason":"Reviewed exact material",` +
+		`"expiresAt":"2026-09-01T13:00:00Z","idempotencyKey":"review-ui-1"}`
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/deployment-plans/"+planID.String()+"/review-decisions",
+		strings.NewReader(body),
+	)
+	request.SetPathValue("deploymentPlanId", planID.String())
+	userAuth := testChannelAuth()
+	userAuth.role = types.UserRoleAdmin
+	request = request.WithContext(auth.Authentication.NewContext(request.Context(), userAuth))
+	response := httptest.NewRecorder()
+
+	createReviewAdmissionDecisionHandlerWithDependencies(dependencies).
+		ServeHTTP(response, request)
+
+	g.Expect(response.Code).To(Equal(http.StatusOK))
 }

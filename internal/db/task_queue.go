@@ -254,6 +254,14 @@ func createTasksForDeploymentPlan(
 			return nil
 		}
 		if path == deploymentPlanTaskCreationPathAdmittedV2 {
+			if err := requireCurrentDeploymentPlanApprovalForExecution(
+				ctx,
+				request.OrganizationID,
+				request.DeploymentPlanID,
+				request.ActorUserAccountID,
+			); err != nil {
+				return err
+			}
 			if err := requireCurrentReviewAdmissionGo(ctx, request, *plan); err != nil {
 				return err
 			}

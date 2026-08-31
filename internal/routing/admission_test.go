@@ -47,4 +47,9 @@ func TestAdmissionRoutesArePublishedInOpenAPI(t *testing.T) {
 	}
 	g.Expect(document.Paths["/api/v1/deployment-plans/{deploymentPlanId}/review-decisions"]).
 		To(HaveKey(strings.ToLower(http.MethodGet)))
+	g.Expect(document.Paths).To(HaveKey(
+		"/api/v1/deployment-plans/{deploymentPlanId}/review-material",
+	))
+	g.Expect(document.Paths["/api/v1/deployment-plans/{deploymentPlanId}/review-material"]).
+		To(HaveKey(strings.ToLower(http.MethodGet)))
 }

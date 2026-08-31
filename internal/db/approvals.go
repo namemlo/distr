@@ -551,6 +551,31 @@ func EvaluateApprovalEligibility(
 	ctx context.Context,
 	approvalRequestID uuid.UUID,
 ) (types.ApprovalEvaluation, error) {
+	return evaluateApprovalEligibility(ctx, approvalRequestID, uuid.Nil)
+}
+
+func evaluateApprovalEligibilityForAdmission(
+	ctx context.Context,
+	approvalRequestID uuid.UUID,
+	executorUserAccountID uuid.UUID,
+) (types.ApprovalEvaluation, error) {
+	if executorUserAccountID == uuid.Nil {
+		return types.ApprovalEvaluation{}, apierrors.NewBadRequest(
+			"executorUserAccountId is required",
+		)
+	}
+	return evaluateApprovalEligibility(
+		ctx,
+		approvalRequestID,
+		executorUserAccountID,
+	)
+}
+
+func evaluateApprovalEligibility(
+	ctx context.Context,
+	approvalRequestID uuid.UUID,
+	executorUserAccountID uuid.UUID,
+) (types.ApprovalEvaluation, error) {
 	if approvalRequestID == uuid.Nil {
 		return types.ApprovalEvaluation{}, apierrors.NewBadRequest(
 			"approvalRequestId is required",
@@ -604,7 +629,24 @@ func EvaluateApprovalEligibility(
 				return err
 			}
 		}
-		result = governance.EvaluateApproval(*request, request.Decisions, decisionAt)
+		if executorUserAccountID == uuid.Nil {
+			result = governance.EvaluateApproval(*request, request.Decisions, decisionAt)
+			return nil
+		}
+		currentlyAuthorized, err := currentAuthorizedApprovalDecisions(
+			ctx,
+			*request,
+			decisionAt,
+		)
+		if err != nil {
+			return err
+		}
+		result = governance.EvaluateApprovalForAdmission(
+			*request,
+			currentlyAuthorized,
+			executorUserAccountID,
+			decisionAt,
+		)
 		return nil
 	})
 	return result, err
@@ -638,6 +680,91 @@ func EvaluateDeploymentPlanApproval(
 		return types.ApprovalEvaluation{}, err
 	}
 	return EvaluateApprovalEligibility(ctx, request.ID)
+}
+
+func requireCurrentDeploymentPlanApprovalForExecution(
+	ctx context.Context,
+	organizationID, deploymentPlanID, executorUserAccountID uuid.UUID,
+) error {
+	request, err := getActiveApprovalRequestForSubject(
+		ctx,
+		organizationID,
+		types.ApprovalSubjectDeploymentPlan,
+		deploymentPlanID,
+		false,
+	)
+	if errors.Is(err, apierrors.ErrNotFound) {
+		return apierrors.NewConflict(
+			"deployment plan has no current approval request",
+		)
+	}
+	if err != nil {
+		return err
+	}
+	evaluation, err := evaluateApprovalEligibilityForAdmission(
+		ctx,
+		request.ID,
+		executorUserAccountID,
+	)
+	if err != nil {
+		return err
+	}
+	if !evaluation.Eligible ||
+		evaluation.State != types.ApprovalRequestStateApproved {
+		return apierrors.NewConflict(
+			"deployment plan approval is not currently eligible for this executor",
+		)
+	}
+	return nil
+}
+
+func currentDeploymentPlanApprovalEligibleForAdmission(
+	ctx context.Context,
+	organizationID, deploymentPlanID, executorUserAccountID uuid.UUID,
+	decisionAt time.Time,
+) (bool, error) {
+	request, err := getActiveApprovalRequestForSubject(
+		ctx,
+		organizationID,
+		types.ApprovalSubjectDeploymentPlan,
+		deploymentPlanID,
+		false,
+	)
+	if errors.Is(err, apierrors.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := hydrateApprovalRequest(ctx, request); err != nil {
+		return false, err
+	}
+	current, reason, err := currentApprovalSubjectSnapshot(ctx, *request)
+	if err != nil {
+		return false, err
+	}
+	if reason == "" {
+		reason = detectApprovalInvalidation(*request, current, decisionAt)
+	}
+	if reason != "" {
+		return false, nil
+	}
+	currentlyAuthorized, err := currentAuthorizedApprovalDecisions(
+		ctx,
+		*request,
+		decisionAt,
+	)
+	if err != nil {
+		return false, err
+	}
+	evaluation := governance.EvaluateApprovalForAdmission(
+		*request,
+		currentlyAuthorized,
+		executorUserAccountID,
+		decisionAt,
+	)
+	return evaluation.Eligible &&
+		evaluation.State == types.ApprovalRequestStateApproved, nil
 }
 
 func InvalidateApproval(
@@ -1992,6 +2119,75 @@ func approvalActorInRequiredGroup(
 		return false, fmt.Errorf("authorize approval requirement group: %w", err)
 	}
 	return allowed, nil
+}
+
+func currentAuthorizedApprovalDecisions(
+	ctx context.Context,
+	request types.ApprovalRequest,
+	decisionAt time.Time,
+) ([]types.ApprovalDecision, error) {
+	if len(request.Decisions) == 0 {
+		return []types.ApprovalDecision{}, nil
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT decision.id
+		FROM ApprovalDecision decision
+		JOIN ApprovalRequirement requirement
+		  ON requirement.id = decision.approval_requirement_id
+		 AND requirement.approval_request_id = decision.approval_request_id
+		 AND requirement.organization_id = decision.organization_id
+		JOIN PrincipalGroupMember member
+		  ON member.organization_id = requirement.organization_id
+		 AND member.group_id = requirement.principal_group_id
+		 AND member.user_account_id = decision.actor_useraccount_id
+		 AND member.effective_from <= @decisionAt
+		 AND (
+		   member.effective_until IS NULL
+		   OR member.effective_until > @decisionAt
+		 )
+		JOIN LATERAL (
+		  SELECT revision.state
+		  FROM PrincipalGroupMemberRevision revision
+		  WHERE revision.organization_id = member.organization_id
+		    AND revision.principal_group_member_id = member.id
+		    AND revision.effective_from <= @decisionAt
+		  ORDER BY revision.effective_from DESC, revision.revision DESC
+		  LIMIT 1
+		) current_revision ON current_revision.state = 'active'
+		JOIN Organization_UserAccount membership
+		  ON membership.organization_id = member.organization_id
+		 AND membership.user_account_id = member.user_account_id
+		 AND membership.created_at = member.user_membership_created_at
+		WHERE decision.organization_id = @organizationID
+		  AND decision.approval_request_id = @approvalRequestID
+		  AND decision.decision = 'APPROVE'
+	`, pgx.NamedArgs{
+		"organizationID":    request.OrganizationID,
+		"approvalRequestID": request.ID,
+		"decisionAt":        decisionAt.UTC(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("revalidate current approval decision authority: %w", err)
+	}
+	authorizedIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("collect current approval decision authority: %w", err)
+	}
+	authorized := make(map[uuid.UUID]struct{}, len(authorizedIDs))
+	for _, decisionID := range authorizedIDs {
+		authorized[decisionID] = struct{}{}
+	}
+	result := make([]types.ApprovalDecision, 0, len(request.Decisions))
+	for _, decision := range request.Decisions {
+		if decision.Decision == types.ApprovalDecisionReject {
+			result = append(result, decision)
+			continue
+		}
+		if _, ok := authorized[decision.ID]; ok {
+			result = append(result, decision)
+		}
+	}
+	return result, nil
 }
 
 func approvalDatabaseTime(ctx context.Context) (time.Time, error) {

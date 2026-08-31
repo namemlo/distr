@@ -41,6 +41,11 @@ type admissionHandlerDependencies struct {
 		uuid.UUID,
 		uuid.UUID,
 	) ([]types.ReviewAdmissionDecisionRecord, error)
+	getReviewMaterial func(
+		context.Context,
+		uuid.UUID,
+		uuid.UUID,
+	) (*types.ReviewAdmissionMaterial, error)
 	authorize types.AdmissionAuthorizer
 	clock     func() time.Time
 }
@@ -51,6 +56,7 @@ func defaultAdmissionHandlerDependencies() admissionHandlerDependencies {
 		createOverride:       db.CreateEmergencyOverride,
 		createReviewDecision: db.CreateReviewAdmissionDecision,
 		listReviewDecisions:  db.ListReviewAdmissionDecisions,
+		getReviewMaterial:    db.GetReviewAdmissionMaterial,
 		authorize:            admissionScopedAuthorization,
 		clock: func() time.Time {
 			return time.Now().UTC()
@@ -161,6 +167,17 @@ func deploymentPlanAdmissionRoutes(r chiopenapi.Router) {
 	)).With(option.Request(deploymentPlanAdmissionRoute{})).With(option.Response(
 		http.StatusOK, []types.ReviewAdmissionDecisionRecord{},
 	))
+
+	r.With(
+		admissionMutationAccessMiddlewareWithFlags(env.ExperimentalFeatureFlags()),
+	).Get(
+		"/review-material",
+		getReviewAdmissionMaterialHandlerWithDependencies(dependencies),
+	).With(option.Description(
+		"Get current observed-state-bound review material and admission readiness",
+	)).With(option.Request(deploymentPlanAdmissionRoute{})).With(option.Response(
+		http.StatusOK, types.ReviewAdmissionMaterial{},
+	))
 }
 
 func createReviewAdmissionDecisionHandlerWithDependencies(
@@ -212,6 +229,28 @@ func listReviewAdmissionDecisionsHandlerWithDependencies(
 			return
 		}
 		RespondJSON(w, decisions)
+	}
+}
+
+func getReviewAdmissionMaterialHandlerWithDependencies(
+	dependencies admissionHandlerDependencies,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		planID, ok := admissionPathPlanID(w, r)
+		if !ok {
+			return
+		}
+		authInfo := auth.Authentication.Require(r.Context())
+		material, err := dependencies.getReviewMaterial(
+			r.Context(),
+			*authInfo.CurrentOrgID(),
+			planID,
+		)
+		if err != nil {
+			handleAdmissionError(w, r, "get review admission material", err)
+			return
+		}
+		RespondJSON(w, material)
 	}
 }
 

@@ -18,6 +18,15 @@ func (decision ReviewAdmissionDecision) IsValid() bool {
 	return decision == ReviewAdmissionDecisionGo || decision == ReviewAdmissionDecisionNoGo
 }
 
+type ReviewAdmissionMaterialState string
+
+const (
+	ReviewAdmissionMaterialStateMissing ReviewAdmissionMaterialState = "MISSING"
+	ReviewAdmissionMaterialStateGo      ReviewAdmissionMaterialState = "GO"
+	ReviewAdmissionMaterialStateNoGo    ReviewAdmissionMaterialState = "NO_GO"
+	ReviewAdmissionMaterialStateStale   ReviewAdmissionMaterialState = "STALE"
+)
+
 type ReviewAdmissionDecisionRecord struct {
 	ID                     uuid.UUID               `db:"id" json:"id"`
 	CreatedAt              time.Time               `db:"created_at" json:"createdAt"`
@@ -36,6 +45,23 @@ type ReviewAdmissionDecisionRecord struct {
 	AuthorizationEvidence  string                  `db:"authorization_evidence" json:"authorizationEvidence"`
 	CanonicalChecksum      string                  `db:"canonical_checksum" json:"canonicalChecksum"`
 	IdempotencyKey         string                  `db:"idempotency_key" json:"idempotencyKey"`
+}
+
+type ReviewAdmissionMaterial struct {
+	DeploymentPlanID          uuid.UUID                      `json:"deploymentPlanId"`
+	PlanRevision              int64                          `json:"planRevision"`
+	PlanChecksum              string                         `json:"planChecksum"`
+	ObservedStateChecksum     string                         `json:"observedStateChecksum"`
+	ReviewMaterialChecksum    string                         `json:"reviewMaterialChecksum"`
+	ReviewMaterialValid       bool                           `json:"reviewMaterialValid"`
+	AdmissionValid            bool                           `json:"admissionValid"`
+	AdmissionEvaluationID     *uuid.UUID                     `json:"admissionEvaluationId,omitempty"`
+	AdmissionDecision         AdmissionDecision              `json:"admissionDecision,omitempty"`
+	AdmissionDecisionChecksum string                         `json:"admissionDecisionChecksum,omitempty"`
+	State                     ReviewAdmissionMaterialState   `json:"state"`
+	CanDecide                 bool                           `json:"canDecide"`
+	Blockers                  []string                       `json:"blockers"`
+	LatestDecision            *ReviewAdmissionDecisionRecord `json:"latestDecision,omitempty"`
 }
 
 type CreateReviewAdmissionDecisionRequest struct {

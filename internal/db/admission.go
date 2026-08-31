@@ -571,6 +571,7 @@ func buildAdmissionRequest(
 		ctx,
 		snapshot.Plan.OrganizationID,
 		snapshot.Plan.ID,
+		request.ActorUserAccountID,
 	)
 	if err != nil {
 		return types.AdmissionRequest{}, err
@@ -619,7 +620,7 @@ func buildAdmissionRequest(
 
 func admissionApprovalEvidence(
 	ctx context.Context,
-	organizationID, planID uuid.UUID,
+	organizationID, planID, executorUserAccountID uuid.UUID,
 ) (types.AdmissionApprovalEvidence, error) {
 	request, err := getActiveApprovalRequestForSubject(
 		ctx,
@@ -640,7 +641,11 @@ func admissionApprovalEvidence(
 	if err != nil {
 		return types.AdmissionApprovalEvidence{}, err
 	}
-	evaluation, err := EvaluateApprovalEligibility(ctx, request.ID)
+	evaluation, err := evaluateApprovalEligibilityForAdmission(
+		ctx,
+		request.ID,
+		executorUserAccountID,
+	)
 	if err != nil {
 		return types.AdmissionApprovalEvidence{}, err
 	}

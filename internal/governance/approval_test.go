@@ -124,6 +124,103 @@ func TestApprovalEvaluationRequiresIndependentSubscriberQuorums(t *testing.T) {
 	g.Expect(evaluation.MissingRequirementIDs).To(BeEmpty())
 }
 
+func TestApprovalAdmissionExcludesExecutorFromProtectedRequirement(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, time.July, 18, 8, 0, 0, 0, time.UTC)
+	executorID := uuid.New()
+	request, requirement := pendingApprovalFixture(now, uuid.New())
+	requirement.SeparationConstraints = append(
+		requirement.SeparationConstraints,
+		types.SeparationConstraintExecutorCannotApprove,
+	)
+	request.Requirements = []types.ApprovalRequirement{requirement}
+	request.State = types.ApprovalRequestStateApproved
+	decisions := []types.ApprovalDecision{
+		approvedDecision(request, requirement, executorID, 1),
+	}
+
+	evaluation := EvaluateApprovalForAdmission(
+		request,
+		decisions,
+		executorID,
+		now,
+	)
+
+	g.Expect(evaluation.Eligible).To(BeFalse())
+	g.Expect(evaluation.State).To(Equal(types.ApprovalRequestStatePending))
+	g.Expect(evaluation.Requirements).To(ConsistOf(types.ApprovalRequirementEvaluation{
+		RequirementID: requirement.ID,
+		ApprovedCount: 0,
+		RequiredCount: 1,
+		Satisfied:     false,
+	}))
+}
+
+func TestApprovalRequiresDistinctActorsAcrossProtectedRequirements(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, time.July, 18, 8, 0, 0, 0, time.UTC)
+	request, first := pendingApprovalFixture(now, uuid.New())
+	second := first
+	second.ID = uuid.New()
+	second.RuleKey = "independent-owner"
+	second.SortOrder = 2
+	request.Requirements = []types.ApprovalRequirement{first, second}
+	actorA := uuid.New()
+	actorB := uuid.New()
+	decisions := []types.ApprovalDecision{
+		approvedDecision(request, first, actorA, 1),
+		approvedDecision(request, second, actorA, 2),
+	}
+
+	evaluation := EvaluateApproval(request, decisions, now)
+
+	g.Expect(evaluation.Eligible).To(BeFalse())
+	g.Expect(evaluation.State).To(Equal(types.ApprovalRequestStatePending))
+	g.Expect(evaluation.MissingRequirementIDs).To(HaveLen(1))
+	g.Expect(evaluation.Requirements).To(ContainElement(types.ApprovalRequirementEvaluation{
+		RequirementID: second.ID,
+		ApprovedCount: 0,
+		RequiredCount: 1,
+		Satisfied:     false,
+	}))
+
+	decisions = append(decisions, approvedDecision(request, second, actorB, 3))
+	evaluation = EvaluateApproval(request, decisions, now)
+	g.Expect(evaluation.Eligible).To(BeTrue())
+	g.Expect(evaluation.State).To(Equal(types.ApprovalRequestStateApproved))
+	g.Expect(evaluation.MissingRequirementIDs).To(BeEmpty())
+}
+
+func TestApprovalDistinctActorMatchingUsesAlternateAuthorizedActor(t *testing.T) {
+	g := NewWithT(t)
+	now := time.Date(2026, time.July, 18, 8, 0, 0, 0, time.UTC)
+	request, first := pendingApprovalFixture(now, uuid.New())
+	second := first
+	second.ID = uuid.New()
+	second.RuleKey = "subscriber"
+	second.SortOrder = 2
+	request.Requirements = []types.ApprovalRequirement{first, second}
+	sharedActor := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	alternateActor := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	decisions := []types.ApprovalDecision{
+		approvedDecision(request, first, sharedActor, 1),
+		approvedDecision(request, first, alternateActor, 2),
+		approvedDecision(request, second, sharedActor, 3),
+	}
+
+	evaluation := EvaluateApproval(request, decisions, now)
+
+	g.Expect(evaluation.Eligible).To(BeTrue())
+	g.Expect(evaluation.Requirements).To(ConsistOf(
+		types.ApprovalRequirementEvaluation{
+			RequirementID: first.ID, ApprovedCount: 1, RequiredCount: 1, Satisfied: true,
+		},
+		types.ApprovalRequirementEvaluation{
+			RequirementID: second.ID, ApprovedCount: 1, RequiredCount: 1, Satisfied: true,
+		},
+	))
+}
+
 func TestApprovalWithoutRequirementsFailsClosed(t *testing.T) {
 	now := time.Date(2026, time.July, 18, 8, 0, 0, 0, time.UTC)
 	request, _ := pendingApprovalFixture(now, uuid.New())

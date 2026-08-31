@@ -10,6 +10,7 @@ import {
   OperatorPlanDetailResponse,
   OperatorPlanFact,
   OperatorPlanRow,
+  OperatorReviewAdmissionMaterial,
 } from '../../types/operator-control-plane';
 import {PlanDetailComponent} from './plan-detail.component';
 
@@ -21,6 +22,8 @@ describe('PlanDetailComponent', () => {
     validatePlanDraft: ReturnType<typeof vi.fn>;
     publishPlanDraft: ReturnType<typeof vi.fn>;
     requestPlanApproval: ReturnType<typeof vi.fn>;
+    getReviewAdmissionMaterial: ReturnType<typeof vi.fn>;
+    recordReviewAdmissionDecision: ReturnType<typeof vi.fn>;
     createPreviousStatePlan: ReturnType<typeof vi.fn>;
   };
   let overlay: {confirm: ReturnType<typeof vi.fn>};
@@ -109,6 +112,39 @@ describe('PlanDetailComponent', () => {
     ],
   };
 
+  const reviewMaterial: OperatorReviewAdmissionMaterial = {
+    deploymentPlanId: 'plan-1',
+    planRevision: 1,
+    planChecksum: 'sha256:canonical',
+    observedStateChecksum: 'sha256:observed',
+    reviewMaterialChecksum: 'sha256:review-material',
+    reviewMaterialValid: true,
+    admissionValid: true,
+    admissionEvaluationId: 'admission-1',
+    admissionDecision: 'ADMIT',
+    admissionDecisionChecksum: 'sha256:admission',
+    state: 'GO',
+    canDecide: true,
+    blockers: [],
+    latestDecision: {
+      id: 'review-1',
+      createdAt: '2026-07-28T01:06:00Z',
+      organizationId: 'organization-1',
+      deploymentPlanId: 'plan-1',
+      planRevision: 1,
+      planChecksum: 'sha256:canonical',
+      reviewMaterialChecksum: 'sha256:review-material',
+      observedStateChecksum: 'sha256:observed',
+      decision: 'GO',
+      reason: 'Current observed state is ready.',
+      actorUserAccountId: 'approver-1',
+      expiresAt: '2026-08-01T12:00:00Z',
+      authorizationEvidence: 'sha256:authorization',
+      canonicalChecksum: 'sha256:decision',
+      idempotencyKey: 'review-1',
+    },
+  };
+
   beforeEach(() => {
     service = {
       getPlan: vi.fn().mockReturnValue(of({detail} satisfies OperatorPlanDetailResponse)),
@@ -119,6 +155,8 @@ describe('PlanDetailComponent', () => {
       validatePlanDraft: vi.fn(),
       publishPlanDraft: vi.fn(),
       requestPlanApproval: vi.fn(),
+      getReviewAdmissionMaterial: vi.fn().mockReturnValue(of(reviewMaterial)),
+      recordReviewAdmissionDecision: vi.fn(),
       createPreviousStatePlan: vi.fn(),
     };
     overlay = {confirm: vi.fn().mockReturnValue(of(true))};
@@ -232,6 +270,89 @@ describe('PlanDetailComponent', () => {
     expect(text).toContain('Blocking');
     expect(text).toContain('Signed plan manifest');
     expect(text).toContain('sha256:evidence');
+    expect(text).toContain('GO / NO_GO review');
+    expect(text).toContain('Current GO');
+    expect(text).toContain('sha256:review-material');
+  });
+
+  it('shows current NO_GO and stale review states explicitly', () => {
+    service.getReviewAdmissionMaterial.mockReturnValue(
+      of({
+        ...reviewMaterial,
+        state: 'NO_GO',
+        latestDecision: {...reviewMaterial.latestDecision!, decision: 'NO_GO'},
+      })
+    );
+    let result = createComponent();
+    expect(result.fixture.nativeElement.textContent).toContain('Current NO_GO');
+    expect(result.fixture.nativeElement.textContent).toContain('Latest NO_GO');
+
+    TestBed.resetTestingModule();
+    service.getReviewAdmissionMaterial.mockReturnValue(
+      of({
+        ...reviewMaterial,
+        state: 'STALE',
+        canDecide: false,
+        admissionValid: false,
+        blockers: ['latest deployment admission is missing, stale, or not ADMIT'],
+      })
+    );
+    configureTestBed();
+    result = createComponent();
+    expect(result.fixture.nativeElement.textContent).toContain('Stale review decision');
+    expect(result.fixture.nativeElement.textContent).toContain('GO / NO_GO controls are disabled');
+  });
+
+  it('disables both review controls when material or admission is invalid', () => {
+    service.getReviewAdmissionMaterial.mockReturnValue(
+      of({
+        ...reviewMaterial,
+        reviewMaterialValid: false,
+        admissionValid: false,
+        canDecide: false,
+        blockers: ['review material is incomplete', 'latest deployment admission is not ADMIT'],
+      })
+    );
+    const {fixture, component} = createComponent();
+    (component as any).reviewDecisionForm.setValue({
+      reason: 'Reviewed exact evidence.',
+      expiresAt: '2026-08-01T12:00Z',
+    });
+    fixture.detectChanges();
+
+    const go = fixture.nativeElement.querySelector('[data-testid="record-review-go"]') as HTMLButtonElement;
+    const noGo = fixture.nativeElement.querySelector('[data-testid="record-review-no-go"]') as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    expect(noGo.disabled).toBe(true);
+    expect(fixture.nativeElement.textContent).toContain('review material is incomplete');
+  });
+
+  it('posts checksum-bound NO_GO that supersedes and revokes the current GO tip', async () => {
+    service.recordReviewAdmissionDecision.mockReturnValue(
+      of({...reviewMaterial.latestDecision!, id: 'review-2', decision: 'NO_GO'})
+    );
+    const refreshed = {...reviewMaterial, state: 'NO_GO' as const};
+    service.getReviewAdmissionMaterial.mockReturnValueOnce(of(reviewMaterial)).mockReturnValueOnce(of(refreshed));
+    const {component} = createComponent();
+    (component as any).reviewDecisionForm.setValue({
+      reason: 'Runtime evidence requires investigation.',
+      expiresAt: '2026-08-01T12:00Z',
+    });
+
+    await (component as any).recordReviewDecision('NO_GO');
+
+    expect(overlay.confirm.mock.calls[0][0].requiredConfirmInputText).toBe('sha256:review-material');
+    expect(service.recordReviewAdmissionDecision).toHaveBeenCalledWith('plan-1', {
+      expectedPlanChecksum: 'sha256:canonical',
+      reviewMaterialChecksum: 'sha256:review-material',
+      observedStateChecksum: 'sha256:observed',
+      decision: 'NO_GO',
+      reason: 'Runtime evidence requires investigation.',
+      expiresAt: '2026-08-01T12:00:00.000Z',
+      supersedesDecisionId: 'review-1',
+      revokesDecisionId: 'review-1',
+    });
+    expect(service.getReviewAdmissionMaterial).toHaveBeenCalledTimes(2);
   });
 
   it('renders forward and previous-state Customer and Transaction checkpoints as immutable facts', () => {

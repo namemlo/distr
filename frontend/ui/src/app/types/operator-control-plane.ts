@@ -329,6 +329,57 @@ export interface OperatorPlanDetail {
   evidence: OperatorEvidenceRef[];
 }
 
+export type OperatorReviewAdmissionDecisionValue = 'GO' | 'NO_GO';
+export type OperatorReviewAdmissionMaterialState = 'MISSING' | 'GO' | 'NO_GO' | 'STALE';
+
+export interface OperatorReviewAdmissionDecision {
+  id: string;
+  createdAt: string;
+  organizationId: string;
+  deploymentPlanId: string;
+  planRevision: number;
+  planChecksum: string;
+  reviewMaterialChecksum: string;
+  observedStateChecksum: string;
+  decision: OperatorReviewAdmissionDecisionValue;
+  reason: string;
+  actorUserAccountId: string;
+  expiresAt: string;
+  supersedesDecisionId?: string;
+  revokesDecisionId?: string;
+  authorizationEvidence: string;
+  canonicalChecksum: string;
+  idempotencyKey: string;
+}
+
+export interface OperatorReviewAdmissionMaterial {
+  deploymentPlanId: string;
+  planRevision: number;
+  planChecksum: string;
+  observedStateChecksum: string;
+  reviewMaterialChecksum: string;
+  reviewMaterialValid: boolean;
+  admissionValid: boolean;
+  admissionEvaluationId?: string;
+  admissionDecision?: string;
+  admissionDecisionChecksum?: string;
+  state: OperatorReviewAdmissionMaterialState;
+  canDecide: boolean;
+  blockers: string[];
+  latestDecision?: OperatorReviewAdmissionDecision;
+}
+
+export interface OperatorReviewAdmissionDecisionRequest {
+  expectedPlanChecksum: string;
+  reviewMaterialChecksum: string;
+  observedStateChecksum: string;
+  decision: OperatorReviewAdmissionDecisionValue;
+  reason: string;
+  expiresAt: string;
+  supersedesDecisionId?: string;
+  revokesDecisionId?: string;
+}
+
 export interface OperatorPlanCompare {
   left: OperatorPlanRow;
   right: OperatorPlanRow;

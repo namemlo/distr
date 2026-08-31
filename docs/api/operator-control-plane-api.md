@@ -115,22 +115,23 @@ declarations remain compatible without a database contract.
 
 ### Plans and approvals
 
-| Method      | Route                                      | Purpose                                     |
-| ----------- | ------------------------------------------ | ------------------------------------------- |
-| `POST`      | `/deployment-plan-drafts`                  | Create mutable plan draft                   |
-| `GET/PATCH` | `/deployment-plan-drafts/{id}`             | Inspect/edit with optimistic revision       |
-| `POST`      | `/deployment-plan-drafts/{id}/validate`    | Resolve exact target preview and blockers   |
-| `POST`      | `/deployment-plan-drafts/{id}/publish`     | Publish immutable plan/checksum             |
-| `GET`       | `/deployment-plans`                        | List published plans                        |
-| `GET`       | `/deployment-plans/{id}`                   | Get one plan                                |
-| `POST`      | `/deployment-plans/{id}/approval-requests` | Request checksum-bound approval             |
-| `POST`      | `/deployment-plans/{id}/previous-state`    | Create a new compatible previous-state plan |
-| `POST`      | `/deployment-plans/{id}/baseline-adoptions` | Adopt exact existing runtime without deployment |
-| `POST`      | `/deployment-plans/{id}/tasks`             | Create durable tasks for a ready plan       |
-| `GET/POST`  | `/deployment-plans/{id}/review-decisions`  | Read or append observed-state-bound GO/NO_GO evidence |
-| `GET`       | `/approval-requests`                       | List approval work                          |
-| `GET`       | `/approval-requests/{id}`                  | Get immutable request/decision evidence     |
-| `POST`      | `/approval-requests/{id}/decisions`        | Append an authorized decision               |
+| Method      | Route                                       | Purpose                                                                  |
+| ----------- | ------------------------------------------- | ------------------------------------------------------------------------ |
+| `POST`      | `/deployment-plan-drafts`                   | Create mutable plan draft                                                |
+| `GET/PATCH` | `/deployment-plan-drafts/{id}`              | Inspect/edit with optimistic revision                                    |
+| `POST`      | `/deployment-plan-drafts/{id}/validate`     | Resolve exact target preview and blockers                                |
+| `POST`      | `/deployment-plan-drafts/{id}/publish`      | Publish immutable plan/checksum                                          |
+| `GET`       | `/deployment-plans`                         | List published plans                                                     |
+| `GET`       | `/deployment-plans/{id}`                    | Get one plan                                                             |
+| `POST`      | `/deployment-plans/{id}/approval-requests`  | Request checksum-bound approval                                          |
+| `POST`      | `/deployment-plans/{id}/previous-state`     | Create a new compatible previous-state plan                              |
+| `POST`      | `/deployment-plans/{id}/baseline-adoptions` | Adopt exact existing runtime without deployment                          |
+| `POST`      | `/deployment-plans/{id}/tasks`              | Create durable tasks for a ready plan                                    |
+| `GET/POST`  | `/deployment-plans/{id}/review-decisions`   | Read or append observed-state-bound GO/NO_GO evidence                    |
+| `GET`       | `/deployment-plans/{id}/review-material`    | Read current checksums, admission validity, decision state, and blockers |
+| `GET`       | `/approval-requests`                        | List approval work                                                       |
+| `GET`       | `/approval-requests/{id}`                   | Get immutable request/decision evidence                                  |
+| `POST`      | `/approval-requests/{id}/decisions`         | Append an authorized decision                                            |
 
 Any material release, config, provider, migration, baseline, policy, or campaign
 change invalidates reuse of the old approval.
@@ -147,6 +148,13 @@ to be an unexpired `GO`. The decision binds the plan and the current
 independently observed-state checksum. A later `NO_GO`, supersession,
 revocation, observed-state change, expiry, or failed authorization recheck
 blocks before task or external mutation.
+
+The review-material route returns `MISSING`, `GO`, `NO_GO`, or `STALE`, the
+exact plan/observed/review checksums, the latest append-only decision, current
+admission validity, blockers, and `canDecide`. Material is incomplete when any
+frozen baseline lacks a current independent observation. The operator plan UI
+uses this response to disable unsafe controls and requires typed confirmation
+of the exact review-material checksum before appending a decision.
 
 Baseline adoption is available only for an initial sealed `READY` native-v2
 bootstrap plan with no task, external-execution, pending-desired, or active-
@@ -197,12 +205,14 @@ approval is the provider deployment plan's exact, unexpired approved request;
 the probe is a separate native observation evidence binding. Missing, stale,
 superseded, or checksum-invalid evidence blocks publication.
 
-The standard controlled-client policy requires four-eyes approval: the
-execution requester cannot decide the same plan or campaign approval. A
-distinct authorized organization actor must append the decision. Preparing
-plans or reading evidence does not authorize mutation of a client runtime,
-client workload database, or companion-service runtime; each such scope must be
-named in the separately approved execution boundary.
+The standard controlled-client policy requires four-eyes approval. At
+admission and again before task creation, Distr revalidates current active
+approval-group membership, excludes the executing actor from requirements with
+`executor_cannot_approve`, and prevents reuse of one actor across requirements
+that require `distinct_approvers`. Preparing plans or reading evidence does not
+authorize mutation of a client runtime, client workload database, or
+companion-service runtime; each such scope must be named in the separately
+approved execution boundary.
 
 ### Campaigns
 

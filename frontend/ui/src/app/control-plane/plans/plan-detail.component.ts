@@ -13,6 +13,8 @@ import {
   OperatorPlanDetail,
   OperatorPlanDraftValidation,
   OperatorPlanFact,
+  OperatorReviewAdmissionDecisionValue,
+  OperatorReviewAdmissionMaterial,
 } from '../../types/operator-control-plane';
 
 const actionablePlanStatuses = new Set(['DRAFT', 'VALIDATING', 'BLOCKED', 'READY', 'PUBLISHED']);
@@ -43,11 +45,14 @@ export class PlanDetailComponent implements OnInit {
   protected readonly evidence = signal<OperatorEvidenceRef[]>([]);
   protected readonly comparison = signal<OperatorPlanCompare | null>(null);
   protected readonly draftValidation = signal<OperatorPlanDraftValidation | null>(null);
+  protected readonly reviewMaterial = signal<OperatorReviewAdmissionMaterial | null>(null);
   protected readonly loading = signal(true);
   protected readonly evidenceLoading = signal(true);
+  protected readonly reviewMaterialLoading = signal(true);
   protected readonly actionLoading = signal<string | null>(null);
   protected readonly error = signal<OperatorControlPlaneError | null>(null);
   protected readonly evidenceError = signal<OperatorControlPlaneError | null>(null);
+  protected readonly reviewMaterialError = signal<OperatorControlPlaneError | null>(null);
   protected readonly actionError = signal<string | null>(null);
 
   protected readonly compareForm = this.fb.nonNullable.group({
@@ -59,6 +64,10 @@ export class PlanDetailComponent implements OnInit {
     expectedPreviewChecksum: ['', Validators.required],
   });
   protected readonly approvalForm = this.fb.nonNullable.group({
+    expiresAt: ['', Validators.required],
+  });
+  protected readonly reviewDecisionForm = this.fb.nonNullable.group({
+    reason: ['', [Validators.required, Validators.maxLength(4096)]],
     expiresAt: ['', Validators.required],
   });
   protected readonly previousStateForm = this.fb.nonNullable.group({
@@ -88,17 +97,21 @@ export class PlanDetailComponent implements OnInit {
     this.evidence.set([]);
     this.comparison.set(null);
     this.draftValidation.set(null);
+    this.reviewMaterial.set(null);
     this.actionError.set(null);
     this.error.set(null);
     this.evidenceError.set(null);
+    this.reviewMaterialError.set(null);
   }
 
   protected load() {
     const generation = ++this.planLoadGeneration;
     this.loading.set(true);
     this.evidenceLoading.set(true);
+    this.reviewMaterialLoading.set(true);
     this.error.set(null);
     this.evidenceError.set(null);
+    this.reviewMaterialError.set(null);
 
     this.service.getPlan(this.planId).subscribe({
       next: ({detail}) => {
@@ -124,6 +137,26 @@ export class PlanDetailComponent implements OnInit {
         if (generation !== this.planLoadGeneration) return;
         this.evidenceError.set(error);
         this.evidenceLoading.set(false);
+      },
+    });
+
+    this.loadReviewMaterial(generation);
+  }
+
+  private loadReviewMaterial(generation = this.planLoadGeneration) {
+    this.reviewMaterialLoading.set(true);
+    this.reviewMaterialError.set(null);
+    this.service.getReviewAdmissionMaterial(this.planId).subscribe({
+      next: (material) => {
+        if (generation !== this.planLoadGeneration) return;
+        this.reviewMaterial.set(material);
+        this.reviewMaterialLoading.set(false);
+      },
+      error: (error: OperatorControlPlaneError) => {
+        if (generation !== this.planLoadGeneration) return;
+        this.reviewMaterial.set(null);
+        this.reviewMaterialError.set(error);
+        this.reviewMaterialLoading.set(false);
       },
     });
   }
@@ -210,6 +243,47 @@ export class PlanDetailComponent implements OnInit {
     await this.runAction('approval', async () => {
       const result = await firstValueFrom(this.service.requestPlanApproval(this.planId, {expiresAt}));
       await this.router.navigate(['/approvals'], {queryParams: {requestId: result.id}});
+    });
+  }
+
+  protected async recordReviewDecision(decision: OperatorReviewAdmissionDecisionValue) {
+    const material = this.reviewMaterial();
+    if (this.reviewDecisionForm.invalid || !material?.canDecide || this.actionLoading()) {
+      return;
+    }
+    const values = this.reviewDecisionForm.getRawValue();
+    const latest = material.latestDecision;
+    const confirmed = await firstValueFrom(
+      this.overlay.confirm({
+        message: {
+          message: `Record ${decision} for the current observed deployment material?`,
+          alert: {
+            type: decision === 'NO_GO' ? 'danger' : 'warning',
+            message: 'This appends immutable review evidence bound to the exact plan and observed-state checksums.',
+          },
+        },
+        requiredConfirmInputText: material.reviewMaterialChecksum,
+        confirmLabel: decision === 'NO_GO' ? 'Record NO_GO' : 'Record GO',
+      })
+    );
+    if (!confirmed) {
+      return;
+    }
+    await this.runAction(`review-${decision.toLowerCase()}`, async () => {
+      await firstValueFrom(
+        this.service.recordReviewAdmissionDecision(this.planId, {
+          expectedPlanChecksum: material.planChecksum,
+          reviewMaterialChecksum: material.reviewMaterialChecksum,
+          observedStateChecksum: material.observedStateChecksum,
+          decision,
+          reason: values.reason.trim(),
+          expiresAt: new Date(values.expiresAt).toISOString(),
+          supersedesDecisionId: latest?.id,
+          revokesDecisionId: decision === 'NO_GO' && material.state === 'GO' ? latest?.id : undefined,
+        })
+      );
+      this.reviewDecisionForm.controls.reason.reset('');
+      this.loadReviewMaterial();
     });
   }
 
@@ -301,6 +375,25 @@ export class PlanDetailComponent implements OnInit {
   protected actionsEnabled(): boolean {
     const status = this.detail()?.plan.status;
     return status !== undefined && actionablePlanStatuses.has(status) && !this.isPartial();
+  }
+
+  protected reviewDecisionStateLabel(): string {
+    switch (this.reviewMaterial()?.state) {
+      case 'GO':
+        return 'Current GO';
+      case 'NO_GO':
+        return 'Current NO_GO';
+      case 'STALE':
+        return 'Stale review decision';
+      case 'MISSING':
+        return 'No review decision';
+      default:
+        return 'Review state unavailable';
+    }
+  }
+
+  protected reviewDecisionEnabled(): boolean {
+    return this.reviewMaterial()?.canDecide === true && !this.reviewMaterialLoading();
   }
 
   protected isForbidden(): boolean {
