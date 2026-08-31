@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
@@ -1667,255 +1668,14 @@ func loadObservedProviderCandidates(
 		return nil, nil
 	}
 	candidates := make([]types.RequirementProviderCandidate, 0)
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-			SELECT capability.name,
-			       release.id,
-			       capability.version_or_range,
-			       state.platform,
-			       release.canonical_checksum,
-			       unit.id,
-			       instance.id,
-			       unit.subscriber_set_checksum,
-			       observation.id,
-			       state.state_version,
-			       state.state_checksum,
-			       observation.state_version,
-			       observation.state_checksum,
-			       scope.delivery_model,
-			       instance.management_state,
-			       EXISTS (
-			         SELECT 1
-			         FROM ComponentReleaseArtifact artifact
-			         WHERE artifact.release_bundle_id = release.id
-			           AND artifact.organization_id = release.organization_id
-			           AND artifact.platform = state.platform
-			       )
-			       AND NOT EXISTS (
-			         SELECT 1
-			         FROM ComponentReleaseArtifact artifact
-			         WHERE artifact.release_bundle_id = release.id
-			           AND artifact.organization_id = release.organization_id
-			           AND artifact.platform = state.platform
-			           AND NOT EXISTS (
-			             SELECT 1
-			             FROM ComponentReleaseEvidenceVerification verification
-			             WHERE verification.release_bundle_id = artifact.release_bundle_id
-			               AND verification.organization_id = artifact.organization_id
-			               AND verification.artifact_key = artifact.artifact_key
-			               AND verification.platform = artifact.platform
-			               AND verification.artifact_digest = artifact.platform_digest
-			           )
-			       ) AS provenance_verified,
-			       COALESCE((
-			         SELECT 'sha256:' || encode(
-			           sha256(convert_to(
-			             string_agg(
-			               verification.id::TEXT || '|' ||
-			               verification.artifact_key || '|' ||
-			               verification.platform || '|' ||
-			               verification.artifact_digest || '|' ||
-			               verification.evidence_digest || '|' ||
-			               verification.policy_checksum || '|' ||
-			               verification.trust_root_id::TEXT,
-			               E'\n'
-			               ORDER BY verification.artifact_key,
-			                        verification.platform,
-			                        verification.id
-			             ),
-			             'UTF8'
-			           )),
-			           'hex'
-			         )
-			         FROM ComponentReleaseEvidenceVerification verification
-			         WHERE verification.release_bundle_id = release.id
-			           AND verification.organization_id = release.organization_id
-			           AND verification.platform = state.platform
-			       ), '') AS provenance_binding_checksum
-			FROM ComponentReleaseCapability capability
-			JOIN ReleaseBundle release
-			  ON release.id = capability.release_bundle_id
-			 AND release.organization_id = capability.organization_id
-			 AND release.kind = 'component'
-			 AND release.status = 'PUBLISHED'
-			JOIN TargetComponentState state
-			  ON state.release_bundle_id = release.id
-			 AND state.organization_id = release.organization_id
-			 AND state.health = 'HEALTHY'
-			JOIN LATERAL (
-			  SELECT observed.id,
-			         observed.state_version,
-			         observed.state_checksum
-			  FROM TargetComponentObservation observed
-			  WHERE observed.target_component_state_id = state.id
-			    AND observed.organization_id = state.organization_id
-			    AND observed.health = 'HEALTHY'
-			  ORDER BY observed.observed_at DESC,
-			           observed.state_version DESC,
-			           observed.id DESC
-			  LIMIT 1
-			) observation ON true
-			JOIN DeploymentUnit unit
-			  ON unit.organization_id = state.organization_id
-			 AND unit.deployment_target_id = state.deployment_target_id
-			 AND unit.retired_at IS NULL
-			JOIN TargetEnvironmentAssignment assignment
-			  ON assignment.id = unit.target_environment_assignment_id
-			 AND assignment.deployment_target_id = unit.deployment_target_id
-			 AND assignment.organization_id = unit.organization_id
-			 AND assignment.active_from <= @effectiveAt
-			 AND (
-			   assignment.active_until IS NULL
-			   OR assignment.active_until > @effectiveAt
-			 )
-			JOIN DeploymentScope scope
-			  ON scope.id = unit.deployment_scope_id
-			 AND scope.organization_id = unit.organization_id
-			 AND scope.retired_at IS NULL
-			JOIN ComponentInstance instance
-			  ON instance.deployment_unit_id = unit.id
-			 AND instance.organization_id = unit.organization_id
-			 AND instance.retired_at IS NULL
-			JOIN ComponentDefinition definition
-			  ON definition.id = instance.component_definition_id
-			 AND definition.organization_id = instance.organization_id
-			 AND definition.retired_at IS NULL
-			 AND (
-			   definition.key = state.component
-			   OR instance.physical_name = state.component
-			 )
-			WHERE capability.organization_id = @organizationID
-			  AND capability.direction = 'provides'
-			  AND capability.name = ANY(@capabilities)
-			  AND (
-			    unit.id = @deploymentUnitID
-			    OR (
-			      scope.delivery_model = 'shared'
-			      AND (
-			        @customerOrganizationID::UUID IS NULL
-			        OR EXISTS (
-			          SELECT 1
-			          FROM DeploymentUnitSubscriber subscriber
-			          WHERE subscriber.organization_id = unit.organization_id
-			            AND subscriber.deployment_unit_id = unit.id
-			            AND subscriber.customer_organization_id = @customerOrganizationID
-			            AND subscriber.retired_at IS NULL
-			        )
-			      )
-			    )
-			    OR scope.delivery_model = 'external'
-			    OR instance.management_state = 'external'
-			  )
-			ORDER BY capability.name,
-			         release.id,
-			         unit.id,
-			         instance.id,
-			         observation.id
-			LIMIT @providerRowLimit`,
-		pgx.NamedArgs{
-			"organizationID":         organizationID,
-			"effectiveAt":            input.EffectiveAt,
-			"capabilities":           capabilities,
-			"deploymentUnitID":       input.Unit.ID,
-			"customerOrganizationID": input.Scope.CustomerOrganizationID,
-			"providerRowLimit":       maxTargetPlanProviderRows + 1,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("could not batch query observed target requirement providers: %w", err)
-	}
-	defer rows.Close()
 	providerRows := 0
-	for rows.Next() {
-		providerRows++
-		if err := validateTargetPlanProviderRowCount(providerRows); err != nil {
-			return nil, err
-		}
-		var (
-			capabilityName            string
-			releaseID                 uuid.UUID
-			version                   string
-			platform                  string
-			releaseChecksum           string
-			unitID                    uuid.UUID
-			instanceID                uuid.UUID
-			subscriberChecksum        string
-			observationID             uuid.UUID
-			expectedVersion           int64
-			expectedChecksum          string
-			observedVersion           int64
-			observedChecksum          string
-			deliveryModel             types.DeliveryModel
-			managementState           types.RegistryManagementState
-			provenanceVerified        bool
-			provenanceBindingChecksum string
-		)
-		if err := rows.Scan(
-			&capabilityName,
-			&releaseID,
-			&version,
-			&platform,
-			&releaseChecksum,
-			&unitID,
-			&instanceID,
-			&subscriberChecksum,
-			&observationID,
-			&expectedVersion,
-			&expectedChecksum,
-			&observedVersion,
-			&observedChecksum,
-			&deliveryModel,
-			&managementState,
-			&provenanceVerified,
-			&provenanceBindingChecksum,
-		); err != nil {
-			return nil, fmt.Errorf("could not scan observed target requirement provider: %w", err)
-		}
-		for _, requirement := range requirementsByCapability[capabilityName] {
-			mode, componentInstanceID, allowed := observedProviderMode(
-				requirement,
-				unitID,
-				instanceID,
-				deliveryModel,
-				managementState,
-				input.Unit.ID,
-			)
-			if !allowed {
-				continue
-			}
-			releaseIDCopy := releaseID
-			observationIDCopy := observationID
-			unitIDCopy := unitID
-			candidate := types.RequirementProviderCandidate{
-				RequirementKey: requirement.Key, Mode: mode,
-				ProviderReleaseID: &releaseIDCopy, ObservationID: &observationIDCopy,
-				ProviderVersion: version, ProviderPlatform: platform,
-				ProviderReleaseChecksum:   releaseChecksum,
-				ProvenanceBindingChecksum: provenanceBindingChecksum,
-				DeploymentUnitID:          unitIDCopy, ComponentInstanceID: componentInstanceID,
-				ExpectedStateVersion:  expectedVersion,
-				ExpectedStateChecksum: expectedChecksum,
-				ObservedStateVersion:  observedVersion,
-				ObservedStateChecksum: observedChecksum,
-				ProvenanceVerified:    provenanceVerified,
-				V1Compatible:          true,
-			}
-			if mode == types.RequirementResolutionModeSharedProvider {
-				candidate.SubscriberSetChecksum = subscriberChecksum
-			}
-			candidates, err = appendTargetPlanCandidate(candidates, candidate)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("could not collect observed target requirement providers: %w", err)
-	}
 	nativeRows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT capability.name, release.id, capability.version_or_range,
 		       active.platform, release.canonical_checksum, unit.id, instance.id,
 		       unit.subscriber_set_checksum, active.id, observed.id, active.revision,
-		       observed.state_checksum, scope.delivery_model, instance.management_state,
+		       observed.state_checksum, observed.fresh_until, observed.trusted,
+		       observed.is_current, observed.evidence_checksum,
+		       scope.delivery_model, instance.management_state,
 		       NOT EXISTS (
 		         SELECT 1 FROM ComponentReleaseArtifact candidate_artifact
 		         WHERE candidate_artifact.release_bundle_id = release.id
@@ -1944,14 +1704,19 @@ func loadObservedProviderCandidates(
 		           AND verification.organization_id = release.organization_id
 		           AND verification.platform = active.platform
 		           AND verification.artifact_digest = active.artifact_digest
-		       ), '')
+		       ), ''), approval.id, approval.subject_id, approval.subject_revision,
+		       approval.subject_checksum, approval.effective_policy_checksum,
+		       approval.subscriber_set_checksum, approval.revision, approval.state
 		FROM ComponentDesiredStateHead head
 		JOIN ActiveDesiredRevision active
 		  ON active.id = head.active_revision_id AND active.organization_id = head.organization_id
 		 AND active.health_evidence_kind = 'STANDARD_READINESS'
 		 AND active.health_evidence_use = 'STANDARD_PROMOTION_ELIGIBLE'
+		JOIN ObservedComponentState verified
+		  ON verified.id = active.verified_observation_id
+		 AND verified.organization_id = active.organization_id
 		JOIN ObservedComponentState observed
-		  ON observed.id = active.verified_observation_id
+		  ON observed.observer_id = verified.observer_id
 		 AND observed.organization_id = active.organization_id
 		 AND observed.deployment_unit_id = active.deployment_unit_id
 		 AND observed.component_instance_id = active.component_instance_id
@@ -1975,6 +1740,26 @@ func loadObservedProviderCandidates(
 		 AND capability.direction = 'provides' AND capability.name = ANY(@capabilities)
 		JOIN DeploymentUnit unit ON unit.id = active.deployment_unit_id
 		 AND unit.organization_id = active.organization_id AND unit.retired_at IS NULL
+		JOIN DeploymentPlan provider_plan ON provider_plan.id = active.deployment_plan_id
+		 AND provider_plan.organization_id = active.organization_id
+		 AND provider_plan.deployment_unit_id = unit.id
+		LEFT JOIN LATERAL (
+		  SELECT request.id, request.subject_id, request.subject_revision,
+		         request.subject_checksum, request.effective_policy_checksum,
+		         request.subscriber_set_checksum, request.revision, request.state
+		  FROM ApprovalRequest request
+		  WHERE request.organization_id = provider_plan.organization_id
+		    AND request.subject_type = 'deployment_plan'
+		    AND request.subject_id = provider_plan.id
+		    AND request.subject_revision = 1
+		    AND request.subject_checksum = provider_plan.canonical_checksum
+		    AND request.effective_policy_checksum = provider_plan.effective_policy_checksum
+		    AND request.subscriber_set_checksum = provider_plan.subscriber_set_checksum
+		    AND request.state = 'APPROVED'
+		    AND request.expires_at > @effectiveAt
+		  ORDER BY request.resolved_at DESC, request.id DESC
+		  LIMIT 1
+		) approval ON true
 		JOIN TargetEnvironmentAssignment assignment
 		  ON assignment.id = unit.target_environment_assignment_id
 		 AND assignment.organization_id = unit.organization_id
@@ -1986,6 +1771,8 @@ func loadObservedProviderCandidates(
 		 AND instance.deployment_unit_id = unit.id AND instance.organization_id = unit.organization_id
 		 AND instance.retired_at IS NULL
 		WHERE head.organization_id = @organizationID AND NOT head.quarantined
+		  AND observed.is_current AND observed.trusted
+		  AND observed.fresh_until >= @effectiveAt
 		  AND (unit.id = @deploymentUnitID OR scope.delivery_model IN ('shared', 'external')
 		       OR instance.management_state = 'external')
 		  AND (@customerOrganizationID::UUID IS NULL OR unit.id = @deploymentUnitID
@@ -2013,15 +1800,26 @@ func loadObservedProviderCandidates(
 		}
 		var capabilityName, version, platform, releaseChecksum, subscriberChecksum string
 		var expectedChecksum, provenanceBindingChecksum string
+		var observationFreshUntil time.Time
+		var observationTrusted, observationCurrent bool
+		var contractProbeEvidenceChecksum string
 		var releaseID, unitID, instanceID, activeID, observedID uuid.UUID
+		var approvalID, approvalSubjectID *uuid.UUID
+		var approvalSubjectRevision, approvalRevision *int64
+		var approvalSubjectChecksum, approvalPolicyChecksum, approvalSubscriberChecksum *string
+		var approvalState *types.ApprovalRequestState
 		var revision int64
 		var deliveryModel types.DeliveryModel
 		var managementState types.RegistryManagementState
 		var provenanceVerified bool
 		if err := nativeRows.Scan(&capabilityName, &releaseID, &version, &platform,
 			&releaseChecksum, &unitID, &instanceID, &subscriberChecksum, &activeID,
-			&observedID, &revision, &expectedChecksum, &deliveryModel, &managementState,
-			&provenanceVerified, &provenanceBindingChecksum); err != nil {
+			&observedID, &revision, &expectedChecksum, &observationFreshUntil,
+			&observationTrusted, &observationCurrent, &contractProbeEvidenceChecksum,
+			&deliveryModel, &managementState, &provenanceVerified,
+			&provenanceBindingChecksum, &approvalID, &approvalSubjectID,
+			&approvalSubjectRevision, &approvalSubjectChecksum, &approvalPolicyChecksum,
+			&approvalSubscriberChecksum, &approvalRevision, &approvalState); err != nil {
 			return nil, fmt.Errorf("could not scan native observed requirement provider: %w", err)
 		}
 		for _, requirement := range requirementsByCapability[capabilityName] {
@@ -2039,7 +1837,28 @@ func loadObservedProviderCandidates(
 				DeploymentUnitID: unitID, ComponentInstanceID: componentInstanceID,
 				ExpectedStateVersion: revision, ExpectedStateChecksum: expectedChecksum,
 				ObservedStateVersion: revision, ObservedStateChecksum: expectedChecksum,
+				ObservationFreshUntil: observationFreshUntil,
+				ObservationTrusted:    observationTrusted, ObservationCurrent: observationCurrent,
 				ProvenanceVerified: provenanceVerified, V1Compatible: true,
+			}
+			if mode == types.RequirementResolutionModeApprovedExternal &&
+				approvalID != nil && approvalSubjectID != nil &&
+				approvalSubjectRevision != nil && approvalSubjectChecksum != nil &&
+				approvalPolicyChecksum != nil && approvalSubscriberChecksum != nil &&
+				approvalRevision != nil && approvalState != nil {
+				request := types.ApprovalRequest{
+					ID: *approvalID, SubjectID: *approvalSubjectID,
+					SubjectRevision:         *approvalSubjectRevision,
+					SubjectChecksum:         *approvalSubjectChecksum,
+					EffectivePolicyChecksum: *approvalPolicyChecksum,
+					SubscriberSetChecksum:   *approvalSubscriberChecksum,
+					Revision:                *approvalRevision, State: *approvalState,
+				}
+				contractProbeID := observedID
+				candidate.ProviderApprovalRequestID = approvalID
+				candidate.ProviderApprovalChecksum = approvalEvidenceChecksum(request)
+				candidate.ContractProbeObservationID = &contractProbeID
+				candidate.ContractProbeEvidenceChecksum = contractProbeEvidenceChecksum
 			}
 			if mode == types.RequirementResolutionModeSharedProvider {
 				candidate.SubscriberSetChecksum = subscriberChecksum
@@ -2264,6 +2083,10 @@ func insertDeploymentPlanResolvedRequirements(
 			"provenance_binding_checksum", "provider_deployment_unit_id",
 			"component_instance_id", "subscriber_set_checksum",
 			"expected_state_version", "expected_state_checksum",
+			"provider_evidence_version", "observation_fresh_until",
+			"observation_trusted", "observation_current",
+			"provider_approval_request_id", "provider_approval_checksum",
+			"contract_probe_observation_id", "contract_probe_evidence_checksum",
 			"binding_checksum", "sort_order",
 		},
 		pgx.CopyFromSlice(len(plan.ResolvedRequirements), func(index int) ([]any, error) {
@@ -2277,7 +2100,12 @@ func insertDeploymentPlanResolvedRequirements(
 				resolution.ProviderReleaseChecksum, resolution.ProvenanceBindingChecksum,
 				resolution.ProviderDeploymentUnitID, resolution.ComponentInstanceID,
 				resolution.SubscriberSetChecksum, resolution.ExpectedStateVersion,
-				resolution.ExpectedStateChecksum, resolution.BindingChecksum, resolution.SortOrder,
+				resolution.ExpectedStateChecksum, resolution.ProviderEvidenceVersion,
+				resolution.ObservationFreshUntil, resolution.ObservationTrusted,
+				resolution.ObservationCurrent, resolution.ProviderApprovalRequestID,
+				resolution.ProviderApprovalChecksum, resolution.ContractProbeObservationID,
+				resolution.ContractProbeEvidenceChecksum, resolution.BindingChecksum,
+				resolution.SortOrder,
 			}, nil
 		}),
 	)
@@ -2339,6 +2167,14 @@ func getDeploymentPlanResolvedRequirements(
 		       subscriber_set_checksum,
 		       expected_state_version,
 		       expected_state_checksum,
+		       provider_evidence_version,
+		       observation_fresh_until,
+		       observation_trusted,
+		       observation_current,
+		       provider_approval_request_id,
+		       provider_approval_checksum,
+		       contract_probe_observation_id,
+		       contract_probe_evidence_checksum,
 		       binding_checksum,
 		       sort_order
 		FROM DeploymentPlanResolvedRequirement

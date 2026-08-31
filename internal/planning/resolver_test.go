@@ -413,6 +413,105 @@ func TestResolveTargetRequirementsRequiresFrozenDisabledFeatureFlag(t *testing.T
 	g.Expect(issueCodes(issues)).To(ContainElement("invalid_requirement_binding"))
 }
 
+func TestResolveTargetRequirementsRejectsUntrustedNonCurrentAndStaleProviderEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*types.RequirementProviderCandidate, time.Time)
+		code   string
+	}{
+		{
+			name: "untrusted",
+			mutate: func(candidate *types.RequirementProviderCandidate, _ time.Time) {
+				candidate.ObservationTrusted = false
+			},
+			code: "untrusted_provider_observation",
+		},
+		{
+			name: "non-current",
+			mutate: func(candidate *types.RequirementProviderCandidate, _ time.Time) {
+				candidate.ObservationCurrent = false
+			},
+			code: "non_current_provider_observation",
+		},
+		{
+			name: "stale",
+			mutate: func(candidate *types.RequirementProviderCandidate, effectiveAt time.Time) {
+				candidate.ObservationFreshUntil = effectiveAt.Add(-time.Nanosecond)
+			},
+			code: "stale_provider_observation",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			draft := resolverFixture()
+			test.mutate(&draft.ResolutionInput.Candidates[0], draft.ResolutionInput.EffectiveAt)
+
+			_, issues := ResolveTargetRequirements(context.Background(), draft)
+
+			g.Expect(issueCodes(issues)).To(ContainElement(test.code))
+		})
+	}
+}
+
+func TestResolveTargetRequirementsRequiresExternalApprovalAndContractProbe(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*types.RequirementProviderCandidate)
+	}{
+		{
+			name: "approval",
+			mutate: func(candidate *types.RequirementProviderCandidate) {
+				candidate.ProviderApprovalRequestID = nil
+			},
+		},
+		{
+			name: "approval checksum",
+			mutate: func(candidate *types.RequirementProviderCandidate) {
+				candidate.ProviderApprovalChecksum = ""
+			},
+		},
+		{
+			name: "contract probe",
+			mutate: func(candidate *types.RequirementProviderCandidate) {
+				candidate.ContractProbeObservationID = nil
+			},
+		},
+		{
+			name: "contract probe checksum",
+			mutate: func(candidate *types.RequirementProviderCandidate) {
+				candidate.ContractProbeEvidenceChecksum = ""
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			draft := resolverFixture()
+			test.mutate(&draft.ResolutionInput.Candidates[1])
+
+			_, issues := ResolveTargetRequirements(context.Background(), draft)
+
+			g.Expect(issueCodes(issues)).To(ContainElement("invalid_requirement_binding"))
+		})
+	}
+}
+
+func TestResolveTargetRequirementsChecksumBindsFreshnessApprovalAndProbe(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	first, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+	original := first[1].BindingChecksum
+
+	draft.ResolutionInput.Candidates[1].ObservationFreshUntil =
+		draft.ResolutionInput.Candidates[1].ObservationFreshUntil.Add(time.Minute)
+	draft.ResolutionInput.Candidates[1].ProviderApprovalChecksum = checksum("c")
+	draft.ResolutionInput.Candidates[1].ContractProbeEvidenceChecksum = checksum("d")
+	second, secondIssues := ResolveTargetRequirements(context.Background(), draft)
+
+	g.Expect(secondIssues).To(BeEmpty())
+	g.Expect(second[1].BindingChecksum).NotTo(Equal(original))
+}
+
 func resolverFixture() types.PlanDraft {
 	organizationID := uuid.MustParse("10000000-0000-0000-0000-000000000001")
 	productReleaseID := uuid.MustParse("10000000-0000-0000-0000-000000000002")
@@ -449,7 +548,8 @@ func resolverFixture() types.PlanDraft {
 			RequirementKey:            "target:consumer:cache",
 			Mode:                      types.RequirementResolutionModePinnedExisting,
 			ProviderReleaseID:         ptrUUID(componentReleaseID),
-			ObservationID:             ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000001")),
+			ActiveDesiredRevisionID:   ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000001")),
+			ObservedComponentStateID:  ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000011")),
 			ProviderVersion:           "1.4.0",
 			ProviderPlatform:          "linux/amd64",
 			DeploymentUnitID:          unitID,
@@ -458,29 +558,41 @@ func resolverFixture() types.PlanDraft {
 			ExpectedStateVersion:      7,
 			ObservedStateChecksum:     checksum("1"),
 			ExpectedStateChecksum:     checksum("1"),
+			ObservationFreshUntil:     now.Add(time.Hour),
+			ObservationTrusted:        true,
+			ObservationCurrent:        true,
 			ProviderReleaseChecksum:   checksum("7"),
 			ProvenanceBindingChecksum: checksum("8"),
 			ProvenanceVerified:        true,
 			V1Compatible:              true,
 		},
 		{
-			RequirementKey:        "target:consumer:email",
-			Mode:                  types.RequirementResolutionModeApprovedExternal,
-			ObservationID:         ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000002")),
-			ProviderVersion:       "1.2.0",
-			ProviderPlatform:      "linux/amd64",
-			ExpectedStateChecksum: checksum("2"),
-			ObservedStateChecksum: checksum("2"),
-			ExpectedStateVersion:  1,
-			ObservedStateVersion:  1,
-			ProvenanceVerified:    true,
-			V1Compatible:          true,
+			RequirementKey:                "target:consumer:email",
+			Mode:                          types.RequirementResolutionModeApprovedExternal,
+			ActiveDesiredRevisionID:       ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000002")),
+			ObservedComponentStateID:      ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000012")),
+			ProviderVersion:               "1.2.0",
+			ProviderPlatform:              "linux/amd64",
+			ExpectedStateChecksum:         checksum("2"),
+			ObservedStateChecksum:         checksum("2"),
+			ExpectedStateVersion:          1,
+			ObservedStateVersion:          1,
+			ObservationFreshUntil:         now.Add(time.Hour),
+			ObservationTrusted:            true,
+			ObservationCurrent:            true,
+			ProviderApprovalRequestID:     ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000022")),
+			ProviderApprovalChecksum:      checksum("9"),
+			ContractProbeObservationID:    ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000012")),
+			ContractProbeEvidenceChecksum: checksum("a"),
+			ProvenanceVerified:            true,
+			V1Compatible:                  true,
 		},
 		{
 			RequirementKey:            "target:consumer:fraud",
 			Mode:                      types.RequirementResolutionModeSharedProvider,
 			ProviderReleaseID:         ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000003")),
-			ObservationID:             ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000004")),
+			ActiveDesiredRevisionID:   ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000004")),
+			ObservedComponentStateID:  ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000014")),
 			ProviderVersion:           "1.5.0",
 			ProviderPlatform:          "linux/amd64",
 			DeploymentUnitID:          sharedUnitID,
@@ -489,6 +601,9 @@ func resolverFixture() types.PlanDraft {
 			ObservedStateChecksum:     checksum("4"),
 			ExpectedStateVersion:      3,
 			ObservedStateVersion:      3,
+			ObservationFreshUntil:     now.Add(time.Hour),
+			ObservationTrusted:        true,
+			ObservationCurrent:        true,
 			ProviderReleaseChecksum:   checksum("7"),
 			ProvenanceBindingChecksum: checksum("8"),
 			ProvenanceVerified:        true,

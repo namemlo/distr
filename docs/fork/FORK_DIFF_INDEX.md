@@ -1950,6 +1950,32 @@ Use one entry per pull request:
   require an authoritative non-bootstrap baseline. Executor evidence never
   promotes observed state; independent observation remains authoritative.
 
+### PR-088 - Fresh dependency provider evidence
+
+- Status: Implemented with focused local verification; integrated PostgreSQL
+  migration and final release gates remain pending.
+- Upstream base: Native baseline-adoption hardening checkpoint.
+- Feature flags: Uses the existing default-off `operator_control_plane_v2`
+  planning boundary.
+- User-facing behavior: New target plans reject stale, untrusted, or
+  superseded reused-provider observations. Approved external providers also
+  expose exact provider approval and contract-probe evidence.
+- Database changes: Migration 168 adds evidence-versioned, append-only
+  freshness/currentness, approval, and probe fields with retained foreign keys
+  and downgrade refusal.
+- API changes: Draft validation and published-plan/read-model responses expose
+  the checksum-bound provider evidence; no new route family is added.
+- UI changes: The plan draft review shows freshness, current/trusted status,
+  provider approval, and contract-probe identities/checksums.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0075, PR-088 fork notes, and operator API guidance.
+- Tests: Focused resolver, repository-query, persistence, migration-shape, and
+  operator read-model coverage.
+- Upstream contribution notes: Community-neutral dependency evidence with no
+  adopter, registry, CI, cloud, or service-name assumptions.
+- Compatibility notes: Existing evidence-version-1 plans remain readable and
+  unchanged. Legacy observations cannot authorize new dependency bindings.
+
 ### PR-091 - Independent runtime measurement probes
 
 - Status: Implemented with focused local verification; no live environment is

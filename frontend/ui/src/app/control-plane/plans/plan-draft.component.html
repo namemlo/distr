@@ -338,7 +338,13 @@
                     </td>
                     <td class="max-w-80 break-all px-4 py-3 font-mono text-xs">
                       <div>
-                        {{ resolution.providerReleaseId || resolution.observationId || 'Feature flag binding' }}
+                        {{
+                          resolution.providerReleaseId ||
+                            resolution.observationId ||
+                            resolution.observedComponentStateId ||
+                            resolution.providerApprovalRequestId ||
+                            'Feature flag binding'
+                        }}
                       </div>
                       <div>{{ resolution.providerDeploymentUnitId || 'Selected unit' }}</div>
                       <div>{{ resolution.providerReleaseChecksum || resolution.subscriberSetChecksum || '' }}</div>
@@ -346,6 +352,21 @@
                     <td class="max-w-72 break-all px-4 py-3 font-mono text-xs">
                       <div>v{{ resolution.expectedStateVersion }}</div>
                       <div>{{ resolution.expectedStateChecksum }}</div>
+                      @if (resolution.observationFreshUntil) {
+                        <div>fresh until {{ resolution.observationFreshUntil | date: 'medium' }}</div>
+                        <div>
+                          trusted {{ resolution.observationTrusted ? 'yes' : 'no' }} · current
+                          {{ resolution.observationCurrent ? 'yes' : 'no' }}
+                        </div>
+                      }
+                      @if (resolution.providerApprovalRequestId) {
+                        <div>approval {{ resolution.providerApprovalRequestId }}</div>
+                        <div>{{ resolution.providerApprovalChecksum }}</div>
+                      }
+                      @if (resolution.contractProbeObservationId) {
+                        <div>contract probe {{ resolution.contractProbeObservationId }}</div>
+                        <div>{{ resolution.contractProbeEvidenceChecksum }}</div>
+                      }
                     </td>
                     <td class="max-w-72 break-all px-4 py-3 font-mono text-xs">{{ resolution.bindingChecksum }}</td>
                   </tr>

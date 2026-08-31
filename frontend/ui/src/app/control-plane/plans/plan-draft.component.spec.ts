@@ -241,6 +241,12 @@ describe('PlanDraftComponent', () => {
     expect(text).toContain('sha256:expected-customer-state');
     expect(text).toContain('sha256:binding-included');
     expect(text).toContain('sha256:binding-pinned');
+    expect(text).toContain('fresh until');
+    expect(text).toContain('trusted yes · current yes');
+    expect(text).toContain('provider-approval-1');
+    expect(text).toContain('sha256:provider-approval');
+    expect(text).toContain('contract-probe-1');
+    expect(text).toContain('sha256:contract-probe');
     expect(text).toContain('sha256:preview');
 
     const forward = fixture.nativeElement.querySelector('[aria-labelledby="forward-heading"]').textContent;
@@ -331,8 +337,35 @@ describe('PlanDraftComponent', () => {
           providerDeploymentUnitId: 'customer-unit-1',
           expectedStateVersion: 2,
           expectedStateChecksum: 'sha256:expected-customer-state',
+          providerEvidenceVersion: 2,
+          observationFreshUntil: '2026-07-18T04:00:00Z',
+          observationTrusted: true,
+          observationCurrent: true,
           bindingChecksum: 'sha256:binding-pinned',
           sortOrder: 1,
+        },
+        {
+          requirementKey: 'transaction-api:email.api:external',
+          consumerKey: 'transaction-api',
+          capability: 'email.api',
+          versionRange: '=1.0.0',
+          mode: 'approved_external',
+          activeDesiredRevisionId: 'external-active-1',
+          observedComponentStateId: 'contract-probe-1',
+          providerVersion: '1.0.0',
+          providerPlatform: 'linux/amd64',
+          expectedStateVersion: 3,
+          expectedStateChecksum: 'sha256:external-state',
+          providerEvidenceVersion: 2,
+          observationFreshUntil: '2026-07-18T04:00:00Z',
+          observationTrusted: true,
+          observationCurrent: true,
+          providerApprovalRequestId: 'provider-approval-1',
+          providerApprovalChecksum: 'sha256:provider-approval',
+          contractProbeObservationId: 'contract-probe-1',
+          contractProbeEvidenceChecksum: 'sha256:contract-probe',
+          bindingChecksum: 'sha256:binding-external',
+          sortOrder: 2,
         },
       ],
       graph: {

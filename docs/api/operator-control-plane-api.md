@@ -167,6 +167,17 @@ liveness for `pinned_existing` or shared-provider promotion. Concurrent exact
 idempotent requests re-read and return the committed adoption; changed material
 under the same key remains a conflict.
 
+New target plans use dependency provider evidence version 2. For
+`pinned_existing`, `shared_provider`, and `approved_external`, validation and
+published-plan responses include `observationFreshUntil`,
+`observationTrusted`, and `observationCurrent`; all three must authorize the
+server-selected planning instant. `approved_external` also includes
+`providerApprovalRequestId`, `providerApprovalChecksum`,
+`contractProbeObservationId`, and `contractProbeEvidenceChecksum`. The
+approval is the provider deployment plan's exact, unexpired approved request;
+the probe is a separate native observation evidence binding. Missing, stale,
+superseded, or checksum-invalid evidence blocks publication.
+
 The standard controlled-client policy requires four-eyes approval: the
 execution requester cannot decide the same plan or campaign approval. A
 distinct authorized organization actor must append the decision. Preparing

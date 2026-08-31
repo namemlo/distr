@@ -2,6 +2,7 @@ package db
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,4 +97,23 @@ func TestOperatorPlanDetailQueriesAreConstantAndTenantPlanBound(t *testing.T) {
 		g.Expect(query).To(ContainSubstring("organization_id = @organizationID"))
 		g.Expect(query).To(ContainSubstring("@planID"))
 	}
+}
+
+func TestRequirementProviderEvidenceMessageExposesFrozenApprovalAndProbe(t *testing.T) {
+	g := NewWithT(t)
+	freshUntil := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
+	approvalID := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1")
+	probeID := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2")
+
+	message := requirementProviderEvidenceMessage(types.RequirementResolution{
+		ObservationFreshUntil:         &freshUntil,
+		ProviderApprovalRequestID:     &approvalID,
+		ProviderApprovalChecksum:      "sha256:" + strings.Repeat("a", 64),
+		ContractProbeObservationID:    &probeID,
+		ContractProbeEvidenceChecksum: "sha256:" + strings.Repeat("b", 64),
+	})
+
+	g.Expect(message).To(ContainSubstring(freshUntil.Format(time.RFC3339)))
+	g.Expect(message).To(ContainSubstring(approvalID.String()))
+	g.Expect(message).To(ContainSubstring(probeID.String()))
 }

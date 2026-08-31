@@ -1197,6 +1197,14 @@ export interface OperatorRequirementResolution {
   subscriberSetChecksum?: string;
   expectedStateVersion: number;
   expectedStateChecksum: string;
+  providerEvidenceVersion?: number;
+  observationFreshUntil?: string;
+  observationTrusted?: boolean;
+  observationCurrent?: boolean;
+  providerApprovalRequestId?: string;
+  providerApprovalChecksum?: string;
+  contractProbeObservationId?: string;
+  contractProbeEvidenceChecksum?: string;
   bindingChecksum: string;
   sortOrder: number;
   v1Compatible?: boolean;

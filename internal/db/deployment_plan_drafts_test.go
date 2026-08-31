@@ -208,6 +208,46 @@ func TestMigration164PreservesLegacyAndAddsNativePlanningLineage(t *testing.T) {
 	g.Expect(downText).To(ContainSubstring("refusing migration 164 rollback: native planning lineage exists"))
 }
 
+func TestMigration168FreezesFreshProviderApprovalAndContractProbeEvidence(t *testing.T) {
+	g := NewWithT(t)
+	root := filepath.Join("..", "migrations", "sql")
+	up, err := os.ReadFile(filepath.Join(root, "168_dependency_provider_evidence.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	down, err := os.ReadFile(filepath.Join(root, "168_dependency_provider_evidence.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	upText, downText := string(up), string(down)
+
+	for _, fact := range []string{
+		"provider_evidence_version", "observation_fresh_until",
+		"observation_trusted", "observation_current",
+		"provider_approval_request_id", "provider_approval_checksum",
+		"contract_probe_observation_id", "contract_probe_evidence_checksum",
+		"REFERENCES ApprovalRequest", "REFERENCES ObservedComponentState",
+		"contract_probe_observation_id = observed_component_state_id",
+	} {
+		g.Expect(upText).To(ContainSubstring(fact))
+	}
+	g.Expect(downText).To(ContainSubstring("ACCESS EXCLUSIVE MODE"))
+	g.Expect(downText).To(ContainSubstring(
+		"refusing migration 168 rollback: checksum-bound provider evidence exists",
+	))
+}
+
+func TestObservedProviderCandidatesRequireCurrentFreshEvidenceAndApprovedExternalBinding(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("deployment_plan_drafts.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	g.Expect(text).To(ContainSubstring("observed.is_current AND observed.trusted"))
+	g.Expect(text).To(ContainSubstring("observed.fresh_until >= @effectiveAt"))
+	g.Expect(text).To(ContainSubstring("request.subject_type = 'deployment_plan'"))
+	g.Expect(text).To(ContainSubstring("request.state = 'APPROVED'"))
+	g.Expect(text).To(ContainSubstring("request.expires_at > @effectiveAt"))
+	g.Expect(text).To(ContainSubstring("approvalEvidenceChecksum(request)"))
+	g.Expect(text).To(ContainSubstring("candidate.ContractProbeEvidenceChecksum"))
+}
+
 func TestDraftPublicationUsesRowLockAndExactOptimisticChecksum(t *testing.T) {
 	g := NewWithT(t)
 	source, err := os.ReadFile("deployment_plan_drafts.go")

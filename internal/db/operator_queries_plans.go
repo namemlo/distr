@@ -561,7 +561,8 @@ func buildOperatorPlanDetail(
 		detail.Requirements = append(detail.Requirements, types.OperatorPlanFact{
 			ID: &id, Key: requirement.RequirementKey, Kind: string(requirement.Mode),
 			Expected: requirement.VersionRange, Actual: requirement.ProviderVersion,
-			Checksum: requirement.BindingChecksum, Order: requirement.SortOrder,
+			Checksum: requirement.BindingChecksum,
+			Message:  requirementProviderEvidenceMessage(requirement), Order: requirement.SortOrder,
 		})
 	}
 	for _, migration := range plan.Migrations {
@@ -636,6 +637,20 @@ func buildOperatorPlanDetail(
 	detail.AdapterChecksum = checksumOperatorPlanValue(detail.Adapters)
 	detail.IntentChecksum = checksumOperatorPlanValue(intents)
 	return detail
+}
+
+func requirementProviderEvidenceMessage(requirement types.RequirementResolution) string {
+	parts := make([]string, 0, 4)
+	if requirement.ObservationFreshUntil != nil {
+		parts = append(parts, "observation fresh until "+requirement.ObservationFreshUntil.UTC().Format(time.RFC3339))
+	}
+	if requirement.ProviderApprovalRequestID != nil {
+		parts = append(parts, "provider approval "+requirement.ProviderApprovalRequestID.String()+" @ "+requirement.ProviderApprovalChecksum)
+	}
+	if requirement.ContractProbeObservationID != nil {
+		parts = append(parts, "contract probe "+requirement.ContractProbeObservationID.String()+" @ "+requirement.ContractProbeEvidenceChecksum)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func appendOperatorPlanConfigFacts(

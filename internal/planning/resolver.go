@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/distr-sh/distr/internal/adapterresolution"
@@ -277,63 +278,90 @@ func ResolveTargetRequirements(
 			continue
 		}
 		resolution := types.RequirementResolution{
-			RequirementKey:            requirement.Key,
-			ConsumerKey:               requirement.ConsumerKey,
-			Capability:                requirement.Capability,
-			VersionRange:              requirement.VersionRange,
-			Mode:                      candidate.Mode,
-			ProviderReleaseID:         cloneUUID(candidate.ProviderReleaseID),
-			ObservationID:             cloneUUID(candidate.ObservationID),
-			ActiveDesiredRevisionID:   cloneUUID(candidate.ActiveDesiredRevisionID),
-			ObservedComponentStateID:  cloneUUID(candidate.ObservedComponentStateID),
-			ProviderVersion:           strings.TrimSpace(candidate.ProviderVersion),
-			ProviderPlatform:          strings.TrimSpace(candidate.ProviderPlatform),
-			ProviderReleaseChecksum:   strings.TrimSpace(candidate.ProviderReleaseChecksum),
-			ProvenanceBindingChecksum: strings.TrimSpace(candidate.ProvenanceBindingChecksum),
-			ComponentInstanceID:       cloneUUID(candidate.ComponentInstanceID),
-			SubscriberSetChecksum:     strings.TrimSpace(candidate.SubscriberSetChecksum),
-			ExpectedStateVersion:      candidate.ExpectedStateVersion,
-			ExpectedStateChecksum:     strings.TrimSpace(candidate.ExpectedStateChecksum),
-			SortOrder:                 len(resolutions),
-			V1Compatible:              candidate.V1Compatible,
+			RequirementKey:                requirement.Key,
+			ConsumerKey:                   requirement.ConsumerKey,
+			Capability:                    requirement.Capability,
+			VersionRange:                  requirement.VersionRange,
+			Mode:                          candidate.Mode,
+			ProviderReleaseID:             cloneUUID(candidate.ProviderReleaseID),
+			ObservationID:                 cloneUUID(candidate.ObservationID),
+			ActiveDesiredRevisionID:       cloneUUID(candidate.ActiveDesiredRevisionID),
+			ObservedComponentStateID:      cloneUUID(candidate.ObservedComponentStateID),
+			ProviderVersion:               strings.TrimSpace(candidate.ProviderVersion),
+			ProviderPlatform:              strings.TrimSpace(candidate.ProviderPlatform),
+			ProviderReleaseChecksum:       strings.TrimSpace(candidate.ProviderReleaseChecksum),
+			ProvenanceBindingChecksum:     strings.TrimSpace(candidate.ProvenanceBindingChecksum),
+			ComponentInstanceID:           cloneUUID(candidate.ComponentInstanceID),
+			SubscriberSetChecksum:         strings.TrimSpace(candidate.SubscriberSetChecksum),
+			ExpectedStateVersion:          candidate.ExpectedStateVersion,
+			ExpectedStateChecksum:         strings.TrimSpace(candidate.ExpectedStateChecksum),
+			ProviderEvidenceVersion:       2,
+			ObservationTrusted:            candidate.ObservationTrusted,
+			ObservationCurrent:            candidate.ObservationCurrent,
+			ProviderApprovalRequestID:     cloneUUID(candidate.ProviderApprovalRequestID),
+			ProviderApprovalChecksum:      strings.TrimSpace(candidate.ProviderApprovalChecksum),
+			ContractProbeObservationID:    cloneUUID(candidate.ContractProbeObservationID),
+			ContractProbeEvidenceChecksum: strings.TrimSpace(candidate.ContractProbeEvidenceChecksum),
+			SortOrder:                     len(resolutions),
+			V1Compatible:                  candidate.V1Compatible,
+		}
+		if !candidate.ObservationFreshUntil.IsZero() {
+			freshUntil := candidate.ObservationFreshUntil
+			resolution.ObservationFreshUntil = &freshUntil
 		}
 		if candidate.DeploymentUnitID != uuid.Nil {
 			resolution.ProviderDeploymentUnitID = cloneUUID(&candidate.DeploymentUnitID)
 		}
 		checksum, err := canonicalChecksum(struct {
-			RequirementKey            string                          `json:"requirementKey"`
-			ConsumerKey               string                          `json:"consumerKey"`
-			Capability                string                          `json:"capability"`
-			VersionRange              string                          `json:"versionRange"`
-			Mode                      types.RequirementResolutionMode `json:"mode"`
-			ProviderReleaseID         *uuid.UUID                      `json:"providerReleaseId,omitempty"`
-			ObservationID             *uuid.UUID                      `json:"observationId,omitempty"`
-			ActiveDesiredRevisionID   *uuid.UUID                      `json:"activeDesiredRevisionId,omitempty"`
-			ObservedComponentStateID  *uuid.UUID                      `json:"observedComponentStateId,omitempty"`
-			ProviderVersion           string                          `json:"providerVersion"`
-			ProviderPlatform          string                          `json:"providerPlatform"`
-			ProviderReleaseChecksum   string                          `json:"providerReleaseChecksum,omitempty"`
-			ProvenanceBindingChecksum string                          `json:"provenanceBindingChecksum,omitempty"`
-			ProviderDeploymentUnitID  *uuid.UUID                      `json:"providerDeploymentUnitId,omitempty"`
-			ComponentInstanceID       *uuid.UUID                      `json:"componentInstanceId,omitempty"`
-			SubscriberSetChecksum     string                          `json:"subscriberSetChecksum,omitempty"`
-			ExpectedStateVersion      int64                           `json:"expectedStateVersion"`
-			ExpectedStateChecksum     string                          `json:"expectedStateChecksum"`
+			RequirementKey                string                          `json:"requirementKey"`
+			ConsumerKey                   string                          `json:"consumerKey"`
+			Capability                    string                          `json:"capability"`
+			VersionRange                  string                          `json:"versionRange"`
+			Mode                          types.RequirementResolutionMode `json:"mode"`
+			ProviderReleaseID             *uuid.UUID                      `json:"providerReleaseId,omitempty"`
+			ObservationID                 *uuid.UUID                      `json:"observationId,omitempty"`
+			ActiveDesiredRevisionID       *uuid.UUID                      `json:"activeDesiredRevisionId,omitempty"`
+			ObservedComponentStateID      *uuid.UUID                      `json:"observedComponentStateId,omitempty"`
+			ProviderVersion               string                          `json:"providerVersion"`
+			ProviderPlatform              string                          `json:"providerPlatform"`
+			ProviderReleaseChecksum       string                          `json:"providerReleaseChecksum,omitempty"`
+			ProvenanceBindingChecksum     string                          `json:"provenanceBindingChecksum,omitempty"`
+			ProviderDeploymentUnitID      *uuid.UUID                      `json:"providerDeploymentUnitId,omitempty"`
+			ComponentInstanceID           *uuid.UUID                      `json:"componentInstanceId,omitempty"`
+			SubscriberSetChecksum         string                          `json:"subscriberSetChecksum,omitempty"`
+			ExpectedStateVersion          int64                           `json:"expectedStateVersion"`
+			ExpectedStateChecksum         string                          `json:"expectedStateChecksum"`
+			ProviderEvidenceVersion       int16                           `json:"providerEvidenceVersion"`
+			ObservationFreshUntil         *time.Time                      `json:"observationFreshUntil,omitempty"`
+			ObservationTrusted            bool                            `json:"observationTrusted"`
+			ObservationCurrent            bool                            `json:"observationCurrent"`
+			ProviderApprovalRequestID     *uuid.UUID                      `json:"providerApprovalRequestId,omitempty"`
+			ProviderApprovalChecksum      string                          `json:"providerApprovalChecksum,omitempty"`
+			ContractProbeObservationID    *uuid.UUID                      `json:"contractProbeObservationId,omitempty"`
+			ContractProbeEvidenceChecksum string                          `json:"contractProbeEvidenceChecksum,omitempty"`
 		}{
 			RequirementKey: requirement.Key, ConsumerKey: requirement.ConsumerKey,
 			Capability: requirement.Capability, VersionRange: requirement.VersionRange,
 			Mode: candidate.Mode, ProviderReleaseID: resolution.ProviderReleaseID,
 			ObservationID: resolution.ObservationID, ProviderVersion: resolution.ProviderVersion,
-			ActiveDesiredRevisionID:   resolution.ActiveDesiredRevisionID,
-			ObservedComponentStateID:  resolution.ObservedComponentStateID,
-			ProviderPlatform:          resolution.ProviderPlatform,
-			ProviderReleaseChecksum:   resolution.ProviderReleaseChecksum,
-			ProvenanceBindingChecksum: resolution.ProvenanceBindingChecksum,
-			ProviderDeploymentUnitID:  resolution.ProviderDeploymentUnitID,
-			ComponentInstanceID:       resolution.ComponentInstanceID,
-			SubscriberSetChecksum:     resolution.SubscriberSetChecksum,
-			ExpectedStateVersion:      resolution.ExpectedStateVersion,
-			ExpectedStateChecksum:     resolution.ExpectedStateChecksum,
+			ActiveDesiredRevisionID:       resolution.ActiveDesiredRevisionID,
+			ObservedComponentStateID:      resolution.ObservedComponentStateID,
+			ProviderPlatform:              resolution.ProviderPlatform,
+			ProviderReleaseChecksum:       resolution.ProviderReleaseChecksum,
+			ProvenanceBindingChecksum:     resolution.ProvenanceBindingChecksum,
+			ProviderDeploymentUnitID:      resolution.ProviderDeploymentUnitID,
+			ComponentInstanceID:           resolution.ComponentInstanceID,
+			SubscriberSetChecksum:         resolution.SubscriberSetChecksum,
+			ExpectedStateVersion:          resolution.ExpectedStateVersion,
+			ExpectedStateChecksum:         resolution.ExpectedStateChecksum,
+			ProviderEvidenceVersion:       resolution.ProviderEvidenceVersion,
+			ObservationFreshUntil:         resolution.ObservationFreshUntil,
+			ObservationTrusted:            resolution.ObservationTrusted,
+			ObservationCurrent:            resolution.ObservationCurrent,
+			ProviderApprovalRequestID:     resolution.ProviderApprovalRequestID,
+			ProviderApprovalChecksum:      resolution.ProviderApprovalChecksum,
+			ContractProbeObservationID:    resolution.ContractProbeObservationID,
+			ContractProbeEvidenceChecksum: resolution.ContractProbeEvidenceChecksum,
 		})
 		if err != nil {
 			issues = append(issues, types.ValidationIssue{
@@ -737,6 +765,28 @@ func validateCandidateBinding(
 			Message: "provider platform does not match the target config platform",
 		}
 	}
+	if candidate.Mode == types.RequirementResolutionModePinnedExisting ||
+		candidate.Mode == types.RequirementResolutionModeSharedProvider ||
+		candidate.Mode == types.RequirementResolutionModeApprovedExternal {
+		switch {
+		case !candidate.ObservationTrusted:
+			return &types.ValidationIssue{
+				Code: "untrusted_provider_observation", Field: field,
+				Message: "provider observation is not trusted",
+			}
+		case !candidate.ObservationCurrent:
+			return &types.ValidationIssue{
+				Code: "non_current_provider_observation", Field: field,
+				Message: "provider observation is no longer the trusted current observation",
+			}
+		case candidate.ObservationFreshUntil.IsZero() ||
+			candidate.ObservationFreshUntil.Before(draft.ResolutionInput.EffectiveAt):
+			return &types.ValidationIssue{
+				Code: "stale_provider_observation", Field: field,
+				Message: "provider observation is stale at the plan decision time",
+			}
+		}
+	}
 	switch candidate.Mode {
 	case types.RequirementResolutionModeIncluded:
 		if candidate.ProviderReleaseID == nil ||
@@ -775,12 +825,19 @@ func validateCandidateBinding(
 			return invalidBinding(field, "shared provider requires exact shared unit, subscriber set, release, and observation")
 		}
 	case types.RequirementResolutionModeApprovedExternal:
-		if candidate.ObservationID == nil ||
+		if !candidateObservationLineageValid(candidate) ||
+			candidate.ActiveDesiredRevisionID == nil ||
+			candidate.ObservedComponentStateID == nil ||
+			candidate.ProviderApprovalRequestID == nil ||
+			!planChecksumPattern.MatchString(candidate.ProviderApprovalChecksum) ||
+			candidate.ContractProbeObservationID == nil ||
+			*candidate.ContractProbeObservationID != *candidate.ObservedComponentStateID ||
+			!planChecksumPattern.MatchString(candidate.ContractProbeEvidenceChecksum) ||
 			(candidate.ProviderReleaseID != nil &&
 				(!planChecksumPattern.MatchString(candidate.ProviderReleaseChecksum) ||
 					!planChecksumPattern.MatchString(candidate.ProvenanceBindingChecksum))) ||
 			!candidate.ProvenanceVerified {
-			return invalidBinding(field, "approved external provider requires trusted approval evidence")
+			return invalidBinding(field, "approved external provider requires exact approval and contract-probe evidence")
 		}
 	case types.RequirementResolutionModeFeatureDisabled:
 		enabled, present := draft.ResolutionInput.Config.FeatureFlags[candidate.FeatureFlagKey]
@@ -872,13 +929,19 @@ func compareRequirementCandidates(a, b types.RequirementProviderCandidate) int {
 		a.RequirementKey, string(a.Mode), uuidString(a.ProviderReleaseID),
 		uuidString(a.ObservationID), uuidString(a.ActiveDesiredRevisionID),
 		uuidString(a.ObservedComponentStateID), a.ProviderVersion, a.DeploymentUnitID.String(),
-		uuidString(a.ComponentInstanceID),
+		uuidString(a.ComponentInstanceID), a.ObservationFreshUntil.UTC().Format(time.RFC3339Nano),
+		fmt.Sprintf("%t", a.ObservationTrusted), fmt.Sprintf("%t", a.ObservationCurrent),
+		uuidString(a.ProviderApprovalRequestID), a.ProviderApprovalChecksum,
+		uuidString(a.ContractProbeObservationID), a.ContractProbeEvidenceChecksum,
 	}
 	keysB := []string{
 		b.RequirementKey, string(b.Mode), uuidString(b.ProviderReleaseID),
 		uuidString(b.ObservationID), uuidString(b.ActiveDesiredRevisionID),
 		uuidString(b.ObservedComponentStateID), b.ProviderVersion, b.DeploymentUnitID.String(),
-		uuidString(b.ComponentInstanceID),
+		uuidString(b.ComponentInstanceID), b.ObservationFreshUntil.UTC().Format(time.RFC3339Nano),
+		fmt.Sprintf("%t", b.ObservationTrusted), fmt.Sprintf("%t", b.ObservationCurrent),
+		uuidString(b.ProviderApprovalRequestID), b.ProviderApprovalChecksum,
+		uuidString(b.ContractProbeObservationID), b.ContractProbeEvidenceChecksum,
 	}
 	for index := range keysA {
 		if cmp := strings.Compare(keysA[index], keysB[index]); cmp != 0 {

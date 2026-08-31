@@ -177,54 +177,69 @@ type TargetRequirement struct {
 }
 
 type RequirementProviderCandidate struct {
-	RequirementKey            string                    `json:"requirementKey"`
-	Mode                      RequirementResolutionMode `json:"mode"`
-	ProviderReleaseID         *uuid.UUID                `json:"providerReleaseId,omitempty"`
-	ObservationID             *uuid.UUID                `json:"observationId,omitempty"`
-	ActiveDesiredRevisionID   *uuid.UUID                `json:"activeDesiredRevisionId,omitempty"`
-	ObservedComponentStateID  *uuid.UUID                `json:"observedComponentStateId,omitempty"`
-	ProviderVersion           string                    `json:"providerVersion"`
-	ProviderPlatform          string                    `json:"providerPlatform"`
-	ProviderReleaseChecksum   string                    `json:"providerReleaseChecksum,omitempty"`
-	ProvenanceBindingChecksum string                    `json:"provenanceBindingChecksum,omitempty"`
-	DeploymentUnitID          uuid.UUID                 `json:"deploymentUnitId,omitempty"`
-	ComponentInstanceID       *uuid.UUID                `json:"componentInstanceId,omitempty"`
-	SubscriberSetChecksum     string                    `json:"subscriberSetChecksum,omitempty"`
-	ExpectedStateVersion      int64                     `json:"expectedStateVersion"`
-	ExpectedStateChecksum     string                    `json:"expectedStateChecksum"`
-	ObservedStateVersion      int64                     `json:"observedStateVersion"`
-	ObservedStateChecksum     string                    `json:"observedStateChecksum"`
-	ProvenanceVerified        bool                      `json:"provenanceVerified"`
-	FeatureFlagKey            string                    `json:"featureFlagKey,omitempty"`
-	FeatureFlagEnabled        bool                      `json:"featureFlagEnabled"`
-	V1Compatible              bool                      `json:"v1Compatible"`
+	RequirementKey                string                    `json:"requirementKey"`
+	Mode                          RequirementResolutionMode `json:"mode"`
+	ProviderReleaseID             *uuid.UUID                `json:"providerReleaseId,omitempty"`
+	ObservationID                 *uuid.UUID                `json:"observationId,omitempty"`
+	ActiveDesiredRevisionID       *uuid.UUID                `json:"activeDesiredRevisionId,omitempty"`
+	ObservedComponentStateID      *uuid.UUID                `json:"observedComponentStateId,omitempty"`
+	ProviderVersion               string                    `json:"providerVersion"`
+	ProviderPlatform              string                    `json:"providerPlatform"`
+	ProviderReleaseChecksum       string                    `json:"providerReleaseChecksum,omitempty"`
+	ProvenanceBindingChecksum     string                    `json:"provenanceBindingChecksum,omitempty"`
+	DeploymentUnitID              uuid.UUID                 `json:"deploymentUnitId,omitempty"`
+	ComponentInstanceID           *uuid.UUID                `json:"componentInstanceId,omitempty"`
+	SubscriberSetChecksum         string                    `json:"subscriberSetChecksum,omitempty"`
+	ExpectedStateVersion          int64                     `json:"expectedStateVersion"`
+	ExpectedStateChecksum         string                    `json:"expectedStateChecksum"`
+	ObservedStateVersion          int64                     `json:"observedStateVersion"`
+	ObservedStateChecksum         string                    `json:"observedStateChecksum"`
+	ObservationFreshUntil         time.Time                 `json:"observationFreshUntil,omitempty"`
+	ObservationTrusted            bool                      `json:"observationTrusted"`
+	ObservationCurrent            bool                      `json:"observationCurrent"`
+	ProviderApprovalRequestID     *uuid.UUID                `json:"providerApprovalRequestId,omitempty"`
+	ProviderApprovalChecksum      string                    `json:"providerApprovalChecksum,omitempty"`
+	ContractProbeObservationID    *uuid.UUID                `json:"contractProbeObservationId,omitempty"`
+	ContractProbeEvidenceChecksum string                    `json:"contractProbeEvidenceChecksum,omitempty"`
+	ProvenanceVerified            bool                      `json:"provenanceVerified"`
+	FeatureFlagKey                string                    `json:"featureFlagKey,omitempty"`
+	FeatureFlagEnabled            bool                      `json:"featureFlagEnabled"`
+	V1Compatible                  bool                      `json:"v1Compatible"`
 }
 
 type RequirementResolution struct {
-	ID                        uuid.UUID                 `db:"id" json:"id,omitempty"`
-	DeploymentPlanID          uuid.UUID                 `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
-	OrganizationID            uuid.UUID                 `db:"organization_id" json:"organizationId,omitempty"`
-	RequirementKey            string                    `db:"requirement_key" json:"requirementKey"`
-	ConsumerKey               string                    `db:"consumer_key" json:"consumerKey"`
-	Capability                string                    `db:"capability" json:"capability"`
-	VersionRange              string                    `db:"version_range" json:"versionRange"`
-	Mode                      RequirementResolutionMode `db:"mode" json:"mode"`
-	ProviderReleaseID         *uuid.UUID                `db:"provider_release_id" json:"providerReleaseId,omitempty"`
-	ObservationID             *uuid.UUID                `db:"observation_id" json:"observationId,omitempty"`
-	ActiveDesiredRevisionID   *uuid.UUID                `db:"active_desired_revision_id" json:"activeDesiredRevisionId,omitempty"`
-	ObservedComponentStateID  *uuid.UUID                `db:"observed_component_state_id" json:"observedComponentStateId,omitempty"`
-	ProviderVersion           string                    `db:"provider_version" json:"providerVersion"`
-	ProviderPlatform          string                    `db:"provider_platform" json:"providerPlatform"`
-	ProviderReleaseChecksum   string                    `db:"provider_release_checksum" json:"providerReleaseChecksum,omitempty"`
-	ProvenanceBindingChecksum string                    `db:"provenance_binding_checksum" json:"provenanceBindingChecksum,omitempty"`
-	ProviderDeploymentUnitID  *uuid.UUID                `db:"provider_deployment_unit_id" json:"providerDeploymentUnitId,omitempty"`
-	ComponentInstanceID       *uuid.UUID                `db:"component_instance_id" json:"componentInstanceId,omitempty"`
-	SubscriberSetChecksum     string                    `db:"subscriber_set_checksum" json:"subscriberSetChecksum,omitempty"`
-	ExpectedStateVersion      int64                     `db:"expected_state_version" json:"expectedStateVersion"`
-	ExpectedStateChecksum     string                    `db:"expected_state_checksum" json:"expectedStateChecksum"`
-	BindingChecksum           string                    `db:"binding_checksum" json:"bindingChecksum"`
-	SortOrder                 int                       `db:"sort_order" json:"sortOrder"`
-	V1Compatible              bool                      `db:"-" json:"v1Compatible"`
+	ID                            uuid.UUID                 `db:"id" json:"id,omitempty"`
+	DeploymentPlanID              uuid.UUID                 `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
+	OrganizationID                uuid.UUID                 `db:"organization_id" json:"organizationId,omitempty"`
+	RequirementKey                string                    `db:"requirement_key" json:"requirementKey"`
+	ConsumerKey                   string                    `db:"consumer_key" json:"consumerKey"`
+	Capability                    string                    `db:"capability" json:"capability"`
+	VersionRange                  string                    `db:"version_range" json:"versionRange"`
+	Mode                          RequirementResolutionMode `db:"mode" json:"mode"`
+	ProviderReleaseID             *uuid.UUID                `db:"provider_release_id" json:"providerReleaseId,omitempty"`
+	ObservationID                 *uuid.UUID                `db:"observation_id" json:"observationId,omitempty"`
+	ActiveDesiredRevisionID       *uuid.UUID                `db:"active_desired_revision_id" json:"activeDesiredRevisionId,omitempty"`
+	ObservedComponentStateID      *uuid.UUID                `db:"observed_component_state_id" json:"observedComponentStateId,omitempty"`
+	ProviderVersion               string                    `db:"provider_version" json:"providerVersion"`
+	ProviderPlatform              string                    `db:"provider_platform" json:"providerPlatform"`
+	ProviderReleaseChecksum       string                    `db:"provider_release_checksum" json:"providerReleaseChecksum,omitempty"`
+	ProvenanceBindingChecksum     string                    `db:"provenance_binding_checksum" json:"provenanceBindingChecksum,omitempty"`
+	ProviderDeploymentUnitID      *uuid.UUID                `db:"provider_deployment_unit_id" json:"providerDeploymentUnitId,omitempty"`
+	ComponentInstanceID           *uuid.UUID                `db:"component_instance_id" json:"componentInstanceId,omitempty"`
+	SubscriberSetChecksum         string                    `db:"subscriber_set_checksum" json:"subscriberSetChecksum,omitempty"`
+	ExpectedStateVersion          int64                     `db:"expected_state_version" json:"expectedStateVersion"`
+	ExpectedStateChecksum         string                    `db:"expected_state_checksum" json:"expectedStateChecksum"`
+	ProviderEvidenceVersion       int16                     `db:"provider_evidence_version" json:"providerEvidenceVersion"`
+	ObservationFreshUntil         *time.Time                `db:"observation_fresh_until" json:"observationFreshUntil,omitempty"`
+	ObservationTrusted            bool                      `db:"observation_trusted" json:"observationTrusted"`
+	ObservationCurrent            bool                      `db:"observation_current" json:"observationCurrent"`
+	ProviderApprovalRequestID     *uuid.UUID                `db:"provider_approval_request_id" json:"providerApprovalRequestId,omitempty"`
+	ProviderApprovalChecksum      string                    `db:"provider_approval_checksum" json:"providerApprovalChecksum,omitempty"`
+	ContractProbeObservationID    *uuid.UUID                `db:"contract_probe_observation_id" json:"contractProbeObservationId,omitempty"`
+	ContractProbeEvidenceChecksum string                    `db:"contract_probe_evidence_checksum" json:"contractProbeEvidenceChecksum,omitempty"`
+	BindingChecksum               string                    `db:"binding_checksum" json:"bindingChecksum"`
+	SortOrder                     int                       `db:"sort_order" json:"sortOrder"`
+	V1Compatible                  bool                      `db:"-" json:"v1Compatible"`
 }
 
 type TargetPlanGraph struct {
