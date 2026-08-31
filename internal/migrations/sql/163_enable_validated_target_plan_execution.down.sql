@@ -1,3 +1,6 @@
+SET LOCAL lock_timeout = '10s';
+SET LOCAL statement_timeout = '5min';
+
 LOCK TABLE DeploymentPlan IN ACCESS EXCLUSIVE MODE;
 
 DO $$
@@ -13,6 +16,44 @@ BEGIN
   END IF;
 END
 $$;
+
+ALTER TABLE DeploymentPlan
+  DROP CONSTRAINT deploymentplan_v2_shape_check,
+  ADD CONSTRAINT deploymentplan_v2_shape_check CHECK (
+    (
+      plan_schema = 'distr.deployment-plan/v1'
+      AND draft_id IS NULL
+      AND deployment_unit_id IS NULL
+      AND target_config_snapshot_id IS NULL
+      AND supersedes_deployment_plan_id IS NULL
+      AND supersede_reason = ''
+      AND protocol_version = 'v1'
+      AND published_by_user_account_id IS NULL
+      AND sealed_at IS NULL
+    )
+    OR (
+      plan_schema = 'distr.target-deployment-plan/v2'
+      AND draft_id IS NOT NULL
+      AND deployment_unit_id IS NOT NULL
+      AND target_config_snapshot_id IS NOT NULL
+      AND published_by_user_account_id IS NOT NULL
+      AND status = 'BLOCKED'
+      AND canonical_checksum ~ '^sha256:[0-9a-f]{64}$'
+      AND octet_length(canonical_payload) BETWEEN 2 AND 4194304
+      AND canonical_checksum = 'sha256:' || encode(sha256(canonical_payload), 'hex')
+      AND (
+        (
+          supersedes_deployment_plan_id IS NULL
+          AND supersede_reason = ''
+        )
+        OR (
+          supersedes_deployment_plan_id IS NOT NULL
+          AND length(btrim(supersede_reason)) BETWEEN 1 AND 2048
+          AND supersede_reason !~ E'[\\r\\n]'
+        )
+      )
+    )
+  );
 
 CREATE OR REPLACE FUNCTION deployment_plan_v2_immutable_guard()
 RETURNS trigger
@@ -163,6 +204,12 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+DROP TRIGGER DeploymentPlan_v2_immutable_guard ON DeploymentPlan;
+
+CREATE TRIGGER DeploymentPlan_v2_immutable_guard
+BEFORE UPDATE OR DELETE ON DeploymentPlan
+FOR EACH ROW EXECUTE FUNCTION deployment_plan_v2_immutable_guard();
 
 CREATE OR REPLACE FUNCTION deployment_plan_v2_sealed_commit_guard()
 RETURNS trigger

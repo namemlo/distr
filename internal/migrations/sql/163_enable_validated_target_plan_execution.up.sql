@@ -1,3 +1,44 @@
+SET LOCAL lock_timeout = '10s';
+SET LOCAL statement_timeout = '5min';
+
+ALTER TABLE DeploymentPlan
+  DROP CONSTRAINT deploymentplan_v2_shape_check,
+  ADD CONSTRAINT deploymentplan_v2_shape_check CHECK (
+    (
+      plan_schema = 'distr.deployment-plan/v1'
+      AND draft_id IS NULL
+      AND deployment_unit_id IS NULL
+      AND target_config_snapshot_id IS NULL
+      AND supersedes_deployment_plan_id IS NULL
+      AND supersede_reason = ''
+      AND protocol_version = 'v1'
+      AND published_by_user_account_id IS NULL
+      AND sealed_at IS NULL
+    )
+    OR (
+      plan_schema = 'distr.target-deployment-plan/v2'
+      AND draft_id IS NOT NULL
+      AND deployment_unit_id IS NOT NULL
+      AND target_config_snapshot_id IS NOT NULL
+      AND published_by_user_account_id IS NOT NULL
+      AND status IN ('BLOCKED', 'READY', 'EXECUTED')
+      AND canonical_checksum ~ '^sha256:[0-9a-f]{64}$'
+      AND octet_length(canonical_payload) BETWEEN 2 AND 4194304
+      AND canonical_checksum = 'sha256:' || encode(sha256(canonical_payload), 'hex')
+      AND (
+        (
+          supersedes_deployment_plan_id IS NULL
+          AND supersede_reason = ''
+        )
+        OR (
+          supersedes_deployment_plan_id IS NOT NULL
+          AND length(btrim(supersede_reason)) BETWEEN 1 AND 2048
+          AND supersede_reason !~ E'[\\r\\n]'
+        )
+      )
+    )
+  );
+
 CREATE OR REPLACE FUNCTION deployment_plan_v2_immutable_guard()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -15,6 +56,15 @@ BEGIN
     END IF;
     RAISE EXCEPTION 'published target deployment plans retain audit lineage'
       USING ERRCODE = '23514';
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.plan_schema = 'distr.target-deployment-plan/v2'
+       AND NEW.sealed_at IS NOT NULL THEN
+      RAISE EXCEPTION 'target deployment plan must be inserted unsealed'
+        USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
   END IF;
 
   IF OLD.plan_schema <> 'distr.target-deployment-plan/v2'
@@ -133,6 +183,12 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+DROP TRIGGER DeploymentPlan_v2_immutable_guard ON DeploymentPlan;
+
+CREATE TRIGGER DeploymentPlan_v2_immutable_guard
+BEFORE INSERT OR UPDATE OR DELETE ON DeploymentPlan
+FOR EACH ROW EXECUTE FUNCTION deployment_plan_v2_immutable_guard();
 
 CREATE OR REPLACE FUNCTION deployment_plan_v2_sealed_commit_guard()
 RETURNS trigger

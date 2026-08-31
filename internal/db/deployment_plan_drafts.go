@@ -522,6 +522,18 @@ func publishValidatedTargetPlan(
 		return nil, err
 	}
 	input := draft.ResolutionInput
+	effectivePolicy, policyIssues, err := ResolveEffectivePolicyForDeploymentUnit(
+		ctx,
+		draft.OrganizationID,
+		draft.DeploymentUnitID,
+		input.Assignment.EnvironmentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(policyIssues) > 0 {
+		return nil, &DeploymentPlanDraftValidationError{Issues: policyIssues}
+	}
 	target, err := getTargetPlanDeploymentTarget(
 		ctx,
 		draft.OrganizationID,
@@ -545,6 +557,9 @@ func publishValidatedTargetPlan(
 		PlanSchema:                 types.TargetDeploymentPlanSchemaV2,
 		DraftID:                    &draft.ID,
 		DeploymentUnitID:           &draft.DeploymentUnitID,
+		EffectivePolicy:            &effectivePolicy,
+		EffectivePolicyChecksum:    effectivePolicy.Checksum,
+		SubscriberSetChecksum:      effectivePolicy.SubscriberSetChecksum,
 		TargetConfigSnapshotID:     &draft.TargetConfigSnapshotID,
 		ProtocolVersion:            draft.ProtocolVersion,
 		SupersedesDeploymentPlanID: draft.SupersedesDeploymentPlanID,
@@ -648,6 +663,9 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 			plan_schema,
 			draft_id,
 			deployment_unit_id,
+			effective_policy,
+			effective_policy_checksum,
+			subscriber_set_checksum,
 			target_config_snapshot_id,
 			protocol_version,
 			supersedes_deployment_plan_id,
@@ -671,6 +689,9 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 			@planSchema,
 			@draftID,
 			@deploymentUnitID,
+			@effectivePolicy,
+			@effectivePolicyChecksum,
+			@subscriberSetChecksum,
 			@targetConfigSnapshotID,
 			@protocolVersion,
 			@supersedesDeploymentPlanID,
@@ -690,6 +711,9 @@ func insertPublishedTargetPlan(ctx context.Context, plan *types.DeploymentPlan) 
 			"processSnapshotID": plan.ProcessSnapshotID, "variableSnapshotID": plan.VariableSnapshotID,
 			"releaseContract": plan.ReleaseContract, "planSchema": plan.PlanSchema,
 			"draftID": plan.DraftID, "deploymentUnitID": plan.DeploymentUnitID,
+			"effectivePolicy":            plan.EffectivePolicy,
+			"effectivePolicyChecksum":    plan.EffectivePolicyChecksum,
+			"subscriberSetChecksum":      plan.SubscriberSetChecksum,
 			"targetConfigSnapshotID":     plan.TargetConfigSnapshotID,
 			"protocolVersion":            plan.ProtocolVersion,
 			"supersedesDeploymentPlanID": plan.SupersedesDeploymentPlanID,
