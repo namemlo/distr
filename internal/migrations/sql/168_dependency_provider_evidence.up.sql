@@ -1,3 +1,6 @@
+SET LOCAL lock_timeout = '10s';
+SET LOCAL statement_timeout = '5min';
+
 ALTER TABLE DeploymentPlanResolvedRequirement
   ADD COLUMN provider_evidence_version SMALLINT NOT NULL DEFAULT 1 CHECK (
     provider_evidence_version IN (1, 2)
