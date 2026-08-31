@@ -886,6 +886,7 @@ async function attachmentPath(root, value, name) {
 
 async function inspectScreenshots(root, attachments, prefix) {
   const screenshots = [];
+  const retainedDigests = new Map();
   for (const [index, attachment] of attachments.entries()) {
     const name = screenshotNames[index];
     const source = await attachmentPath(root, attachment.path, name);
@@ -896,10 +897,14 @@ async function inspectScreenshots(root, attachments, prefix) {
       fail(`missing screenshot attachment: ${name}`);
     }
     const {width, height} = inspectPNG(bytes, name);
+    const digest = sha256(bytes);
+    const duplicate = retainedDigests.get(digest);
+    if (duplicate) fail(`browser evidence screenshot bytes are duplicated: ${duplicate} and ${name}`);
+    retainedDigests.set(digest, name);
     screenshots.push({
       name,
       path: `${prefix}/screenshots/${name}`,
-      sha256: sha256(bytes),
+      sha256: digest,
       width,
       height,
       bytes,

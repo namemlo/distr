@@ -138,13 +138,18 @@ test.describe('operator control room route-mocked contract', () => {
       await expect(buildProof).toContainText('VERIFIED');
       await expect(buildProof).toContainText('fixture-build-ledger-43');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 1,
-          slug: 'version-build',
-          actor: 'vendorAdmin',
-          entityIds: {releaseId: fixtureIds.productRelease},
-          checksums: {release: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 1,
+            slug: 'version-build',
+            actor: 'vendorAdmin',
+            entityIds: {releaseId: fixtureIds.productRelease},
+            checksums: {release: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
+          },
+          buildProof
+        )
       );
 
       const changelog = page
@@ -155,13 +160,18 @@ test.describe('operator control room route-mocked contract', () => {
       await expect(changelog).toContainText('2.4.1');
       await expect(changelog).toContainText('2.4.2');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 2,
-          slug: 'accumulated-changelog',
-          actor: 'vendorAdmin',
-          entityIds: {releaseId: fixtureIds.productRelease},
-          checksums: {baseline: 'sha256:8888888888888888888888888888888888888888888888888888888888888888'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 2,
+            slug: 'accumulated-changelog',
+            actor: 'vendorAdmin',
+            entityIds: {releaseId: fixtureIds.productRelease},
+            checksums: {baseline: 'sha256:8888888888888888888888888888888888888888888888888888888888888888'},
+          },
+          changelog
+        )
       );
 
       const graph = page.getByRole('heading', {name: 'Release graph'}).locator('xpath=ancestor::section[1]');
@@ -169,13 +179,18 @@ test.describe('operator control room route-mocked contract', () => {
       await expect(graph).toContainText('>=4.2.0 <5.0.0');
       await expect(graph).toContainText('provider_deploy_and_health_before_consumer');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 3,
-          slug: 'dependency-constraints',
-          actor: 'vendorAdmin',
-          entityIds: {releaseId: fixtureIds.productRelease},
-          checksums: {graph: 'sha256:6666666666666666666666666666666666666666666666666666666666666666'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 3,
+            slug: 'dependency-constraints',
+            actor: 'vendorAdmin',
+            entityIds: {releaseId: fixtureIds.productRelease},
+            checksums: {graph: 'sha256:6666666666666666666666666666666666666666666666666666666666666666'},
+          },
+          graph
+        )
       );
 
       await page.goto(`/deployments/plans/${fixtureIds.plan}`);
@@ -187,15 +202,21 @@ test.describe('operator control room route-mocked contract', () => {
       await expect(page.getByRole('region', {name: 'Steps'})).toContainText(
         '2. Verify ledger-api health before orders-api'
       );
-      await expect(page.getByRole('region', {name: 'Approvals'})).toContainText('Production approval is pending');
+      const pendingApprovals = page.getByRole('region', {name: 'Approvals'});
+      await expect(pendingApprovals).toContainText('Production approval is pending');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 4,
-          slug: 'plan-approval-pending',
-          actor: 'vendorAdmin',
-          entityIds: {planId: fixtureIds.plan},
-          checksums: {plan: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 4,
+            slug: 'plan-approval-pending',
+            actor: 'vendorAdmin',
+            entityIds: {planId: fixtureIds.plan},
+            checksums: {plan: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
+          },
+          pendingApprovals
+        )
       );
       const auditBeforeApproval = await getFromPage(page, '/api/v1/control-plane/audit');
       expect(auditBeforeApproval.body).toMatchObject({items: []});
@@ -203,27 +224,39 @@ test.describe('operator control room route-mocked contract', () => {
       await controlPlane.signInAs('scopedApprover');
       await page.goto('/approvals');
       await page.getByRole('button', {name: 'View approval'}).first().click();
-      await page.getByLabel('Decision comment').fill('Verified immutable release and provider-first plan');
+      const decisionComment = page.getByLabel('Decision comment');
+      await decisionComment.fill('Verified immutable release and provider-first plan');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 5,
-          slug: 'approval-request',
-          actor: 'scopedApprover',
-          entityIds: {approvalId: fixtureIds.approval, planId: fixtureIds.plan},
-          checksums: {approval: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 5,
+            slug: 'approval-request',
+            actor: 'scopedApprover',
+            entityIds: {approvalId: fixtureIds.approval, planId: fixtureIds.plan},
+            checksums: {approval: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'},
+          },
+          decisionComment
+        )
       );
       await page.getByRole('button', {name: 'Approve'}).click();
       await confirmOverlay(page, 'Approve');
-      await expect(page.getByRole('table').getByText('APPROVED', {exact: true})).toBeVisible();
+      const approvedState = page.getByRole('table').getByText('APPROVED', {exact: true});
+      await expect(approvedState).toBeVisible();
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 6,
-          slug: 'approval-approved',
-          actor: 'scopedApprover',
-          entityIds: {approvalId: fixtureIds.approval, planId: fixtureIds.plan},
-          checksums: {approval: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 6,
+            slug: 'approval-approved',
+            actor: 'scopedApprover',
+            entityIds: {approvalId: fixtureIds.approval, planId: fixtureIds.plan},
+            checksums: {approval: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'},
+          },
+          approvedState
+        )
       );
       const auditAfterApproval = await getFromPage(page, '/api/v1/control-plane/audit');
       expect(auditAfterApproval.body).toMatchObject({
@@ -267,16 +300,22 @@ test.describe('operator control room route-mocked contract', () => {
 
       await controlPlane.signInAs('vendorAdmin');
       await page.goto(`/deployments/plans/${fixtureIds.plan}`);
-      await expect(page.getByRole('region', {name: 'Approvals'})).toContainText('Production approval is satisfied');
+      const satisfiedApprovals = page.getByRole('region', {name: 'Approvals'});
+      await expect(satisfiedApprovals).toContainText('Production approval is satisfied');
       await expect(page.getByText('Approval must be satisfied before execution')).toHaveCount(0);
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 7,
-          slug: 'plan-approval-satisfied',
-          actor: 'vendorAdmin',
-          entityIds: {planId: fixtureIds.plan},
-          checksums: {plan: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 7,
+            slug: 'plan-approval-satisfied',
+            actor: 'vendorAdmin',
+            entityIds: {planId: fixtureIds.plan},
+            checksums: {plan: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
+          },
+          satisfiedApprovals
+        )
       );
 
       await page.getByLabel('Successful plan ID').fill(fixtureIds.publishedPlan);
@@ -285,47 +324,70 @@ test.describe('operator control room route-mocked contract', () => {
       await confirmOverlay(page, 'Create previous-state plan', fixtureIds.publishedPlan);
       await expect(page).toHaveURL(new RegExp(`/deployments/plans/${fixtureIds.previousPlan}$`));
       await expect(page.getByText('2026.07.0', {exact: true})).toBeVisible();
-      await expect(page.getByRole('region', {name: 'Changes'})).toContainText('orders-api 2.5.0 to 2.4.0');
+      const previousStateChanges = page.getByRole('region', {name: 'Changes'});
+      await expect(previousStateChanges).toContainText('orders-api 2.5.0 to 2.4.0');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 8,
-          slug: 'previous-state-plan',
-          actor: 'vendorAdmin',
-          entityIds: {
-            planId: fixtureIds.previousPlan,
-            sourcePlanId: fixtureIds.plan,
-            successfulPlanId: fixtureIds.publishedPlan,
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 8,
+            slug: 'previous-state-plan',
+            actor: 'vendorAdmin',
+            entityIds: {
+              planId: fixtureIds.previousPlan,
+              sourcePlanId: fixtureIds.plan,
+              successfulPlanId: fixtureIds.publishedPlan,
+            },
+            checksums: {plan: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},
           },
-          checksums: {plan: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},
-        })
+          previousStateChanges
+        )
       );
 
       await page.getByLabel('Other plan ID').fill(fixtureIds.plan);
       await page.getByRole('button', {name: 'Compare'}).click();
-      await expect(page.getByText('Previous-state plan restores release A while preserving release B')).toBeVisible();
+      const previousStateComparison = page.getByText(
+        'Previous-state plan restores release A while preserving release B'
+      );
+      await expect(previousStateComparison).toBeVisible();
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 9,
-          slug: 'previous-state-comparison',
-          actor: 'vendorAdmin',
-          entityIds: {leftPlanId: fixtureIds.previousPlan, rightPlanId: fixtureIds.plan},
-          checksums: {
-            left: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            right: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 9,
+            slug: 'previous-state-comparison',
+            actor: 'vendorAdmin',
+            entityIds: {leftPlanId: fixtureIds.previousPlan, rightPlanId: fixtureIds.plan},
+            checksums: {
+              left: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              right: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+            },
           },
-        })
+          previousStateComparison
+        )
       );
 
-      await page.goto(`/deployments/plans/${fixtureIds.plan}`);
+      await page.goto(`/releases/${fixtureIds.productRelease}`);
       await expect(page.getByText('2026.08.0', {exact: true})).toBeVisible();
+      await expect(page.getByText('Reference Client DEV', {exact: true})).toBeVisible();
+      const preservedRelease = page
+        .getByRole('heading', {name: 'Release detail'})
+        .locator('xpath=ancestor::section[1]');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 10,
-          slug: 'release-b-history-preserved',
-          actor: 'vendorAdmin',
-          entityIds: {planId: fixtureIds.plan, previousStatePlanId: fixtureIds.previousPlan},
-          checksums: {plan: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 10,
+            slug: 'release-b-history-preserved',
+            actor: 'vendorAdmin',
+            entityIds: {releaseId: fixtureIds.productRelease, previousStatePlanId: fixtureIds.previousPlan},
+            checksums: {release: 'sha256:1111111111111111111111111111111111111111111111111111111111111111'},
+          },
+          preservedRelease
+        )
       );
 
       await page.goto('/audit');
@@ -333,13 +395,18 @@ test.describe('operator control room route-mocked contract', () => {
       await expect(auditEvents).toContainText('approval.decided');
       await expect(auditEvents).toContainText('deployment_plan.previous_state_created');
       checkpoints.push(
-        await attachVisualCheckpoint(page, testInfo, {
-          sequence: 11,
-          slug: 'immutable-history-audit',
-          actor: 'vendorAdmin',
-          entityIds: {planId: fixtureIds.plan, previousStatePlanId: fixtureIds.previousPlan},
-          checksums: {audit: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'},
-        })
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 11,
+            slug: 'immutable-history-audit',
+            actor: 'vendorAdmin',
+            entityIds: {planId: fixtureIds.plan, previousStatePlanId: fixtureIds.previousPlan},
+            checksums: {audit: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'},
+          },
+          auditEvents
+        )
       );
       expect(controlPlane.externalAttempts).toEqual([]);
       expect(checkpoints).toHaveLength(11);

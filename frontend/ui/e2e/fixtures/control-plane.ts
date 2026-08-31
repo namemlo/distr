@@ -1,4 +1,4 @@
-import {test as base, expect, type Page, type Route, type TestInfo} from '@playwright/test';
+import {test as base, expect, type Locator, type Page, type Route, type TestInfo} from '@playwright/test';
 import {createHash} from 'node:crypto';
 
 export type OperatorActor = 'vendorAdmin' | 'scopedApprover' | 'executorOperator' | 'auditViewer' | 'unauthorized';
@@ -666,13 +666,16 @@ export async function attachContractEvidence(testInfo: TestInfo, name: string, v
 export async function attachVisualCheckpoint(
   page: Page,
   testInfo: TestInfo,
-  checkpoint: VisualCheckpointInput
+  checkpoint: VisualCheckpointInput,
+  focus: Locator
 ): Promise<VisualCheckpointRecord> {
   const filename = `${checkpoint.sequence.toString().padStart(2, '0')}-${checkpoint.slug}.png`;
   const path = testInfo.outputPath(filename);
+  await focus.evaluate((element) => element.scrollIntoView({block: 'center', inline: 'nearest'}));
+  await expect(focus).toBeVisible();
   const screenshot = await page.screenshot({
     path,
-    fullPage: true,
+    fullPage: false,
     animations: 'disabled',
     caret: 'hide',
   });

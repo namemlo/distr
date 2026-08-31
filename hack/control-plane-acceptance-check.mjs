@@ -1717,6 +1717,7 @@ async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, bindin
   ) {
     fail(`${row.id} browser screenshots must exactly match the 11 retained visual checkpoints`);
   }
+  const retainedScreenshotDigests = new Map();
   for (const screenshot of report.screenshots) {
     let bytes;
     try {
@@ -1731,6 +1732,14 @@ async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, bindin
     if (dimensions.width !== screenshot.width || dimensions.height !== screenshot.height) {
       fail(`${row.id} browser screenshot PNG dimensions must match 1440x1200`);
     }
+    const digest = sha256(bytes);
+    const duplicate = retainedScreenshotDigests.get(digest);
+    if (duplicate) {
+      fail(
+        `${row.id} browser screenshot bytes must be distinct for every checkpoint: ${duplicate} and ${screenshot.name}`
+      );
+    }
+    retainedScreenshotDigests.set(digest, screenshot.name);
   }
 
   await validateBrowserExecutionSources(root, gitFacts, row, sourceCommit, report.executionSources);

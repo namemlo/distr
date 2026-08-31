@@ -142,8 +142,8 @@ function pngChunk(type, data) {
   return Buffer.concat([length, typeBytes, data, checksum]);
 }
 
-function fixturePNG(width = 1440, height = 1200, {secret = false} = {}) {
-  const key = `${width}:${height}:${secret}`;
+function fixturePNG(width = 1440, height = 1200, {secret = false, variant = 0} = {}) {
+  const key = `${width}:${height}:${secret}:${variant}`;
   if (!fixturePNGCache.has(key)) {
     const ihdr = Buffer.alloc(13);
     ihdr.writeUInt32BE(width, 0);
@@ -151,6 +151,10 @@ function fixturePNG(width = 1440, height = 1200, {secret = false} = {}) {
     ihdr[8] = 8;
     ihdr[9] = 6;
     const scanlines = Buffer.alloc((width * 4 + 1) * height);
+    scanlines[1] = variant & 0xff;
+    scanlines[2] = (variant >>> 8) & 0xff;
+    scanlines[3] = (variant >>> 16) & 0xff;
+    scanlines[4] = 0xff;
     const chunks = [pngChunk('IHDR', ihdr)];
     if (secret) chunks.push(pngChunk('tEXt', Buffer.from('password\0browser-secret-value')));
     chunks.push(pngChunk('IDAT', deflateSync(scanlines)));
@@ -579,8 +583,8 @@ async function fixtureWorkspace({
     await mkdir(path.join(directory, 'results', 'screenshots'), {recursive: true});
     const attachments = [];
     const screenshots = [];
-    for (const name of browserScreenshotNames) {
-      const bytes = fixturePNG();
+    for (const [index, name] of browserScreenshotNames.entries()) {
+      const bytes = fixturePNG(1440, 1200, {variant: index + 1});
       const screenshotPath = `results/screenshots/${name}`;
       await writeFile(path.join(directory, screenshotPath), bytes);
       attachments.push({
@@ -1716,6 +1720,28 @@ test('rejects AC-63 retained screenshot checksum or PNG dimension drift', async 
     assert.notEqual(result.status, 0, field);
     assert.match(result.stderr, expected, field);
   }
+});
+
+test('rejects AC-63 screenshot claims that retain duplicate rendered bytes', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+  });
+  await rewriteBrowserEvidence(
+    directory,
+    async ({report}) => {
+      const first = report.screenshots[0];
+      const duplicate = report.screenshots[1];
+      const bytes = await readFile(path.join(directory, first.path));
+      await writeFile(path.join(directory, duplicate.path), bytes);
+      duplicate.sha256 = sha256(bytes);
+    },
+    'duplicate retained screenshot bytes'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-63 browser screenshot bytes must be distinct for every checkpoint/);
 });
 
 test('rejects AC-63 browser proof without exact network isolation, source bindings, and tool identity', async () => {

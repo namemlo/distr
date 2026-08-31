@@ -135,7 +135,7 @@ function chunk(type, data) {
   return Buffer.concat([length, name, data, checksum]);
 }
 
-function png(secret = false, zeroWidth = false) {
+function png(secret = false, zeroWidth = false, checkpoint = 0) {
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(zeroWidth ? 0 : 1440, 0);
@@ -143,6 +143,7 @@ function png(secret = false, zeroWidth = false) {
   ihdr[8] = 8;
   ihdr[9] = 6;
   const chunks = [chunk('IHDR', ihdr)];
+  chunks.push(chunk('tEXt', Buffer.from('checkpoint\0' + checkpoint)));
   if (secret) chunks.push(chunk('tEXt', Buffer.from('password\0browser-secret-value')));
   chunks.push(chunk('IDAT', Buffer.from([120, 156, 3, 0, 0, 0, 0, 1])));
   chunks.push(chunk('IEND', Buffer.alloc(0)));
@@ -156,7 +157,11 @@ for (const [index, name] of names.entries()) {
   const bytes =
     scenario === 'bad-signature' && index === 0
       ? Buffer.from('not-a-png')
-      : png(scenario === 'secret-png' && index === 0, scenario === 'zero-dimension' && index === 0);
+      : png(
+          scenario === 'secret-png' && index === 0,
+          scenario === 'zero-dimension' && index === 0,
+          scenario === 'duplicate-png' ? 0 : index + 1
+        );
   await writeFile(target, bytes);
   attachments.push({name, path: target, contentType: 'image/png'});
 }
@@ -450,6 +455,7 @@ test('directly runs the exact AC-63 evidence test and derives retained raw, PNG,
     classReport.screenshots.map(({name, width, height}) => ({name, width, height})),
     screenshotNames.map((name) => ({name, width: 1440, height: 1200}))
   );
+  assert.equal(new Set(classReport.screenshots.map(({sha256: digest}) => digest)).size, screenshotNames.length);
   assert.deepEqual(classReport.networkProof, {
     mode: 'bound-test-assertion',
     testTitle: exactTitle,
@@ -482,6 +488,16 @@ test('directly runs the exact AC-63 evidence test and derives retained raw, PNG,
   await assertIsolatedWorktreeRemoved(fixture);
   const {stdout: staged} = await git(fixture.directory, 'diff', '--cached', '--name-only');
   assert.equal(staged, '');
+});
+
+test('rejects reused screenshot bytes for different AC-63 checkpoint claims', async () => {
+  const fixture = await fixtureWorkspace();
+
+  const result = await run(fixture, {scenario: 'duplicate-png'});
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /browser evidence screenshot bytes are duplicated/);
+  await assertIsolatedWorktreeRemoved(fixture);
 });
 
 for (const [dependencyVariant, expected] of [
