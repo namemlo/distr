@@ -284,6 +284,8 @@ func ResolveTargetRequirements(
 			Mode:                      candidate.Mode,
 			ProviderReleaseID:         cloneUUID(candidate.ProviderReleaseID),
 			ObservationID:             cloneUUID(candidate.ObservationID),
+			ActiveDesiredRevisionID:   cloneUUID(candidate.ActiveDesiredRevisionID),
+			ObservedComponentStateID:  cloneUUID(candidate.ObservedComponentStateID),
 			ProviderVersion:           strings.TrimSpace(candidate.ProviderVersion),
 			ProviderPlatform:          strings.TrimSpace(candidate.ProviderPlatform),
 			ProviderReleaseChecksum:   strings.TrimSpace(candidate.ProviderReleaseChecksum),
@@ -306,6 +308,8 @@ func ResolveTargetRequirements(
 			Mode                      types.RequirementResolutionMode `json:"mode"`
 			ProviderReleaseID         *uuid.UUID                      `json:"providerReleaseId,omitempty"`
 			ObservationID             *uuid.UUID                      `json:"observationId,omitempty"`
+			ActiveDesiredRevisionID   *uuid.UUID                      `json:"activeDesiredRevisionId,omitempty"`
+			ObservedComponentStateID  *uuid.UUID                      `json:"observedComponentStateId,omitempty"`
 			ProviderVersion           string                          `json:"providerVersion"`
 			ProviderPlatform          string                          `json:"providerPlatform"`
 			ProviderReleaseChecksum   string                          `json:"providerReleaseChecksum,omitempty"`
@@ -320,6 +324,8 @@ func ResolveTargetRequirements(
 			Capability: requirement.Capability, VersionRange: requirement.VersionRange,
 			Mode: candidate.Mode, ProviderReleaseID: resolution.ProviderReleaseID,
 			ObservationID: resolution.ObservationID, ProviderVersion: resolution.ProviderVersion,
+			ActiveDesiredRevisionID:   resolution.ActiveDesiredRevisionID,
+			ObservedComponentStateID:  resolution.ObservedComponentStateID,
 			ProviderPlatform:          resolution.ProviderPlatform,
 			ProviderReleaseChecksum:   resolution.ProviderReleaseChecksum,
 			ProvenanceBindingChecksum: resolution.ProvenanceBindingChecksum,
@@ -750,7 +756,7 @@ func validateCandidateBinding(
 	case types.RequirementResolutionModePinnedExisting:
 		if candidate.ProviderReleaseID == nil ||
 			candidate.ComponentInstanceID == nil ||
-			candidate.ObservationID == nil ||
+			!candidateObservationLineageValid(candidate) ||
 			candidate.DeploymentUnitID != draft.DeploymentUnitID ||
 			!planChecksumPattern.MatchString(candidate.ProviderReleaseChecksum) ||
 			!planChecksumPattern.MatchString(candidate.ProvenanceBindingChecksum) ||
@@ -759,7 +765,7 @@ func validateCandidateBinding(
 		}
 	case types.RequirementResolutionModeSharedProvider:
 		if candidate.ProviderReleaseID == nil ||
-			candidate.ObservationID == nil ||
+			!candidateObservationLineageValid(candidate) ||
 			candidate.DeploymentUnitID == uuid.Nil ||
 			candidate.DeploymentUnitID == draft.DeploymentUnitID ||
 			!planChecksumPattern.MatchString(candidate.SubscriberSetChecksum) ||
@@ -788,6 +794,13 @@ func validateCandidateBinding(
 		return invalidBinding(field, "unsupported requirement resolution mode")
 	}
 	return nil
+}
+
+func candidateObservationLineageValid(candidate types.RequirementProviderCandidate) bool {
+	legacy := candidate.ObservationID != nil
+	native := candidate.ActiveDesiredRevisionID != nil &&
+		candidate.ObservedComponentStateID != nil
+	return legacy != native
 }
 
 func invalidBinding(field, message string) *types.ValidationIssue {
@@ -857,12 +870,14 @@ func releaseProvenanceChecksumMatches(pin types.ComponentReleasePin) bool {
 func compareRequirementCandidates(a, b types.RequirementProviderCandidate) int {
 	keysA := []string{
 		a.RequirementKey, string(a.Mode), uuidString(a.ProviderReleaseID),
-		uuidString(a.ObservationID), a.ProviderVersion, a.DeploymentUnitID.String(),
+		uuidString(a.ObservationID), uuidString(a.ActiveDesiredRevisionID),
+		uuidString(a.ObservedComponentStateID), a.ProviderVersion, a.DeploymentUnitID.String(),
 		uuidString(a.ComponentInstanceID),
 	}
 	keysB := []string{
 		b.RequirementKey, string(b.Mode), uuidString(b.ProviderReleaseID),
-		uuidString(b.ObservationID), b.ProviderVersion, b.DeploymentUnitID.String(),
+		uuidString(b.ObservationID), uuidString(b.ActiveDesiredRevisionID),
+		uuidString(b.ObservedComponentStateID), b.ProviderVersion, b.DeploymentUnitID.String(),
 		uuidString(b.ComponentInstanceID),
 	}
 	for index := range keysA {

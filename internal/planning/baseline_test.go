@@ -155,6 +155,37 @@ func TestSelectVerifiedBaselineObservationChecksumPinsPlatform(t *testing.T) {
 	g.Expect(amd64Baseline.ObservationChecksum).NotTo(Equal(arm64Baseline.ObservationChecksum))
 }
 
+func TestSelectVerifiedBaselinePersistsNativeAuthoritativeLineage(t *testing.T) {
+	g := NewWithT(t)
+	sourcePlanID, activeID, observedID := uuid.New(), uuid.New(), uuid.New()
+	desiredChecksum := testChecksum("1")
+	query := types.BaselineQuery{
+		OrganizationID: uuid.New(), DeploymentUnitID: uuid.New(), ComponentInstanceID: uuid.New(),
+		ComponentKey: "customer-api", ExpectedDesiredRevision: 7, ExpectedDesiredChecksum: desiredChecksum,
+		Candidates: []types.BaselineCandidate{{
+			SourceDeploymentPlanID: &sourcePlanID, ActiveDesiredRevisionID: &activeID,
+			ObservedComponentStateID: &observedID, ObservationID: observedID,
+			ObservedAt: time.Now().UTC(), Health: types.TargetComponentHealthHealthy,
+			DesiredRevision: 7, DesiredChecksum: desiredChecksum,
+			ObservedRevision: 7, ObservedChecksum: desiredChecksum,
+			PlanSchema:      types.TargetDeploymentPlanSchemaV2,
+			ProtocolVersion: types.DeploymentPlanProtocolV2, PlanFactsMatch: true,
+			ReleaseBundleID: uuid.New(), Version: "2.1.0",
+			Image:    "registry.example/customer-api@" + testChecksum("2"),
+			Platform: "linux/amd64", ConfigChecksum: testChecksum("3"),
+		}},
+	}
+
+	baseline, err := SelectVerifiedBaseline(context.Background(), query)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(baseline.AuthorizesV2Execution).To(BeTrue())
+	g.Expect(baseline.ActiveDesiredRevisionID).To(Equal(&activeID))
+	g.Expect(baseline.ObservedComponentStateID).To(Equal(&observedID))
+	g.Expect(baseline.ObservationID).To(BeNil())
+	g.Expect(baseline.ExternalExecutionID).To(BeNil())
+}
+
 func testChecksum(char string) string {
 	result := "sha256:"
 	for range 64 {

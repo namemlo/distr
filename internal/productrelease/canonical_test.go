@@ -26,3 +26,18 @@ func TestCanonicalizeProductReleaseIsStableAcrossInputOrder(t *testing.T) {
 	g.Expect(secondChecksum).To(Equal(firstChecksum))
 	g.Expect(firstChecksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
 }
+
+func TestCanonicalizeProductReleasePinsDependencyPolicyChecksum(t *testing.T) {
+	g := NewWithT(t)
+	first := neutralProviderConsumerManifest()
+	second := first
+	second.DependencyPolicyChecksum = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+	firstPayload, firstChecksum, err := CanonicalizeProductRelease(first)
+	g.Expect(err).NotTo(HaveOccurred())
+	secondPayload, secondChecksum, err := CanonicalizeProductRelease(second)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(secondPayload).NotTo(Equal(firstPayload))
+	g.Expect(secondChecksum).NotTo(Equal(firstChecksum))
+}

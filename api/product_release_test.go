@@ -14,12 +14,13 @@ func TestCreateProductReleaseRequestValidate(t *testing.T) {
 	g := NewWithT(t)
 	componentReleaseID := uuid.New()
 	request := CreateProductReleaseRequest{
-		ApplicationID:           uuid.New(),
-		ChannelID:               uuid.New(),
-		Product:                 " neutral-suite ",
-		Version:                 " 2026.07.14.1 ",
-		DependencyPolicyVersion: uuid.New(),
-		RequiredPlatforms:       []string{" linux/amd64 "},
+		ApplicationID:            uuid.New(),
+		ChannelID:                uuid.New(),
+		Product:                  " neutral-suite ",
+		Version:                  " 2026.07.14.1 ",
+		DependencyPolicyVersion:  uuid.New(),
+		DependencyPolicyChecksum: " sha256:" + strings.Repeat("f", 64) + " ",
+		RequiredPlatforms:        []string{" linux/amd64 "},
 		Components: []ProductReleaseComponentRequest{{
 			ComponentReleaseID:       componentReleaseID,
 			ComponentReleaseChecksum: " sha256:" + strings.Repeat("a", 64) + " ",
@@ -83,11 +84,12 @@ func TestGenericReleaseBundleRejectsProductReleaseContract(t *testing.T) {
 func TestCreateProductReleaseRequestRejectsDuplicateAndMutablePins(t *testing.T) {
 	componentReleaseID := uuid.New()
 	base := CreateProductReleaseRequest{
-		ApplicationID:           uuid.New(),
-		ChannelID:               uuid.New(),
-		Product:                 "neutral-suite",
-		Version:                 "1.2.3",
-		DependencyPolicyVersion: uuid.New(),
+		ApplicationID:            uuid.New(),
+		ChannelID:                uuid.New(),
+		Product:                  "neutral-suite",
+		Version:                  "1.2.3",
+		DependencyPolicyVersion:  uuid.New(),
+		DependencyPolicyChecksum: "sha256:" + strings.Repeat("f", 64),
 		Components: []ProductReleaseComponentRequest{{
 			ComponentReleaseID:       componentReleaseID,
 			ComponentReleaseChecksum: "sha256:" + strings.Repeat("a", 64),
@@ -111,11 +113,12 @@ func TestCreateProductReleaseRequestRejectsDuplicateAndMutablePins(t *testing.T)
 func TestCreateProductReleaseRequestRejectsBoundedCollectionsAndIndexedVersion(t *testing.T) {
 	valid := func() CreateProductReleaseRequest {
 		return CreateProductReleaseRequest{
-			ApplicationID:           uuid.New(),
-			ChannelID:               uuid.New(),
-			Product:                 "neutral-suite",
-			Version:                 "1.2.3",
-			DependencyPolicyVersion: uuid.New(),
+			ApplicationID:            uuid.New(),
+			ChannelID:                uuid.New(),
+			Product:                  "neutral-suite",
+			Version:                  "1.2.3",
+			DependencyPolicyVersion:  uuid.New(),
+			DependencyPolicyChecksum: "sha256:" + strings.Repeat("f", 64),
 			Components: []ProductReleaseComponentRequest{{
 				ComponentReleaseID:       uuid.New(),
 				ComponentReleaseChecksum: "sha256:" + strings.Repeat("a", 64),

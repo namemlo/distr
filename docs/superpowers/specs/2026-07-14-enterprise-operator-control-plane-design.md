@@ -269,6 +269,7 @@ A Product Release pins a coherent set of Component Release IDs and a validated d
     {"component": "example-api", "componentReleaseId": "uuid"}
   ],
   "dependencyPolicyVersion": "uuid",
+  "dependencyPolicyChecksum": "sha256:<64 lowercase hex>",
   "releaseNotes": "Product-level summary"
 }
 ```

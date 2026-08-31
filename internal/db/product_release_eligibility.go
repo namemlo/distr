@@ -244,6 +244,12 @@ func (repository persistedProductReleaseEligibilityRepository) ValidateDependenc
 			"canonical policy facts do not match the published dependency policy",
 		), nil
 	}
+	if manifest.DependencyPolicyChecksum != policy.CanonicalChecksum {
+		return productReleasePolicyIssue(
+			"dependencyPolicyChecksum",
+			"dependency policy checksum does not match the exact published policy version",
+		), nil
+	}
 	allowed := make(map[types.RequirementResolutionMode]struct{},
 		len(policy.Document.AdmissionRules.AllowedResolutionModes))
 	for _, mode := range policy.Document.AdmissionRules.AllowedResolutionModes {

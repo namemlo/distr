@@ -54,7 +54,9 @@ func SelectVerifiedBaseline(
 			candidate.ProtocolVersion == types.DeploymentPlanProtocolV2 &&
 			candidate.PlanFactsMatch &&
 			candidate.SourceDeploymentPlanID != nil &&
-			candidate.ExternalExecutionID != nil
+			((candidate.ExternalExecutionID != nil && candidate.ObservationID != uuid.Nil) ||
+				(candidate.ActiveDesiredRevisionID != nil &&
+					candidate.ObservedComponentStateID != nil))
 		if authoritative {
 			projection = types.BaselineProjectionVerifiedV2
 		}
@@ -79,13 +81,19 @@ func SelectVerifiedBaseline(
 			return nil, fmt.Errorf("checksum baseline observation: %w", err)
 		}
 		observationID := candidate.ObservationID
+		var persistedObservationID *uuid.UUID
+		if candidate.ActiveDesiredRevisionID == nil && candidate.ObservedComponentStateID == nil {
+			persistedObservationID = &observationID
+		}
 		observedAt := candidate.ObservedAt.UTC()
 		releaseID := candidate.ReleaseBundleID
 		return &types.DeploymentPlanBaseline{
 			ComponentInstanceID: query.ComponentInstanceID, ComponentKey: componentKey,
-			SourceDeploymentPlanID: cloneUUID(candidate.SourceDeploymentPlanID),
-			ExternalExecutionID:    cloneUUID(candidate.ExternalExecutionID),
-			ObservationID:          &observationID, ObservedAt: &observedAt,
+			SourceDeploymentPlanID:   cloneUUID(candidate.SourceDeploymentPlanID),
+			ExternalExecutionID:      cloneUUID(candidate.ExternalExecutionID),
+			ActiveDesiredRevisionID:  cloneUUID(candidate.ActiveDesiredRevisionID),
+			ObservedComponentStateID: cloneUUID(candidate.ObservedComponentStateID),
+			ObservationID:            persistedObservationID, ObservedAt: &observedAt,
 			DesiredRevision: candidate.DesiredRevision, DesiredChecksum: candidate.DesiredChecksum,
 			ObservationChecksum: observationChecksum, ReleaseBundleID: &releaseID,
 			Version: strings.TrimSpace(candidate.Version), Image: strings.TrimSpace(candidate.Image),

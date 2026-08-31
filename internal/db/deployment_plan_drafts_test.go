@@ -176,6 +176,27 @@ func TestMigration163EnablesOnlyValidatedReadyTargetPlans(t *testing.T) {
 	g.Expect(downText).To(ContainSubstring("target_plan_execution_deferred"))
 }
 
+func TestMigration164PreservesLegacyAndAddsNativePlanningLineage(t *testing.T) {
+	g := NewWithT(t)
+	root := filepath.Join("..", "migrations", "sql")
+	up, err := os.ReadFile(filepath.Join(root, "164_native_v2_planning_lineage.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	down, err := os.ReadFile(filepath.Join(root, "164_native_v2_planning_lineage.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	upText, downText := string(up), string(down)
+
+	for _, fact := range []string{
+		"active_desired_revision_id", "observed_component_state_id",
+		"REFERENCES ActiveDesiredRevision", "REFERENCES ObservedComponentState",
+		"projection = 'legacy_projection'", "projection = 'verified_v2'",
+	} {
+		g.Expect(upText).To(ContainSubstring(fact))
+	}
+	g.Expect(upText).To(ContainSubstring("deploymentplanresolvedrequirement_native_pair_check"))
+	g.Expect(downText).To(ContainSubstring("ACCESS EXCLUSIVE MODE"))
+	g.Expect(downText).To(ContainSubstring("refusing migration 164 rollback: native planning lineage exists"))
+}
+
 func TestDraftPublicationUsesRowLockAndExactOptimisticChecksum(t *testing.T) {
 	g := NewWithT(t)
 	source, err := os.ReadFile("deployment_plan_drafts.go")

@@ -268,11 +268,12 @@ func productReleaseEligibilityTestMaterial(
 		CanonicalChecksum:     "sha256:" + strings.Repeat("a", 64),
 	}
 	manifest := types.ProductReleaseManifest{
-		Schema:                  types.ProductReleaseSchemaV1,
-		OrganizationID:          organizationID,
-		Product:                 "payments",
-		Version:                 "1.0.0",
-		DependencyPolicyVersion: policy.ID,
+		Schema:                   types.ProductReleaseSchemaV1,
+		OrganizationID:           organizationID,
+		Product:                  "payments",
+		Version:                  "1.0.0",
+		DependencyPolicyVersion:  policy.ID,
+		DependencyPolicyChecksum: policy.CanonicalChecksum,
 		Components: []types.ProductReleaseComponent{{
 			OrganizationID:           organizationID,
 			ComponentReleaseID:       componentReleaseID,

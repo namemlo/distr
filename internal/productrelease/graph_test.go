@@ -235,12 +235,13 @@ func TestProductReleaseGraphRejectsUnboundedAggregateRequirements(t *testing.T) 
 func neutralProviderConsumerManifest() types.ProductReleaseManifest {
 	orgID := uuid.New()
 	return types.ProductReleaseManifest{
-		Schema:                  types.ProductReleaseSchemaV1,
-		ReleaseBundleID:         uuid.New(),
-		OrganizationID:          orgID,
-		Product:                 "neutral-suite",
-		Version:                 "2026.7.0",
-		DependencyPolicyVersion: uuid.New(),
+		Schema:                   types.ProductReleaseSchemaV1,
+		ReleaseBundleID:          uuid.New(),
+		OrganizationID:           orgID,
+		Product:                  "neutral-suite",
+		Version:                  "2026.7.0",
+		DependencyPolicyVersion:  uuid.New(),
+		DependencyPolicyChecksum: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		Components: []types.ProductReleaseComponent{
 			{
 				ComponentReleaseID:       uuid.New(),

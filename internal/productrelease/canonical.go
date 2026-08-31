@@ -11,15 +11,16 @@ import (
 )
 
 type canonicalProductRelease struct {
-	Schema                  string                        `json:"schema"`
-	Product                 string                        `json:"product"`
-	Version                 string                        `json:"version"`
-	DependencyPolicyVersion string                        `json:"dependencyPolicyVersion"`
-	ReleaseNotes            string                        `json:"releaseNotes"`
-	RequiredPlatforms       []string                      `json:"requiredPlatforms"`
-	Components              []canonicalProductComponent   `json:"components"`
-	Requirements            []types.CapabilityRequirement `json:"requirements"`
-	Graph                   canonicalProductReleaseGraph  `json:"graph"`
+	Schema                   string                        `json:"schema"`
+	Product                  string                        `json:"product"`
+	Version                  string                        `json:"version"`
+	DependencyPolicyVersion  string                        `json:"dependencyPolicyVersion"`
+	DependencyPolicyChecksum string                        `json:"dependencyPolicyChecksum"`
+	ReleaseNotes             string                        `json:"releaseNotes"`
+	RequiredPlatforms        []string                      `json:"requiredPlatforms"`
+	Components               []canonicalProductComponent   `json:"components"`
+	Requirements             []types.CapabilityRequirement `json:"requirements"`
+	Graph                    canonicalProductReleaseGraph  `json:"graph"`
 }
 
 type canonicalProductComponent struct {
@@ -53,14 +54,15 @@ func CanonicalizeProductRelease(manifest types.ProductReleaseManifest) ([]byte, 
 	graph.Checksum = "sha256:" + hex.EncodeToString(graphSum[:])
 
 	canonical := canonicalProductRelease{
-		Schema:                  types.ProductReleaseSchemaV1,
-		Product:                 normalized.Product,
-		Version:                 normalized.Version,
-		DependencyPolicyVersion: normalized.DependencyPolicyVersion.String(),
-		ReleaseNotes:            normalized.ReleaseNotes,
-		RequiredPlatforms:       slices.Clone(normalized.RequiredPlatforms),
-		Components:              make([]canonicalProductComponent, 0, len(normalized.Components)),
-		Requirements:            slices.Clone(normalized.Requirements),
+		Schema:                   types.ProductReleaseSchemaV1,
+		Product:                  normalized.Product,
+		Version:                  normalized.Version,
+		DependencyPolicyVersion:  normalized.DependencyPolicyVersion.String(),
+		DependencyPolicyChecksum: normalized.DependencyPolicyChecksum,
+		ReleaseNotes:             normalized.ReleaseNotes,
+		RequiredPlatforms:        slices.Clone(normalized.RequiredPlatforms),
+		Components:               make([]canonicalProductComponent, 0, len(normalized.Components)),
+		Requirements:             slices.Clone(normalized.Requirements),
 		Graph: canonicalProductReleaseGraph{
 			Nodes:            graph.Nodes,
 			Edges:            graph.Edges,
@@ -111,6 +113,7 @@ func normalizedProductReleaseManifest(manifest types.ProductReleaseManifest) typ
 	normalized.Product = strings.TrimSpace(normalized.Product)
 	normalized.Version = strings.TrimSpace(normalized.Version)
 	normalized.ReleaseNotes = strings.TrimSpace(normalized.ReleaseNotes)
+	normalized.DependencyPolicyChecksum = strings.TrimSpace(normalized.DependencyPolicyChecksum)
 	normalized.RequiredPlatforms = normalizedStrings(normalized.RequiredPlatforms)
 	normalized.Components = normalizedComponents(normalized.Components)
 	normalized.Requirements = slices.Clone(normalized.Requirements)

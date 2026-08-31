@@ -20,17 +20,18 @@ func ProductReleaseManifestFromCreateRequest(
 		})
 	}
 	return types.ProductReleaseManifest{
-		Schema:                  request.Schema,
-		OrganizationID:          organizationID,
-		ApplicationID:           request.ApplicationID,
-		ChannelID:               request.ChannelID,
-		Product:                 request.Product,
-		Version:                 request.Version,
-		DependencyPolicyVersion: request.DependencyPolicyVersion,
-		ReleaseNotes:            request.ReleaseNotes,
-		RequiredPlatforms:       slices.Clone(request.RequiredPlatforms),
-		Components:              components,
-		Requirements:            cloneProductReleaseRequirements(request.Requirements),
+		Schema:                   request.Schema,
+		OrganizationID:           organizationID,
+		ApplicationID:            request.ApplicationID,
+		ChannelID:                request.ChannelID,
+		Product:                  request.Product,
+		Version:                  request.Version,
+		DependencyPolicyVersion:  request.DependencyPolicyVersion,
+		DependencyPolicyChecksum: request.DependencyPolicyChecksum,
+		ReleaseNotes:             request.ReleaseNotes,
+		RequiredPlatforms:        slices.Clone(request.RequiredPlatforms),
+		Components:               components,
+		Requirements:             cloneProductReleaseRequirements(request.Requirements),
 	}
 }
 
@@ -59,14 +60,15 @@ func ProductReleaseToAPI(
 		PublishedByUserAccountID: bundle.PublishedByUserAccountID,
 		PublishedAt:              bundle.PublishedAt,
 		Manifest: api.ProductReleaseManifest{
-			Schema:                  manifest.Schema,
-			Product:                 manifest.Product,
-			Version:                 manifest.Version,
-			DependencyPolicyVersion: manifest.DependencyPolicyVersion,
-			ReleaseNotes:            manifest.ReleaseNotes,
-			RequiredPlatforms:       slices.Clone(manifest.RequiredPlatforms),
-			Components:              components,
-			Requirements:            cloneProductReleaseRequirements(manifest.Requirements),
+			Schema:                   manifest.Schema,
+			Product:                  manifest.Product,
+			Version:                  manifest.Version,
+			DependencyPolicyVersion:  manifest.DependencyPolicyVersion,
+			DependencyPolicyChecksum: manifest.DependencyPolicyChecksum,
+			ReleaseNotes:             manifest.ReleaseNotes,
+			RequiredPlatforms:        slices.Clone(manifest.RequiredPlatforms),
+			Components:               components,
+			Requirements:             cloneProductReleaseRequirements(manifest.Requirements),
 		},
 	}
 }

@@ -1887,6 +1887,146 @@ func loadObservedProviderCandidates(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("could not collect observed target requirement providers: %w", err)
 	}
+	nativeRows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT capability.name, release.id, capability.version_or_range,
+		       active.platform, release.canonical_checksum, unit.id, instance.id,
+		       unit.subscriber_set_checksum, active.id, observed.id, active.revision,
+		       observed.state_checksum, scope.delivery_model, instance.management_state,
+		       NOT EXISTS (
+		         SELECT 1 FROM ComponentReleaseArtifact candidate_artifact
+		         WHERE candidate_artifact.release_bundle_id = release.id
+		           AND candidate_artifact.organization_id = release.organization_id
+		           AND candidate_artifact.platform = active.platform
+		           AND candidate_artifact.platform_digest = active.artifact_digest
+		           AND NOT EXISTS (
+		             SELECT 1 FROM ComponentReleaseEvidenceVerification verification
+		             WHERE verification.release_bundle_id = candidate_artifact.release_bundle_id
+		               AND verification.organization_id = candidate_artifact.organization_id
+		               AND verification.artifact_key = candidate_artifact.artifact_key
+		               AND verification.platform = candidate_artifact.platform
+		               AND verification.artifact_digest = candidate_artifact.platform_digest
+		           )
+		       ),
+		       COALESCE((
+		         SELECT 'sha256:' || encode(sha256(convert_to(string_agg(
+		           verification.id::TEXT || '|' || verification.artifact_key || '|' ||
+		           verification.platform || '|' || verification.artifact_digest || '|' ||
+		           verification.evidence_digest || '|' || verification.policy_checksum || '|' ||
+		           verification.trust_root_id::TEXT, E'\n'
+		           ORDER BY verification.artifact_key, verification.platform, verification.id
+		         ), 'UTF8')), 'hex')
+		         FROM ComponentReleaseEvidenceVerification verification
+		         WHERE verification.release_bundle_id = release.id
+		           AND verification.organization_id = release.organization_id
+		           AND verification.platform = active.platform
+		           AND verification.artifact_digest = active.artifact_digest
+		       ), '')
+		FROM ComponentDesiredStateHead head
+		JOIN ActiveDesiredRevision active
+		  ON active.id = head.active_revision_id AND active.organization_id = head.organization_id
+		JOIN ObservedComponentState observed
+		  ON observed.id = active.verified_observation_id
+		 AND observed.organization_id = active.organization_id
+		 AND observed.deployment_unit_id = active.deployment_unit_id
+		 AND observed.component_instance_id = active.component_instance_id
+		 AND observed.trusted AND observed.disposition = 'ACCEPTED'
+		 AND observed.health = 'HEALTHY' AND observed.outcome = 'COMPLETE'
+		 AND observed.artifact_digest = active.artifact_digest
+		 AND observed.config_checksum = active.config_checksum
+		 AND observed.schema_version = active.schema_version
+		 AND observed.capability_checksum = active.capability_checksum
+		 AND observed.platform = active.platform
+		 AND observed.topology_checksum = active.topology_checksum
+		JOIN ComponentReleaseArtifact artifact
+		  ON artifact.organization_id = active.organization_id
+		 AND artifact.platform = active.platform
+		 AND artifact.platform_digest = active.artifact_digest
+		JOIN ReleaseBundle release
+		  ON release.id = artifact.release_bundle_id AND release.organization_id = artifact.organization_id
+		 AND release.kind = 'component' AND release.status = 'PUBLISHED'
+		JOIN ComponentReleaseCapability capability
+		  ON capability.release_bundle_id = release.id AND capability.organization_id = release.organization_id
+		 AND capability.direction = 'provides' AND capability.name = ANY(@capabilities)
+		JOIN DeploymentUnit unit ON unit.id = active.deployment_unit_id
+		 AND unit.organization_id = active.organization_id AND unit.retired_at IS NULL
+		JOIN TargetEnvironmentAssignment assignment
+		  ON assignment.id = unit.target_environment_assignment_id
+		 AND assignment.organization_id = unit.organization_id
+		 AND assignment.active_from <= @effectiveAt
+		 AND (assignment.active_until IS NULL OR assignment.active_until > @effectiveAt)
+		JOIN DeploymentScope scope ON scope.id = unit.deployment_scope_id
+		 AND scope.organization_id = unit.organization_id AND scope.retired_at IS NULL
+		JOIN ComponentInstance instance ON instance.id = active.component_instance_id
+		 AND instance.deployment_unit_id = unit.id AND instance.organization_id = unit.organization_id
+		 AND instance.retired_at IS NULL
+		WHERE head.organization_id = @organizationID AND NOT head.quarantined
+		  AND (unit.id = @deploymentUnitID OR scope.delivery_model IN ('shared', 'external')
+		       OR instance.management_state = 'external')
+		  AND (@customerOrganizationID::UUID IS NULL OR unit.id = @deploymentUnitID
+		       OR scope.delivery_model = 'external' OR instance.management_state = 'external'
+		       OR EXISTS (SELECT 1 FROM DeploymentUnitSubscriber subscriber
+		          WHERE subscriber.organization_id = unit.organization_id
+		            AND subscriber.deployment_unit_id = unit.id
+		            AND subscriber.customer_organization_id = @customerOrganizationID
+		            AND subscriber.retired_at IS NULL))
+		ORDER BY capability.name, release.id, unit.id, instance.id, observed.id
+		LIMIT @providerRowLimit`, pgx.NamedArgs{
+		"organizationID": organizationID, "effectiveAt": input.EffectiveAt,
+		"capabilities": capabilities, "deploymentUnitID": input.Unit.ID,
+		"customerOrganizationID": input.Scope.CustomerOrganizationID,
+		"providerRowLimit":       maxTargetPlanProviderRows + 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not batch query native observed requirement providers: %w", err)
+	}
+	defer nativeRows.Close()
+	for nativeRows.Next() {
+		providerRows++
+		if err := validateTargetPlanProviderRowCount(providerRows); err != nil {
+			return nil, err
+		}
+		var capabilityName, version, platform, releaseChecksum, subscriberChecksum string
+		var expectedChecksum, provenanceBindingChecksum string
+		var releaseID, unitID, instanceID, activeID, observedID uuid.UUID
+		var revision int64
+		var deliveryModel types.DeliveryModel
+		var managementState types.RegistryManagementState
+		var provenanceVerified bool
+		if err := nativeRows.Scan(&capabilityName, &releaseID, &version, &platform,
+			&releaseChecksum, &unitID, &instanceID, &subscriberChecksum, &activeID,
+			&observedID, &revision, &expectedChecksum, &deliveryModel, &managementState,
+			&provenanceVerified, &provenanceBindingChecksum); err != nil {
+			return nil, fmt.Errorf("could not scan native observed requirement provider: %w", err)
+		}
+		for _, requirement := range requirementsByCapability[capabilityName] {
+			mode, componentInstanceID, allowed := observedProviderMode(requirement, unitID,
+				instanceID, deliveryModel, managementState, input.Unit.ID)
+			if !allowed {
+				continue
+			}
+			releaseIDCopy, activeIDCopy, observedIDCopy := releaseID, activeID, observedID
+			candidate := types.RequirementProviderCandidate{
+				RequirementKey: requirement.Key, Mode: mode, ProviderReleaseID: &releaseIDCopy,
+				ActiveDesiredRevisionID: &activeIDCopy, ObservedComponentStateID: &observedIDCopy,
+				ProviderVersion: version, ProviderPlatform: platform,
+				ProviderReleaseChecksum: releaseChecksum, ProvenanceBindingChecksum: provenanceBindingChecksum,
+				DeploymentUnitID: unitID, ComponentInstanceID: componentInstanceID,
+				ExpectedStateVersion: revision, ExpectedStateChecksum: expectedChecksum,
+				ObservedStateVersion: revision, ObservedStateChecksum: expectedChecksum,
+				ProvenanceVerified: provenanceVerified, V1Compatible: true,
+			}
+			if mode == types.RequirementResolutionModeSharedProvider {
+				candidate.SubscriberSetChecksum = subscriberChecksum
+			}
+			candidates, err = appendTargetPlanCandidate(candidates, candidate)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := nativeRows.Err(); err != nil {
+		return nil, fmt.Errorf("could not collect native observed requirement providers: %w", err)
+	}
 	slices.SortFunc(candidates, func(a, b types.RequirementProviderCandidate) int {
 		if cmp := strings.Compare(a.RequirementKey, b.RequirementKey); cmp != 0 {
 			return cmp
@@ -1897,9 +2037,19 @@ func loadObservedProviderCandidates(
 		if cmp := strings.Compare(a.DeploymentUnitID.String(), b.DeploymentUnitID.String()); cmp != 0 {
 			return cmp
 		}
-		return strings.Compare(a.ObservationID.String(), b.ObservationID.String())
+		if cmp := strings.Compare(optionalUUIDString(a.ActiveDesiredRevisionID), optionalUUIDString(b.ActiveDesiredRevisionID)); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(optionalUUIDString(a.ObservationID), optionalUUIDString(b.ObservationID))
 	})
 	return candidates, nil
+}
+
+func optionalUUIDString(value *uuid.UUID) string {
+	if value == nil {
+		return ""
+	}
+	return value.String()
 }
 
 func observedProviderMode(
@@ -2082,7 +2232,8 @@ func insertDeploymentPlanResolvedRequirements(
 		[]string{
 			"id", "deployment_plan_id", "organization_id", "requirement_key",
 			"consumer_key", "capability", "version_range", "mode",
-			"provider_release_id", "observation_id", "provider_version",
+			"provider_release_id", "observation_id", "active_desired_revision_id",
+			"observed_component_state_id", "provider_version",
 			"provider_platform", "provider_release_checksum",
 			"provenance_binding_checksum", "provider_deployment_unit_id",
 			"component_instance_id", "subscriber_set_checksum",
@@ -2095,6 +2246,7 @@ func insertDeploymentPlanResolvedRequirements(
 				uuid.New(), plan.ID, plan.OrganizationID, resolution.RequirementKey,
 				resolution.ConsumerKey, resolution.Capability, resolution.VersionRange,
 				resolution.Mode, resolution.ProviderReleaseID, resolution.ObservationID,
+				resolution.ActiveDesiredRevisionID, resolution.ObservedComponentStateID,
 				resolution.ProviderVersion, resolution.ProviderPlatform,
 				resolution.ProviderReleaseChecksum, resolution.ProvenanceBindingChecksum,
 				resolution.ProviderDeploymentUnitID, resolution.ComponentInstanceID,
@@ -2150,6 +2302,8 @@ func getDeploymentPlanResolvedRequirements(
 		       mode,
 		       provider_release_id,
 		       observation_id,
+		       active_desired_revision_id,
+		       observed_component_state_id,
 		       provider_version,
 		       provider_platform,
 		       provider_release_checksum,

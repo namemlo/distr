@@ -66,6 +66,7 @@ type ProductReleaseManifest struct {
 	Product                  string                    `json:"product"`
 	Version                  string                    `json:"version"`
 	DependencyPolicyVersion  uuid.UUID                 `json:"dependencyPolicyVersion"`
+	DependencyPolicyChecksum string                    `json:"dependencyPolicyChecksum"`
 	ReleaseNotes             string                    `json:"releaseNotes"`
 	RequiredPlatforms        []string                  `json:"requiredPlatforms"`
 	Components               []ProductReleaseComponent `json:"components"`

@@ -16,16 +16,17 @@ var (
 )
 
 type CreateProductReleaseRequest struct {
-	Schema                  string                           `json:"schema"`
-	ApplicationID           uuid.UUID                        `json:"applicationId"`
-	ChannelID               uuid.UUID                        `json:"channelId"`
-	Product                 string                           `json:"product"`
-	Version                 string                           `json:"version"`
-	DependencyPolicyVersion uuid.UUID                        `json:"dependencyPolicyVersion"`
-	ReleaseNotes            string                           `json:"releaseNotes"`
-	RequiredPlatforms       []string                         `json:"requiredPlatforms"`
-	Components              []ProductReleaseComponentRequest `json:"components"`
-	Requirements            []types.CapabilityRequirement    `json:"requirements"`
+	Schema                   string                           `json:"schema"`
+	ApplicationID            uuid.UUID                        `json:"applicationId"`
+	ChannelID                uuid.UUID                        `json:"channelId"`
+	Product                  string                           `json:"product"`
+	Version                  string                           `json:"version"`
+	DependencyPolicyVersion  uuid.UUID                        `json:"dependencyPolicyVersion"`
+	DependencyPolicyChecksum string                           `json:"dependencyPolicyChecksum"`
+	ReleaseNotes             string                           `json:"releaseNotes"`
+	RequiredPlatforms        []string                         `json:"requiredPlatforms"`
+	Components               []ProductReleaseComponentRequest `json:"components"`
+	Requirements             []types.CapabilityRequirement    `json:"requirements"`
 }
 
 type ProductReleaseComponentRequest struct {
@@ -61,6 +62,10 @@ func (r *CreateProductReleaseRequest) Validate() error {
 	}
 	if r.DependencyPolicyVersion == uuid.Nil {
 		return validation.NewValidationFailedError("dependencyPolicyVersion is required")
+	}
+	r.DependencyPolicyChecksum = strings.TrimSpace(r.DependencyPolicyChecksum)
+	if !productReleaseChecksumPattern.MatchString(r.DependencyPolicyChecksum) {
+		return validation.NewValidationFailedError("dependencyPolicyChecksum must be a lowercase sha256 digest")
 	}
 	if len(r.ReleaseNotes) > 8192 {
 		return validation.NewValidationFailedError("releaseNotes is too long")
@@ -149,14 +154,15 @@ type ProductRelease struct {
 }
 
 type ProductReleaseManifest struct {
-	Schema                  string                        `json:"schema"`
-	Product                 string                        `json:"product"`
-	Version                 string                        `json:"version"`
-	DependencyPolicyVersion uuid.UUID                     `json:"dependencyPolicyVersion"`
-	ReleaseNotes            string                        `json:"releaseNotes"`
-	RequiredPlatforms       []string                      `json:"requiredPlatforms"`
-	Components              []ProductReleaseComponent     `json:"components"`
-	Requirements            []types.CapabilityRequirement `json:"requirements"`
+	Schema                   string                        `json:"schema"`
+	Product                  string                        `json:"product"`
+	Version                  string                        `json:"version"`
+	DependencyPolicyVersion  uuid.UUID                     `json:"dependencyPolicyVersion"`
+	DependencyPolicyChecksum string                        `json:"dependencyPolicyChecksum"`
+	ReleaseNotes             string                        `json:"releaseNotes"`
+	RequiredPlatforms        []string                      `json:"requiredPlatforms"`
+	Components               []ProductReleaseComponent     `json:"components"`
+	Requirements             []types.CapabilityRequirement `json:"requirements"`
 }
 
 type ProductReleaseComponent struct {

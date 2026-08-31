@@ -27,7 +27,8 @@ workflow.
 ## Consequences
 
 Validated target plans can use the already implemented approval, admission, task, and fenced execution path without
-rewriting historical plans. Operators must include migration 163 in clean-install, upgrade, restart, and safe-down
+rewriting historical plans. Migration 164 additionally freezes native desired/observed lineage on planning evidence
+and the exact dependency-policy checksum on Product Releases. Operators must include migrations 163 and 164 in clean-install, upgrade, restart, and safe-down
 evidence. A failed validation or any blocker still prevents publication rather than producing an executable plan.
 
 ## Alternatives Considered
@@ -41,6 +42,6 @@ evidence. A failed validation or any blocker still prevents publication rather t
 ## Validation
 
 - Focused database, planning, desired-state, execution-protocol, and migration tests must pass.
-- PostgreSQL clean-install, 162-to-163 upgrade, restart, and down/refusal evidence remains a release gate.
+- PostgreSQL clean-install, 162-to-164 upgrade, restart, and down/refusal evidence remains a release gate.
 - Rollout must verify that existing blocked rows are byte-for-byte unchanged and a new validated plan reaches
   `READY`, approval, task creation, and status-only `EXECUTED` transition.

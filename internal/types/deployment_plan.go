@@ -96,60 +96,64 @@ type BaselineQuery struct {
 }
 
 type BaselineCandidate struct {
-	SourceDeploymentPlanID  *uuid.UUID
-	ExternalExecutionID     *uuid.UUID
-	ObservationID           uuid.UUID
-	ObservedAt              time.Time
-	Health                  TargetComponentHealth
-	DesiredRevision         int64
-	DesiredChecksum         string
-	ObservedRevision        int64
-	ObservedChecksum        string
-	PlanSchema              string
-	ProtocolVersion         string
-	PlanFactsMatch          bool
-	ReleaseBundleID         uuid.UUID
-	Version                 string
-	Image                   string
-	Platform                string
-	ConfigSnapshotID        *uuid.UUID
-	ConfigChecksum          string
-	ProviderBindingChecksum string
-	SchemaState             string
-	SchemaChecksum          string
-	TopologyChecksum        string
+	SourceDeploymentPlanID   *uuid.UUID
+	ExternalExecutionID      *uuid.UUID
+	ActiveDesiredRevisionID  *uuid.UUID
+	ObservedComponentStateID *uuid.UUID
+	ObservationID            uuid.UUID
+	ObservedAt               time.Time
+	Health                   TargetComponentHealth
+	DesiredRevision          int64
+	DesiredChecksum          string
+	ObservedRevision         int64
+	ObservedChecksum         string
+	PlanSchema               string
+	ProtocolVersion          string
+	PlanFactsMatch           bool
+	ReleaseBundleID          uuid.UUID
+	Version                  string
+	Image                    string
+	Platform                 string
+	ConfigSnapshotID         *uuid.UUID
+	ConfigChecksum           string
+	ProviderBindingChecksum  string
+	SchemaState              string
+	SchemaChecksum           string
+	TopologyChecksum         string
 }
 
 type DeploymentPlanBaseline struct {
-	ID                      uuid.UUID          `db:"id" json:"id,omitempty"`
-	CreatedAt               time.Time          `db:"created_at" json:"createdAt,omitempty"`
-	DeploymentPlanID        uuid.UUID          `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
-	OrganizationID          uuid.UUID          `db:"organization_id" json:"organizationId,omitempty"`
-	ComponentInstanceID     uuid.UUID          `db:"component_instance_id" json:"componentInstanceId"`
-	ComponentKey            string             `db:"component_key" json:"componentKey"`
-	SourceDeploymentPlanID  *uuid.UUID         `db:"source_deployment_plan_id" json:"sourceDeploymentPlanId,omitempty"`
-	ExternalExecutionID     *uuid.UUID         `db:"external_execution_id" json:"externalExecutionId,omitempty"`
-	ObservationID           *uuid.UUID         `db:"observation_id" json:"observationId,omitempty"`
-	ObservedAt              *time.Time         `db:"observed_at" json:"observedAt,omitempty"`
-	DesiredRevision         int64              `db:"desired_revision" json:"desiredRevision"`
-	DesiredChecksum         string             `db:"desired_checksum" json:"desiredChecksum"`
-	ObservationChecksum     string             `db:"observation_checksum" json:"observationChecksum"`
-	ReleaseBundleID         *uuid.UUID         `db:"release_bundle_id" json:"releaseBundleId,omitempty"`
-	Version                 string             `db:"version" json:"version"`
-	Image                   string             `db:"image" json:"image"`
-	Platform                string             `db:"platform" json:"platform"`
-	ConfigSnapshotID        *uuid.UUID         `db:"target_config_snapshot_id" json:"targetConfigSnapshotId,omitempty"`
-	ConfigChecksum          string             `db:"config_checksum" json:"configChecksum"`
-	ProviderBindingChecksum string             `db:"provider_binding_checksum" json:"providerBindingChecksum"`
-	SchemaState             string             `db:"schema_state" json:"schemaState"`
-	SchemaChecksum          string             `db:"schema_checksum" json:"schemaChecksum"`
-	TopologyChecksum        string             `db:"topology_checksum" json:"topologyChecksum"`
-	Projection              BaselineProjection `db:"projection" json:"projection"`
-	AuthorizesV2Execution   bool               `db:"authorizes_v2_execution" json:"authorizesV2Execution"`
-	Bootstrap               bool               `db:"bootstrap" json:"bootstrap"`
-	ActorUserAccountID      uuid.UUID          `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
-	CanonicalChecksum       string             `db:"canonical_checksum" json:"canonicalChecksum"`
-	SortOrder               int                `db:"sort_order" json:"sortOrder"`
+	ID                       uuid.UUID          `db:"id" json:"id,omitempty"`
+	CreatedAt                time.Time          `db:"created_at" json:"createdAt,omitempty"`
+	DeploymentPlanID         uuid.UUID          `db:"deployment_plan_id" json:"deploymentPlanId,omitempty"`
+	OrganizationID           uuid.UUID          `db:"organization_id" json:"organizationId,omitempty"`
+	ComponentInstanceID      uuid.UUID          `db:"component_instance_id" json:"componentInstanceId"`
+	ComponentKey             string             `db:"component_key" json:"componentKey"`
+	SourceDeploymentPlanID   *uuid.UUID         `db:"source_deployment_plan_id" json:"sourceDeploymentPlanId,omitempty"`
+	ExternalExecutionID      *uuid.UUID         `db:"external_execution_id" json:"externalExecutionId,omitempty"`
+	ActiveDesiredRevisionID  *uuid.UUID         `db:"active_desired_revision_id" json:"activeDesiredRevisionId,omitempty"`
+	ObservedComponentStateID *uuid.UUID         `db:"observed_component_state_id" json:"observedComponentStateId,omitempty"`
+	ObservationID            *uuid.UUID         `db:"observation_id" json:"observationId,omitempty"`
+	ObservedAt               *time.Time         `db:"observed_at" json:"observedAt,omitempty"`
+	DesiredRevision          int64              `db:"desired_revision" json:"desiredRevision"`
+	DesiredChecksum          string             `db:"desired_checksum" json:"desiredChecksum"`
+	ObservationChecksum      string             `db:"observation_checksum" json:"observationChecksum"`
+	ReleaseBundleID          *uuid.UUID         `db:"release_bundle_id" json:"releaseBundleId,omitempty"`
+	Version                  string             `db:"version" json:"version"`
+	Image                    string             `db:"image" json:"image"`
+	Platform                 string             `db:"platform" json:"platform"`
+	ConfigSnapshotID         *uuid.UUID         `db:"target_config_snapshot_id" json:"targetConfigSnapshotId,omitempty"`
+	ConfigChecksum           string             `db:"config_checksum" json:"configChecksum"`
+	ProviderBindingChecksum  string             `db:"provider_binding_checksum" json:"providerBindingChecksum"`
+	SchemaState              string             `db:"schema_state" json:"schemaState"`
+	SchemaChecksum           string             `db:"schema_checksum" json:"schemaChecksum"`
+	TopologyChecksum         string             `db:"topology_checksum" json:"topologyChecksum"`
+	Projection               BaselineProjection `db:"projection" json:"projection"`
+	AuthorizesV2Execution    bool               `db:"authorizes_v2_execution" json:"authorizesV2Execution"`
+	Bootstrap                bool               `db:"bootstrap" json:"bootstrap"`
+	ActorUserAccountID       uuid.UUID          `db:"actor_user_account_id" json:"actorUserAccountId,omitempty"`
+	CanonicalChecksum        string             `db:"canonical_checksum" json:"canonicalChecksum"`
+	SortOrder                int                `db:"sort_order" json:"sortOrder"`
 }
 
 type BaselineState struct {

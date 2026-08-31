@@ -208,6 +208,9 @@ func validateProductReleaseIdentity(
 	if manifest.DependencyPolicyVersion == uuid.Nil {
 		collector.add("dependencyPolicyVersion", "required", "dependency policy version is required")
 	}
+	if !productReleaseChecksumPattern.MatchString(strings.TrimSpace(manifest.DependencyPolicyChecksum)) {
+		collector.add("dependencyPolicyChecksum", "checksum", "dependency policy checksum must be a lowercase sha256 digest")
+	}
 	if len(manifest.Components) == 0 {
 		collector.add("components", "required", "at least one component release is required")
 	}

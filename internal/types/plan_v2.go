@@ -181,6 +181,8 @@ type RequirementProviderCandidate struct {
 	Mode                      RequirementResolutionMode `json:"mode"`
 	ProviderReleaseID         *uuid.UUID                `json:"providerReleaseId,omitempty"`
 	ObservationID             *uuid.UUID                `json:"observationId,omitempty"`
+	ActiveDesiredRevisionID   *uuid.UUID                `json:"activeDesiredRevisionId,omitempty"`
+	ObservedComponentStateID  *uuid.UUID                `json:"observedComponentStateId,omitempty"`
 	ProviderVersion           string                    `json:"providerVersion"`
 	ProviderPlatform          string                    `json:"providerPlatform"`
 	ProviderReleaseChecksum   string                    `json:"providerReleaseChecksum,omitempty"`
@@ -209,6 +211,8 @@ type RequirementResolution struct {
 	Mode                      RequirementResolutionMode `db:"mode" json:"mode"`
 	ProviderReleaseID         *uuid.UUID                `db:"provider_release_id" json:"providerReleaseId,omitempty"`
 	ObservationID             *uuid.UUID                `db:"observation_id" json:"observationId,omitempty"`
+	ActiveDesiredRevisionID   *uuid.UUID                `db:"active_desired_revision_id" json:"activeDesiredRevisionId,omitempty"`
+	ObservedComponentStateID  *uuid.UUID                `db:"observed_component_state_id" json:"observedComponentStateId,omitempty"`
 	ProviderVersion           string                    `db:"provider_version" json:"providerVersion"`
 	ProviderPlatform          string                    `db:"provider_platform" json:"providerPlatform"`
 	ProviderReleaseChecksum   string                    `db:"provider_release_checksum" json:"providerReleaseChecksum,omitempty"`

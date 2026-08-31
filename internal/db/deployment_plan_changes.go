@@ -194,13 +194,20 @@ func loadVerifiedBaseline(
 	draft types.PlanDraft,
 	planned types.PlannedState,
 ) (*types.DeploymentPlanBaseline, types.BaselineState, error) {
+	nativeBaseline, nativeState, found, err := loadNativeVerifiedBaseline(ctx, draft, planned)
+	if err != nil {
+		return nil, types.BaselineState{}, err
+	}
+	if found {
+		return nativeBaseline, nativeState, nil
+	}
 	type desiredState struct {
 		ID       uuid.UUID
 		Revision int64
 		Checksum string
 	}
 	var desired desiredState
-	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+	err = internalctx.GetDb(ctx).QueryRow(ctx, `
 		SELECT state.id, state.state_version, state.state_checksum
 		FROM TargetComponentState state
 		JOIN DeploymentUnit unit
@@ -364,6 +371,135 @@ func loadVerifiedBaseline(
 		return nil, types.BaselineState{}, err
 	}
 	return baseline, baselineStateFromEvidence(*baseline), nil
+}
+
+func loadNativeVerifiedBaseline(
+	ctx context.Context,
+	draft types.PlanDraft,
+	planned types.PlannedState,
+) (*types.DeploymentPlanBaseline, types.BaselineState, bool, error) {
+	var candidate types.BaselineCandidate
+	var activeDesiredRevisionID, observedComponentStateID uuid.UUID
+	var sourcePlanID uuid.UUID
+	var canonicalPayload []byte
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT active.id,
+		       observation.id,
+		       observation.captured_at,
+		       active.revision,
+		       observation.state_checksum,
+		       active.artifact_digest,
+		       active.platform,
+		       active.config_checksum,
+		       active.deployment_plan_id,
+		       plan.plan_schema,
+		       plan.protocol_version,
+		       plan.canonical_payload
+		FROM ComponentDesiredStateHead head
+		JOIN ActiveDesiredRevision active
+		  ON active.id = head.active_revision_id
+		 AND active.organization_id = head.organization_id
+		 AND active.deployment_unit_id = head.deployment_unit_id
+		 AND active.component_instance_id = head.component_instance_id
+		JOIN ObservedComponentState observation
+		  ON observation.id = active.verified_observation_id
+		 AND observation.organization_id = active.organization_id
+		 AND observation.deployment_unit_id = active.deployment_unit_id
+		 AND observation.component_instance_id = active.component_instance_id
+		 AND observation.trusted
+		 AND observation.disposition = 'ACCEPTED'
+		 AND observation.health = 'HEALTHY'
+		 AND observation.outcome = 'COMPLETE'
+		 AND observation.artifact_digest = active.artifact_digest
+		 AND observation.config_checksum = active.config_checksum
+		 AND observation.schema_version = active.schema_version
+		 AND observation.capability_checksum = active.capability_checksum
+		 AND observation.platform = active.platform
+		 AND observation.topology_checksum = active.topology_checksum
+		JOIN DeploymentPlan plan
+		  ON plan.id = active.deployment_plan_id
+		 AND plan.organization_id = active.organization_id
+		WHERE head.organization_id = @organizationID
+		  AND head.deployment_unit_id = @deploymentUnitID
+		  AND head.component_instance_id = @componentInstanceID
+		  AND NOT head.quarantined
+		FOR SHARE`,
+		pgx.NamedArgs{
+			"organizationID":      draft.OrganizationID,
+			"deploymentUnitID":    draft.DeploymentUnitID,
+			"componentInstanceID": planned.ComponentInstanceID,
+		},
+	).Scan(
+		&activeDesiredRevisionID,
+		&observedComponentStateID,
+		&candidate.ObservedAt,
+		&candidate.DesiredRevision,
+		&candidate.DesiredChecksum,
+		&candidate.Image,
+		&candidate.Platform,
+		&candidate.ConfigChecksum,
+		&sourcePlanID,
+		&candidate.PlanSchema,
+		&candidate.ProtocolVersion,
+		&canonicalPayload,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, types.BaselineState{}, false, nil
+	}
+	if err != nil {
+		return nil, types.BaselineState{}, false,
+			fmt.Errorf("query native verified baseline: %w", err)
+	}
+
+	candidate.ActiveDesiredRevisionID = &activeDesiredRevisionID
+	candidate.ObservedComponentStateID = &observedComponentStateID
+	candidate.SourceDeploymentPlanID = &sourcePlanID
+	candidate.ObservationID = observedComponentStateID
+	candidate.Health = types.TargetComponentHealthHealthy
+	candidate.ObservedRevision = candidate.DesiredRevision
+	candidate.ObservedChecksum = candidate.DesiredChecksum
+	if !enrichNativeBaselineCandidate(&candidate, canonicalPayload, planned) {
+		return nil, types.BaselineState{}, false, nil
+	}
+	baseline, err := planning.SelectVerifiedBaseline(ctx, types.BaselineQuery{
+		OrganizationID:          draft.OrganizationID,
+		DeploymentUnitID:        draft.DeploymentUnitID,
+		ComponentInstanceID:     planned.ComponentInstanceID,
+		ComponentKey:            planned.ComponentKey,
+		ExpectedDesiredRevision: candidate.DesiredRevision,
+		ExpectedDesiredChecksum: candidate.DesiredChecksum,
+		Candidates:              []types.BaselineCandidate{candidate},
+	})
+	if err != nil {
+		return nil, types.BaselineState{}, false, err
+	}
+	return baseline, baselineStateFromEvidence(*baseline), true, nil
+}
+
+func enrichNativeBaselineCandidate(
+	candidate *types.BaselineCandidate,
+	payload []byte,
+	planned types.PlannedState,
+) bool {
+	var canonical types.TargetDeploymentPlanCanonical
+	if err := json.Unmarshal(payload, &canonical); err != nil {
+		return false
+	}
+	state, ok := findPlannedState(canonical, planned.ComponentInstanceID, planned.ComponentKey)
+	if !ok || !imageDigestMatches(candidate.Image, state.Image) ||
+		candidate.Platform != state.Platform || candidate.ConfigChecksum != state.ConfigChecksum {
+		return false
+	}
+	candidate.ReleaseBundleID = state.ReleaseBundleID
+	candidate.Version = state.Version
+	candidate.Image = state.Image
+	candidate.ConfigSnapshotID = state.ConfigSnapshotID
+	candidate.ProviderBindingChecksum = state.ProviderBindingChecksum
+	candidate.SchemaState = state.SchemaState
+	candidate.SchemaChecksum = state.SchemaChecksum
+	candidate.TopologyChecksum = state.TopologyChecksum
+	candidate.PlanFactsMatch = true
+	return true
 }
 
 func enrichBaselineCandidate(
@@ -575,6 +711,7 @@ func persistDeploymentPlanEvidence(
 			[]string{
 				"id", "deployment_plan_id", "organization_id", "component_instance_id",
 				"component_key", "source_deployment_plan_id", "external_execution_id",
+				"active_desired_revision_id", "observed_component_state_id",
 				"observation_id", "observed_at", "desired_revision", "desired_checksum",
 				"observation_checksum", "release_bundle_id", "version", "image", "platform",
 				"target_config_snapshot_id", "config_checksum", "provider_binding_checksum",
@@ -587,7 +724,8 @@ func persistDeploymentPlanEvidence(
 				return []any{
 					baseline.ID, plan.ID, plan.OrganizationID, baseline.ComponentInstanceID,
 					baseline.ComponentKey, baseline.SourceDeploymentPlanID,
-					baseline.ExternalExecutionID, baseline.ObservationID, baseline.ObservedAt,
+					baseline.ExternalExecutionID, baseline.ActiveDesiredRevisionID,
+					baseline.ObservedComponentStateID, baseline.ObservationID, baseline.ObservedAt,
 					baseline.DesiredRevision, baseline.DesiredChecksum,
 					baseline.ObservationChecksum, baseline.ReleaseBundleID, baseline.Version,
 					baseline.Image, baseline.Platform, baseline.ConfigSnapshotID,
@@ -679,7 +817,8 @@ func getDeploymentPlanBaselines(
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT id, created_at, deployment_plan_id, organization_id,
 		       component_instance_id, component_key, source_deployment_plan_id,
-		       external_execution_id, observation_id, observed_at, desired_revision,
+		       external_execution_id, active_desired_revision_id,
+		       observed_component_state_id, observation_id, observed_at, desired_revision,
 		       desired_checksum, observation_checksum, release_bundle_id, version,
 		       image, platform, target_config_snapshot_id, config_checksum,
 		       provider_binding_checksum, schema_state, schema_checksum,
