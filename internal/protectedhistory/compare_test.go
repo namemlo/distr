@@ -71,60 +71,31 @@ func TestCompareExactRequiresArtifactEquality(t *testing.T) {
 
 func TestCompareExactPermitsOnlyEveryApprovedRetirement(t *testing.T) {
 	t.Parallel()
-	baseline := mustBuild(t, []RawRecord{
-		{Kind: "deploymentplan", ID: testPlanID, Payload: json.RawMessage(`{"status":"VALID"}`)},
-		{Kind: "task", ID: testTaskID, Payload: json.RawMessage(`{"status":"SUCCEEDED"}`)},
-	})
-	current := mustBuild(t, []RawRecord{{
-		Kind: "deploymentplan", ID: testPlanID, Payload: json.RawMessage(`{"status":"VALID"}`),
-	}})
-	allowlist, err := BuildApprovedRetirementAllowlist(
-		*baseline,
-		"sha256:"+strings.Repeat("a", 64),
-		"77777777-7777-4777-8777-777777777777",
-		"sha256:"+strings.Repeat("b", 64),
-		[]RetirementAllowance{{
-			Kind: "task", ID: testTaskID, BaselineHash: baseline.Records[1].Hash,
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := CompareExact(*baseline, *current, allowlist)
+	fixture := mustRetirementFixture(t)
+	result, err := CompareExact(*fixture.Baseline, *fixture.Current, fixture.Authorization)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Status != ComparisonRetirements || len(result.ApprovedRetirements) != 1 ||
-		result.RetirementAllowlistID != allowlist.AllowlistID {
+		result.RetirementAllowlistID != fixture.Authorization.Allowlist.AllowlistID {
 		t.Fatalf("approved retirement was not classified exactly: %#v", result)
 	}
 
-	tampered := *allowlist
-	tampered.Items = append([]RetirementAllowance(nil), allowlist.Items...)
-	tampered.Items[0].BaselineHash = "sha256:" + strings.Repeat("c", 64)
-	if _, err := CompareExact(*baseline, *current, &tampered); err == nil {
+	tampered := *fixture.Authorization
+	tampered.Allowlist = fixture.Authorization.Allowlist
+	tampered.Allowlist.Items = append(
+		[]RetirementAllowance(nil), fixture.Authorization.Allowlist.Items...,
+	)
+	tampered.Allowlist.Items[0].BaselineHash = "sha256:" + strings.Repeat("c", 64)
+	if _, err := CompareExact(*fixture.Baseline, *fixture.Current, &tampered); err == nil {
 		t.Fatal("tampered retirement allowlist was accepted")
 	}
 }
 
 func TestCompareExactRejectsUnusedRetirementAllowance(t *testing.T) {
 	t.Parallel()
-	baseline := mustBuild(t, []RawRecord{{
-		Kind: "task", ID: testTaskID, Payload: json.RawMessage(`{"status":"SUCCEEDED"}`),
-	}})
-	allowlist, err := BuildApprovedRetirementAllowlist(
-		*baseline,
-		"sha256:"+strings.Repeat("a", 64),
-		"77777777-7777-4777-8777-777777777777",
-		"sha256:"+strings.Repeat("b", 64),
-		[]RetirementAllowance{{
-			Kind: "task", ID: testTaskID, BaselineHash: baseline.Records[0].Hash,
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := CompareExact(*baseline, *baseline, allowlist)
+	fixture := mustRetirementFixture(t)
+	result, err := CompareExact(*fixture.Baseline, *fixture.Baseline, fixture.Authorization)
 	if err != nil {
 		t.Fatal(err)
 	}

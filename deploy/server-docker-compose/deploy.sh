@@ -4025,13 +4025,22 @@ run_protected_history_export() (
 run_protected_history_exact_compare() (
   set -Eeuo pipefail
   local image_ref="${1:-}" plan_dir="${2:-}" baseline_name="${3:-}"
-  local current_name="${4:-}" allowlist_name="${5:-NONE}" report_name="${6:-}"
+  local current_name="${4:-}" allowlist_name="${5:-NONE}" approval_name="${6:-NONE}"
+  local membership_name="${7:-NONE}" report_name="${8:-}"
   local deployment_uid deployment_gid temporary=''
-  local -a allowlist_args=()
+  local -a retirement_args=()
   [[ "$report_name" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
   if [[ "$allowlist_name" != NONE ]]; then
-    [[ "$allowlist_name" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
-    allowlist_args=(--approved-retirement-allowlist "/evidence/$allowlist_name")
+    [[ "$allowlist_name" =~ ^[A-Za-z0-9_.-]+$ &&
+       "$approval_name" =~ ^[A-Za-z0-9_.-]+$ &&
+       "$membership_name" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+    retirement_args=(
+      --approved-retirement-allowlist "/evidence/$allowlist_name"
+      --retirement-approval "/evidence/$approval_name"
+      --sample-membership "/evidence/$membership_name"
+    )
+  elif [[ "$approval_name" != NONE || "$membership_name" != NONE ]]; then
+    return 1
   fi
   deployment_uid="$(id -u)" || return
   deployment_gid="$(id -g)" || return
@@ -4043,7 +4052,7 @@ run_protected_history_exact_compare() (
     "$image_ref" protected-history compare \
       --baseline "/evidence/$baseline_name" \
       --current "/evidence/$current_name" \
-      --require-exact "${allowlist_args[@]}" >"$temporary" || return
+      --require-exact "${retirement_args[@]}" >"$temporary" || return
   chmod 0600 "$temporary" || return
   jq -e '.status == "UNCHANGED" or .status == "APPROVED_RETIREMENTS_ONLY"' \
     "$temporary" >/dev/null || return
@@ -4054,7 +4063,7 @@ run_protected_history_exact_compare() (
 )
 
 restore_plan_state_keys() {
-  printf '%s' 'STATE,PLAN_ID,PRIOR_HANDOFF,PRIOR_HANDOFF_SHA256,DATABASE_BACKUP,DATABASE_BACKUP_SHA256,OBJECT_BACKUP,OBJECT_BACKUP_SHA256,PROTECTED_HISTORY_BASELINE_SHA256,RETIREMENT_ALLOWLIST_SHA256,TARGET_IMAGE_REF,TARGET_RELEASE_COMMIT,TARGET_IMAGE_DIGEST,OPERATOR_IMAGE_REF,OPERATOR_RELEASE_COMMIT,POSTGRES_VOLUME,RUSTFS_VOLUME,SOURCE_SCHEMA_VERSION,OBJECT_AGGREGATE_SHA256,CREATED_AT'
+  printf '%s' 'STATE,PLAN_ID,RESTORE_SNAPSHOT_SHA256,PRIOR_HANDOFF,PRIOR_HANDOFF_SHA256,DATABASE_BACKUP,DATABASE_BACKUP_SHA256,OBJECT_BACKUP,OBJECT_BACKUP_SHA256,PROTECTED_HISTORY_BASELINE_SHA256,RETIREMENT_ALLOWLIST_SHA256,RETIREMENT_APPROVAL_SHA256,SAMPLE_MEMBERSHIP_SHA256,TARGET_IMAGE_REF,TARGET_RELEASE_COMMIT,TARGET_IMAGE_DIGEST,OPERATOR_IMAGE_REF,OPERATOR_RELEASE_COMMIT,POSTGRES_VOLUME,RUSTFS_VOLUME,SOURCE_SCHEMA_VERSION,OBJECT_AGGREGATE_SHA256,CREATED_AT'
 }
 
 write_restore_plan_state() (
@@ -4065,6 +4074,7 @@ write_restore_plan_state() (
   shift 9 || return
   local operator_ref="${1:-}" operator_commit="${2:-}" postgres_volume="${3:-}"
   local rustfs_volume="${4:-}" source_schema="${5:-}" object_aggregate="${6:-}"
+  local snapshot_checksum="${7:-}" approval_checksum="${8:-}" membership_checksum="${9:-}"
   local state="$plan_dir/restore-plan.env" temporary=''
   local handoff_checksum database_checksum object_checksum created_at
   handoff_checksum="$(checksum_bound_input_value "$handoff")" || return
@@ -4076,6 +4086,7 @@ write_restore_plan_state() (
   {
     printf 'STATE=READY\n'
     printf 'PLAN_ID=%s\n' "$plan_id"
+    printf 'RESTORE_SNAPSHOT_SHA256=%s\n' "$snapshot_checksum"
     printf 'PRIOR_HANDOFF=%s\n' "$handoff"
     printf 'PRIOR_HANDOFF_SHA256=%s\n' "$handoff_checksum"
     printf 'DATABASE_BACKUP=%s\n' "$database_backup"
@@ -4084,6 +4095,8 @@ write_restore_plan_state() (
     printf 'OBJECT_BACKUP_SHA256=%s\n' "$object_checksum"
     printf 'PROTECTED_HISTORY_BASELINE_SHA256=%s\n' "$baseline_checksum"
     printf 'RETIREMENT_ALLOWLIST_SHA256=%s\n' "$retirement_checksum"
+    printf 'RETIREMENT_APPROVAL_SHA256=%s\n' "$approval_checksum"
+    printf 'SAMPLE_MEMBERSHIP_SHA256=%s\n' "$membership_checksum"
     printf 'TARGET_IMAGE_REF=%s\n' "$target_ref"
     printf 'TARGET_RELEASE_COMMIT=%s\n' "$target_commit"
     printf 'TARGET_IMAGE_DIGEST=%s\n' "${target_ref##*@}"
@@ -4101,6 +4114,77 @@ write_restore_plan_state() (
   temporary=''
   write_sha256_sidecar_create_new "$state" || return
 )
+
+write_restore_snapshot_manifest() (
+  set -Eeuo pipefail
+  local plan_dir="${1:-}" plan_id="${2:-}" handoff_checksum="${3:-}"
+  local database_checksum="${4:-}" object_checksum="${5:-}" baseline_checksum="${6:-}"
+  local target_ref="${7:-}" target_commit="${8:-}" output temporary=''
+  output="$plan_dir/release-restore-snapshot.json"
+  [[ "$plan_id" =~ ^restore_[0-9]{8}T[0-9]{6}Z_[0-9a-f]{16}$ &&
+     "$handoff_checksum" =~ ^sha256:[0-9a-f]{64}$ &&
+     "$database_checksum" =~ ^sha256:[0-9a-f]{64}$ &&
+     "$object_checksum" =~ ^sha256:[0-9a-f]{64}$ &&
+     "$baseline_checksum" =~ ^sha256:[0-9a-f]{64}$ &&
+     "$target_ref" =~ @sha256:[0-9a-f]{64}$ && "$target_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+  temporary="$(mktemp "$plan_dir/.release-restore-snapshot.XXXXXX")" || return
+  trap 'rm -f -- "${temporary:-}" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+  jq -n \
+    --arg schema 'distr.release-restore-snapshot/v1' \
+    --arg planId "$plan_id" \
+    --arg handoffChecksum "$handoff_checksum" \
+    --arg postgresBackupChecksum "$database_checksum" \
+    --arg rustfsBackupChecksum "$object_checksum" \
+    --arg protectedHistoryChecksum "$baseline_checksum" \
+    --arg targetImageRef "$target_ref" \
+    --arg targetReleaseCommit "$target_commit" \
+    '{
+      schema: $schema,
+      planId: $planId,
+      inputs: {
+        priorHandoff: {checksum: $handoffChecksum},
+        postgresBackup: {checksum: $postgresBackupChecksum},
+        rustfsBackup: {checksum: $rustfsBackupChecksum},
+        protectedHistoryBaseline: {checksum: $protectedHistoryChecksum}
+      },
+      target: {imageRef: $targetImageRef, releaseCommit: $targetReleaseCommit}
+    }' >"$temporary" || return
+  chmod 0600 "$temporary" || return
+  copy_file_create_new_0600 "$temporary" "$output" || return
+  rm -f -- "$temporary" || return
+  temporary=''
+  write_sha256_sidecar_create_new "$output" || return
+)
+
+validate_restore_snapshot_manifest() {
+  local plan_dir="${1:-}" plan_name="${2:-}" manifest
+  local -n plan_values="$plan_name"
+  manifest="$plan_dir/release-restore-snapshot.json"
+  verify_sha256_sidecar "$manifest" || return
+  [[ "$(checksum_value "$manifest")" == "${plan_values[RESTORE_SNAPSHOT_SHA256]}" ]] || {
+    die "restore snapshot manifest checksum changed"
+    return 1
+  }
+  jq -e \
+    --arg planId "${plan_values[PLAN_ID]}" \
+    --arg handoffChecksum "${plan_values[PRIOR_HANDOFF_SHA256]}" \
+    --arg postgresBackupChecksum "${plan_values[DATABASE_BACKUP_SHA256]}" \
+    --arg rustfsBackupChecksum "${plan_values[OBJECT_BACKUP_SHA256]}" \
+    --arg protectedHistoryChecksum "${plan_values[PROTECTED_HISTORY_BASELINE_SHA256]}" \
+    --arg targetImageRef "${plan_values[TARGET_IMAGE_REF]}" \
+    --arg targetReleaseCommit "${plan_values[TARGET_RELEASE_COMMIT]}" \
+    '.schema == "distr.release-restore-snapshot/v1" and
+     .planId == $planId and
+     .inputs.priorHandoff.checksum == $handoffChecksum and
+     .inputs.postgresBackup.checksum == $postgresBackupChecksum and
+     .inputs.rustfsBackup.checksum == $rustfsBackupChecksum and
+     .inputs.protectedHistoryBaseline.checksum == $protectedHistoryChecksum and
+     .target.imageRef == $targetImageRef and
+     .target.releaseCommit == $targetReleaseCommit' "$manifest" >/dev/null || {
+    die "restore snapshot manifest does not bind the sealed recovery inputs"
+    return 1
+  }
+}
 
 write_restore_failure_state() {
   local plan_dir="${1:-}" plan_id="${2:-}" postgres_volume="${3:-}"
@@ -4127,13 +4211,21 @@ restore_plan() (
   set -Eeuo pipefail
   local handoff="${1:-}" database_backup="${2:-}" object_backup="${3:-}"
   local protected_baseline="${4:-}" plan_dir="${5:-}" retirement_allowlist="${6:--}"
+  local retirement_approval="${7:--}" sample_membership="${8:--}"
   local project plan_id nonce network postgres_container postgres_volume rustfs_volume
   local target_ref target_commit target_digest operator_ref operator_commit verified_commit
-  local baseline_checksum retirement_checksum=NONE source_schema object_aggregate database_url
+  local baseline_checksum retirement_checksum=NONE approval_checksum=NONE membership_checksum=NONE
+  local source_schema object_aggregate database_url snapshot_checksum
   local database_backup_name object_backup_name phase=PREPARE complete=0 cleanup_status=0
   local network_created=0 container_created=0
   [[ -n "$handoff" && -n "$database_backup" && -n "$object_backup" &&
      -n "$protected_baseline" && -n "$plan_dir" ]] || return 1
+  if [[ "$retirement_allowlist" == - || "$retirement_approval" == - || "$sample_membership" == - ]]; then
+    [[ "$retirement_allowlist" == - && "$retirement_approval" == - && "$sample_membership" == - ]] || {
+      die "restore retirement authorization requires allowlist, approval, and membership together"
+      return 1
+    }
+  fi
   acquire_deploy_lock || return
   require_no_active_timestamp_fence || return
   check_env || return
@@ -4145,6 +4237,8 @@ restore_plan() (
   verify_checksum_bound_input "$protected_baseline" || return
   if [[ "$retirement_allowlist" != - ]]; then
     verify_checksum_bound_input "$retirement_allowlist" || return
+    verify_checksum_bound_input "$retirement_approval" || return
+    verify_checksum_bound_input "$sample_membership" || return
   fi
   prepare_restore_plan_directory "$plan_dir" || return
   target_ref="$(metadata_value "$handoff" DISTR_IMAGE_REF)" || return
@@ -4160,6 +4254,8 @@ restore_plan() (
     "$protected_baseline")" || return
   if [[ "$retirement_allowlist" != - ]]; then
     retirement_checksum="$(checksum_bound_input_value "$retirement_allowlist")" || return
+    approval_checksum="$(checksum_bound_input_value "$retirement_approval")" || return
+    membership_checksum="$(checksum_bound_input_value "$sample_membership")" || return
   fi
   plan_id="restore_$(date -u +%Y%m%dT%H%M%SZ)_$(openssl rand -hex 8)" || return
   nonce="$(openssl rand -hex 8)" || return
@@ -4208,6 +4304,12 @@ restore_plan() (
     copy_file_create_new_0600 "$retirement_allowlist" \
       "$plan_dir/approved-retirement-allowlist.json" || return
     write_sha256_sidecar_create_new "$plan_dir/approved-retirement-allowlist.json" || return
+    copy_file_create_new_0600 "$retirement_approval" \
+      "$plan_dir/retirement-approval.json" || return
+    write_sha256_sidecar_create_new "$plan_dir/retirement-approval.json" || return
+    copy_file_create_new_0600 "$sample_membership" \
+      "$plan_dir/sample-membership.json" || return
+    write_sha256_sidecar_create_new "$plan_dir/sample-membership.json" || return
   fi
   phase=VERIFY_IMAGES
   pull_immutable_image_ref "$target_ref" || return
@@ -4261,17 +4363,27 @@ restore_plan() (
     "$operator_ref" "$plan_dir" protected-history-before.json \
     protected-history-restored.json \
     "$([[ "$retirement_allowlist" == - ]] && printf NONE || printf approved-retirement-allowlist.json)" \
+    "$([[ "$retirement_approval" == - ]] && printf NONE || printf retirement-approval.json)" \
+    "$([[ "$sample_membership" == - ]] && printf NONE || printf sample-membership.json)" \
     protected-history-restore-compare.json || return
   [[ "$(jq -er '.sourceSchemaVersion' "$plan_dir/protected-history-restored.json")" == "$source_schema" ]] || {
     die "restored protected-history schema differs from baseline"
     return 1
   }
   phase=SEAL_PLAN
+  write_restore_snapshot_manifest \
+    "$plan_dir" "$plan_id" \
+    "$(checksum_bound_input_value "$handoff")" \
+    "$(checksum_bound_input_value "$database_backup")" \
+    "$(checksum_bound_input_value "$object_backup")" \
+    "$baseline_checksum" "$target_ref" "$target_commit" || return
+  snapshot_checksum="$(checksum_value "$plan_dir/release-restore-snapshot.json")" || return
   write_restore_plan_state \
     "$plan_dir" "$plan_id" "$plan_dir/prior-handoff.env" "$database_backup" "$object_backup" \
     "$baseline_checksum" "$retirement_checksum" "$target_ref" "$target_commit" \
     "$operator_ref" "$operator_commit" "$postgres_volume" "$rustfs_volume" \
-    "$source_schema" "$object_aggregate" || return
+    "$source_schema" "$object_aggregate" "$snapshot_checksum" \
+    "$approval_checksum" "$membership_checksum" || return
   complete=1
   info "restore plan is READY; no runtime volume or image was switched: $plan_dir"
 )
@@ -4279,13 +4391,15 @@ restore_plan() (
 validate_restore_plan() {
   local plan_dir="${1:-}" output_name="${2:-}" state="$plan_dir/restore-plan.env"
   local keys handoff_checksum database_checksum object_checksum baseline_checksum retirement_checksum
+  local approval_checksum membership_checksum
   local -n output="$output_name"
   keys="$(restore_plan_state_keys)" || return
   verify_sha256_sidecar "$state" || return
-  parse_restricted_key_file "$state" "$keys" output || return
+  parse_restricted_key_file "$state" "$keys" "$output_name" || return
   [[ "${output[STATE]}" == READY &&
      "${output[PLAN_ID]}" =~ ^restore_[0-9]{8}T[0-9]{6}Z_[0-9a-f]{16}$ &&
      "${output[TARGET_IMAGE_REF]}" == *@"${output[TARGET_IMAGE_DIGEST]}" &&
+     "${output[RESTORE_SNAPSHOT_SHA256]}" =~ ^sha256:[0-9a-f]{64}$ &&
      "${output[SOURCE_SCHEMA_VERSION]}" =~ ^[0-9]+$ ]] || return 1
   ((${output[SOURCE_SCHEMA_VERSION]} >= 138)) || return 1
   handoff_checksum="$(checksum_bound_input_value "${output[PRIOR_HANDOFF]}")" || return
@@ -4301,8 +4415,16 @@ validate_restore_plan() {
   }
   if [[ "${output[RETIREMENT_ALLOWLIST_SHA256]}" != NONE ]]; then
     retirement_checksum="$(checksum_value "$plan_dir/approved-retirement-allowlist.json")" || return
-    [[ "$retirement_checksum" == "${output[RETIREMENT_ALLOWLIST_SHA256]}" ]] || return 1
+    approval_checksum="$(checksum_value "$plan_dir/retirement-approval.json")" || return
+    membership_checksum="$(checksum_value "$plan_dir/sample-membership.json")" || return
+    [[ "$retirement_checksum" == "${output[RETIREMENT_ALLOWLIST_SHA256]}" &&
+       "$approval_checksum" == "${output[RETIREMENT_APPROVAL_SHA256]}" &&
+       "$membership_checksum" == "${output[SAMPLE_MEMBERSHIP_SHA256]}" ]] || return 1
+  else
+    [[ "${output[RETIREMENT_APPROVAL_SHA256]}" == NONE &&
+       "${output[SAMPLE_MEMBERSHIP_SHA256]}" == NONE ]] || return 1
   fi
+  validate_restore_snapshot_manifest "$plan_dir" output || return
   [[ "$(metadata_value "${output[PRIOR_HANDOFF]}" DISTR_IMAGE_REF)" == "${output[TARGET_IMAGE_REF]}" &&
      "$(metadata_value "${output[PRIOR_HANDOFF]}" DISTR_RELEASE_COMMIT)" == "${output[TARGET_RELEASE_COMMIT]}" &&
      "$(metadata_value "${output[PRIOR_HANDOFF]}" DISTR_IMAGE_DIGEST)" == "${output[TARGET_IMAGE_DIGEST]}" ]] || {
@@ -4347,19 +4469,293 @@ write_restore_applied_state() {
   write_sha256_sidecar_create_new "$state" || return
 }
 
+restore_switch_journal_keys() {
+  printf '%s' 'STATE,PLAN_ID,RESTORE_SNAPSHOT_SHA256,SOURCE_IMAGE_REF,SOURCE_RELEASE_COMMIT,SOURCE_POSTGRES_VOLUME,SOURCE_RUSTFS_VOLUME,TARGET_IMAGE_REF,TARGET_RELEASE_COMMIT,TARGET_POSTGRES_VOLUME,TARGET_RUSTFS_VOLUME,UPDATED_AT,JOURNAL_CHECKSUM'
+}
+
+restore_switch_transition_allowed() {
+  local from="${1:-NONE}" to="${2:-}"
+  [[ "$from" == "$to" ]] && return 0
+  case "$from:$to" in
+    NONE:PREPARED|PREPARED:SOURCE_STOPPED|PREPARED:RECOVERY_REQUIRED|PREPARED:RECOVERED|SOURCE_STOPPED:IDENTITY_SWITCHED|SOURCE_STOPPED:RECOVERY_REQUIRED|SOURCE_STOPPED:RECOVERED|IDENTITY_SWITCHED:TARGET_VERIFIED|IDENTITY_SWITCHED:RECOVERY_REQUIRED|IDENTITY_SWITCHED:RECOVERED|TARGET_VERIFIED:COMMITTED|TARGET_VERIFIED:RECOVERY_REQUIRED|TARGET_VERIFIED:RECOVERED|RECOVERY_REQUIRED:RECOVERED)
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+read_restore_switch_journal() {
+  local plan_dir="${1:-}" output_name="${2:-}" journal_file="$plan_dir/restore-switch-journal.env"
+  local keys last_line recorded computed
+  local -n output="$output_name"
+  keys="$(restore_switch_journal_keys)" || return
+  parse_restricted_key_file "$journal_file" "$keys" "$output_name" || return
+  last_line="$(tail -n 1 -- "$journal_file")" || return
+  [[ "$last_line" == JOURNAL_CHECKSUM=* ]] || {
+    die "restore switch journal checksum is not the final record"
+    return 1
+  }
+  recorded="${output[JOURNAL_CHECKSUM]}"
+  computed="sha256:$(sed '$d' "$journal_file" | sha256sum | awk '{print $1}')" || return
+  [[ "$recorded" == "$computed" ]] || {
+    die "restore switch journal checksum mismatch"
+    return 1
+  }
+  [[ "${output[STATE]}" =~ ^(PREPARED|SOURCE_STOPPED|IDENTITY_SWITCHED|TARGET_VERIFIED|COMMITTED|RECOVERY_REQUIRED|RECOVERED)$ ]] || return 1
+}
+
+restore_runtime_identity_matches() {
+  local image_ref="${1:-}" release_commit="${2:-}"
+  local postgres_volume="${3:-}" rustfs_volume="${4:-}"
+  [[ "${DISTR_IMAGE_REF:-}" == "$image_ref" &&
+     "${DISTR_RELEASE_COMMIT:-}" == "$release_commit" &&
+     "$(configured_postgres_volume)" == "$postgres_volume" &&
+     "$(configured_rustfs_volume)" == "$rustfs_volume" ]]
+}
+
+running_service_volume_name() {
+  local service="${1:-}" destination="${2:-}" container volume
+  [[ "$service" =~ ^[a-z][a-z0-9-]*$ && "$destination" == /* ]] || return 1
+  container="$(compose ps -q "$service")" || return
+  [[ -n "$container" ]] || {
+    die "restore source service is not running: $service"
+    return 1
+  }
+  volume="$(docker inspect --format \
+    "{{range .Mounts}}{{if eq .Destination \"$destination\"}}{{.Name}}{{end}}{{end}}" \
+    "$container")" || return
+  [[ "$volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || {
+    die "restore source $service does not use one named volume at $destination"
+    return 1
+  }
+  printf '%s' "$volume" || return
+}
+
+require_running_restore_source_identity() {
+  local source_ref="${1:-}" source_commit="${2:-}"
+  local source_postgres="${3:-}" source_rustfs="${4:-}"
+  local actual_postgres actual_rustfs
+  restore_runtime_identity_matches \
+    "$source_ref" "$source_commit" "$source_postgres" "$source_rustfs" || {
+    die "configured restore source identity changed during preflight"
+    return 1
+  }
+  verify_running_release_identity >/dev/null || return
+  actual_postgres="$(running_service_volume_name postgres /var/lib/postgresql)" || return
+  actual_rustfs="$(running_service_volume_name storage /data)" || return
+  [[ "$actual_postgres" == "$source_postgres" && "$actual_rustfs" == "$source_rustfs" ]] || {
+    die "running restore source volumes differ from the configured source identity"
+    return 1
+  }
+}
+
+validate_restore_switch_journal_identity() {
+  local plan_name="${1:-}" journal_name="${2:-}"
+  local -n plan_values="$plan_name"
+  local -n journal_values="$journal_name"
+  [[ "${journal_values[PLAN_ID]}" == "${plan_values[PLAN_ID]}" &&
+     "${journal_values[RESTORE_SNAPSHOT_SHA256]}" == "${plan_values[RESTORE_SNAPSHOT_SHA256]}" &&
+     "${journal_values[SOURCE_IMAGE_REF]}" =~ @sha256:[0-9a-f]{64}$ &&
+     "${journal_values[SOURCE_RELEASE_COMMIT]}" =~ ^[0-9a-f]{40}$ &&
+     "${journal_values[SOURCE_POSTGRES_VOLUME]}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ &&
+     "${journal_values[SOURCE_RUSTFS_VOLUME]}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ &&
+     "${journal_values[TARGET_IMAGE_REF]}" == "${plan_values[TARGET_IMAGE_REF]}" &&
+     "${journal_values[TARGET_RELEASE_COMMIT]}" == "${plan_values[TARGET_RELEASE_COMMIT]}" &&
+     "${journal_values[TARGET_POSTGRES_VOLUME]}" == "${plan_values[POSTGRES_VOLUME]}" &&
+     "${journal_values[TARGET_RUSTFS_VOLUME]}" == "${plan_values[RUSTFS_VOLUME]}" ]] || {
+    die "restore switch journal identity differs from the sealed plan"
+    return 1
+  }
+}
+
+write_restore_switch_journal() (
+  set -Eeuo pipefail
+  local plan_dir="${1:-}" next_state="${2:-}" plan_name="${3:-}"
+  local source_ref="${4:-}" source_commit="${5:-}" source_postgres="${6:-}" source_rustfs="${7:-}"
+  local journal="$plan_dir/restore-switch-journal.env" temporary='' directory current_state=NONE digest
+  local -n plan_values="$plan_name"
+  local -A current=()
+  directory="$(dirname -- "$journal")" || return
+  if [[ -e "$journal" || -L "$journal" ]]; then
+    read_restore_switch_journal "$plan_dir" current || return
+    current_state="${current[STATE]}"
+    [[ "${current[PLAN_ID]}" == "${plan_values[PLAN_ID]}" &&
+       "${current[RESTORE_SNAPSHOT_SHA256]}" == "${plan_values[RESTORE_SNAPSHOT_SHA256]}" &&
+       "${current[SOURCE_IMAGE_REF]}" == "$source_ref" &&
+       "${current[SOURCE_RELEASE_COMMIT]}" == "$source_commit" &&
+       "${current[SOURCE_POSTGRES_VOLUME]}" == "$source_postgres" &&
+       "${current[SOURCE_RUSTFS_VOLUME]}" == "$source_rustfs" &&
+       "${current[TARGET_IMAGE_REF]}" == "${plan_values[TARGET_IMAGE_REF]}" &&
+       "${current[TARGET_RELEASE_COMMIT]}" == "${plan_values[TARGET_RELEASE_COMMIT]}" &&
+       "${current[TARGET_POSTGRES_VOLUME]}" == "${plan_values[POSTGRES_VOLUME]}" &&
+       "${current[TARGET_RUSTFS_VOLUME]}" == "${plan_values[RUSTFS_VOLUME]}" ]] || {
+      die "restore switch journal identity differs from the sealed plan"
+      return 1
+    }
+  fi
+  restore_switch_transition_allowed "$current_state" "$next_state" || {
+    die "invalid restore switch journal transition $current_state -> $next_state"
+    return 1
+  }
+  temporary="$(mktemp "$directory/.restore-switch-journal.XXXXXX")" || return
+  trap 'rm -f -- "${temporary:-}" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+  {
+    printf 'STATE=%s\n' "$next_state"
+    printf 'PLAN_ID=%s\n' "${plan_values[PLAN_ID]}"
+    printf 'RESTORE_SNAPSHOT_SHA256=%s\n' "${plan_values[RESTORE_SNAPSHOT_SHA256]}"
+    printf 'SOURCE_IMAGE_REF=%s\n' "$source_ref"
+    printf 'SOURCE_RELEASE_COMMIT=%s\n' "$source_commit"
+    printf 'SOURCE_POSTGRES_VOLUME=%s\n' "$source_postgres"
+    printf 'SOURCE_RUSTFS_VOLUME=%s\n' "$source_rustfs"
+    printf 'TARGET_IMAGE_REF=%s\n' "${plan_values[TARGET_IMAGE_REF]}"
+    printf 'TARGET_RELEASE_COMMIT=%s\n' "${plan_values[TARGET_RELEASE_COMMIT]}"
+    printf 'TARGET_POSTGRES_VOLUME=%s\n' "${plan_values[POSTGRES_VOLUME]}"
+    printf 'TARGET_RUSTFS_VOLUME=%s\n' "${plan_values[RUSTFS_VOLUME]}"
+    printf 'UPDATED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary" || return
+  digest="sha256:$(sha256sum -- "$temporary" | awk '{print $1}')" || return
+  printf 'JOURNAL_CHECKSUM=%s\n' "$digest" >>"$temporary" || return
+  chmod 0600 "$temporary" || return
+  sync -f "$temporary" || return
+  mv -fT -- "$temporary" "$journal" || return
+  temporary=''
+  sync -f "$directory" || return
+)
+
+restore_source_runtime() {
+  local source_ref="${1:-}" source_commit="${2:-}" source_postgres="${3:-}" source_rustfs="${4:-}"
+  stop_restore_runtime || return
+  set_restore_runtime_identity "$source_ref" "$source_commit" "$source_postgres" "$source_rustfs" || return
+  load_env || return
+  compose_config || return
+  start_dependencies || return
+  start_hub || return
+  health || return
+  verify_running_release_identity >/dev/null || return
+}
+
+validate_restore_applied_state() {
+  local plan_dir="${1:-}" plan_id="${2:-}" state="$plan_dir/restore-applied.env"
+  local keys='STATE,PLAN_ID,APPLIED_AT'
+  local -A values=()
+  verify_sha256_sidecar "$state" || return
+  parse_restricted_key_file "$state" "$keys" values || return
+  [[ "${values[STATE]}" == APPLIED &&
+     "${values[PLAN_ID]}" == "$plan_id" &&
+     "${values[APPLIED_AT]}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+    die "restore applied state does not match the sealed plan"
+    return 1
+  }
+}
+
+restore_recover() (
+  set -Eeuo pipefail
+  local plan_dir="${1:-}" state
+  local -A plan=() journal=()
+  acquire_deploy_lock || return
+  require_no_active_timestamp_fence || return
+  check_env || return
+  validate_restore_plan "$plan_dir" plan || return
+  read_restore_switch_journal "$plan_dir" journal || return
+  validate_restore_switch_journal_identity plan journal || return
+  state="${journal[STATE]}"
+
+  case "$state" in
+    PREPARED)
+      restore_runtime_identity_matches \
+        "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+        "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" || {
+        die "prepared restore journal does not match the configured source runtime"
+        return 1
+      }
+      if ! verify_running_release_identity >/dev/null; then
+        restore_source_runtime \
+          "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+          "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" || return
+      fi
+      write_restore_switch_journal \
+        "$plan_dir" RECOVERED plan \
+        "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+        "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" || return
+      info "restore recovery confirmed the source runtime and marked the journal RECOVERED"
+      ;;
+    SOURCE_STOPPED|IDENTITY_SWITCHED|RECOVERY_REQUIRED)
+      restore_runtime_identity_matches \
+        "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+        "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" ||
+        restore_runtime_identity_matches \
+          "${plan[TARGET_IMAGE_REF]}" "${plan[TARGET_RELEASE_COMMIT]}" \
+          "${plan[POSTGRES_VOLUME]}" "${plan[RUSTFS_VOLUME]}" || {
+          die "restore recovery found an unrecognized configured runtime identity"
+          return 1
+        }
+      restore_source_runtime \
+        "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+        "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" || return
+      write_restore_switch_journal \
+        "$plan_dir" RECOVERED plan \
+        "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+        "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" || return
+      info "restore recovery returned the source image and volumes to service"
+      ;;
+    TARGET_VERIFIED)
+      validate_restore_applied_state "$plan_dir" "${plan[PLAN_ID]}" || return
+      restore_runtime_identity_matches \
+        "${plan[TARGET_IMAGE_REF]}" "${plan[TARGET_RELEASE_COMMIT]}" \
+        "${plan[POSTGRES_VOLUME]}" "${plan[RUSTFS_VOLUME]}" || {
+        die "verified-target journal does not match the configured target runtime"
+        return 1
+      }
+      verify_running_release_identity >/dev/null || return
+      write_restore_switch_journal \
+        "$plan_dir" COMMITTED plan \
+        "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+        "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" || return
+      info "restore recovery finalized the verified target as COMMITTED"
+      ;;
+    COMMITTED)
+      validate_restore_applied_state "$plan_dir" "${plan[PLAN_ID]}" || return
+      restore_runtime_identity_matches \
+        "${plan[TARGET_IMAGE_REF]}" "${plan[TARGET_RELEASE_COMMIT]}" \
+        "${plan[POSTGRES_VOLUME]}" "${plan[RUSTFS_VOLUME]}" || {
+        die "committed restore journal does not match the configured target runtime"
+        return 1
+      }
+      verify_running_release_identity >/dev/null || return
+      info "restore journal is already COMMITTED"
+      ;;
+    RECOVERED)
+      restore_runtime_identity_matches \
+        "${journal[SOURCE_IMAGE_REF]}" "${journal[SOURCE_RELEASE_COMMIT]}" \
+        "${journal[SOURCE_POSTGRES_VOLUME]}" "${journal[SOURCE_RUSTFS_VOLUME]}" || {
+        die "recovered restore journal does not match the configured source runtime"
+        return 1
+      }
+      verify_running_release_identity >/dev/null || return
+      info "restore journal is already RECOVERED"
+      ;;
+    *) return 1 ;;
+  esac
+)
+
 restore_apply() (
   set -Eeuo pipefail
   local plan_dir="${1:-}" project network nonce postgres_container database_url object_aggregate
   local source_ref source_commit source_postgres source_rustfs verified_commit actual_schema
-  local apply_history apply_compare post_history post_compare
-  local switched=0 complete=0 cleanup_status=0 container_created=0 network_created=0
-  local allowlist_name=NONE
+  local apply_history apply_compare source_history source_compare post_history post_compare
+  local source_stopped=0 journal_prepared=0 complete=0 cleanup_status=0
+  local container_created=0 network_created=0
+  local allowlist_name=NONE approval_name=NONE membership_name=NONE
   local -A plan=()
   acquire_deploy_lock || return
   require_no_active_timestamp_fence || return
   check_env || return
   [[ ! -e "$plan_dir/restore-applied.env" && ! -L "$plan_dir/restore-applied.env" ]] || {
     die "restore plan was already applied"
+    return 1
+  }
+  [[ ! -e "$plan_dir/restore-switch-journal.env" && ! -L "$plan_dir/restore-switch-journal.env" ]] || {
+    die "restore switch journal already exists; run restore-recover before another apply"
     return 1
   }
   validate_restore_plan "$plan_dir" plan || return
@@ -4377,6 +4773,8 @@ restore_apply() (
   [[ "$verified_commit" == "${plan[OPERATOR_RELEASE_COMMIT]}" ]] || return 1
   if [[ "${plan[RETIREMENT_ALLOWLIST_SHA256]}" != NONE ]]; then
     allowlist_name=approved-retirement-allowlist.json
+    approval_name=retirement-approval.json
+    membership_name=sample-membership.json
   fi
   project="${COMPOSE_PROJECT_NAME:-distr-prod}"
   nonce="$(openssl rand -hex 8)" || return
@@ -4384,6 +4782,8 @@ restore_apply() (
   postgres_container="distr-restore-apply-$nonce"
   apply_history="protected-history-apply-validation-$nonce.json"
   apply_compare="protected-history-apply-compare-$nonce.json"
+  source_history="protected-history-live-source-fence-$nonce.json"
+  source_compare="protected-history-live-source-fence-compare-$nonce.json"
   post_history="protected-history-post-switch-$nonce.json"
   post_compare="protected-history-post-switch-compare-$nonce.json"
 
@@ -4397,14 +4797,17 @@ restore_apply() (
     if ((network_created == 1)); then
       docker network rm "$network" >/dev/null 2>&1 || cleanup_status=1
     fi
-    if ((switched == 1 && complete == 0)); then
-      stop_restore_runtime || cleanup_status=1
-      set_restore_runtime_identity \
-        "$source_ref" "$source_commit" "$source_postgres" "$source_rustfs" || cleanup_status=1
-      load_env || cleanup_status=1
-      start_dependencies || cleanup_status=1
-      start_hub || cleanup_status=1
-      health || cleanup_status=1
+    if ((complete == 0 && (source_stopped == 1 || journal_prepared == 1))); then
+      if restore_source_runtime "$source_ref" "$source_commit" "$source_postgres" "$source_rustfs"; then
+        write_restore_switch_journal \
+          "$plan_dir" RECOVERED plan "$source_ref" "$source_commit" \
+          "$source_postgres" "$source_rustfs" || cleanup_status=1
+      else
+        write_restore_switch_journal \
+          "$plan_dir" RECOVERY_REQUIRED plan "$source_ref" "$source_commit" \
+          "$source_postgres" "$source_rustfs" || true
+        cleanup_status=1
+      fi
     fi
     if ((complete == 0)); then
       write_restore_failure_state \
@@ -4438,7 +4841,8 @@ restore_apply() (
     protected-history-before.json "$apply_history" || return
   run_protected_history_exact_compare \
     "${plan[OPERATOR_IMAGE_REF]}" "$plan_dir" protected-history-before.json \
-    "$apply_history" "$allowlist_name" "$apply_compare" || return
+    "$apply_history" "$allowlist_name" "$approval_name" "$membership_name" \
+    "$apply_compare" || return
   object_aggregate="sha256:$(aggregate_volume_checksum "${plan[RUSTFS_VOLUME]}")" || return
   [[ "$object_aggregate" == "${plan[OBJECT_AGGREGATE_SHA256]}" ]] || {
     die "restore candidate object volume changed after planning"
@@ -4447,14 +4851,51 @@ restore_apply() (
   docker stop --time 30 "$postgres_container" >/dev/null || return
   docker rm "$postgres_container" >/dev/null || return
   container_created=0
-  docker network rm "$network" >/dev/null || return
-  network_created=0
 
+  require_running_restore_source_identity \
+    "$source_ref" "$source_commit" "$source_postgres" "$source_rustfs" || return
+  write_restore_switch_journal \
+    "$plan_dir" PREPARED plan "$source_ref" "$source_commit" \
+    "$source_postgres" "$source_rustfs" || return
+  journal_prepared=1
   stop_restore_runtime || return
+  source_stopped=1
+  write_restore_switch_journal \
+    "$plan_dir" SOURCE_STOPPED plan "$source_ref" "$source_commit" \
+    "$source_postgres" "$source_rustfs" || return
+
+  postgres_container="distr-restore-source-$nonce"
+  docker run -d --name "$postgres_container" \
+    --label "distr.sh/restore-plan=${plan[PLAN_ID]}" \
+    --network "$network" \
+    -v "$source_postgres:/var/lib/postgresql" \
+    -e "POSTGRES_USER=$POSTGRES_USER" \
+    -e "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
+    -e "POSTGRES_DB=$POSTGRES_DB" \
+    postgres:18.4-alpine3.23 >/dev/null || return
+  container_created=1
+  wait_for_restore_postgres "$postgres_container" "$POSTGRES_USER" "$POSTGRES_DB" || return
+  database_url="host=$postgres_container port=5432 user=$POSTGRES_USER password=$POSTGRES_PASSWORD dbname=$POSTGRES_DB sslmode=disable"
+  run_protected_history_export \
+    "${plan[OPERATOR_IMAGE_REF]}" "$network" "$database_url" "$plan_dir" \
+    protected-history-before.json "$source_history" || return
+  run_protected_history_exact_compare \
+    "${plan[OPERATOR_IMAGE_REF]}" "$plan_dir" protected-history-before.json \
+    "$source_history" "$allowlist_name" "$approval_name" "$membership_name" \
+    "$source_compare" || {
+    die "restore apply refused: live protected history changed after the sealed backup"
+    return 1
+  }
+  docker stop --time 30 "$postgres_container" >/dev/null || return
+  docker rm "$postgres_container" >/dev/null || return
+  container_created=0
+
   set_restore_runtime_identity \
     "${plan[TARGET_IMAGE_REF]}" "${plan[TARGET_RELEASE_COMMIT]}" \
     "${plan[POSTGRES_VOLUME]}" "${plan[RUSTFS_VOLUME]}" || return
-  switched=1
+  write_restore_switch_journal \
+    "$plan_dir" IDENTITY_SWITCHED plan "$source_ref" "$source_commit" \
+    "$source_postgres" "$source_rustfs" || return
   load_env || return
   compose_config || return
   start_dependencies || return
@@ -4471,10 +4912,18 @@ restore_apply() (
     protected-history-before.json "$post_history" || return
   run_protected_history_exact_compare \
     "${plan[OPERATOR_IMAGE_REF]}" "$plan_dir" protected-history-before.json \
-    "$post_history" "$allowlist_name" "$post_compare" || return
+    "$post_history" "$allowlist_name" "$approval_name" "$membership_name" \
+    "$post_compare" || return
   [[ "sha256:$(aggregate_volume_checksum "${plan[RUSTFS_VOLUME]}")" == \
      "${plan[OBJECT_AGGREGATE_SHA256]}" ]] || return 1
+  write_restore_switch_journal \
+    "$plan_dir" TARGET_VERIFIED plan "$source_ref" "$source_commit" \
+    "$source_postgres" "$source_rustfs" || return
   write_restore_applied_state "$plan_dir" "${plan[PLAN_ID]}" || return
+  complete=1
+  write_restore_switch_journal \
+    "$plan_dir" COMMITTED plan "$source_ref" "$source_commit" \
+    "$source_postgres" "$source_rustfs" || return
   complete=1
   info "restore applied atomically; prior runtime volumes remain retained: $source_postgres $source_rustfs"
 )
@@ -4517,10 +4966,12 @@ Commands:
   ps                   show compose service state
   cleanup-artifacts    run ArtifactBlob cleanup once
   rollback <ref|tag>   application-only rollback to a previous ECR digest ref or tag
-  restore-plan <prior-handoff> <postgres-backup> <rustfs-backup> <protected-history> <plan-dir> [approved-retirement-allowlist|-]
+  restore-plan <prior-handoff> <postgres-backup> <rustfs-backup> <protected-history> <plan-dir> [retirement-allowlist retirement-approval sample-membership]
                        restore into new volumes, validate, and seal a no-switch plan
   restore-apply <plan-dir>
                        revalidate a sealed plan and atomically switch image plus volumes
+  restore-recover <plan-dir>
+                       recover an interrupted restore switch or finalize a verified target
   timestamp-expand-capture <evidence-dir>
                        stop/fence Hub and retain verified schema-137 evidence
   timestamp-expand-apply <approved-manifest> <evidence-dir>
@@ -4620,8 +5071,8 @@ dispatch_command() {
       timestamp_expand_recover_dirty "$@" || return
       ;;
     restore-plan)
-      [[ $# == 6 || $# == 7 ]] || {
-        die "usage: $0 restore-plan <prior-handoff> <postgres-backup> <rustfs-backup> <protected-history> <plan-dir> [approved-retirement-allowlist|-]"
+      [[ $# == 6 || $# == 9 ]] || {
+        die "usage: $0 restore-plan <prior-handoff> <postgres-backup> <rustfs-backup> <protected-history> <plan-dir> [retirement-allowlist retirement-approval sample-membership]"
         return 1
       }
       shift
@@ -4634,6 +5085,14 @@ dispatch_command() {
       }
       shift
       restore_apply "$@" || return
+      ;;
+    restore-recover)
+      [[ $# == 2 ]] || {
+        die "usage: $0 restore-recover <plan-dir>"
+        return 1
+      }
+      shift
+      restore_recover "$@" || return
       ;;
     init|ecr-login|ecr-create-repo|build|push|pull|deps|backup|migrate|up|release|deploy|cleanup-artifacts|rollback)
       if [[ "$command_name" == rollback ]]; then

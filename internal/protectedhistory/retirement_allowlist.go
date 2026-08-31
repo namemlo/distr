@@ -22,39 +22,39 @@ type RetirementAllowance struct {
 	BaselineHash string `json:"baselineHash"`
 }
 
+// ApprovedRetirementAllowlist names exact missing records but delegates
+// authorization and sample ownership proof to two separately sealed artifacts.
 type ApprovedRetirementAllowlist struct {
-	Schema             string                `json:"schema"`
-	Purpose            string                `json:"purpose"`
-	BaselineArtifactID string                `json:"baselineArtifactId"`
-	Scope              Scope                 `json:"scope"`
-	PreviewChecksum    string                `json:"previewChecksum"`
-	ApprovalID         string                `json:"approvalId"`
-	ApprovalChecksum   string                `json:"approvalChecksum"`
-	ApprovalState      string                `json:"approvalState"`
-	Items              []RetirementAllowance `json:"items"`
-	AllowlistID        string                `json:"allowlistId"`
+	Schema               string                `json:"schema"`
+	Purpose              string                `json:"purpose"`
+	BaselineArtifactID   string                `json:"baselineArtifactId"`
+	Scope                Scope                 `json:"scope"`
+	PreviewChecksum      string                `json:"previewChecksum"`
+	ApprovalArtifactID   string                `json:"approvalArtifactId"`
+	MembershipArtifactID string                `json:"membershipArtifactId"`
+	Items                []RetirementAllowance `json:"items"`
+	AllowlistID          string                `json:"allowlistId"`
 }
 
 func BuildApprovedRetirementAllowlist(
 	baseline Artifact,
 	previewChecksum string,
-	approvalID string,
-	approvalChecksum string,
+	approvalArtifactID string,
+	membershipArtifactID string,
 	items []RetirementAllowance,
 ) (*ApprovedRetirementAllowlist, error) {
 	if err := Validate(baseline); err != nil {
 		return nil, fmt.Errorf("baseline artifact: %w", err)
 	}
 	allowlist := &ApprovedRetirementAllowlist{
-		Schema:             RetirementAllowlistSchemaV1,
-		Purpose:            SampleDomainRetirement,
-		BaselineArtifactID: baseline.ArtifactID,
-		Scope:              baseline.Scope,
-		PreviewChecksum:    previewChecksum,
-		ApprovalID:         approvalID,
-		ApprovalChecksum:   approvalChecksum,
-		ApprovalState:      "APPROVED",
-		Items:              append([]RetirementAllowance(nil), items...),
+		Schema:               RetirementAllowlistSchemaV1,
+		Purpose:              SampleDomainRetirement,
+		BaselineArtifactID:   baseline.ArtifactID,
+		Scope:                baseline.Scope,
+		PreviewChecksum:      previewChecksum,
+		ApprovalArtifactID:   approvalArtifactID,
+		MembershipArtifactID: membershipArtifactID,
+		Items:                append([]RetirementAllowance(nil), items...),
 	}
 	if err := canonicalizeRetirementAllowlist(allowlist); err != nil {
 		return nil, err
@@ -113,17 +113,14 @@ func ValidateApprovedRetirementAllowlist(allowlist ApprovedRetirementAllowlist) 
 	if !scopeEqual(canonicalScope, allowlist.Scope) {
 		return errors.New("approved retirement scope is not in canonical order")
 	}
-	if !checksumPattern.MatchString(allowlist.PreviewChecksum) {
-		return errors.New("preview checksum must use lowercase sha256 format")
-	}
-	if _, err := canonicalUUID("approval", allowlist.ApprovalID); err != nil {
-		return err
-	}
-	if !checksumPattern.MatchString(allowlist.ApprovalChecksum) {
-		return errors.New("approval checksum must use lowercase sha256 format")
-	}
-	if allowlist.ApprovalState != "APPROVED" {
-		return errors.New("retirement allowlist approval state must be APPROVED")
+	for name, value := range map[string]string{
+		"preview checksum":       allowlist.PreviewChecksum,
+		"approval artifact id":   allowlist.ApprovalArtifactID,
+		"membership artifact id": allowlist.MembershipArtifactID,
+	} {
+		if !checksumPattern.MatchString(value) {
+			return fmt.Errorf("%s must use lowercase sha256 format", name)
+		}
 	}
 	if len(allowlist.Items) == 0 {
 		return errors.New("approved retirement allowlist requires at least one exact item")
@@ -145,21 +142,17 @@ func ValidateApprovedRetirementAllowlist(allowlist ApprovedRetirementAllowlist) 
 }
 
 func canonicalizeRetirementAllowlist(allowlist *ApprovedRetirementAllowlist) error {
-	approvalID, err := canonicalUUID("approval", allowlist.ApprovalID)
-	if err != nil {
-		return err
-	}
-	allowlist.ApprovalID = approvalID
 	for index := range allowlist.Items {
 		item := &allowlist.Items[index]
 		item.Kind = strings.ToLower(strings.TrimSpace(item.Kind))
 		if _, ok := allowedKinds[item.Kind]; !ok {
 			return fmt.Errorf("retirement item kind %q is not protected", item.Kind)
 		}
-		item.ID, err = canonicalUUID(item.Kind, item.ID)
+		id, err := canonicalUUID(item.Kind, item.ID)
 		if err != nil {
 			return err
 		}
+		item.ID = id
 		if !checksumPattern.MatchString(item.BaselineHash) {
 			return fmt.Errorf("retirement item %s/%s baseline hash is invalid", item.Kind, item.ID)
 		}
@@ -193,9 +186,8 @@ func computeRetirementAllowlistID(allowlist ApprovedRetirementAllowlist) string 
 	writeStringSet(&buffer, allowlist.Scope.CustomerOrganizationIDs)
 	writeStringSet(&buffer, allowlist.Scope.DeploymentTargetIDs)
 	writeField(&buffer, allowlist.PreviewChecksum)
-	writeField(&buffer, allowlist.ApprovalID)
-	writeField(&buffer, allowlist.ApprovalChecksum)
-	writeField(&buffer, allowlist.ApprovalState)
+	writeField(&buffer, allowlist.ApprovalArtifactID)
+	writeField(&buffer, allowlist.MembershipArtifactID)
 	for _, item := range allowlist.Items {
 		writeField(&buffer, item.Kind)
 		writeField(&buffer, item.ID)

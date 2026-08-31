@@ -663,7 +663,12 @@ PostgreSQL or RustFS volumes.
 
 First retain a protected-history baseline for the exact client scopes and SHA-256
 sidecars for the prior publication handoff, PostgreSQL dump, RustFS archive, and
-baseline. Create a secure empty parent for the plan, then run:
+baseline. The protected-history exporter supports schemas 138 through 169 only:
+138-165 use the complete schema-138 whole-row table set, while 166, 167, 168,
+and 169 are explicitly registered, adding `ExecutionRuntimeEvidence`,
+`DeploymentPlanResolvedRequirement`, and `BaselineAdoptionComponent` at their
+respective migrations. A later unregistered schema is refused. Create a secure
+empty parent for the plan, then run:
 
 ```bash
 ./deploy/server-docker-compose/deploy.sh restore-plan \
@@ -677,7 +682,12 @@ baseline. Create a secure empty parent for the plan, then run:
 `restore-plan` keeps the active runtime online. It restores both backups into
 new labeled volumes, validates the prior immutable image and schema, compares
 protected history exactly, records the complete RustFS aggregate, and seals
-`restore-plan.env`. It never switches `.env` or deletes a candidate volume.
+`restore-plan.env`. It also seals `release-restore-snapshot.json` with schema
+`distr.release-restore-snapshot/v1`; this aggregate manifest binds the plan ID,
+prior handoff checksum, PostgreSQL and RustFS backup checksums,
+protected-history baseline checksum, target digest reference, and target release
+commit. The manifest checksum is recorded in `restore-plan.env`. Planning never
+switches `.env` or deletes a candidate volume.
 
 After independent review of the sealed plan:
 
@@ -685,16 +695,68 @@ After independent review of the sealed plan:
 ./deploy/server-docker-compose/deploy.sh restore-apply /secure/restore-plan
 ```
 
-Apply repeats every checksum, image, volume-label, object, schema, and history
-check before outage. It stops Hub/PostgreSQL/RustFS, atomically replaces the Hub
-image identity plus `POSTGRES_VOLUME_NAME` and `RUSTFS_VOLUME_NAME`, starts the
-restored runtime, and repeats the checks. If post-switch validation fails, it
-restores the untouched previous image/volume identity and restarts that runtime.
-Candidate volumes remain retained with failure evidence. Successful apply also
-retains the previous active volumes until a separate reviewed retirement.
+Apply repeats every checksum, aggregate snapshot, image, volume-label, object,
+schema, and history check before outage. It also verifies that the running Hub
+digest and the actual PostgreSQL and RustFS container mounts equal the configured
+source image and volume identity. It then writes a durable,
+self-checksummed `restore-switch-journal.env` in `PREPARED`, stops
+Hub/PostgreSQL/RustFS, and records `SOURCE_STOPPED`. Before changing `.env`, it
+mounts the stopped source PostgreSQL volume in an isolated container and exports
+the same protected scope again. Any addition, modification, deletion outside a
+valid retirement authorization, scope difference, or schema difference from the
+sealed baseline refuses the switch. This fence detects writes that occurred
+between the retained backup/baseline and the outage.
+
+After the stopped-source fence passes, apply atomically replaces the Hub image
+identity plus `POSTGRES_VOLUME_NAME` and `RUSTFS_VOLUME_NAME`, records
+`IDENTITY_SWITCHED`, starts the restored runtime, and repeats readiness, image,
+schema, object, and history checks. It records `TARGET_VERIFIED`, creates the
+checksummed `restore-applied.env`, and then records `COMMITTED`. If apply fails,
+it attempts to restore and verify the untouched source identity and records
+`RECOVERED`; otherwise it leaves `RECOVERY_REQUIRED`. A new apply is refused
+while a switch journal already exists. Candidate and previous volumes are never
+deleted.
+
+After an interrupted or unresolved apply, run:
+
+```bash
+./deploy/server-docker-compose/deploy.sh restore-recover /secure/restore-plan
+```
+
+Recovery verifies the journal checksum, aggregate snapshot binding, plan ID,
+and exact recorded source/target image and volume identities before acting:
+
+| Journal state | Recovery result |
+| --- | --- |
+| `PREPARED` | Verify the still-configured source identity and write `RECOVERED`. |
+| `SOURCE_STOPPED`, `IDENTITY_SWITCHED`, or `RECOVERY_REQUIRED` | Restore the recorded source image and volumes, start and verify the source runtime, then write `RECOVERED`. |
+| `TARGET_VERIFIED` | Write `COMMITTED` only when the matching checksummed `restore-applied.env` is already valid. |
+| `COMMITTED` or `RECOVERED` | Return the existing terminal result without changing runtime identity. |
+
+Recovery refuses a journal checksum error, plan/snapshot mismatch, or source or
+target identity drift. It does not remove any volume.
 
 Only the separately approved sample-domain retirement workflow may supply the
-optional sixth `restore-plan` argument. Use `-` or omit it for normal exact
+three optional `restore-plan` arguments, and all three must be present together:
+
+```bash
+./deploy/server-docker-compose/deploy.sh restore-plan \
+  /secure/prior-release.env \
+  /secure/postgres-before.dump \
+  /secure/rustfs-before.tar.gz \
+  /secure/protected-history-before.json \
+  /secure/restore-plan \
+  /secure/approved-retirement-allowlist.json \
+  /secure/retirement-approval.json \
+  /secure/sample-membership.json
+```
+
+The allowlist identifies exact missing records, the approval artifact is backed
+by baseline `ApprovalRequest`, `ApprovalDecision`, and `SampleRetirementJob`
+records, and the membership artifact is backed by baseline
+`SampleRetirementOwnershipEvidence` and `SampleRetirementItem` records with a
+direct application, deployment-target, or environment binding. An allowlist
+alone cannot authorize deletion. Omit all three arguments for normal exact
 history equality. See [protected-history continuity](protected-history-continuity.md).
 
 Do not automate `distr migrate --down`; the command explicitly warns that it purges the database.

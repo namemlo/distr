@@ -143,6 +143,8 @@ func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.C
 	var currentPath string
 	var requireExact bool
 	var approvedRetirementAllowlistPath string
+	var retirementApprovalPath string
+	var sampleMembershipPath string
 	command := &cobra.Command{
 		Use:   "compare",
 		Short: "compare two sealed artifacts and reject missing or modified baseline records",
@@ -151,8 +153,19 @@ func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.C
 			if baselinePath == "" || currentPath == "" {
 				return errors.New("baseline and current are required")
 			}
-			if approvedRetirementAllowlistPath != "" && !requireExact {
-				return errors.New("approved retirement allowlist requires exact comparison")
+			retirementInputCount := 0
+			for _, path := range []string{
+				approvedRetirementAllowlistPath, retirementApprovalPath, sampleMembershipPath,
+			} {
+				if path != "" {
+					retirementInputCount++
+				}
+			}
+			if retirementInputCount != 0 && retirementInputCount != 3 {
+				return errors.New("retirement comparison requires allowlist, approval, and sample membership artifacts")
+			}
+			if retirementInputCount == 3 && !requireExact {
+				return errors.New("approved retirement authorization requires exact comparison")
 			}
 			baselinePayload, err := runtime.Read(baselinePath)
 			if err != nil {
@@ -170,20 +183,39 @@ func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.C
 			if err != nil {
 				return fmt.Errorf("parse current artifact: %w", err)
 			}
-			var approvedRetirements *protectedhistory.ApprovedRetirementAllowlist
-			if approvedRetirementAllowlistPath != "" {
+			var retirementAuthorization *protectedhistory.RetirementAuthorization
+			if retirementInputCount == 3 {
 				allowlistPayload, err := runtime.Read(approvedRetirementAllowlistPath)
 				if err != nil {
 					return fmt.Errorf("read approved retirement allowlist: %w", err)
 				}
-				approvedRetirements, err = protectedhistory.ParseApprovedRetirementAllowlist(allowlistPayload)
+				allowlist, err := protectedhistory.ParseApprovedRetirementAllowlist(allowlistPayload)
 				if err != nil {
 					return err
+				}
+				approvalPayload, err := runtime.Read(retirementApprovalPath)
+				if err != nil {
+					return fmt.Errorf("read retirement approval artifact: %w", err)
+				}
+				approval, err := protectedhistory.ParseRetirementApprovalArtifact(approvalPayload)
+				if err != nil {
+					return err
+				}
+				membershipPayload, err := runtime.Read(sampleMembershipPath)
+				if err != nil {
+					return fmt.Errorf("read sample membership artifact: %w", err)
+				}
+				membership, err := protectedhistory.ParseSampleMembershipArtifact(membershipPayload)
+				if err != nil {
+					return err
+				}
+				retirementAuthorization = &protectedhistory.RetirementAuthorization{
+					Allowlist: *allowlist, Approval: *approval, Membership: *membership,
 				}
 			}
 			var comparison *protectedhistory.Comparison
 			if requireExact {
-				comparison, err = protectedhistory.CompareExact(*baseline, *current, approvedRetirements)
+				comparison, err = protectedhistory.CompareExact(*baseline, *current, retirementAuthorization)
 			} else {
 				comparison, err = protectedhistory.Compare(*baseline, *current)
 			}
@@ -213,7 +245,19 @@ func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.C
 		&approvedRetirementAllowlistPath,
 		"approved-retirement-allowlist",
 		"",
-		"separately supplied approved exact-ID sample-retirement allowlist",
+		"separately supplied exact-ID sample-retirement allowlist",
+	)
+	command.Flags().StringVar(
+		&retirementApprovalPath,
+		"retirement-approval",
+		"",
+		"checksum-sealed approval artifact bound to protected approval records",
+	)
+	command.Flags().StringVar(
+		&sampleMembershipPath,
+		"sample-membership",
+		"",
+		"checksum-sealed exact sample-domain membership artifact",
 	)
 	return command
 }

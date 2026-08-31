@@ -3,81 +3,94 @@ package db
 import (
 	"strings"
 	"testing"
-
-	"github.com/distr-sh/distr/internal/protectedhistory"
 )
 
-func TestProtectedHistoryProjectionIsExplicitAndComplete(t *testing.T) {
-	t.Parallel()
-	lowerSQL := strings.ToLower(protectedHistoryRecordsSQL)
-	for _, kind := range protectedhistory.AllowedKinds() {
-		if !strings.Contains(lowerSQL, "'"+kind+"'") {
-			t.Errorf("protected history query does not project %s", kind)
-		}
-	}
-	for _, unsafeProjection := range []string{
-		"to_jsonb(",
-		"variable.value",
-		"output.value",
-		"lease.lease_token_hash",
-		"plan.canonical_payload",
-		"bundle.canonical_payload",
-		"execution.provider_url",
-		"execution.last_message",
-		"event.observed_state",
-	} {
-		if strings.Contains(lowerSQL, unsafeProjection) {
-			t.Errorf("protected history query contains unsafe projection %q", unsafeProjection)
-		}
-	}
-}
-
-func TestProtectedHistoryProjectionIsSchemaEvolutionAware(t *testing.T) {
-	t.Parallel()
-	lowerSQL := strings.ToLower(protectedHistoryRecordsSQL)
-	for _, wholeRowPattern := range []string{"select *", "row_to_json", "json_agg"} {
-		if strings.Contains(lowerSQL, wholeRowPattern) {
-			t.Errorf("protected history query contains whole-row pattern %q", wholeRowPattern)
-		}
-	}
-	if !strings.Contains(lowerSQL, "targetcomponentstate', state.id") {
-		t.Fatal("mutable target state identity projection is absent")
-	}
-	stateStart := strings.Index(lowerSQL, "union all select 'targetcomponentstate'")
-	observationStart := strings.Index(lowerSQL, "union all select 'targetcomponentobservation'")
-	if stateStart < 0 || observationStart <= stateStart {
-		t.Fatal("target state projection boundaries are absent")
-	}
-	stateProjection := lowerSQL[stateStart:observationStart]
-	for _, mutableColumn := range []string{"state_version", "state_checksum", "release_bundle_id", "observed_at"} {
-		if strings.Contains(stateProjection, mutableColumn) {
-			t.Errorf("mutable target state column %q is protected as immutable history", mutableColumn)
-		}
-	}
-}
-
-func TestProtectedHistoryLegacyProjectionUsesOnlySchema138AuditTables(t *testing.T) {
+func TestProtectedHistorySchema138ProjectionCoversAllHistoryFamiliesAndFields(t *testing.T) {
 	t.Parallel()
 	lowerSQL := strings.ToLower(protectedHistoryLegacyRecordsSQL)
-	for _, required := range []string{
-		"customerorganization", "deploymenttarget", "externalexecution", "externalexecutionevent",
+	for _, kind := range []string{
+		"application", "applicationversion", "customerorganization",
+		"deploymenttarget", "deploymenttargetlogrecord",
+		"deployment", "deploymentrevision", "deploymentrevisionstatus", "deploymentlogrecord",
+		"releasebundle", "releasebundlecomponent", "releasebundleauditevent",
+		"releasebundleidempotencykey", "processsnapshot", "variablesnapshot",
+		"variablesnapshotvalue", "deploymentplan", "deploymentplanissue",
+		"deploymentplanstep", "deploymentplantarget", "deploymentplantargetcomponent",
+		"deploymentplanvariable", "deploymentpreflightrun", "deploymentpreflightcheck",
+		"task", "tasklease", "taskresourcelock", "steprun", "steprunevent",
+		"steprunlogchunk", "steprunoutput", "targetcomponentstate",
+		"targetcomponentobservation", "externalexecution", "externalexecutionevent",
+		"externalexecutiontimestampmanifest", "externalexecutiontimestampcellprovenance",
+		"externalexecutiontimestampdeletiontombstone", "externalexecutiontimestampexpandstate",
+		"externalexecutiontimestampcontractgate",
 	} {
-		if !strings.Contains(lowerSQL, "'"+required+"'") {
-			t.Errorf("legacy protected history query does not project %s", required)
+		if !strings.Contains(lowerSQL, "'"+kind+"'") {
+			t.Errorf("schema-138 protected history query does not project %s", kind)
 		}
 	}
-	for _, laterTable := range []string{
-		"deploymentplan ", "targetcomponentstate", "tasklease", "releasebundlecomponent",
-	} {
-		if strings.Contains(lowerSQL, laterTable) {
-			t.Errorf("legacy projection depends on post-138 table %q", laterTable)
+	if strings.Count(lowerSQL, "to_jsonb(") < 30 {
+		t.Fatal("schema-138 projection does not protect complete row fields")
+	}
+	if strings.Contains(lowerSQL, "select *") || strings.Contains(lowerSQL, "json_agg") {
+		t.Fatal("schema-138 projection uses an unbounded aggregate or select-star")
+	}
+	if strings.Contains(lowerSQL, "deploymenttargetstatus") {
+		t.Fatal("schema-138 projection references DeploymentTargetStatus dropped by migration 95")
+	}
+}
+
+func TestProtectedHistoryProjectionRegistersSchema166Through169(t *testing.T) {
+	t.Parallel()
+	for _, version := range []uint64{138, 165, 166, 167, 168, 169} {
+		query, err := protectedHistoryRecordsSQLForSchema(version)
+		if err != nil || strings.TrimSpace(query) == "" {
+			t.Fatalf("schema %d projection is not registered: %v", version, err)
 		}
 	}
-	for _, unsafeProjection := range []string{
-		"to_jsonb(", "select *", "provider_url", "last_message", "event.observed_state",
+	query166, _ := protectedHistoryRecordsSQLForSchema(166)
+	query167, _ := protectedHistoryRecordsSQLForSchema(167)
+	query168, _ := protectedHistoryRecordsSQLForSchema(168)
+	query169, _ := protectedHistoryRecordsSQLForSchema(169)
+	if strings.Contains(strings.ToLower(query166), "'executionruntimeevidence'") {
+		t.Fatal("schema 166 projection references migration-167 evidence")
+	}
+	if strings.Contains(strings.ToLower(query166), "deploymentplanresolvedrequirement") ||
+		strings.Contains(strings.ToLower(query166), "baselineadoptioncomponent") {
+		t.Fatal("schema 166 projection references migration-168 or migration-169 records")
+	}
+	if !strings.Contains(strings.ToLower(query167), "'executionruntimeevidence'") {
+		t.Fatal("schema 167 projection omits runtime trust evidence")
+	}
+	if strings.Contains(strings.ToLower(query167), "deploymentplanresolvedrequirement") ||
+		strings.Contains(strings.ToLower(query167), "baselineadoptioncomponent") {
+		t.Fatal("schema 167 projection references migration-168 or migration-169 records")
+	}
+	if !strings.Contains(strings.ToLower(query168), "deploymentplanresolvedrequirement") {
+		t.Fatal("schema 168 projection omits provider-evidence records")
+	}
+	if strings.Contains(strings.ToLower(query168), "baselineadoptioncomponent") {
+		t.Fatal("schema 168 projection references migration-169 baseline facts")
+	}
+	if !strings.Contains(strings.ToLower(query169), "baselineadoptioncomponent") {
+		t.Fatal("schema 169 projection omits separated baseline facts")
+	}
+	if _, err := protectedHistoryRecordsSQLForSchema(170); err == nil {
+		t.Fatal("unknown schema 170 did not fail closed")
+	}
+}
+
+func TestExpandedProjectionIncludesDatabaseBackedRetirementAuthorization(t *testing.T) {
+	t.Parallel()
+	lowerSQL := strings.ToLower(protectedHistoryRecordsSQL)
+	for _, kind := range []string{
+		"approvalrequest", "approvaldecision", "sampleretirementjob",
+		"sampleretirementitem", "sampleretirementownershipevidence",
 	} {
-		if strings.Contains(lowerSQL, unsafeProjection) {
-			t.Errorf("legacy projection contains unsafe value %q", unsafeProjection)
+		if !strings.Contains(lowerSQL, "'"+kind+"'") {
+			t.Errorf("expanded projection omits retirement authorization record %s", kind)
 		}
+	}
+	if strings.Contains(lowerSQL, "intent.payload") {
+		t.Fatal("expanded projection exposes signed execution intent payload")
 	}
 }

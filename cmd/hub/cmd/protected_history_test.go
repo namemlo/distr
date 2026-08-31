@@ -125,60 +125,18 @@ func TestProtectedHistoryFingerprintCommandPrintsCanonicalIdentity(t *testing.T)
 	}
 }
 
-func TestProtectedHistoryCompareCommandExactModeUsesSeparateApproval(t *testing.T) {
+func TestProtectedHistoryCompareCommandRequiresCompleteRetirementAuthorization(t *testing.T) {
 	t.Parallel()
-	baseline, err := protectedhistory.Build(testProtectedHistoryScope(), 138, []protectedhistory.RawRecord{{
-		Kind: "task", ID: "55555555-5555-4555-8555-555555555555",
-		Payload: json.RawMessage(`{"status":"SUCCEEDED"}`),
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	current, err := protectedhistory.Build(testProtectedHistoryScope(), 138, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allowlist, err := protectedhistory.BuildApprovedRetirementAllowlist(
-		*baseline,
-		"sha256:"+strings.Repeat("a", 64),
-		"77777777-7777-4777-8777-777777777777",
-		"sha256:"+strings.Repeat("b", 64),
-		[]protectedhistory.RetirementAllowance{{
-			Kind: "task", ID: baseline.Records[0].ID, BaselineHash: baseline.Records[0].Hash,
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baselinePayload, _ := protectedhistory.Marshal(*baseline)
-	currentPayload, _ := protectedhistory.Marshal(*current)
-	allowlistPayload, _ := protectedhistory.MarshalApprovedRetirementAllowlist(*allowlist)
-	var stdout bytes.Buffer
 	command := newProtectedHistoryCommand(protectedHistoryRuntime{
-		Stdout: &stdout,
-		Read: func(path string) ([]byte, error) {
-			switch path {
-			case "baseline.json":
-				return baselinePayload, nil
-			case "current.json":
-				return currentPayload, nil
-			case "approved.json":
-				return allowlistPayload, nil
-			default:
-				return nil, errors.New("unexpected path")
-			}
-		},
+		Read: func(string) ([]byte, error) { return nil, errors.New("read must not run") },
 	})
 	command.SetArgs([]string{
 		"compare", "--baseline", "baseline.json", "--current", "current.json",
 		"--require-exact", "--approved-retirement-allowlist", "approved.json",
 	})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout.String(), `"status": "APPROVED_RETIREMENTS_ONLY"`) ||
-		!strings.Contains(stdout.String(), allowlist.AllowlistID) {
-		t.Fatalf("approved retirement comparison was not emitted: %s", stdout.String())
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "requires allowlist, approval, and sample membership") {
+		t.Fatalf("incomplete retirement authorization was not rejected: %v", err)
 	}
 }
 

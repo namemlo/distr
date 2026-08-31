@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/protectedhistory"
@@ -93,6 +94,9 @@ func protectedHistorySchemaVersion(ctx context.Context) (uint64, error) {
 	if version < 138 {
 		return 0, fmt.Errorf("schema version %d is unsupported; minimum is 138", version)
 	}
+	if version > 169 {
+		return 0, fmt.Errorf("schema version %d is unsupported; maximum registered projection is 169", version)
+	}
 	return uint64(version), nil
 }
 
@@ -132,9 +136,9 @@ func readProtectedHistoryRecords(
 	schemaVersion uint64,
 	args pgx.NamedArgs,
 ) ([]protectedhistory.RawRecord, error) {
-	query := protectedHistoryRecordsSQL
-	if schemaVersion < 166 {
-		query = protectedHistoryLegacyRecordsSQL
+	query, err := protectedHistoryRecordsSQLForSchema(schemaVersion)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, query, args)
 	if err != nil {
@@ -157,9 +161,40 @@ func readProtectedHistoryRecords(
 	return records, nil
 }
 
-// Schema 138 predates the v2 planning tables. Its protected projection keeps
-// the client ownership boundary plus external-execution audit history, which
-// is the stable rollback fingerprint available on every supported schema.
+func protectedHistoryRecordsSQLForSchema(schemaVersion uint64) (string, error) {
+	switch {
+	case schemaVersion >= 138 && schemaVersion <= 165:
+		return protectedHistoryLegacyRecordsSQL, nil
+	case schemaVersion == 166:
+		return strings.ReplaceAll(protectedHistoryRecordsSQL, protectedHistoryVersionRecordsMarker, ""), nil
+	case schemaVersion == 167:
+		return strings.ReplaceAll(
+			protectedHistoryRecordsSQL,
+			protectedHistoryVersionRecordsMarker,
+			protectedHistorySchema167RecordsSQL,
+		), nil
+	case schemaVersion == 168:
+		return strings.ReplaceAll(
+			protectedHistoryRecordsSQL,
+			protectedHistoryVersionRecordsMarker,
+			protectedHistorySchema167RecordsSQL+protectedHistorySchema168RecordsSQL,
+		), nil
+	case schemaVersion == 169:
+		return strings.ReplaceAll(
+			protectedHistoryRecordsSQL,
+			protectedHistoryVersionRecordsMarker,
+			protectedHistorySchema167RecordsSQL+
+				protectedHistorySchema168RecordsSQL+
+				protectedHistorySchema169RecordsSQL,
+		), nil
+	default:
+		return "", fmt.Errorf("schema version %d has no protected-history projection", schemaVersion)
+	}
+}
+
+// Schema 138 already contains release, deployment, task, execution and
+// timestamp-audit history. Whole-row JSON makes every field in that exact
+// schema part of the fingerprint instead of silently omitting older history.
 const protectedHistoryLegacyRecordsSQL = `
 WITH
 requested_customer_organizations(id) AS (
@@ -177,72 +212,263 @@ selected_targets(id) AS (
       OR dt.customer_organization_id IN (SELECT id FROM requested_customer_organizations)
     )
 ),
+selected_deployments(id) AS (
+  SELECT deployment.id FROM Deployment deployment
+  WHERE deployment.deployment_target_id IN (SELECT id FROM selected_targets)
+),
+selected_revisions(id) AS (
+  SELECT revision.id FROM DeploymentRevision revision
+  WHERE revision.deployment_id IN (SELECT id FROM selected_deployments)
+),
+selected_plans(id) AS (
+  SELECT DISTINCT target.deployment_plan_id
+  FROM DeploymentPlanTarget target
+  WHERE target.organization_id = @organizationId
+    AND (
+      target.deployment_target_id IN (SELECT id FROM selected_targets)
+      OR target.customer_organization_id IN (SELECT id FROM requested_customer_organizations)
+    )
+),
+selected_tasks(id) AS (
+  SELECT task.id FROM Task task
+  WHERE task.organization_id = @organizationId
+    AND (
+      task.deployment_plan_id IN (SELECT id FROM selected_plans)
+      OR task.deployment_target_id IN (SELECT id FROM selected_targets)
+    )
+),
+selected_release_bundles(id) AS (
+  SELECT plan.release_bundle_id FROM DeploymentPlan plan
+  WHERE plan.id IN (SELECT id FROM selected_plans)
+),
 selected_executions(id) AS (
   SELECT execution.id
   FROM ExternalExecution execution
   WHERE execution.organization_id = @organizationId
-    AND execution.deployment_target_id IN (SELECT id FROM selected_targets)
+    AND (
+      execution.deployment_target_id IN (SELECT id FROM selected_targets)
+      OR execution.task_id IN (SELECT id FROM selected_tasks)
+    )
+),
+selected_execution_events(id) AS (
+  SELECT event.id FROM ExternalExecutionEvent event
+  WHERE event.external_execution_id IN (SELECT id FROM selected_executions)
+),
+selected_timestamp_manifests(id) AS (
+  SELECT DISTINCT provenance.manifest_id
+  FROM ExternalExecutionTimestampCellProvenance provenance
+  WHERE (
+    provenance.source_table = 'externalexecution'
+    AND provenance.source_row_id IN (SELECT id FROM selected_executions)
+  ) OR (
+    provenance.source_table = 'externalexecutionevent'
+    AND provenance.source_row_id IN (SELECT id FROM selected_execution_events)
+  )
+),
+selected_application_versions(id) AS (
+  SELECT revision.application_version_id FROM DeploymentRevision revision
+  WHERE revision.id IN (SELECT id FROM selected_revisions)
+  UNION
+  SELECT component.application_version_id FROM ReleaseBundleComponent component
+  WHERE component.release_bundle_id IN (SELECT id FROM selected_release_bundles)
+    AND component.application_version_id IS NOT NULL
+),
+selected_applications(id) AS (
+  SELECT version.application_id FROM ApplicationVersion version
+  WHERE version.id IN (SELECT id FROM selected_application_versions)
+  UNION
+  SELECT plan.application_id FROM DeploymentPlan plan
+  WHERE plan.id IN (SELECT id FROM selected_plans)
 ),
 logical_records(kind, id, payload) AS (
-  SELECT 'customerorganization', co.id, jsonb_build_object(
-    'organizationId', co.organization_id,
-    'partnerOrganizationId', co.partner_organization_id
-  )
+  SELECT 'application', application.id, to_jsonb(application)
+  FROM Application application
+  WHERE application.organization_id = @organizationId
+    AND application.id IN (SELECT id FROM selected_applications)
+
+  UNION ALL SELECT 'applicationversion', version.id, to_jsonb(version)
+  FROM ApplicationVersion version
+  WHERE version.id IN (SELECT id FROM selected_application_versions)
+
+  UNION ALL SELECT 'customerorganization', co.id, to_jsonb(co)
   FROM CustomerOrganization co
   WHERE co.organization_id = @organizationId
     AND co.id IN (SELECT id FROM requested_customer_organizations)
 
-  UNION ALL SELECT 'deploymenttarget', target.id, jsonb_build_object(
-    'organizationId', target.organization_id,
-    'customerOrganizationId', target.customer_organization_id,
-    'type', target.type,
-    'platform', target.platform
-  ) FROM DeploymentTarget target
+  UNION ALL SELECT 'deploymenttarget', target.id, to_jsonb(target)
+  FROM DeploymentTarget target
   WHERE target.organization_id = @organizationId
     AND target.id IN (SELECT id FROM selected_targets)
 
-  UNION ALL SELECT 'externalexecution', execution.id, jsonb_build_object(
-    'organizationId', execution.organization_id,
-    'stepRunId', execution.step_run_id,
-    'taskId', execution.task_id,
-    'deploymentPlanId', execution.deployment_plan_id,
-    'deploymentPlanTargetId', execution.deployment_plan_target_id,
-    'deploymentTargetId', execution.deployment_target_id,
-    'applicationId', execution.application_id,
-    'releaseBundleId', execution.release_bundle_id,
-    'component', execution.component,
-    'planChecksum', execution.plan_checksum,
-    'idempotencyKey', execution.idempotency_key,
-    'expectedStateVersion', execution.expected_state_version,
-    'expectedStateChecksum', execution.expected_state_checksum,
-    'expectedVersion', execution.expected_version,
-    'expectedImage', execution.expected_image,
-    'expectedPlatform', execution.expected_platform,
-    'expectedContracts', execution.expected_contracts,
-    'expectedConfigChecksum', execution.expected_config_checksum,
-    'status', execution.status,
-    'triggerAttempts', execution.trigger_attempts,
-    'lastCallbackSequence', execution.last_callback_sequence,
-    'actualVersion', execution.actual_version,
-    'actualImage', execution.actual_image,
-    'actualPlatform', execution.actual_platform,
-    'actualContracts', execution.actual_contracts,
-    'actualConfigChecksum', execution.actual_config_checksum,
-    'actualHealth', execution.actual_health,
-    'observedStateChecksum', execution.observed_state_checksum
-  ) FROM ExternalExecution execution
+  UNION ALL SELECT 'deploymenttargetlogrecord', log.id, to_jsonb(log)
+  FROM DeploymentTargetLogRecord log
+  WHERE log.deployment_target_id IN (SELECT id FROM selected_targets)
+
+  UNION ALL SELECT 'deployment', deployment.id, to_jsonb(deployment)
+  FROM Deployment deployment
+  WHERE deployment.id IN (SELECT id FROM selected_deployments)
+
+  UNION ALL SELECT 'deploymentrevision', revision.id, to_jsonb(revision)
+  FROM DeploymentRevision revision
+  WHERE revision.id IN (SELECT id FROM selected_revisions)
+
+  UNION ALL SELECT 'deploymentrevisionstatus', status.id, to_jsonb(status)
+  FROM DeploymentRevisionStatus status
+  WHERE status.deployment_revision_id IN (SELECT id FROM selected_revisions)
+
+  UNION ALL SELECT 'deploymentlogrecord', log.id, to_jsonb(log)
+  FROM DeploymentLogRecord log
+  WHERE log.deployment_id IN (SELECT id FROM selected_deployments)
+
+  UNION ALL SELECT 'releasebundle', bundle.id, to_jsonb(bundle)
+  FROM ReleaseBundle bundle
+  WHERE bundle.organization_id = @organizationId
+    AND bundle.id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'releasebundlecomponent', component.id, to_jsonb(component)
+  FROM ReleaseBundleComponent component
+  WHERE component.release_bundle_id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'releasebundleauditevent', event.id, to_jsonb(event)
+  FROM ReleaseBundleAuditEvent event
+  WHERE event.organization_id = @organizationId
+    AND event.release_bundle_id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'releasebundleidempotencykey', keyrow.id, to_jsonb(keyrow)
+  FROM ReleaseBundleIdempotencyKey keyrow
+  WHERE keyrow.organization_id = @organizationId
+    AND keyrow.release_bundle_id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'processsnapshot', snapshot.id, to_jsonb(snapshot)
+  FROM ProcessSnapshot snapshot
+  WHERE snapshot.organization_id = @organizationId
+    AND snapshot.id IN (
+      SELECT plan.process_snapshot_id FROM DeploymentPlan plan
+      WHERE plan.id IN (SELECT id FROM selected_plans) AND plan.process_snapshot_id IS NOT NULL
+    )
+
+  UNION ALL SELECT 'variablesnapshot', snapshot.id, to_jsonb(snapshot)
+  FROM VariableSnapshot snapshot
+  WHERE snapshot.organization_id = @organizationId
+    AND snapshot.id IN (
+      SELECT plan.variable_snapshot_id FROM DeploymentPlan plan
+      WHERE plan.id IN (SELECT id FROM selected_plans) AND plan.variable_snapshot_id IS NOT NULL
+    )
+
+  UNION ALL SELECT 'variablesnapshotvalue', value.id, to_jsonb(value)
+  FROM VariableSnapshotValue value
+  WHERE value.variable_snapshot_id IN (
+    SELECT plan.variable_snapshot_id FROM DeploymentPlan plan
+    WHERE plan.id IN (SELECT id FROM selected_plans) AND plan.variable_snapshot_id IS NOT NULL
+  )
+
+  UNION ALL SELECT 'deploymentplan', plan.id, to_jsonb(plan)
+  FROM DeploymentPlan plan
+  WHERE plan.organization_id = @organizationId AND plan.id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplanissue', issue.id, to_jsonb(issue)
+  FROM DeploymentPlanIssue issue
+  WHERE issue.organization_id = @organizationId AND issue.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplanstep', step.id, to_jsonb(step)
+  FROM DeploymentPlanStep step
+  WHERE step.organization_id = @organizationId AND step.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplantarget', target.id, to_jsonb(target)
+  FROM DeploymentPlanTarget target
+  WHERE target.organization_id = @organizationId AND target.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplantargetcomponent', component.id, to_jsonb(component)
+  FROM DeploymentPlanTargetComponent component
+  WHERE component.organization_id = @organizationId AND component.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplanvariable', variable.id, to_jsonb(variable)
+  FROM DeploymentPlanVariable variable
+  WHERE variable.organization_id = @organizationId AND variable.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentpreflightrun', run.id, to_jsonb(run)
+  FROM DeploymentPreflightRun run
+  WHERE run.organization_id = @organizationId AND run.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentpreflightcheck', checkrow.id, to_jsonb(checkrow)
+  FROM DeploymentPreflightCheck checkrow
+  WHERE checkrow.organization_id = @organizationId AND checkrow.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'task', task.id, to_jsonb(task)
+  FROM Task task
+  WHERE task.organization_id = @organizationId AND task.id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'tasklease', lease.id, to_jsonb(lease)
+  FROM TaskLease lease
+  WHERE lease.organization_id = @organizationId AND lease.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'taskresourcelock', lockrow.id, to_jsonb(lockrow)
+  FROM TaskResourceLock lockrow
+  WHERE lockrow.organization_id = @organizationId AND lockrow.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'steprun', run.id, to_jsonb(run)
+  FROM StepRun run
+  WHERE run.organization_id = @organizationId AND run.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'steprunevent', event.id, to_jsonb(event)
+  FROM StepRunEvent event
+  WHERE event.organization_id = @organizationId AND event.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'steprunlogchunk', chunk.id, to_jsonb(chunk)
+  FROM StepRunLogChunk chunk
+  WHERE chunk.organization_id = @organizationId AND chunk.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'steprunoutput', output.id, to_jsonb(output)
+  FROM StepRunOutput output
+  WHERE output.organization_id = @organizationId AND output.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'targetcomponentstate', state.id, to_jsonb(state)
+  FROM TargetComponentState state
+  WHERE state.organization_id = @organizationId
+    AND state.deployment_target_id IN (SELECT id FROM selected_targets)
+
+  UNION ALL SELECT 'targetcomponentobservation', observation.id, to_jsonb(observation)
+  FROM TargetComponentObservation observation
+  WHERE observation.organization_id = @organizationId
+    AND observation.deployment_target_id IN (SELECT id FROM selected_targets)
+
+  UNION ALL SELECT 'externalexecution', execution.id, to_jsonb(execution)
+  FROM ExternalExecution execution
   WHERE execution.organization_id = @organizationId
     AND execution.id IN (SELECT id FROM selected_executions)
 
-  UNION ALL SELECT 'externalexecutionevent', event.id, jsonb_build_object(
-    'organizationId', event.organization_id,
-    'externalExecutionId', event.external_execution_id,
-    'sequence', event.sequence,
-    'status', event.status,
-    'payloadHash', event.payload_hash
-  ) FROM ExternalExecutionEvent event
+  UNION ALL SELECT 'externalexecutionevent', event.id, to_jsonb(event)
+  FROM ExternalExecutionEvent event
   WHERE event.organization_id = @organizationId
-    AND event.external_execution_id IN (SELECT id FROM selected_executions)
+    AND event.id IN (SELECT id FROM selected_execution_events)
+
+  UNION ALL SELECT 'externalexecutiontimestampmanifest', manifest.id, to_jsonb(manifest)
+  FROM ExternalExecutionTimestampManifest manifest
+  WHERE manifest.id IN (SELECT id FROM selected_timestamp_manifests)
+
+  UNION ALL SELECT 'externalexecutiontimestampcellprovenance',
+    md5(provenance.manifest_id::text || ':' || provenance.source_table || ':' ||
+      provenance.source_row_id::text || ':' || provenance.source_column)::uuid,
+    to_jsonb(provenance)
+  FROM ExternalExecutionTimestampCellProvenance provenance
+  WHERE provenance.manifest_id IN (SELECT id FROM selected_timestamp_manifests)
+
+  UNION ALL SELECT 'externalexecutiontimestampdeletiontombstone',
+    md5(tombstone.source_table || ':' || tombstone.source_row_id::text || ':' ||
+      tombstone.source_column)::uuid,
+    to_jsonb(tombstone)
+  FROM ExternalExecutionTimestampDeletionTombstone tombstone
+  WHERE tombstone.source_row_id IN (
+    SELECT id FROM selected_executions UNION SELECT id FROM selected_execution_events
+  )
+
+  UNION ALL SELECT 'externalexecutiontimestampexpandstate',
+    '00000000-0000-5000-8000-000000000138'::uuid, to_jsonb(state)
+  FROM ExternalExecutionTimestampExpandState state
+
+  UNION ALL SELECT 'externalexecutiontimestampcontractgate', gate.id, to_jsonb(gate)
+  FROM ExternalExecutionTimestampContractGate gate
+  WHERE gate.manifest_id IN (SELECT id FROM selected_timestamp_manifests)
 )
 SELECT kind, id::text, payload::text
 FROM logical_records
@@ -289,6 +515,26 @@ selected_release_bundles(id) AS (
   FROM DeploymentPlan plan
   WHERE plan.organization_id = @organizationId
     AND plan.id IN (SELECT id FROM selected_plans)
+),
+selected_execution_attempts(id) AS (
+  SELECT attempt.id
+  FROM ExecutionAttempt attempt
+  WHERE attempt.organization_id = @organizationId
+    AND attempt.task_id IN (SELECT id FROM selected_tasks)
+),
+selected_sample_retirement_jobs(id) AS (
+  SELECT DISTINCT item.retirement_job_id
+  FROM SampleRetirementItem item
+  WHERE item.organization_id = @organizationId
+    AND (
+      (item.subject_type = 'deployment_target' AND item.subject_id IN (SELECT id FROM selected_targets))
+      OR (item.subject_type = 'application' AND item.subject_id IN (
+        SELECT plan.application_id FROM DeploymentPlan plan WHERE plan.id IN (SELECT id FROM selected_plans)
+      ))
+      OR (item.subject_type = 'environment' AND item.subject_id IN (
+        SELECT plan.environment_id FROM DeploymentPlan plan WHERE plan.id IN (SELECT id FROM selected_plans)
+      ))
+    )
 ),
 logical_records(kind, id, payload) AS (
   SELECT 'customerorganization', co.id, jsonb_build_object(
@@ -521,8 +767,80 @@ logical_records(kind, id, payload) AS (
   ) FROM TargetComponentObservation observation
   WHERE observation.organization_id = @organizationId
     AND observation.deployment_target_id IN (SELECT id FROM selected_targets)
+
+  UNION ALL SELECT 'executionattempt', attempt.id, to_jsonb(attempt)
+  FROM ExecutionAttempt attempt
+  WHERE attempt.organization_id = @organizationId
+    AND attempt.id IN (SELECT id FROM selected_execution_attempts)
+
+  UNION ALL SELECT 'executionintent', intent.id, jsonb_build_object(
+    'createdAt', intent.created_at, 'organizationId', intent.organization_id,
+    'executionAttemptId', intent.execution_attempt_id, 'checksum', intent.checksum,
+    'keyId', intent.key_id, 'signature', intent.signature
+  ) FROM ExecutionIntent intent
+  WHERE intent.organization_id = @organizationId
+    AND intent.execution_attempt_id IN (SELECT id FROM selected_execution_attempts)
+
+  UNION ALL SELECT 'sampleretirementjob', job.id, to_jsonb(job)
+  FROM SampleRetirementJob job
+  WHERE job.organization_id = @organizationId
+    AND job.id IN (SELECT id FROM selected_sample_retirement_jobs)
+
+  UNION ALL SELECT 'sampleretirementitem', item.id, to_jsonb(item)
+  FROM SampleRetirementItem item
+  WHERE item.organization_id = @organizationId
+    AND item.retirement_job_id IN (SELECT id FROM selected_sample_retirement_jobs)
+
+  UNION ALL SELECT 'sampleretirementownershipevidence', evidence.id, to_jsonb(evidence)
+  FROM SampleRetirementOwnershipEvidence evidence
+  WHERE evidence.organization_id = @organizationId
+    AND evidence.id IN (
+      SELECT item.ownership_evidence_id FROM SampleRetirementItem item
+      WHERE item.retirement_job_id IN (SELECT id FROM selected_sample_retirement_jobs)
+    )
+
+  UNION ALL SELECT 'approvalrequest', request.id, to_jsonb(request)
+  FROM ApprovalRequest request
+  WHERE request.organization_id = @organizationId
+    AND request.subject_type = 'sample_retirement'
+    AND request.subject_id IN (SELECT id FROM selected_sample_retirement_jobs)
+
+  UNION ALL SELECT 'approvaldecision', decision.id, to_jsonb(decision)
+  FROM ApprovalDecision decision
+  WHERE decision.organization_id = @organizationId
+    AND decision.approval_request_id IN (
+      SELECT request.id FROM ApprovalRequest request
+      WHERE request.organization_id = @organizationId
+        AND request.subject_type = 'sample_retirement'
+        AND request.subject_id IN (SELECT id FROM selected_sample_retirement_jobs)
+    )
+
+  /*PROTECTED_HISTORY_VERSION_RECORDS*/
 )
 SELECT kind, id::text, payload::text
 FROM logical_records
 ORDER BY kind, id
+`
+
+const protectedHistoryVersionRecordsMarker = "/*PROTECTED_HISTORY_VERSION_RECORDS*/"
+
+const protectedHistorySchema167RecordsSQL = `
+  UNION ALL SELECT 'executionruntimeevidence', evidence.id, to_jsonb(evidence)
+  FROM ExecutionRuntimeEvidence evidence
+  WHERE evidence.organization_id = @organizationId
+    AND evidence.execution_attempt_id IN (SELECT id FROM selected_execution_attempts)
+`
+
+const protectedHistorySchema168RecordsSQL = `
+  UNION ALL SELECT 'deploymentplanresolvedrequirement', requirement.id, to_jsonb(requirement)
+  FROM DeploymentPlanResolvedRequirement requirement
+  WHERE requirement.organization_id = @organizationId
+    AND requirement.deployment_plan_id IN (SELECT id FROM selected_plans)
+`
+
+const protectedHistorySchema169RecordsSQL = `
+  UNION ALL SELECT 'baselineadoptioncomponent', component.id, to_jsonb(component)
+  FROM BaselineAdoptionComponent component
+  WHERE component.organization_id = @organizationId
+    AND component.deployment_plan_id IN (SELECT id FROM selected_plans)
 `

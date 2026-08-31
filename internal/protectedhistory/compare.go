@@ -52,16 +52,16 @@ func Compare(baseline, current Artifact) (*Comparison, error) {
 func CompareExact(
 	baseline,
 	current Artifact,
-	approvedRetirements *ApprovedRetirementAllowlist,
+	retirementAuthorization *RetirementAuthorization,
 ) (*Comparison, error) {
-	return compare(baseline, current, true, approvedRetirements)
+	return compare(baseline, current, true, retirementAuthorization)
 }
 
 func compare(
 	baseline,
 	current Artifact,
 	requireExact bool,
-	approvedRetirements *ApprovedRetirementAllowlist,
+	retirementAuthorization *RetirementAuthorization,
 ) (*Comparison, error) {
 	if err := Validate(baseline); err != nil {
 		return nil, fmt.Errorf("baseline artifact: %w", err)
@@ -78,21 +78,15 @@ func compare(
 		Violations:          []Difference{},
 	}
 	approvedByKey := map[string]RetirementAllowance{}
-	if approvedRetirements != nil {
+	if retirementAuthorization != nil {
 		if !requireExact {
 			return nil, fmt.Errorf("approved retirements require exact comparison")
 		}
-		if err := ValidateApprovedRetirementAllowlist(*approvedRetirements); err != nil {
-			return nil, fmt.Errorf("approved retirement allowlist: %w", err)
+		if err := ValidateRetirementAuthorization(baseline, *retirementAuthorization); err != nil {
+			return nil, fmt.Errorf("approved retirement authorization: %w", err)
 		}
-		if approvedRetirements.BaselineArtifactID != baseline.ArtifactID {
-			return nil, fmt.Errorf("approved retirement allowlist is bound to a different baseline artifact")
-		}
-		if !scopeEqual(approvedRetirements.Scope, baseline.Scope) {
-			return nil, fmt.Errorf("approved retirement allowlist scope differs from baseline scope")
-		}
-		result.RetirementAllowlistID = approvedRetirements.AllowlistID
-		for _, item := range approvedRetirements.Items {
+		result.RetirementAllowlistID = retirementAuthorization.Allowlist.AllowlistID
+		for _, item := range retirementAuthorization.Allowlist.Items {
 			approvedByKey[item.Kind+"\x00"+item.ID] = item
 		}
 	}

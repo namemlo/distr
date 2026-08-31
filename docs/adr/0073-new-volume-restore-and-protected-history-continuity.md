@@ -21,32 +21,64 @@ The server Compose deployment helper exposes two separate operations:
   labeled Docker volumes. It verifies the prior immutable image handoff and OCI
   revision, checks the restored schema with the prior image, exports protected
   history with the current operator image, performs an exact comparison, and
-  seals a read-only plan. It does not stop or switch the active runtime.
+  seals a read-only plan. It also creates
+  `distr.release-restore-snapshot/v1`, whose checksum binds the plan ID, prior
+  handoff, PostgreSQL backup, RustFS backup, protected-history baseline, target
+  digest reference, and target release commit. It does not stop or switch the
+  active runtime.
 - `restore-apply` revalidates every sealed input, volume label, object aggregate,
-  image identity, and protected-history fingerprint before stopping the active
-  runtime. It then replaces the image identity and both Compose volume names in
-  one atomic `.env` rename, starts the restored runtime, and repeats health,
-  schema, object, and protected-history checks.
+  snapshot binding, image identity, and protected-history fingerprint. It also
+  proves that the running Hub digest and the PostgreSQL/RustFS container mounts
+  match the configured source identity. It writes a durable `PREPARED` switch
+  journal before stopping the active runtime, records
+  `SOURCE_STOPPED`, mounts the stopped source PostgreSQL volume in an isolated
+  container, and compares its live protected history with the sealed baseline.
+  Only an exact result permits the image and both Compose volume names to be
+  replaced in one atomic `.env` rename. The restored runtime must then pass
+  health, image, schema, object, and protected-history checks before the journal
+  advances through `TARGET_VERIFIED` to `COMMITTED`.
+- `restore-recover` validates the self-checksummed journal and its sealed source
+  and target identities. `PREPARED` is closed as `RECOVERED` after proving the
+  source identity; `SOURCE_STOPPED`, `IDENTITY_SWITCHED`, and
+  `RECOVERY_REQUIRED` restore and verify the source runtime before becoming
+  `RECOVERED`; and `TARGET_VERIFIED` becomes `COMMITTED` only when the matching
+  checksummed applied-state record already exists. `COMMITTED` and `RECOVERED`
+  are idempotent terminal results. A checksum or identity mismatch is refused.
 
 Candidate and previous active volumes are never deleted automatically. A failed
-candidate remains labeled and an immutable failure record identifies it. If an
-apply fails after the switch, the helper atomically restores the previous image
-and volume names and starts the untouched previous runtime.
+candidate remains labeled and an immutable failure record identifies it. A
+failed apply attempts to restore the previous image and volume names and start
+the untouched previous runtime; if that cannot be proven, the journal remains
+`RECOVERY_REQUIRED` and a later `restore-recover` must resolve it. A new apply is
+refused while any switch journal is unresolved.
 
 Protected-history artifacts remain canonical JSON with record and artifact
-SHA-256 identities. Schema 138 through 165 export the stable customer,
-deployment-target, external-execution, and external-event projection. Schema
-166 and later export the expanded control-plane projection. Exact comparison
-rejects additions, modifications, deletions, scope changes, and schema changes.
+SHA-256 identities. Schemas 138 through 165 use the complete schema-138 table
+set and whole-row payloads across release, deployment, task, execution, log,
+observation, and external-execution timestamp-audit families. Schema 166 has an
+explicit expanded control-plane projection; schema 167 adds
+`ExecutionRuntimeEvidence`; schema 168 adds
+`DeploymentPlanResolvedRequirement`; and schema 169 adds
+`BaselineAdoptionComponent`. Any schema newer than the highest registered
+projection is refused rather than silently omitted. Exact comparison rejects
+additions, modifications, deletions, scope changes, and schema changes.
 
-A missing record can be accepted only when a separately supplied
-`distr.protected-history-retirement-allowlist/v1` artifact:
+A missing record can be accepted only when all three separately sealed artifacts
+are supplied together:
 
-- is bound to the exact baseline artifact and scope;
-- identifies every missing kind, UUID, and baseline record hash;
-- is bound to an immutable preview checksum;
-- carries a nonzero approval UUID, approval checksum, and `APPROVED` state; and
-- contains no unused allowance.
+- `distr.protected-history-retirement-allowlist/v1` names every exact missing
+  kind, UUID, and baseline record hash and binds the other two artifact IDs;
+- `distr.protected-history-retirement-approval/v1` is backed by the exact
+  baseline `ApprovalRequest`, approving `ApprovalDecision` records, and applied
+  or verified `SampleRetirementJob`; and
+- `distr.protected-history-sample-membership/v1` is backed by exact baseline
+  `SampleRetirementOwnershipEvidence` and applied `SampleRetirementItem` records
+  and proves that each protected record is directly bound to the named
+  application, deployment target, or environment.
+
+All three artifacts bind the same baseline artifact, canonical scope, immutable
+preview checksum, and exact item set. The allowlist cannot authorize itself, and
+any missing artifact, stale or unused allowance, or indirect membership fails.
 
 This exception is restricted to the existing sample-domain retirement purpose.
 It cannot authorize patterns, additions, modifications, cross-scope changes, or
@@ -57,14 +89,16 @@ ordinary retention cleanup.
 Schema rollback requires additional disk capacity for parallel PostgreSQL and
 RustFS volumes and incurs a short outage only during `restore-apply`. Operators
 must retain the exact prior handoff, both backups and sidecars, the protected
-history baseline, and any separate retirement approval. Diagnosis is safer
-because no failed or previous volume is erased automatically; retirement of
-retained volumes is a later, separately reviewed operation.
+history baseline, aggregate restore snapshot, switch journal, and any three-part
+retirement authorization. Diagnosis is safer because no failed or previous
+volume is erased automatically; retirement of retained volumes is a later,
+separately reviewed operation.
 
-The protected projection intentionally differs before and after schema 166, so
-exact comparisons are made only between artifacts from the same schema. This is
-appropriate for backup/restore equality and avoids fabricating unavailable v2
-history on schema 138.
+Each registered schema projection reflects only tables available at that schema,
+so exact comparisons are made only between artifacts from the same schema. This
+is appropriate for backup/restore equality, avoids fabricating unavailable
+history, and forces a deliberate projection review whenever a later migration
+introduces protected records.
 
 ## Alternatives Considered
 
@@ -81,12 +115,12 @@ history on schema 138.
 
 ## Validation
 
-- Focused Go tests cover canonical allowlist sealing, exact equality, additions,
-  modifications, missing records, stale/unused allowances, schema mismatch, and
-  CLI fingerprint/compare behavior.
-- Database tests prove the schema-138 projection uses only the stable audit
-  tables and excludes sensitive payload fields.
-- `hack/test-server-compose-restore.sh` proves validation-before-switch order,
-  atomic image/volume identity replacement, failed-volume retention, apply
-  recovery, and CLI arity.
+- Focused Go tests cover canonical three-artifact retirement authorization,
+  exact equality, additions, modifications, missing records, stale/unused
+  allowances, direct membership, schema mismatch, and CLI behavior.
+- Database tests prove the complete schema-138 whole-row projection, explicit
+  schema 166-169 registration, and refusal of an unknown future schema.
+- `hack/test-server-compose-restore.sh` proves aggregate snapshot binding,
+  validation-before-switch order, the stopped-source history fence, durable
+  journal transitions, crash recovery, volume retention, and CLI arity.
 - `bash -n`, focused Go tests, and diff checks are required before integration.
