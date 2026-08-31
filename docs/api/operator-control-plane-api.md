@@ -119,6 +119,7 @@ Product Release lifecycle operations are:
 | `GET`       | `/deployment-plans/{id}`                   | Get one plan                                |
 | `POST`      | `/deployment-plans/{id}/approval-requests` | Request checksum-bound approval             |
 | `POST`      | `/deployment-plans/{id}/previous-state`    | Create a new compatible previous-state plan |
+| `POST`      | `/deployment-plans/{id}/baseline-adoptions` | Adopt exact existing runtime without deployment |
 | `POST`      | `/deployment-plans/{id}/tasks`             | Create durable tasks for a ready plan       |
 | `GET/POST`  | `/deployment-plans/{id}/review-decisions`  | Read or append observed-state-bound GO/NO_GO evidence |
 | `GET`       | `/approval-requests`                       | List approval work                          |
@@ -133,6 +134,34 @@ to be an unexpired `GO`. The decision binds the plan and the current
 independently observed-state checksum. A later `NO_GO`, supersession,
 revocation, observed-state change, expiry, or failed authorization recheck
 blocks before task or external mutation.
+
+Baseline adoption is available only for an initial sealed `READY` native-v2
+bootstrap plan with no task, external-execution, pending-desired, or active-
+desired history. The request supplies an idempotency key, reason, exact plan,
+Product Release, and target-config checksums, and one component entry for every
+frozen plan pin. Each entry binds component instance/key, Component Release,
+source commit/build, provenance verification and policy, artifact digest,
+platform, config/schema/capability/topology, current observation and observer,
+observation evidence/state/runtime checksums, health evidence classification,
+use restriction, and health-policy checksum.
+
+An exact replay returns the retained immutable result. Changed material under
+the same key returns `409`. Success returns `ADOPTED` with
+`deploymentPerformed=false`, `taskCount=0`, `lockCount=0`, and
+`executionCount=0`; no task,
+task lock, attempt, external execution, or executor report is created. The plan
+enters its successful terminal lifecycle state only after the deferred database
+guard verifies every active head, current observation head, release/config pin,
+and correlated `baseline_adoption.adopted` audit event.
+
+`LEGACY_LIVENESS_ONLY` must be paired with
+`BASELINE_OR_ROLLBACK_ONLY`. Its retained observer evidence reference should
+identify a digest-addressed artifact containing portable logical probe paths,
+HTTP status, response size, and response checksum. Ephemeral transport addresses
+must not be used as canonical evidence. This classification cannot be written as
+execution-sourced desired-state promotion; later deployments retain the normal
+standard-readiness observation gate, and provider discovery will not use legacy
+liveness for `pinned_existing` or shared-provider promotion.
 
 The standard controlled-client policy requires four-eyes approval: the
 execution requester cannot decide the same plan or campaign approval. A

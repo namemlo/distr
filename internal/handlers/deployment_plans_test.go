@@ -40,3 +40,16 @@ func TestPreviousStateRouteUsesCurrentTenantAndActor(t *testing.T) {
 	g.Expect(text).To(ContainSubstring("authentication.CurrentUserID()"))
 	g.Expect(strings.Count(text, "RequireReadWriteOrAdmin")).To(BeNumerically(">=", 3))
 }
+
+func TestBaselineAdoptionRouteRequiresScopedPlanExecutionAuthority(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("deployment_plans.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	g.Expect(text).To(ContainSubstring(`Post("/baseline-adoptions"`))
+	g.Expect(text).To(ContainSubstring("AdoptDeploymentPlanBaseline"))
+	g.Expect(text).To(ContainSubstring("types.ActionPlanExecute"))
+	g.Expect(text).To(ContainSubstring("RequireEnrollment: true"))
+	g.Expect(text).To(ContainSubstring("middleware.BlockSuperAdmin"))
+}

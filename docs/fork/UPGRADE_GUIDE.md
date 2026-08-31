@@ -16,17 +16,21 @@ compatibility, or clear the fence. Resume the applicable normal timestamp-expand
 finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
 migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
 
-## PR-084 Integrated Upgrade Through Migration 165
+## PR-085 Integrated Upgrade Through Migration 166
 
-PR-084 requires an ordered upgrade from migration 138 through migration 165. Migration 163 preserves existing
+PR-085 requires an ordered upgrade from migration 138 through migration 166. Migration 163 preserves existing
 blocked plan history and enables only newly validated target deployment plans to seal as executable `READY` plans.
 Its down migration refuses after any executable v2 plan exists.
 Migration 164 preserves legacy planning evidence while allowing authoritative `ActiveDesiredRevision` and
 `ObservedComponentState` lineage to be frozen for native v2 baselines and provider resolutions. Its down migration
 refuses once native lineage exists.
+Migration 165 adds append-only review-material `GO/NO_GO` decisions and refuses downgrade while any decision exists.
+Migration 166 adds immutable native baseline adoption and source/health-policy lineage. It creates no deployment
+task or execution history, and its down migration refuses while any adoption evidence or adoption-sourced active
+desired revision exists.
 Before a release can be signed, retain separate results for clean install, upgrade, safe down/refusal, checkpoint
 restart, v1-only flags-off, mixed v1/v2, and retained-v2-history flags-off paths on the supported PostgreSQL 16.14
-and 18.4 images. The required matrix and current pending status are recorded in the
+and 18.4 images through migration 166. The required matrix and current pending status are recorded in the
 [community release readiness package](../release/community-release-readiness.md#integrated-control-plane-release-gate).
 
 Migration 162 adds `SampleRetirementJob`, `SampleRetirementItem`, `SampleRetirementCheckpoint`, and

@@ -10,6 +10,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
@@ -95,6 +96,22 @@ func deploymentPlansRouterWithVerifier(
 				With(option.Request(CreatePreviousStateDeploymentPlanRouteRequest{})).
 				With(option.Response(http.StatusOK, api.DeploymentPlan{}))
 
+			type CreateBaselineAdoptionRouteRequest struct {
+				DeploymentPlanIDRequest
+				api.CreateBaselineAdoptionRequest
+			}
+
+			r.With(
+				admissionMutationAccessMiddlewareWithFlags(env.ExperimentalFeatureFlags()),
+				middleware.RequireReadWriteOrAdmin,
+				middleware.BlockSuperAdmin,
+			).Post("/baseline-adoptions", createBaselineAdoptionHandler()).
+				With(option.Description(
+					"Adopt exact independently observed healthy runtime as a native v2 baseline",
+				)).
+				With(option.Request(CreateBaselineAdoptionRouteRequest{})).
+				With(option.Response(http.StatusOK, api.BaselineAdoption{}))
+
 			deploymentPlanAdmissionRoutes(r)
 		})
 
@@ -104,6 +121,80 @@ func deploymentPlansRouterWithVerifier(
 			With(option.Request(api.CreateDeploymentPlanRequest{})).
 			With(option.Response(http.StatusOK, api.DeploymentPlan{}))
 	})
+}
+
+func createBaselineAdoptionHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		deploymentPlanID, err := uuid.Parse(r.PathValue("deploymentPlanId"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		request, err := JsonBody[api.CreateBaselineAdoptionRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		ctx := r.Context()
+		log := internalctx.GetLogger(ctx)
+		authentication := auth.Authentication.Require(ctx)
+		organizationID := *authentication.CurrentOrgID()
+		plan, err := db.GetDeploymentPlan(ctx, deploymentPlanID, organizationID)
+		if errors.Is(err, apierrors.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			log.Error("failed to load baseline adoption plan", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		if plan.DeploymentUnitID == nil {
+			http.Error(w, "baseline adoption requires a deployment unit", http.StatusConflict)
+			return
+		}
+		if err := authorizeControlPlaneResource(ctx, controlPlaneResourceAuthorizationRequest{
+			OrganizationID: organizationID,
+			PrincipalID:    authentication.CurrentUserID(),
+			CredentialRole: authentication.CurrentUserRole(),
+			IsSuperAdmin:   authentication.IsSuperAdmin(),
+			Action:         types.ActionPlanExecute,
+			Resource: types.ResourceRef{
+				OrganizationID: organizationID,
+				Kind:           types.PermissionScopeDeploymentUnit,
+				ID:             *plan.DeploymentUnitID,
+			},
+			DecisionAt:        time.Now().UTC(),
+			RequireEnrollment: true,
+			EnvironmentID:     plan.EnvironmentID,
+		}); err != nil {
+			http.Error(w, "insufficient permissions", http.StatusForbidden)
+			return
+		}
+
+		adoption, err := db.AdoptDeploymentPlanBaseline(ctx, request.ToTypes(
+			organizationID, deploymentPlanID, authentication.CurrentUserID(),
+		))
+		switch {
+		case errors.Is(err, apierrors.ErrNotFound):
+			http.NotFound(w, r)
+		case errors.Is(err, apierrors.ErrBadRequest):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.Is(err, apierrors.ErrConflict), errors.Is(err, apierrors.ErrAlreadyExists):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case err != nil:
+			log.Error("failed to adopt deployment plan baseline", zap.Error(err))
+			sentry.GetHubFromContext(ctx).CaptureException(err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		default:
+			RespondJSON(w, adoption)
+		}
+	}
 }
 
 func deploymentPlansFeatureFlagMiddleware(handler http.Handler) http.Handler {

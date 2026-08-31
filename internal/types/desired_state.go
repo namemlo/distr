@@ -19,6 +19,13 @@ const (
 	PendingDesiredStatusConflict  PendingDesiredStatus = "CONFLICT"
 )
 
+type DesiredRevisionSource string
+
+const (
+	DesiredRevisionSourceExecution        DesiredRevisionSource = "EXECUTION"
+	DesiredRevisionSourceBaselineAdoption DesiredRevisionSource = "BASELINE_ADOPTION"
+)
+
 type PendingDesiredRevisionInput struct {
 	OrganizationID      uuid.UUID `json:"organizationId"`
 	DeploymentPlanID    uuid.UUID `json:"deploymentPlanId"`
@@ -63,23 +70,27 @@ type PendingDesiredRevision struct {
 }
 
 type ActiveDesiredRevision struct {
-	ID                    uuid.UUID `db:"id" json:"id"`
-	CreatedAt             time.Time `db:"created_at" json:"createdAt"`
-	OrganizationID        uuid.UUID `db:"organization_id" json:"organizationId"`
-	PendingRevisionID     uuid.UUID `db:"pending_revision_id" json:"pendingRevisionId"`
-	DeploymentPlanID      uuid.UUID `db:"deployment_plan_id" json:"deploymentPlanId"`
-	ExecutionID           uuid.UUID `db:"execution_id" json:"executionId"`
-	DeploymentUnitID      uuid.UUID `db:"deployment_unit_id" json:"deploymentUnitId"`
-	ComponentInstanceID   uuid.UUID `db:"component_instance_id" json:"componentInstanceId"`
-	ComponentKey          string    `db:"component_key" json:"componentKey"`
-	Revision              int64     `db:"revision" json:"revision"`
-	ArtifactDigest        string    `db:"artifact_digest" json:"artifactDigest"`
-	ConfigChecksum        string    `db:"config_checksum" json:"configChecksum"`
-	SchemaVersion         string    `db:"schema_version" json:"schemaVersion"`
-	CapabilityChecksum    string    `db:"capability_checksum" json:"capabilityChecksum"`
-	Platform              string    `db:"platform" json:"platform"`
-	TopologyChecksum      string    `db:"topology_checksum" json:"topologyChecksum"`
-	VerifiedObservationID uuid.UUID `db:"verified_observation_id" json:"verifiedObservationId"`
+	ID                          uuid.UUID                          `db:"id" json:"id"`
+	CreatedAt                   time.Time                          `db:"created_at" json:"createdAt"`
+	OrganizationID              uuid.UUID                          `db:"organization_id" json:"organizationId"`
+	PendingRevisionID           *uuid.UUID                         `db:"pending_revision_id" json:"pendingRevisionId,omitempty"`
+	DeploymentPlanID            uuid.UUID                          `db:"deployment_plan_id" json:"deploymentPlanId"`
+	ExecutionID                 *uuid.UUID                         `db:"execution_id" json:"executionId,omitempty"`
+	DeploymentUnitID            uuid.UUID                          `db:"deployment_unit_id" json:"deploymentUnitId"`
+	ComponentInstanceID         uuid.UUID                          `db:"component_instance_id" json:"componentInstanceId"`
+	ComponentKey                string                             `db:"component_key" json:"componentKey"`
+	Revision                    int64                              `db:"revision" json:"revision"`
+	ArtifactDigest              string                             `db:"artifact_digest" json:"artifactDigest"`
+	ConfigChecksum              string                             `db:"config_checksum" json:"configChecksum"`
+	SchemaVersion               string                             `db:"schema_version" json:"schemaVersion"`
+	CapabilityChecksum          string                             `db:"capability_checksum" json:"capabilityChecksum"`
+	Platform                    string                             `db:"platform" json:"platform"`
+	TopologyChecksum            string                             `db:"topology_checksum" json:"topologyChecksum"`
+	VerifiedObservationID       uuid.UUID                          `db:"verified_observation_id" json:"verifiedObservationId"`
+	SourceKind                  DesiredRevisionSource              `db:"source_kind" json:"sourceKind"`
+	BaselineAdoptionComponentID *uuid.UUID                         `db:"baseline_adoption_component_id" json:"baselineAdoptionComponentId,omitempty"`
+	HealthEvidenceKind          BaselineAdoptionHealthEvidenceKind `db:"health_evidence_kind" json:"healthEvidenceKind"`
+	HealthEvidenceUse           BaselineAdoptionHealthEvidenceUse  `db:"health_evidence_use" json:"healthEvidenceUse"`
 }
 
 type ComponentDesiredStateHead struct {

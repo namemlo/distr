@@ -60,13 +60,16 @@ func Advance(
 		pending.VerifiedObservationID = gate.ObservationID
 		next := &types.ActiveDesiredRevision{
 			ID: uuid.New(), CreatedAt: now, OrganizationID: pending.OrganizationID,
-			PendingRevisionID: pending.ID, DeploymentPlanID: pending.DeploymentPlanID,
-			ExecutionID: pending.ExecutionID, DeploymentUnitID: pending.DeploymentUnitID,
+			PendingRevisionID: new(pending.ID), DeploymentPlanID: pending.DeploymentPlanID,
+			ExecutionID: new(pending.ExecutionID), DeploymentUnitID: pending.DeploymentUnitID,
 			ComponentInstanceID: pending.ComponentInstanceID, ComponentKey: pending.ComponentKey,
 			Revision: pending.Revision, ArtifactDigest: pending.ArtifactDigest,
 			ConfigChecksum: pending.ConfigChecksum, SchemaVersion: pending.SchemaVersion,
 			CapabilityChecksum: pending.CapabilityChecksum, Platform: pending.Platform,
 			TopologyChecksum: pending.TopologyChecksum, VerifiedObservationID: gate.ObservationID,
+			SourceKind:         types.DesiredRevisionSourceExecution,
+			HealthEvidenceKind: types.BaselineAdoptionHealthStandardReadiness,
+			HealthEvidenceUse:  types.BaselineAdoptionHealthUsePromotionEligible,
 		}
 		return next, pending, nil
 	case types.ObservationGateStatusPartial:

@@ -490,6 +490,8 @@ func deleteDesiredObservedStateForOrganizations(
 		"CampaignPrerequisiteEvaluation",
 		"ComponentDesiredStateHead",
 		"ActiveDesiredRevision",
+		"BaselineAdoptionComponent",
+		"BaselineAdoption",
 		"ExecutorReport",
 		"PendingDesiredRevision",
 		"ComponentObservationHead",

@@ -45,7 +45,9 @@ const activeDesiredOutputExpr = `
 	a.component_instance_id, a.component_key, a.revision,
 	a.artifact_digest, a.config_checksum, a.schema_version,
 	a.capability_checksum, a.platform, a.topology_checksum,
-	a.verified_observation_id
+	a.verified_observation_id, a.source_kind,
+	a.baseline_adoption_component_id, a.health_evidence_kind,
+	a.health_evidence_use
 `
 
 const observedStateOutputExpr = `
@@ -665,7 +667,7 @@ func advanceActiveDesiredRevisionTx(
 				EventType:            "active_desired_revision.advanced",
 				Outcome:              "VERIFIED",
 				DeploymentPlanID:     &next.DeploymentPlanID,
-				ExecutionID:          &next.ExecutionID,
+				ExecutionID:          next.ExecutionID,
 				DesiredStateID:       &next.ID,
 				ObservationID:        &next.VerifiedObservationID,
 				DeploymentUnitID:     &next.DeploymentUnitID,

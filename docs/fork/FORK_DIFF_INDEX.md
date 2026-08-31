@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-Entries through PR-083 are recorded below; each entry's status and evidence
+Entries through PR-085 are recorded below; each entry's status and evidence
 boundary remain authoritative. PR-054A timestamp-expand runtime, migration,
 audited dirty-marker recovery, and operator documentation are implemented
 locally, while final acceptance remains pending. PR-055 through PR-082 build
@@ -12,6 +12,9 @@ the default-off integrated control plane through migration 162. PR-083 adds
 the release, evidence, operations, and cutover contract; its PostgreSQL matrix,
 full build/test suite, Docker/live proof, security scans, immutable image
 evidence, and post-deployment sign-off remain pending.
+PR-084 and PR-085 add the review-decision and native baseline-adoption safety
+boundaries through migration 166; their live PostgreSQL and final release gates
+also remain pending.
 
 ## Tracking Template
 
@@ -1841,3 +1844,36 @@ Use one entry per pull request:
 - Compatibility notes: V1 task creation is unchanged. V2 task creation fails
   closed before mutation unless the current decision tip is an authorized,
   unexpired, observed-state-current `GO`.
+
+### PR-085 - Native baseline adoption
+
+- Status: Implemented with focused local verification; live PostgreSQL and
+  final release-matrix gates remain pending.
+- Upstream base: `b477580b` (AC-50/AC-51 acceptance-proof checkpoint).
+- Feature flags: Uses the existing default-off `operator_control_plane_v2` and
+  `executor_protocol_v2` boundary.
+- User-facing behavior: An authorized operator can adopt exact current healthy
+  runtime as native desired state without claiming that Distr deployed it.
+- Database changes: Migration 166 adds immutable `BaselineAdoption` and
+  `BaselineAdoptionComponent` evidence and mutually exclusive execution versus
+  adoption lineage on `ActiveDesiredRevision`. Deferred guards require exact
+  plan/release/config/component/provenance/current-observation/audit coverage.
+- API changes: Adds `POST
+  /api/v1/deployment-plans/{id}/baseline-adoptions` with exact checksum-bound
+  evidence and idempotent replay.
+- UI changes: None; this is an API-first state-lineage boundary.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0072, PR-085 fork notes, API guidance, migration-166
+  upgrade and release-matrix coverage.
+- Tests: Focused API validation, canonical material/idempotency, desired-state
+  source projection, handler authorization, repository mutation-shape,
+  migration guard/down-refusal, planning/observation/reconciliation, and
+  migration-matrix validation.
+- Upstream contribution notes: Community-neutral adoption, health-classification,
+  and evidence-lineage primitives with no client, CI provider, registry, runtime
+  address, or credential assumptions.
+- Compatibility notes: Existing v1 and execution-sourced v2 promotion remain
+  unchanged. Adoption produces `ADOPTED`, `deploymentPerformed=false`, and zero
+  tasks/locks/executions. Legacy liveness is restricted to baseline/rollback
+  evidence, cannot be persisted as execution-sourced promotion, and is excluded
+  from native provider discovery for promotion.

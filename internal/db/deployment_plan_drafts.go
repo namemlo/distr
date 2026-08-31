@@ -1948,6 +1948,8 @@ func loadObservedProviderCandidates(
 		FROM ComponentDesiredStateHead head
 		JOIN ActiveDesiredRevision active
 		  ON active.id = head.active_revision_id AND active.organization_id = head.organization_id
+		 AND active.health_evidence_kind = 'STANDARD_READINESS'
+		 AND active.health_evidence_use = 'STANDARD_PROMOTION_ELIGIBLE'
 		JOIN ObservedComponentState observed
 		  ON observed.id = active.verified_observation_id
 		 AND observed.organization_id = active.organization_id

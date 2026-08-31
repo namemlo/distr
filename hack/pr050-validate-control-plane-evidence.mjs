@@ -11,7 +11,7 @@ const safeDatabaseNamePattern = /(test|ci|fixture|sandbox|control[_-]?plane)/i;
 const requiredMigrationScenarios = Object.freeze([
   'migration-file-integrity',
   'postgres-runtime-version',
-  'migration-138-to-165-upgrade',
+  'migration-138-to-166-upgrade',
   'clean-install',
   'single-step-down-and-refusal-contracts',
   'checkpoint-idempotency-and-cursor-resume',
@@ -104,8 +104,8 @@ export function validateMigrationEvidence(report, expectedCommit, expectedPostgr
   if (report.source?.workingTreeDirty !== false) {
     fail('migration report source must be a clean tracked worktree');
   }
-  if (report.range?.from !== 138 || report.range?.to !== 165) {
-    fail('migration report must cover the exact 138 through 165 range');
+  if (report.range?.from !== 138 || report.range?.to !== 166) {
+    fail('migration report must cover the exact 138 through 166 range');
   }
   if (
     !['16.14', '18.4'].includes(expectedPostgresVersion) ||
@@ -128,16 +128,16 @@ export function validateMigrationEvidence(report, expectedCommit, expectedPostgr
   ) {
     fail('migration report database identity must be an explicit loopback test database');
   }
-  if (!Array.isArray(report.migrationFiles) || report.migrationFiles.length !== 28) {
-    fail('migration report must contain exactly 28 migration file pairs');
+  if (!Array.isArray(report.migrationFiles) || report.migrationFiles.length !== 29) {
+    fail('migration report must contain exactly 29 migration file pairs');
   }
   report.migrationFiles.forEach((file, index) => validateMigrationFile(file, 138 + index, index));
   if (
     report.coverage?.schemaUpgrade?.from !== 138 ||
-    report.coverage?.schemaUpgrade?.to !== 165 ||
+    report.coverage?.schemaUpgrade?.to !== 166 ||
     report.coverage?.schemaDown?.mode !== 'single-step' ||
-    report.coverage?.schemaDown?.from !== 165 ||
-    report.coverage?.schemaDown?.to !== 164 ||
+    report.coverage?.schemaDown?.from !== 166 ||
+    report.coverage?.schemaDown?.to !== 165 ||
     report.coverage?.checkpoint !== 'idempotency-and-cursor-resume-tests' ||
     JSON.stringify(report.coverage?.notExecuted) !==
       JSON.stringify(['process-interruption-and-restart', 'binary-rollback'])
