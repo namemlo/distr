@@ -609,6 +609,110 @@ set_image_identity() (
   sync -f "$directory" || return
 )
 
+metadata_value() {
+  local file="${1:-}" key="${2:-}" line
+  local -a lines=()
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ && -f "$file" && ! -L "$file" ]] || return 1
+  mapfile -t lines < <(grep -E "^${key}=" "$file" || true)
+  ((${#lines[@]} == 1)) || {
+    die "release handoff must contain exactly one ${key}"
+    return 1
+  }
+  line="${lines[0]}"
+  line="${line#*=}"
+  [[ -n "$line" && "$line" != *$'\n'* && "$line" != *$'\r'* ]] || return 1
+  printf '%s' "$line" || return
+}
+
+verify_checksum_bound_input() {
+  local file="${1:-}" sidecar directory file_mode sidecar_mode
+  local file_owner sidecar_owner current_uid sidecar_name
+  sidecar="$file.sha256"
+  [[ -f "$file" && ! -L "$file" && -f "$sidecar" && ! -L "$sidecar" ]] || {
+    die "checksummed input is missing or unsafe: $file"
+    return 1
+  }
+  path_components_have_no_symlink "$file" || return
+  file_mode="$(stat -c '%a' -- "$file")" || return
+  sidecar_mode="$(stat -c '%a' -- "$sidecar")" || return
+  [[ "$file_mode" == 600 || "$file_mode" == 640 || "$file_mode" == 644 ]] || {
+    die "checksummed input mode must be 0600, 0640, or 0644: $file"
+    return 1
+  }
+  [[ "$sidecar_mode" == 600 || "$sidecar_mode" == 640 || "$sidecar_mode" == 644 ]] || {
+    die "checksum sidecar mode must be 0600, 0640, or 0644: $sidecar"
+    return 1
+  }
+  current_uid="$(id -u)" || return
+  file_owner="$(stat -c '%u' -- "$file")" || return
+  sidecar_owner="$(stat -c '%u' -- "$sidecar")" || return
+  [[ "$file_owner" == "$current_uid" && "$sidecar_owner" == "$current_uid" ]] || {
+    die "checksummed input and sidecar must be owned by the deployment user"
+    return 1
+  }
+  directory="$(dirname -- "$file")" || return
+  sidecar_name="$(basename -- "$sidecar")" || return
+  (cd "$directory" || return; sha256sum -c --status -- "$sidecar_name" || return) || {
+    die "checksum verification failed: $file"
+    return 1
+  }
+}
+
+checksum_bound_input_value() {
+  local file="${1:-}" digest recorded expected
+  verify_checksum_bound_input "$file" || return
+  read -r digest recorded <"$file.sha256" || return
+  expected="$(basename -- "$file")" || return
+  [[ "$digest" =~ ^[0-9a-f]{64}$ && "$recorded" == "$expected" ]] || return 1
+  printf 'sha256:%s' "$digest" || return
+}
+
+configured_postgres_volume() {
+  printf '%s' "${POSTGRES_VOLUME_NAME:-${COMPOSE_PROJECT_NAME:-distr-prod}_postgres}" || return
+}
+
+configured_rustfs_volume() {
+  printf '%s' "${RUSTFS_VOLUME_NAME:-${COMPOSE_PROJECT_NAME:-distr-prod}_rustfs}" || return
+}
+
+set_restore_runtime_identity() (
+  set -Eeuo pipefail
+  local image_ref="${1:-}" release_commit="${2:-}"
+  local postgres_volume="${3:-}" rustfs_volume="${4:-}" image_digest
+  local directory temporary='' original_env
+  [[ "$image_ref" =~ ^[A-Za-z0-9._/+:-]+@sha256:[0-9a-f]{64}$ ]] || {
+    die "restore identity requires an immutable digest reference"
+    return 1
+  }
+  [[ "$release_commit" =~ ^[0-9a-f]{40}$ ]] || {
+    die "restore identity requires a full lowercase release commit"
+    return 1
+  }
+  [[ "$postgres_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ &&
+     "$rustfs_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || {
+    die "restore identity contains an invalid Docker volume name"
+    return 1
+  }
+  image_digest="${image_ref##*@}"
+  require_secure_env_file || return
+  directory="$(dirname -- "$ENV_FILE")" || return
+  temporary="$(mktemp "$directory/.env.restore-identity.XXXXXX")" || return
+  trap 'rm -f -- "${temporary:-}" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+  install -m 0600 -- "$ENV_FILE" "$temporary" || return
+  original_env="$ENV_FILE"
+  ENV_FILE="$temporary"
+  set_env_var DISTR_IMAGE_REF "$image_ref" || return
+  set_env_var DISTR_RELEASE_COMMIT "$release_commit" || return
+  set_env_var DISTR_IMAGE_DIGEST "$image_digest" || return
+  set_env_var POSTGRES_VOLUME_NAME "$postgres_volume" || return
+  set_env_var RUSTFS_VOLUME_NAME "$rustfs_volume" || return
+  sync -f "$temporary" || return
+  ENV_FILE="$original_env"
+  mv -fT -- "$temporary" "$ENV_FILE" || return
+  temporary=''
+  sync -f "$directory" || return
+)
+
 acquire_deploy_lock() {
   local parent parent_mode owner current_uid
   need_cmd flock || return
@@ -3849,6 +3953,532 @@ rollback_app() (
   complete=1
 )
 
+prepare_restore_plan_directory() {
+  local directory="${1:-}" parent
+  [[ "$directory" == /* ]] || {
+    die "restore plan directory must be absolute"
+    return 1
+  }
+  path_components_have_no_symlink "$directory" || {
+    die "restore plan directory path contains a symlink"
+    return 1
+  }
+  parent="$(dirname -- "$directory")" || return
+  require_secure_state_directory "$parent" || return
+  [[ ! -e "$directory" && ! -L "$directory" ]] || {
+    die "restore plan directory already exists"
+    return 1
+  }
+  (umask 077; mkdir -- "$directory") || return
+  chmod 0700 -- "$directory" || return
+  require_secure_state_directory "$directory" || return
+}
+
+wait_for_restore_postgres() {
+  local container="${1:-}" database_user="${2:-}" database_name="${3:-}" attempt
+  [[ -n "$container" && -n "$database_user" && -n "$database_name" ]] || return 1
+  for ((attempt=1; attempt<=60; attempt++)); do
+    if docker exec "$container" pg_isready \
+        --username="$database_user" --dbname="$database_name" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1 || return
+  done
+  die "restore candidate PostgreSQL did not become ready"
+  return 1
+}
+
+run_protected_history_export() (
+  set -Eeuo pipefail
+  local image_ref="${1:-}" network="${2:-}" database_url="${3:-}"
+  local plan_dir="${4:-}" baseline_name="${5:-}" output_name="${6:-}"
+  local baseline="$plan_dir/$baseline_name" organization_id deployment_uid deployment_gid
+  local -a args customer_ids target_ids
+  [[ "$output_name" =~ ^[A-Za-z0-9_.-]+$ && -f "$baseline" && ! -L "$baseline" ]] || return 1
+  organization_id="$(jq -er '.scope.organizationId' "$baseline")" || return
+  mapfile -t customer_ids < <(jq -er '.scope.customerOrganizationIds[]?' "$baseline")
+  mapfile -t target_ids < <(jq -er '.scope.deploymentTargetIds[]?' "$baseline")
+  args=(
+    protected-history export
+    --organization-id "$organization_id"
+    --output "/evidence/$output_name"
+  )
+  local id
+  for id in "${customer_ids[@]}"; do
+    args+=(--customer-organization-id "$id")
+  done
+  for id in "${target_ids[@]}"; do
+    args+=(--deployment-target-id "$id")
+  done
+  deployment_uid="$(id -u)" || return
+  deployment_gid="$(id -g)" || return
+  docker run --rm \
+    --network "$network" \
+    --user "$deployment_uid:$deployment_gid" \
+    -v "$plan_dir:/evidence" \
+    -e "DATABASE_URL=$database_url" \
+    "$image_ref" "${args[@]}" || return
+  [[ -f "$plan_dir/$output_name" && ! -L "$plan_dir/$output_name" ]] || return 1
+  write_sha256_sidecar_create_new "$plan_dir/$output_name" || return
+)
+
+run_protected_history_exact_compare() (
+  set -Eeuo pipefail
+  local image_ref="${1:-}" plan_dir="${2:-}" baseline_name="${3:-}"
+  local current_name="${4:-}" allowlist_name="${5:-NONE}" report_name="${6:-}"
+  local deployment_uid deployment_gid temporary=''
+  local -a allowlist_args=()
+  [[ "$report_name" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+  if [[ "$allowlist_name" != NONE ]]; then
+    [[ "$allowlist_name" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+    allowlist_args=(--approved-retirement-allowlist "/evidence/$allowlist_name")
+  fi
+  deployment_uid="$(id -u)" || return
+  deployment_gid="$(id -g)" || return
+  temporary="$(mktemp "$plan_dir/.$report_name.XXXXXX")" || return
+  trap 'rm -f -- "${temporary:-}" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+  docker run --rm \
+    --user "$deployment_uid:$deployment_gid" \
+    -v "$plan_dir:/evidence:ro" \
+    "$image_ref" protected-history compare \
+      --baseline "/evidence/$baseline_name" \
+      --current "/evidence/$current_name" \
+      --require-exact "${allowlist_args[@]}" >"$temporary" || return
+  chmod 0600 "$temporary" || return
+  jq -e '.status == "UNCHANGED" or .status == "APPROVED_RETIREMENTS_ONLY"' \
+    "$temporary" >/dev/null || return
+  copy_file_create_new_0600 "$temporary" "$plan_dir/$report_name" || return
+  rm -- "$temporary" || return
+  temporary=''
+  write_sha256_sidecar_create_new "$plan_dir/$report_name" || return
+)
+
+restore_plan_state_keys() {
+  printf '%s' 'STATE,PLAN_ID,PRIOR_HANDOFF,PRIOR_HANDOFF_SHA256,DATABASE_BACKUP,DATABASE_BACKUP_SHA256,OBJECT_BACKUP,OBJECT_BACKUP_SHA256,PROTECTED_HISTORY_BASELINE_SHA256,RETIREMENT_ALLOWLIST_SHA256,TARGET_IMAGE_REF,TARGET_RELEASE_COMMIT,TARGET_IMAGE_DIGEST,OPERATOR_IMAGE_REF,OPERATOR_RELEASE_COMMIT,POSTGRES_VOLUME,RUSTFS_VOLUME,SOURCE_SCHEMA_VERSION,OBJECT_AGGREGATE_SHA256,CREATED_AT'
+}
+
+write_restore_plan_state() (
+  set -Eeuo pipefail
+  local plan_dir="${1:-}" plan_id="${2:-}" handoff="${3:-}"
+  local database_backup="${4:-}" object_backup="${5:-}" baseline_checksum="${6:-}"
+  local retirement_checksum="${7:-}" target_ref="${8:-}" target_commit="${9:-}"
+  shift 9 || return
+  local operator_ref="${1:-}" operator_commit="${2:-}" postgres_volume="${3:-}"
+  local rustfs_volume="${4:-}" source_schema="${5:-}" object_aggregate="${6:-}"
+  local state="$plan_dir/restore-plan.env" temporary=''
+  local handoff_checksum database_checksum object_checksum created_at
+  handoff_checksum="$(checksum_bound_input_value "$handoff")" || return
+  database_checksum="$(checksum_bound_input_value "$database_backup")" || return
+  object_checksum="$(checksum_bound_input_value "$object_backup")" || return
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return
+  temporary="$(mktemp "$plan_dir/.restore-plan.XXXXXX")" || return
+  trap 'rm -f -- "${temporary:-}" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+  {
+    printf 'STATE=READY\n'
+    printf 'PLAN_ID=%s\n' "$plan_id"
+    printf 'PRIOR_HANDOFF=%s\n' "$handoff"
+    printf 'PRIOR_HANDOFF_SHA256=%s\n' "$handoff_checksum"
+    printf 'DATABASE_BACKUP=%s\n' "$database_backup"
+    printf 'DATABASE_BACKUP_SHA256=%s\n' "$database_checksum"
+    printf 'OBJECT_BACKUP=%s\n' "$object_backup"
+    printf 'OBJECT_BACKUP_SHA256=%s\n' "$object_checksum"
+    printf 'PROTECTED_HISTORY_BASELINE_SHA256=%s\n' "$baseline_checksum"
+    printf 'RETIREMENT_ALLOWLIST_SHA256=%s\n' "$retirement_checksum"
+    printf 'TARGET_IMAGE_REF=%s\n' "$target_ref"
+    printf 'TARGET_RELEASE_COMMIT=%s\n' "$target_commit"
+    printf 'TARGET_IMAGE_DIGEST=%s\n' "${target_ref##*@}"
+    printf 'OPERATOR_IMAGE_REF=%s\n' "$operator_ref"
+    printf 'OPERATOR_RELEASE_COMMIT=%s\n' "$operator_commit"
+    printf 'POSTGRES_VOLUME=%s\n' "$postgres_volume"
+    printf 'RUSTFS_VOLUME=%s\n' "$rustfs_volume"
+    printf 'SOURCE_SCHEMA_VERSION=%s\n' "$source_schema"
+    printf 'OBJECT_AGGREGATE_SHA256=%s\n' "$object_aggregate"
+    printf 'CREATED_AT=%s\n' "$created_at"
+  } >"$temporary" || return
+  chmod 0600 "$temporary" || return
+  copy_file_create_new_0600 "$temporary" "$state" || return
+  rm -- "$temporary" || return
+  temporary=''
+  write_sha256_sidecar_create_new "$state" || return
+)
+
+write_restore_failure_state() {
+  local plan_dir="${1:-}" plan_id="${2:-}" postgres_volume="${3:-}"
+  local rustfs_volume="${4:-}" phase="${5:-}" state temporary
+  [[ -d "$plan_dir" && ! -L "$plan_dir" ]] || return 0
+  state="$plan_dir/restore-failure.env"
+  [[ ! -e "$state" && ! -L "$state" ]] || return 0
+  temporary="$(mktemp "$plan_dir/.restore-failure.XXXXXX")" || return
+  {
+    printf 'STATE=FAILED_VOLUMES_RETAINED\n'
+    printf 'PLAN_ID=%s\n' "$plan_id"
+    printf 'POSTGRES_VOLUME=%s\n' "$postgres_volume"
+    printf 'RUSTFS_VOLUME=%s\n' "$rustfs_volume"
+    printf 'PHASE=%s\n' "$phase"
+    printf 'FAILED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary" || return
+  chmod 0600 "$temporary" || return
+  copy_file_create_new_0600 "$temporary" "$state" || return
+  rm -f -- "$temporary" || return
+  write_sha256_sidecar_create_new "$state" || return
+}
+
+restore_plan() (
+  set -Eeuo pipefail
+  local handoff="${1:-}" database_backup="${2:-}" object_backup="${3:-}"
+  local protected_baseline="${4:-}" plan_dir="${5:-}" retirement_allowlist="${6:--}"
+  local project plan_id nonce network postgres_container postgres_volume rustfs_volume
+  local target_ref target_commit target_digest operator_ref operator_commit verified_commit
+  local baseline_checksum retirement_checksum=NONE source_schema object_aggregate database_url
+  local database_backup_name object_backup_name phase=PREPARE complete=0 cleanup_status=0
+  local network_created=0 container_created=0
+  [[ -n "$handoff" && -n "$database_backup" && -n "$object_backup" &&
+     -n "$protected_baseline" && -n "$plan_dir" ]] || return 1
+  acquire_deploy_lock || return
+  require_no_active_timestamp_fence || return
+  check_env || return
+  operator_ref="$DISTR_IMAGE_REF"
+  operator_commit="$DISTR_RELEASE_COMMIT"
+  verify_checksum_bound_input "$handoff" || return
+  verify_checksum_bound_input "$database_backup" || return
+  verify_checksum_bound_input "$object_backup" || return
+  verify_checksum_bound_input "$protected_baseline" || return
+  if [[ "$retirement_allowlist" != - ]]; then
+    verify_checksum_bound_input "$retirement_allowlist" || return
+  fi
+  prepare_restore_plan_directory "$plan_dir" || return
+  target_ref="$(metadata_value "$handoff" DISTR_IMAGE_REF)" || return
+  target_commit="$(metadata_value "$handoff" DISTR_RELEASE_COMMIT)" || return
+  target_digest="$(metadata_value "$handoff" DISTR_IMAGE_DIGEST)" || return
+  [[ "$target_ref" =~ @sha256:[0-9a-f]{64}$ && "$target_digest" == "${target_ref##*@}" &&
+     "$target_commit" =~ ^[0-9a-f]{40}$ ]] || {
+    die "prior handoff contains an invalid immutable image identity"
+    return 1
+  }
+  baseline_checksum="$(checksum_bound_input_value "$protected_baseline")" || return
+  source_schema="$(jq -er '.sourceSchemaVersion | select(type == "number" and floor == . and . >= 138)' \
+    "$protected_baseline")" || return
+  if [[ "$retirement_allowlist" != - ]]; then
+    retirement_checksum="$(checksum_bound_input_value "$retirement_allowlist")" || return
+  fi
+  plan_id="restore_$(date -u +%Y%m%dT%H%M%SZ)_$(openssl rand -hex 8)" || return
+  nonce="$(openssl rand -hex 8)" || return
+  project="${COMPOSE_PROJECT_NAME:-distr-prod}"
+  network="${project}_restore_$nonce"
+  postgres_container="distr-restore-pg-$nonce"
+  postgres_volume="${project}_restore_pg_$nonce"
+  rustfs_volume="${project}_restore_object_$nonce"
+  [[ "$postgres_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ &&
+     "$rustfs_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || {
+    die "Compose project name is too long for guarded restore volume names"
+    return 1
+  }
+  database_backup_name="$(basename -- "$database_backup")" || return
+  object_backup_name="$(basename -- "$object_backup")" || return
+
+  cleanup_restore_plan() {
+    local status=$?
+    trap - EXIT HUP INT TERM
+    if ((container_created == 1)); then
+      docker stop --time 30 "$postgres_container" >/dev/null 2>&1 || true
+      docker rm -f "$postgres_container" >/dev/null 2>&1 || cleanup_status=1
+    fi
+    if ((network_created == 1)); then
+      docker network rm "$network" >/dev/null 2>&1 || cleanup_status=1
+    fi
+    if ((complete == 0)); then
+      write_restore_failure_state \
+        "$plan_dir" "$plan_id" "$postgres_volume" "$rustfs_volume" "$phase" || cleanup_status=1
+      info "restore plan failed; candidate volumes retained: $postgres_volume $rustfs_volume"
+    fi
+    if ((cleanup_status != 0)); then exit 1; fi
+    exit "$status"
+  }
+  trap cleanup_restore_plan EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  phase=STAGE_INPUTS
+  copy_file_create_new_0600 "$handoff" "$plan_dir/prior-handoff.env" || return
+  write_sha256_sidecar_create_new "$plan_dir/prior-handoff.env" || return
+  copy_file_create_new_0600 "$protected_baseline" "$plan_dir/protected-history-before.json" || return
+  write_sha256_sidecar_create_new "$plan_dir/protected-history-before.json" || return
+  if [[ "$retirement_allowlist" != - ]]; then
+    copy_file_create_new_0600 "$retirement_allowlist" \
+      "$plan_dir/approved-retirement-allowlist.json" || return
+    write_sha256_sidecar_create_new "$plan_dir/approved-retirement-allowlist.json" || return
+  fi
+  phase=VERIFY_IMAGES
+  pull_immutable_image_ref "$target_ref" || return
+  verified_commit="$(image_release_commit "$target_ref")" || return
+  [[ "$verified_commit" == "$target_commit" ]] || {
+    die "prior handoff image revision differs from its immutable image"
+    return 1
+  }
+  pull_immutable_image_ref "$operator_ref" || return
+  verified_commit="$(image_release_commit "$operator_ref")" || return
+  [[ "$verified_commit" == "$operator_commit" ]] || {
+    die "operator image revision differs from current release identity"
+    return 1
+  }
+  phase=RESTORE_VOLUMES
+  docker volume create --label "distr.sh/restore-plan=$plan_id" \
+    --label 'distr.sh/restore-state=candidate' "$postgres_volume" >/dev/null || return
+  docker volume create --label "distr.sh/restore-plan=$plan_id" \
+    --label 'distr.sh/restore-state=candidate' "$rustfs_volume" >/dev/null || return
+  docker network create --label "distr.sh/restore-plan=$plan_id" "$network" >/dev/null || return
+  network_created=1
+  docker run -d --name "$postgres_container" \
+    --label "distr.sh/restore-plan=$plan_id" \
+    --network "$network" \
+    -v "$postgres_volume:/var/lib/postgresql" \
+    -v "$(dirname -- "$database_backup"):/backup:ro" \
+    -e "POSTGRES_USER=$POSTGRES_USER" \
+    -e "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
+    -e "POSTGRES_DB=$POSTGRES_DB" \
+    postgres:18.4-alpine3.23 >/dev/null || return
+  container_created=1
+  wait_for_restore_postgres "$postgres_container" "$POSTGRES_USER" "$POSTGRES_DB" || return
+  docker exec -e "PGPASSWORD=$POSTGRES_PASSWORD" "$postgres_container" \
+    pg_restore --exit-on-error --no-owner --no-privileges \
+      --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" \
+      "/backup/$database_backup_name" || return
+  docker run --rm \
+    -v "$rustfs_volume:/restore" \
+    -v "$(dirname -- "$object_backup"):/backup:ro" \
+    alpine:3.23 tar -C /restore -xzf "/backup/$object_backup_name" || return
+  object_aggregate="sha256:$(aggregate_volume_checksum "$rustfs_volume")" || return
+  [[ "$object_aggregate" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  phase=VALIDATE_RESTORE
+  database_url="host=$postgres_container port=5432 user=$POSTGRES_USER password=$POSTGRES_PASSWORD dbname=$POSTGRES_DB sslmode=disable"
+  docker run --rm --network "$network" -e "DATABASE_URL=$database_url" \
+    "$target_ref" migrate --check || return
+  run_protected_history_export \
+    "$operator_ref" "$network" "$database_url" "$plan_dir" \
+    protected-history-before.json protected-history-restored.json || return
+  run_protected_history_exact_compare \
+    "$operator_ref" "$plan_dir" protected-history-before.json \
+    protected-history-restored.json \
+    "$([[ "$retirement_allowlist" == - ]] && printf NONE || printf approved-retirement-allowlist.json)" \
+    protected-history-restore-compare.json || return
+  [[ "$(jq -er '.sourceSchemaVersion' "$plan_dir/protected-history-restored.json")" == "$source_schema" ]] || {
+    die "restored protected-history schema differs from baseline"
+    return 1
+  }
+  phase=SEAL_PLAN
+  write_restore_plan_state \
+    "$plan_dir" "$plan_id" "$plan_dir/prior-handoff.env" "$database_backup" "$object_backup" \
+    "$baseline_checksum" "$retirement_checksum" "$target_ref" "$target_commit" \
+    "$operator_ref" "$operator_commit" "$postgres_volume" "$rustfs_volume" \
+    "$source_schema" "$object_aggregate" || return
+  complete=1
+  info "restore plan is READY; no runtime volume or image was switched: $plan_dir"
+)
+
+validate_restore_plan() {
+  local plan_dir="${1:-}" output_name="${2:-}" state="$plan_dir/restore-plan.env"
+  local keys handoff_checksum database_checksum object_checksum baseline_checksum retirement_checksum
+  local -n output="$output_name"
+  keys="$(restore_plan_state_keys)" || return
+  verify_sha256_sidecar "$state" || return
+  parse_restricted_key_file "$state" "$keys" output || return
+  [[ "${output[STATE]}" == READY &&
+     "${output[PLAN_ID]}" =~ ^restore_[0-9]{8}T[0-9]{6}Z_[0-9a-f]{16}$ &&
+     "${output[TARGET_IMAGE_REF]}" == *@"${output[TARGET_IMAGE_DIGEST]}" &&
+     "${output[SOURCE_SCHEMA_VERSION]}" =~ ^[0-9]+$ ]] || return 1
+  ((${output[SOURCE_SCHEMA_VERSION]} >= 138)) || return 1
+  handoff_checksum="$(checksum_bound_input_value "${output[PRIOR_HANDOFF]}")" || return
+  database_checksum="$(checksum_bound_input_value "${output[DATABASE_BACKUP]}")" || return
+  object_checksum="$(checksum_bound_input_value "${output[OBJECT_BACKUP]}")" || return
+  baseline_checksum="$(checksum_value "$plan_dir/protected-history-before.json")" || return
+  [[ "$handoff_checksum" == "${output[PRIOR_HANDOFF_SHA256]}" &&
+     "$database_checksum" == "${output[DATABASE_BACKUP_SHA256]}" &&
+     "$object_checksum" == "${output[OBJECT_BACKUP_SHA256]}" &&
+     "$baseline_checksum" == "${output[PROTECTED_HISTORY_BASELINE_SHA256]}" ]] || {
+    die "restore plan input checksum changed"
+    return 1
+  }
+  if [[ "${output[RETIREMENT_ALLOWLIST_SHA256]}" != NONE ]]; then
+    retirement_checksum="$(checksum_value "$plan_dir/approved-retirement-allowlist.json")" || return
+    [[ "$retirement_checksum" == "${output[RETIREMENT_ALLOWLIST_SHA256]}" ]] || return 1
+  fi
+  [[ "$(metadata_value "${output[PRIOR_HANDOFF]}" DISTR_IMAGE_REF)" == "${output[TARGET_IMAGE_REF]}" &&
+     "$(metadata_value "${output[PRIOR_HANDOFF]}" DISTR_RELEASE_COMMIT)" == "${output[TARGET_RELEASE_COMMIT]}" &&
+     "$(metadata_value "${output[PRIOR_HANDOFF]}" DISTR_IMAGE_DIGEST)" == "${output[TARGET_IMAGE_DIGEST]}" ]] || {
+    die "prior handoff identity changed"
+    return 1
+  }
+}
+
+require_restore_volume_binding() {
+  local volume="${1:-}" plan_id="${2:-}" recorded state
+  recorded="$(docker volume inspect --format '{{ index .Labels "distr.sh/restore-plan" }}' "$volume")" || return
+  state="$(docker volume inspect --format '{{ index .Labels "distr.sh/restore-state" }}' "$volume")" || return
+  [[ "$recorded" == "$plan_id" && "$state" == candidate ]] || {
+    die "restore candidate volume ownership differs from sealed plan"
+    return 1
+  }
+}
+
+stop_restore_runtime() {
+  compose stop hub postgres storage || return
+  local service
+  for service in hub postgres storage; do
+    [[ -z "$(compose ps -q "$service")" ]] || {
+      die "restore apply could not stop $service"
+      return 1
+    }
+  done
+}
+
+write_restore_applied_state() {
+  local plan_dir="${1:-}" plan_id="${2:-}" state="$plan_dir/restore-applied.env" temporary
+  [[ ! -e "$state" && ! -L "$state" ]] || return 1
+  temporary="$(mktemp "$plan_dir/.restore-applied.XXXXXX")" || return
+  {
+    printf 'STATE=APPLIED\n'
+    printf 'PLAN_ID=%s\n' "$plan_id"
+    printf 'APPLIED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary" || return
+  chmod 0600 "$temporary" || return
+  copy_file_create_new_0600 "$temporary" "$state" || return
+  rm -f -- "$temporary" || return
+  write_sha256_sidecar_create_new "$state" || return
+}
+
+restore_apply() (
+  set -Eeuo pipefail
+  local plan_dir="${1:-}" project network nonce postgres_container database_url object_aggregate
+  local source_ref source_commit source_postgres source_rustfs verified_commit actual_schema
+  local apply_history apply_compare post_history post_compare
+  local switched=0 complete=0 cleanup_status=0 container_created=0 network_created=0
+  local allowlist_name=NONE
+  local -A plan=()
+  acquire_deploy_lock || return
+  require_no_active_timestamp_fence || return
+  check_env || return
+  [[ ! -e "$plan_dir/restore-applied.env" && ! -L "$plan_dir/restore-applied.env" ]] || {
+    die "restore plan was already applied"
+    return 1
+  }
+  validate_restore_plan "$plan_dir" plan || return
+  source_ref="$DISTR_IMAGE_REF"
+  source_commit="$DISTR_RELEASE_COMMIT"
+  source_postgres="$(configured_postgres_volume)" || return
+  source_rustfs="$(configured_rustfs_volume)" || return
+  require_restore_volume_binding "${plan[POSTGRES_VOLUME]}" "${plan[PLAN_ID]}" || return
+  require_restore_volume_binding "${plan[RUSTFS_VOLUME]}" "${plan[PLAN_ID]}" || return
+  pull_immutable_image_ref "${plan[TARGET_IMAGE_REF]}" || return
+  verified_commit="$(image_release_commit "${plan[TARGET_IMAGE_REF]}")" || return
+  [[ "$verified_commit" == "${plan[TARGET_RELEASE_COMMIT]}" ]] || return 1
+  pull_immutable_image_ref "${plan[OPERATOR_IMAGE_REF]}" || return
+  verified_commit="$(image_release_commit "${plan[OPERATOR_IMAGE_REF]}")" || return
+  [[ "$verified_commit" == "${plan[OPERATOR_RELEASE_COMMIT]}" ]] || return 1
+  if [[ "${plan[RETIREMENT_ALLOWLIST_SHA256]}" != NONE ]]; then
+    allowlist_name=approved-retirement-allowlist.json
+  fi
+  project="${COMPOSE_PROJECT_NAME:-distr-prod}"
+  nonce="$(openssl rand -hex 8)" || return
+  network="${project}_restore_apply_$nonce"
+  postgres_container="distr-restore-apply-$nonce"
+  apply_history="protected-history-apply-validation-$nonce.json"
+  apply_compare="protected-history-apply-compare-$nonce.json"
+  post_history="protected-history-post-switch-$nonce.json"
+  post_compare="protected-history-post-switch-compare-$nonce.json"
+
+  cleanup_restore_apply() {
+    local status=$?
+    trap - EXIT HUP INT TERM
+    if ((container_created == 1)); then
+      docker stop --time 30 "$postgres_container" >/dev/null 2>&1 || true
+      docker rm -f "$postgres_container" >/dev/null 2>&1 || cleanup_status=1
+    fi
+    if ((network_created == 1)); then
+      docker network rm "$network" >/dev/null 2>&1 || cleanup_status=1
+    fi
+    if ((switched == 1 && complete == 0)); then
+      stop_restore_runtime || cleanup_status=1
+      set_restore_runtime_identity \
+        "$source_ref" "$source_commit" "$source_postgres" "$source_rustfs" || cleanup_status=1
+      load_env || cleanup_status=1
+      start_dependencies || cleanup_status=1
+      start_hub || cleanup_status=1
+      health || cleanup_status=1
+    fi
+    if ((complete == 0)); then
+      write_restore_failure_state \
+        "$plan_dir" "${plan[PLAN_ID]}" "${plan[POSTGRES_VOLUME]}" \
+        "${plan[RUSTFS_VOLUME]}" APPLY || cleanup_status=1
+      info "restore apply failed; candidate volumes retained for diagnosis"
+    fi
+    if ((cleanup_status != 0)); then exit 1; fi
+    exit "$status"
+  }
+  trap cleanup_restore_apply EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  docker network create --label "distr.sh/restore-plan=${plan[PLAN_ID]}" "$network" >/dev/null || return
+  network_created=1
+  docker run -d --name "$postgres_container" \
+    --label "distr.sh/restore-plan=${plan[PLAN_ID]}" \
+    --network "$network" \
+    -v "${plan[POSTGRES_VOLUME]}:/var/lib/postgresql" \
+    -e "POSTGRES_USER=$POSTGRES_USER" \
+    -e "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
+    -e "POSTGRES_DB=$POSTGRES_DB" \
+    postgres:18.4-alpine3.23 >/dev/null || return
+  container_created=1
+  wait_for_restore_postgres "$postgres_container" "$POSTGRES_USER" "$POSTGRES_DB" || return
+  database_url="host=$postgres_container port=5432 user=$POSTGRES_USER password=$POSTGRES_PASSWORD dbname=$POSTGRES_DB sslmode=disable"
+  run_protected_history_export \
+    "${plan[OPERATOR_IMAGE_REF]}" "$network" "$database_url" "$plan_dir" \
+    protected-history-before.json "$apply_history" || return
+  run_protected_history_exact_compare \
+    "${plan[OPERATOR_IMAGE_REF]}" "$plan_dir" protected-history-before.json \
+    "$apply_history" "$allowlist_name" "$apply_compare" || return
+  object_aggregate="sha256:$(aggregate_volume_checksum "${plan[RUSTFS_VOLUME]}")" || return
+  [[ "$object_aggregate" == "${plan[OBJECT_AGGREGATE_SHA256]}" ]] || {
+    die "restore candidate object volume changed after planning"
+    return 1
+  }
+  docker stop --time 30 "$postgres_container" >/dev/null || return
+  docker rm "$postgres_container" >/dev/null || return
+  container_created=0
+  docker network rm "$network" >/dev/null || return
+  network_created=0
+
+  stop_restore_runtime || return
+  set_restore_runtime_identity \
+    "${plan[TARGET_IMAGE_REF]}" "${plan[TARGET_RELEASE_COMMIT]}" \
+    "${plan[POSTGRES_VOLUME]}" "${plan[RUSTFS_VOLUME]}" || return
+  switched=1
+  load_env || return
+  compose_config || return
+  start_dependencies || return
+  start_hub || return
+  health || return
+  verify_running_release_identity >/dev/null || return
+  actual_schema="$(current_schema_status)" || return
+  [[ "$actual_schema" == "${plan[SOURCE_SCHEMA_VERSION]}:false" ]] || {
+    die "restored runtime schema differs from sealed restore plan"
+    return 1
+  }
+  run_protected_history_export \
+    "${plan[OPERATOR_IMAGE_REF]}" "${project}_default" "$DATABASE_URL" "$plan_dir" \
+    protected-history-before.json "$post_history" || return
+  run_protected_history_exact_compare \
+    "${plan[OPERATOR_IMAGE_REF]}" "$plan_dir" protected-history-before.json \
+    "$post_history" "$allowlist_name" "$post_compare" || return
+  [[ "sha256:$(aggregate_volume_checksum "${plan[RUSTFS_VOLUME]}")" == \
+     "${plan[OBJECT_AGGREGATE_SHA256]}" ]] || return 1
+  write_restore_applied_state "$plan_dir" "${plan[PLAN_ID]}" || return
+  complete=1
+  info "restore applied atomically; prior runtime volumes remain retained: $source_postgres $source_rustfs"
+)
+
 require_no_active_timestamp_fence() {
   if active_timestamp_fence; then
     die "timestamp expand fence is active; only capture resume, apply, dirty recovery, or cancel is allowed"
@@ -3887,6 +4517,10 @@ Commands:
   ps                   show compose service state
   cleanup-artifacts    run ArtifactBlob cleanup once
   rollback <ref|tag>   application-only rollback to a previous ECR digest ref or tag
+  restore-plan <prior-handoff> <postgres-backup> <rustfs-backup> <protected-history> <plan-dir> [approved-retirement-allowlist|-]
+                       restore into new volumes, validate, and seal a no-switch plan
+  restore-apply <plan-dir>
+                       revalidate a sealed plan and atomically switch image plus volumes
   timestamp-expand-capture <evidence-dir>
                        stop/fence Hub and retain verified schema-137 evidence
   timestamp-expand-apply <approved-manifest> <evidence-dir>
@@ -3984,6 +4618,22 @@ dispatch_command() {
       }
       shift
       timestamp_expand_recover_dirty "$@" || return
+      ;;
+    restore-plan)
+      [[ $# == 6 || $# == 7 ]] || {
+        die "usage: $0 restore-plan <prior-handoff> <postgres-backup> <rustfs-backup> <protected-history> <plan-dir> [approved-retirement-allowlist|-]"
+        return 1
+      }
+      shift
+      restore_plan "$@" || return
+      ;;
+    restore-apply)
+      [[ $# == 2 ]] || {
+        die "usage: $0 restore-apply <plan-dir>"
+        return 1
+      }
+      shift
+      restore_apply "$@" || return
       ;;
     init|ecr-login|ecr-create-repo|build|push|pull|deps|backup|migrate|up|release|deploy|cleanup-artifacts|rollback)
       if [[ "$command_name" == rollback ]]; then

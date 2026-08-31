@@ -59,3 +59,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0070: Enable Validated Target Deployment Plan Execution](0070-validated-target-plan-execution.md)
 - [ADR-0071: Review-Material Admission Decisions](0071-review-material-admission-decisions.md)
 - [ADR-0072: Native Baseline Adoption](0072-native-baseline-adoption.md)
+- [ADR-0073: New-Volume Restore and Protected-History Continuity](0073-new-volume-restore-and-protected-history-continuity.md)

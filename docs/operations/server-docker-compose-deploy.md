@@ -658,11 +658,44 @@ Use it only when the new database schema is backward-compatible with the previou
 
 If a migration is incompatible:
 
-1. Stop Hub.
-2. Restore the pre-upgrade PostgreSQL backup.
-3. Restore RustFS or external object storage if the release changed artifact data.
-4. Start the previous image digest.
-5. Run health checks and a smoke test.
+Use the guarded new-volume restore workflow. Do not overwrite the active
+PostgreSQL or RustFS volumes.
+
+First retain a protected-history baseline for the exact client scopes and SHA-256
+sidecars for the prior publication handoff, PostgreSQL dump, RustFS archive, and
+baseline. Create a secure empty parent for the plan, then run:
+
+```bash
+./deploy/server-docker-compose/deploy.sh restore-plan \
+  /secure/prior-release.env \
+  /secure/postgres-before.dump \
+  /secure/rustfs-before.tar.gz \
+  /secure/protected-history-before.json \
+  /secure/restore-plan
+```
+
+`restore-plan` keeps the active runtime online. It restores both backups into
+new labeled volumes, validates the prior immutable image and schema, compares
+protected history exactly, records the complete RustFS aggregate, and seals
+`restore-plan.env`. It never switches `.env` or deletes a candidate volume.
+
+After independent review of the sealed plan:
+
+```bash
+./deploy/server-docker-compose/deploy.sh restore-apply /secure/restore-plan
+```
+
+Apply repeats every checksum, image, volume-label, object, schema, and history
+check before outage. It stops Hub/PostgreSQL/RustFS, atomically replaces the Hub
+image identity plus `POSTGRES_VOLUME_NAME` and `RUSTFS_VOLUME_NAME`, starts the
+restored runtime, and repeats the checks. If post-switch validation fails, it
+restores the untouched previous image/volume identity and restarts that runtime.
+Candidate volumes remain retained with failure evidence. Successful apply also
+retains the previous active volumes until a separate reviewed retirement.
+
+Only the separately approved sample-domain retirement workflow may supply the
+optional sixth `restore-plan` argument. Use `-` or omit it for normal exact
+history equality. See [protected-history continuity](protected-history-continuity.md).
 
 Do not automate `distr migrate --down`; the command explicitly warns that it purges the database.
 

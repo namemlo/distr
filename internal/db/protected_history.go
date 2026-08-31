@@ -34,7 +34,7 @@ func ExportProtectedHistory(
 		if err := validateProtectedHistoryScope(txCtx, args); err != nil {
 			return err
 		}
-		records, err := readProtectedHistoryRecords(txCtx, args)
+		records, err := readProtectedHistoryRecords(txCtx, version, args)
 		if err != nil {
 			return err
 		}
@@ -129,9 +129,14 @@ SELECT
 
 func readProtectedHistoryRecords(
 	ctx context.Context,
+	schemaVersion uint64,
 	args pgx.NamedArgs,
 ) ([]protectedhistory.RawRecord, error) {
-	rows, err := internalctx.GetDb(ctx).Query(ctx, protectedHistoryRecordsSQL, args)
+	query := protectedHistoryRecordsSQL
+	if schemaVersion < 166 {
+		query = protectedHistoryLegacyRecordsSQL
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, query, args)
 	if err != nil {
 		return nil, fmt.Errorf("query protected history records: %w", err)
 	}
@@ -151,6 +156,98 @@ func readProtectedHistoryRecords(
 	}
 	return records, nil
 }
+
+// Schema 138 predates the v2 planning tables. Its protected projection keeps
+// the client ownership boundary plus external-execution audit history, which
+// is the stable rollback fingerprint available on every supported schema.
+const protectedHistoryLegacyRecordsSQL = `
+WITH
+requested_customer_organizations(id) AS (
+  SELECT unnest(@customerOrganizationIds::uuid[])
+),
+requested_deployment_targets(id) AS (
+  SELECT unnest(@deploymentTargetIds::uuid[])
+),
+selected_targets(id) AS (
+  SELECT dt.id
+  FROM DeploymentTarget dt
+  WHERE dt.organization_id = @organizationId
+    AND (
+      dt.id IN (SELECT id FROM requested_deployment_targets)
+      OR dt.customer_organization_id IN (SELECT id FROM requested_customer_organizations)
+    )
+),
+selected_executions(id) AS (
+  SELECT execution.id
+  FROM ExternalExecution execution
+  WHERE execution.organization_id = @organizationId
+    AND execution.deployment_target_id IN (SELECT id FROM selected_targets)
+),
+logical_records(kind, id, payload) AS (
+  SELECT 'customerorganization', co.id, jsonb_build_object(
+    'organizationId', co.organization_id,
+    'partnerOrganizationId', co.partner_organization_id
+  )
+  FROM CustomerOrganization co
+  WHERE co.organization_id = @organizationId
+    AND co.id IN (SELECT id FROM requested_customer_organizations)
+
+  UNION ALL SELECT 'deploymenttarget', target.id, jsonb_build_object(
+    'organizationId', target.organization_id,
+    'customerOrganizationId', target.customer_organization_id,
+    'type', target.type,
+    'platform', target.platform
+  ) FROM DeploymentTarget target
+  WHERE target.organization_id = @organizationId
+    AND target.id IN (SELECT id FROM selected_targets)
+
+  UNION ALL SELECT 'externalexecution', execution.id, jsonb_build_object(
+    'organizationId', execution.organization_id,
+    'stepRunId', execution.step_run_id,
+    'taskId', execution.task_id,
+    'deploymentPlanId', execution.deployment_plan_id,
+    'deploymentPlanTargetId', execution.deployment_plan_target_id,
+    'deploymentTargetId', execution.deployment_target_id,
+    'applicationId', execution.application_id,
+    'releaseBundleId', execution.release_bundle_id,
+    'component', execution.component,
+    'planChecksum', execution.plan_checksum,
+    'idempotencyKey', execution.idempotency_key,
+    'expectedStateVersion', execution.expected_state_version,
+    'expectedStateChecksum', execution.expected_state_checksum,
+    'expectedVersion', execution.expected_version,
+    'expectedImage', execution.expected_image,
+    'expectedPlatform', execution.expected_platform,
+    'expectedContracts', execution.expected_contracts,
+    'expectedConfigChecksum', execution.expected_config_checksum,
+    'status', execution.status,
+    'triggerAttempts', execution.trigger_attempts,
+    'lastCallbackSequence', execution.last_callback_sequence,
+    'actualVersion', execution.actual_version,
+    'actualImage', execution.actual_image,
+    'actualPlatform', execution.actual_platform,
+    'actualContracts', execution.actual_contracts,
+    'actualConfigChecksum', execution.actual_config_checksum,
+    'actualHealth', execution.actual_health,
+    'observedStateChecksum', execution.observed_state_checksum
+  ) FROM ExternalExecution execution
+  WHERE execution.organization_id = @organizationId
+    AND execution.id IN (SELECT id FROM selected_executions)
+
+  UNION ALL SELECT 'externalexecutionevent', event.id, jsonb_build_object(
+    'organizationId', event.organization_id,
+    'externalExecutionId', event.external_execution_id,
+    'sequence', event.sequence,
+    'status', event.status,
+    'payloadHash', event.payload_hash
+  ) FROM ExternalExecutionEvent event
+  WHERE event.organization_id = @organizationId
+    AND event.external_execution_id IN (SELECT id FROM selected_executions)
+)
+SELECT kind, id::text, payload::text
+FROM logical_records
+ORDER BY kind, id
+`
 
 const protectedHistoryRecordsSQL = `
 WITH

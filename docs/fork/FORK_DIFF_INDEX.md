@@ -1891,3 +1891,30 @@ Use one entry per pull request:
   tasks/locks/executions. Legacy liveness is restricted to baseline/rollback
   evidence, cannot be persisted as execution-sourced promotion, and is excluded
   from native provider discovery for promotion.
+
+### PR-086 - Guarded restore and protected-history continuity
+
+- Status: Implemented with focused local verification; no live restore or client
+  database access is claimed.
+- Upstream base: `cbc670c4` (final Choice TP control-room evidence checkpoint).
+- Feature flags: None. These are explicit offline operator commands and a
+  stricter opt-in protected-history comparison mode.
+- User-facing behavior: Operators can plan an isolated PostgreSQL/RustFS restore
+  into new volumes, then revalidate and atomically switch the immutable Hub
+  image and both volume names. Failed candidate and previous active volumes are
+  retained.
+- Database changes: No migration. Schema-aware protected-history export uses the
+  stable client audit projection on schema 138 through 165 and the expanded v2
+  projection from schema 166.
+- API/UI/agent changes: None.
+- Documentation: Adds ADR-0073, PR-086 fork notes, protected-history continuity,
+  and guarded server Compose restore procedures.
+- Tests: Adds exact comparison, approved exact-ID retirement allowlist,
+  fingerprint CLI, schema-138 projection, atomic restore identity, ordering,
+  failure-retention, recovery, and dispatch coverage.
+- Upstream contribution notes: Community-neutral Docker Compose and canonical
+  evidence contracts with no adopter, ECR, Jenkins, or client naming.
+- Compatibility notes: Existing application-only rollback and default Compose
+  volume names are unchanged. Post-schema rollback now has a separate,
+  checksum-bound database/object restore path; it never invokes a down migration
+  or deletes retained volumes.

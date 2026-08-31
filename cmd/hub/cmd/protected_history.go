@@ -51,6 +51,7 @@ func newProtectedHistoryCommand(runtime protectedHistoryRuntime) *cobra.Command 
 		Args:  cobra.NoArgs,
 	}
 	command.AddCommand(newProtectedHistoryExportCommand(runtime))
+	command.AddCommand(newProtectedHistoryFingerprintCommand(runtime))
 	command.AddCommand(newProtectedHistoryCompareCommand(runtime))
 	return command
 }
@@ -105,9 +106,43 @@ func newProtectedHistoryExportCommand(runtime protectedHistoryRuntime) *cobra.Co
 	return command
 }
 
+func newProtectedHistoryFingerprintCommand(runtime protectedHistoryRuntime) *cobra.Command {
+	var artifactPath string
+	command := &cobra.Command{
+		Use:   "fingerprint",
+		Short: "validate one sealed artifact and print its canonical fingerprint",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if artifactPath == "" {
+				return errors.New("artifact is required")
+			}
+			payload, err := runtime.Read(artifactPath)
+			if err != nil {
+				return fmt.Errorf("read protected history artifact: %w", err)
+			}
+			artifact, err := protectedhistory.Parse(payload)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(runtime.Stdout).Encode(struct {
+				ArtifactID  string `json:"artifactId"`
+				RecordsRoot string `json:"recordsRoot"`
+				RecordCount uint64 `json:"recordCount"`
+			}{
+				ArtifactID: artifact.ArtifactID, RecordsRoot: artifact.RecordsRoot,
+				RecordCount: artifact.RecordCount,
+			})
+		},
+	}
+	command.Flags().StringVar(&artifactPath, "artifact", "", "sealed protected-history artifact path")
+	return command
+}
+
 func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.Command {
 	var baselinePath string
 	var currentPath string
+	var requireExact bool
+	var approvedRetirementAllowlistPath string
 	command := &cobra.Command{
 		Use:   "compare",
 		Short: "compare two sealed artifacts and reject missing or modified baseline records",
@@ -115,6 +150,9 @@ func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.C
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if baselinePath == "" || currentPath == "" {
 				return errors.New("baseline and current are required")
+			}
+			if approvedRetirementAllowlistPath != "" && !requireExact {
+				return errors.New("approved retirement allowlist requires exact comparison")
 			}
 			baselinePayload, err := runtime.Read(baselinePath)
 			if err != nil {
@@ -132,7 +170,23 @@ func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.C
 			if err != nil {
 				return fmt.Errorf("parse current artifact: %w", err)
 			}
-			comparison, err := protectedhistory.Compare(*baseline, *current)
+			var approvedRetirements *protectedhistory.ApprovedRetirementAllowlist
+			if approvedRetirementAllowlistPath != "" {
+				allowlistPayload, err := runtime.Read(approvedRetirementAllowlistPath)
+				if err != nil {
+					return fmt.Errorf("read approved retirement allowlist: %w", err)
+				}
+				approvedRetirements, err = protectedhistory.ParseApprovedRetirementAllowlist(allowlistPayload)
+				if err != nil {
+					return err
+				}
+			}
+			var comparison *protectedhistory.Comparison
+			if requireExact {
+				comparison, err = protectedhistory.CompareExact(*baseline, *current, approvedRetirements)
+			} else {
+				comparison, err = protectedhistory.Compare(*baseline, *current)
+			}
 			if err != nil {
 				return err
 			}
@@ -149,6 +203,18 @@ func newProtectedHistoryCompareCommand(runtime protectedHistoryRuntime) *cobra.C
 	}
 	command.Flags().StringVar(&baselinePath, "baseline", "", "sealed baseline artifact path")
 	command.Flags().StringVar(&currentPath, "current", "", "sealed current artifact path")
+	command.Flags().BoolVar(
+		&requireExact,
+		"require-exact",
+		false,
+		"reject additions and schema changes as well as missing or modified records",
+	)
+	command.Flags().StringVar(
+		&approvedRetirementAllowlistPath,
+		"approved-retirement-allowlist",
+		"",
+		"separately supplied approved exact-ID sample-retirement allowlist",
+	)
 	return command
 }
 

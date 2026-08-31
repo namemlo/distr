@@ -100,7 +100,9 @@ services:
 
 volumes:
   postgres:
+    name: ${POSTGRES_VOLUME_NAME:-${COMPOSE_PROJECT_NAME:-distr-prod}_postgres}
   rustfs:
+    name: ${RUSTFS_VOLUME_NAME:-${COMPOSE_PROJECT_NAME:-distr-prod}_rustfs}
 
 networks:
   nginx-ui:

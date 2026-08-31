@@ -55,3 +55,29 @@ func TestProtectedHistoryProjectionIsSchemaEvolutionAware(t *testing.T) {
 		}
 	}
 }
+
+func TestProtectedHistoryLegacyProjectionUsesOnlySchema138AuditTables(t *testing.T) {
+	t.Parallel()
+	lowerSQL := strings.ToLower(protectedHistoryLegacyRecordsSQL)
+	for _, required := range []string{
+		"customerorganization", "deploymenttarget", "externalexecution", "externalexecutionevent",
+	} {
+		if !strings.Contains(lowerSQL, "'"+required+"'") {
+			t.Errorf("legacy protected history query does not project %s", required)
+		}
+	}
+	for _, laterTable := range []string{
+		"deploymentplan ", "targetcomponentstate", "tasklease", "releasebundlecomponent",
+	} {
+		if strings.Contains(lowerSQL, laterTable) {
+			t.Errorf("legacy projection depends on post-138 table %q", laterTable)
+		}
+	}
+	for _, unsafeProjection := range []string{
+		"to_jsonb(", "select *", "provider_url", "last_message", "event.observed_state",
+	} {
+		if strings.Contains(lowerSQL, unsafeProjection) {
+			t.Errorf("legacy projection contains unsafe value %q", unsafeProjection)
+		}
+	}
+}
