@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -55,6 +56,14 @@ func TestDeploymentPlanChangeRepositoryUsesTenantScopeAndSerializableCAS(t *test
 	g.Expect(text).To(ContainSubstring("successfulPlanID"))
 	g.Expect(text).To(ContainSubstring("FROM ActiveDesiredRevision active"))
 	g.Expect(text).To(ContainSubstring("JOIN ObservedComponentState observation"))
+	g.Expect(text).To(ContainSubstring("bool_and(task.status = 'SUCCEEDED')"))
+	g.Expect(text).To(ContainSubstring("task.task_type = 'deployment'"))
+	g.Expect(text).To(ContainSubstring("task.protocol_version = 'v2'"))
+	g.Expect(text).To(ContainSubstring("count(DISTINCT task.deployment_plan_target_id) = count(*)"))
+	g.Expect(text).To(ContainSubstring("FROM BaselineAdoption adoption"))
+	g.Expect(text).To(ContainSubstring("count(DISTINCT component.component_key)"))
+	g.Expect(text).To(ContainSubstring("head.active_revision_id = active.id"))
+	g.Expect(text).To(ContainSubstring("observation.fresh_until >= clock_timestamp()"))
 }
 
 func TestReleaseNoteQueryIsApplicationLineageScopedAndKeepsBounds(t *testing.T) {
@@ -148,9 +157,123 @@ func TestValidatePreviousStatePlanPairRejectsCrossTenant(t *testing.T) {
 		Status:                 types.DeploymentPlanStatusExecuted,
 	}
 
-	err := validatePreviousStatePlanPair(current, successful)
+	err := validatePreviousStatePlanPair(
+		current, successful,
+		types.TargetDeploymentPlanCanonical{}, types.TargetDeploymentPlanCanonical{},
+	)
 
 	g.Expect(err).To(MatchError(ContainSubstring("same organization")))
+}
+
+func TestValidatePreviousStatePlanPairRejectsCrossTargetOrScope(t *testing.T) {
+	g := NewWithT(t)
+	organizationID, applicationID, environmentID := uuid.New(), uuid.New(), uuid.New()
+	unitID, configID, draftID := uuid.New(), uuid.New(), uuid.New()
+	current := &types.DeploymentPlan{
+		OrganizationID: organizationID, ApplicationID: applicationID, EnvironmentID: environmentID,
+		DeploymentUnitID: &unitID, PlanSchema: types.TargetDeploymentPlanSchemaV2,
+	}
+	successful := &types.DeploymentPlan{
+		OrganizationID: organizationID, ApplicationID: applicationID, EnvironmentID: environmentID,
+		DeploymentUnitID: &unitID, TargetConfigSnapshotID: &configID, DraftID: &draftID,
+		PlanSchema: types.TargetDeploymentPlanSchemaV2, Status: types.DeploymentPlanStatusExecuted,
+	}
+	currentCanonical := types.TargetDeploymentPlanCanonical{
+		DeploymentUnitID: unitID, DeploymentScopeID: uuid.New(), DeploymentTargetID: uuid.New(),
+		EnvironmentID: environmentID,
+	}
+	sourceCanonical := currentCanonical
+	sourceCanonical.DeploymentTargetID = uuid.New()
+
+	g.Expect(validatePreviousStatePlanPair(
+		current, successful, currentCanonical, sourceCanonical,
+	)).To(MatchError(ContainSubstring("same exact target and deployment scope")))
+
+	sourceCanonical.DeploymentTargetID = currentCanonical.DeploymentTargetID
+	sourceCanonical.DeploymentScopeID = uuid.New()
+	g.Expect(validatePreviousStatePlanPair(
+		current, successful, currentCanonical, sourceCanonical,
+	)).To(MatchError(ContainSubstring("same exact target and deployment scope")))
+}
+
+func TestSuccessfulTaskSetRequiresExactAllSucceededCoverage(t *testing.T) {
+	g := NewWithT(t)
+	g.Expect(successfulTaskSetComplete(2, []types.TaskStatus{
+		types.TaskStatusSucceeded, types.TaskStatusSucceeded,
+	})).To(BeTrue())
+	g.Expect(successfulTaskSetComplete(2, []types.TaskStatus{types.TaskStatusSucceeded})).To(BeFalse())
+	g.Expect(successfulTaskSetComplete(2, []types.TaskStatus{
+		types.TaskStatusSucceeded, types.TaskStatusRunning,
+	})).To(BeFalse())
+	g.Expect(successfulTaskSetComplete(0, nil)).To(BeFalse())
+}
+
+func TestPreviousStateReverseProofRequiresCompleteReversibleCompatibleChain(t *testing.T) {
+	g := NewWithT(t)
+	componentID := uuid.New()
+	oldState := types.PlannedState{
+		ComponentInstanceID: componentID, ComponentKey: "ledger", Version: "1.4.0",
+		DatabaseResourceKey: "database:ledger", SchemaState: "1", SchemaChecksum: testDBChecksum("a"),
+	}
+	newState := oldState
+	newState.Version = "2.0.0"
+	newState.SchemaState = "2"
+	newState.SchemaChecksum = testDBChecksum("b")
+	contract := types.MigrationContract{
+		ID: "ledger.002", ComponentKey: "ledger", DatabaseResourceKey: "database:ledger",
+		ExpectedSourceVersion: "1", ExpectedSourceChecksum: oldState.SchemaChecksum,
+		ResultingVersion: "2", ResultingSchemaChecksum: newState.SchemaChecksum,
+		Phase: types.MigrationPhaseExpand, LockType: "exclusive", LockTimeoutSeconds: 60,
+		OperationalImpact: "brief lock", PreconditionProbes: []types.MigrationProbe{{
+			Name: "source", Reference: "probe:source", ExpectedChecksum: testDBChecksum("c"),
+		}}, PostconditionProbes: []types.MigrationProbe{{
+			Name: "target", Reference: "probe:target", ExpectedChecksum: testDBChecksum("d"),
+		}}, RetryClass: types.MigrationRetryNone,
+		Reversibility:                    types.MigrationReversibilityReversible,
+		PreviousApplicationCompatibility: ">=1.0.0 <2.0.0",
+		RecoveryProcedureReference:       "procedure:ledger:reverse:v1",
+		AdapterType:                      "database.migrate", ArtifactDigest: "registry.example/migrate@" + testDBChecksum("e"),
+		EvidenceRetentionDays: 30,
+	}
+	checksum, err := migrationplanning.CanonicalMigrationContractChecksum(contract)
+	g.Expect(err).NotTo(HaveOccurred())
+	contract.Checksum = checksum
+
+	proof, err := validatePreviousStateReverseContracts(
+		[]types.PlannedState{newState}, []types.PlannedState{oldState}, []types.MigrationContract{contract},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(proof).To(Equal([]types.MigrationContract{contract}))
+
+	manual := contract
+	manual.Reversibility = types.MigrationReversibilityManual
+	manual.Checksum, err = migrationplanning.CanonicalMigrationContractChecksum(manual)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = validatePreviousStateReverseContracts(
+		[]types.PlannedState{newState}, []types.PlannedState{oldState}, []types.MigrationContract{manual},
+	)
+	g.Expect(err).To(MatchError(ContainSubstring("reversible")))
+
+	incompatible := contract
+	incompatible.PreviousApplicationCompatibility = ">=2.0.0"
+	incompatible.Checksum, err = migrationplanning.CanonicalMigrationContractChecksum(incompatible)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = validatePreviousStateReverseContracts(
+		[]types.PlannedState{newState}, []types.PlannedState{oldState}, []types.MigrationContract{incompatible},
+	)
+	g.Expect(err).To(MatchError(ContainSubstring("previous application")))
+
+	_, err = validatePreviousStateReverseContracts(
+		[]types.PlannedState{newState}, []types.PlannedState{oldState}, nil,
+	)
+	g.Expect(err).To(MatchError(ContainSubstring("structured reverse chain")))
+
+	invalidChecksum := contract
+	invalidChecksum.Checksum = testDBChecksum("f")
+	_, err = validatePreviousStateReverseContracts(
+		[]types.PlannedState{newState}, []types.PlannedState{oldState}, []types.MigrationContract{invalidChecksum},
+	)
+	g.Expect(err).To(MatchError(ContainSubstring("invalid")))
 }
 
 func TestAddPreviousStateEvidenceCreatesNewBToALineage(t *testing.T) {

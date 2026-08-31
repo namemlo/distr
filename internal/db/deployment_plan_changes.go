@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/planning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -1032,7 +1035,17 @@ func createPreviousStatePlanInTx(
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePreviousStatePlanPair(current, successful); err != nil {
+	currentCanonical, err := decodeTargetDeploymentPlanCanonical(current.CanonicalPayload, "current")
+	if err != nil {
+		return nil, err
+	}
+	successfulCanonical, err := decodeTargetDeploymentPlanCanonical(successful.CanonicalPayload, "successful")
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePreviousStatePlanPair(
+		current, successful, currentCanonical, successfulCanonical,
+	); err != nil {
 		return nil, err
 	}
 	if err := ensureCurrentPlanCAS(ctx, *current); err != nil {
@@ -1046,11 +1059,19 @@ func createPreviousStatePlanInTx(
 	); err != nil {
 		return nil, err
 	}
-	if err := ensurePreviousStateIsReversible(
+	if err := ensureSuccessfulPlanSourceComplete(
+		ctx, organizationID, *successful, successfulCanonical,
+	); err != nil {
+		return nil, err
+	}
+	reverseContracts, err := ensurePreviousStateIsReversible(
 		ctx,
 		organizationID,
 		currentPlanID,
-	); err != nil {
+		currentCanonical,
+		successfulCanonical,
+	)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1085,6 +1106,11 @@ func createPreviousStatePlanInTx(
 	}
 	if len(validation.Issues) > 0 {
 		return nil, &DeploymentPlanDraftValidationError{Issues: validation.Issues}
+	}
+	if err := applyPreviousStateReversePlan(
+		ctx, draft, validation, currentCanonical, reverseContracts,
+	); err != nil {
+		return nil, err
 	}
 	if err := addPreviousStateEvidence(
 		draft,
@@ -1121,6 +1147,8 @@ func createPreviousStatePlanInTx(
 func validatePreviousStatePlanPair(
 	current,
 	successful *types.DeploymentPlan,
+	currentCanonical,
+	successfulCanonical types.TargetDeploymentPlanCanonical,
 ) error {
 	if current.PlanSchema != types.TargetDeploymentPlanSchemaV2 ||
 		successful.PlanSchema != types.TargetDeploymentPlanSchemaV2 {
@@ -1140,6 +1168,18 @@ func validatePreviousStatePlanPair(
 			"current and successful plans must belong to the same exact placement",
 		)
 	}
+	if currentCanonical.DeploymentUnitID != *current.DeploymentUnitID ||
+		successfulCanonical.DeploymentUnitID != *successful.DeploymentUnitID ||
+		currentCanonical.EnvironmentID != current.EnvironmentID ||
+		successfulCanonical.EnvironmentID != successful.EnvironmentID ||
+		currentCanonical.DeploymentTargetID == uuid.Nil ||
+		currentCanonical.DeploymentTargetID != successfulCanonical.DeploymentTargetID ||
+		currentCanonical.DeploymentScopeID == uuid.Nil ||
+		currentCanonical.DeploymentScopeID != successfulCanonical.DeploymentScopeID {
+		return apierrors.NewBadRequest(
+			"current and successful plans must use the same exact target and deployment scope",
+		)
+	}
 	if successful.Status != types.DeploymentPlanStatusExecuted {
 		return apierrors.NewConflict("previous-state source plan is not successful")
 	}
@@ -1147,6 +1187,20 @@ func validatePreviousStatePlanPair(
 		return apierrors.NewConflict("successful plan does not retain exact v2 source facts")
 	}
 	return nil
+}
+
+func decodeTargetDeploymentPlanCanonical(
+	payload []byte,
+	name string,
+) (types.TargetDeploymentPlanCanonical, error) {
+	var canonical types.TargetDeploymentPlanCanonical
+	if err := json.Unmarshal(payload, &canonical); err != nil ||
+		canonical.Schema != types.TargetDeploymentPlanSchemaV2 {
+		return types.TargetDeploymentPlanCanonical{}, apierrors.NewConflict(
+			name + " plan canonical payload is invalid",
+		)
+	}
+	return canonical, nil
 }
 
 func previousStateEnvironmentAssignment(
@@ -1228,6 +1282,101 @@ func addPreviousStateEvidence(
 	validation.Draft.PreviewChecksum = checksum
 	validation.Draft.PreviewPayload = payload
 	return nil
+}
+
+func applyPreviousStateReversePlan(
+	ctx context.Context,
+	draft *types.PlanDraft,
+	validation *types.PlanDraftValidation,
+	currentCanonical types.TargetDeploymentPlanCanonical,
+	contracts []types.MigrationContract,
+) error {
+	graph, err := migrationplanning.BuildPreviousStateGraph(validation.Graph, contracts)
+	if err != nil {
+		return apierrors.NewConflict("build previous-state reverse graph: " + err.Error())
+	}
+	validation.Graph = graph
+	validation.MigrationContracts = slices.Clone(contracts)
+	if draft.ResolutionInput == nil {
+		return apierrors.NewConflict("previous-state reverse adapter resolution facts are missing")
+	}
+
+	requirements := make([]types.StepAdapterRequirement, 0, len(validation.StepAdapters)+len(contracts))
+	graphSteps := make(map[string]struct{}, len(graph.Steps))
+	for _, step := range graph.Steps {
+		graphSteps[step.StepKey] = struct{}{}
+	}
+	for _, adapter := range validation.StepAdapters {
+		if _, exists := graphSteps[adapter.StepKey]; !exists {
+			continue
+		}
+		requirements = append(requirements, types.StepAdapterRequirement{
+			StepKey: adapter.StepKey, Capability: adapter.Capability,
+			CapabilityVersion: adapter.CapabilityVersion,
+			ScopeType:         adapter.ScopeType, ScopeReference: adapter.ScopeReference,
+		})
+	}
+	for _, contract := range contracts {
+		version, resolveErr := reverseAdapterCapabilityVersion(currentCanonical, contract)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		requirements = append(requirements, types.StepAdapterRequirement{
+			StepKey:    "recovery:" + contract.ID + ":reverse",
+			Capability: contract.AdapterType, CapabilityVersion: version,
+			ScopeType:      types.AdapterScopeDatabaseResource,
+			ScopeReference: contract.DatabaseResourceKey,
+		})
+	}
+	input := draft.ResolutionInput
+	input.AdapterRequirements = requirements
+	if len(contracts) > 0 {
+		input.AdapterImplementations, err = ListAdapterImplementations(ctx, draft.OrganizationID)
+		if err != nil {
+			return err
+		}
+		assignments, assignmentErr := ListAdapterAssignments(ctx, draft.OrganizationID)
+		if assignmentErr != nil {
+			return assignmentErr
+		}
+		input.AdapterAssignments = input.AdapterAssignments[:0]
+		for _, assignment := range assignments {
+			if assignment.ConfigSnapshotID == draft.TargetConfigSnapshotID {
+				input.AdapterAssignments = append(input.AdapterAssignments, assignment)
+			}
+		}
+	}
+	validation.Draft = *draft
+	validation.StepAdapters, validation.Issues = planning.ResolvePlanStepAdapters(ctx, *draft)
+	if len(validation.Issues) > 0 {
+		return &DeploymentPlanDraftValidationError{Issues: validation.Issues}
+	}
+	return nil
+}
+
+func reverseAdapterCapabilityVersion(
+	current types.TargetDeploymentPlanCanonical,
+	contract types.MigrationContract,
+) (string, error) {
+	versions := make([]string, 0, 1)
+	for _, pin := range current.ComponentReleasePins {
+		if pin.ComponentKey != contract.ComponentKey {
+			continue
+		}
+		for _, requirement := range pin.AdapterRequirements {
+			if requirement.StepKind == "migration" && requirement.Capability == contract.AdapterType {
+				versions = append(versions, requirement.Version)
+			}
+		}
+	}
+	slices.Sort(versions)
+	versions = slices.Compact(versions)
+	if len(versions) != 1 {
+		return "", apierrors.NewConflict(
+			"reverse migration adapter capability does not resolve uniquely from current plan contracts",
+		)
+	}
+	return versions[0], nil
 }
 
 func getPreviousStatePlan(
@@ -1343,70 +1492,129 @@ func ensureSuccessfulPlanObserved(
 	if len(missingSuccessfulObservationCoverage(planned, observed)) == 0 {
 		return nil
 	}
-	rows, err := internalctx.GetDb(ctx).Query(ctx, `
-		SELECT DISTINCT observation.component_instance_id,
-		       observation.release_bundle_id,
-		       observation.image,
-		       observation.platform,
-		       observation.config_checksum
-		FROM ExternalExecution execution
-		JOIN TargetComponentObservation observation
-		  ON observation.external_execution_id = execution.id
-		 AND observation.organization_id = execution.organization_id
-		 AND observation.health = 'HEALTHY'
-		 AND observation.state_checksum = execution.observed_state_checksum
-		 AND observation.config_checksum = execution.actual_config_checksum
-		WHERE execution.organization_id = @organizationID
-		  AND execution.deployment_plan_id = @successfulPlanID
-		  AND execution.status = 'SUCCEEDED'
-		LIMIT 4097`,
-		pgx.NamedArgs{
-			"organizationID":   organizationID,
-			"successfulPlanID": successfulPlanID,
-		},
+	return apierrors.NewConflict(
+		"successful plan lacks current trusted healthy observations for every component",
 	)
+}
+
+func ensureSuccessfulPlanSourceComplete(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	successful types.DeploymentPlan,
+	canonical types.TargetDeploymentPlanCanonical,
+) error {
+	var taskSetComplete bool
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1
+		  FROM Task task
+		  JOIN DeploymentPlanTarget target
+		    ON target.organization_id = task.organization_id
+		   AND target.deployment_plan_id = task.deployment_plan_id
+		   AND target.id = task.deployment_plan_target_id
+		   AND target.deployment_target_id = task.deployment_target_id
+		  JOIN DeploymentPlan plan
+		    ON plan.organization_id = task.organization_id
+		   AND plan.id = task.deployment_plan_id
+		   AND plan.application_id = task.application_id
+		   AND plan.release_bundle_id = task.release_bundle_id
+		   AND plan.channel_id = task.channel_id
+		   AND plan.environment_id = task.environment_id
+		  WHERE task.organization_id = @organizationID
+		    AND task.deployment_plan_id = @planID
+		    AND task.task_type = 'deployment'
+		    AND task.protocol_version = 'v2'
+		  GROUP BY task.execution_occurrence_id
+		  HAVING count(*) = (
+		    SELECT count(*)
+		    FROM DeploymentPlanTarget target
+		    WHERE target.organization_id = @organizationID
+		      AND target.deployment_plan_id = @planID
+		  )
+		  AND count(*) > 0
+		  AND count(DISTINCT task.deployment_plan_target_id) = count(*)
+		  AND bool_and(task.status = 'SUCCEEDED')
+		)`, pgx.NamedArgs{
+		"organizationID": organizationID,
+		"planID":         successful.ID,
+	}).Scan(&taskSetComplete)
 	if err != nil {
-		return fmt.Errorf("query successful plan observations: %w", err)
+		return fmt.Errorf("check successful previous-state task set: %w", err)
 	}
-	defer rows.Close()
-	rowCount := 0
-	for rows.Next() {
-		rowCount++
-		if rowCount > maxPlanEvidenceRows {
-			return apierrors.NewConflict("successful plan observation limit exceeded")
-		}
-		var componentInstanceID *uuid.UUID
-		var releaseID uuid.UUID
-		var image, platform, configChecksum string
-		if err := rows.Scan(
-			&componentInstanceID,
-			&releaseID,
-			&image,
-			&platform,
-			&configChecksum,
-		); err != nil {
-			return fmt.Errorf("scan successful plan observation: %w", err)
-		}
-		if componentInstanceID == nil {
-			continue
-		}
-		observed = append(observed, successfulComponentObservation{
-			ComponentInstanceID: *componentInstanceID,
-			ReleaseBundleID:     releaseID,
-			Image:               image,
-			Platform:            platform,
-			ConfigChecksum:      configChecksum,
-		})
+	if taskSetComplete {
+		return nil
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("collect successful plan observations: %w", err)
+
+	planned, err := plannedStatesFromCanonical(canonical)
+	if err != nil || len(planned) == 0 {
+		return apierrors.NewConflict("previous-state source plan has no complete component set")
 	}
-	if len(missingSuccessfulObservationCoverage(planned, observed)) > 0 {
+	var adoptionComplete bool
+	err = internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1
+		  FROM BaselineAdoption adoption
+		  WHERE adoption.organization_id = @organizationID
+		    AND adoption.deployment_plan_id = @planID
+		    AND adoption.status = 'ADOPTED'
+		    AND NOT adoption.deployment_performed
+		    AND adoption.task_count = 0
+		    AND adoption.lock_count = 0
+		    AND adoption.execution_count = 0
+		    AND adoption.plan_checksum = @planChecksum
+		    AND adoption.product_release_id = @productReleaseID
+		    AND adoption.target_config_snapshot_id = @targetConfigSnapshotID
+		    AND adoption.deployment_unit_id = @deploymentUnitID
+		    AND adoption.environment_id = @environmentID
+		    AND adoption.deployment_target_id = @deploymentTargetID
+		    AND (
+		      SELECT count(*)
+		      FROM BaselineAdoptionComponent component
+		      WHERE component.organization_id = adoption.organization_id
+		        AND component.baseline_adoption_id = adoption.id
+		        AND component.deployment_plan_id = adoption.deployment_plan_id
+		    ) = @componentCount
+		    AND (
+		      SELECT count(DISTINCT component.component_key)
+		      FROM BaselineAdoptionComponent component
+		      WHERE component.organization_id = adoption.organization_id
+		        AND component.baseline_adoption_id = adoption.id
+		    ) = @componentCount
+		    AND (
+		      SELECT count(DISTINCT component.component_instance_id)
+		      FROM BaselineAdoptionComponent component
+		      WHERE component.organization_id = adoption.organization_id
+		        AND component.baseline_adoption_id = adoption.id
+		    ) = @componentCount
+		)`, pgx.NamedArgs{
+		"organizationID":         organizationID,
+		"planID":                 successful.ID,
+		"planChecksum":           successful.CanonicalChecksum,
+		"productReleaseID":       successful.ReleaseBundleID,
+		"targetConfigSnapshotID": successful.TargetConfigSnapshotID,
+		"deploymentUnitID":       successful.DeploymentUnitID,
+		"environmentID":          successful.EnvironmentID,
+		"deploymentTargetID":     canonical.DeploymentTargetID,
+		"componentCount":         len(planned),
+	}).Scan(&adoptionComplete)
+	if err != nil {
+		return fmt.Errorf("check successful previous-state baseline adoption: %w", err)
+	}
+	if !adoptionComplete {
 		return apierrors.NewConflict(
-			"successful plan lacks independent healthy observations for every component",
+			"previous-state source plan has no exact fully successful task set or complete baseline adoption",
 		)
 	}
 	return nil
+}
+
+func successfulTaskSetComplete(targetCount int, statuses []types.TaskStatus) bool {
+	if targetCount < 1 || len(statuses) != targetCount {
+		return false
+	}
+	return !slices.ContainsFunc(statuses, func(status types.TaskStatus) bool {
+		return status != types.TaskStatusSucceeded
+	})
 }
 
 func loadNativeSuccessfulPlanObservations(
@@ -1421,6 +1629,13 @@ func loadNativeSuccessfulPlanObservations(
 		       active.platform,
 		       active.config_checksum
 		FROM ActiveDesiredRevision active
+		JOIN ComponentDesiredStateHead head
+		  ON head.organization_id = active.organization_id
+		 AND head.deployment_unit_id = active.deployment_unit_id
+		 AND head.component_instance_id = active.component_instance_id
+		 AND head.active_revision_id = active.id
+		 AND head.pending_revision_id IS NULL
+		 AND NOT head.quarantined
 		JOIN ObservedComponentState observation
 		  ON observation.id = active.verified_observation_id
 		 AND observation.organization_id = active.organization_id
@@ -1436,6 +1651,20 @@ func loadNativeSuccessfulPlanObservations(
 		 AND observation.capability_checksum = active.capability_checksum
 		 AND observation.platform = active.platform
 		 AND observation.topology_checksum = active.topology_checksum
+		 AND observation.is_current
+		 AND observation.fresh_until >= clock_timestamp()
+		 AND (
+		   (active.source_kind = 'EXECUTION' AND observation.executor_outcome = 'SUCCEEDED')
+		   OR (active.source_kind = 'BASELINE_ADOPTION' AND observation.executor_outcome = '')
+		 )
+		JOIN ComponentObservationHead observation_head
+		  ON observation_head.organization_id = observation.organization_id
+		 AND observation_head.observer_id = observation.observer_id
+		 AND observation_head.deployment_unit_id = observation.deployment_unit_id
+		 AND observation_head.component_instance_id = observation.component_instance_id
+		 AND observation_head.observation_id = observation.id
+		 AND observation_head.evidence_checksum = observation.evidence_checksum
+		 AND observation_head.captured_at = observation.captured_at
 		WHERE active.organization_id = @organizationID
 		  AND active.deployment_plan_id = @successfulPlanID
 		ORDER BY active.component_instance_id, active.revision DESC, active.id DESC
@@ -1546,26 +1775,135 @@ func ensurePreviousStateIsReversible(
 	ctx context.Context,
 	organizationID,
 	currentPlanID uuid.UUID,
-) error {
-	var forwardOnly bool
-	err := internalctx.GetDb(ctx).QueryRow(ctx, `
-		SELECT EXISTS (
-		  SELECT 1
-		  FROM DeploymentPlanChangeEntry change
-		  WHERE change.organization_id = @organizationID
-		    AND change.deployment_plan_id = @currentPlanID
-		    AND change.kind = 'schema'
-		    AND change.forward_only
-		)`,
-		pgx.NamedArgs{
-			"organizationID": organizationID,
-			"currentPlanID":  currentPlanID,
-		},
-	).Scan(&forwardOnly)
+	currentCanonical,
+	successfulCanonical types.TargetDeploymentPlanCanonical,
+) ([]types.MigrationContract, error) {
+	persisted, err := getDeploymentPlanMigrations(ctx, currentPlanID, organizationID)
 	if err != nil {
-		return fmt.Errorf("check previous-state forward-only block: %w", err)
+		return nil, err
 	}
-	return rejectForwardOnlyPreviousState(forwardOnly)
+	persistedContracts := make([]types.MigrationContract, len(persisted))
+	for index, migration := range persisted {
+		persistedContracts[index] = migration.MigrationContract()
+	}
+	canonicalContracts := slices.Clone(currentCanonical.MigrationContracts)
+	if !reflect.DeepEqual(
+		normalizedMigrationContracts(persistedContracts),
+		normalizedMigrationContracts(canonicalContracts),
+	) {
+		return nil, apierrors.NewConflict(
+			"current plan structured migration persistence does not match its canonical contract set",
+		)
+	}
+	currentStates, err := plannedStatesFromCanonical(currentCanonical)
+	if err != nil {
+		return nil, apierrors.NewConflict("current plan component state is invalid")
+	}
+	successfulStates, err := plannedStatesFromCanonical(successfulCanonical)
+	if err != nil {
+		return nil, apierrors.NewConflict("successful plan component state is invalid")
+	}
+	return validatePreviousStateReverseContracts(
+		currentStates, successfulStates, persistedContracts,
+	)
+}
+
+func normalizedMigrationContracts(contracts []types.MigrationContract) []types.MigrationContract {
+	result := make([]types.MigrationContract, len(contracts))
+	for index, contract := range contracts {
+		result[index] = migrationplanning.NormalizeMigrationContract(contract)
+	}
+	slices.SortFunc(result, func(a, b types.MigrationContract) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return result
+}
+
+type previousStateSchemaKey struct {
+	ComponentKey        string
+	DatabaseResourceKey string
+}
+
+func validatePreviousStateReverseContracts(
+	currentStates,
+	successfulStates []types.PlannedState,
+	contracts []types.MigrationContract,
+) ([]types.MigrationContract, error) {
+	currentByKey := make(map[previousStateSchemaKey]types.PlannedState, len(currentStates))
+	successfulByKey := make(map[previousStateSchemaKey]types.PlannedState, len(successfulStates))
+	for _, state := range currentStates {
+		currentByKey[previousStateSchemaKey{state.ComponentKey, state.DatabaseResourceKey}] = state
+	}
+	for _, state := range successfulStates {
+		successfulByKey[previousStateSchemaKey{state.ComponentKey, state.DatabaseResourceKey}] = state
+	}
+	ordered, err := migrationplanning.OrderMigrationContracts(contracts)
+	if err != nil {
+		return nil, apierrors.NewConflict("structured reverse chain is invalid: " + err.Error())
+	}
+	contractsByKey := make(map[previousStateSchemaKey][]types.MigrationContract)
+	for _, contract := range ordered {
+		key := previousStateSchemaKey{contract.ComponentKey, contract.DatabaseResourceKey}
+		contractsByKey[key] = append(contractsByKey[key], contract)
+	}
+	used := make(map[string]struct{}, len(contracts))
+	for key, current := range currentByKey {
+		successful, exists := successfulByKey[key]
+		if !exists {
+			if current.SchemaState != "" || current.SchemaChecksum != "" {
+				return nil, apierrors.NewConflict("previous-state schema source component is missing")
+			}
+			continue
+		}
+		if current.SchemaState == successful.SchemaState &&
+			current.SchemaChecksum == successful.SchemaChecksum {
+			if len(contractsByKey[key]) > 0 {
+				return nil, apierrors.NewConflict("unused structured migration contracts conflict with unchanged schema")
+			}
+			continue
+		}
+		chain := contractsByKey[key]
+		if len(chain) == 0 {
+			return nil, apierrors.NewConflict("schema change has no complete structured reverse chain")
+		}
+		applicationVersion, versionErr := semver.StrictNewVersion(strings.TrimSpace(successful.Version))
+		if versionErr != nil {
+			return nil, apierrors.NewConflict("previous application version is not valid semantic version evidence")
+		}
+		version, checksum := successful.SchemaState, successful.SchemaChecksum
+		for _, contract := range chain {
+			if issues := migrationplanning.ValidateMigrationContractIntegrity(contract); len(issues) > 0 {
+				return nil, apierrors.NewConflict(
+					"structured reverse chain contract is invalid: " + issues[0].Message,
+				)
+			}
+			if contract.Reversibility != types.MigrationReversibilityReversible ||
+				contract.RequiresForwardFix {
+				return nil, apierrors.NewConflict(
+					"structured reverse chain must be explicitly reversible without a forward fix",
+				)
+			}
+			constraint, constraintErr := semver.NewConstraint(contract.PreviousApplicationCompatibility)
+			if constraintErr != nil || !constraint.Check(applicationVersion) {
+				return nil, apierrors.NewConflict(
+					"previous application is outside reverse mixed-version compatibility",
+				)
+			}
+			if contract.ExpectedSourceVersion != version ||
+				contract.ExpectedSourceChecksum != checksum {
+				return nil, apierrors.NewConflict("structured reverse chain is incomplete or ambiguous")
+			}
+			version, checksum = contract.ResultingVersion, contract.ResultingSchemaChecksum
+			used[contract.ID] = struct{}{}
+		}
+		if version != current.SchemaState || checksum != current.SchemaChecksum {
+			return nil, apierrors.NewConflict("structured reverse chain does not reach current schema")
+		}
+	}
+	if len(used) != len(contracts) {
+		return nil, apierrors.NewConflict("unused structured migration contracts conflict with reverse authority")
+	}
+	return ordered, nil
 }
 
 func rejectStaleCurrentPlan(newer bool) error {

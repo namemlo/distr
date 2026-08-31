@@ -52,6 +52,36 @@ func TestBuildRecoveryPlanBlocksAutomaticReverseForForwardOnlyMigration(t *testi
 	g.Expect(err).To(MatchError(ContainSubstring("forward-fix")))
 }
 
+func TestBuildPreviousStateGraphRemovesForwardMigrationAndReversesAfterHealth(t *testing.T) {
+	g := NewWithT(t)
+	contract := migrationContractFixture()
+	base := types.TargetPlanGraph{
+		Steps: []types.TargetPlanStep{
+			{StepKey: "config:verify", ActionType: "config.verify"},
+			{StepKey: "migration:forward:apply", Kind: "migration", ActionType: "database.migration.apply"},
+			{StepKey: "component:ledger:deploy", ComponentKey: "ledger", ActionType: "component.deploy"},
+			{StepKey: "component:ledger:health", ComponentKey: "ledger", ActionType: "component.health"},
+		},
+		Edges: []types.DeploymentPlanStepEdge{
+			newEdge("config:verify", "migration:forward:apply"),
+			newEdge("migration:forward:apply", "component:ledger:deploy"),
+			newEdge("component:ledger:deploy", "component:ledger:health"),
+		},
+	}
+
+	graph, err := BuildPreviousStateGraph(base, []types.MigrationContract{contract})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(graph.Steps).NotTo(ContainElement(HaveField("ActionType", "database.migration.apply")))
+	g.Expect(graph.Steps).To(ContainElement(HaveField("ActionType", "database.migration.reverse")))
+	g.Expect(graph.TopologicalOrder).To(Equal([]string{
+		"config:verify",
+		"component:ledger:deploy",
+		"component:ledger:health",
+		"recovery:ledger.042:reverse",
+	}))
+}
+
 func TestBuildRecoveryPlanFailsClosedForUnresolvedReverseGraph(t *testing.T) {
 	first := migrationContractFixture()
 	dependent := migrationContractFixture()

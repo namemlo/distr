@@ -682,10 +682,15 @@ func EvaluateDeploymentPlanApproval(
 	return EvaluateApprovalEligibility(ctx, request.ID)
 }
 
+type currentDeploymentPlanApproval struct {
+	ID       uuid.UUID
+	Revision int64
+}
+
 func requireCurrentDeploymentPlanApprovalForExecution(
 	ctx context.Context,
 	organizationID, deploymentPlanID, executorUserAccountID uuid.UUID,
-) error {
+) (currentDeploymentPlanApproval, error) {
 	request, err := getActiveApprovalRequestForSubject(
 		ctx,
 		organizationID,
@@ -694,12 +699,12 @@ func requireCurrentDeploymentPlanApprovalForExecution(
 		false,
 	)
 	if errors.Is(err, apierrors.ErrNotFound) {
-		return apierrors.NewConflict(
+		return currentDeploymentPlanApproval{}, apierrors.NewConflict(
 			"deployment plan has no current approval request",
 		)
 	}
 	if err != nil {
-		return err
+		return currentDeploymentPlanApproval{}, err
 	}
 	evaluation, err := evaluateApprovalEligibilityForAdmission(
 		ctx,
@@ -707,15 +712,15 @@ func requireCurrentDeploymentPlanApprovalForExecution(
 		executorUserAccountID,
 	)
 	if err != nil {
-		return err
+		return currentDeploymentPlanApproval{}, err
 	}
 	if !evaluation.Eligible ||
 		evaluation.State != types.ApprovalRequestStateApproved {
-		return apierrors.NewConflict(
+		return currentDeploymentPlanApproval{}, apierrors.NewConflict(
 			"deployment plan approval is not currently eligible for this executor",
 		)
 	}
-	return nil
+	return currentDeploymentPlanApproval{ID: request.ID, Revision: request.Revision}, nil
 }
 
 func currentDeploymentPlanApprovalEligibleForAdmission(

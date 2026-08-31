@@ -147,7 +147,10 @@ Protocol-v2 task creation also requires the latest persistent review decision
 to be an unexpired `GO`. The decision binds the plan and the current
 independently observed-state checksum. A later `NO_GO`, supersession,
 revocation, observed-state change, expiry, or failed authorization recheck
-blocks before task or external mutation.
+blocks before task or external mutation. The scheduler supplies the exact
+latest ADMIT identity/checksum to task creation, which rechecks the same current
+approval request revision and reconstructs GO authorization evidence against
+the admission and approval current when the GO was recorded.
 
 The review-material route returns `MISSING`, `GO`, `NO_GO`, or `STALE`, the
 exact plan/observed/review checksums, the latest append-only decision, current
@@ -155,6 +158,13 @@ admission validity, blockers, and `canDecide`. Material is incomplete when any
 frozen baseline lacks a current independent observation. The operator plan UI
 uses this response to disable unsafe controls and requires typed confirmation
 of the exact review-material checksum before appending a decision.
+
+The review-decision collection returns the complete retained append-only chain
+in newest-first order. Each row includes actor, comment, record/expiry times,
+plan revision, idempotency key, plan/observed/review/decision checksums,
+authorization evidence, and supersession/revocation references. The plan UI
+uses those fields to show the complete history and identify revoked,
+superseded, expired, or material-invalidated decisions.
 
 Baseline adoption is available only for an initial sealed `READY` native-v2
 bootstrap plan with no task, external-execution, pending-desired, or active-
@@ -258,10 +268,10 @@ the exact verified baseline state version/checksum, current image/configuration,
 platform, target-scoped caller, and adapter-assignment audience in addition to
 the desired artifact/configuration and fence.
 
-| Method | Executor route                                      | Purpose                                                    |
-| ------ | --------------------------------------------------- | ---------------------------------------------------------- |
+| Method | Executor route                                           | Purpose                                                   |
+| ------ | -------------------------------------------------------- | --------------------------------------------------------- |
 | `POST` | `/api/executor/v2/attempts/{attemptId}/runtime-evidence` | Retain immutable pre/result runtime proof for the attempt |
-| `POST` | `/api/executor/v2/attempts/{attemptId}/complete`     | Complete; `SUCCEEDED` binds retained evidence ID/checksum  |
+| `POST` | `/api/executor/v2/attempts/{attemptId}/complete`         | Complete; `SUCCEEDED` binds retained evidence ID/checksum |
 
 The runtime-evidence response returns a server canonical checksum. A successful
 completion must return that exact row ID and canonical checksum. Unhealthy,

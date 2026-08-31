@@ -409,6 +409,10 @@ export class OperatorControlPlaneService {
     return this.get<OperatorReviewAdmissionMaterial>(`/api/v1/deployment-plans/${pathId(planId)}/review-material`);
   }
 
+  listReviewAdmissionDecisions(planId: string): Observable<OperatorReviewAdmissionDecision[]> {
+    return this.get<OperatorReviewAdmissionDecision[]>(`/api/v1/deployment-plans/${pathId(planId)}/review-decisions`);
+  }
+
   recordReviewAdmissionDecision(
     planId: string,
     request: OperatorReviewAdmissionDecisionRequest,

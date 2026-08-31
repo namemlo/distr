@@ -237,6 +237,59 @@ func TestReviewMaterialReadReturnsCurrentDecisionState(t *testing.T) {
 	g.Expect(decoded.CanDecide).To(BeTrue())
 }
 
+func TestReviewDecisionHistoryReturnsCompleteAppendOnlyLineage(t *testing.T) {
+	g := NewWithT(t)
+	planID, supersededID, currentID := uuid.New(), uuid.New(), uuid.New()
+	createdAt := time.Date(2026, time.September, 1, 10, 0, 0, 0, time.UTC)
+	records := []types.ReviewAdmissionDecisionRecord{{
+		ID: currentID, CreatedAt: createdAt.Add(time.Hour), DeploymentPlanID: planID,
+		PlanRevision: 3, PlanChecksum: "sha256:" + strings.Repeat("a", 64),
+		ReviewMaterialChecksum: "sha256:" + strings.Repeat("b", 64),
+		ObservedStateChecksum:  "sha256:" + strings.Repeat("c", 64),
+		Decision:               types.ReviewAdmissionDecisionNoGo, Reason: "Runtime evidence changed.",
+		ActorUserAccountID: uuid.New(), ExpiresAt: createdAt.Add(2 * time.Hour),
+		SupersedesDecisionID: &supersededID, RevokesDecisionID: &supersededID,
+		AuthorizationEvidence: "sha256:" + strings.Repeat("d", 64),
+		CanonicalChecksum:     "sha256:" + strings.Repeat("e", 64),
+		IdempotencyKey:        "review-history-2",
+	}, {
+		ID: supersededID, CreatedAt: createdAt, DeploymentPlanID: planID,
+		PlanRevision: 2, Decision: types.ReviewAdmissionDecisionGo,
+		Reason: "Initial GO.", ActorUserAccountID: uuid.New(),
+		ExpiresAt: createdAt.Add(time.Hour), IdempotencyKey: "review-history-1",
+	}}
+	dependencies := admissionHandlerDependencies{
+		listReviewDecisions: func(
+			_ context.Context, organizationID, requestedPlanID uuid.UUID,
+		) ([]types.ReviewAdmissionDecisionRecord, error) {
+			g.Expect(organizationID).NotTo(Equal(uuid.Nil))
+			g.Expect(requestedPlanID).To(Equal(planID))
+			return records, nil
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/deployment-plans/"+planID.String()+"/review-decisions",
+		nil,
+	)
+	request.SetPathValue("deploymentPlanId", planID.String())
+	userAuth := testChannelAuth()
+	userAuth.role = types.UserRoleAdmin
+	request = request.WithContext(auth.Authentication.NewContext(request.Context(), userAuth))
+	response := httptest.NewRecorder()
+
+	listReviewAdmissionDecisionsHandlerWithDependencies(dependencies).
+		ServeHTTP(response, request)
+
+	g.Expect(response.Code).To(Equal(http.StatusOK))
+	var decoded []types.ReviewAdmissionDecisionRecord
+	g.Expect(json.Unmarshal(response.Body.Bytes(), &decoded)).To(Succeed())
+	g.Expect(decoded).To(HaveLen(2))
+	g.Expect(decoded[0]).To(Equal(records[0]))
+	g.Expect(*decoded[0].SupersedesDecisionID).To(Equal(supersededID))
+	g.Expect(*decoded[0].RevokesDecisionID).To(Equal(supersededID))
+}
+
 func TestReviewDecisionPostPreservesChecksumBoundMaterial(t *testing.T) {
 	g := NewWithT(t)
 	planID := uuid.New()

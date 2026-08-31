@@ -498,6 +498,9 @@ describe('OperatorControlPlaneService', () => {
       expiresAt: '2026-08-01T00:00:00.000Z',
     });
 
+    service.listReviewAdmissionDecisions('plan-1').subscribe();
+    expectRequest('/api/v1/deployment-plans/plan-1/review-decisions', {});
+
     service
       .createPreviousStatePlan('plan-current', {
         successfulDeploymentPlanId: 'plan-successful',

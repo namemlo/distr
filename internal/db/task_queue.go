@@ -197,6 +197,12 @@ func createTasksForDeploymentPlan(
 	if err := validateCreateTasksForDeploymentPlanRequest(request); err != nil {
 		return nil, err
 	}
+	if path == deploymentPlanTaskCreationPathAdmittedV2 &&
+		(request.AdmissionEvaluationID == uuid.Nil || !isLowerSHA256(request.AdmissionDecisionChecksum)) {
+		return nil, apierrors.NewBadRequest(
+			"exact admissionEvaluationId and admissionDecisionChecksum are required",
+		)
+	}
 	defaultPolicy, lockResources := normalizeTaskLockResourceRequests(request)
 	var tasks []types.Task
 	var failedPreflight *types.DeploymentPreflightRun
@@ -254,15 +260,16 @@ func createTasksForDeploymentPlan(
 			return nil
 		}
 		if path == deploymentPlanTaskCreationPathAdmittedV2 {
-			if err := requireCurrentDeploymentPlanApprovalForExecution(
+			approval, err := requireCurrentDeploymentPlanApprovalForExecution(
 				ctx,
 				request.OrganizationID,
 				request.DeploymentPlanID,
 				request.ActorUserAccountID,
-			); err != nil {
+			)
+			if err != nil {
 				return err
 			}
-			if err := requireCurrentReviewAdmissionGo(ctx, request, *plan); err != nil {
+			if err := requireCurrentReviewAdmissionGo(ctx, request, *plan, approval); err != nil {
 				return err
 			}
 		}

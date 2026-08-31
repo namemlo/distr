@@ -103,12 +103,19 @@ Content-Type: application/json
 }
 ```
 
-The source must be an executed plan for the same organization, application,
-environment, and Deployment Unit, with independent healthy observations for
-every physical Component Instance and component release pair. New observations
-persist that exact instance identity; a shared Component Release ID cannot
-collapse coverage for multiple instances. The current plan must still be the
-latest placement plan and must not contain a forward-only schema transition.
+The source must be a native-v2 plan for the exact same organization,
+application, environment, Deployment Unit, deployment target, and deployment
+scope. It must have either one complete protocol-v2 deployment occurrence with
+exactly one `SUCCEEDED` deployment Task per frozen target or one complete
+`ADOPTED` baseline-adoption set that matches the source plan, release,
+configuration, placement, and every component. Plan status alone is not
+success evidence.
+
+Every source component must also remain the active desired-state head with no
+pending revision or quarantine. Its bound observation must be the current
+observation head, match every immutable artifact/config/schema/capability/
+platform/topology fact, and remain trusted, accepted, healthy, complete, and
+fresh. Legacy external-execution observations cannot satisfy this proof.
 
 The response is a new immutable target plan. It references current plan B in
 `supersedesDeploymentPlanId`, source plan A in
@@ -116,9 +123,19 @@ The response is a new immutable target plan. It references current plan B in
 A retry of the same B/A request returns the existing new plan.
 
 Creation runs in one serializable transaction that locks both tenant-scoped
-plans, rejects a stale current plan, verifies independent healthy observations
-for every source component, blocks forward-only schema recovery, resolves
-current B against desired A, and publishes the new history.
+plans and rejects a stale current-plan CAS. For schema changes it requires the
+current plan's persisted migration rows to equal its canonical contracts,
+validates every contract checksum and integrity rule, rejects manual,
+forward-only, or forward-fix recovery, proves a complete unambiguous chain from
+A's schema to B's schema, and enforces each contract's
+`previousApplicationCompatibility` against A.
+
+The B-to-A graph discards any forward migration/backup graph from the newly
+resolved A plan, bridges surviving dependencies, deploys and health-checks the
+old component first, and then runs reverse migrations in reverse dependency
+order. Reverse adapters are freshly resolved from the current release
+requirement and selected Target Config Snapshot; forward adapter bindings are
+not reused as reverse authority.
 
 ## Data model
 
@@ -154,7 +171,9 @@ Migration rollback refuses while any PR-064 evidence exists.
 - Operators receive a target-specific change log for approval.
 - Legacy state remains useful without becoming a protocol-v2 trust bypass.
 - First deployments are explicit bootstrap operations governed by policy.
-- Forward-only database changes require a forward fix.
+- Previous-state schema recovery requires a complete explicitly reversible
+  structured contract chain; otherwise operators must use a separately
+  governed forward fix or restore workflow.
 - Existing v1 rows, APIs, canonical payloads, checksums, and execution remain
   unchanged.
 - PR-067 may replace the conservative default risk policy without changing the

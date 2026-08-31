@@ -203,6 +203,82 @@
             </div>
           }
 
+          <section aria-labelledby="review-decision-history-heading" class="mt-4 rounded border p-4">
+            <h3 id="review-decision-history-heading" class="font-semibold">Decision history</h3>
+            <p class="mt-1 text-xs text-gray-500">
+              Complete append-only GO / NO_GO evidence, newest first. Superseded and revoked rows remain visible.
+            </p>
+            @if (reviewDecisionHistoryLoading()) {
+              <p role="status" class="mt-3 text-sm text-gray-500">Loading decision history...</p>
+            } @else if (reviewDecisionHistoryError(); as historyFailure) {
+              <div role="alert" class="mt-3 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+                Decision history could not be loaded. {{ historyFailure.message }}
+              </div>
+            } @else {
+              <div class="mt-3 space-y-3" data-testid="review-decision-history">
+                @for (decision of reviewDecisionHistory(); track decision.id) {
+                  <article class="rounded border p-3 text-sm">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <span class="font-semibold">{{ decision.decision }} · revision {{ decision.planRevision }}</span>
+                      <span>{{ reviewDecisionHistoryStatus(decision) }}</span>
+                    </div>
+                    <dl class="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      <div>
+                        <dt class="text-gray-500">Actor</dt>
+                        <dd class="break-all font-mono">{{ decision.actorUserAccountId }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Recorded</dt>
+                        <dd>{{ decision.createdAt | date: 'medium' }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Expires</dt>
+                        <dd>{{ decision.expiresAt | date: 'medium' }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Idempotency key</dt>
+                        <dd class="break-all font-mono">{{ decision.idempotencyKey }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Supersedes</dt>
+                        <dd class="break-all font-mono">{{ decision.supersedesDecisionId || 'None' }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Revokes</dt>
+                        <dd class="break-all font-mono">{{ decision.revokesDecisionId || 'None' }}</dd>
+                      </div>
+                    </dl>
+                    <p class="mt-3"><span class="font-semibold">Comment:</span> {{ decision.reason }}</p>
+                    <dl class="mt-3 grid gap-2 text-xs md:grid-cols-2">
+                      <div>
+                        <dt class="text-gray-500">Plan checksum</dt>
+                        <dd class="break-all font-mono">{{ decision.planChecksum }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Observed-state checksum</dt>
+                        <dd class="break-all font-mono">{{ decision.observedStateChecksum }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Review-material checksum</dt>
+                        <dd class="break-all font-mono">{{ decision.reviewMaterialChecksum }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Decision checksum</dt>
+                        <dd class="break-all font-mono">{{ decision.canonicalChecksum }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-gray-500">Authorization evidence</dt>
+                        <dd class="break-all font-mono">{{ decision.authorizationEvidence }}</dd>
+                      </div>
+                    </dl>
+                  </article>
+                } @empty {
+                  <p class="text-sm text-gray-500">No GO / NO_GO decisions have been recorded.</p>
+                }
+              </div>
+            }
+          </section>
+
           <form [formGroup]="reviewDecisionForm" class="mt-4 rounded border p-4">
             <label class="block text-sm">
               Review reason

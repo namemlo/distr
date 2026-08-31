@@ -25,7 +25,7 @@ func BuildRecoveryPlan(
 	var err error
 	switch request.Mode {
 	case types.RecoveryModeReverse:
-		graph, err = buildReverseGraph(failed)
+		graph, err = BuildReverseGraph(failed)
 	case types.RecoveryModeForwardFix, types.RecoveryModeManual:
 		graph, err = finalizeGraph(types.TargetPlanGraph{})
 	case types.RecoveryModeRestore:
@@ -59,7 +59,7 @@ func BuildRecoveryPlan(
 	return &draft, nil
 }
 
-func buildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
+func BuildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
 	completed := make(map[string]struct{}, len(failed.CompletedMigrationIDs))
 	for _, id := range failed.CompletedMigrationIDs {
 		if _, duplicate := completed[id]; duplicate {
@@ -155,6 +155,114 @@ func buildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
 		}
 	}
 	return finalizeGraph(types.TargetPlanGraph{Steps: steps, Edges: edges})
+}
+
+func buildReverseGraph(failed types.FailedPlan) (types.TargetPlanGraph, error) {
+	return BuildReverseGraph(failed)
+}
+
+func BuildPreviousStateGraph(
+	base types.TargetPlanGraph,
+	contracts []types.MigrationContract,
+) (types.TargetPlanGraph, error) {
+	completed := make([]string, len(contracts))
+	for index, contract := range contracts {
+		completed[index] = contract.ID
+	}
+	reverse, err := BuildReverseGraph(types.FailedPlan{
+		PlanID: uuid.New(), Contracts: slices.Clone(contracts), CompletedMigrationIDs: completed,
+	})
+	if err != nil {
+		return types.TargetPlanGraph{}, err
+	}
+
+	removed := make(map[string]struct{})
+	steps := make([]types.TargetPlanStep, 0, len(base.Steps)+len(reverse.Steps))
+	for _, step := range base.Steps {
+		if strings.HasPrefix(step.StepKey, "migration:") ||
+			strings.Contains(step.StepKey, ":migration:") ||
+			strings.HasPrefix(step.ActionType, "database.migration.") ||
+			step.Kind == "migration" || step.Kind == "migration_precondition" ||
+			step.Kind == "migration_validation" || step.Kind == "backup" ||
+			step.Kind == "backup_verification" {
+			removed[step.StepKey] = struct{}{}
+			continue
+		}
+		steps = append(steps, step)
+	}
+	edges := make([]types.DeploymentPlanStepEdge, 0, len(base.Edges)+len(reverse.Edges)+len(reverse.Steps))
+	for _, edge := range base.Edges {
+		if _, found := removed[edge.FromStepKey]; found {
+			continue
+		}
+		if _, found := removed[edge.ToStepKey]; found {
+			continue
+		}
+		edges = append(edges, edge)
+	}
+	for _, edge := range base.Edges {
+		if _, fromRemoved := removed[edge.FromStepKey]; fromRemoved {
+			continue
+		}
+		if _, toRemoved := removed[edge.ToStepKey]; !toRemoved {
+			continue
+		}
+		for _, successor := range survivingMigrationSuccessors(base.Edges, removed, edge.ToStepKey) {
+			edges = append(edges, newEdge(edge.FromStepKey, successor))
+		}
+	}
+	steps = append(steps, reverse.Steps...)
+	edges = append(edges, reverse.Edges...)
+
+	incoming := make(map[string]struct{}, len(reverse.Edges))
+	for _, edge := range reverse.Edges {
+		incoming[edge.ToStepKey] = struct{}{}
+	}
+	for _, step := range reverse.Steps {
+		if _, hasIncoming := incoming[step.StepKey]; hasIncoming {
+			continue
+		}
+		healthKey := "component:" + step.ComponentKey + ":health"
+		if !hasGraphStep(steps, healthKey) {
+			return types.TargetPlanGraph{}, fmt.Errorf(
+				"reverse migration %q requires old component health step %q",
+				step.StepKey,
+				healthKey,
+			)
+		}
+		edges = append(edges, newEdge(healthKey, step.StepKey))
+	}
+	return finalizeGraph(types.TargetPlanGraph{Steps: steps, Edges: edges})
+}
+
+func survivingMigrationSuccessors(
+	edges []types.DeploymentPlanStepEdge,
+	removed map[string]struct{},
+	start string,
+) []string {
+	result := make([]string, 0)
+	seen := map[string]struct{}{start: {}}
+	queue := []string{start}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, edge := range edges {
+			if edge.FromStepKey != current {
+				continue
+			}
+			if _, wasRemoved := removed[edge.ToStepKey]; !wasRemoved {
+				result = append(result, edge.ToStepKey)
+				continue
+			}
+			if _, visited := seen[edge.ToStepKey]; visited {
+				continue
+			}
+			seen[edge.ToStepKey] = struct{}{}
+			queue = append(queue, edge.ToStepKey)
+		}
+	}
+	slices.Sort(result)
+	return slices.Compact(result)
 }
 
 func buildRestoreGraph(

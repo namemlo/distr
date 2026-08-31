@@ -59,13 +59,13 @@ The resolver receives organization-scoped facts loaded by the repository:
 
 Every target requirement must resolve to exactly one allowed mode:
 
-| Mode | Required frozen evidence |
-| --- | --- |
-| `included` | Pinned Product Release component, matching platform artifact, provenance eligibility, and physical instance in the selected unit |
-| `pinned_existing` | Exact component release, physical instance, trusted observation, and matching current expected-state version/checksum |
-| `shared_provider` | Exact provider unit, immutable subscriber-set checksum, component release, trusted observation, and expected state |
-| `approved_external` | Approved external binding and trusted observation evidence |
-| `feature_disabled` | An immutable false feature-flag fact from the selected Target Config Snapshot |
+| Mode                | Required frozen evidence                                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `included`          | Pinned Product Release component, matching platform artifact, provenance eligibility, and physical instance in the selected unit |
+| `pinned_existing`   | Exact component release, physical instance, trusted observation, and matching current expected-state version/checksum            |
+| `shared_provider`   | Exact provider unit, immutable subscriber-set checksum, component release, trusted observation, and expected state               |
+| `approved_external` | Approved external binding and trusted observation evidence                                                                       |
+| `feature_disabled`  | An immutable false feature-flag fact from the selected Target Config Snapshot                                                    |
 
 No fallback order silently chooses between multiple bindings. Zero matches is
 unresolved; more than one match is ambiguous. Foreign, retired, mismatched,
@@ -112,6 +112,24 @@ adapter implementation, capability, assignment, or frozen plan-step adapter
 row refuses the schema downgrade; operators must retain the forward schema or
 restore an explicitly verified backup instead of deleting adapter history.
 
+### Previous-state publication
+
+Returning to an earlier release is a new immutable target plan, not an in-place
+rollback. Current and source plans must match the exact organization,
+application, environment, Deployment Unit, deployment target, and deployment
+scope. The source requires either a complete all-`SUCCEEDED` protocol-v2 Task
+occurrence or complete baseline-adoption lineage, plus current trusted healthy
+observations for every frozen component.
+
+Schema reversal is authorized only by the current plan's structured migration
+contracts after persisted/canonical equality, contract integrity, explicit
+reversibility, no-forward-fix, complete-chain, and previous-application
+compatibility checks. The new plan removes forward migration steps, deploys and
+health-checks the earlier component version, then runs reverse contracts in
+reverse dependency order using adapters freshly resolved from the current
+release and Target Config Snapshot facts. Missing or ambiguous proof fails
+closed.
+
 ### Protocol boundary
 
 `protocolVersion=v1` is publishable only when every generated step and
@@ -149,6 +167,9 @@ enforce organization isolation.
 - Existing v1 plans, payloads, checksums, endpoints, and execution remain
   compatible.
 - PR-064 can add baselines and change sets without changing draft identity.
+- A previous-state plan cannot use plan status, legacy external observations,
+  forward adapter bindings, or an incomplete migration declaration as rollback
+  authority.
 - PR-066 can replace the authorization seam with scoped grants without
   weakening the current route guards.
 - PR-075 owns v2 execution enablement; this ADR deliberately does not add an

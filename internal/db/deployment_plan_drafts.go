@@ -2042,11 +2042,18 @@ func projectTargetPlanMigrations(
 	for index, contract := range ordered {
 		applyKey := "migration:" + contract.ID + ":apply"
 		validateKey := "migration:" + contract.ID + ":validate"
-		if _, exists := steps[applyKey]; !exists {
-			return nil, fmt.Errorf("structured migration %q has no apply graph step", contract.ID)
-		}
-		if _, exists := steps[validateKey]; !exists {
-			return nil, fmt.Errorf("structured migration %q has no validate graph step", contract.ID)
+		_, hasApply := steps[applyKey]
+		_, hasValidate := steps[validateKey]
+		if !hasApply || !hasValidate {
+			reverseKey := "recovery:" + contract.ID + ":reverse"
+			if _, hasReverse := steps[reverseKey]; !hasReverse || hasApply || hasValidate {
+				return nil, fmt.Errorf(
+					"structured migration %q has neither a complete forward nor reverse graph step set",
+					contract.ID,
+				)
+			}
+			applyKey = reverseKey
+			validateKey = reverseKey
 		}
 		result = append(result, types.DeploymentPlanMigration{
 			ID: uuid.New(), MigrationID: contract.ID, ContractChecksum: contract.Checksum,

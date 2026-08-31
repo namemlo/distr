@@ -61,15 +61,41 @@ func CreateReviewAdmissionDecision(
 		if snapshot.Plan.CanonicalChecksum != request.ExpectedPlanChecksum {
 			return apierrors.NewConflict("deployment plan checksum changed before review decision")
 		}
-		observedChecksum, err := currentPlanObservedStateChecksum(txCtx, request.OrganizationID, request.DeploymentPlanID)
+		observed, err := loadCurrentPlanObservedStateMaterial(
+			txCtx, request.OrganizationID, request.DeploymentPlanID, decisionAt, true,
+		)
 		if err != nil {
 			return err
 		}
+		if !observed.Complete {
+			return apierrors.NewConflict("deployment plan current observed state set is incomplete")
+		}
+		observedChecksum := observed.Checksum
 		materialChecksum := reviewadmission.ReviewMaterialChecksum(
 			snapshot.Plan.CanonicalChecksum, observedChecksum,
 		)
 		if observedChecksum != request.ObservedStateChecksum || materialChecksum != request.ReviewMaterialChecksum {
 			return apierrors.NewConflict("observed state changed before review decision")
+		}
+		admission, err := getLatestReviewAdmissionEvaluationMaterial(
+			txCtx, request.OrganizationID, request.DeploymentPlanID,
+		)
+		if err != nil {
+			return apierrors.NewConflict("deployment plan has no current ADMIT evaluation")
+		}
+		approval, err := requireCurrentDeploymentPlanApprovalForExecution(
+			txCtx, request.OrganizationID, request.DeploymentPlanID, admission.ActorUserAccountID,
+		)
+		if err != nil {
+			return err
+		}
+		if !currentReviewAdmissionEvaluation(*admission, snapshot.Plan, observed.LatestReceivedAt, true) {
+			return apierrors.NewConflict("latest deployment admission is stale or not ADMIT")
+		}
+		if err := validateExactReviewAdmissionBinding(
+			*admission, admission.ID, admission.DecisionChecksum, approval.ID, approval.Revision,
+		); err != nil {
+			return err
 		}
 		existing, existingErr := getReviewDecisionByIdempotencyKey(
 			txCtx, request.OrganizationID, request.DeploymentPlanID, request.IdempotencyKey,
@@ -94,7 +120,7 @@ func CreateReviewAdmissionDecision(
 			return err
 		}
 		record := types.ReviewAdmissionDecisionRecord{
-			ID: uuid.New(), OrganizationID: request.OrganizationID,
+			ID: uuid.New(), CreatedAt: decisionAt, OrganizationID: request.OrganizationID,
 			DeploymentPlanID: request.DeploymentPlanID, PlanRevision: snapshot.PlanRevision,
 			PlanChecksum: snapshot.Plan.CanonicalChecksum, ReviewMaterialChecksum: materialChecksum,
 			ObservedStateChecksum: observedChecksum, Decision: request.Decision,
@@ -103,6 +129,7 @@ func CreateReviewAdmissionDecision(
 			RevokesDecisionID: request.RevokesDecisionID,
 			AuthorizationEvidence: reviewAuthorizationEvidence(
 				request.OrganizationID, request.ActorUserAccountID, request.DeploymentPlanID, decisionAt,
+				admission.ID, admission.DecisionChecksum, approval.ID, approval.Revision,
 			),
 			IdempotencyKey: strings.TrimSpace(request.IdempotencyKey),
 		}
@@ -124,12 +151,39 @@ func ListReviewAdmissionDecisions(
 		FROM ReviewAdmissionDecision d
 		WHERE d.organization_id = @organizationID
 		  AND d.deployment_plan_id = @planID
-		ORDER BY d.created_at DESC, d.id DESC
-		LIMIT 100`, pgx.NamedArgs{"organizationID": organizationID, "planID": planID})
+		ORDER BY d.created_at DESC, d.id DESC`, pgx.NamedArgs{
+		"organizationID": organizationID,
+		"planID":         planID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list review admission decisions: %w", err)
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByName[types.ReviewAdmissionDecisionRecord])
+}
+
+func getLatestReviewAdmissionDecision(
+	ctx context.Context, organizationID, planID uuid.UUID,
+) (*types.ReviewAdmissionDecisionRecord, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT `+reviewAdmissionOutputExpr+`
+		FROM ReviewAdmissionDecision d
+		WHERE d.organization_id = @organizationID
+		  AND d.deployment_plan_id = @planID
+		ORDER BY d.created_at DESC, d.id DESC
+		LIMIT 1`, pgx.NamedArgs{"organizationID": organizationID, "planID": planID})
+	if err != nil {
+		return nil, fmt.Errorf("get latest review admission decision: %w", err)
+	}
+	value, err := pgx.CollectExactlyOneRow(
+		rows, pgx.RowToStructByName[types.ReviewAdmissionDecisionRecord],
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("collect latest review admission decision: %w", err)
+	}
+	return &value, nil
 }
 
 type reviewAdmissionEvaluationMaterial struct {
@@ -142,6 +196,8 @@ type reviewAdmissionEvaluationMaterial struct {
 	MaterialChecksum        string
 	DecisionChecksum        string
 	ActorUserAccountID      uuid.UUID
+	ApprovalRequestID       *uuid.UUID
+	ApprovalRequestRevision *int64
 }
 
 func GetReviewAdmissionMaterial(
@@ -167,19 +223,20 @@ func GetReviewAdmissionMaterial(
 			txCtx,
 			organizationID,
 			planID,
+			now,
 			false,
 		)
 		if err != nil {
 			return err
 		}
-		decisions, err := ListReviewAdmissionDecisions(txCtx, organizationID, planID)
-		if err != nil {
+		latestDecision, err := getLatestReviewAdmissionDecision(
+			txCtx, organizationID, planID,
+		)
+		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
 			return err
 		}
-		var latestDecision *types.ReviewAdmissionDecisionRecord
-		if len(decisions) > 0 {
-			latest := decisions[0]
-			latestDecision = &latest
+		if errors.Is(err, apierrors.ErrNotFound) {
+			latestDecision = nil
 		}
 		admission, err := getLatestReviewAdmissionEvaluationMaterial(
 			txCtx,
@@ -266,7 +323,7 @@ func getLatestReviewAdmissionEvaluationMaterial(
 	err := internalctx.GetDb(ctx).QueryRow(ctx, `
 		SELECT id, plan_revision, plan_checksum, effective_policy_checksum,
 		       decision, evaluated_at, material_checksum, decision_checksum,
-		       actor_useraccount_id
+		       actor_useraccount_id, approval_request_id, approval_request_revision
 		FROM AdmissionEvaluation
 		WHERE organization_id = @organizationID
 		  AND deployment_plan_id = @planID
@@ -285,6 +342,8 @@ func getLatestReviewAdmissionEvaluationMaterial(
 		&value.MaterialChecksum,
 		&value.DecisionChecksum,
 		&value.ActorUserAccountID,
+		&value.ApprovalRequestID,
+		&value.ApprovalRequestRevision,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apierrors.ErrNotFound
@@ -293,6 +352,25 @@ func getLatestReviewAdmissionEvaluationMaterial(
 		return nil, fmt.Errorf("get latest review admission evaluation: %w", err)
 	}
 	return &value, nil
+}
+
+func validateExactReviewAdmissionBinding(
+	evaluation reviewAdmissionEvaluationMaterial,
+	expectedID uuid.UUID,
+	expectedDecisionChecksum string,
+	approvalRequestID uuid.UUID,
+	approvalRequestRevision int64,
+) error {
+	if expectedID == uuid.Nil || evaluation.ID != expectedID ||
+		evaluation.DecisionChecksum != expectedDecisionChecksum {
+		return apierrors.NewConflict("exact admission evaluation changed before task creation")
+	}
+	if evaluation.ApprovalRequestID == nil || evaluation.ApprovalRequestRevision == nil ||
+		*evaluation.ApprovalRequestID != approvalRequestID ||
+		*evaluation.ApprovalRequestRevision != approvalRequestRevision {
+		return apierrors.NewConflict("admission evaluation does not bind the current approval request")
+	}
+	return nil
 }
 
 func currentReviewAdmissionEvaluation(
@@ -315,6 +393,7 @@ func requireCurrentReviewAdmissionGo(
 	ctx context.Context,
 	request types.CreateTasksForDeploymentPlanRequest,
 	plan types.DeploymentPlan,
+	approval currentDeploymentPlanApproval,
 ) error {
 	if err := lockReviewAdmissionPlan(
 		ctx, request.OrganizationID, request.DeploymentPlanID,
@@ -334,16 +413,48 @@ func requireCurrentReviewAdmissionGo(
 	if err != nil {
 		return err
 	}
-	observedChecksum, err := currentPlanObservedStateChecksum(
-		ctx, request.OrganizationID, request.DeploymentPlanID,
+	observed, err := loadCurrentPlanObservedStateMaterial(
+		ctx, request.OrganizationID, request.DeploymentPlanID, now, true,
 	)
 	if err != nil {
 		return err
 	}
+	if !observed.Complete {
+		return apierrors.NewConflict("deployment plan current observed state set is incomplete")
+	}
 	if err := reviewadmission.ValidateCurrentGo(
-		*decision, plan.CanonicalChecksum, observedChecksum, now,
+		*decision, plan.CanonicalChecksum, observed.Checksum, now,
 	); err != nil {
 		return apierrors.NewConflict(err.Error())
+	}
+	boundAdmission, err := getReviewAdmissionEvaluationMaterialAt(
+		ctx, request.OrganizationID, request.DeploymentPlanID, decision.CreatedAt,
+	)
+	if err != nil {
+		return apierrors.NewConflict("GO review decision has no bound admission evaluation")
+	}
+	if boundAdmission.ApprovalRequestID == nil || boundAdmission.ApprovalRequestRevision == nil ||
+		decision.AuthorizationEvidence != reviewAuthorizationEvidence(
+			request.OrganizationID, decision.ActorUserAccountID, request.DeploymentPlanID,
+			decision.CreatedAt, boundAdmission.ID, boundAdmission.DecisionChecksum,
+			*boundAdmission.ApprovalRequestID, *boundAdmission.ApprovalRequestRevision,
+		) {
+		return apierrors.NewConflict("GO authorization evidence is not bound to its admission and approval")
+	}
+	currentAdmission, err := getLatestReviewAdmissionEvaluationMaterial(
+		ctx, request.OrganizationID, request.DeploymentPlanID,
+	)
+	if err != nil {
+		return apierrors.NewConflict("deployment plan has no current ADMIT evaluation")
+	}
+	if !currentReviewAdmissionEvaluation(*currentAdmission, plan, observed.LatestReceivedAt, true) {
+		return apierrors.NewConflict("latest deployment admission is stale or not ADMIT")
+	}
+	if err := validateExactReviewAdmissionBinding(
+		*currentAdmission, request.AdmissionEvaluationID, request.AdmissionDecisionChecksum,
+		approval.ID, approval.Revision,
+	); err != nil {
+		return err
 	}
 	if request.ReviewAuthorize == nil {
 		return apierrors.ErrForbidden
@@ -353,6 +464,41 @@ func requireCurrentReviewAdmissionGo(
 		ActorUserAccountID: request.ActorUserAccountID, EnvironmentID: plan.EnvironmentID,
 		DeploymentUnitID: plan.DeploymentUnitID, DecisionAt: now,
 	})
+}
+
+func getReviewAdmissionEvaluationMaterialAt(
+	ctx context.Context,
+	organizationID, planID uuid.UUID,
+	evaluatedAt time.Time,
+) (*reviewAdmissionEvaluationMaterial, error) {
+	var value reviewAdmissionEvaluationMaterial
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT id, plan_revision, plan_checksum, effective_policy_checksum,
+		       decision, evaluated_at, material_checksum, decision_checksum,
+		       actor_useraccount_id, approval_request_id, approval_request_revision
+		FROM AdmissionEvaluation
+		WHERE organization_id = @organizationID
+		  AND deployment_plan_id = @planID
+		  AND created_at <= @evaluatedAt
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, pgx.NamedArgs{
+		"organizationID": organizationID,
+		"planID":         planID,
+		"evaluatedAt":    evaluatedAt,
+	}).Scan(
+		&value.ID, &value.PlanRevision, &value.PlanChecksum,
+		&value.EffectivePolicyChecksum, &value.Decision, &value.EvaluatedAt,
+		&value.MaterialChecksum, &value.DecisionChecksum, &value.ActorUserAccountID,
+		&value.ApprovalRequestID, &value.ApprovalRequestRevision,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get review admission evaluation at decision: %w", err)
+	}
+	return &value, nil
 }
 
 func lockReviewAdmissionPlan(
@@ -379,10 +525,15 @@ func lockReviewAdmissionPlan(
 func currentPlanObservedStateChecksum(
 	ctx context.Context, organizationID, planID uuid.UUID,
 ) (string, error) {
+	now, err := admissionDatabaseTime(ctx)
+	if err != nil {
+		return "", err
+	}
 	material, err := loadCurrentPlanObservedStateMaterial(
 		ctx,
 		organizationID,
 		planID,
+		now,
 		true,
 	)
 	if err != nil {
@@ -405,6 +556,7 @@ type currentPlanObservedStateMaterial struct {
 func loadCurrentPlanObservedStateMaterial(
 	ctx context.Context,
 	organizationID, planID uuid.UUID,
+	now time.Time,
 	lockRows bool,
 ) (currentPlanObservedStateMaterial, error) {
 	var result currentPlanObservedStateMaterial
@@ -421,36 +573,99 @@ func loadCurrentPlanObservedStateMaterial(
 		return result, fmt.Errorf("count deployment plan observed-state baselines: %w", err)
 	}
 	query := `
-		SELECT b.component_key, o.id, o.state_checksum
+		SELECT b.component_key, active.id, active.revision,
+		       o.id, o.state_checksum, o.runtime_state_checksum,
+		       o.artifact_digest, o.config_checksum, o.schema_version,
+		       o.capability_checksum, o.platform, o.topology_checksum,
+		       o.received_at, o.fresh_until
 		FROM DeploymentPlanBaseline b
+		JOIN ComponentDesiredStateHead head
+		  ON head.organization_id = b.organization_id
+		 AND head.component_instance_id = b.component_instance_id
+		 AND head.active_revision_id = b.active_desired_revision_id
+		 AND head.pending_revision_id IS NULL
+		 AND NOT head.quarantined
+		JOIN ActiveDesiredRevision active
+		  ON active.id = head.active_revision_id
+		 AND active.organization_id = head.organization_id
+		 AND active.deployment_unit_id = head.deployment_unit_id
+		 AND active.component_instance_id = head.component_instance_id
+		 AND active.component_key = b.component_key
+		 AND active.revision = b.desired_revision
 		JOIN ObservedComponentState o
-		  ON o.organization_id = b.organization_id
-		 AND o.component_instance_id = b.component_instance_id
+		  ON o.id = b.observed_component_state_id
+		 AND o.id = active.verified_observation_id
+		 AND o.organization_id = active.organization_id
+		 AND o.deployment_unit_id = active.deployment_unit_id
+		 AND o.component_instance_id = active.component_instance_id
+		 AND o.component_key = active.component_key
+		 AND o.artifact_digest = active.artifact_digest
+		 AND o.config_checksum = active.config_checksum
+		 AND o.schema_version = active.schema_version
+		 AND o.capability_checksum = active.capability_checksum
+		 AND o.platform = active.platform
+		 AND o.topology_checksum = active.topology_checksum
+		 AND o.state_checksum = b.observation_checksum
 		 AND o.is_current
+		 AND o.trusted
+		 AND o.disposition = 'ACCEPTED'
+		 AND o.health = 'HEALTHY'
+		 AND o.outcome = 'COMPLETE'
+		 AND o.fresh_until >= @now
+		JOIN ComponentObservationHead observation_head
+		  ON observation_head.organization_id = o.organization_id
+		 AND observation_head.observer_id = o.observer_id
+		 AND observation_head.deployment_unit_id = o.deployment_unit_id
+		 AND observation_head.component_instance_id = o.component_instance_id
+		 AND observation_head.observation_id = o.id
+		 AND observation_head.evidence_checksum = o.evidence_checksum
+		 AND observation_head.captured_at = o.captured_at
 		WHERE b.organization_id = @organizationID
 		  AND b.deployment_plan_id = @planID
-		ORDER BY b.component_key, o.id`
+		  AND b.projection = 'verified_v2'
+		  AND b.authorizes_v2_execution
+		  AND NOT b.bootstrap
+		  AND b.active_desired_revision_id IS NOT NULL
+		  AND b.observed_component_state_id IS NOT NULL
+		ORDER BY b.component_key, active.id, o.id`
 	if lockRows {
-		query += " FOR SHARE OF o"
+		query += " FOR SHARE OF b, head, active, o, observation_head"
 	}
 	rows, err := internalctx.GetDb(ctx).Query(
 		ctx,
 		query,
-		pgx.NamedArgs{"organizationID": organizationID, "planID": planID},
+		pgx.NamedArgs{"organizationID": organizationID, "planID": planID, "now": now},
 	)
 	if err != nil {
 		return result, fmt.Errorf("load current observed state: %w", err)
 	}
 	defer rows.Close()
 	type item struct {
-		ComponentKey  string    `json:"componentKey"`
-		ObservationID uuid.UUID `json:"observationId"`
-		StateChecksum string    `json:"stateChecksum"`
+		ComponentKey         string    `json:"componentKey"`
+		ActiveRevisionID     uuid.UUID `json:"activeRevisionId"`
+		DesiredRevision      int64     `json:"desiredRevision"`
+		ObservationID        uuid.UUID `json:"observationId"`
+		StateChecksum        string    `json:"stateChecksum"`
+		RuntimeStateChecksum string    `json:"runtimeStateChecksum"`
+		ArtifactDigest       string    `json:"artifactDigest"`
+		ConfigChecksum       string    `json:"configChecksum"`
+		SchemaVersion        string    `json:"schemaVersion"`
+		CapabilityChecksum   string    `json:"capabilityChecksum"`
+		Platform             string    `json:"platform"`
+		TopologyChecksum     string    `json:"topologyChecksum"`
+		ReceivedAt           time.Time `json:"receivedAt"`
+		FreshUntil           time.Time `json:"freshUntil"`
 	}
 	items := []item{}
 	for rows.Next() {
 		var value item
-		if err := rows.Scan(&value.ComponentKey, &value.ObservationID, &value.StateChecksum); err != nil {
+		if err := rows.Scan(
+			&value.ComponentKey, &value.ActiveRevisionID, &value.DesiredRevision,
+			&value.ObservationID, &value.StateChecksum, &value.RuntimeStateChecksum,
+			&value.ArtifactDigest, &value.ConfigChecksum, &value.SchemaVersion,
+			&value.CapabilityChecksum, &value.Platform, &value.TopologyChecksum,
+			&value.ReceivedAt, &value.FreshUntil,
+		); err != nil {
 			return result, fmt.Errorf("scan current observed state: %w", err)
 		}
 		items = append(items, value)
@@ -461,22 +676,10 @@ func loadCurrentPlanObservedStateMaterial(
 	payload, _ := json.Marshal(items)
 	sum := sha256.Sum256(payload)
 	result.Checksum = "sha256:" + hex.EncodeToString(sum[:])
-	result.Complete = len(items) == baselineCount
-	if len(items) > 0 {
-		if err := internalctx.GetDb(ctx).QueryRow(ctx, `
-			SELECT max(o.received_at)
-			FROM DeploymentPlanBaseline b
-			JOIN ObservedComponentState o
-			  ON o.organization_id = b.organization_id
-			 AND o.component_instance_id = b.component_instance_id
-			 AND o.is_current
-			WHERE b.organization_id = @organizationID
-			  AND b.deployment_plan_id = @planID
-		`, pgx.NamedArgs{
-			"organizationID": organizationID,
-			"planID":         planID,
-		}).Scan(&result.LatestReceivedAt); err != nil {
-			return result, fmt.Errorf("read latest current observation time: %w", err)
+	result.Complete = baselineCount > 0 && len(items) == baselineCount
+	for _, value := range items {
+		if value.ReceivedAt.After(result.LatestReceivedAt) {
+			result.LatestReceivedAt = value.ReceivedAt
 		}
 	}
 	return result, nil
@@ -512,20 +715,20 @@ func insertReviewAdmissionDecision(
 ) (*types.ReviewAdmissionDecisionRecord, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		INSERT INTO ReviewAdmissionDecision (
-		  id, organization_id, deployment_plan_id, plan_revision,
+		  id, created_at, organization_id, deployment_plan_id, plan_revision,
 		  plan_checksum, review_material_checksum, observed_state_checksum,
 		  decision, reason, actor_useraccount_id, expires_at,
 		  supersedes_decision_id, revokes_decision_id,
 		  authorization_evidence, canonical_checksum, idempotency_key
 		) VALUES (
-		  @id, @organizationID, @deploymentPlanID, @planRevision,
+		  @id, @createdAt, @organizationID, @deploymentPlanID, @planRevision,
 		  @planChecksum, @reviewMaterialChecksum, @observedStateChecksum,
 		  @decision, @reason, @actorUserAccountID, @expiresAt,
 		  @supersedesDecisionID, @revokesDecisionID,
 		  @authorizationEvidence, @canonicalChecksum, @idempotencyKey
 		) RETURNING `+reviewAdmissionOutputExpr,
 		pgx.NamedArgs{
-			"id": decision.ID, "organizationID": decision.OrganizationID,
+			"id": decision.ID, "createdAt": decision.CreatedAt, "organizationID": decision.OrganizationID,
 			"deploymentPlanID": decision.DeploymentPlanID, "planRevision": decision.PlanRevision,
 			"planChecksum": decision.PlanChecksum, "reviewMaterialChecksum": decision.ReviewMaterialChecksum,
 			"observedStateChecksum": decision.ObservedStateChecksum, "decision": decision.Decision,
@@ -633,15 +836,27 @@ func validateReviewAdmissionRequest(request types.CreateReviewAdmissionDecisionR
 }
 
 func reviewAuthorizationEvidence(
-	organizationID, actorID, planID uuid.UUID, decisionAt time.Time,
+	organizationID, actorID, planID uuid.UUID,
+	decisionAt time.Time,
+	admissionEvaluationID uuid.UUID,
+	admissionDecisionChecksum string,
+	approvalRequestID uuid.UUID,
+	approvalRequestRevision int64,
 ) string {
 	payload, _ := json.Marshal(struct {
-		OrganizationID uuid.UUID `json:"organizationId"`
-		ActorID        uuid.UUID `json:"actorId"`
-		PlanID         uuid.UUID `json:"planId"`
-		Action         string    `json:"action"`
-		DecisionAt     string    `json:"decisionAt"`
-	}{organizationID, actorID, planID, "plan.execute", decisionAt.UTC().Format(time.RFC3339Nano)})
+		OrganizationID            uuid.UUID `json:"organizationId"`
+		ActorID                   uuid.UUID `json:"actorId"`
+		PlanID                    uuid.UUID `json:"planId"`
+		Action                    string    `json:"action"`
+		DecisionAt                string    `json:"decisionAt"`
+		AdmissionEvaluationID     uuid.UUID `json:"admissionEvaluationId"`
+		AdmissionDecisionChecksum string    `json:"admissionDecisionChecksum"`
+		ApprovalRequestID         uuid.UUID `json:"approvalRequestId"`
+		ApprovalRequestRevision   int64     `json:"approvalRequestRevision"`
+	}{
+		organizationID, actorID, planID, "plan.execute", decisionAt.UTC().Format(time.RFC3339Nano),
+		admissionEvaluationID, admissionDecisionChecksum, approvalRequestID, approvalRequestRevision,
+	})
 	sum := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }

@@ -212,6 +212,8 @@ func validateStepAdapterScope(
 	switch {
 	case (strings.HasPrefix(requirement.StepKey, "migration:") &&
 		strings.HasSuffix(requirement.StepKey, ":apply")) ||
+		(strings.HasPrefix(requirement.StepKey, "recovery:") &&
+			strings.HasSuffix(requirement.StepKey, ":reverse")) ||
 		strings.Contains(requirement.StepKey, ":migration:"):
 		valid = requirement.ScopeType == types.AdapterScopeDatabaseResource
 	case strings.HasSuffix(requirement.StepKey, ":health"):

@@ -2,6 +2,7 @@ package scheduling
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/types"
@@ -86,6 +87,8 @@ func TestCreateTasksForAdmittedV2PlanCreatesTasksOnlyAfterAdmit(t *testing.T) {
 	g.Expect(err).To(MatchError(ContainSubstring("WAIT")))
 	g.Expect(taskCalls).To(Equal(0))
 
+	admissionID := uuid.New()
+	decisionChecksum := "sha256:" + strings.Repeat("a", 64)
 	dependencies.AdmitDeploymentPlan = func(
 		_ context.Context,
 		admissionRequest types.AdmitDeploymentPlanRequest,
@@ -93,7 +96,19 @@ func TestCreateTasksForAdmittedV2PlanCreatesTasksOnlyAfterAdmit(t *testing.T) {
 		g.Expect(admissionRequest.DeploymentPlanID).To(Equal(request.DeploymentPlanID))
 		g.Expect(admissionRequest.SchedulerIdempotencyKey).
 			To(Equal(request.SchedulerIdempotencyKey))
-		return &types.AdmissionEvaluation{Decision: types.AdmissionDecisionAdmit}, nil
+		return &types.AdmissionEvaluation{
+			ID: admissionID, Decision: types.AdmissionDecisionAdmit,
+			DecisionChecksum: decisionChecksum,
+		}, nil
+	}
+	dependencies.CreateTasks = func(
+		_ context.Context,
+		createRequest types.CreateTasksForDeploymentPlanRequest,
+	) ([]types.Task, error) {
+		taskCalls++
+		g.Expect(createRequest.AdmissionEvaluationID).To(Equal(admissionID))
+		g.Expect(createRequest.AdmissionDecisionChecksum).To(Equal(decisionChecksum))
+		return []types.Task{{ID: uuid.New()}}, nil
 	}
 	tasks, err := CreateTasksForAdmittedV2Plan(
 		context.Background(),

@@ -46,6 +46,17 @@ func TestReviewAdmissionMigrationAndTaskGateAreFailClosed(t *testing.T) {
 	g.Expect(gate).To(BeNumerically(">", 0))
 	g.Expect(gate).To(BeNumerically("<", preflight))
 	g.Expect(gate).To(BeNumerically("<", insert))
+
+	reviewText := string(repositorySource)
+	g.Expect(reviewText).NotTo(ContainSubstring("LIMIT 100"))
+	for _, required := range []string{
+		"baselineCount > 0", "b.authorizes_v2_execution", "head.active_revision_id = b.active_desired_revision_id",
+		"head.pending_revision_id IS NULL", "NOT head.quarantined", "o.id = active.verified_observation_id",
+		"o.is_current", "o.trusted", "o.disposition = 'ACCEPTED'", "o.health = 'HEALTHY'",
+		"o.outcome = 'COMPLETE'", "o.fresh_until >= @now", "o.capability_checksum = active.capability_checksum",
+	} {
+		g.Expect(reviewText).To(ContainSubstring(required))
+	}
 }
 
 func TestReviewDecisionReplayMatchesOnlyExactMaterial(t *testing.T) {
@@ -117,4 +128,56 @@ func TestReviewMaterialRequiresCurrentAdmitAndCurrentApproval(t *testing.T) {
 		evaluatedAt,
 		true,
 	)).To(BeFalse())
+}
+
+func TestExactAdmissionBindingRejectsStaleOrMismatchedMaterial(t *testing.T) {
+	g := NewWithT(t)
+	approvalID := uuid.New()
+	approvalRevision := int64(7)
+	evaluation := reviewAdmissionEvaluationMaterial{
+		ID: uuid.New(), PlanRevision: 1,
+		PlanChecksum:            "sha256:" + strings.Repeat("a", 64),
+		EffectivePolicyChecksum: "sha256:" + strings.Repeat("b", 64),
+		Decision:                types.AdmissionDecisionAdmit,
+		MaterialChecksum:        "sha256:" + strings.Repeat("c", 64),
+		DecisionChecksum:        "sha256:" + strings.Repeat("d", 64),
+		ApprovalRequestID:       &approvalID, ApprovalRequestRevision: &approvalRevision,
+	}
+
+	g.Expect(validateExactReviewAdmissionBinding(
+		evaluation, evaluation.ID, evaluation.DecisionChecksum, approvalID, approvalRevision,
+	)).To(Succeed())
+	g.Expect(validateExactReviewAdmissionBinding(
+		evaluation, uuid.New(), evaluation.DecisionChecksum, approvalID, approvalRevision,
+	)).To(MatchError(ContainSubstring("exact admission")))
+	g.Expect(validateExactReviewAdmissionBinding(
+		evaluation, evaluation.ID, "sha256:"+strings.Repeat("e", 64), approvalID, approvalRevision,
+	)).To(MatchError(ContainSubstring("exact admission")))
+	g.Expect(validateExactReviewAdmissionBinding(
+		evaluation, evaluation.ID, evaluation.DecisionChecksum, uuid.New(), approvalRevision,
+	)).To(MatchError(ContainSubstring("current approval")))
+}
+
+func TestReviewAuthorizationEvidenceBindsAdmissionAndApproval(t *testing.T) {
+	g := NewWithT(t)
+	decisionAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	organizationID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	admissionID, approvalID := uuid.New(), uuid.New()
+
+	first := reviewAuthorizationEvidence(
+		organizationID, actorID, planID, decisionAt,
+		admissionID, "sha256:"+strings.Repeat("a", 64), approvalID, 3,
+	)
+	second := reviewAuthorizationEvidence(
+		organizationID, actorID, planID, decisionAt,
+		uuid.New(), "sha256:"+strings.Repeat("a", 64), approvalID, 3,
+	)
+	third := reviewAuthorizationEvidence(
+		organizationID, actorID, planID, decisionAt,
+		admissionID, "sha256:"+strings.Repeat("a", 64), approvalID, 4,
+	)
+
+	g.Expect(first).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
+	g.Expect(second).NotTo(Equal(first))
+	g.Expect(third).NotTo(Equal(first))
 }

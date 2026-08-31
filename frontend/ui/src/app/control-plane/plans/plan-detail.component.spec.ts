@@ -10,6 +10,7 @@ import {
   OperatorPlanDetailResponse,
   OperatorPlanFact,
   OperatorPlanRow,
+  OperatorReviewAdmissionDecision,
   OperatorReviewAdmissionMaterial,
 } from '../../types/operator-control-plane';
 import {PlanDetailComponent} from './plan-detail.component';
@@ -23,6 +24,7 @@ describe('PlanDetailComponent', () => {
     publishPlanDraft: ReturnType<typeof vi.fn>;
     requestPlanApproval: ReturnType<typeof vi.fn>;
     getReviewAdmissionMaterial: ReturnType<typeof vi.fn>;
+    listReviewAdmissionDecisions: ReturnType<typeof vi.fn>;
     recordReviewAdmissionDecision: ReturnType<typeof vi.fn>;
     createPreviousStatePlan: ReturnType<typeof vi.fn>;
   };
@@ -144,6 +146,21 @@ describe('PlanDetailComponent', () => {
       idempotencyKey: 'review-1',
     },
   };
+  const reviewHistory: OperatorReviewAdmissionDecision[] = [
+    {
+      ...reviewMaterial.latestDecision!,
+      id: 'review-2',
+      createdAt: '2026-07-28T02:06:00Z',
+      decision: 'NO_GO',
+      reason: 'Current observation requires investigation.',
+      actorUserAccountId: 'approver-2',
+      supersedesDecisionId: 'review-1',
+      revokesDecisionId: 'review-1',
+      canonicalChecksum: 'sha256:decision-2',
+      idempotencyKey: 'review-key-2',
+    },
+    {...reviewMaterial.latestDecision!, idempotencyKey: 'review-key-1'},
+  ];
 
   beforeEach(() => {
     service = {
@@ -156,6 +173,7 @@ describe('PlanDetailComponent', () => {
       publishPlanDraft: vi.fn(),
       requestPlanApproval: vi.fn(),
       getReviewAdmissionMaterial: vi.fn().mockReturnValue(of(reviewMaterial)),
+      listReviewAdmissionDecisions: vi.fn().mockReturnValue(of(reviewHistory)),
       recordReviewAdmissionDecision: vi.fn(),
       createPreviousStatePlan: vi.fn(),
     };
@@ -189,6 +207,7 @@ describe('PlanDetailComponent', () => {
 
     expect(service.getPlan.mock.calls.at(-1)).toEqual(['plan-published']);
     expect(service.getPlanEvidence.mock.calls.at(-1)).toEqual(['plan-published']);
+    expect(service.listReviewAdmissionDecisions.mock.calls.at(-1)).toEqual(['plan-published']);
     expect((component as any).planId).toBe('plan-published');
   });
 
@@ -275,6 +294,29 @@ describe('PlanDetailComponent', () => {
     expect(text).toContain('sha256:review-material');
   });
 
+  it('renders the complete append-only decision history and lineage evidence', () => {
+    const {fixture} = createComponent();
+    const text = fixture.nativeElement.textContent;
+
+    for (const value of [
+      'Decision history',
+      'approver-2',
+      'Current observation requires investigation.',
+      'revision 1',
+      'review-key-2',
+      'review-1',
+      'sha256:canonical',
+      'sha256:observed',
+      'sha256:review-material',
+      'sha256:decision-2',
+      'sha256:authorization',
+      'Revoked by review-2',
+    ]) {
+      expect(text).withContext(value).toContain(value);
+    }
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="review-decision-history"] article').length).toBe(2);
+  });
+
   it('shows current NO_GO and stale review states explicitly', () => {
     service.getReviewAdmissionMaterial.mockReturnValue(
       of({
@@ -353,6 +395,7 @@ describe('PlanDetailComponent', () => {
       revokesDecisionId: 'review-1',
     });
     expect(service.getReviewAdmissionMaterial).toHaveBeenCalledTimes(2);
+    expect(service.listReviewAdmissionDecisions).toHaveBeenCalledTimes(2);
   });
 
   it('renders forward and previous-state Customer and Transaction checkpoints as immutable facts', () => {

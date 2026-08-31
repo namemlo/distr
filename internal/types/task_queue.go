@@ -117,13 +117,15 @@ func (s StepRunStatus) IsTerminal() bool {
 }
 
 type CreateTasksForDeploymentPlanRequest struct {
-	OrganizationID        uuid.UUID
-	DeploymentPlanID      uuid.UUID
-	ExecutionOccurrenceID uuid.UUID
-	ActorUserAccountID    uuid.UUID
-	ConcurrencyPolicy     TaskConcurrencyPolicy
-	AdditionalResources   []TaskLockResourceRequest
-	ReviewAuthorize       ReviewAdmissionExecutionAuthorizer
+	OrganizationID            uuid.UUID
+	DeploymentPlanID          uuid.UUID
+	ExecutionOccurrenceID     uuid.UUID
+	ActorUserAccountID        uuid.UUID
+	AdmissionEvaluationID     uuid.UUID
+	AdmissionDecisionChecksum string
+	ConcurrencyPolicy         TaskConcurrencyPolicy
+	AdditionalResources       []TaskLockResourceRequest
+	ReviewAuthorize           ReviewAdmissionExecutionAuthorizer
 }
 
 type TaskLockResourceRequest struct {

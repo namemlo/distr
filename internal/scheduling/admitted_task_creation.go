@@ -86,12 +86,14 @@ func CreateTasksForAdmittedV2Plan(
 	return dependencies.CreateTasks(
 		ctx,
 		types.CreateTasksForDeploymentPlanRequest{
-			OrganizationID:        request.OrganizationID,
-			DeploymentPlanID:      request.DeploymentPlanID,
-			ExecutionOccurrenceID: request.ExecutionOccurrenceID,
-			ActorUserAccountID:    request.ActorUserAccountID,
-			ConcurrencyPolicy:     request.ConcurrencyPolicy,
-			AdditionalResources:   request.AdditionalResources,
+			OrganizationID:            request.OrganizationID,
+			DeploymentPlanID:          request.DeploymentPlanID,
+			ExecutionOccurrenceID:     request.ExecutionOccurrenceID,
+			ActorUserAccountID:        request.ActorUserAccountID,
+			AdmissionEvaluationID:     evaluation.ID,
+			AdmissionDecisionChecksum: evaluation.DecisionChecksum,
+			ConcurrencyPolicy:         request.ConcurrencyPolicy,
+			AdditionalResources:       request.AdditionalResources,
 		},
 	)
 }

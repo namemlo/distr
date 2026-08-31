@@ -13,6 +13,7 @@ import {
   OperatorPlanDetail,
   OperatorPlanDraftValidation,
   OperatorPlanFact,
+  OperatorReviewAdmissionDecision,
   OperatorReviewAdmissionDecisionValue,
   OperatorReviewAdmissionMaterial,
 } from '../../types/operator-control-plane';
@@ -46,13 +47,16 @@ export class PlanDetailComponent implements OnInit {
   protected readonly comparison = signal<OperatorPlanCompare | null>(null);
   protected readonly draftValidation = signal<OperatorPlanDraftValidation | null>(null);
   protected readonly reviewMaterial = signal<OperatorReviewAdmissionMaterial | null>(null);
+  protected readonly reviewDecisionHistory = signal<OperatorReviewAdmissionDecision[]>([]);
   protected readonly loading = signal(true);
   protected readonly evidenceLoading = signal(true);
   protected readonly reviewMaterialLoading = signal(true);
+  protected readonly reviewDecisionHistoryLoading = signal(true);
   protected readonly actionLoading = signal<string | null>(null);
   protected readonly error = signal<OperatorControlPlaneError | null>(null);
   protected readonly evidenceError = signal<OperatorControlPlaneError | null>(null);
   protected readonly reviewMaterialError = signal<OperatorControlPlaneError | null>(null);
+  protected readonly reviewDecisionHistoryError = signal<OperatorControlPlaneError | null>(null);
   protected readonly actionError = signal<string | null>(null);
 
   protected readonly compareForm = this.fb.nonNullable.group({
@@ -98,10 +102,12 @@ export class PlanDetailComponent implements OnInit {
     this.comparison.set(null);
     this.draftValidation.set(null);
     this.reviewMaterial.set(null);
+    this.reviewDecisionHistory.set([]);
     this.actionError.set(null);
     this.error.set(null);
     this.evidenceError.set(null);
     this.reviewMaterialError.set(null);
+    this.reviewDecisionHistoryError.set(null);
   }
 
   protected load() {
@@ -109,9 +115,11 @@ export class PlanDetailComponent implements OnInit {
     this.loading.set(true);
     this.evidenceLoading.set(true);
     this.reviewMaterialLoading.set(true);
+    this.reviewDecisionHistoryLoading.set(true);
     this.error.set(null);
     this.evidenceError.set(null);
     this.reviewMaterialError.set(null);
+    this.reviewDecisionHistoryError.set(null);
 
     this.service.getPlan(this.planId).subscribe({
       next: ({detail}) => {
@@ -141,6 +149,7 @@ export class PlanDetailComponent implements OnInit {
     });
 
     this.loadReviewMaterial(generation);
+    this.loadReviewDecisionHistory(generation);
   }
 
   private loadReviewMaterial(generation = this.planLoadGeneration) {
@@ -157,6 +166,24 @@ export class PlanDetailComponent implements OnInit {
         this.reviewMaterial.set(null);
         this.reviewMaterialError.set(error);
         this.reviewMaterialLoading.set(false);
+      },
+    });
+  }
+
+  private loadReviewDecisionHistory(generation = this.planLoadGeneration) {
+    this.reviewDecisionHistoryLoading.set(true);
+    this.reviewDecisionHistoryError.set(null);
+    this.service.listReviewAdmissionDecisions(this.planId).subscribe({
+      next: (decisions) => {
+        if (generation !== this.planLoadGeneration) return;
+        this.reviewDecisionHistory.set(decisions);
+        this.reviewDecisionHistoryLoading.set(false);
+      },
+      error: (error: OperatorControlPlaneError) => {
+        if (generation !== this.planLoadGeneration) return;
+        this.reviewDecisionHistory.set([]);
+        this.reviewDecisionHistoryError.set(error);
+        this.reviewDecisionHistoryLoading.set(false);
       },
     });
   }
@@ -284,6 +311,7 @@ export class PlanDetailComponent implements OnInit {
       );
       this.reviewDecisionForm.controls.reason.reset('');
       this.loadReviewMaterial();
+      this.loadReviewDecisionHistory();
     });
   }
 
@@ -394,6 +422,34 @@ export class PlanDetailComponent implements OnInit {
 
   protected reviewDecisionEnabled(): boolean {
     return this.reviewMaterial()?.canDecide === true && !this.reviewMaterialLoading();
+  }
+
+  protected reviewDecisionHistoryStatus(decision: OperatorReviewAdmissionDecision): string {
+    const history = this.reviewDecisionHistory();
+    const revoker = history.find((candidate) => candidate.revokesDecisionId === decision.id);
+    if (revoker) {
+      return `Revoked by ${revoker.id}`;
+    }
+    const superseder = history.find((candidate) => candidate.supersedesDecisionId === decision.id);
+    if (superseder) {
+      return `Superseded by ${superseder.id}`;
+    }
+    const material = this.reviewMaterial();
+    if (
+      material &&
+      (decision.planChecksum !== material.planChecksum ||
+        decision.reviewMaterialChecksum !== material.reviewMaterialChecksum ||
+        decision.observedStateChecksum !== material.observedStateChecksum)
+    ) {
+      return 'Invalidated by material change';
+    }
+    if (new Date(decision.expiresAt).getTime() <= Date.now()) {
+      return 'Expired';
+    }
+    if (material?.latestDecision?.id === decision.id && material.state === 'STALE') {
+      return 'Invalidated';
+    }
+    return material?.latestDecision?.id === decision.id ? 'Current tip' : 'Historical';
   }
 
   protected isForbidden(): boolean {

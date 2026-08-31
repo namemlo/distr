@@ -1256,22 +1256,23 @@ Use one entry per pull request:
   execution remains disabled until PR-075.
 - User-facing behavior: Plan validation and published plan reads expose exact healthy baselines, client-specific
   image/config/provider/schema/topology changes, accumulated skipped-release notes, bootstrap, and policy risks.
-  Operators may create a new B-to-A plan from an independently observed successful A without rewriting either
-  historical plan.
+  Operators may create a new B-to-A plan only for the exact same target/scope from a complete all-successful v2
+  Task occurrence or complete baseline adoption whose current trusted observations still exactly match A.
 - Database changes: Migration 146 adds append-only, actor-attributed `DeploymentPlanBaseline`,
   `DeploymentPlanChangeEntry`, and `DeploymentPlanRiskEntry`, plus immutable bootstrap and previous-state source
   lineage on `DeploymentPlan`. Composite tenant foreign keys and rollback refusal protect evidence.
 - API changes: Adds `POST /api/v1/deployment-plans/{currentPlanId}/previous-state` and additive
   `baselines`/`changes`/`risks`/`bootstrap`/`previousStateSourcePlanId` response fields.
 - UI changes: Adds typed target-plan baseline, change, release-note, risk, and previous-state request contracts.
-- Agent protocol changes: None. Legacy projection is explicitly non-authoritative for v2 and PR-075 remains the
-  execution gate.
+- Agent protocol changes: None. Legacy external-observation fallback is explicitly non-authoritative. Reverse
+  migration steps use freshly resolved current adapter/config facts after the old component is healthy.
 - Documentation: Folded the accepted exact-baseline and previous-state decision
   record into the PR-064 operator/fork note; no additional ADR number is
   allocated.
-- Tests: Added exact newest healthy selection, bootstrap, stale CAS/static tenant fences, deterministic image/config/
-  provider/schema/topology comparison, skipped-note accumulation, stable ordering, forward-only risk, B-to-A route,
-  migration append-only/rollback, API validation, and mapping coverage.
+- Tests: Added exact newest healthy selection, bootstrap, stale CAS/static tenant fences, exact source occurrence or
+  adoption proof, current observation-head trust/freshness, deterministic comparison, complete structured reverse
+  chain/compatibility, reverse graph/adapter resolution, B-to-A route, migration append-only/rollback, API
+  validation, and mapping coverage.
 - Upstream contribution notes: Community-neutral plan comparison and recovery history; no adopter, CI provider,
   infrastructure credential, client database, or application-specific behavior.
 - Compatibility notes: Existing v1 fields, rows, payloads, checksums, creation, and execution remain unchanged.
@@ -1853,25 +1854,30 @@ Use one entry per pull request:
 - User-facing behavior: Authorized operators append persistent `GO` or
   `NO_GO` decisions bound to the exact plan and complete current observed
   state. The plan detail UI shows current, negative, stale, and missing states,
-  blockers, and exact checksums; typed checksum confirmation is required.
+  blockers, exact checksums, and the complete retained decision chain with
+  actor/comment/time/revision/idempotency/expiry and lineage; typed checksum
+  confirmation is required.
 - Database changes: Migration 165 adds append-only, expiring, checksum-bound
   `ReviewAdmissionDecision` rows with supersession and revocation lineage.
 - API changes: Adds `GET/POST /api/v1/deployment-plans/{id}/review-decisions`
-  and `GET /api/v1/deployment-plans/{id}/review-material`.
+  and `GET /api/v1/deployment-plans/{id}/review-material`; the list returns the
+  complete append-only history rather than only a capped/latest projection.
 - UI changes: Adds checksum-bound `GO/NO_GO` controls to plan detail, including
   disabled invalid-admission states and supersession/revocation lineage.
 - Agent protocol changes: None.
 - Documentation: Adds ADR-0071 and PR-084 fork notes.
-- Tests: Focused checksum, expiry/staleness, `NO_GO`, current approval
-  authority, executor separation, distinct approver matching, API validation,
-  route, UI state/submission, migration shape, task mutation ordering,
-  migration lint, and diff checks.
+- Tests: Focused checksum, empty/incomplete observed material, expiry/staleness,
+  `NO_GO`, exact admission/approval binding, current approval authority,
+  executor separation, distinct approver matching, complete API/UI history,
+  migration shape, task mutation ordering, migration lint, and diff checks.
 - Upstream contribution notes: Community-neutral review and admission
   primitives with no adopter, CI provider, registry, or runtime assumptions.
 - Compatibility notes: V1 task creation is unchanged. V2 task creation fails
   closed before mutation unless the current decision tip is an authorized,
   unexpired, observed-state-current `GO` and approval remains eligible for the
-  executing actor under current active group membership.
+  executing actor under current active group membership. Historical GO records
+  without admission/approval-bound authorization evidence remain readable but
+  require a fresh GO before new task creation.
 
 ### PR-085 - Native baseline adoption
 
@@ -1948,7 +1954,7 @@ Use one entry per pull request:
   immutable v3 trust bindings, and creates append-only
   `ExecutionRuntimeEvidence` with exact attempt and intent lineage.
 - API changes: Adds `POST
-  /api/executor/v2/attempts/{attemptId}/runtime-evidence`; successful completion
+/api/executor/v2/attempts/{attemptId}/runtime-evidence`; successful completion
   binds the retained evidence ID and server canonical checksum.
 - UI changes: No new route; operator execution evidence includes the retained
   executor runtime proof.

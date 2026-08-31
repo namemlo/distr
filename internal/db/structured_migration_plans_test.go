@@ -90,6 +90,15 @@ func TestProjectTargetPlanMigrationsRetainsCompleteStructuredContract(t *testing
 	g.Expect(migrations[0].MigrationContract()).To(Equal(contract))
 	g.Expect(migrations[0].ApplyStepKey).To(Equal("migration:ledger.042:apply"))
 	g.Expect(migrations[0].ValidateStepKey).To(Equal("migration:ledger.042:validate"))
+
+	reverseGraph := types.TargetPlanGraph{Steps: []types.TargetPlanStep{{
+		StepKey: "recovery:ledger.042:reverse", ActionType: "database.migration.reverse",
+	}}}
+	reverse, err := projectTargetPlanMigrations([]types.MigrationContract{contract}, reverseGraph)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(reverse).To(HaveLen(1))
+	g.Expect(reverse[0].ApplyStepKey).To(Equal("recovery:ledger.042:reverse"))
+	g.Expect(reverse[0].ValidateStepKey).To(Equal("recovery:ledger.042:reverse"))
 }
 
 func TestCanonicalMigrationFreezesResultingSchemaChecksum(t *testing.T) {
