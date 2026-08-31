@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	. "github.com/onsi/gomega"
 )
@@ -50,6 +51,47 @@ func TestMigration147DefinesStructuredMigrationEvidence(t *testing.T) {
 	g.Expect(strings.ToLower(sql)).NotTo(ContainSubstring("password"))
 }
 
+func TestProjectTargetPlanMigrationsRetainsCompleteStructuredContract(t *testing.T) {
+	g := NewWithT(t)
+	contract := types.MigrationContract{
+		ID: "ledger.042", ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+		ExpectedSourceVersion: "41", ExpectedSourceChecksum: "sha256:" + strings.Repeat("1", 64),
+		ResultingVersion: "42", ResultingSchemaChecksum: "sha256:" + strings.Repeat("2", 64),
+		Phase: types.MigrationPhaseExpand, LockType: "exclusive", LockTimeoutSeconds: 30,
+		OperationalImpact: "brief write lock", BackupRequired: true,
+		BackupVerifier: "backup-verifier:v1",
+		PreconditionProbes: []types.MigrationProbe{{
+			Name: "source", Reference: "probe:ledger:source:v1",
+			ExpectedChecksum: "sha256:" + strings.Repeat("3", 64),
+		}},
+		PostconditionProbes: []types.MigrationProbe{{
+			Name: "result", Reference: "probe:ledger:result:v1",
+			ExpectedChecksum: "sha256:" + strings.Repeat("4", 64),
+		}},
+		RetryClass: types.MigrationRetrySafe, IdempotencyKey: "ledger.042",
+		Reversibility:                    types.MigrationReversibilityReversible,
+		PreviousApplicationCompatibility: ">=1.8.0",
+		RecoveryProcedureReference:       "recovery:ledger.042:v1",
+		AdapterType:                      "database.migrate",
+		ArtifactDigest:                   "registry.example.com/migrations/ledger@sha256:" + strings.Repeat("5", 64),
+		EvidenceRetentionDays:            90,
+	}
+	contract.Checksum, _ = migrationplanning.CanonicalMigrationContractChecksum(contract)
+	graph, err := migrationplanning.ExpandMigrationGraph(contract, types.TargetPlanGraph{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	migrations, err := projectTargetPlanMigrations(
+		[]types.MigrationContract{contract},
+		graph,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(migrations).To(HaveLen(1))
+	g.Expect(migrations[0].MigrationContract()).To(Equal(contract))
+	g.Expect(migrations[0].ApplyStepKey).To(Equal("migration:ledger.042:apply"))
+	g.Expect(migrations[0].ValidateStepKey).To(Equal("migration:ledger.042:validate"))
+}
+
 func TestCanonicalMigrationFreezesResultingSchemaChecksum(t *testing.T) {
 	g := NewWithT(t)
 	resultingChecksum := "sha256:" + strings.Repeat("f", 64)
@@ -65,6 +107,23 @@ func TestCanonicalMigrationFreezesResultingSchemaChecksum(t *testing.T) {
 	g.Expect(string(payload)).To(ContainSubstring(
 		`"resultingSchemaChecksum":"` + resultingChecksum + `"`,
 	))
+}
+
+func TestMigrationStateUsesExactStructuredResultAndForwardFixFact(t *testing.T) {
+	g := NewWithT(t)
+	state, checksumValue, forwardOnly, err := migrationState(
+		[]types.MigrationDeclaration{{Key: "ledger.042", Order: 10}},
+		[]types.MigrationContract{{
+			ID: "ledger.042", ResultingVersion: "42",
+			ResultingSchemaChecksum: "sha256:" + strings.Repeat("f", 64),
+			RequiresForwardFix:      true,
+		}},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(state).To(Equal("42"))
+	g.Expect(checksumValue).To(Equal("sha256:" + strings.Repeat("f", 64)))
+	g.Expect(forwardOnly).To(BeTrue())
 }
 
 func TestMigration147DownRefusesToDiscardEvidence(t *testing.T) {

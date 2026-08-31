@@ -20,8 +20,9 @@ func TestDeploymentPlanDraftValidationToAPI(t *testing.T) {
 			ProtocolVersion:           types.DeploymentPlanProtocolV2,
 			PublishedDeploymentPlanID: &planID,
 		},
-		PreviewChecksum: "sha256:preview",
-		Issues:          []types.ValidationIssue{{Code: "blocked"}},
+		PreviewChecksum:    "sha256:preview",
+		Issues:             []types.ValidationIssue{{Code: "blocked"}},
+		MigrationContracts: []types.MigrationContract{{ID: "ledger.042"}},
 	}
 
 	result := DeploymentPlanDraftValidationToAPI(input)
@@ -30,4 +31,5 @@ func TestDeploymentPlanDraftValidationToAPI(t *testing.T) {
 	g.Expect(result.Draft.PublishedDeploymentPlanID).To(Equal(&planID))
 	g.Expect(result.PreviewChecksum).To(Equal(input.PreviewChecksum))
 	g.Expect(result.Issues).To(Equal(input.Issues))
+	g.Expect(result.MigrationContracts).To(Equal(input.MigrationContracts))
 }

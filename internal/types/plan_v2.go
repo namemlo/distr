@@ -39,16 +39,17 @@ type PlanDraft struct {
 }
 
 type PlanDraftValidation struct {
-	Draft           PlanDraft                   `json:"draft"`
-	Resolutions     []RequirementResolution     `json:"resolutions"`
-	StepAdapters    []ResolvedPlanStepAdapter   `json:"stepAdapters"`
-	Graph           TargetPlanGraph             `json:"graph"`
-	Baselines       []DeploymentPlanBaseline    `json:"baselines"`
-	Changes         []DeploymentPlanChangeEntry `json:"changes"`
-	Risks           []DeploymentPlanRiskEntry   `json:"risks"`
-	Bootstrap       bool                        `json:"bootstrap"`
-	Issues          []ValidationIssue           `json:"issues"`
-	PreviewChecksum string                      `json:"previewChecksum"`
+	Draft              PlanDraft                   `json:"draft"`
+	Resolutions        []RequirementResolution     `json:"resolutions"`
+	StepAdapters       []ResolvedPlanStepAdapter   `json:"stepAdapters"`
+	Graph              TargetPlanGraph             `json:"graph"`
+	Baselines          []DeploymentPlanBaseline    `json:"baselines"`
+	Changes            []DeploymentPlanChangeEntry `json:"changes"`
+	Risks              []DeploymentPlanRiskEntry   `json:"risks"`
+	MigrationContracts []MigrationContract         `json:"migrationContracts,omitempty"`
+	Bootstrap          bool                        `json:"bootstrap"`
+	Issues             []ValidationIssue           `json:"issues"`
+	PreviewChecksum    string                      `json:"previewChecksum"`
 }
 
 type PlanResolutionInput struct {
@@ -146,6 +147,7 @@ type ComponentReleasePin struct {
 	ProvenanceBindingChecksum string                    `json:"provenanceBindingChecksum"`
 	ProvenanceFacts           []ComponentProvenanceFact `json:"provenanceFacts"`
 	Migrations                []MigrationDeclaration    `json:"migrations"`
+	MigrationContracts        []MigrationContract       `json:"migrationContracts,omitempty"`
 	AdapterRequirements       []AdapterRequirement      `json:"adapterRequirements,omitempty"`
 }
 
@@ -303,6 +305,7 @@ type TargetDeploymentPlanCanonical struct {
 	Baselines                    []DeploymentPlanBaseline    `json:"baselines"`
 	Changes                      []DeploymentPlanChangeEntry `json:"changes"`
 	Risks                        []DeploymentPlanRiskEntry   `json:"risks"`
+	MigrationContracts           []MigrationContract         `json:"migrationContracts,omitempty"`
 	Bootstrap                    bool                        `json:"bootstrap"`
 	ProtocolVersion              string                      `json:"protocolVersion"`
 	SupersedesDeploymentPlanID   *uuid.UUID                  `json:"supersedesDeploymentPlanId,omitempty"`

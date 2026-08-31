@@ -61,4 +61,7 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0072: Native Baseline Adoption](0072-native-baseline-adoption.md)
 - [ADR-0073: New-Volume Restore and Protected-History Continuity](0073-new-volume-restore-and-protected-history-continuity.md)
 - [ADR-0074: Executor Runtime Trust Contract](0074-executor-runtime-trust-contract.md)
+- [ADR-0075: Fresh Dependency Provider Evidence](0075-dependency-provider-evidence.md)
+- [ADR-0076: Native Structured Migration Contract Wiring](0076-native-structured-migration-contract-wiring.md)
+- [ADR-0077: Baseline Adoption Fact Separation](0077-baseline-adoption-fact-separation.md)
 - [ADR-0078: Independent Runtime Measurement Probes](0078-independent-runtime-measurement-probes.md)

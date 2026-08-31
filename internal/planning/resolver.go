@@ -14,6 +14,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/distr-sh/distr/internal/adapterresolution"
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -118,10 +119,18 @@ func adapterRequirementsFromReleasePins(
 				expectedScopeType = types.AdapterScopeObserverRegistration
 			case "migration":
 				expectedScopeType = types.AdapterScopeDatabaseResource
+				structured := make(map[string]struct{}, len(pin.MigrationContracts))
+				for _, contract := range pin.MigrationContracts {
+					structured[contract.ID] = struct{}{}
+				}
 				for _, migration := range pin.Migrations {
+					stepKey := "component:" + pin.ComponentKey + ":migration:" + migration.Key
+					if _, exists := structured[migration.Key]; exists {
+						stepKey = "migration:" + migration.Key + ":apply"
+					}
 					stepKeys = append(
 						stepKeys,
-						"component:"+pin.ComponentKey+":migration:"+migration.Key,
+						stepKey,
 					)
 				}
 			default:
@@ -201,7 +210,9 @@ func validateStepAdapterScope(
 ) *types.ValidationIssue {
 	valid := false
 	switch {
-	case strings.Contains(requirement.StepKey, ":migration:"):
+	case (strings.HasPrefix(requirement.StepKey, "migration:") &&
+		strings.HasSuffix(requirement.StepKey, ":apply")) ||
+		strings.Contains(requirement.StepKey, ":migration:"):
 		valid = requirement.ScopeType == types.AdapterScopeDatabaseResource
 	case strings.HasSuffix(requirement.StepKey, ":health"):
 		valid = requirement.ScopeType == types.AdapterScopeObserverRegistration
@@ -667,6 +678,7 @@ func validateReleasePins(
 		instances[instance.ID] = instance
 	}
 	seen := make(map[string]struct{}, len(input.ReleasePins))
+	allContracts := make([]types.MigrationContract, 0)
 	for _, pin := range input.ReleasePins {
 		key := strings.TrimSpace(pin.ComponentKey)
 		if _, duplicate := seen[key]; duplicate {
@@ -712,6 +724,69 @@ func validateReleasePins(
 			issues = append(issues, types.ValidationIssue{
 				Code: "component_instance_not_deployable", Field: "targetConfigSnapshotId",
 				Message: "pinned product components require managed or legacy-cutover physical instances",
+			})
+		}
+		declarations := make(map[string]types.MigrationDeclaration, len(pin.Migrations))
+		for _, declaration := range pin.Migrations {
+			declarations[declaration.Key] = declaration
+		}
+		contracts := make(map[string]types.MigrationContract, len(pin.MigrationContracts))
+		for _, contract := range pin.MigrationContracts {
+			field := "migrations." + contract.ID
+			if _, duplicate := contracts[contract.ID]; duplicate {
+				issues = append(issues, types.ValidationIssue{
+					Code: "structured_migration_contract_duplicate", Field: field,
+					Message: "structured migration contract ids must be unique",
+				})
+				continue
+			}
+			contracts[contract.ID] = contract
+			allContracts = append(allContracts, contract)
+			declaration, declared := declarations[contract.ID]
+			if !declared || (declaration.Type != "database" && declaration.Type != "data") {
+				issues = append(issues, types.ValidationIssue{
+					Code: "structured_migration_contract_declaration_mismatch", Field: field,
+					Message: "structured migration contract must match a database or data declaration",
+				})
+			}
+			if contract.ComponentKey != key {
+				issues = append(issues, types.ValidationIssue{
+					Code: "structured_migration_component_mismatch", Field: field + ".componentKey",
+					Message: "structured migration contract belongs to another component",
+				})
+			}
+			if ok && strings.TrimSpace(instance.DatabaseBoundary) != contract.DatabaseResourceKey {
+				issues = append(issues, types.ValidationIssue{
+					Code:    "structured_migration_database_boundary_mismatch",
+					Field:   field + ".databaseResourceKey",
+					Message: "structured migration contract does not match the physical database boundary",
+				})
+			}
+			for _, contractIssue := range migrationplanning.ValidateMigrationContractIntegrity(contract) {
+				issues = append(issues, types.ValidationIssue{
+					Code: contractIssue.Code, Field: field + "." + contractIssue.Field,
+					Message: contractIssue.Message,
+				})
+			}
+		}
+		for _, declaration := range pin.Migrations {
+			if declaration.Type != "database" && declaration.Type != "data" {
+				continue
+			}
+			if _, exists := contracts[declaration.Key]; !exists {
+				issues = append(issues, types.ValidationIssue{
+					Code:    "structured_migration_contract_required",
+					Field:   "migrations." + declaration.Key + ".contract",
+					Message: "database and data migrations require a complete structured contract",
+				})
+			}
+		}
+	}
+	if len(allContracts) > 0 {
+		if _, err := migrationplanning.OrderMigrationContracts(allContracts); err != nil {
+			issues = append(issues, types.ValidationIssue{
+				Code: "structured_migration_graph_invalid", Field: "migrationContracts",
+				Message: "structured migration dependency graph is invalid: " + err.Error(),
 			})
 		}
 	}

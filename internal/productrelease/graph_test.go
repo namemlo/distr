@@ -218,6 +218,40 @@ func TestProductReleaseDuplicateMigrationRequiresEveryFunctionalFieldToMatch(t *
 	}
 }
 
+func TestProductReleaseRequiresCompleteStructuredDatabaseMigrationContracts(t *testing.T) {
+	g := NewWithT(t)
+	manifest := neutralProviderConsumerManifest()
+	manifest.Components[1].Migrations = []types.MigrationDeclaration{{
+		Key: "ledger.042", Type: "database", Order: 1,
+		Compatibility: "forward-compatible", FailurePolicy: "retry",
+		Description: "Apply the ledger schema transition",
+	}}
+
+	issues := ValidateProductReleaseGraph(manifest)
+
+	g.Expect(issues).To(ContainElement(And(
+		HaveField("Field", "components.0.migrations.ledger.042.contract"),
+		HaveField("Rule", "structuredMigrationContract"),
+	)))
+}
+
+func TestProductReleaseAcceptsCompleteStructuredMigrationGraph(t *testing.T) {
+	g := NewWithT(t)
+	manifest := neutralProviderConsumerManifest()
+	contract := productMigrationContract(t)
+	manifest.Components[1].Migrations = []types.MigrationDeclaration{{
+		Key: contract.ID, Type: "database", Order: 1,
+		Compatibility: "forward-compatible", FailurePolicy: "retry",
+		Description: "Apply the ledger schema transition",
+	}}
+	manifest.Components[1].MigrationContracts = []types.MigrationContract{contract}
+
+	issues := ValidateProductReleaseGraph(manifest)
+
+	g.Expect(issues).NotTo(ContainElement(HaveField("Rule", "structuredMigrationContract")))
+	g.Expect(issues).NotTo(ContainElement(HaveField("Rule", "structuredMigrationGraph")))
+}
+
 func TestProductReleaseGraphRejectsUnboundedAggregateRequirements(t *testing.T) {
 	g := NewWithT(t)
 	manifest := neutralProviderConsumerManifest()

@@ -166,10 +166,11 @@ type ProductReleaseManifest struct {
 }
 
 type ProductReleaseComponent struct {
-	ComponentReleaseID       uuid.UUID `json:"componentReleaseId"`
-	ComponentReleaseChecksum string    `json:"componentReleaseChecksum"`
-	ComponentKey             string    `json:"componentKey"`
-	Version                  string    `json:"version"`
+	ComponentReleaseID       uuid.UUID                 `json:"componentReleaseId"`
+	ComponentReleaseChecksum string                    `json:"componentReleaseChecksum"`
+	ComponentKey             string                    `json:"componentKey"`
+	Version                  string                    `json:"version"`
+	MigrationContracts       []types.MigrationContract `json:"migrationContracts,omitempty"`
 }
 
 type ProductReleaseValidationResponse struct {

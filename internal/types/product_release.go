@@ -91,6 +91,7 @@ type ProductReleaseComponent struct {
 	Provides                 []CapabilityDeclaration     `json:"-"`
 	Requires                 []CapabilityRequirement     `json:"-"`
 	Migrations               []MigrationDeclaration      `json:"-"`
+	MigrationContracts       []MigrationContract         `json:"migrationContracts,omitempty"`
 	Platforms                []string                    `json:"-"`
 	Contract                 *ComponentReleaseContractV2 `json:"-"`
 }

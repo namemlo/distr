@@ -149,6 +149,33 @@ func TestExpandMigrationGraphRejectsUnorderedDatabaseLockConflict(t *testing.T) 
 	g.Expect(err).To(MatchError(ContainSubstring("database lock")))
 }
 
+func TestExpandMigrationGraphAllowsTransitiveOrderedDatabaseLockChain(t *testing.T) {
+	g := NewWithT(t)
+	first := migrationContractFixture()
+	second := migrationContractFixture()
+	second.ID = "ledger.043"
+	second.IdempotencyKey = second.ID
+	second.DependsOn = []string{first.ID}
+	third := migrationContractFixture()
+	third.ID = "ledger.044"
+	third.IdempotencyKey = third.ID
+	third.DependsOn = []string{second.ID}
+
+	graph, err := ExpandMigrationGraph(first, types.TargetPlanGraph{})
+	g.Expect(err).NotTo(HaveOccurred())
+	graph, err = ExpandMigrationGraph(second, graph)
+	g.Expect(err).NotTo(HaveOccurred())
+	graph, err = ExpandMigrationGraph(third, graph)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(indexOf(graph.TopologicalOrder, "migration:ledger.042:validate")).To(
+		BeNumerically("<", indexOf(graph.TopologicalOrder, "migration:ledger.043:validate")),
+	)
+	g.Expect(indexOf(graph.TopologicalOrder, "migration:ledger.043:validate")).To(
+		BeNumerically("<", indexOf(graph.TopologicalOrder, "migration:ledger.044:apply")),
+	)
+}
+
 func TestExpandMigrationGraphDoesNotInsertRestoreShortcut(t *testing.T) {
 	g := NewWithT(t)
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -156,6 +157,7 @@ func ValidateProductReleaseGraph(manifest types.ProductReleaseManifest) []types.
 		return collector.issues
 	}
 	components, providers := validateProductReleaseComponents(manifest, collector)
+	validateProductReleaseMigrationGraph(components, collector)
 	validateProductReleaseRequirements(manifest, components, providers, collector)
 	graph := BuildProductReleaseGraph(manifest)
 	if path := exactCyclePath(graph.Nodes, graph.Edges); len(path) > 0 {
@@ -373,6 +375,7 @@ func validateProductReleaseComponentMigrations(
 	migrationContracts map[string]types.MigrationDeclaration,
 	collector *productReleaseIssueCollector,
 ) {
+	declarations := make(map[string]types.MigrationDeclaration, len(component.Migrations))
 	for index, migration := range component.Migrations {
 		migrationField := fmt.Sprintf("%s.migrations.%d", field, index)
 		previous, exists := migrationContracts[migration.Key]
@@ -385,6 +388,70 @@ func validateProductReleaseComponentMigrations(
 		} else {
 			migrationContracts[migration.Key] = migration
 		}
+		declarations[migration.Key] = migration
+	}
+	structured := make(map[string]types.MigrationContract, len(component.MigrationContracts))
+	for index, contract := range component.MigrationContracts {
+		contractField := fmt.Sprintf("%s.migrationContracts.%d", field, index)
+		if _, duplicate := structured[contract.ID]; duplicate {
+			collector.add(contractField+".id", "unique", "structured migration contract ids must be unique")
+			continue
+		}
+		structured[contract.ID] = contract
+		declaration, declared := declarations[contract.ID]
+		if !declared || (declaration.Type != "database" && declaration.Type != "data") {
+			collector.add(
+				contractField,
+				"structuredMigrationContract",
+				"structured migration contract must match a database or data migration declaration",
+			)
+		}
+		if contract.ComponentKey != component.ComponentKey {
+			collector.add(
+				contractField+".componentKey",
+				"structuredMigrationContract",
+				"structured migration contract must belong to the frozen component",
+			)
+		}
+		for _, issue := range migrationplanning.ValidateMigrationContractIntegrity(contract) {
+			collector.add(
+				contractField+"."+issue.Field,
+				"structuredMigrationContract",
+				issue.Message,
+			)
+		}
+	}
+	for _, declaration := range component.Migrations {
+		if declaration.Type != "database" && declaration.Type != "data" {
+			continue
+		}
+		if _, exists := structured[declaration.Key]; !exists {
+			collector.add(
+				field+".migrations."+declaration.Key+".contract",
+				"structuredMigrationContract",
+				"database and data migrations require a complete frozen structured contract",
+			)
+		}
+	}
+}
+
+func validateProductReleaseMigrationGraph(
+	components []types.ProductReleaseComponent,
+	collector *productReleaseIssueCollector,
+) {
+	contracts := make([]types.MigrationContract, 0)
+	for _, component := range components {
+		contracts = append(contracts, component.MigrationContracts...)
+	}
+	if len(contracts) == 0 {
+		return
+	}
+	if _, err := migrationplanning.OrderMigrationContracts(contracts); err != nil {
+		collector.add(
+			"migrationContracts",
+			"structuredMigrationGraph",
+			"structured migration dependency graph is invalid: "+err.Error(),
+		)
 	}
 }
 
@@ -666,6 +733,17 @@ func normalizedComponents(input []types.ProductReleaseComponent) []types.Product
 			}
 			return strings.Compare(a.Key, b.Key)
 		})
+		components[index].MigrationContracts = slices.Clone(components[index].MigrationContracts)
+		for migrationIndex := range components[index].MigrationContracts {
+			components[index].MigrationContracts[migrationIndex] =
+				migrationplanning.NormalizeMigrationContract(
+					components[index].MigrationContracts[migrationIndex],
+				)
+		}
+		slices.SortFunc(
+			components[index].MigrationContracts,
+			func(a, b types.MigrationContract) int { return strings.Compare(a.ID, b.ID) },
+		)
 	}
 	slices.SortFunc(components, func(a, b types.ProductReleaseComponent) int {
 		if cmp := strings.Compare(a.ComponentKey, b.ComponentKey); cmp != 0 {

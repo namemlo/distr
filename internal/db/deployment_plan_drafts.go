@@ -14,6 +14,7 @@ import (
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/planning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -372,6 +373,13 @@ func validateDeploymentPlanDraft(
 		})
 		return result, nil
 	}
+	migrations, err := targetPlanMigrationContracts(input.ReleasePins)
+	if err != nil {
+		result.Issues = append(result.Issues, types.ValidationIssue{
+			Code: "invalid_migration_graph", Field: "migrationContracts", Message: err.Error(),
+		})
+		return result, nil
+	}
 	baselines, changes, risks, bootstrap, err := resolveDeploymentPlanEvidence(
 		ctx,
 		*draft,
@@ -385,6 +393,7 @@ func validateDeploymentPlanDraft(
 	result.Baselines = baselines
 	result.Changes = changes
 	result.Risks = risks
+	result.MigrationContracts = migrations
 	result.Bootstrap = bootstrap
 	canonical := buildTargetPlanCanonical(
 		*draft,
@@ -395,6 +404,7 @@ func validateDeploymentPlanDraft(
 		baselines,
 		changes,
 		risks,
+		migrations,
 		bootstrap,
 	)
 	payload, checksum, err := planning.CanonicalizeTargetDeploymentPlan(canonical)
@@ -544,6 +554,13 @@ func publishValidatedTargetPlan(
 		return nil, err
 	}
 	planTargetID := uuid.New()
+	planMigrations, err := projectTargetPlanMigrations(
+		validation.MigrationContracts,
+		validation.Graph,
+	)
+	if err != nil {
+		return nil, err
+	}
 	plan := &types.DeploymentPlan{
 		ID:                         uuid.New(),
 		OrganizationID:             draft.OrganizationID,
@@ -581,6 +598,7 @@ func publishValidatedTargetPlan(
 		Baselines:            validation.Baselines,
 		Changes:              validation.Changes,
 		Risks:                validation.Risks,
+		Migrations:           planMigrations,
 		Bootstrap:            validation.Bootstrap,
 		StepAdapters:         projectResolvedPlanStepAdapters(validation.StepAdapters),
 	}
@@ -1204,9 +1222,17 @@ func adapterScopeBindingsFromPlacement(
 				if !types.AdapterScopeDatabaseResource.IsValidReference(databaseBoundary) {
 					continue
 				}
+				structured := make(map[string]struct{}, len(pin.MigrationContracts))
+				for _, contract := range pin.MigrationContracts {
+					structured[contract.ID] = struct{}{}
+				}
 				for _, migration := range pin.Migrations {
+					stepKey := "component:" + componentKey + ":migration:" + migration.Key
+					if _, exists := structured[migration.Key]; exists {
+						stepKey = "migration:" + migration.Key + ":apply"
+					}
 					result = append(result, types.AdapterStepScopeBinding{
-						StepKey:        "component:" + componentKey + ":migration:" + migration.Key,
+						StepKey:        stepKey,
 						ScopeType:      types.AdapterScopeDatabaseResource,
 						ScopeReference: databaseBoundary,
 					})
@@ -1521,6 +1547,7 @@ func loadTargetPlanReleasePins(
 			ProvenanceBindingChecksum: provenanceBindingChecksum,
 			ProvenanceFacts:           slices.Clone(provenanceFacts),
 			Migrations:                slices.Clone(component.Migrations),
+			MigrationContracts:        slices.Clone(component.MigrationContracts),
 		}
 		if component.Contract != nil {
 			pin.AdapterRequirements = slices.Clone(component.Contract.AdapterRequirements)
@@ -1952,6 +1979,7 @@ func buildTargetPlanCanonical(
 	baselines []types.DeploymentPlanBaseline,
 	changes []types.DeploymentPlanChangeEntry,
 	risks []types.DeploymentPlanRiskEntry,
+	migrations []types.MigrationContract,
 	bootstrap bool,
 ) types.TargetDeploymentPlanCanonical {
 	return types.TargetDeploymentPlanCanonical{
@@ -1976,11 +2004,74 @@ func buildTargetPlanCanonical(
 		Baselines:                  slices.Clone(baselines),
 		Changes:                    slices.Clone(changes),
 		Risks:                      slices.Clone(risks),
+		MigrationContracts:         slices.Clone(migrations),
 		Bootstrap:                  bootstrap,
 		SupersedesDeploymentPlanID: draft.SupersedesDeploymentPlanID,
 		SupersedeReason:            strings.TrimSpace(draft.SupersedeReason),
 		PreviousStateSourcePlanID:  draft.PreviousStateSourcePlanID,
 	}
+}
+
+func targetPlanMigrationContracts(
+	pins []types.ComponentReleasePin,
+) ([]types.MigrationContract, error) {
+	contracts := make([]types.MigrationContract, 0)
+	for _, pin := range pins {
+		contracts = append(contracts, pin.MigrationContracts...)
+	}
+	ordered, err := migrationplanning.OrderMigrationContracts(contracts)
+	if err != nil {
+		return nil, fmt.Errorf("order target-plan migration contracts: %w", err)
+	}
+	return ordered, nil
+}
+
+func projectTargetPlanMigrations(
+	contracts []types.MigrationContract,
+	graph types.TargetPlanGraph,
+) ([]types.DeploymentPlanMigration, error) {
+	ordered, err := migrationplanning.OrderMigrationContracts(contracts)
+	if err != nil {
+		return nil, fmt.Errorf("order target-plan migrations for persistence: %w", err)
+	}
+	steps := make(map[string]struct{}, len(graph.Steps))
+	for _, step := range graph.Steps {
+		steps[step.StepKey] = struct{}{}
+	}
+	result := make([]types.DeploymentPlanMigration, 0, len(ordered))
+	for index, contract := range ordered {
+		applyKey := "migration:" + contract.ID + ":apply"
+		validateKey := "migration:" + contract.ID + ":validate"
+		if _, exists := steps[applyKey]; !exists {
+			return nil, fmt.Errorf("structured migration %q has no apply graph step", contract.ID)
+		}
+		if _, exists := steps[validateKey]; !exists {
+			return nil, fmt.Errorf("structured migration %q has no validate graph step", contract.ID)
+		}
+		result = append(result, types.DeploymentPlanMigration{
+			ID: uuid.New(), MigrationID: contract.ID, ContractChecksum: contract.Checksum,
+			ComponentKey: contract.ComponentKey, DatabaseResourceKey: contract.DatabaseResourceKey,
+			ExpectedSourceVersion:   contract.ExpectedSourceVersion,
+			ExpectedSourceChecksum:  contract.ExpectedSourceChecksum,
+			ResultingVersion:        contract.ResultingVersion,
+			ResultingSchemaChecksum: contract.ResultingSchemaChecksum,
+			Phase:                   contract.Phase, DependsOn: slices.Clone(contract.DependsOn),
+			LockType: contract.LockType, LockTimeoutSeconds: contract.LockTimeoutSeconds,
+			OperationalImpact: contract.OperationalImpact,
+			BackupRequired:    contract.BackupRequired, BackupVerifier: contract.BackupVerifier,
+			RetryClass: contract.RetryClass, IdempotencyKey: contract.IdempotencyKey,
+			Reversibility:                    contract.Reversibility,
+			PreviousApplicationCompatibility: contract.PreviousApplicationCompatibility,
+			RecoveryProcedureReference:       contract.RecoveryProcedureReference,
+			RequiresForwardFix:               contract.RequiresForwardFix,
+			AdapterType:                      contract.AdapterType, ArtifactDigest: contract.ArtifactDigest,
+			PreconditionProbes:    slices.Clone(contract.PreconditionProbes),
+			PostconditionProbes:   slices.Clone(contract.PostconditionProbes),
+			EvidenceRetentionDays: contract.EvidenceRetentionDays,
+			ApplyStepKey:          applyKey, ValidateStepKey: validateKey, SortOrder: index,
+		})
+	}
+	return result, nil
 }
 
 func projectResolvedPlanStepAdapters(

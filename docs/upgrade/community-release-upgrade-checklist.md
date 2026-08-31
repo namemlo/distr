@@ -75,6 +75,9 @@ checksum remain identical.
 - Run `hack/validate-migrations.sh`.
 - Run a dry-run legacy compatibility inspection where PR-049 metadata is needed.
 - Confirm live PostgreSQL tests have passed in the release candidate environment.
+- When upgrading to PR-089 wiring, confirm migration 147 is already applied.
+  No migration 169 exists or is required; the release reuses the existing
+  append-only `DeploymentPlanMigration` storage.
 
 ## Upgrade Order
 
@@ -103,3 +106,9 @@ Downgrade is limited when:
 - feature-flagged resources were created after the older version was deployed.
 
 If downgrade is required, validate it against a restored backup before touching production data.
+
+Plans published with structured migration contracts retain migration-147 rows
+and canonical JSON that older binaries may not understand. Do not delete that
+evidence for downgrade. Stop new protocol-v2 admission, preserve the database,
+and validate binary rollback against a restored copy while retaining the
+forward schema.

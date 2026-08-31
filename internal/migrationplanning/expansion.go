@@ -43,9 +43,15 @@ func ExpandMigrationGraph(
 		}
 		return finalizeGraph(base)
 	}
+	orderedDependencySteps, err := dependencyAncestorSteps(base, contract.DependsOn)
+	if err != nil {
+		return types.TargetPlanGraph{}, err
+	}
 	for _, step := range base.Steps {
-		if step.DatabaseLockKey == databaseLock &&
-			!dependencyStep(contract.DependsOn, step.StepKey) {
+		if step.DatabaseLockKey == databaseLock {
+			if _, ordered := orderedDependencySteps[step.StepKey]; ordered {
+				continue
+			}
 			return types.TargetPlanGraph{}, fmt.Errorf(
 				"database lock %q conflicts with unordered step %q",
 				databaseLock,
@@ -143,7 +149,8 @@ func buildMigrationGraph(
 		}
 	}
 	for _, step := range base.Steps {
-		if step.ComponentKey == contract.ComponentKey && isMutationStep(step) {
+		if !strings.HasPrefix(step.StepKey, "migration:") &&
+			step.ComponentKey == contract.ComponentKey && isMutationStep(step) {
 			edges = append(edges, newEdge(validateKey, step.StepKey))
 		}
 	}
@@ -258,8 +265,9 @@ func migrationStep(
 	inputJSON, _ := json.Marshal(input)
 	return types.TargetPlanStep{
 		StepKey: key, Name: name, Kind: kind, ComponentKey: contract.ComponentKey,
-		ActionType: actionType, ActionName: actionType, ExecutionLocation: "agent",
-		InputBindings: inputJSON, TargetLockKey: targetLock, DatabaseLockKey: databaseLock,
+		ActionType: actionType, ActionName: actionType,
+		ExecutionLocation: types.TaskExecutorTypeAgent.ExecutionLocation(),
+		InputBindings:     inputJSON, TargetLockKey: targetLock, DatabaseLockKey: databaseLock,
 		TimeoutSeconds: contract.LockTimeoutSeconds, RetryClass: string(retry),
 		CancellationBehavior:   cancellation,
 		ExpectedInputChecksum:  checksumBytes(inputJSON),
@@ -366,13 +374,39 @@ func migrationCancellation(contract types.MigrationContract) string {
 	return "cooperative"
 }
 
-func dependencyStep(dependencies []string, stepKey string) bool {
+func dependencyAncestorSteps(
+	graph types.TargetPlanGraph,
+	dependencies []string,
+) (map[string]struct{}, error) {
+	reverse := make(map[string][]string, len(graph.Edges))
+	for _, edge := range graph.Edges {
+		reverse[edge.ToStepKey] = append(reverse[edge.ToStepKey], edge.FromStepKey)
+	}
+	result := make(map[string]struct{})
+	queue := make([]string, 0, len(dependencies))
 	for _, dependency := range dependencies {
-		if strings.HasPrefix(stepKey, "migration:"+dependency+":") {
-			return true
+		validateKey := "migration:" + dependency + ":validate"
+		if !hasGraphStep(graph.Steps, validateKey) {
+			return nil, fmt.Errorf(
+				"migration dependency %q has no validate graph step",
+				dependency,
+			)
+		}
+		result[validateKey] = struct{}{}
+		queue = append(queue, validateKey)
+	}
+	for len(queue) > 0 {
+		key := queue[0]
+		queue = queue[1:]
+		for _, predecessor := range reverse[key] {
+			if _, exists := result[predecessor]; exists {
+				continue
+			}
+			result[predecessor] = struct{}{}
+			queue = append(queue, predecessor)
 		}
 	}
-	return false
+	return result, nil
 }
 
 func isMutationStep(step types.TargetPlanStep) bool {

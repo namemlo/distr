@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	. "github.com/onsi/gomega"
 )
@@ -76,12 +77,38 @@ func TestParseReleaseContractPreservesV1Shape(t *testing.T) {
 	g.Expect(normalized).To(MatchJSON(expected))
 }
 
+func TestNormalizeComponentReleaseOmitsEmptyStructuredMigrationContracts(t *testing.T) {
+	g := NewWithT(t)
+	contract := validComponentReleaseContract()
+	contract.Migrations = nil
+	contract.MigrationContracts = nil
+
+	payload, err := NormalizeReleaseContract(contract)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).NotTo(ContainSubstring("migrationContracts"))
+}
+
 func TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData(t *testing.T) {
 	tests := []struct {
 		name     string
 		mutate   func(*types.ComponentReleaseContractV2)
 		wantRule string
 	}{
+		{
+			name: "database migration without structured contract",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.MigrationContracts = nil
+			},
+			wantRule: "migrations.schema-v2.contract:required",
+		},
+		{
+			name: "structured migration checksum drift",
+			mutate: func(contract *types.ComponentReleaseContractV2) {
+				contract.MigrationContracts[0].ResultingVersion = "43"
+			},
+			wantRule: "migrationContracts.schema-v2.checksum:checksumMismatch",
+		},
 		{
 			name: "missing actual commit",
 			mutate: func(contract *types.ComponentReleaseContractV2) {
@@ -766,6 +793,7 @@ func validComponentReleaseContract() types.ComponentReleaseContractV2 {
 			FailurePolicy: "stop",
 			Description:   "Apply the symbolic account schema upgrade",
 		}},
+		MigrationContracts: []types.MigrationContract{componentMigrationContract()},
 		Changes: types.ComponentReleaseChanges{
 			Summary: "Add account settlement support",
 			Commits: []string{componentReleaseCommit},
@@ -775,4 +803,42 @@ func validComponentReleaseContract() types.ComponentReleaseContractV2 {
 			SBOM:       []string{"oci://evidence/sbom@sha256:" + strings.Repeat("e", 64)},
 		},
 	}
+}
+
+func componentMigrationContract() types.MigrationContract {
+	contract := types.MigrationContract{
+		ID: "schema-v2", ComponentKey: "payments.api",
+		DatabaseResourceKey: "postgres:payments", ExpectedSourceVersion: "1",
+		ExpectedSourceChecksum:  "sha256:" + strings.Repeat("1", 64),
+		ResultingVersion:        "2",
+		ResultingSchemaChecksum: "sha256:" + strings.Repeat("2", 64),
+		Phase:                   types.MigrationPhaseExpand,
+		LockType:                "exclusive",
+		LockTimeoutSeconds:      60,
+		OperationalImpact:       "brief write lock",
+		BackupRequired:          true,
+		BackupVerifier:          "backup-verifier:v1",
+		PreconditionProbes: []types.MigrationProbe{{
+			Name: "source schema", Reference: "probe:payments:source:v1",
+			ExpectedChecksum: "sha256:" + strings.Repeat("3", 64),
+		}},
+		PostconditionProbes: []types.MigrationProbe{{
+			Name: "resulting schema", Reference: "probe:payments:result:v1",
+			ExpectedChecksum: "sha256:" + strings.Repeat("4", 64),
+		}},
+		RetryClass:                       types.MigrationRetryNone,
+		Reversibility:                    types.MigrationReversibilityManual,
+		PreviousApplicationCompatibility: ">=2.3.0",
+		RecoveryProcedureReference:       "recovery:payments:schema-v2:v1",
+		AdapterType:                      "database.migrate",
+		ArtifactDigest: "registry.example.com/migrations/payments@sha256:" +
+			strings.Repeat("5", 64),
+		EvidenceRetentionDays: 90,
+	}
+	checksum, err := migrationplanning.CanonicalMigrationContractChecksum(contract)
+	if err != nil {
+		panic(err)
+	}
+	contract.Checksum = checksum
+	return contract
 }

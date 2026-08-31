@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/stepredaction"
 	"github.com/distr-sh/distr/internal/types"
 	"oras.land/oras-go/v2/registry"
@@ -252,6 +253,15 @@ func normalizedComponentReleaseContractV2(contract types.ComponentReleaseContrac
 			return a.Order - b.Order
 		}
 		return strings.Compare(a.Key, b.Key)
+	})
+	normalized.MigrationContracts = cloneNonNilSlice(contract.MigrationContracts)
+	for i := range normalized.MigrationContracts {
+		normalized.MigrationContracts[i] = migrationplanning.NormalizeMigrationContract(
+			normalized.MigrationContracts[i],
+		)
+	}
+	slices.SortFunc(normalized.MigrationContracts, func(a, b types.MigrationContract) int {
+		return strings.Compare(a.ID, b.ID)
 	})
 	normalized.AdapterRequirements = slices.Clone(contract.AdapterRequirements)
 	for i := range normalized.AdapterRequirements {
@@ -606,7 +616,7 @@ func validateComponentMigrations(contract types.ComponentReleaseContractV2) []Va
 	add := func(field, rule, message string) {
 		issues = append(issues, ValidationIssue{Field: field, Rule: rule, Message: message})
 	}
-	keys := map[string]struct{}{}
+	keys := map[string]types.MigrationDeclaration{}
 	orders := map[int]struct{}{}
 	for _, migration := range contract.Migrations {
 		field := "migrations." + migration.Key
@@ -616,7 +626,7 @@ func validateComponentMigrations(contract types.ComponentReleaseContractV2) []Va
 		if _, ok := keys[migration.Key]; ok {
 			add(field+".key", "unique", "migration keys must be unique")
 		}
-		keys[migration.Key] = struct{}{}
+		keys[migration.Key] = migration
 		switch migration.Type {
 		case "database", "data", "runtime":
 		default:
@@ -641,6 +651,41 @@ func validateComponentMigrations(contract types.ComponentReleaseContractV2) []Va
 		}
 		if migration.Description == "" {
 			add(field+".description", "required", "migration description is required")
+		}
+	}
+	contracts := make(map[string]types.MigrationContract, len(contract.MigrationContracts))
+	for _, migrationContract := range contract.MigrationContracts {
+		field := "migrationContracts." + migrationContract.ID
+		if _, duplicate := contracts[migrationContract.ID]; duplicate {
+			add(field+".id", "unique", "structured migration contract ids must be unique")
+			continue
+		}
+		contracts[migrationContract.ID] = migrationContract
+		declaration, declared := keys[migrationContract.ID]
+		if !declared || (declaration.Type != "database" && declaration.Type != "data") {
+			add(field, "declaration", "structured migration contract must match a database or data migration declaration")
+		}
+		if migrationContract.ComponentKey != contract.ComponentKey {
+			add(field+".componentKey", "component", "structured migration contract must belong to the released component")
+		}
+		for _, issue := range migrationplanning.ValidateMigrationContractIntegrity(migrationContract) {
+			rule := issue.Code
+			if issue.Code == "migration_checksum_mismatch" {
+				rule = "checksumMismatch"
+			}
+			add(field+"."+issue.Field, rule, issue.Message)
+		}
+	}
+	for _, migration := range contract.Migrations {
+		if migration.Type != "database" && migration.Type != "data" {
+			continue
+		}
+		if _, exists := contracts[migration.Key]; !exists {
+			add(
+				"migrations."+migration.Key+".contract",
+				"required",
+				"database and data migrations require a complete structured migration contract",
+			)
 		}
 	}
 	return issues
@@ -1094,6 +1139,7 @@ func validateComponentReleaseContractV2Bounds(
 		)
 		checkString(field+".description", migration.Description, maxComponentReleaseDescriptionLength)
 	}
+	checkCollection("migrationContracts", len(contract.MigrationContracts), maxReleaseContractItems)
 
 	checkString("changes.summary", contract.Changes.Summary, maxComponentReleaseSummaryLength)
 	checkCollection("changes.commits", len(contract.Changes.Commits), maxReleaseContractItems)

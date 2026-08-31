@@ -149,7 +149,10 @@ func plannedStatesFromResolution(
 		if err != nil {
 			return nil, err
 		}
-		schemaState, schemaChecksum, forwardOnly, err := migrationState(pin.Migrations)
+		schemaState, schemaChecksum, forwardOnly, err := migrationState(
+			pin.Migrations,
+			pin.MigrationContracts,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -1214,6 +1217,7 @@ func addPreviousStateEvidence(
 		validation.Baselines,
 		validation.Changes,
 		validation.Risks,
+		validation.MigrationContracts,
 		validation.Bootstrap,
 	)
 	payload, checksum, err := planning.CanonicalizeTargetDeploymentPlan(canonical)
@@ -1614,7 +1618,30 @@ func providerBindingsChecksum(
 
 func migrationState(
 	migrations []types.MigrationDeclaration,
+	contracts []types.MigrationContract,
 ) (string, string, bool, error) {
+	if len(contracts) > 0 {
+		orderByID := make(map[string]int, len(migrations))
+		for _, migration := range migrations {
+			orderByID[migration.Key] = migration.Order
+		}
+		normalizedContracts := slices.Clone(contracts)
+		slices.SortFunc(normalizedContracts, func(a, b types.MigrationContract) int {
+			if orderByID[a.ID] != orderByID[b.ID] {
+				return orderByID[a.ID] - orderByID[b.ID]
+			}
+			return strings.Compare(a.ID, b.ID)
+		})
+		forwardOnly := false
+		for _, contract := range normalizedContracts {
+			if contract.RequiresForwardFix ||
+				contract.Reversibility == types.MigrationReversibilityForwardOnly {
+				forwardOnly = true
+			}
+		}
+		result := normalizedContracts[len(normalizedContracts)-1]
+		return result.ResultingVersion, result.ResultingSchemaChecksum, forwardOnly, nil
+	}
 	normalized := slices.Clone(migrations)
 	slices.SortFunc(normalized, func(a, b types.MigrationDeclaration) int {
 		if a.Order != b.Order {

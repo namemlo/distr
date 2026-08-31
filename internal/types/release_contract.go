@@ -99,6 +99,7 @@ type ComponentReleaseContractV2 struct {
 	Provides            []CapabilityDeclaration            `json:"provides"`
 	Requires            []CapabilityRequirement            `json:"requires"`
 	Migrations          []MigrationDeclaration             `json:"migrations"`
+	MigrationContracts  []MigrationContract                `json:"migrationContracts,omitempty"`
 	AdapterRequirements []AdapterRequirement               `json:"adapterRequirements,omitempty"`
 	Changes             ComponentReleaseChanges            `json:"changes"`
 	Evidence            ComponentReleaseEvidenceReferences `json:"evidence"`

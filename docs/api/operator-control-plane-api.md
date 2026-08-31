@@ -107,6 +107,12 @@ Product Release lifecycle operations are:
 | `GET`  | `/product-releases/{productReleaseId}/graph`    | Inspect the frozen capability graph           |
 | `POST` | `/product-releases/{productReleaseId}/publish`  | Publish and freeze a valid Product Release    |
 
+Component Release v2 and Product Release component responses additively expose
+`migrationContracts`. Every `database` or `data` declaration must have one
+checksum-bound full contract. Product validation rejects incomplete contracts,
+checksum drift, duplicate IDs, missing dependencies, and cycles. Runtime-only
+declarations remain compatible without a database contract.
+
 ### Plans and approvals
 
 | Method      | Route                                      | Purpose                                     |
@@ -128,6 +134,13 @@ Product Release lifecycle operations are:
 
 Any material release, config, provider, migration, baseline, policy, or campaign
 change invalidates reuse of the old approval.
+
+Target-plan validation additively returns `migrationContracts`, ordered in dependency
+order. Each entry freezes exact source/result schema checksums, backup and probe
+requirements, lock/retry/recovery facts, artifact digest, and component/database
+identity. The graph contains `migration:<id>:backup:*`, `precondition`, `apply`,
+and `validate` steps as applicable; publication retains the same contract in
+the immutable plan migration evidence.
 
 Protocol-v2 task creation also requires the latest persistent review decision
 to be an unexpired `GO`. The decision binds the plan and the current

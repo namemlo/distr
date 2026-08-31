@@ -24,10 +24,11 @@ type canonicalProductRelease struct {
 }
 
 type canonicalProductComponent struct {
-	ComponentReleaseID       string `json:"componentReleaseId"`
-	ComponentReleaseChecksum string `json:"componentReleaseChecksum"`
-	ComponentKey             string `json:"componentKey"`
-	Version                  string `json:"version"`
+	ComponentReleaseID       string                    `json:"componentReleaseId"`
+	ComponentReleaseChecksum string                    `json:"componentReleaseChecksum"`
+	ComponentKey             string                    `json:"componentKey"`
+	Version                  string                    `json:"version"`
+	MigrationContracts       []types.MigrationContract `json:"migrationContracts,omitempty"`
 }
 
 type canonicalProductReleaseGraph struct {
@@ -76,6 +77,7 @@ func CanonicalizeProductRelease(manifest types.ProductReleaseManifest) ([]byte, 
 			ComponentReleaseChecksum: component.ComponentReleaseChecksum,
 			ComponentKey:             component.ComponentKey,
 			Version:                  component.Version,
+			MigrationContracts:       slices.Clone(component.MigrationContracts),
 		})
 	}
 	payload, err := json.Marshal(canonical)

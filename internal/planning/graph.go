@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -64,6 +65,13 @@ func CanonicalizeTargetDeploymentPlan(
 		}
 		return strings.Compare(a.Code, b.Code)
 	})
+	var err error
+	canonical.MigrationContracts, err = migrationplanning.OrderMigrationContracts(
+		canonical.MigrationContracts,
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("order canonical target-plan migrations: %w", err)
+	}
 	canonical.StepAdapters = slices.Clone(canonical.StepAdapters)
 	slices.SortFunc(canonical.StepAdapters, func(a, b types.ResolvedPlanStepAdapter) int {
 		return strings.Compare(a.StepKey, b.StepKey)
@@ -119,11 +127,73 @@ func BuildTargetPlanGraph(
 	)}
 	edges := make([]types.DeploymentPlanStepEdge, 0)
 	pins := normalizedReleasePins(input.ReleasePins)
-	firstExecutableByComponent := make(map[string]string, len(pins))
+	entryStepsByComponent := make(map[string][]string, len(pins))
+	pinByComponent := make(map[string]types.ComponentReleasePin, len(pins))
+	structuredContracts := make([]types.MigrationContract, 0)
+	for _, pin := range pins {
+		pinByComponent[pin.ComponentKey] = pin
+		declarations := make(map[string]types.MigrationDeclaration, len(pin.Migrations))
+		for _, declaration := range pin.Migrations {
+			declarations[declaration.Key] = declaration
+		}
+		structured := make(map[string]struct{}, len(pin.MigrationContracts))
+		binding := findComponentBinding(input.Config.ComponentBindings, pin.ComponentKey)
+		instance := componentInstanceForBinding(input.ComponentInstances, binding)
+		for _, contract := range pin.MigrationContracts {
+			declaration, declared := declarations[contract.ID]
+			if !declared || (declaration.Type != "database" && declaration.Type != "data") {
+				return types.TargetPlanGraph{}, fmt.Errorf(
+					"structured migration %q has no matching database or data declaration",
+					contract.ID,
+				)
+			}
+			if contract.ComponentKey != pin.ComponentKey {
+				return types.TargetPlanGraph{}, fmt.Errorf(
+					"structured migration %q belongs to component %q, not %q",
+					contract.ID,
+					contract.ComponentKey,
+					pin.ComponentKey,
+				)
+			}
+			if instance == nil ||
+				strings.TrimSpace(instance.DatabaseBoundary) != contract.DatabaseResourceKey {
+				return types.TargetPlanGraph{}, fmt.Errorf(
+					"structured migration %q does not match the component database boundary",
+					contract.ID,
+				)
+			}
+			structured[contract.ID] = struct{}{}
+		}
+		for _, declaration := range pin.Migrations {
+			if declaration.Type != "database" && declaration.Type != "data" {
+				continue
+			}
+			if _, exists := structured[declaration.Key]; !exists {
+				return types.TargetPlanGraph{}, fmt.Errorf(
+					"database or data migration %q requires a structured contract",
+					declaration.Key,
+				)
+			}
+		}
+		structuredContracts = append(structuredContracts, pin.MigrationContracts...)
+	}
+	orderedContracts, err := migrationplanning.OrderMigrationContracts(structuredContracts)
+	if err != nil {
+		return types.TargetPlanGraph{}, fmt.Errorf("order structured migration contracts: %w", err)
+	}
+	structuredByComponent := make(map[string]bool, len(orderedContracts))
+	for _, contract := range orderedContracts {
+		structuredByComponent[contract.ComponentKey] = true
+	}
 	for _, pin := range pins {
 		componentBinding := findComponentBinding(input.Config.ComponentBindings, pin.ComponentKey)
 		previousKey := "config:verify"
-		migrations := slices.Clone(pin.Migrations)
+		migrations := make([]types.MigrationDeclaration, 0, len(pin.Migrations))
+		for _, migration := range pin.Migrations {
+			if migration.Type == "runtime" {
+				migrations = append(migrations, migration)
+			}
+		}
 		slices.SortFunc(migrations, func(a, b types.MigrationDeclaration) int {
 			if a.Order != b.Order {
 				return a.Order - b.Order
@@ -132,10 +202,6 @@ func BuildTargetPlanGraph(
 		})
 		for _, migration := range migrations {
 			stepKey := "component:" + pin.ComponentKey + ":migration:" + migration.Key
-			databaseLockKey := ""
-			if migration.Type == "database" || migration.Type == "data" {
-				databaseLockKey = targetLockKey(*input) + ":db:" + pin.ComponentKey
-			}
 			step := newTargetPlanStep(
 				stepKey,
 				"Apply "+migration.Key,
@@ -152,7 +218,7 @@ func BuildTargetPlanGraph(
 					"failurePolicy": migration.FailurePolicy,
 				},
 				targetLockKey(*input),
-				databaseLockKey,
+				"",
 				900,
 				migrationRetryClass(migration),
 				migrationCancellationBehavior(migration),
@@ -161,8 +227,11 @@ func BuildTargetPlanGraph(
 				migration.Compatibility != "breaking",
 			)
 			steps = append(steps, step)
-			if firstExecutableByComponent[pin.ComponentKey] == "" {
-				firstExecutableByComponent[pin.ComponentKey] = stepKey
+			if len(entryStepsByComponent[pin.ComponentKey]) == 0 {
+				entryStepsByComponent[pin.ComponentKey] = append(
+					entryStepsByComponent[pin.ComponentKey],
+					stepKey,
+				)
 			}
 			edges = append(edges, edge(previousKey, stepKey))
 			previousKey = stepKey
@@ -195,8 +264,12 @@ func BuildTargetPlanGraph(
 			true,
 		)
 		steps = append(steps, deploy)
-		if firstExecutableByComponent[pin.ComponentKey] == "" {
-			firstExecutableByComponent[pin.ComponentKey] = deployKey
+		if len(entryStepsByComponent[pin.ComponentKey]) == 0 &&
+			!structuredByComponent[pin.ComponentKey] {
+			entryStepsByComponent[pin.ComponentKey] = append(
+				entryStepsByComponent[pin.ComponentKey],
+				deployKey,
+			)
 		}
 		edges = append(edges, edge(previousKey, deployKey))
 		healthKey := "component:" + pin.ComponentKey + ":health"
@@ -223,6 +296,39 @@ func BuildTargetPlanGraph(
 		edges = append(edges, edge(deployKey, healthKey))
 	}
 
+	graph := types.TargetPlanGraph{Steps: steps, Edges: edges}
+	for _, contract := range orderedContracts {
+		entryKey := migrationContractEntryStepKey(contract)
+		graph.Edges = append(graph.Edges, edge("config:verify", entryKey))
+		graph, err = migrationplanning.ExpandMigrationGraph(contract, graph)
+		if err != nil {
+			return types.TargetPlanGraph{}, err
+		}
+		entryStepsByComponent[contract.ComponentKey] = append(
+			entryStepsByComponent[contract.ComponentKey],
+			entryKey,
+		)
+	}
+	steps = graph.Steps
+	edges = graph.Edges
+	for index := range steps {
+		if !strings.HasPrefix(steps[index].StepKey, "migration:") {
+			continue
+		}
+		pin, exists := pinByComponent[steps[index].ComponentKey]
+		if !exists {
+			continue
+		}
+		steps[index].ComponentReleaseID = cloneUUID(&pin.ComponentReleaseID)
+		steps[index].ComponentInstanceID = componentBindingID(
+			findComponentBinding(input.Config.ComponentBindings, pin.ComponentKey),
+		)
+	}
+	for componentKey := range entryStepsByComponent {
+		slices.Sort(entryStepsByComponent[componentKey])
+		entryStepsByComponent[componentKey] = slices.Compact(entryStepsByComponent[componentKey])
+	}
+
 	for _, productEdge := range normalizedProductEdges(input.ProductEdges) {
 		if productEdge.ResolutionStage != types.CapabilityResolutionStageProduct {
 			continue
@@ -230,9 +336,10 @@ func BuildTargetPlanGraph(
 		provider := strings.TrimPrefix(productEdge.From, "component:")
 		consumer := strings.TrimPrefix(productEdge.To, "component:")
 		from := "component:" + provider + ":health"
-		to := firstExecutableByComponent[consumer]
-		if hasStep(steps, from) && hasStep(steps, to) {
-			edges = append(edges, edge(from, to))
+		for _, to := range entryStepsByComponent[consumer] {
+			if hasStep(steps, from) && hasStep(steps, to) {
+				edges = append(edges, edge(from, to))
+			}
 		}
 	}
 
@@ -269,9 +376,10 @@ func BuildTargetPlanGraph(
 			resolution.V1Compatible,
 		))
 		edges = append(edges, edge("config:verify", verifyKey))
-		consumerFirstExecutable := firstExecutableByComponent[resolution.ConsumerKey]
-		if hasStep(steps, consumerFirstExecutable) {
-			edges = append(edges, edge(verifyKey, consumerFirstExecutable))
+		for _, consumerEntryStep := range entryStepsByComponent[resolution.ConsumerKey] {
+			if hasStep(steps, consumerEntryStep) {
+				edges = append(edges, edge(verifyKey, consumerEntryStep))
+			}
 		}
 	}
 
@@ -293,7 +401,7 @@ func BuildTargetPlanGraph(
 	if err != nil {
 		return types.TargetPlanGraph{}, err
 	}
-	graph := types.TargetPlanGraph{
+	graph = types.TargetPlanGraph{
 		Steps: steps, Edges: edges, TopologicalOrder: order,
 	}
 	checksum, err := canonicalChecksum(struct {
@@ -306,6 +414,13 @@ func BuildTargetPlanGraph(
 	}
 	graph.Checksum = checksum
 	return graph, nil
+}
+
+func migrationContractEntryStepKey(contract types.MigrationContract) string {
+	if contract.BackupRequired {
+		return "migration:" + contract.ID + ":backup:create"
+	}
+	return "migration:" + contract.ID + ":precondition"
 }
 
 func ValidateProtocolGraph(protocol string, graph types.TargetPlanGraph) error {
@@ -457,6 +572,17 @@ func normalizedReleasePins(pins []types.ComponentReleasePin) []types.ComponentRe
 				return strings.Compare(a.VerificationID.String(), b.VerificationID.String())
 			},
 		)
+		pins[index].MigrationContracts = slices.Clone(pins[index].MigrationContracts)
+		for migrationIndex := range pins[index].MigrationContracts {
+			pins[index].MigrationContracts[migrationIndex] =
+				migrationplanning.NormalizeMigrationContract(
+					pins[index].MigrationContracts[migrationIndex],
+				)
+		}
+		slices.SortFunc(
+			pins[index].MigrationContracts,
+			func(a, b types.MigrationContract) int { return strings.Compare(a.ID, b.ID) },
+		)
 	}
 	slices.SortFunc(pins, func(a, b types.ComponentReleasePin) int {
 		return strings.Compare(a.ComponentKey, b.ComponentKey)
@@ -491,6 +617,22 @@ func componentBindingID(binding *types.ConfigComponentBinding) *uuid.UUID {
 	}
 	value := binding.ComponentInstanceID
 	return &value
+}
+
+func componentInstanceForBinding(
+	instances []types.ComponentInstance,
+	binding *types.ConfigComponentBinding,
+) *types.ComponentInstance {
+	if binding == nil {
+		return nil
+	}
+	for index := range instances {
+		if instances[index].ID == binding.ComponentInstanceID {
+			value := instances[index]
+			return &value
+		}
+	}
+	return nil
 }
 
 func migrationRetryClass(migration types.MigrationDeclaration) string {

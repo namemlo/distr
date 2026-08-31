@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -50,6 +51,134 @@ func TestCanonicalTargetPlanFreezesAdaptersDeterministically(t *testing.T) {
 	g.Expect(driftedChecksum).NotTo(Equal(leftChecksum))
 }
 
+func TestBuildTargetPlanGraphExpandsStructuredMigrationSafetyGates(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	contract := planningMigrationContract(t)
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: contract.ID, Type: "database", Order: 1,
+		Compatibility: "forward-compatible", FailurePolicy: "retry",
+		Description: "Apply the ledger schema transition",
+	}}
+	draft.ResolutionInput.ReleasePins[0].MigrationContracts = []types.MigrationContract{contract}
+	draft.ResolutionInput.ComponentInstances[0].DatabaseBoundary = contract.DatabaseResourceKey
+	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+
+	graph, err := BuildTargetPlanGraph(context.Background(), draft, resolutions)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(graph.TopologicalOrder).To(ContainElements(
+		"migration:ledger.042:backup:create",
+		"migration:ledger.042:backup:verify",
+		"migration:ledger.042:precondition",
+		"migration:ledger.042:apply",
+		"migration:ledger.042:validate",
+	))
+	g.Expect(indexOf(graph.TopologicalOrder, "migration:ledger.042:backup:verify")).To(
+		BeNumerically("<", indexOf(graph.TopologicalOrder, "migration:ledger.042:apply")),
+	)
+	g.Expect(graph.Edges).To(ContainElement(types.DeploymentPlanStepEdge{
+		Key:         "migration:ledger.042:validate->component:consumer:deploy",
+		FromStepKey: "migration:ledger.042:validate", ToStepKey: "component:consumer:deploy",
+	}))
+	g.Expect(graph.Steps).NotTo(ContainElement(HaveField("ActionType", "component.migrate")))
+	apply, found := findTargetPlanStep(graph.Steps, "migration:ledger.042:apply")
+	g.Expect(found).To(BeTrue())
+	g.Expect(apply.ComponentReleaseID).To(Equal(
+		&draft.ResolutionInput.ReleasePins[0].ComponentReleaseID,
+	))
+	g.Expect(apply.ComponentInstanceID).To(Equal(
+		&draft.ResolutionInput.Config.ComponentBindings[0].ComponentInstanceID,
+	))
+}
+
+func TestBuildTargetPlanGraphAllowsTransitiveSameDatabaseMigrationChain(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	first := planningMigrationContract(t)
+	second := first
+	second.ID = "ledger.043"
+	second.DependsOn = []string{first.ID}
+	second.ExpectedSourceVersion = first.ResultingVersion
+	second.ResultingVersion = "43"
+	second.IdempotencyKey = second.ID
+	second.RecoveryProcedureReference = "recovery:ledger.043:v1"
+	second.Checksum, _ = migrationplanning.CanonicalMigrationContractChecksum(second)
+	third := second
+	third.ID = "ledger.044"
+	third.DependsOn = []string{second.ID}
+	third.ExpectedSourceVersion = second.ResultingVersion
+	third.ResultingVersion = "44"
+	third.IdempotencyKey = third.ID
+	third.RecoveryProcedureReference = "recovery:ledger.044:v1"
+	third.Checksum, _ = migrationplanning.CanonicalMigrationContractChecksum(third)
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{
+		{Key: first.ID, Type: "database", Order: 1},
+		{Key: second.ID, Type: "database", Order: 2},
+		{Key: third.ID, Type: "database", Order: 3},
+	}
+	draft.ResolutionInput.ReleasePins[0].MigrationContracts = []types.MigrationContract{
+		third,
+		first,
+		second,
+	}
+	draft.ResolutionInput.ComponentInstances[0].DatabaseBoundary = first.DatabaseResourceKey
+	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+	g.Expect(issues).To(BeEmpty())
+
+	graph, err := BuildTargetPlanGraph(context.Background(), draft, resolutions)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(indexOf(graph.TopologicalOrder, "migration:ledger.042:validate")).To(
+		BeNumerically("<", indexOf(graph.TopologicalOrder, "migration:ledger.043:apply")),
+	)
+	g.Expect(indexOf(graph.TopologicalOrder, "migration:ledger.043:validate")).To(
+		BeNumerically("<", indexOf(graph.TopologicalOrder, "migration:ledger.044:apply")),
+	)
+	g.Expect(indexOf(graph.TopologicalOrder, "migration:ledger.044:validate")).To(
+		BeNumerically("<", indexOf(graph.TopologicalOrder, "component:consumer:deploy")),
+	)
+}
+
+func TestCanonicalTargetPlanOmitsEmptyStructuredMigrationFields(t *testing.T) {
+	g := NewWithT(t)
+	payload, _, err := CanonicalizeTargetDeploymentPlan(types.TargetDeploymentPlanCanonical{})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).NotTo(ContainSubstring("migrationContracts"))
+	g.Expect(string(payload)).NotTo(ContainSubstring(`"migrations"`))
+}
+
+func planningMigrationContract(t *testing.T) types.MigrationContract {
+	t.Helper()
+	contract := types.MigrationContract{
+		ID: "ledger.042", ComponentKey: "consumer",
+		DatabaseResourceKey: "postgres:ledger", ExpectedSourceVersion: "41",
+		ExpectedSourceChecksum: checksum("1"), ResultingVersion: "42",
+		ResultingSchemaChecksum: checksum("2"), Phase: types.MigrationPhaseExpand,
+		LockType: "exclusive", LockTimeoutSeconds: 30, OperationalImpact: "brief write lock",
+		BackupRequired: true, BackupVerifier: "backup-verifier:v1",
+		PreconditionProbes: []types.MigrationProbe{{
+			Name: "source", Reference: "probe:ledger:source:v1", ExpectedChecksum: checksum("3"),
+		}},
+		PostconditionProbes: []types.MigrationProbe{{
+			Name: "result", Reference: "probe:ledger:result:v1", ExpectedChecksum: checksum("4"),
+		}},
+		RetryClass: types.MigrationRetrySafe, IdempotencyKey: "ledger.042",
+		Reversibility:                    types.MigrationReversibilityReversible,
+		PreviousApplicationCompatibility: ">=1.8.0",
+		RecoveryProcedureReference:       "recovery:ledger.042:v1",
+		AdapterType:                      "database.migrate",
+		ArtifactDigest:                   "registry.example.com/migrations/ledger@sha256:" + strings.Repeat("5", 64),
+		EvidenceRetentionDays:            90,
+	}
+	value, err := migrationplanning.CanonicalMigrationContractChecksum(contract)
+	NewWithT(t).Expect(err).NotTo(HaveOccurred())
+	contract.Checksum = value
+	return contract
+}
+
 func TestBuildTargetPlanGraphIsStableAndAcyclic(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()
@@ -81,7 +210,7 @@ func TestBuildTargetPlanGraphUsesTargetDispatcherLocationForExecutableSteps(t *t
 	g := NewWithT(t)
 	draft := resolverFixture()
 	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
-		Key: "schema", Type: "database", Order: 1,
+		Key: "schema", Type: "runtime", Order: 1,
 	}}
 	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
 	g.Expect(issues).To(BeEmpty())
@@ -105,7 +234,7 @@ func TestBuildTargetPlanGraphKeepsExecutableStepTimeoutWithinSignedIntentLimit(t
 	g := NewWithT(t)
 	draft := resolverFixture()
 	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
-		Key: "schema", Type: "database", Order: 1,
+		Key: "schema", Type: "runtime", Order: 1,
 	}}
 	resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
 	g.Expect(issues).To(BeEmpty())
@@ -183,7 +312,7 @@ func TestBuildTargetPlanGraphGatesConsumerFirstMigration(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()
 	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
-		Key: "schema", Type: "database", Order: 1,
+		Key: "schema", Type: "runtime", Order: 1,
 	}}
 	draft.ResolutionInput.ReleasePins = append(
 		draft.ResolutionInput.ReleasePins,

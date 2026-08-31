@@ -557,6 +557,7 @@ func hydrateProductReleaseComponents(
 			Provides:                 slices.Clone(contract.Provides),
 			Requires:                 cloneCapabilityRequirements(contract.Requires),
 			Migrations:               slices.Clone(contract.Migrations),
+			MigrationContracts:       slices.Clone(contract.MigrationContracts),
 			Platforms:                componentContractPlatforms(contract),
 			Contract:                 &contract,
 		})
@@ -672,6 +673,7 @@ func loadProductReleaseManifest(
 		component.Provides = slices.Clone(contract.Provides)
 		component.Requires = cloneCapabilityRequirements(contract.Requires)
 		component.Migrations = slices.Clone(contract.Migrations)
+		component.MigrationContracts = slices.Clone(contract.MigrationContracts)
 		component.Platforms = componentContractPlatforms(contract)
 		component.Contract = &contract
 		components = append(components, component)
@@ -1163,6 +1165,7 @@ func cloneComponentReleaseContract(contract types.ComponentReleaseContractV2) ty
 	clone.Provides = slices.Clone(contract.Provides)
 	clone.Requires = cloneCapabilityRequirements(contract.Requires)
 	clone.Migrations = slices.Clone(contract.Migrations)
+	clone.MigrationContracts = slices.Clone(contract.MigrationContracts)
 	clone.Changes.Commits = slices.Clone(contract.Changes.Commits)
 	clone.Evidence.Provenance = slices.Clone(contract.Evidence.Provenance)
 	clone.Evidence.SBOM = slices.Clone(contract.Evidence.SBOM)

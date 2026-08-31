@@ -46,6 +46,7 @@ func ProductReleaseToAPI(
 			ComponentReleaseChecksum: component.ComponentReleaseChecksum,
 			ComponentKey:             component.ComponentKey,
 			Version:                  component.Version,
+			MigrationContracts:       slices.Clone(component.MigrationContracts),
 		})
 	}
 	return api.ProductRelease{

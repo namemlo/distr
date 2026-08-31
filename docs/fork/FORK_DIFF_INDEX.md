@@ -2031,3 +2031,31 @@ Use one entry per pull request:
 - Compatibility notes: Existing adoption request/outcome checksums and audit
   history are not rewritten. Downgrade drops only the derived read-model column
   and restores the prior guard.
+
+### PR-089 - Native structured migration contract wiring
+
+- Status: Implemented with focused local verification; live PostgreSQL and
+  final release-matrix gates remain pending.
+- Upstream base: `50c1e187` canonical integration checkpoint.
+- Feature flags: Uses the existing default-off operator control-plane and
+  protocol-v2 boundaries; no new flag is added.
+- User-facing behavior: Component, Product, and Target Deployment Plan review
+  exposes the complete checksum-bound database/data migration contract and its
+  expanded safety gates.
+- Database changes: None. Reuses migration 147 and its append-only
+  `DeploymentPlanMigration` relation; migration 169 is not introduced.
+- API changes: Additive `migrationContracts` on Product Release components and
+  target-plan validation responses.
+- UI changes: None.
+- Agent protocol changes: Native planning invokes the existing structured
+  backup/precondition/apply/validate action graph and binds migration adapters
+  to `migration:<id>:apply`.
+- Documentation: Adds ADR-0076, PR-089 fork notes, operator API guidance, and
+  upgrade compatibility notes.
+- Tests: Focused Component/Product release, planning, mapping, persistence,
+  schema-state, and migration-147 tests.
+- Upstream contribution notes: Community-neutral contract wiring with no
+  adopter, CI provider, registry, runtime address, or credential assumption.
+- Compatibility notes: Empty additive fields are omitted, preserving the
+  prior canonical shape when no structured migrations exist. Runtime-only
+  symbolic migrations remain compatible.

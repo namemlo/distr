@@ -78,6 +78,7 @@ func TestAdapterScopeBindingsUsePersistedDatabaseAndObserverBoundaries(t *testin
 		Migrations: []types.MigrationDeclaration{{
 			Key: "schema-v2",
 		}},
+		MigrationContracts: []types.MigrationContract{{ID: "schema-v2"}},
 		AdapterRequirements: []types.AdapterRequirement{
 			{StepKind: "deploy", Capability: "distr.compose.deploy", Version: "1.0.0"},
 			{StepKind: "migration", Capability: "database.migrate", Version: "1.0.0"},
@@ -104,7 +105,7 @@ func TestAdapterScopeBindingsUsePersistedDatabaseAndObserverBoundaries(t *testin
 			ScopeReference: observerID.String(),
 		},
 		{
-			StepKey:        "component:catalog:migration:schema-v2",
+			StepKey:        "migration:schema-v2:apply",
 			ScopeType:      types.AdapterScopeDatabaseResource,
 			ScopeReference: "postgres:catalog",
 		},

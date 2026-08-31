@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -175,6 +176,59 @@ func TestResolvePlanStepAdaptersUsesReleaseDeclaredRequirements(t *testing.T) {
 	}))
 }
 
+func TestValidatePlanDraftRejectsUnstructuredDatabaseMigration(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: "ledger.042", Type: "database", Order: 1,
+		Compatibility: "forward-compatible", FailurePolicy: "stop",
+		Description: "Apply the ledger schema transition",
+	}}
+
+	issues := ValidatePlanDraft(context.Background(), draft)
+
+	g.Expect(issueCodes(issues)).To(ContainElement("structured_migration_contract_required"))
+}
+
+func TestValidatePlanDraftRejectsStructuredMigrationDatabaseBoundaryDrift(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	contract := planningMigrationContract(t)
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: contract.ID, Type: "database", Order: 1,
+		Compatibility: "forward-compatible", FailurePolicy: "stop",
+		Description: "Apply the ledger schema transition",
+	}}
+	draft.ResolutionInput.ReleasePins[0].MigrationContracts = []types.MigrationContract{contract}
+	draft.ResolutionInput.ComponentInstances[0].DatabaseBoundary = "postgres:other"
+
+	issues := ValidatePlanDraft(context.Background(), draft)
+
+	g.Expect(issueCodes(issues)).To(ContainElement("structured_migration_database_boundary_mismatch"))
+}
+
+func TestValidatePlanDraftReportsStructuredGraphAgainstPublicField(t *testing.T) {
+	g := NewWithT(t)
+	draft := resolverFixture()
+	contract := planningMigrationContract(t)
+	contract.DependsOn = []string{"ledger.missing"}
+	contract.Checksum, _ = migrationplanning.CanonicalMigrationContractChecksum(contract)
+	draft.ResolutionInput.ReleasePins[0].Migrations = []types.MigrationDeclaration{{
+		Key: contract.ID, Type: "database", Order: 1,
+		Compatibility: "forward-compatible", FailurePolicy: "stop",
+		Description: "Apply the ledger schema transition",
+	}}
+	draft.ResolutionInput.ReleasePins[0].MigrationContracts = []types.MigrationContract{contract}
+	draft.ResolutionInput.ComponentInstances[0].DatabaseBoundary = contract.DatabaseResourceKey
+
+	issues := ValidatePlanDraft(context.Background(), draft)
+
+	g.Expect(issues).To(ContainElement(And(
+		HaveField("Code", "structured_migration_graph_invalid"),
+		HaveField("Field", "migrationContracts"),
+	)))
+}
+
 func TestResolvePlanStepAdaptersDoesNotAcceptAssignmentCapabilityOverride(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()
@@ -262,13 +316,14 @@ func TestAdapterRequirementsFromReleasePinsUsesTypedMigrationAndHealthScopes(t *
 		Compatibility: "backward-compatible", FailurePolicy: "stop",
 		Description: "apply schema v2",
 	}}
+	input.ReleasePins[0].MigrationContracts = []types.MigrationContract{{ID: "schema-v2"}}
 	input.ReleasePins[0].AdapterRequirements = []types.AdapterRequirement{
 		{StepKind: "migration", Capability: "database.migrate", Version: "1.0.0"},
 		{StepKind: "health", Capability: "health.observe", Version: "1.0.0"},
 	}
 	input.AdapterScopeBindings = []types.AdapterStepScopeBinding{
 		{
-			StepKey:        "component:consumer:migration:schema-v2",
+			StepKey:        "migration:schema-v2:apply",
 			ScopeType:      types.AdapterScopeDatabaseResource,
 			ScopeReference: "postgres:consumer",
 		},
@@ -284,7 +339,7 @@ func TestAdapterRequirementsFromReleasePinsUsesTypedMigrationAndHealthScopes(t *
 	g.Expect(issues).To(BeEmpty())
 	g.Expect(requirements).To(ConsistOf(
 		types.StepAdapterRequirement{
-			StepKey:    "component:consumer:migration:schema-v2",
+			StepKey:    "migration:schema-v2:apply",
 			Capability: "database.migrate", CapabilityVersion: "1.0.0",
 			ScopeType:      types.AdapterScopeDatabaseResource,
 			ScopeReference: "postgres:consumer",
