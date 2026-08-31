@@ -31,6 +31,18 @@ func (c *runtimeAttemptCreator) CreateExecutionAttempt(
 	return &types.ExecutionAttempt{ID: uuid.New(), OrganizationID: request.OrganizationID}, nil
 }
 
+type runtimeReadyStepRunsLoader struct {
+	steps []types.StepRun
+	calls int
+}
+
+func (l *runtimeReadyStepRunsLoader) LoadExecutionV2ReadyStepRuns(
+	context.Context, uuid.UUID, uuid.UUID,
+) ([]types.StepRun, error) {
+	l.calls++
+	return l.steps, nil
+}
+
 type runtimeEvidenceVerifier struct{ evidence types.ReconciliationEvidence }
 
 func (v runtimeEvidenceVerifier) VerifyReconciliationEvidence(
@@ -65,9 +77,13 @@ func (*runtimeCampaignBridge) RetryCampaignExecution(
 func TestDependenciesInjectEveryExecutionV2RuntimeSeam(t *testing.T) {
 	g := NewWithT(t)
 	creator := &runtimeAttemptCreator{}
-	dispatcher := executionworker.NewProtocolDispatcher(nil, executionworker.NewDispatcher(
-		runtimeAdmissionGate{}, creator,
-	))
+	step := types.StepRun{ID: uuid.New(), StepKey: "deploy", Status: types.StepRunStatusPending}
+	readySteps := &runtimeReadyStepRunsLoader{steps: []types.StepRun{step}}
+	dispatcher := executionworker.NewProtocolDispatcherWithReadyStepRunsLoader(
+		nil,
+		executionworker.NewDispatcher(runtimeAdmissionGate{}, creator),
+		readySteps,
+	)
 	evidence := types.ReconciliationEvidence{ExecutionID: uuid.New()}
 	bridge := &runtimeCampaignBridge{}
 	ctx := Dependencies{
@@ -81,9 +97,10 @@ func TestDependenciesInjectEveryExecutionV2RuntimeSeam(t *testing.T) {
 		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
 		EnvironmentID: uuid.New(), DeploymentPlanID: uuid.New(),
 		ProtocolVersion: types.ExecutionProtocolVersionV2,
-		StepRuns:        []types.StepRun{{ID: uuid.New(), StepKey: "deploy", Status: types.StepRunStatusPending}},
+		StepRuns:        []types.StepRun{step},
 	}
 	g.Expect(executionworker.DispatchCreatedTasks(ctx, []types.Task{task})).To(Succeed())
+	g.Expect(readySteps.calls).To(Equal(1))
 	g.Expect(creator.calls).To(Equal(1))
 	verified, err := executionprotocol.VerifyImportedReconciliationEvidence(
 		ctx, types.SignedReconciliationEvidence{},

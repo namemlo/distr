@@ -259,8 +259,18 @@ func dispatchTaskRetry(ctx context.Context, task types.Task) error {
 }
 
 func NewProtocolDispatcher(v1 V1Dispatcher, v2 *Dispatcher) *ProtocolDispatcher {
+	return NewProtocolDispatcherWithReadyStepRunsLoader(
+		v1, v2, repositoryReadyStepRunsLoader{},
+	)
+}
+
+func NewProtocolDispatcherWithReadyStepRunsLoader(
+	v1 V1Dispatcher,
+	v2 *Dispatcher,
+	readySteps ReadyStepRunsLoader,
+) *ProtocolDispatcher {
 	return &ProtocolDispatcher{
-		v1: v1, v2: v2, readySteps: repositoryReadyStepRunsLoader{},
+		v1: v1, v2: v2, readySteps: readySteps,
 	}
 }
 
