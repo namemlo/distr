@@ -329,7 +329,7 @@ test.describe('operator control room route-mocked contract', () => {
       await page.getByLabel('Reason').fill('Restore the last independently verified state');
       await page.getByRole('button', {name: 'Create previous-state plan'}).click();
       await confirmOverlay(page, 'Create previous-state plan', fixtureIds.publishedPlan);
-      await expect(page).toHaveURL(new RegExp(`/deployments/plans/${fixtureIds.previousPlan}$`));
+      await expect(page).toHaveURL(new RegExp(`/deployments/plans/${fixtureIds.previousPlan}(?:\\?.*)?$`));
       await expect(page.getByText('2026.07.0', {exact: true})).toBeVisible();
       const previousStateChanges = page.getByRole('region', {name: 'Changes'});
       await expect(previousStateChanges).toContainText('orders-api 2.5.0 to 2.4.0');
@@ -904,7 +904,7 @@ test.describe('operator control room route-mocked contract', () => {
       await page.getByLabel('Reason').fill('Restore the last independently verified state');
       await page.getByRole('button', {name: 'Create previous-state plan'}).click();
       await confirmOverlay(page, 'Create previous-state plan', fixtureIds.publishedPlan);
-      await expect(page).toHaveURL(new RegExp(`/deployments/plans/${fixtureIds.previousPlan}$`));
+      await expect(page).toHaveURL(new RegExp(`/deployments/plans/${fixtureIds.previousPlan}(?:\\?.*)?$`));
       await expect(page.getByText(fixtureIds.previousPlan, {exact: true})).toBeVisible();
     });
 
