@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-16",
+  "owner": "PR-062",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/productrelease/graph_test.go",
+    "sha256": "sha256:df06bb69d2d51f35d179e5b6a2a09619a62ff6e3c7dac7d0c54c6ea6daafa5cf"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-062_PRODUCT_RELEASE_CAPABILITY_GRAPH.md",
+    "sha256": "sha256:864043f30ae1ee9914addcc958b115630a7f7b4445e83b343d8ec45ad37131ba"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/1d0a538f659d9f75a5dc10f13ed6a395bbfd4e842795ed4a427d9eaaf0e4092f.json",
+    "sha256": "sha256:7904399a30bd09a63742d25737130fe30ba3f6a7376326e2718d5ca4a4937735"
+  }
+}

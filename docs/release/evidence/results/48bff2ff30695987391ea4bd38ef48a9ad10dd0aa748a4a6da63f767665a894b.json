@@ -1,0 +1,143 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/releasebundles",
+      "-run",
+      "^(?:TestParseReleaseContractV2StrictlyDispatchesBySchema|TestParseReleaseContractPreservesV1Shape|TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData|TestValidateComponentReleaseContractV2AcceptsVersionedAdapterRequirements|TestValidateComponentReleaseContractV2RejectsUnresolvedBackupAdapterRequirement|TestValidateComponentReleaseContractV2AllowsOnlyOneAdapterPerStepKind|TestNormalizeReleaseContractV2SortsOnlySetLikeCollections|TestNormalizeReleaseContractV2TreatsNullOmittedAndEmptyCollectionsEqually|TestNormalizeReleaseContractV2TreatsNestedNullAndEmptyCollectionsEqually|TestValidateComponentReleaseContractV2RejectsCredentialBearingTextAndReferences|TestValidateComponentReleaseContractV2RejectsEmbeddedAbsolutePaths|TestValidateComponentReleaseContractV2RequiresPortableImmutableEvidenceReferences|TestValidateComponentReleaseContractV2AcceptsCredentialFreeImmutableReferences|TestValidateComponentReleaseContractV2AcceptsNeutralProvenanceURIIdentities|TestValidateComponentReleaseContractV2RejectsTargetSpecificOrMutableURIIdentities|TestValidateComponentReleaseContractV2BoundsEveryCollection|TestValidateComponentReleaseContractV2BoundsFreeTextAndReferences|TestValidateComponentReleaseContractV2BoundsCanonicalPayload)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/releasebundles/release_contract_v2_test.go",
+    "selectedTests": [
+      "TestParseReleaseContractV2StrictlyDispatchesBySchema",
+      "TestParseReleaseContractPreservesV1Shape",
+      "TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData",
+      "TestValidateComponentReleaseContractV2AcceptsVersionedAdapterRequirements",
+      "TestValidateComponentReleaseContractV2RejectsUnresolvedBackupAdapterRequirement",
+      "TestValidateComponentReleaseContractV2AllowsOnlyOneAdapterPerStepKind",
+      "TestNormalizeReleaseContractV2SortsOnlySetLikeCollections",
+      "TestNormalizeReleaseContractV2TreatsNullOmittedAndEmptyCollectionsEqually",
+      "TestNormalizeReleaseContractV2TreatsNestedNullAndEmptyCollectionsEqually",
+      "TestValidateComponentReleaseContractV2RejectsCredentialBearingTextAndReferences",
+      "TestValidateComponentReleaseContractV2RejectsEmbeddedAbsolutePaths",
+      "TestValidateComponentReleaseContractV2RequiresPortableImmutableEvidenceReferences",
+      "TestValidateComponentReleaseContractV2AcceptsCredentialFreeImmutableReferences",
+      "TestValidateComponentReleaseContractV2AcceptsNeutralProvenanceURIIdentities",
+      "TestValidateComponentReleaseContractV2RejectsTargetSpecificOrMutableURIIdentities",
+      "TestValidateComponentReleaseContractV2BoundsEveryCollection",
+      "TestValidateComponentReleaseContractV2BoundsFreeTextAndReferences",
+      "TestValidateComponentReleaseContractV2BoundsCanonicalPayload"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 74,
+    "passed": 74,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestNormalizeReleaseContractV2SortsOnlySetLikeCollections",
+        "status": "pass"
+      },
+      {
+        "name": "TestNormalizeReleaseContractV2TreatsNestedNullAndEmptyCollectionsEqually",
+        "status": "pass"
+      },
+      {
+        "name": "TestNormalizeReleaseContractV2TreatsNullOmittedAndEmptyCollectionsEqually",
+        "status": "pass"
+      },
+      {
+        "name": "TestParseReleaseContractPreservesV1Shape",
+        "status": "pass"
+      },
+      {
+        "name": "TestParseReleaseContractV2StrictlyDispatchesBySchema",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2AcceptsCredentialFreeImmutableReferences",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2AcceptsNeutralProvenanceURIIdentities",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2AcceptsVersionedAdapterRequirements",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2AllowsOnlyOneAdapterPerStepKind",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2BoundsCanonicalPayload",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2BoundsEveryCollection",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2BoundsFreeTextAndReferences",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2RejectsCredentialBearingTextAndReferences",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2RejectsEmbeddedAbsolutePaths",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2RejectsInvalidIdentityAndTargetData",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2RejectsTargetSpecificOrMutableURIIdentities",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2RejectsUnresolvedBackupAdapterRequirement",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateComponentReleaseContractV2RequiresPortableImmutableEvidenceReferences",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:08.278Z",
+  "completedAt": "2026-08-29T19:06:12.070Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/releasebundles/canonical_test.go",
+      "sha256": "sha256:80e8de1510bc6d58a9ea0025c96e9298ab3e00adfb55ec46ff086577ae5e5470"
+    },
+    {
+      "path": "internal/releasebundles/provenance_test.go",
+      "sha256": "sha256:b3714c7e05bc4b39ad4e04ba569d475592da9b75badd206c129a7ab16e6eb141"
+    },
+    {
+      "path": "internal/releasebundles/release_contract_test.go",
+      "sha256": "sha256:df30097ea6256b330df179b371188dd6992731fd59d2433421d2f79b4dc154b6"
+    },
+    {
+      "path": "internal/releasebundles/release_contract_v2_test.go",
+      "sha256": "sha256:cd516e8c5806e02099b5462b3b675fd4a3ec7a3c81259b3116a8fbe90a9fca3a"
+    },
+    {
+      "path": "internal/releasebundles/validation_test.go",
+      "sha256": "sha256:0fd4698d570771f3fe92c09ccba1810727d10bf461db674557733ad9ccb5817f"
+    }
+  ]
+}

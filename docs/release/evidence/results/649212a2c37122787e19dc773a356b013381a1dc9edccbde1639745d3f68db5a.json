@@ -1,0 +1,111 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/observation",
+      "-run",
+      "^(?:TestObservationGateRequiresIndependentExactMatch|TestObservationGateDoesNotInventSuccessForPartialUnknownCancelOrFailure|TestObservationGateQuarantinesTimeoutAndConflictingObservers|TestObservationGateAcceptsIndependentObserversThatAgree|TestObservationGateFencesTrustedSameSequenceConflictEvidence|TestObservationGateDoesNotVerifyEvidenceCapturedAfterDeadline|TestObservationGateRequiresFreshEvidenceCapturedAfterAdmission|TestObservationGatePreservesEligiblePreDeadlineEvidenceAfterLaterSample|TestObservationGateRequiresAcceptedTrustedEvidenceForTerminalOutcome|TestObservationGateTerminalEvidenceRetainsTrustedObservationIdentity|TestObservationGateRejectsExecutorSuccessWhenRuntimeIsWrong|TestObservationGateDoesNotAdvanceTerminalExecutorFailure|TestCampaignObservationVerifierBindsTrustedIdentityAndChecksum|TestCampaignObservationResolverUsesCanonicalComponentPlacement)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/observation/gate_test.go",
+    "selectedTests": [
+      "TestObservationGateRequiresIndependentExactMatch",
+      "TestObservationGateDoesNotInventSuccessForPartialUnknownCancelOrFailure",
+      "TestObservationGateQuarantinesTimeoutAndConflictingObservers",
+      "TestObservationGateAcceptsIndependentObserversThatAgree",
+      "TestObservationGateFencesTrustedSameSequenceConflictEvidence",
+      "TestObservationGateDoesNotVerifyEvidenceCapturedAfterDeadline",
+      "TestObservationGateRequiresFreshEvidenceCapturedAfterAdmission",
+      "TestObservationGatePreservesEligiblePreDeadlineEvidenceAfterLaterSample",
+      "TestObservationGateRequiresAcceptedTrustedEvidenceForTerminalOutcome",
+      "TestObservationGateTerminalEvidenceRetainsTrustedObservationIdentity",
+      "TestObservationGateRejectsExecutorSuccessWhenRuntimeIsWrong",
+      "TestObservationGateDoesNotAdvanceTerminalExecutorFailure",
+      "TestCampaignObservationVerifierBindsTrustedIdentityAndChecksum",
+      "TestCampaignObservationResolverUsesCanonicalComponentPlacement"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 21,
+    "passed": 21,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestCampaignObservationResolverUsesCanonicalComponentPlacement",
+        "status": "pass"
+      },
+      {
+        "name": "TestCampaignObservationVerifierBindsTrustedIdentityAndChecksum",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateAcceptsIndependentObserversThatAgree",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateDoesNotAdvanceTerminalExecutorFailure",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateDoesNotInventSuccessForPartialUnknownCancelOrFailure",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateDoesNotVerifyEvidenceCapturedAfterDeadline",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateFencesTrustedSameSequenceConflictEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGatePreservesEligiblePreDeadlineEvidenceAfterLaterSample",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateQuarantinesTimeoutAndConflictingObservers",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateRejectsExecutorSuccessWhenRuntimeIsWrong",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateRequiresAcceptedTrustedEvidenceForTerminalOutcome",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateRequiresFreshEvidenceCapturedAfterAdmission",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateRequiresIndependentExactMatch",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationGateTerminalEvidenceRetainsTrustedObservationIdentity",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:43.046Z",
+  "completedAt": "2026-08-29T19:06:45.166Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/observation/gate_test.go",
+      "sha256": "sha256:42499501695d8332fc7674e07cf09539f65e69071cfa0d765a8589f74f566b55"
+    },
+    {
+      "path": "internal/observation/ingest_test.go",
+      "sha256": "sha256:f87c12ea9674cdeab7cd309961506716530b00f7d3de1d1884962231c314dc65"
+    }
+  ]
+}

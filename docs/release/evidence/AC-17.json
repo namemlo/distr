@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-17",
+  "owner": "PR-063",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/planning/resolver_test.go",
+    "sha256": "sha256:c8f328ca0817429c4c10c163c96dea61cc11a4406df9c018fb6c70ee89e4abbb"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-063_TARGET_DEPLOYMENT_PLAN_V2.md",
+    "sha256": "sha256:93ba873195484bfa732123ca53464fc8c3f92df9045c5019b1084c0b67b702ac"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/bd70f460619d8b6d737a701e9738f3bacb541af6f22a79108e29eb750a67f215.json",
+    "sha256": "sha256:1aed382a956dc52d8e5b0e44459b1017229860429ff80aef03397c163ca1f589"
+  }
+}

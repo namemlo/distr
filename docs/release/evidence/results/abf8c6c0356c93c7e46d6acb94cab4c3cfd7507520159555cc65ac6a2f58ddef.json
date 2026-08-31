@@ -1,0 +1,91 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/deploymentregistry",
+      "-run",
+      "^(?:TestValidateDeploymentRegistryPlacementAcceptsDedicatedTopology|TestValidateDeploymentRegistryPlacementAcceptsSharedTopologyWithStableSubscriberChecksum|TestValidateDeploymentRegistryPlacementRejectsAmbiguousActiveEnvironment|TestValidateDeploymentRegistryPlacementRejectsDuplicatePhysicalIdentity|TestValidateDeploymentRegistryPlacementRequiresSharedSubscriber|TestValidateDeploymentRegistryPlacementRejectsOrphanInstance|TestValidateDeploymentRegistryPlacementRequiresAliasForRename|TestValidateDeploymentRegistryPlacementRejectsCrossOrganizationSubstitution|TestValidateDeploymentRegistryPlacementReturnsStableOrderedIssueCodes|TestDeploymentRegistryEnumValuesRemainExact)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/deploymentregistry/validation_test.go",
+    "selectedTests": [
+      "TestValidateDeploymentRegistryPlacementAcceptsDedicatedTopology",
+      "TestValidateDeploymentRegistryPlacementAcceptsSharedTopologyWithStableSubscriberChecksum",
+      "TestValidateDeploymentRegistryPlacementRejectsAmbiguousActiveEnvironment",
+      "TestValidateDeploymentRegistryPlacementRejectsDuplicatePhysicalIdentity",
+      "TestValidateDeploymentRegistryPlacementRequiresSharedSubscriber",
+      "TestValidateDeploymentRegistryPlacementRejectsOrphanInstance",
+      "TestValidateDeploymentRegistryPlacementRequiresAliasForRename",
+      "TestValidateDeploymentRegistryPlacementRejectsCrossOrganizationSubstitution",
+      "TestValidateDeploymentRegistryPlacementReturnsStableOrderedIssueCodes",
+      "TestDeploymentRegistryEnumValuesRemainExact"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 10,
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestDeploymentRegistryEnumValuesRemainExact",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementAcceptsDedicatedTopology",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementAcceptsSharedTopologyWithStableSubscriberChecksum",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementRejectsAmbiguousActiveEnvironment",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementRejectsCrossOrganizationSubstitution",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementRejectsDuplicatePhysicalIdentity",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementRejectsOrphanInstance",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementRequiresAliasForRename",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementRequiresSharedSubscriber",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateDeploymentRegistryPlacementReturnsStableOrderedIssueCodes",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:52.692Z",
+  "completedAt": "2026-08-29T19:06:54.607Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/deploymentregistry/import_test.go",
+      "sha256": "sha256:fc002cde9ad249f701a36c186024bb45db135a56ba1c0be1e916e8624d9821ad"
+    },
+    {
+      "path": "internal/deploymentregistry/validation_test.go",
+      "sha256": "sha256:2cec061af4430087f549e7e77bd7a85f2a797b4a342d0f24a12aac6adaa2f96c"
+    }
+  ]
+}

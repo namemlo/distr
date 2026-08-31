@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-32",
+  "owner": "PR-070",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/scheduling/admission_test.go",
+    "sha256": "sha256:5820e67195214130707d6586618b66f4d9108680df44afaf3ab96590adbfa081"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-070_DEPLOYMENT_ADMISSION_OVERRIDES.md",
+    "sha256": "sha256:a51a88eb2e83d34c1ec4ca4b2a3db954daa0e8eba2672f22d412e23ccb3f2e11"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/65f9d2056a019a2f7105b481d1a97d8d3ab89ae58754718ed0500bf941af3976.json",
+    "sha256": "sha256:5cf4d0fb121307fc59544f749c351c383ffe1805f6ae62142ac183c47a4c2702"
+  }
+}

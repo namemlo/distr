@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-66",
+  "owner": "PR-072",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/campaigns/thresholds_test.go",
+    "sha256": "sha256:ee93a94f5f25f354f87d59c90d332cd6d14713e44fbf102ebb145a2382c03814"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-072_CAMPAIGN_SCHEDULER_THRESHOLDS.md",
+    "sha256": "sha256:675a87b342beea5e73b1983dd03d0911756bcf541dc9c4c9fd26293eebbe515b"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/5a1263328e0b8103044fc6927e678696b212eb87b8cc57e297493cacd8248d43.json",
+    "sha256": "sha256:217916412af295d2a3b03371a1b1632561e573660e6b289fbadb41f031a2897d"
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/campaigns",
+      "-run",
+      "^(?:TestPauseCampaignBlocksAdmissionsBeforeSafePointAndResumeSurvivesRestart|TestScheduledCampaignPauseResumesToScheduled|TestCancelCampaignOnlyCancellableWorkAndReconcilesUncertainState|TestCampaignControlRejectsStaleAndConflictingState|TestExcludeCampaignMemberIsAuthorizedAndVisibleAsIncompleteDrift|TestCampaignControlsRejectWhitespacePaddedReason|TestCampaignMemberMutationRejectsTerminalRunAndAdvancesVersion|TestCompositeCampaignControlServiceIsRouteCompatible|TestRetryCampaignSplitKeepsV1AndMaterializesV2ThroughRetryStore|TestRetryCampaignV2FailsClosedWithoutStoreOrAuthorizer|TestCampaignMemberRetryOnlyAllowsFailedMember)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/campaigns/controls_test.go",
+    "selectedTests": [
+      "TestPauseCampaignBlocksAdmissionsBeforeSafePointAndResumeSurvivesRestart",
+      "TestScheduledCampaignPauseResumesToScheduled",
+      "TestCancelCampaignOnlyCancellableWorkAndReconcilesUncertainState",
+      "TestCampaignControlRejectsStaleAndConflictingState",
+      "TestExcludeCampaignMemberIsAuthorizedAndVisibleAsIncompleteDrift",
+      "TestCampaignControlsRejectWhitespacePaddedReason",
+      "TestCampaignMemberMutationRejectsTerminalRunAndAdvancesVersion",
+      "TestCompositeCampaignControlServiceIsRouteCompatible",
+      "TestRetryCampaignSplitKeepsV1AndMaterializesV2ThroughRetryStore",
+      "TestRetryCampaignV2FailsClosedWithoutStoreOrAuthorizer",
+      "TestCampaignMemberRetryOnlyAllowsFailedMember"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 11,
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestCampaignControlRejectsStaleAndConflictingState",
+        "status": "pass"
+      },
+      {
+        "name": "TestCampaignControlsRejectWhitespacePaddedReason",
+        "status": "pass"
+      },
+      {
+        "name": "TestCampaignMemberMutationRejectsTerminalRunAndAdvancesVersion",
+        "status": "pass"
+      },
+      {
+        "name": "TestCampaignMemberRetryOnlyAllowsFailedMember",
+        "status": "pass"
+      },
+      {
+        "name": "TestCancelCampaignOnlyCancellableWorkAndReconcilesUncertainState",
+        "status": "pass"
+      },
+      {
+        "name": "TestCompositeCampaignControlServiceIsRouteCompatible",
+        "status": "pass"
+      },
+      {
+        "name": "TestExcludeCampaignMemberIsAuthorizedAndVisibleAsIncompleteDrift",
+        "status": "pass"
+      },
+      {
+        "name": "TestPauseCampaignBlocksAdmissionsBeforeSafePointAndResumeSurvivesRestart",
+        "status": "pass"
+      },
+      {
+        "name": "TestRetryCampaignSplitKeepsV1AndMaterializesV2ThroughRetryStore",
+        "status": "pass"
+      },
+      {
+        "name": "TestRetryCampaignV2FailsClosedWithoutStoreOrAuthorizer",
+        "status": "pass"
+      },
+      {
+        "name": "TestScheduledCampaignPauseResumesToScheduled",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:05:49.571Z",
+  "completedAt": "2026-08-29T19:05:51.834Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/campaigns/canonical_test.go",
+      "sha256": "sha256:7ff06395a62875f983eb5f605ec723107637c147326d5604e5d781a220179403"
+    },
+    {
+      "path": "internal/campaigns/controls_test.go",
+      "sha256": "sha256:ce020e24fc9f9ef5dbebd625df2e3852df33eb43b66d9f02984e30cf75618220"
+    },
+    {
+      "path": "internal/campaigns/membership_test.go",
+      "sha256": "sha256:2fbd857db585ca45bf5c5b4cea64304e054a0d2ea9daf9476c47575189dfc1f2"
+    },
+    {
+      "path": "internal/campaigns/scheduler_test.go",
+      "sha256": "sha256:e18abf76d811cbc67079b8158b7d94abfeaca4e8cc83372c7370be29c3dfb6aa"
+    },
+    {
+      "path": "internal/campaigns/state_machine_test.go",
+      "sha256": "sha256:b1894b0487bc48b47d6aa8857d96c83128ab1ecd5b1e54531f74b99da7f4a35c"
+    },
+    {
+      "path": "internal/campaigns/thresholds_test.go",
+      "sha256": "sha256:ee93a94f5f25f354f87d59c90d332cd6d14713e44fbf102ebb145a2382c03814"
+    },
+    {
+      "path": "internal/campaigns/validation_test.go",
+      "sha256": "sha256:89b7f6c8091c5cd336bc6c5f4f839378711ae198db256ea06a50c64342721af0"
+    }
+  ]
+}

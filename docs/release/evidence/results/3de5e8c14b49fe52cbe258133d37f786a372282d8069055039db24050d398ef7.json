@@ -1,0 +1,62 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/desiredstate",
+      "-run",
+      "^(?:TestDesiredStateAdmissionDoesNotReplaceActiveRevision|TestDesiredStateAdvancesOnlyAfterIndependentVerification|TestDesiredStateTerminalFailurePreservesPriorActive|TestDesiredStateCancellationPreservesPriorActive|TestDesiredStateRejectsUnprovenNonTimeoutTerminalOutcome)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/desiredstate/state_test.go",
+    "selectedTests": [
+      "TestDesiredStateAdmissionDoesNotReplaceActiveRevision",
+      "TestDesiredStateAdvancesOnlyAfterIndependentVerification",
+      "TestDesiredStateTerminalFailurePreservesPriorActive",
+      "TestDesiredStateCancellationPreservesPriorActive",
+      "TestDesiredStateRejectsUnprovenNonTimeoutTerminalOutcome"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 5,
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestDesiredStateAdmissionDoesNotReplaceActiveRevision",
+        "status": "pass"
+      },
+      {
+        "name": "TestDesiredStateAdvancesOnlyAfterIndependentVerification",
+        "status": "pass"
+      },
+      {
+        "name": "TestDesiredStateCancellationPreservesPriorActive",
+        "status": "pass"
+      },
+      {
+        "name": "TestDesiredStateRejectsUnprovenNonTimeoutTerminalOutcome",
+        "status": "pass"
+      },
+      {
+        "name": "TestDesiredStateTerminalFailurePreservesPriorActive",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:06.141Z",
+  "completedAt": "2026-08-29T19:06:08.106Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/desiredstate/state_test.go",
+      "sha256": "sha256:1161c4cded19dd26381158c786533075e05be47004253b3c1dd1f91a34f3bad9"
+    }
+  ]
+}

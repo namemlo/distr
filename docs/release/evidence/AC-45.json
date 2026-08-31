@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-45",
+  "owner": "PR-077",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/desiredstate/state_test.go",
+    "sha256": "sha256:1161c4cded19dd26381158c786533075e05be47004253b3c1dd1f91a34f3bad9"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-077_DESIRED_OBSERVED_RECONCILIATION.md",
+    "sha256": "sha256:763d04322e4b81366e0c07a579372c5dbff9079328b95cb1417cd882a53aa3d1"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/3de5e8c14b49fe52cbe258133d37f786a372282d8069055039db24050d398ef7.json",
+    "sha256": "sha256:ad8fd0a458e35339746fa3e10dfb32702e0853b56e16c8d208e92c5b45b990d1"
+  }
+}

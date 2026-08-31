@@ -1,0 +1,146 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/campaigns",
+      "-run",
+      "^(?:TestSchedulerUsesDeterministicAdmissionOrderAndDeduplicatesTick|TestSchedulerFailsClosedWhenObservationVerifierIsUnwired|TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch|TestSchedulerResolvesFrozenPrerequisiteByCanonicalProviderIdentity|TestSchedulerBlocksForBakeConcurrencyRiskAndHealth|TestSchedulerStopsForThresholdPauseAndLeaseLoss|TestSchedulerCompletesFinalCampaignAfterThresholdAndBake|TestSchedulerCompletesAllExcludedFinalWaveWithZeroSampleEvidence|TestSchedulerDoesNotCompleteFinalCampaignBeforeBake|TestSchedulerPausesUnhealthyFinalCampaignInsteadOfLeavingItRunning|TestSchedulerDoesNotExposeWhilePausedOrLeaseUnavailable|TestPauseCampaignCompletesAtSafePointAfterRestart|TestSchedulerDispatchesRecoveryBeforeMaterializedAdmissionTasks|TestSchedulerStopsBeforeAdmissionWhenRecoveryDispatchFails|TestSchedulerNeverDispatchesWhilePaused|TestSchedulerDoesNotCallDispatcherWhenNothingWasAdmittedOrRecovered|TestNilCampaignTaskDispatcherFunctionFailsClosed)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/campaigns/scheduler_test.go",
+    "selectedTests": [
+      "TestSchedulerUsesDeterministicAdmissionOrderAndDeduplicatesTick",
+      "TestSchedulerFailsClosedWhenObservationVerifierIsUnwired",
+      "TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch",
+      "TestSchedulerResolvesFrozenPrerequisiteByCanonicalProviderIdentity",
+      "TestSchedulerBlocksForBakeConcurrencyRiskAndHealth",
+      "TestSchedulerStopsForThresholdPauseAndLeaseLoss",
+      "TestSchedulerCompletesFinalCampaignAfterThresholdAndBake",
+      "TestSchedulerCompletesAllExcludedFinalWaveWithZeroSampleEvidence",
+      "TestSchedulerDoesNotCompleteFinalCampaignBeforeBake",
+      "TestSchedulerPausesUnhealthyFinalCampaignInsteadOfLeavingItRunning",
+      "TestSchedulerDoesNotExposeWhilePausedOrLeaseUnavailable",
+      "TestPauseCampaignCompletesAtSafePointAfterRestart",
+      "TestSchedulerDispatchesRecoveryBeforeMaterializedAdmissionTasks",
+      "TestSchedulerStopsBeforeAdmissionWhenRecoveryDispatchFails",
+      "TestSchedulerNeverDispatchesWhilePaused",
+      "TestSchedulerDoesNotCallDispatcherWhenNothingWasAdmittedOrRecovered",
+      "TestNilCampaignTaskDispatcherFunctionFailsClosed"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 17,
+    "passed": 17,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestNilCampaignTaskDispatcherFunctionFailsClosed",
+        "status": "pass"
+      },
+      {
+        "name": "TestPauseCampaignCompletesAtSafePointAfterRestart",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerBlocksForBakeConcurrencyRiskAndHealth",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerCompletesAllExcludedFinalWaveWithZeroSampleEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerCompletesFinalCampaignAfterThresholdAndBake",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerDispatchesRecoveryBeforeMaterializedAdmissionTasks",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerDoesNotCallDispatcherWhenNothingWasAdmittedOrRecovered",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerDoesNotCompleteFinalCampaignBeforeBake",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerDoesNotExposeWhilePausedOrLeaseUnavailable",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerFailsClosedWhenObservationVerifierIsUnwired",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerNeverDispatchesWhilePaused",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerPausesUnhealthyFinalCampaignInsteadOfLeavingItRunning",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerPersistsExactObservationBindingAndPausesOnMismatch",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerResolvesFrozenPrerequisiteByCanonicalProviderIdentity",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerStopsBeforeAdmissionWhenRecoveryDispatchFails",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerStopsForThresholdPauseAndLeaseLoss",
+        "status": "pass"
+      },
+      {
+        "name": "TestSchedulerUsesDeterministicAdmissionOrderAndDeduplicatesTick",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:04.250Z",
+  "completedAt": "2026-08-29T19:06:05.973Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/campaigns/canonical_test.go",
+      "sha256": "sha256:7ff06395a62875f983eb5f605ec723107637c147326d5604e5d781a220179403"
+    },
+    {
+      "path": "internal/campaigns/controls_test.go",
+      "sha256": "sha256:ce020e24fc9f9ef5dbebd625df2e3852df33eb43b66d9f02984e30cf75618220"
+    },
+    {
+      "path": "internal/campaigns/membership_test.go",
+      "sha256": "sha256:2fbd857db585ca45bf5c5b4cea64304e054a0d2ea9daf9476c47575189dfc1f2"
+    },
+    {
+      "path": "internal/campaigns/scheduler_test.go",
+      "sha256": "sha256:e18abf76d811cbc67079b8158b7d94abfeaca4e8cc83372c7370be29c3dfb6aa"
+    },
+    {
+      "path": "internal/campaigns/state_machine_test.go",
+      "sha256": "sha256:b1894b0487bc48b47d6aa8857d96c83128ab1ecd5b1e54531f74b99da7f4a35c"
+    },
+    {
+      "path": "internal/campaigns/thresholds_test.go",
+      "sha256": "sha256:ee93a94f5f25f354f87d59c90d332cd6d14713e44fbf102ebb145a2382c03814"
+    },
+    {
+      "path": "internal/campaigns/validation_test.go",
+      "sha256": "sha256:89b7f6c8091c5cd336bc6c5f4f839378711ae198db256ea06a50c64342721af0"
+    }
+  ]
+}

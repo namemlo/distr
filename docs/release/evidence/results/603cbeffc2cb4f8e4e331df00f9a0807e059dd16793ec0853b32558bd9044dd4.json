@@ -1,0 +1,116 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/deploymentregistry",
+      "-run",
+      "^(?:TestRegistryImportPreviewIsDeterministicAndNoOpOnCanonicalReimport|TestRegistryImportPreviewRejectsInvalidEvidenceAndSecretBearingInput|TestRegistryImportPreviewRejectsDuplicateAndUnaliasedRenameWithoutSilentOmission|TestRegistryImportClassificationMappingAndCoverageAreExact|TestRegistryImportSourceBaselineProducesExactNonzeroOmissions|TestRegistryImportSourceBaselineKeepsRetirementsSeparateFromOmissions|TestRegistryImportRejectsMappedPlacementOutsideSourceBaseline|TestRegistryImportDiagnosticsAreStableAndBounded|TestRegistryImportNeutralRoadmapScaleFixtureHasExactCoverage|TestRegistryImportNormalizesEveryReturnedFieldAndSubscriberSet|TestRegistryImportSanitizesEveryPlacementStringOnEveryOS|TestRegistryImportRejectsUnsafeExistingBaselineBeforeDiff|TestRegistryImportRejectsUnpersistableIdentityBeforeDiagnostics|TestRegistryImportDiffSeparatesPlacementCreateAndMetadataUpdate|TestRegistryImportCoverageBlocksEveryUnapplyableTopology)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/deploymentregistry/import_test.go",
+    "selectedTests": [
+      "TestRegistryImportPreviewIsDeterministicAndNoOpOnCanonicalReimport",
+      "TestRegistryImportPreviewRejectsInvalidEvidenceAndSecretBearingInput",
+      "TestRegistryImportPreviewRejectsDuplicateAndUnaliasedRenameWithoutSilentOmission",
+      "TestRegistryImportClassificationMappingAndCoverageAreExact",
+      "TestRegistryImportSourceBaselineProducesExactNonzeroOmissions",
+      "TestRegistryImportSourceBaselineKeepsRetirementsSeparateFromOmissions",
+      "TestRegistryImportRejectsMappedPlacementOutsideSourceBaseline",
+      "TestRegistryImportDiagnosticsAreStableAndBounded",
+      "TestRegistryImportNeutralRoadmapScaleFixtureHasExactCoverage",
+      "TestRegistryImportNormalizesEveryReturnedFieldAndSubscriberSet",
+      "TestRegistryImportSanitizesEveryPlacementStringOnEveryOS",
+      "TestRegistryImportRejectsUnsafeExistingBaselineBeforeDiff",
+      "TestRegistryImportRejectsUnpersistableIdentityBeforeDiagnostics",
+      "TestRegistryImportDiffSeparatesPlacementCreateAndMetadataUpdate",
+      "TestRegistryImportCoverageBlocksEveryUnapplyableTopology"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 28,
+    "passed": 28,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestRegistryImportClassificationMappingAndCoverageAreExact",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportCoverageBlocksEveryUnapplyableTopology",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportDiagnosticsAreStableAndBounded",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportDiffSeparatesPlacementCreateAndMetadataUpdate",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportNeutralRoadmapScaleFixtureHasExactCoverage",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportNormalizesEveryReturnedFieldAndSubscriberSet",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportPreviewIsDeterministicAndNoOpOnCanonicalReimport",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportPreviewRejectsDuplicateAndUnaliasedRenameWithoutSilentOmission",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportPreviewRejectsInvalidEvidenceAndSecretBearingInput",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportRejectsMappedPlacementOutsideSourceBaseline",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportRejectsUnpersistableIdentityBeforeDiagnostics",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportRejectsUnsafeExistingBaselineBeforeDiff",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportSanitizesEveryPlacementStringOnEveryOS",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportSourceBaselineKeepsRetirementsSeparateFromOmissions",
+        "status": "pass"
+      },
+      {
+        "name": "TestRegistryImportSourceBaselineProducesExactNonzeroOmissions",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:31.979Z",
+  "completedAt": "2026-08-29T19:06:34.297Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/deploymentregistry/import_test.go",
+      "sha256": "sha256:fc002cde9ad249f701a36c186024bb45db135a56ba1c0be1e916e8624d9821ad"
+    },
+    {
+      "path": "internal/deploymentregistry/validation_test.go",
+      "sha256": "sha256:2cec061af4430087f549e7e77bd7a85f2a797b4a342d0f24a12aac6adaa2f96c"
+    }
+  ]
+}

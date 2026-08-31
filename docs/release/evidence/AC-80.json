@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-80",
+  "owner": "PR-071",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/campaigns/scheduler_test.go",
+    "sha256": "sha256:e18abf76d811cbc67079b8158b7d94abfeaca4e8cc83372c7370be29c3dfb6aa"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-071_IMMUTABLE_CAMPAIGN_REVISIONS.md",
+    "sha256": "sha256:ff66a5fffe41c3e58c11553a4ceedf1d0290fc97befb0997204797b453eb5a1d"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/31536686f715906bb793d041a9c73a44705003f3dc8c7517c4bdc8e67c7b1299.json",
+    "sha256": "sha256:97fb65a26d789ffed5abebbbf1a7d7cbffff5422cfb8e550a659a7bbb9b89b29"
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/adapterresolution",
+      "-run",
+      "^(?:TestResolveStepAdapterFreezesExactReleaseCapabilityAndVersion|TestResolveStepAdapterRejectsMissingAndAmbiguousImplementation|TestResolveStepAdapterRequiresExactTargetScopeAndConfigSnapshot|TestResolveStepAdapterRejectsDisabledAssignment|TestResolveStepAdapterKeepsReleaseRequirementAuthoritative|TestVerifyAdapterAtStartRejectsVersionAndFingerprintDrift|TestVerifyAdapterAtStartAcceptsExactFrozenState|TestVerifyAdapterAtStartSeparatelyRejectsAssignmentAndSnapshotChecksumDrift)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/adapterresolution/resolver_test.go",
+    "selectedTests": [
+      "TestResolveStepAdapterFreezesExactReleaseCapabilityAndVersion",
+      "TestResolveStepAdapterRejectsMissingAndAmbiguousImplementation",
+      "TestResolveStepAdapterRequiresExactTargetScopeAndConfigSnapshot",
+      "TestResolveStepAdapterRejectsDisabledAssignment",
+      "TestResolveStepAdapterKeepsReleaseRequirementAuthoritative",
+      "TestVerifyAdapterAtStartRejectsVersionAndFingerprintDrift",
+      "TestVerifyAdapterAtStartAcceptsExactFrozenState",
+      "TestVerifyAdapterAtStartSeparatelyRejectsAssignmentAndSnapshotChecksumDrift"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 15,
+    "passed": 15,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestResolveStepAdapterFreezesExactReleaseCapabilityAndVersion",
+        "status": "pass"
+      },
+      {
+        "name": "TestResolveStepAdapterKeepsReleaseRequirementAuthoritative",
+        "status": "pass"
+      },
+      {
+        "name": "TestResolveStepAdapterRejectsDisabledAssignment",
+        "status": "pass"
+      },
+      {
+        "name": "TestResolveStepAdapterRejectsMissingAndAmbiguousImplementation",
+        "status": "pass"
+      },
+      {
+        "name": "TestResolveStepAdapterRequiresExactTargetScopeAndConfigSnapshot",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifyAdapterAtStartAcceptsExactFrozenState",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifyAdapterAtStartRejectsVersionAndFingerprintDrift",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifyAdapterAtStartSeparatelyRejectsAssignmentAndSnapshotChecksumDrift",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:54.766Z",
+  "completedAt": "2026-08-29T19:06:56.835Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/adapterresolution/resolver_test.go",
+      "sha256": "sha256:bee4fc314fefd30d6c80f7ef61380b1ab30cb2ae6d15b6eede3b2ed6954501b6"
+    }
+  ]
+}

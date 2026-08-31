@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-69",
+  "owner": "PR-075",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/db/execution_v2_recovery_test.go",
+    "sha256": "sha256:d661125f5f87d28a8dd5ef6bd52d565b34c456ccc35bb19b8d69457fa48a502d"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-075_FENCED_EXECUTOR_PROTOCOL_V2.md",
+    "sha256": "sha256:f8159761d4d34cf2528f46ba6a815f5b1596eeb273933d83e5b7493e528baa02"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/d402de0638fa4ec4ed6f9163e4947c85fa4e44ef2c58ea40cd87325e386ce348.json",
+    "sha256": "sha256:6e2aa2f719ee748679b1ec1e30d998765bd346d0760a0f9bda730625e169d8b4"
+  }
+}

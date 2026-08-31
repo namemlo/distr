@@ -1,0 +1,75 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/auditexport",
+      "-run",
+      "^(?:TestAuditExportBatchRetriesInOrderAndIsIdempotent|TestAuditExportBatchRecordsFailureWithoutAdvancingCheckpoint|TestAuditExportBatchRecordsSinkResolutionFailureAsAttempt|TestAuditExportBatchRetainsFailedAttemptWhenRetrySucceeds|TestAuditExportBatchPersistsCancellationFailureWithDetachedContext|TestAuditExportBatchPersistsCommitFailure)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/auditexport/worker_test.go",
+    "selectedTests": [
+      "TestAuditExportBatchRetriesInOrderAndIsIdempotent",
+      "TestAuditExportBatchRecordsFailureWithoutAdvancingCheckpoint",
+      "TestAuditExportBatchRecordsSinkResolutionFailureAsAttempt",
+      "TestAuditExportBatchRetainsFailedAttemptWhenRetrySucceeds",
+      "TestAuditExportBatchPersistsCancellationFailureWithDetachedContext",
+      "TestAuditExportBatchPersistsCommitFailure"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 6,
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestAuditExportBatchPersistsCancellationFailureWithDetachedContext",
+        "status": "pass"
+      },
+      {
+        "name": "TestAuditExportBatchPersistsCommitFailure",
+        "status": "pass"
+      },
+      {
+        "name": "TestAuditExportBatchRecordsFailureWithoutAdvancingCheckpoint",
+        "status": "pass"
+      },
+      {
+        "name": "TestAuditExportBatchRecordsSinkResolutionFailureAsAttempt",
+        "status": "pass"
+      },
+      {
+        "name": "TestAuditExportBatchRetainsFailedAttemptWhenRetrySucceeds",
+        "status": "pass"
+      },
+      {
+        "name": "TestAuditExportBatchRetriesInOrderAndIsIdempotent",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:05:52.009Z",
+  "completedAt": "2026-08-29T19:05:55.582Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/auditexport/bundle_test.go",
+      "sha256": "sha256:e640f8e2a7c05bd644b7f7426bc5fa3f69a3f667ac6155adaa6b4ca035afbf95"
+    },
+    {
+      "path": "internal/auditexport/production_test.go",
+      "sha256": "sha256:8c09c2568aa19b5503ead6250f0a1926090c19a0f57421bb71a16cbad42de06e"
+    },
+    {
+      "path": "internal/auditexport/worker_test.go",
+      "sha256": "sha256:f5f65a8ee79b2865df4950cebbafe894b8a05629602a8ad8fe6a20958762cac3"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-23",
+  "owner": "PR-065",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "automatedTest": {
+    "path": "internal/migrationplanning/recovery_test.go",
+    "sha256": "sha256:2a307a37f60b6767b457341682d124b106632477ff4dd06a08101a509ffa130d"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-065_STRUCTURED_MIGRATION_PLANS.md",
+    "sha256": "sha256:40641f4f104e204e4acfa6910e3dcd60f6d06d03dd73bc52775448c6d200547b"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/89f6ee4ff17507699e40e26ac104dcdfd6959fc0b58e12bab45b0e1e10e98e4a.json",
+    "sha256": "sha256:b4ea57e72f6ea07a559446b406777c51a90ab04e1fbd0e8bd16db7c577c658d3"
+  }
+}

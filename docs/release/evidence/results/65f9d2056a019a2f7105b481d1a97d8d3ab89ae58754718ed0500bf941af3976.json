@@ -1,0 +1,95 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/scheduling",
+      "-run",
+      "^(?:TestEvaluateAdmissionWaitsForClosedWindowAndActiveFreeze|TestEvaluateAdmissionBlocksMissingApproval|TestEvaluateAdmissionMaterialChecksumIgnoresClockButPinsMaterialFacts|TestEmergencyOverrideAcceleratesOnlyWhitelistedWaits|TestEmergencyOverrideRequiresApprovedApprovalEvidence|TestEmergencyOverrideCannotExceedRemainingWait|TestEmergencyOverrideCannotExceedRemainingFreeze|TestEmergencyOverrideCannotAccelerateApprovalWithoutTrustedRemainingWait|TestEvaluateAdmissionNeverOverridesMandatoryGateEvidence|TestEvaluateAdmissionRejectsOverrideOutsideItsExactLifetime)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/scheduling/admission_test.go",
+    "selectedTests": [
+      "TestEvaluateAdmissionWaitsForClosedWindowAndActiveFreeze",
+      "TestEvaluateAdmissionBlocksMissingApproval",
+      "TestEvaluateAdmissionMaterialChecksumIgnoresClockButPinsMaterialFacts",
+      "TestEmergencyOverrideAcceleratesOnlyWhitelistedWaits",
+      "TestEmergencyOverrideRequiresApprovedApprovalEvidence",
+      "TestEmergencyOverrideCannotExceedRemainingWait",
+      "TestEmergencyOverrideCannotExceedRemainingFreeze",
+      "TestEmergencyOverrideCannotAccelerateApprovalWithoutTrustedRemainingWait",
+      "TestEvaluateAdmissionNeverOverridesMandatoryGateEvidence",
+      "TestEvaluateAdmissionRejectsOverrideOutsideItsExactLifetime"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 10,
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestEmergencyOverrideAcceleratesOnlyWhitelistedWaits",
+        "status": "pass"
+      },
+      {
+        "name": "TestEmergencyOverrideCannotAccelerateApprovalWithoutTrustedRemainingWait",
+        "status": "pass"
+      },
+      {
+        "name": "TestEmergencyOverrideCannotExceedRemainingFreeze",
+        "status": "pass"
+      },
+      {
+        "name": "TestEmergencyOverrideCannotExceedRemainingWait",
+        "status": "pass"
+      },
+      {
+        "name": "TestEmergencyOverrideRequiresApprovedApprovalEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateAdmissionBlocksMissingApproval",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateAdmissionMaterialChecksumIgnoresClockButPinsMaterialFacts",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateAdmissionNeverOverridesMandatoryGateEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateAdmissionRejectsOverrideOutsideItsExactLifetime",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateAdmissionWaitsForClosedWindowAndActiveFreeze",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:45.350Z",
+  "completedAt": "2026-08-29T19:06:47.578Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/scheduling/admission_test.go",
+      "sha256": "sha256:5820e67195214130707d6586618b66f4d9108680df44afaf3ab96590adbfa081"
+    },
+    {
+      "path": "internal/scheduling/admitted_task_creation_test.go",
+      "sha256": "sha256:db5827ca3af00c4a792ad92660b9a097025385e01056739c958448d79f5c4c92"
+    },
+    {
+      "path": "internal/scheduling/calendar_test.go",
+      "sha256": "sha256:c7666db8f2999a961b5e28cd57fe1e8b256835470837745a117fb08fee56540f"
+    }
+  ]
+}

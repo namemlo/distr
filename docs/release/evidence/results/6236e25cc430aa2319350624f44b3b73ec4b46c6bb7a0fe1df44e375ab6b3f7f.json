@@ -1,0 +1,62 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "380cdc7efd86bd364cd6f5aa8ff9afb274ee8078",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/reconciliation",
+      "-run",
+      "^(?:TestClassifyDriftSeparatesArtifactConfigSchemaAndRuntimeHealth|TestClassifyDriftFlagsExecutorSuccessRuntimeWrong|TestClassifyDriftUsesFreshUntilBoundary|TestAcceptedDeviationIsTimeBoundAndDoesNotRewriteDesiredState|TestReconciliationDecisionStatusRequiresPlanOrOutcomeEvidence)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/reconciliation/drift_test.go",
+    "selectedTests": [
+      "TestClassifyDriftSeparatesArtifactConfigSchemaAndRuntimeHealth",
+      "TestClassifyDriftFlagsExecutorSuccessRuntimeWrong",
+      "TestClassifyDriftUsesFreshUntilBoundary",
+      "TestAcceptedDeviationIsTimeBoundAndDoesNotRewriteDesiredState",
+      "TestReconciliationDecisionStatusRequiresPlanOrOutcomeEvidence"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 9,
+    "passed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestAcceptedDeviationIsTimeBoundAndDoesNotRewriteDesiredState",
+        "status": "pass"
+      },
+      {
+        "name": "TestClassifyDriftFlagsExecutorSuccessRuntimeWrong",
+        "status": "pass"
+      },
+      {
+        "name": "TestClassifyDriftSeparatesArtifactConfigSchemaAndRuntimeHealth",
+        "status": "pass"
+      },
+      {
+        "name": "TestClassifyDriftUsesFreshUntilBoundary",
+        "status": "pass"
+      },
+      {
+        "name": "TestReconciliationDecisionStatusRequiresPlanOrOutcomeEvidence",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-08-29T19:06:34.467Z",
+  "completedAt": "2026-08-29T19:06:36.494Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/reconciliation/drift_test.go",
+      "sha256": "sha256:fd9c2a890774d783e42776d100bfc587c2eaf90462295442b3bea9f2cdb9d482"
+    }
+  ]
+}
