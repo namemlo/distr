@@ -19,7 +19,7 @@ separate during native baseline adoption.
 
 ## Surface
 
-Migration 170 adds the read-only response field `applicationVersion` to each
+Migration 169 adds the read-only response field `applicationVersion` to each
 baseline-adoption component record and backfills it from retained plan pins.
 The existing `schemaVersion` and `capabilityChecksum` request fields remain
 independent observation facts. No executor, agent, UI, client database, or
@@ -30,5 +30,5 @@ workload protocol is changed.
 Focused Go and migration-contract tests cover validation, checksum sensitivity,
 read projection, upgrade backfill, deferred database enforcement, and safe
 downgrade shape. Final PostgreSQL certification must cover the complete ordered
-138-to-170 range after the reserved migrations 167-169 are present in the
+138-to-169 range after the reserved migrations 167-168 are present in the
 integration branch.

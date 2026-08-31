@@ -4,7 +4,7 @@ param(
     [int]$FromMigration = 138,
 
     [ValidateRange(0, [int]::MaxValue)]
-    [int]$ToMigration = 170,
+    [int]$ToMigration = 169,
 
     [string]$DatabaseUrl,
 
@@ -29,7 +29,7 @@ $AllowedQueryKeys = @('application_name', 'connect_timeout', 'sslmode')
 $MatrixJwtSecret = ''
 $ScenarioIds = @(
     'postgres-runtime-version',
-    'migration-138-to-170-upgrade',
+    'migration-138-to-169-upgrade',
     'clean-install',
     'single-step-down-and-refusal-contracts',
     'checkpoint-idempotency-and-cursor-resume',
@@ -48,7 +48,7 @@ $ScenarioTests = [ordered]@{
         'TestExecutionRuntimeTrustMigrationPreservesLegacyRowsAndRequiresCompleteV3Shape',
         'TestExecutionRuntimeTrustMigrationCreatesBoundedAppendOnlyAttemptEvidence',
         'TestExecutionRuntimeTrustDowngradeLocksAndRefusesRetainedV3Evidence',
-        'TestMigration170SeparatesReleaseAndObservedBaselineFacts'
+        'TestMigration169SeparatesReleaseAndObservedBaselineFacts'
     )
     'checkpoint-idempotency-and-cursor-resume' = @(
         'TestTargetConfigV1ExtractionRepositoryDryRunApplyRestartAndNoOp',
@@ -551,7 +551,7 @@ if ($PlanOnly) {
             }
         }))
 
-        $scenarioResults.Add((Invoke-MatrixScenario -Id 'migration-138-to-170-upgrade' -Password $database.password -Operation {
+        $scenarioResults.Add((Invoke-MatrixScenario -Id 'migration-138-to-169-upgrade' -Password $database.password -Operation {
             param($checks)
             $schema = & $newSchema
             & $createSchema $checks $schema

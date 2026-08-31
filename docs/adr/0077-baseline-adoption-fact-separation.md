@@ -22,7 +22,7 @@ are independent identities.
 
 ## Decision
 
-Migration 170 adds `application_version` to the append-only
+Migration 169 adds `application_version` to the append-only
 `BaselineAdoptionComponent` read model. Existing rows are backfilled only from
 the exact Component Release pin in their retained deployment-plan canonical
 payload. No observation, desired-state, release, request checksum, or outcome
@@ -55,7 +55,7 @@ checksum, and release checksum are all different without weakening release,
 observation, or desired-state evidence. Existing adoption rows remain append-only
 and retain their original checksums.
 
-Downgrading migration 170 removes only the derived application-version column
+Downgrading migration 169 removes only the derived application-version column
 and restores the migration-166 guard. The underlying frozen plan still retains
 the application version, so adoption and audit history are not deleted.
 
@@ -64,4 +64,4 @@ the application version, so adoption and audit history are not deleted.
 Focused API, canonical-checksum, repository, read-model, migration-contract,
 and migration-lint tests prove independent fact handling and history-preserving
 backfill. The final release matrix must certify the ordered migration range from
-138 through 170 after migrations 167-169 are integrated.
+138 through 169 after migrations 167-168 are integrated.

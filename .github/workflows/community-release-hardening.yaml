@@ -667,7 +667,7 @@ jobs:
               reference,
               sha256: checksum(reference),
               selectors: [
-                'range=138..170',
+                'range=138..169',
                 'v1-flags-off=PASS',
                 'mixed-v1-v2=PASS',
                 'v2-history-flags-off=PASS',

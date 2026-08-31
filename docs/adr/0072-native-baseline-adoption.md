@@ -38,7 +38,7 @@ their evidence checksum.
 Application version, observed schema version, capability-set checksum, and
 Component Release checksum are separate facts. The release pin owns the
 application version and release checksum; the authenticated observation owns
-schema version and capability checksum. Migration 170 exposes the frozen
+schema version and capability checksum. Migration 169 exposes the frozen
 application version explicitly and removes any equality assumption between
 these identities while preserving existing adoption request checksums.
 
@@ -87,7 +87,7 @@ Migration 166 is additive. Its down migration refuses while adoption evidence,
 adoption-sourced active desired revisions, or retained observation health-policy
 evidence exists.
 
-Migration 170 is a compatible projection and guard correction. It backfills the
+Migration 169 is a compatible projection and guard correction. It backfills the
 application version only from the retained frozen plan pin and does not rewrite
 existing observation, desired-state, adoption, or audit checksum material.
 

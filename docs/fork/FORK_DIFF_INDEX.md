@@ -18,9 +18,9 @@ also remain pending.
 PR-087 adds the executor runtime-trust boundary and migration 167; its live
 PostgreSQL, neutral-adapter, and final release gates remain pending.
 PR-090 separates frozen Component Release application identity from
-independently observed schema and capability identity in migration 170. The
+independently observed schema and capability identity in migration 169. The
 PR-086, PR-088, and PR-091 contracts are integrated separately before final
-138-to-170 release certification.
+138-to-169 release certification.
 
 ## Tracking Template
 
@@ -2007,14 +2007,14 @@ Use one entry per pull request:
 ### PR-090 - Baseline adoption fact separation
 
 - Status: Implemented with focused local verification; the integrated
-  PostgreSQL 138-to-170 release matrix remains pending.
+  PostgreSQL 138-to-169 release matrix remains pending.
 - Upstream base: `50c1e187` (serialized baseline-adoption exclusion guard).
 - Feature flags: Uses the existing default-off `operator_control_plane_v2` and
   `executor_protocol_v2` boundary.
 - User-facing behavior: Baseline adoption reports the frozen application
   version separately from independently observed schema version and capability
   checksum.
-- Database changes: Migration 170 backfills append-only
+- Database changes: Migration 169 backfills append-only
   `BaselineAdoptionComponent.application_version` from retained deployment-plan
   pins and replaces the deferred guard with independent release and observation
   fact validation.

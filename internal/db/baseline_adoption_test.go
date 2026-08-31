@@ -76,12 +76,12 @@ func TestMigration166CreatesImmutableNativeBaselineAdoption(t *testing.T) {
 	g.Expect(guardText).To(ContainSubstring("FOR UPDATE"))
 }
 
-func TestMigration170SeparatesReleaseAndObservedBaselineFacts(t *testing.T) {
+func TestMigration169SeparatesReleaseAndObservedBaselineFacts(t *testing.T) {
 	g := NewWithT(t)
 	root := filepath.Join("..", "migrations", "sql")
-	up, err := os.ReadFile(filepath.Join(root, "170_baseline_adoption_fact_separation.up.sql"))
+	up, err := os.ReadFile(filepath.Join(root, "169_baseline_adoption_fact_separation.up.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
-	down, err := os.ReadFile(filepath.Join(root, "170_baseline_adoption_fact_separation.down.sql"))
+	down, err := os.ReadFile(filepath.Join(root, "169_baseline_adoption_fact_separation.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	upText, downText := string(up), string(down)
 
