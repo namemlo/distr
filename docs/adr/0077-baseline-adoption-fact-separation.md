@@ -56,8 +56,11 @@ observation, or desired-state evidence. Existing adoption rows remain append-onl
 and retain their original checksums.
 
 Downgrading migration 169 removes only the derived application-version column
-and restores the migration-166 guard. The underlying frozen plan still retains
-the application version, so adoption and audit history are not deleted.
+and restores the migration-166 guard when every retained row still satisfies
+its legacy application/schema and release/capability equalities. The downgrade
+fails closed for separated facts. The underlying frozen plan still retains the
+application version, and neither successful nor refused downgrade attempts
+rewrite adoption request, outcome, or audit checksum evidence.
 
 ## Validation
 

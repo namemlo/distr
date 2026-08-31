@@ -1,5 +1,24 @@
+SET LOCAL lock_timeout = '10s';
+SET LOCAL statement_timeout = '5min';
+
 LOCK TABLE BaselineAdoption, BaselineAdoptionComponent
   IN SHARE ROW EXCLUSIVE MODE;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM BaselineAdoptionComponent component
+    WHERE component.application_version IS DISTINCT FROM component.schema_version
+       OR component.component_release_checksum
+            IS DISTINCT FROM component.capability_checksum
+  ) THEN
+    RAISE EXCEPTION
+      'refusing migration 169 rollback: separated baseline adoption facts exist'
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$$;
 
 DROP TRIGGER BaselineAdoption_commit_guard ON BaselineAdoption;
 

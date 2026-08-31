@@ -1,3 +1,6 @@
+SET LOCAL lock_timeout = '10s';
+SET LOCAL statement_timeout = '5min';
+
 LOCK TABLE BaselineAdoption, BaselineAdoptionComponent,
   DeploymentPlan, ActiveDesiredRevision, ObservedComponentState
   IN SHARE ROW EXCLUSIVE MODE;

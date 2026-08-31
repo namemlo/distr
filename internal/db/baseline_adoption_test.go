@@ -84,6 +84,12 @@ func TestMigration169SeparatesReleaseAndObservedBaselineFacts(t *testing.T) {
 	down, err := os.ReadFile(filepath.Join(root, "169_baseline_adoption_fact_separation.down.sql"))
 	g.Expect(err).NotTo(HaveOccurred())
 	upText, downText := string(up), string(down)
+	g.Expect(upText).To(HavePrefix(
+		"SET LOCAL lock_timeout = '10s';\nSET LOCAL statement_timeout = '5min';",
+	))
+	g.Expect(downText).To(HavePrefix(
+		"SET LOCAL lock_timeout = '10s';\nSET LOCAL statement_timeout = '5min';",
+	))
 
 	for _, fact := range []string{
 		"ADD COLUMN application_version TEXT",
@@ -108,6 +114,22 @@ func TestMigration169SeparatesReleaseAndObservedBaselineFacts(t *testing.T) {
 	g.Expect(downText).To(ContainSubstring(
 		"EXECUTE FUNCTION baseline_adoption_commit_guard()",
 	))
+	g.Expect(downText).To(ContainSubstring(
+		"component.application_version IS DISTINCT FROM component.schema_version",
+	))
+	g.Expect(downText).To(ContainSubstring(
+		"component.component_release_checksum\n            IS DISTINCT FROM component.capability_checksum",
+	))
+	g.Expect(downText).To(ContainSubstring(
+		"refusing migration 169 rollback: separated baseline adoption facts exist",
+	))
+	guardStart := strings.Index(downText, "IF EXISTS (")
+	legacyGuardRestore := strings.Index(
+		downText,
+		"EXECUTE FUNCTION baseline_adoption_commit_guard()",
+	)
+	g.Expect(guardStart).To(BeNumerically(">=", 0))
+	g.Expect(legacyGuardRestore).To(BeNumerically(">", guardStart))
 	g.Expect(downText).To(ContainSubstring("DROP COLUMN application_version"))
 }
 
