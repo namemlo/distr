@@ -1,0 +1,509 @@
+<section class="min-h-screen bg-gray-50 p-4 antialiased dark:bg-gray-900">
+  <div class="mx-auto max-w-screen-2xl">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <a
+        routerLink="/deployments/plans"
+        [queryParams]="deploymentUnitQuery()"
+        class="text-sm text-primary-700 hover:underline">
+        Back to deployment plans
+      </a>
+      @if (draft()?.publishedDeploymentPlanId; as publishedPlanId) {
+        <a
+          [routerLink]="['/deployments/plans', publishedPlanId]"
+          [queryParams]="deploymentUnitQuery()"
+          class="distr-btn-primary px-4 py-2">
+          Open published plan
+        </a>
+      }
+    </div>
+
+    <header
+      class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div
+        class="border-b border-gray-200 bg-[radial-gradient(circle_at_top_right,_#dbeafe,_transparent_44%)] p-6 dark:border-gray-700 dark:bg-none">
+        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-primary-700">Protocol v2 authoring</p>
+        <h1 class="mt-2 text-3xl font-semibold text-gray-950 dark:text-white">Target deployment plan draft</h1>
+        <p class="mt-2 max-w-4xl text-sm text-gray-600 dark:text-gray-300">
+          Bind one immutable Product Release to one Deployment Unit and verified Target Config Snapshot. Validation
+          resolves every target dependency and freezes the ordered graph before publication.
+        </p>
+        @if (draft(); as currentDraft) {
+          <div class="mt-4 flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-300">
+            <span class="rounded-full bg-white px-3 py-1 font-mono shadow-sm dark:bg-gray-900">{{
+              currentDraft.id
+            }}</span>
+            <span class="rounded-full bg-white px-3 py-1 shadow-sm dark:bg-gray-900"
+              >Revision {{ currentDraft.revision }}</span
+            >
+            @if (isPublished()) {
+              <span class="rounded-full bg-emerald-100 px-3 py-1 font-semibold text-emerald-800">Published</span>
+            } @else {
+              <span class="rounded-full bg-amber-100 px-3 py-1 font-semibold text-amber-800">Mutable draft</span>
+            }
+          </div>
+        }
+      </div>
+    </header>
+
+    @if (loading()) {
+      <div role="status" class="mt-4 rounded-xl bg-white p-10 text-center text-gray-500 shadow-sm dark:bg-gray-800">
+        Loading published releases and target inventory...
+      </div>
+    } @else if (error()) {
+      <div role="alert" class="mt-4 rounded-xl border border-red-300 bg-red-50 p-5 text-red-900">
+        {{ error() }}
+      </div>
+    } @else {
+      @if (actionError()) {
+        <div role="alert" class="mt-4 rounded-xl border border-red-300 bg-red-50 p-4 text-red-900">
+          {{ actionError() }}
+        </div>
+      }
+
+      <form [formGroup]="form" class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
+        <section class="rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="draft-inputs-heading">
+          <h2 id="draft-inputs-heading" class="text-lg font-semibold text-gray-950 dark:text-white">
+            Immutable inputs
+          </h2>
+          <p class="mt-1 text-sm text-gray-500">Selectors load all server pages and retain exact resource IDs.</p>
+
+          <div class="mt-5 grid gap-4 md:grid-cols-2">
+            <label class="distr-label md:col-span-2">
+              Published Product Release
+              <select
+                formControlName="productReleaseId"
+                (change)="selectProductRelease()"
+                [disabled]="isPublished()"
+                class="distr-input mt-1 w-full">
+                <option value="">Select a published Product Release</option>
+                @for (release of releases(); track release.id) {
+                  <option [value]="release.id">
+                    {{ release.application || 'Application' }} · {{ release.version }} · {{ release.id }}
+                  </option>
+                }
+              </select>
+            </label>
+
+            <label class="distr-label md:col-span-2">
+              Deployment Unit
+              <select
+                formControlName="deploymentUnitId"
+                (change)="selectDeploymentUnit()"
+                [disabled]="isPublished()"
+                class="distr-input mt-1 w-full">
+                <option value="">Select a Deployment Unit</option>
+                @for (unit of units(); track unit.id) {
+                  <option [value]="unit.id">{{ unit.name }} · {{ unit.key }} · {{ unit.physicalIdentity }}</option>
+                }
+              </select>
+            </label>
+
+            <label class="distr-label">
+              Environment assignment
+              <input formControlName="environmentAssignmentId" readonly class="distr-input mt-1 w-full bg-gray-100" />
+            </label>
+
+            <label class="distr-label">
+              Executor protocol
+              <select formControlName="protocolVersion" [disabled]="isPublished()" class="distr-input mt-1 w-full">
+                <option value="v2">v2 — fenced executor</option>
+                <option value="v1">v1 — compatible projection only</option>
+              </select>
+            </label>
+
+            <label class="distr-label md:col-span-2">
+              Target Config Snapshot
+              <select
+                formControlName="targetConfigSnapshotId"
+                [disabled]="isPublished() || snapshotsLoading()"
+                class="distr-input mt-1 w-full">
+                <option value="">
+                  {{ snapshotsLoading() ? 'Loading snapshots...' : 'Select an immutable snapshot' }}
+                </option>
+                @for (snapshot of snapshots(); track snapshot.id) {
+                  <option [value]="snapshot.id">
+                    {{ snapshot.createdAt | date: 'medium' }} · {{ snapshot.targetPlatform }} · {{ snapshot.id }}
+                  </option>
+                }
+              </select>
+            </label>
+
+            <label class="distr-label">
+              Superseded plan ID
+              <input
+                formControlName="supersedesDeploymentPlanId"
+                [readonly]="isPublished()"
+                class="distr-input mt-1 w-full"
+                placeholder="Optional immutable plan ID" />
+            </label>
+
+            <label class="distr-label">
+              Supersede reason
+              <textarea
+                formControlName="supersedeReason"
+                [readonly]="isPublished()"
+                rows="3"
+                class="distr-input mt-1 w-full"
+                placeholder="Required with a superseded plan ID"></textarea>
+            </label>
+          </div>
+
+          @if (!supersessionValid()) {
+            <p role="alert" class="mt-3 text-sm text-red-700">
+              Superseded plan ID and a single-line reason must be supplied together.
+            </p>
+          }
+
+          <div class="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              (click)="saveDraft()"
+              [disabled]="!canSave() || actionLoading()"
+              class="distr-btn-secondary px-4 py-2">
+              {{ actionLoading() === 'save' ? 'Saving...' : draft() ? 'Save revision' : 'Create draft' }}
+            </button>
+            <button
+              type="button"
+              (click)="validateDraft()"
+              [disabled]="!canSave() || actionLoading()"
+              class="distr-btn-primary px-4 py-2">
+              {{ actionLoading() === 'validate' ? 'Resolving...' : 'Save and validate exact plan' }}
+            </button>
+            <button
+              type="button"
+              (click)="publishDraft()"
+              [disabled]="!canPublish() || actionLoading()"
+              class="distr-btn-primary px-4 py-2">
+              {{ actionLoading() === 'publish' ? 'Publishing...' : 'Publish checksum-bound plan' }}
+            </button>
+          </div>
+        </section>
+
+        <aside class="space-y-4">
+          <section
+            class="rounded-xl border border-sky-200 bg-sky-50 p-5 text-sky-950"
+            aria-labelledby="process-heading">
+            <h2 id="process-heading" class="text-lg font-semibold">Release process snapshot</h2>
+            <p class="mt-1 text-sm">
+              The process snapshot is selected by the immutable Product Release. The plan-draft API does not accept an
+              arbitrary process ID.
+            </p>
+            @if (processSnapshot(); as snapshot) {
+              <dl class="mt-4 grid gap-3 text-sm">
+                <div>
+                  <dt class="text-sky-700">Snapshot</dt>
+                  <dd class="break-all font-mono text-xs">{{ snapshot.id }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-700">Revision</dt>
+                  <dd>{{ snapshot.revisionNumber }} · {{ snapshot.revision.description }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-700">Canonical checksum</dt>
+                  <dd class="break-all font-mono text-xs">{{ snapshot.canonicalChecksum }}</dd>
+                </div>
+              </dl>
+              <ol class="mt-4 space-y-2 text-sm">
+                @for (step of processSteps(); track step.id) {
+                  <li class="rounded border border-sky-200 bg-white p-2">
+                    <span class="font-mono text-xs">{{ step.sortOrder + 1 }}</span>
+                    <strong class="ml-2">{{ step.name }}</strong>
+                    <span class="ml-2 text-xs text-sky-700">{{ step.actionType }}</span>
+                  </li>
+                }
+              </ol>
+            } @else if (processSnapshotUnavailable()) {
+              <div role="status" class="mt-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                This release does not expose a process snapshot. Validation will still show the canonical target-plan v2
+                graph generated by the server.
+              </div>
+            } @else {
+              <p class="mt-4 text-sm text-sky-700">Select a Product Release to inspect its process snapshot.</p>
+            }
+          </section>
+
+          <section class="rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="target-proof-heading">
+            <h2 id="target-proof-heading" class="text-lg font-semibold">Selected target proof</h2>
+            @if (selectedUnit(); as unit) {
+              <dl class="mt-3 grid gap-3 text-sm">
+                <div>
+                  <dt class="text-gray-500">Physical identity</dt>
+                  <dd>{{ unit.physicalIdentity }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Subscriber-set checksum</dt>
+                  <dd class="break-all font-mono text-xs">{{ unit.subscriberSetChecksum }}</dd>
+                </div>
+              </dl>
+            } @else {
+              <p class="mt-3 text-sm text-gray-500">No Deployment Unit selected.</p>
+            }
+            @if (selectedSnapshot(); as snapshot) {
+              <dl class="mt-4 grid gap-3 border-t pt-4 text-sm">
+                <div>
+                  <dt class="text-gray-500">Config checksum</dt>
+                  <dd class="break-all font-mono text-xs">{{ snapshot.canonicalChecksum }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Source commit</dt>
+                  <dd class="break-all font-mono text-xs">{{ snapshot.sourceCommit }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Objects / components / flags</dt>
+                  <dd>
+                    {{ snapshot.objects.length }} / {{ snapshot.components.length }} /
+                    {{ snapshot.featureFlags.length }}
+                  </dd>
+                </div>
+              </dl>
+            }
+            @if (selectedRelease(); as release) {
+              <a
+                [routerLink]="['/releases', release.id]"
+                [queryParams]="deploymentUnitQuery()"
+                class="mt-4 inline-block text-sm font-medium text-primary-700 hover:underline">
+                Review release, changelog, and component constraints
+              </a>
+            }
+          </section>
+        </aside>
+      </form>
+
+      @if (validation(); as result) {
+        <section
+          class="mt-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Exact server preview</p>
+              <h2 class="mt-1 text-2xl font-semibold">Revision {{ result.draft.revision }}</h2>
+            </div>
+            <div class="max-w-3xl text-right">
+              <p class="text-xs text-gray-500">Preview checksum</p>
+              <p class="break-all font-mono text-xs">{{ result.previewChecksum || result.draft.previewChecksum }}</p>
+              <p class="mt-1 text-xs text-gray-500">Graph {{ result.graph.checksum }}</p>
+            </div>
+          </div>
+
+          @if (result.issues.length > 0) {
+            <div role="alert" class="mt-4 rounded-lg border border-red-300 bg-red-50 p-4 text-red-900">
+              <h3 class="font-semibold">Publication blockers</h3>
+              <ul class="mt-2 space-y-2 text-sm">
+                @for (issue of result.issues; track issue.code + ':' + issue.field + ':' + issue.message) {
+                  <li>
+                    <strong>{{ issue.code }}</strong> · {{ issue.field }} · {{ issue.message }}
+                  </li>
+                }
+              </ul>
+            </div>
+          } @else {
+            <div role="status" class="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-emerald-900">
+              Exact release, target, configuration, dependency, baseline, and graph facts are publishable at this
+              checksum.
+            </div>
+          }
+        </section>
+
+        <section class="mt-4 rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="resolution-heading">
+          <h2 id="resolution-heading" class="text-xl font-semibold">Exact dependency resolution</h2>
+          <p class="mt-1 text-sm text-gray-500">
+            Every symbolic requirement is bound to one exact provider mode, state version, and checksum.
+          </p>
+          <div class="mt-4 overflow-x-auto">
+            <table class="distr-table">
+              <thead class="distr-table-head">
+                <tr>
+                  <th scope="col" class="p-4">Requirement</th>
+                  <th scope="col" class="p-4">Resolution</th>
+                  <th scope="col" class="p-4">Provider identity</th>
+                  <th scope="col" class="p-4">Expected state</th>
+                  <th scope="col" class="p-4">Binding checksum</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (resolution of orderedResolutions(); track resolution.requirementKey) {
+                  <tr class="distr-table-row align-top">
+                    <td class="px-4 py-3">
+                      <strong>{{ resolution.requirementKey }}</strong>
+                      <div class="text-xs text-gray-500">
+                        {{ resolution.consumerKey }} requires {{ resolution.capability }} {{ resolution.versionRange }}
+                      </div>
+                    </td>
+                    <td class="px-4 py-3">
+                      <span class="rounded bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800">{{
+                        resolution.mode
+                      }}</span>
+                      <div class="mt-2 text-xs">
+                        {{ resolution.providerVersion }} · {{ resolution.providerPlatform }}
+                      </div>
+                    </td>
+                    <td class="max-w-80 break-all px-4 py-3 font-mono text-xs">
+                      <div>
+                        {{ resolution.providerReleaseId || resolution.observationId || 'Feature flag binding' }}
+                      </div>
+                      <div>{{ resolution.providerDeploymentUnitId || 'Selected unit' }}</div>
+                      <div>{{ resolution.providerReleaseChecksum || resolution.subscriberSetChecksum || '' }}</div>
+                    </td>
+                    <td class="max-w-72 break-all px-4 py-3 font-mono text-xs">
+                      <div>v{{ resolution.expectedStateVersion }}</div>
+                      <div>{{ resolution.expectedStateChecksum }}</div>
+                    </td>
+                    <td class="max-w-72 break-all px-4 py-3 font-mono text-xs">{{ resolution.bindingChecksum }}</td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="5" class="p-8 text-center text-sm text-gray-500">No target-bound requirements.</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="mt-4 grid gap-4 xl:grid-cols-2">
+          <section class="rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="forward-heading">
+            <h2 id="forward-heading" class="text-xl font-semibold">Forward execution order</h2>
+            <p class="mt-1 text-sm text-gray-500">Exact stable topological order returned by the server.</p>
+            <ol class="mt-4 space-y-3">
+              @for (step of orderedSteps('forward'); track step.stepKey; let index = $index) {
+                <li class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                  <div class="flex items-start gap-3">
+                    <span
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-950 text-xs font-semibold text-white">
+                      {{ index + 1 }}
+                    </span>
+                    <div class="min-w-0">
+                      <h3 class="font-medium">{{ step.name }}</h3>
+                      <p class="break-all font-mono text-xs text-gray-500">{{ step.stepKey }}</p>
+                      <p class="mt-1 text-xs">
+                        {{ step.actionName }} · {{ step.executionLocation }} · timeout {{ step.timeoutSeconds }}s ·
+                        retry
+                        {{ step.retryClass }}
+                      </p>
+                      <p class="mt-1 break-all font-mono text-xs">{{ step.expectedInputChecksum }}</p>
+                    </div>
+                  </div>
+                </li>
+              }
+            </ol>
+          </section>
+
+          <section class="rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="reverse-heading">
+            <h2 id="reverse-heading" class="text-xl font-semibold">Reverse dependency order</h2>
+            <p class="mt-1 text-sm text-gray-500">
+              Review order for a separately planned previous-state deployment. This does not mutate or rewind the
+              current plan.
+            </p>
+            <ol class="mt-4 space-y-3">
+              @for (step of orderedSteps('reverse'); track step.stepKey; let index = $index) {
+                <li
+                  class="rounded-lg border p-3"
+                  [class.border-red-300]="reverseBlocked(step)"
+                  [class.bg-red-50]="reverseBlocked(step)">
+                  <div class="flex items-start gap-3">
+                    <span
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-900">
+                      {{ index + 1 }}
+                    </span>
+                    <div class="min-w-0">
+                      <h3 class="font-medium">{{ step.name }}</h3>
+                      <p class="break-all font-mono text-xs text-gray-500">{{ step.stepKey }}</p>
+                      @if (reverseBlocked(step)) {
+                        <p class="mt-1 text-xs font-semibold text-red-800">
+                          Forward-only change: use an approved forward fix.
+                        </p>
+                      } @else {
+                        <p class="mt-1 text-xs">Eligible for previous-state planning after fresh validation.</p>
+                      }
+                    </div>
+                  </div>
+                </li>
+              }
+            </ol>
+          </section>
+        </div>
+
+        <div class="mt-4 grid gap-4 xl:grid-cols-3">
+          <section class="rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="changes-heading">
+            <h2 id="changes-heading" class="text-lg font-semibold">Ordered changes</h2>
+            <ul class="mt-3 space-y-3 text-sm">
+              @for (change of orderedChanges(); track change.componentKey + ':' + change.kind) {
+                <li class="rounded border p-3">
+                  <div class="flex items-center justify-between gap-2">
+                    <strong>{{ change.componentKey }} · {{ change.kind }}</strong>
+                    @if (change.forwardOnly) {
+                      <span class="rounded bg-red-100 px-2 py-1 text-xs font-semibold text-red-800">Forward only</span>
+                    }
+                  </div>
+                  <div class="mt-2 text-xs">
+                    <span class="text-gray-500">Before:</span> {{ change.before || 'None' }}
+                  </div>
+                  <div class="text-xs"><span class="text-gray-500">After:</span> {{ change.after || 'None' }}</div>
+                </li>
+              } @empty {
+                <li class="text-gray-500">No state changes recorded.</li>
+              }
+            </ul>
+          </section>
+
+          <section class="rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="baselines-heading">
+            <h2 id="baselines-heading" class="text-lg font-semibold">Exact baselines</h2>
+            <ul class="mt-3 space-y-3 text-sm">
+              @for (baseline of result.baselines; track baseline.componentInstanceId) {
+                <li class="rounded border p-3">
+                  <strong>{{ baseline.componentKey }} · {{ baseline.version || 'Bootstrap' }}</strong>
+                  <p class="mt-1 text-xs">
+                    {{ baseline.projection }} · desired revision {{ baseline.desiredRevision }}
+                  </p>
+                  <p class="mt-1 break-all font-mono text-xs">{{ baseline.desiredChecksum }}</p>
+                </li>
+              } @empty {
+                <li class="text-gray-500">No baseline facts recorded.</li>
+              }
+            </ul>
+          </section>
+
+          <section class="rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="risks-heading">
+            <h2 id="risks-heading" class="text-lg font-semibold">Risks</h2>
+            <ul class="mt-3 space-y-3 text-sm">
+              @for (risk of result.risks; track risk.componentKey + ':' + risk.code) {
+                <li class="rounded border p-3" [class.border-red-300]="risk.blocking">
+                  <div class="flex items-center justify-between gap-2">
+                    <strong>{{ risk.code }}</strong>
+                    <span class="rounded bg-gray-100 px-2 py-1 text-xs font-semibold">{{ risk.level }}</span>
+                  </div>
+                  <p class="mt-1">{{ risk.message }}</p>
+                </li>
+              } @empty {
+                <li class="text-gray-500">No risks recorded.</li>
+              }
+            </ul>
+          </section>
+        </div>
+
+        <section class="mt-4 rounded-xl bg-white p-5 shadow-sm dark:bg-gray-800" aria-labelledby="edges-heading">
+          <h2 id="edges-heading" class="text-lg font-semibold">Stable graph edges</h2>
+          <div class="mt-3 overflow-x-auto">
+            <table class="distr-table">
+              <thead class="distr-table-head">
+                <tr>
+                  <th scope="col" class="p-4">Edge</th>
+                  <th scope="col" class="p-4">From</th>
+                  <th scope="col" class="p-4">To</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (edge of orderedEdges(); track edge.key) {
+                  <tr class="distr-table-row font-mono text-xs">
+                    <td class="px-4 py-3">{{ edge.key }}</td>
+                    <td class="px-4 py-3">{{ edge.fromStepKey }}</td>
+                    <td class="px-4 py-3">{{ edge.toStepKey }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      }
+    }
+  </div>
+</section>

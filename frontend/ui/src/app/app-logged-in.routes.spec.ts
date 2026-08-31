@@ -14,6 +14,7 @@ import 'dayjs/plugin/utc';
 import {of} from 'rxjs';
 import {vi} from 'vitest';
 import {routes} from './app-logged-in.routes';
+import {PlanDraftComponent} from './control-plane/plans/plan-draft.component';
 import {AuthService} from './services/auth.service';
 import {FeatureFlagService} from './services/feature-flag.service';
 import {TargetConfigSnapshotsComponent} from './setup/config-snapshots/target-config-snapshots.component';
@@ -52,6 +53,8 @@ describe('operator control-plane routes', () => {
       '/releases',
       '/releases/:releaseId',
       '/deployments/plans',
+      '/deployments/plans/drafts/new',
+      '/deployments/plans/drafts/:draftId',
       '/deployments/plans/:planId',
       '/deployments/campaigns',
       '/deployments/campaigns/:campaignId',
@@ -69,6 +72,8 @@ describe('operator control-plane routes', () => {
       operatorRoute('/fleet'),
       operatorRoute('/releases'),
       operatorRoute('/deployments/plans'),
+      operatorRoute('/deployments/plans/drafts/new'),
+      operatorRoute('/deployments/plans/drafts/:draftId'),
       operatorRoute('/deployments/plans/:planId'),
       operatorRoute('/deployments/campaigns'),
       operatorRoute('/deployments/campaigns/:campaignId'),
@@ -99,6 +104,8 @@ describe('operator control-plane routes', () => {
       'targets',
       'targets/:deploymentTargetId',
       'plans',
+      'plans/drafts/new',
+      'plans/drafts/:draftId',
       'plans/:planId',
       'campaigns',
       'campaigns/:campaignId',
@@ -106,6 +113,11 @@ describe('operator control-plane routes', () => {
       'executions/:executionId',
       ':deploymentTargetId',
     ]);
+  });
+
+  it('routes new and existing target-plan drafts through the same authoring component', () => {
+    expect(operatorRoute('/deployments/plans/drafts/new').component).toBe(PlanDraftComponent);
+    expect(operatorRoute('/deployments/plans/drafts/:draftId').component).toBe(PlanDraftComponent);
   });
 
   it('redirects a legacy target URL while preserving its query parameters and fragment', async () => {
@@ -189,6 +201,8 @@ describe('operator control-plane routes', () => {
         .filter((route) =>
           [
             'plans',
+            'plans/drafts/new',
+            'plans/drafts/:draftId',
             'plans/:planId',
             'campaigns',
             'campaigns/:campaignId',
@@ -204,6 +218,8 @@ describe('operator control-plane routes', () => {
         '/releases',
         '/releases/:releaseId',
         '/deployments/plans',
+        '/deployments/plans/drafts/new',
+        '/deployments/plans/drafts/:draftId',
         '/deployments/plans/:planId',
         '/deployments/campaigns',
         '/deployments/campaigns/:campaignId',

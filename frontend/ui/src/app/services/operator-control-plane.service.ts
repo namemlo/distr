@@ -37,6 +37,8 @@ import {
   OperatorCreateCampaignDraftRequest,
   OperatorCreatePlanDraftRequest,
   OperatorCreateProductReleaseRequest,
+  OperatorDeploymentRegistryPage,
+  OperatorDeploymentUnit,
   OperatorEvidenceBundle,
   OperatorEvidencePage,
   OperatorExecutionCancelRequest,
@@ -80,6 +82,7 @@ import {
 } from '../types/operator-control-plane';
 import {
   CreateUpdateReleaseBundleRequest,
+  ProcessSnapshot,
   ReleaseBundle,
   ReleaseBundleValidationResponse,
 } from '../types/release-bundle';
@@ -358,6 +361,10 @@ export class OperatorControlPlaneService {
     return this.get<OperatorProductRelease>(`/api/v1/product-releases/${pathId(productReleaseId)}`);
   }
 
+  getReleaseProcessSnapshot(releaseId: string): Observable<ProcessSnapshot> {
+    return this.get<ProcessSnapshot>(`/api/v1/release-bundles/${pathId(releaseId)}/process-snapshot`);
+  }
+
   validateProductRelease(productReleaseId: string): Observable<OperatorProductReleaseValidation> {
     return this.post<OperatorProductReleaseValidation>(
       `/api/v1/product-releases/${pathId(productReleaseId)}/validate`,
@@ -371,6 +378,10 @@ export class OperatorControlPlaneService {
 
   createPlanDraft(request: OperatorCreatePlanDraftRequest): Observable<OperatorPlanDraft> {
     return this.post<OperatorPlanDraft>('/api/v1/deployment-plan-drafts', request);
+  }
+
+  getPlanDraft(draftId: string): Observable<OperatorPlanDraft> {
+    return this.get<OperatorPlanDraft>(`/api/v1/deployment-plan-drafts/${pathId(draftId)}`);
   }
 
   updatePlanDraft(draftId: string, request: OperatorUpdatePlanDraftRequest): Observable<OperatorPlanDraft> {
@@ -423,6 +434,15 @@ export class OperatorControlPlaneService {
 
   listTargetConfigSnapshots(filters: TargetConfigSnapshotListFilter = {}): Observable<TargetConfigSnapshotPage> {
     return this.get<TargetConfigSnapshotPage>('/api/v1/target-config-snapshots/', filters);
+  }
+
+  listDeploymentUnits(
+    filters: OperatorPageRequest = {}
+  ): Observable<OperatorDeploymentRegistryPage<OperatorDeploymentUnit>> {
+    return this.get<OperatorDeploymentRegistryPage<OperatorDeploymentUnit>>(
+      '/api/v1/deployment-registry/units/',
+      filters
+    );
   }
 
   listExperimentalFeatureFlags(): Observable<ExperimentalFeatureFlag[]> {

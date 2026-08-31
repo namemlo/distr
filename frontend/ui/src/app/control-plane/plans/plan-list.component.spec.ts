@@ -53,7 +53,10 @@ describe('PlanListComponent', () => {
     expect(text).toContain('sha256:plan-1');
     expect(text).toContain('READY');
     expect(text).toContain('Load more');
-    expect(fixture.nativeElement.querySelector('a[href="/deployments/plans/plan-1"]')).not.toBeNull();
+    expect(
+      fixture.nativeElement.querySelector('a[href="/deployments/plans/plan-1?deploymentUnitId=unit-1"]')
+    ).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('a[href="/deployments/plans/drafts/new"]')).not.toBeNull();
   });
 
   it('keeps the loading state visible until the server page resolves', () => {

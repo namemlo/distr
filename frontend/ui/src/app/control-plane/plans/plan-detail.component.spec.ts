@@ -339,7 +339,7 @@ describe('PlanDetailComponent', () => {
           previewChecksum: 'sha256:preview-4',
         },
         resolutions: [],
-        graph: {},
+        graph: {steps: [], edges: [], topologicalOrder: [], checksum: 'sha256:graph'},
         baselines: [],
         changes: [],
         risks: [],
@@ -377,7 +377,9 @@ describe('PlanDetailComponent', () => {
       expectedRevision: 4,
       expectedPreviewChecksum: 'sha256:preview-4',
     });
-    expect(router.navigate).toHaveBeenCalledWith(['/deployments/plans', 'plan-published']);
+    expect(router.navigate).toHaveBeenCalledWith(['/deployments/plans', 'plan-published'], {
+      queryParams: {deploymentUnitId: 'unit-1'},
+    });
   });
 
   it('confirms approval scope and navigates to the resulting immutable approval request', async () => {
@@ -411,7 +413,9 @@ describe('PlanDetailComponent', () => {
       successfulDeploymentPlanId: 'plan-successful',
       reason: 'Restore the last independently verified state.',
     });
-    expect(router.navigate).toHaveBeenCalledWith(['/deployments/plans', 'plan-previous']);
+    expect(router.navigate).toHaveBeenCalledWith(['/deployments/plans', 'plan-previous'], {
+      queryParams: {deploymentUnitId: 'unit-1'},
+    });
   });
 
   function createComponent(): {fixture: ComponentFixture<PlanDetailComponent>; component: PlanDetailComponent} {

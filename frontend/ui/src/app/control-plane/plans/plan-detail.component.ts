@@ -183,7 +183,7 @@ export class PlanDetailComponent implements OnInit {
           expectedPreviewChecksum: values.expectedPreviewChecksum,
         })
       );
-      await this.router.navigate(['/deployments/plans', result.id]);
+      await this.router.navigate(['/deployments/plans', result.id], {queryParams: this.deploymentUnitQuery()});
     });
   }
 
@@ -236,7 +236,7 @@ export class PlanDetailComponent implements OnInit {
     }
     await this.runAction('previous-state', async () => {
       const result = await firstValueFrom(this.service.createPreviousStatePlan(this.planId, request));
-      await this.router.navigate(['/deployments/plans', result.id]);
+      await this.router.navigate(['/deployments/plans', result.id], {queryParams: this.deploymentUnitQuery()});
     });
   }
 
@@ -309,6 +309,12 @@ export class PlanDetailComponent implements OnInit {
 
   protected isNotFound(): boolean {
     return this.error()?.status === 404;
+  }
+
+  protected deploymentUnitQuery(): Record<string, string> {
+    const deploymentUnitId =
+      this.route.snapshot.queryParamMap.get('deploymentUnitId')?.trim() || this.detail()?.plan.deploymentUnitId?.trim();
+    return deploymentUnitId ? {deploymentUnitId} : {};
   }
 
   private async runAction(key: string, action: () => Promise<void>) {

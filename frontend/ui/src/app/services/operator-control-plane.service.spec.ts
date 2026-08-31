@@ -400,6 +400,17 @@ describe('OperatorControlPlaneService', () => {
     });
   });
 
+  it('reads target-plan drafts and their immutable authoring selectors', () => {
+    service.getPlanDraft('draft-1').subscribe();
+    expectRequest('/api/v1/deployment-plan-drafts/draft-1', {});
+
+    service.getReleaseProcessSnapshot('release-1').subscribe();
+    expectRequest('/api/v1/release-bundles/release-1/process-snapshot', {});
+
+    service.listDeploymentUnits({cursor: 'unit_cursor', limit: 100}).subscribe();
+    expectRequest('/api/v1/deployment-registry/units/', {cursor: 'unit_cursor', limit: '100'});
+  });
+
   it('uses the campaign draft, publication, run, and transition contracts exactly', () => {
     const planId = '11111111-1111-4111-8111-111111111111';
     const draftRequest = {

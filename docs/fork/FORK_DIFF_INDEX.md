@@ -1206,6 +1206,34 @@ Use one entry per pull request:
   unavailable until PR-061 and PR-067 register exact organization-scoped provenance and immutable published-policy
   verifiers.
 
+### PR-063 - Target Deployment Plan v2
+
+- Status: Backend planning and immutable publication were already implemented; the protocol-v2 operator draft
+  authoring and exact validation-review path is now implemented with focused Angular coverage.
+- Upstream base: PR-062 Product Release capability graph.
+- Feature flag: Uses the existing `deployment_plans` and `operator_control_plane_v2` route boundary.
+- User-facing behavior: Operators can create or update one target-plan draft from published Product Releases,
+  active Deployment Units, derived environment assignments, and matching Target Config Snapshots; inspect the
+  release-owned process snapshot; review every exact dependency binding, baseline, change, risk, graph edge, and
+  stable forward/reverse dependency order; then publish the validated revision and preview checksum.
+- Database changes: Migration 145 adds the mutable draft, append-only resolved requirements and graph edges, and
+  additive immutable v2 plan identity. This UI completion adds no schema change.
+- API changes: Uses the existing create/get/update/validate/publish deployment-plan-draft routes without adding an
+  unsupported process-snapshot request field. Added no route or response changes.
+- UI changes: Added new/existing draft routes, paged Product Release and Deployment Unit selectors, unit-scoped
+  config snapshot selection, release process-snapshot review, typed validation contracts, exact dependency tables,
+  ordered forward/reverse graph review, checksum-bound publish, and `deploymentUnitId` navigation preservation.
+- Agent protocol changes: None. The UI selects `v1` or `v2` only through the existing draft protocol field and does
+  not bypass executor admission.
+- Documentation: Updated the PR-063 operator workflow and this fork index.
+- Tests: Focused Angular tests cover service URLs, route precedence/guards, create/update optimistic revision,
+  process snapshot review, exact dependency rendering, stable forward/reverse ordering, publication checksum, and
+  plan/release navigation context.
+- Upstream contribution notes: Community-neutral target-plan authoring and review; no adopter, client, host,
+  database, CI provider, or infrastructure-specific behavior.
+- Compatibility notes: Existing v1 plan creation and immutable plan reads remain unchanged. Reverse order is review
+  context for a separately validated previous-state plan, not an in-place rollback or history rewrite.
+
 ### PR-064 - Exact target baseline, change set, and previous state
 
 - Status: Implemented on the prepared speculative branch; focused pure/unit/compile and static migration checks

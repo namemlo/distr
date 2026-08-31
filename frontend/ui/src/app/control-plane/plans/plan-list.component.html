@@ -1,10 +1,18 @@
 <section class="bg-gray-50 p-4 antialiased dark:bg-gray-900">
   <div class="mx-auto max-w-screen-2xl">
-    <header class="mb-4">
-      <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Deployment plans</h1>
-      <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
-        Server-paged immutable deployment plans and their approval and preflight blockers.
-      </p>
+    <header class="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Deployment plans</h1>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          Server-paged immutable deployment plans and their approval and preflight blockers.
+        </p>
+      </div>
+      <a
+        routerLink="/deployments/plans/drafts/new"
+        [queryParams]="deploymentUnitQuery()"
+        class="distr-btn-primary px-4 py-2">
+        Create target-plan draft
+      </a>
     </header>
 
     <form
@@ -85,6 +93,9 @@
                 <td class="px-4 py-3">
                   <a
                     [routerLink]="['/deployments/plans', plan.id]"
+                    [queryParams]="{
+                      deploymentUnitId: plan.deploymentUnitId || filters.controls.deploymentUnitId.value || null,
+                    }"
                     class="font-medium text-primary-700 hover:underline">
                     {{ plan.productReleaseVersion || plan.productReleaseId || 'Partial release' }}
                   </a>

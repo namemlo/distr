@@ -87,18 +87,47 @@ Cycles block publication.
 
 ## Routes and controls
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/deployment-plan-drafts` | Create draft |
-| `GET` | `/api/v1/deployment-plan-drafts/{id}` | Read draft/publication link |
-| `PATCH` | `/api/v1/deployment-plan-drafts/{id}` | Optimistic draft update |
-| `POST` | `/api/v1/deployment-plan-drafts/{id}/validate` | Resolve and preview |
-| `POST` | `/api/v1/deployment-plan-drafts/{id}/publish` | Atomically publish exact preview |
+| Method  | Route                                          | Purpose                          |
+| ------- | ---------------------------------------------- | -------------------------------- |
+| `POST`  | `/api/v1/deployment-plan-drafts`               | Create draft                     |
+| `GET`   | `/api/v1/deployment-plan-drafts/{id}`          | Read draft/publication link      |
+| `PATCH` | `/api/v1/deployment-plan-drafts/{id}`          | Optimistic draft update          |
+| `POST`  | `/api/v1/deployment-plan-drafts/{id}/validate` | Resolve and preview              |
+| `POST`  | `/api/v1/deployment-plan-drafts/{id}/publish`  | Atomically publish exact preview |
 
 All routes require vendor organization context, `deployment_plans`, and
 `operator_control_plane_v2`. Mutations require read-write/admin and block
 super-admin. The route shape leaves the authorization seam available for
 PR-066 scoped grants.
+
+## Operator UI
+
+The operator plan list now links to a protocol-v2 draft authoring route for
+new and existing drafts. The editor loads every page of published Product
+Releases and active Deployment Units, derives the exact environment assignment
+from the selected unit, and loads only Target Config Snapshots for that unit
+and assignment. Existing drafts are read before editing and updates submit the
+current `expectedRevision`.
+
+Process snapshots remain release-owned. The editor resolves and displays the
+selected Product Release's immutable process snapshot when one is attached; it
+does not invent a `processSnapshotId` draft field that the API does not accept.
+The server-generated target-plan graph remains the publication authority.
+
+Validation review exposes:
+
+- every exact requirement mode, provider identity, expected-state version and
+  checksum, and binding checksum;
+- the server's stable topological forward order and stable graph edges;
+- reverse dependency review order for planning a separate previous-state
+  deployment, with forward-only changes called out explicitly;
+- exact baselines, ordered changes, risks, validation blockers, graph checksum,
+  and preview checksum; and
+- checksum-bound publication confirmation.
+
+`deploymentUnitId` query context is preserved from release and plan lists into
+draft authoring, release review, immutable plan review, and the published-plan
+redirect.
 
 ## Compatibility
 
@@ -117,6 +146,8 @@ tenant-scoped queries and constraints, publication locking/idempotency,
 append-only migration guards, rollback refusal, route feature flags/RBAC, and
 the flags-off v1 compatibility boundary.
 
+The focused Angular contract, route, list/detail navigation, and draft editor
+tests cover create/update, optimistic revision, process snapshot review, exact
+resolution rendering, forward/reverse ordering, and checksum-bound publish.
 Live PostgreSQL migration execution, full repository tests, containers,
-browser tests, and deployment are final integration gates after the numbered
-stack is rebased.
+browser tests, and deployment remain separate integration gates.

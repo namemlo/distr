@@ -51,6 +51,26 @@ export interface OperatorPlanFilters extends OperatorPageRequest {
   productReleaseId?: string | null;
 }
 
+export interface OperatorDeploymentRegistryPage<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
+export interface OperatorDeploymentUnit {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  deploymentScopeId: string;
+  targetEnvironmentAssignmentId: string;
+  deploymentTargetId: string;
+  key: string;
+  name: string;
+  physicalIdentity: string;
+  managementState: string;
+  subscriberSetChecksum: string;
+  retiredAt?: string;
+}
+
 export interface OperatorCampaignFilters extends OperatorPageRequest {
   status?: string | null;
   environmentId?: string | null;
@@ -1158,6 +1178,130 @@ export interface OperatorPlanDraft {
   publishedDeploymentPlanStatus?: string;
 }
 
+export interface OperatorRequirementResolution {
+  requirementKey: string;
+  consumerKey: string;
+  capability: string;
+  versionRange: string;
+  mode: string;
+  providerReleaseId?: string;
+  observationId?: string;
+  activeDesiredRevisionId?: string;
+  observedComponentStateId?: string;
+  providerVersion: string;
+  providerPlatform: string;
+  providerReleaseChecksum?: string;
+  provenanceBindingChecksum?: string;
+  providerDeploymentUnitId?: string;
+  componentInstanceId?: string;
+  subscriberSetChecksum?: string;
+  expectedStateVersion: number;
+  expectedStateChecksum: string;
+  bindingChecksum: string;
+  sortOrder: number;
+  v1Compatible?: boolean;
+}
+
+export interface OperatorTargetPlanStep {
+  stepKey: string;
+  name: string;
+  kind: string;
+  componentKey?: string;
+  componentReleaseId?: string;
+  componentInstanceId?: string;
+  actionType: string;
+  actionName: string;
+  executionLocation: string;
+  inputBindings: Record<string, unknown>;
+  targetLockKey: string;
+  databaseLockKey?: string;
+  timeoutSeconds: number;
+  retryClass: string;
+  cancellationBehavior: string;
+  expectedInputChecksum: string;
+  observationRequirement: string;
+  v1Compatible: boolean;
+  sortOrder: number;
+}
+
+export interface OperatorTargetPlanEdge {
+  key: string;
+  fromStepKey: string;
+  toStepKey: string;
+}
+
+export interface OperatorTargetPlanGraph {
+  steps: OperatorTargetPlanStep[];
+  edges: OperatorTargetPlanEdge[];
+  topologicalOrder: string[];
+  checksum: string;
+}
+
+export interface OperatorPlanBaseline {
+  componentInstanceId: string;
+  componentKey: string;
+  sourceDeploymentPlanId?: string;
+  externalExecutionId?: string;
+  activeDesiredRevisionId?: string;
+  observedComponentStateId?: string;
+  observationId?: string;
+  observedAt?: string;
+  desiredRevision: number;
+  desiredChecksum: string;
+  observationChecksum: string;
+  releaseBundleId?: string;
+  version: string;
+  image: string;
+  platform: string;
+  targetConfigSnapshotId?: string;
+  configChecksum: string;
+  providerBindingChecksum: string;
+  schemaState: string;
+  schemaChecksum: string;
+  topologyChecksum: string;
+  projection: string;
+  authorizesV2Execution: boolean;
+  bootstrap: boolean;
+  canonicalChecksum: string;
+  sortOrder: number;
+}
+
+export interface OperatorPlanReleaseNote {
+  releaseBundleId: string;
+  version: string;
+  publishedAt: string;
+  sourceRevision: string;
+  summary: string;
+}
+
+export interface OperatorPlanChange {
+  componentInstanceId?: string;
+  componentKey: string;
+  kind: string;
+  before: string;
+  after: string;
+  releaseNotes?: OperatorPlanReleaseNote[];
+  forwardOnly: boolean;
+  canonicalChecksum: string;
+  sortOrder: number;
+}
+
+export interface OperatorPlanRisk {
+  componentKey: string;
+  code: string;
+  level: string;
+  blocking: boolean;
+  message: string;
+  canonicalChecksum: string;
+  sortOrder: number;
+}
+
+export interface OperatorPlanValidationIssue {
+  code: string;
+  field: string;
+  message: string;
+}
+
 export interface OperatorPublishPlanDraftRequest {
   expectedRevision: number;
   expectedPreviewChecksum: string;
@@ -1165,13 +1309,13 @@ export interface OperatorPublishPlanDraftRequest {
 
 export interface OperatorPlanDraftValidation {
   draft: OperatorPlanDraft;
-  resolutions: unknown[];
-  graph: unknown;
-  baselines: unknown[];
-  changes: unknown[];
-  risks: unknown[];
+  resolutions: OperatorRequirementResolution[];
+  graph: OperatorTargetPlanGraph;
+  baselines: OperatorPlanBaseline[];
+  changes: OperatorPlanChange[];
+  risks: OperatorPlanRisk[];
   bootstrap: boolean;
-  issues: unknown[];
+  issues: OperatorPlanValidationIssue[];
   previewChecksum?: string;
 }
 

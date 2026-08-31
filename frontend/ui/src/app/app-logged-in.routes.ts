@@ -28,6 +28,7 @@ import {ExecutionDetailComponent} from './control-plane/executions/execution-det
 import {ExecutionsComponent} from './control-plane/executions/executions.component';
 import {FleetComponent} from './control-plane/fleet/fleet.component';
 import {PlanDetailComponent} from './control-plane/plans/plan-detail.component';
+import {PlanDraftComponent} from './control-plane/plans/plan-draft.component';
 import {PlanListComponent} from './control-plane/plans/plan-list.component';
 import {ReconciliationComponent} from './control-plane/reconciliation/reconciliation.component';
 import {ReleasesComponent} from './control-plane/releases/releases.component';
@@ -240,6 +241,16 @@ export const routes: Routes = [
           {
             path: 'plans',
             component: PlanListComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'plans/drafts/new',
+            component: PlanDraftComponent,
+            canActivate: operatorControlPlaneGuards,
+          },
+          {
+            path: 'plans/drafts/:draftId',
+            component: PlanDraftComponent,
             canActivate: operatorControlPlaneGuards,
           },
           {

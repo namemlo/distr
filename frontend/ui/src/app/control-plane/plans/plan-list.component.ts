@@ -107,6 +107,11 @@ export class PlanListComponent implements OnInit {
     return this.error()?.status === 403;
   }
 
+  protected deploymentUnitQuery(): Record<string, string> {
+    const deploymentUnitId = this.filters.controls.deploymentUnitId.value.trim();
+    return deploymentUnitId ? {deploymentUnitId} : {};
+  }
+
   private request(cursor?: string): OperatorPlanFilters {
     return {
       cursor,

@@ -1,6 +1,11 @@
 <section class="bg-gray-50 p-4 antialiased dark:bg-gray-900">
   <div class="mx-auto max-w-screen-2xl">
-    <a routerLink="/deployments/plans" class="text-sm text-primary-700 hover:underline">Back to deployment plans</a>
+    <a
+      routerLink="/deployments/plans"
+      [queryParams]="deploymentUnitQuery()"
+      class="text-sm text-primary-700 hover:underline">
+      Back to deployment plans
+    </a>
 
     @if (loading()) {
       <div role="status" class="mt-4 rounded-lg bg-white p-8 text-center text-gray-500 shadow-sm dark:bg-gray-800">
@@ -33,7 +38,14 @@
         <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <dt class="text-gray-500">Product release</dt>
-            <dd>{{ review.plan.productReleaseVersion }}</dd>
+            <dd>
+              <a
+                [routerLink]="['/releases', review.plan.productReleaseId]"
+                [queryParams]="deploymentUnitQuery()"
+                class="text-primary-700 hover:underline">
+                {{ review.plan.productReleaseVersion }}
+              </a>
+            </dd>
           </div>
           <div>
             <dt class="text-gray-500">Environment</dt>
