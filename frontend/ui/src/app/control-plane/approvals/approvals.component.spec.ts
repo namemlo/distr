@@ -107,6 +107,19 @@ describe('ApprovalsComponent', () => {
     expect(text).toContain('Requester cannot approve');
   });
 
+  it('renders the immutable decision actor, comment, revision, and idempotency key', async () => {
+    service.getApproval.mockReturnValue(of({...pendingApproval, decisions: [approvalDecision]}));
+    const {fixture, component} = await createComponent();
+    await (component as any).openApproval('approval-1');
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Immutable decision history');
+    expect(text).toContain('operator-1');
+    expect(text).toContain('Reviewed immutable evidence.');
+    expect(text).toContain('approval-key-1');
+  });
+
   it('confirms a decision and submits the loaded request revision with one persistent idempotency key', async () => {
     const {component} = await createComponent();
     await (component as any).openApproval('approval-1');

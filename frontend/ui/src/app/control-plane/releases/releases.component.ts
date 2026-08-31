@@ -151,6 +151,13 @@ export class ReleasesComponent {
       );
       if (version !== this.requestVersion) return;
       this.detail.set(response.detail);
+      if (response.detail.release.kind.toUpperCase() === 'PRODUCT') {
+        try {
+          this.productRelease.set(await firstValueFrom(this.controlPlane.getProductRelease(releaseId)));
+        } catch {
+          this.productRelease.set(undefined);
+        }
+      }
       this.evidence.set(this.dedupeEvidence(response.detail.evidence));
       try {
         const evidence = await firstValueFrom(this.controlPlane.getReleaseEvidence(releaseId));
@@ -406,7 +413,14 @@ export class ReleasesComponent {
   }
 
   private async navigateToPublished(releaseId: string): Promise<void> {
-    await this.router.navigate(['/releases', releaseId]);
+    const deploymentUnitId =
+      this.filterForm.controls.deploymentUnitId.value.trim() ||
+      this.route.snapshot?.queryParamMap?.get('deploymentUnitId')?.trim();
+    if (deploymentUnitId) {
+      await this.router.navigate(['/releases', releaseId], {queryParams: {deploymentUnitId}});
+    } else {
+      await this.router.navigate(['/releases', releaseId]);
+    }
     if (this.releaseId() !== releaseId) {
       this.releaseId.set(releaseId);
       await this.loadDetail(releaseId);

@@ -221,6 +221,45 @@
           </article>
         }
       </div>
+
+      <section
+        class="rounded border border-gray-200 p-4 dark:border-gray-700"
+        aria-labelledby="approval-history-heading">
+        <h3 id="approval-history-heading" class="font-semibold text-gray-900 dark:text-white">
+          Immutable decision history
+        </h3>
+        <ol class="mt-3 space-y-3">
+          @for (decision of approval.decisions; track decision.id) {
+            <li class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-900">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <strong>{{ decision.decision }}</strong>
+                <time>{{ decision.createdAt }}</time>
+              </div>
+              <dl class="mt-2 grid gap-1 text-xs md:grid-cols-2">
+                <div>
+                  <dt class="text-gray-500">Decision actor</dt>
+                  <dd class="font-mono">{{ decision.actorUserAccountId }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Request revision</dt>
+                  <dd>{{ decision.requestRevision }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Requirement</dt>
+                  <dd class="font-mono">{{ decision.approvalRequirementId }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Idempotency key</dt>
+                  <dd class="break-all font-mono">{{ decision.idempotencyKey }}</dd>
+                </div>
+              </dl>
+              <p class="mt-2 text-sm">{{ decision.comment || 'No decision comment recorded.' }}</p>
+            </li>
+          } @empty {
+            <li class="text-sm text-gray-500">No decisions recorded yet.</li>
+          }
+        </ol>
+      </section>
     </section>
   }
 </div>

@@ -77,6 +77,81 @@
     }
   </section>
 
+  <section class="space-y-4" aria-labelledby="correlated-events-heading">
+    <div>
+      <h2 id="correlated-events-heading" class="text-xl font-semibold">Correlated deployment event stream</h2>
+      <p class="text-sm text-gray-600 dark:text-gray-300">
+        End-to-end protocol evidence linking immutable releases, config, plans, approvals, campaigns, executions,
+        observations, and reconciliation.
+      </p>
+    </div>
+    @if (correlatedEventsError()) {
+      <p role="status" class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        {{ correlatedEventsError() }}
+      </p>
+    } @else if (correlatedEvents().length === 0) {
+      <p>No correlated protocol events are retained.</p>
+    } @else {
+      <ol class="space-y-3">
+        @for (event of correlatedEvents(); track correlatedEventKey(event)) {
+          <li class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <strong>#{{ event.sequence }} · {{ event.eventType }}</strong>
+                <div class="text-xs text-gray-500">
+                  {{ event.createdAt | date: 'medium' }} · actor {{ event.actorId || 'system' }}
+                </div>
+              </div>
+              <span class="rounded bg-gray-100 px-2 py-1 text-xs font-semibold dark:bg-gray-700">{{
+                stateLabel(event.outcome)
+              }}</span>
+            </div>
+            <dl class="mt-3 grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-3">
+              @for (correlation of correlationEntries(event); track correlation.label) {
+                <div>
+                  <dt class="text-gray-500">{{ correlation.label }}</dt>
+                  <dd class="break-all font-mono">{{ correlation.value }}</dd>
+                </div>
+              }
+            </dl>
+            <div class="mt-3 grid gap-2 text-xs md:grid-cols-2">
+              @if (event.deploymentPlanChecksum) {
+                <div>
+                  Plan checksum: <span class="break-all font-mono">{{ event.deploymentPlanChecksum }}</span>
+                </div>
+              }
+              @if (event.artifactDigest) {
+                <div>
+                  Artifact digest: <span class="break-all font-mono">{{ event.artifactDigest }}</span>
+                </div>
+              }
+              @if (event.targetConfigChecksum) {
+                <div>
+                  Config checksum: <span class="break-all font-mono">{{ event.targetConfigChecksum }}</span>
+                </div>
+              }
+              @if (event.approvalChecksum) {
+                <div>
+                  Approval checksum: <span class="break-all font-mono">{{ event.approvalChecksum }}</span>
+                </div>
+              }
+              @if (event.observationChecksum) {
+                <div>
+                  Observation checksum: <span class="break-all font-mono">{{ event.observationChecksum }}</span>
+                </div>
+              }
+            </div>
+            @if (event.payloadRedacted || event.payloadTruncated) {
+              <p class="mt-2 text-xs text-amber-700">
+                Payload {{ event.payloadRedacted ? 'redacted' : '' }} {{ event.payloadTruncated ? 'truncated' : '' }}
+              </p>
+            }
+          </li>
+        }
+      </ol>
+    }
+  </section>
+
   <section class="space-y-3" aria-labelledby="audit-detail-heading">
     <h2 id="audit-detail-heading" class="text-xl font-semibold">Audit event</h2>
     @if (loadingDetail()) {
@@ -150,6 +225,18 @@
         <dt>Contents</dt>
         <dd>{{ built.events.length }} {{ built.events.length === 1 ? 'event' : 'events' }}</dd>
       </dl>
+      <ol class="mt-4 space-y-2" aria-label="Evidence bundle contents">
+        @for (event of built.events; track event.id) {
+          <li class="rounded border border-gray-200 p-3 text-sm dark:border-gray-700">
+            <strong>#{{ event.sequence }} · {{ event.eventType }}</strong>
+            <span> — {{ stateLabel(event.outcome) }}</span>
+            <div class="mt-1 break-all font-mono text-xs">
+              Plan {{ event.deploymentPlanId || 'n/a' }} · execution {{ event.executionId || 'n/a' }} · observation
+              {{ event.observationId || 'n/a' }}
+            </div>
+          </li>
+        }
+      </ol>
     }
   </section>
 

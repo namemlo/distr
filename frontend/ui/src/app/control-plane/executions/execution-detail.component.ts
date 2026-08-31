@@ -163,6 +163,12 @@ export class ExecutionDetailComponent {
     return this.detail()?.execution.observation === 'STALE';
   }
 
+  protected coordinationFacts(detail: OperatorExecutionDetail): OperatorPlanFact[] {
+    return [...detail.tasks, ...detail.steps, ...detail.observations].filter((fact) =>
+      /lock|lease|fenc|admission|pause/i.test(`${fact.key} ${fact.kind ?? ''} ${fact.message ?? ''}`)
+    );
+  }
+
   private loadDetail(): void {
     if (!this.executionId) {
       this.detailError.set('not-found');

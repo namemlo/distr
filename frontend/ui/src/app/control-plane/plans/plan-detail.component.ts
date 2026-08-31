@@ -300,7 +300,7 @@ export class PlanDetailComponent implements OnInit {
 
   protected actionsEnabled(): boolean {
     const status = this.detail()?.plan.status;
-    return status !== undefined && actionablePlanStatuses.has(status);
+    return status !== undefined && actionablePlanStatuses.has(status) && !this.isPartial();
   }
 
   protected isForbidden(): boolean {

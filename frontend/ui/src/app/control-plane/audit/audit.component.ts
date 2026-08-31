@@ -11,6 +11,7 @@ import {
   OperatorAuditExportStatus,
   OperatorAuditFilters,
   OperatorAuditRow,
+  OperatorControlPlaneAuditEvent,
   OperatorEvidenceBundle,
   OperatorEvidenceRef,
 } from '../../types/operator-control-plane';
@@ -46,6 +47,7 @@ export class AuditComponent {
   });
 
   protected readonly events = signal<OperatorAuditRow[]>([]);
+  protected readonly correlatedEvents = signal<OperatorControlPlaneAuditEvent[]>([]);
   protected readonly nextCursor = signal<string | undefined>(undefined);
   protected readonly detail = signal<OperatorAuditDetail | undefined>(undefined);
   protected readonly evidence = signal<OperatorEvidenceRef[]>([]);
@@ -59,6 +61,7 @@ export class AuditComponent {
   protected readonly buildingBundle = signal(false);
   protected readonly creatingSink = signal(false);
   protected readonly loadError = signal('');
+  protected readonly correlatedEventsError = signal('');
   protected readonly detailError = signal('');
   protected readonly bundleError = signal('');
   protected readonly sinkError = signal('');
@@ -165,8 +168,8 @@ export class AuditComponent {
     }
   }
 
-  protected stateLabel(value: string): string {
-    const normalized = value.trim().toLowerCase();
+  protected stateLabel(value?: string): string {
+    const normalized = value?.trim().toLowerCase() ?? '';
     return normalized === '' ? 'Unknown' : `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
   }
 
@@ -192,8 +195,47 @@ export class AuditComponent {
     return sink.id;
   }
 
+  protected correlatedEventKey(event: OperatorControlPlaneAuditEvent): string {
+    return event.id;
+  }
+
+  protected correlationEntries(event: OperatorControlPlaneAuditEvent): Array<{label: string; value: string}> {
+    const labels: Partial<Record<keyof OperatorControlPlaneAuditEvent, string>> = {
+      productReleaseId: 'Product release',
+      componentReleaseId: 'Component release',
+      targetConfigId: 'Target config',
+      deploymentPlanId: 'Plan',
+      approvalId: 'Approval',
+      campaignRunId: 'Campaign run',
+      executionId: 'Execution',
+      executionAttemptId: 'Attempt',
+      adapterRevisionId: 'Adapter',
+      observationId: 'Observation',
+      driftCaseId: 'Drift case',
+      reconciliationId: 'Reconciliation',
+      deploymentUnitId: 'Deployment unit',
+    };
+    return Object.entries(labels).flatMap(([key, label]) => {
+      const value = event[key as keyof OperatorControlPlaneAuditEvent];
+      return typeof value === 'string' && value ? [{label: label!, value}] : [];
+    });
+  }
+
   private async loadInitial(): Promise<void> {
-    await Promise.all([this.loadEvents(true), this.loadSinks(), this.loadExportStatus()]);
+    await Promise.all([this.loadEvents(true), this.loadCorrelatedEvents(), this.loadSinks(), this.loadExportStatus()]);
+  }
+
+  private async loadCorrelatedEvents(): Promise<void> {
+    this.correlatedEventsError.set('');
+    try {
+      const page = await firstValueFrom(this.service.listControlPlaneAuditEvents({limit: 100}));
+      this.correlatedEvents.set(page.items);
+    } catch {
+      this.correlatedEvents.set([]);
+      this.correlatedEventsError.set(
+        'The correlated protocol event stream is unavailable. Legacy audit remains visible.'
+      );
+    }
   }
 
   private async loadEvents(initial: boolean): Promise<void> {

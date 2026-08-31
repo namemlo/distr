@@ -27,6 +27,29 @@ describe('AuditComponent', () => {
     queryParams = {};
     service = {
       listAudit: vi.fn().mockReturnValue(of({items: [auditRow], nextCursor: 'next-audit'})),
+      listControlPlaneAuditEvents: vi.fn().mockReturnValue(
+        of({
+          items: [
+            {
+              id: 'protocol-event-1',
+              sequence: 43,
+              eventType: 'execution.observation.recorded',
+              actorId: 'AUTO-user-1',
+              outcome: 'SUCCEEDED',
+              productReleaseId: 'AUTO-release-1',
+              deploymentPlanId: 'AUTO-plan-1',
+              approvalId: 'AUTO-approval-1',
+              executionId: 'AUTO-execution-1',
+              observationId: 'AUTO-observation-1',
+              deploymentPlanChecksum: `sha256:${'f'.repeat(64)}`,
+              observationChecksum: `sha256:${'1'.repeat(64)}`,
+              payloadRedacted: false,
+              payloadTruncated: false,
+              createdAt: '2026-07-28T08:05:00Z',
+            },
+          ],
+        })
+      ),
       getAuditEvent: vi.fn().mockReturnValue(
         of({
           detail: {
@@ -167,6 +190,10 @@ describe('AuditComponent', () => {
     ]) {
       expect(text).toContain(expected);
     }
+    expect(text).toContain('Correlated deployment event stream');
+    expect(text).toContain('execution.observation.recorded');
+    expect(text).toContain('AUTO-approval-1');
+    expect(text).toContain('AUTO-observation-1');
   });
 
   it('loads the next keyset page with every active filter without discarding existing events', async () => {

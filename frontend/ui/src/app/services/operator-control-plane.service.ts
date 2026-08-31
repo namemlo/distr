@@ -354,6 +354,10 @@ export class OperatorControlPlaneService {
     );
   }
 
+  getProductRelease(productReleaseId: string): Observable<OperatorProductRelease> {
+    return this.get<OperatorProductRelease>(`/api/v1/product-releases/${pathId(productReleaseId)}`);
+  }
+
   validateProductRelease(productReleaseId: string): Observable<OperatorProductReleaseValidation> {
     return this.post<OperatorProductReleaseValidation>(
       `/api/v1/product-releases/${pathId(productReleaseId)}/validate`,

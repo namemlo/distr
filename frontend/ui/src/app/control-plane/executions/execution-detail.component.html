@@ -34,6 +34,51 @@
       </div>
     }
 
+    <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700" aria-labelledby="coordination-heading">
+      <h2 id="coordination-heading" class="font-semibold text-gray-900 dark:text-white">
+        Deployment coordination and lock proof
+      </h2>
+      <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+        Fencing and retained protocol facts prove that retries cannot reuse stale ownership or overwrite a newer
+        attempt.
+      </p>
+      <dl class="mt-3 grid gap-3 text-sm md:grid-cols-3">
+        <div>
+          <dt class="text-gray-500">Fence resource</dt>
+          <dd class="break-all font-mono">{{ result.execution.fenceResourceKey || 'Not reported' }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Fence generation</dt>
+          <dd>{{ result.execution.fenceGeneration ?? 'Not reported' }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Current attempt</dt>
+          <dd>{{ result.execution.attemptNumber }}</dd>
+        </div>
+      </dl>
+      <div class="mt-4 space-y-2">
+        @for (fact of coordinationFacts(result); track fact.id ?? fact.key) {
+          <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+            <div class="flex justify-between gap-2">
+              <strong>{{ fact.key }}</strong
+              ><span>{{ factStatusLabel(fact) }}</span>
+            </div>
+            @if (fact.message) {
+              <p class="mt-1 text-xs text-gray-500">{{ fact.message }}</p>
+            }
+            @if (fact.expected || fact.actual) {
+              <p class="mt-1 text-xs">Expected {{ fact.expected || 'n/a' }} · actual {{ fact.actual || 'n/a' }}</p>
+            }
+          </div>
+        } @empty {
+          <p class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Lease acquisition/release facts were not returned by this execution read model. Do not treat fencing alone
+            as complete lock-release evidence.
+          </p>
+        }
+      </div>
+    </article>
+
     <div class="grid gap-4 lg:grid-cols-2">
       <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700">
         <h2 class="font-semibold text-gray-900 dark:text-white">Immutable execution</h2>
@@ -55,7 +100,9 @@
           <dt class="text-gray-500">Fence resource</dt>
           <dd class="break-all font-mono">{{ result.execution.fenceResourceKey }}</dd>
           <dt class="text-gray-500">Idempotency key</dt>
-          <dd class="break-all font-mono">{{ result.execution.idempotencyKey || 'Not recorded for this execution' }}</dd>
+          <dd class="break-all font-mono">
+            {{ result.execution.idempotencyKey || 'Not recorded for this execution' }}
+          </dd>
         </dl>
       </article>
 
@@ -182,11 +229,16 @@
                   {{ fact.status || 'Unknown' }} · {{ fact.message || 'No message' }}
                 </div>
                 <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 text-xs">
-                  <dt>Plan checksum</dt><dd class="break-all font-mono">{{ fact.planChecksum }}</dd>
-                  <dt>Artifact digest</dt><dd class="break-all font-mono">{{ fact.artifactDigest }}</dd>
-                  <dt>Config checksum</dt><dd class="break-all font-mono">{{ fact.configChecksum }}</dd>
-                  <dt>Fence</dt><dd class="break-all font-mono">{{ fact.fenceResourceKey }} #{{ fact.fenceGeneration }}</dd>
-                  <dt>Idempotency key</dt><dd class="break-all font-mono">{{ fact.idempotencyKey || 'Not recorded' }}</dd>
+                  <dt>Plan checksum</dt>
+                  <dd class="break-all font-mono">{{ fact.planChecksum }}</dd>
+                  <dt>Artifact digest</dt>
+                  <dd class="break-all font-mono">{{ fact.artifactDigest }}</dd>
+                  <dt>Config checksum</dt>
+                  <dd class="break-all font-mono">{{ fact.configChecksum }}</dd>
+                  <dt>Fence</dt>
+                  <dd class="break-all font-mono">{{ fact.fenceResourceKey }} #{{ fact.fenceGeneration }}</dd>
+                  <dt>Idempotency key</dt>
+                  <dd class="break-all font-mono">{{ fact.idempotencyKey || 'Not recorded' }}</dd>
                 </dl>
               </div>
             } @empty {

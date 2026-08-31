@@ -17,6 +17,7 @@ describe('ReleasesComponent', () => {
   let service: {
     listReleases: ReturnType<typeof vi.fn>;
     getRelease: ReturnType<typeof vi.fn>;
+    getProductRelease: ReturnType<typeof vi.fn>;
     compareReleases: ReturnType<typeof vi.fn>;
     getReleaseEvidence: ReturnType<typeof vi.fn>;
     createComponentRelease: ReturnType<typeof vi.fn>;
@@ -34,6 +35,7 @@ describe('ReleasesComponent', () => {
     service = {
       listReleases: vi.fn(),
       getRelease: vi.fn(),
+      getProductRelease: vi.fn().mockReturnValue(of(productRelease())),
       compareReleases: vi.fn(),
       getReleaseEvidence: vi.fn(),
       createComponentRelease: vi.fn(),
@@ -272,6 +274,9 @@ describe('ReleasesComponent', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/releases', 'product-release-1']);
     expect(service.getRelease).toHaveBeenCalledWith('product-release-1');
     expect(fixture.nativeElement.textContent).toContain('Published product release');
+    expect(fixture.nativeElement.textContent).toContain('Immutable product manifest');
+    expect(fixture.nativeElement.textContent).toContain('policy-1');
+    expect(fixture.nativeElement.textContent).toContain('sha256:graph');
   });
 
   it('does not publish when typed confirmation is cancelled', async () => {
@@ -368,6 +373,7 @@ describe('ReleasesComponent', () => {
     service = {
       listReleases: vi.fn().mockReturnValue(of({items: []})),
       getRelease: vi.fn(),
+      getProductRelease: vi.fn().mockReturnValue(of(productRelease())),
       compareReleases: vi.fn(),
       getReleaseEvidence: vi.fn(),
       createComponentRelease: vi.fn(),
