@@ -252,7 +252,11 @@ func ResolveTargetRequirements(
 	resolutions := make([]types.RequirementResolution, 0, len(requirements))
 	issues := make([]types.ValidationIssue, 0)
 	for _, requirement := range requirements {
-		matches := matchingTargetCandidates(requirement, candidates)
+		matches := matchingTargetCandidates(
+			requirement,
+			candidates,
+			input.Assignment.EnvironmentID,
+		)
 		switch len(matches) {
 		case 0:
 			issues = append(issues, types.ValidationIssue{
@@ -717,6 +721,7 @@ func validateReleasePins(
 func matchingTargetCandidates(
 	requirement types.TargetRequirement,
 	candidates []types.RequirementProviderCandidate,
+	targetEnvironmentID uuid.UUID,
 ) []types.RequirementProviderCandidate {
 	constraint, err := semver.NewConstraint(strings.TrimSpace(requirement.VersionRange))
 	if err != nil {
@@ -731,6 +736,11 @@ func matchingTargetCandidates(
 		if candidate.RequirementKey != requirement.Key {
 			continue
 		}
+		if observedProviderCandidate(candidate.Mode) &&
+			(candidate.ProviderEnvironmentID == uuid.Nil ||
+				candidate.ProviderEnvironmentID != targetEnvironmentID) {
+			continue
+		}
 		if _, ok := allowed[candidate.Mode]; !ok {
 			continue
 		}
@@ -743,6 +753,12 @@ func matchingTargetCandidates(
 		matches = append(matches, candidate)
 	}
 	return matches
+}
+
+func observedProviderCandidate(mode types.RequirementResolutionMode) bool {
+	return mode == types.RequirementResolutionModePinnedExisting ||
+		mode == types.RequirementResolutionModeSharedProvider ||
+		mode == types.RequirementResolutionModeApprovedExternal
 }
 
 func validateCandidateBinding(
@@ -926,7 +942,8 @@ func releaseProvenanceChecksumMatches(pin types.ComponentReleasePin) bool {
 
 func compareRequirementCandidates(a, b types.RequirementProviderCandidate) int {
 	keysA := []string{
-		a.RequirementKey, string(a.Mode), uuidString(a.ProviderReleaseID),
+		a.RequirementKey, string(a.Mode), a.ProviderEnvironmentID.String(),
+		uuidString(a.ProviderReleaseID),
 		uuidString(a.ObservationID), uuidString(a.ActiveDesiredRevisionID),
 		uuidString(a.ObservedComponentStateID), a.ProviderVersion, a.DeploymentUnitID.String(),
 		uuidString(a.ComponentInstanceID), a.ObservationFreshUntil.UTC().Format(time.RFC3339Nano),
@@ -935,7 +952,8 @@ func compareRequirementCandidates(a, b types.RequirementProviderCandidate) int {
 		uuidString(a.ContractProbeObservationID), a.ContractProbeEvidenceChecksum,
 	}
 	keysB := []string{
-		b.RequirementKey, string(b.Mode), uuidString(b.ProviderReleaseID),
+		b.RequirementKey, string(b.Mode), b.ProviderEnvironmentID.String(),
+		uuidString(b.ProviderReleaseID),
 		uuidString(b.ObservationID), uuidString(b.ActiveDesiredRevisionID),
 		uuidString(b.ObservedComponentStateID), b.ProviderVersion, b.DeploymentUnitID.String(),
 		uuidString(b.ComponentInstanceID), b.ObservationFreshUntil.UTC().Format(time.RFC3339Nano),

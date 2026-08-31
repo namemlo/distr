@@ -179,6 +179,7 @@ type TargetRequirement struct {
 type RequirementProviderCandidate struct {
 	RequirementKey                string                    `json:"requirementKey"`
 	Mode                          RequirementResolutionMode `json:"mode"`
+	ProviderEnvironmentID         uuid.UUID                 `json:"providerEnvironmentId,omitempty"`
 	ProviderReleaseID             *uuid.UUID                `json:"providerReleaseId,omitempty"`
 	ObservationID                 *uuid.UUID                `json:"observationId,omitempty"`
 	ActiveDesiredRevisionID       *uuid.UUID                `json:"activeDesiredRevisionId,omitempty"`

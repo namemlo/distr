@@ -68,6 +68,64 @@ func TestResolveTargetRequirementsBlocksAmbiguousAndUnresolvedBindings(t *testin
 	g.Expect(issueCodes(issues)).To(ConsistOf("ambiguous_requirement", "unresolved_requirement"))
 }
 
+func TestResolveTargetRequirementsIgnoresProvidersFromOtherEnvironments(t *testing.T) {
+	environments := []uuid.UUID{
+		uuid.MustParse("50000000-0000-0000-0000-000000000001"),
+		uuid.MustParse("50000000-0000-0000-0000-000000000002"),
+		uuid.MustParse("50000000-0000-0000-0000-000000000003"),
+	}
+	tests := []struct {
+		name           string
+		candidateIndex int
+		targetIndex    int
+		providerIndex  int
+	}{
+		{name: "DEV pinned provider cannot satisfy STG", candidateIndex: 0, targetIndex: 1, providerIndex: 0},
+		{name: "STG shared provider cannot satisfy PROD", candidateIndex: 2, targetIndex: 2, providerIndex: 1},
+		{name: "PROD external provider cannot satisfy DEV", candidateIndex: 1, targetIndex: 0, providerIndex: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			draft := resolverFixture()
+			targetEnvironmentID := environments[test.targetIndex]
+			draft.ResolutionInput.Assignment.EnvironmentID = targetEnvironmentID
+			draft.ResolutionInput.Config.EnvironmentID = targetEnvironmentID
+
+			requirement := draft.ResolutionInput.Requirements[test.candidateIndex]
+			matching := draft.ResolutionInput.Candidates[test.candidateIndex]
+			matching.ProviderEnvironmentID = targetEnvironmentID
+			crossEnvironment := matching
+			crossEnvironment.ProviderEnvironmentID = environments[test.providerIndex]
+			crossEnvironment.ActiveDesiredRevisionID = ptrUUID(uuid.New())
+			crossEnvironment.ObservedComponentStateID = ptrUUID(uuid.New())
+			if crossEnvironment.Mode == types.RequirementResolutionModeApprovedExternal {
+				crossEnvironment.ContractProbeObservationID =
+					ptrUUID(*crossEnvironment.ObservedComponentStateID)
+				crossEnvironment.ProviderApprovalRequestID = ptrUUID(uuid.New())
+			}
+			draft.ResolutionInput.Requirements = []types.TargetRequirement{requirement}
+			draft.ResolutionInput.Candidates = []types.RequirementProviderCandidate{
+				matching,
+				crossEnvironment,
+			}
+
+			resolutions, issues := ResolveTargetRequirements(context.Background(), draft)
+
+			g.Expect(issues).To(BeEmpty())
+			g.Expect(resolutions).To(HaveLen(1))
+			g.Expect(resolutions[0].Mode).To(Equal(matching.Mode))
+
+			draft.ResolutionInput.Candidates = []types.RequirementProviderCandidate{
+				crossEnvironment,
+			}
+			resolutions, issues = ResolveTargetRequirements(context.Background(), draft)
+			g.Expect(resolutions).To(BeEmpty())
+			g.Expect(issueCodes(issues)).To(ConsistOf("unresolved_requirement"))
+		})
+	}
+}
+
 func TestResolvePlanStepAdaptersUsesReleaseDeclaredRequirements(t *testing.T) {
 	g := NewWithT(t)
 	draft := resolverFixture()
@@ -547,6 +605,7 @@ func resolverFixture() types.PlanDraft {
 		{
 			RequirementKey:            "target:consumer:cache",
 			Mode:                      types.RequirementResolutionModePinnedExisting,
+			ProviderEnvironmentID:     environmentID,
 			ProviderReleaseID:         ptrUUID(componentReleaseID),
 			ActiveDesiredRevisionID:   ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000001")),
 			ObservedComponentStateID:  ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000011")),
@@ -569,6 +628,7 @@ func resolverFixture() types.PlanDraft {
 		{
 			RequirementKey:                "target:consumer:email",
 			Mode:                          types.RequirementResolutionModeApprovedExternal,
+			ProviderEnvironmentID:         environmentID,
 			ActiveDesiredRevisionID:       ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000002")),
 			ObservedComponentStateID:      ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000012")),
 			ProviderVersion:               "1.2.0",
@@ -590,6 +650,7 @@ func resolverFixture() types.PlanDraft {
 		{
 			RequirementKey:            "target:consumer:fraud",
 			Mode:                      types.RequirementResolutionModeSharedProvider,
+			ProviderEnvironmentID:     environmentID,
 			ProviderReleaseID:         ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000003")),
 			ActiveDesiredRevisionID:   ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000004")),
 			ObservedComponentStateID:  ptrUUID(uuid.MustParse("20000000-0000-0000-0000-000000000014")),

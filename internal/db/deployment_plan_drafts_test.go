@@ -4,11 +4,17 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/db/queryable"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	. "github.com/onsi/gomega"
 )
 
@@ -248,6 +254,79 @@ func TestObservedProviderCandidatesRequireCurrentFreshEvidenceAndApprovedExterna
 	g.Expect(text).To(ContainSubstring("candidate.ContractProbeEvidenceChecksum"))
 }
 
+func TestLoadObservedProviderCandidatesScopesNativeAndExternalProvidersToTargetEnvironment(
+	t *testing.T,
+) {
+	g := NewWithT(t)
+	devEnvironmentID := uuid.MustParse("60000000-0000-0000-0000-000000000001")
+	stgEnvironmentID := uuid.MustParse("60000000-0000-0000-0000-000000000002")
+	prodEnvironmentID := uuid.MustParse("60000000-0000-0000-0000-000000000003")
+	organizationID := uuid.New()
+	selectedUnitID := uuid.New()
+	effectiveAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	rows := &observedProviderRows{rows: [][]any{
+		observedProviderTestRow(devEnvironmentID, types.DeliveryModelShared,
+			types.RegistryManagementStateManaged, effectiveAt, false),
+		observedProviderTestRow(stgEnvironmentID, types.DeliveryModelShared,
+			types.RegistryManagementStateManaged, effectiveAt, false),
+		observedProviderTestRow(prodEnvironmentID, types.DeliveryModelShared,
+			types.RegistryManagementStateManaged, effectiveAt, false),
+		observedProviderTestRow(devEnvironmentID, types.DeliveryModelExternal,
+			types.RegistryManagementStateExternal, effectiveAt, true),
+		observedProviderTestRow(stgEnvironmentID, types.DeliveryModelExternal,
+			types.RegistryManagementStateExternal, effectiveAt, true),
+		observedProviderTestRow(prodEnvironmentID, types.DeliveryModelExternal,
+			types.RegistryManagementStateExternal, effectiveAt, true),
+	}}
+	recorder := &observedProviderQueryRecorder{rows: rows}
+	ctx := internalctx.WithDb(context.Background(), recorder)
+	input := types.PlanResolutionInput{
+		EffectiveAt: effectiveAt,
+		Assignment: types.TargetEnvironmentAssignment{
+			EnvironmentID: stgEnvironmentID,
+		},
+		Unit: types.DeploymentUnit{ID: selectedUnitID},
+		Requirements: []types.TargetRequirement{
+			{
+				Key: "target:consumer:shared", Capability: "transaction.api",
+				AllowedModes: []types.RequirementResolutionMode{
+					types.RequirementResolutionModeSharedProvider,
+				},
+			},
+			{
+				Key: "target:consumer:external", Capability: "transaction.api",
+				AllowedModes: []types.RequirementResolutionMode{
+					types.RequirementResolutionModeApprovedExternal,
+				},
+			},
+		},
+	}
+
+	candidates, err := loadObservedProviderCandidates(ctx, organizationID, input)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(candidates).To(HaveLen(2))
+	g.Expect([]types.RequirementResolutionMode{
+		candidates[0].Mode,
+		candidates[1].Mode,
+	}).To(ConsistOf(
+		types.RequirementResolutionModeSharedProvider,
+		types.RequirementResolutionModeApprovedExternal,
+	))
+	for _, candidate := range candidates {
+		g.Expect(candidate.ProviderEnvironmentID).To(Equal(stgEnvironmentID))
+	}
+	g.Expect(recorder.sql).To(ContainSubstring(
+		"assignment.environment_id = @environmentID",
+	))
+	g.Expect(recorder.sql).To(ContainSubstring(
+		"assignment.organization_id = unit.organization_id",
+	))
+	namedArgs, ok := recorder.args[0].(pgx.NamedArgs)
+	g.Expect(ok).To(BeTrue())
+	g.Expect(namedArgs["environmentID"]).To(Equal(stgEnvironmentID))
+}
+
 func TestDraftPublicationUsesRowLockAndExactOptimisticChecksum(t *testing.T) {
 	g := NewWithT(t)
 	source, err := os.ReadFile("deployment_plan_drafts.go")
@@ -393,4 +472,118 @@ func (fn targetPlanConfigVerifierFunc) VerifyTargetConfigObject(
 
 func checksumForDraftTest(seed string) string {
 	return "sha256:" + strings.Repeat(seed, 64)
+}
+
+type observedProviderQueryRecorder struct {
+	queryable.Queryable
+	sql  string
+	args []any
+	rows pgx.Rows
+}
+
+func (recorder *observedProviderQueryRecorder) Query(
+	_ context.Context,
+	sql string,
+	args ...any,
+) (pgx.Rows, error) {
+	recorder.sql = sql
+	recorder.args = args
+	return recorder.rows, nil
+}
+
+type observedProviderRows struct {
+	rows  [][]any
+	index int
+}
+
+func (rows *observedProviderRows) Close() {}
+
+func (rows *observedProviderRows) Err() error {
+	return nil
+}
+
+func (rows *observedProviderRows) CommandTag() pgconn.CommandTag {
+	return pgconn.CommandTag{}
+}
+
+func (rows *observedProviderRows) FieldDescriptions() []pgconn.FieldDescription {
+	return nil
+}
+
+func (rows *observedProviderRows) Next() bool {
+	if rows.index >= len(rows.rows) {
+		return false
+	}
+	rows.index++
+	return true
+}
+
+func (rows *observedProviderRows) Scan(dest ...any) error {
+	values := rows.rows[rows.index-1]
+	if len(dest) != len(values) {
+		return pgx.ErrNoRows
+	}
+	for index, value := range values {
+		target := reflect.ValueOf(dest[index]).Elem()
+		if value == nil {
+			target.SetZero()
+			continue
+		}
+		source := reflect.ValueOf(value)
+		if source.Type().AssignableTo(target.Type()) {
+			target.Set(source)
+			continue
+		}
+		if target.Kind() == reflect.Pointer && source.Type().AssignableTo(target.Type().Elem()) {
+			pointer := reflect.New(target.Type().Elem())
+			pointer.Elem().Set(source)
+			target.Set(pointer)
+			continue
+		}
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (rows *observedProviderRows) Values() ([]any, error) {
+	return rows.rows[rows.index-1], nil
+}
+
+func (rows *observedProviderRows) RawValues() [][]byte {
+	return nil
+}
+
+func (rows *observedProviderRows) Conn() *pgx.Conn {
+	return nil
+}
+
+func observedProviderTestRow(
+	environmentID uuid.UUID,
+	deliveryModel types.DeliveryModel,
+	managementState types.RegistryManagementState,
+	effectiveAt time.Time,
+	approved bool,
+) []any {
+	var approvalID, approvalSubjectID any
+	var approvalSubjectRevision, approvalRevision any
+	var approvalSubjectChecksum, approvalPolicyChecksum, approvalSubscriberChecksum any
+	var approvalState any
+	if approved {
+		approvalID, approvalSubjectID = uuid.New(), uuid.New()
+		approvalSubjectRevision, approvalRevision = int64(1), int64(1)
+		approvalSubjectChecksum = checksumForDraftTest("a")
+		approvalPolicyChecksum = checksumForDraftTest("b")
+		approvalSubscriberChecksum = checksumForDraftTest("c")
+		approvalState = types.ApprovalRequestStateApproved
+	}
+	return []any{
+		"transaction.api", uuid.New(), "1.0.0", "linux/amd64",
+		checksumForDraftTest("d"), uuid.New(), uuid.New(), environmentID,
+		checksumForDraftTest("e"), uuid.New(), uuid.New(), int64(1),
+		checksumForDraftTest("f"), effectiveAt.Add(time.Hour), true, true,
+		checksumForDraftTest("1"), deliveryModel, managementState, true,
+		checksumForDraftTest("2"), approvalID, approvalSubjectID,
+		approvalSubjectRevision, approvalSubjectChecksum, approvalPolicyChecksum,
+		approvalSubscriberChecksum, approvalRevision, approvalState,
+	}
 }

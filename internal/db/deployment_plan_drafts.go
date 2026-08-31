@@ -1672,6 +1672,7 @@ func loadObservedProviderCandidates(
 	nativeRows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT capability.name, release.id, capability.version_or_range,
 		       active.platform, release.canonical_checksum, unit.id, instance.id,
+		       assignment.environment_id,
 		       unit.subscriber_set_checksum, active.id, observed.id, active.revision,
 		       observed.state_checksum, observed.fresh_until, observed.trusted,
 		       observed.is_current, observed.evidence_checksum,
@@ -1773,6 +1774,7 @@ func loadObservedProviderCandidates(
 		WHERE head.organization_id = @organizationID AND NOT head.quarantined
 		  AND observed.is_current AND observed.trusted
 		  AND observed.fresh_until >= @effectiveAt
+		  AND assignment.environment_id = @environmentID
 		  AND (unit.id = @deploymentUnitID OR scope.delivery_model IN ('shared', 'external')
 		       OR instance.management_state = 'external')
 		  AND (@customerOrganizationID::UUID IS NULL OR unit.id = @deploymentUnitID
@@ -1786,6 +1788,7 @@ func loadObservedProviderCandidates(
 		LIMIT @providerRowLimit`, pgx.NamedArgs{
 		"organizationID": organizationID, "effectiveAt": input.EffectiveAt,
 		"capabilities": capabilities, "deploymentUnitID": input.Unit.ID,
+		"environmentID":          input.Assignment.EnvironmentID,
 		"customerOrganizationID": input.Scope.CustomerOrganizationID,
 		"providerRowLimit":       maxTargetPlanProviderRows + 1,
 	})
@@ -1803,7 +1806,7 @@ func loadObservedProviderCandidates(
 		var observationFreshUntil time.Time
 		var observationTrusted, observationCurrent bool
 		var contractProbeEvidenceChecksum string
-		var releaseID, unitID, instanceID, activeID, observedID uuid.UUID
+		var releaseID, unitID, instanceID, providerEnvironmentID, activeID, observedID uuid.UUID
 		var approvalID, approvalSubjectID *uuid.UUID
 		var approvalSubjectRevision, approvalRevision *int64
 		var approvalSubjectChecksum, approvalPolicyChecksum, approvalSubscriberChecksum *string
@@ -1813,7 +1816,8 @@ func loadObservedProviderCandidates(
 		var managementState types.RegistryManagementState
 		var provenanceVerified bool
 		if err := nativeRows.Scan(&capabilityName, &releaseID, &version, &platform,
-			&releaseChecksum, &unitID, &instanceID, &subscriberChecksum, &activeID,
+			&releaseChecksum, &unitID, &instanceID, &providerEnvironmentID,
+			&subscriberChecksum, &activeID,
 			&observedID, &revision, &expectedChecksum, &observationFreshUntil,
 			&observationTrusted, &observationCurrent, &contractProbeEvidenceChecksum,
 			&deliveryModel, &managementState, &provenanceVerified,
@@ -1821,6 +1825,10 @@ func loadObservedProviderCandidates(
 			&approvalSubjectRevision, &approvalSubjectChecksum, &approvalPolicyChecksum,
 			&approvalSubscriberChecksum, &approvalRevision, &approvalState); err != nil {
 			return nil, fmt.Errorf("could not scan native observed requirement provider: %w", err)
+		}
+		if providerEnvironmentID == uuid.Nil ||
+			providerEnvironmentID != input.Assignment.EnvironmentID {
+			continue
 		}
 		for _, requirement := range requirementsByCapability[capabilityName] {
 			mode, componentInstanceID, allowed := observedProviderMode(requirement, unitID,
@@ -1831,6 +1839,7 @@ func loadObservedProviderCandidates(
 			releaseIDCopy, activeIDCopy, observedIDCopy := releaseID, activeID, observedID
 			candidate := types.RequirementProviderCandidate{
 				RequirementKey: requirement.Key, Mode: mode, ProviderReleaseID: &releaseIDCopy,
+				ProviderEnvironmentID:   providerEnvironmentID,
 				ActiveDesiredRevisionID: &activeIDCopy, ObservedComponentStateID: &observedIDCopy,
 				ProviderVersion: version, ProviderPlatform: platform,
 				ProviderReleaseChecksum: releaseChecksum, ProvenanceBindingChecksum: provenanceBindingChecksum,
