@@ -77,20 +77,22 @@ describe('ExecutionDetailComponent', () => {
     },
     tasks: [{id: 'task-1', key: 'task-1', status: 'RUNNING', blocking: false, order: 1}],
     steps: [{id: 'step-run-1', key: 'deploy', status: 'RUNNING', blocking: false, order: 1}],
-    attempts: [{
-      id: 'attempt-2',
-      stepKey: 'deploy',
-      status: 'RUNNING',
-      attemptNumber: 2,
-      planChecksum: 'sha256:attempt-plan',
-      artifactDigest: 'sha256:attempt-artifact',
-      configChecksum: 'sha256:attempt-config',
-      fenceGeneration: 42,
-      fenceResourceKey: 'target:target-1',
-      idempotencyKey: 'external:execution-1',
-      message: 'leased',
-      blocking: false,
-    }],
+    attempts: [
+      {
+        id: 'attempt-2',
+        stepKey: 'deploy',
+        status: 'RUNNING',
+        attemptNumber: 2,
+        planChecksum: 'sha256:attempt-plan',
+        artifactDigest: 'sha256:attempt-artifact',
+        configChecksum: 'sha256:attempt-config',
+        fenceGeneration: 42,
+        fenceResourceKey: 'target:target-1',
+        idempotencyKey: 'external:execution-1',
+        message: 'leased',
+        blocking: false,
+      },
+    ],
     observations: [
       {
         id: 'observation-1',
@@ -154,6 +156,81 @@ describe('ExecutionDetailComponent', () => {
     expect(
       fixture.nativeElement.querySelector('a[href="/deployments/executions?deploymentPlanId=plan-1"]')
     ).not.toBeNull();
+  });
+
+  it('renders a failed Transaction attempt followed by its safe retry without collapsing history', () => {
+    service.getExecution.mockReturnValue(
+      of({
+        detail: {
+          ...detail,
+          execution: {
+            ...detail.execution,
+            attemptNumber: 2,
+            status: 'SUCCEEDED',
+            planChecksum: 'sha256:choice-plan',
+            artifactDigest: 'sha256:transaction-t1',
+            configChecksum: 'sha256:choice-config',
+            fenceGeneration: 42,
+            fenceResourceKey: 'choice-tp-dev/transaction-api',
+          },
+          attempts: [
+            {
+              id: 'transaction-attempt-1',
+              stepKey: 'transaction:deploy',
+              status: 'FAILED',
+              attemptNumber: 1,
+              planChecksum: 'sha256:choice-plan',
+              artifactDigest: 'sha256:transaction-t1',
+              configChecksum: 'sha256:choice-config',
+              fenceGeneration: 41,
+              fenceResourceKey: 'choice-tp-dev/transaction-api',
+              idempotencyKey: 'transaction-t1-attempt-1',
+              message: 'Controlled failure before Transaction mutation; C1/T0 remains healthy',
+              blocking: true,
+            },
+            {
+              id: 'transaction-attempt-2',
+              stepKey: 'transaction:deploy',
+              status: 'SUCCEEDED',
+              attemptNumber: 2,
+              planChecksum: 'sha256:choice-plan',
+              artifactDigest: 'sha256:transaction-t1',
+              configChecksum: 'sha256:choice-config',
+              fenceGeneration: 42,
+              fenceResourceKey: 'choice-tp-dev/transaction-api',
+              idempotencyKey: 'transaction-t1-attempt-2',
+              message: 'Safe retry reused the exact immutable plan, artifact, and config',
+              blocking: false,
+            },
+          ],
+          observations: [
+            {
+              id: 'choice-checkpoint-c1-t1',
+              key: 'Checkpoint C1/T1',
+              status: 'VERIFIED',
+              expected: 'C1/T1',
+              actual: 'C1/T1',
+              checksum: 'sha256:choice-observation',
+              message: 'Customer C1 and Transaction T1 are independently observed healthy',
+              blocking: false,
+              order: 1,
+            },
+          ],
+        },
+      } satisfies OperatorExecutionDetailResponse)
+    );
+
+    const {fixture} = createComponent();
+    const text = fixture.nativeElement.textContent;
+
+    expect(text.indexOf('transaction-attempt-1')).toBeLessThan(text.indexOf('transaction-attempt-2'));
+    expect(text).toContain('FAILED');
+    expect(text).toContain('SUCCEEDED');
+    expect(text).toContain('Controlled failure before Transaction mutation');
+    expect(text).toContain('Safe retry reused the exact immutable plan, artifact, and config');
+    expect(text).toContain('choice-tp-dev/transaction-api #41');
+    expect(text).toContain('choice-tp-dev/transaction-api #42');
+    expect(text).toContain('Checkpoint C1/T1');
   });
 
   it('renders the complete evidence page without inventing evidence pagination', () => {

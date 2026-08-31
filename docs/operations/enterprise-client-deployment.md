@@ -139,6 +139,28 @@ and obtain approvals for its new checksum and expanded runtime scope. If
 neither that path nor an approved external/disabled mode is valid, publication
 or planning blocks. The system never silently deploys two services together.
 
+### Two-service proof sequence
+
+The deterministic browser proof includes a client-shaped provider/consumer
+example with one exact capability requirement. It verifies both supported
+planning outcomes without contacting a client system:
+
+1. `included` freezes the provider release in the Product Release, deploys and
+   observes the provider first, retains the healthy mixed-version checkpoint,
+   and then admits the consumer deployment.
+2. `pinned_existing` freezes the compatible provider release, physical
+   component instance, fresh observation, provenance binding, subscriber set,
+   and expected state, then schedules only the consumer mutation.
+3. A controlled consumer failure preserves the mixed-version checkpoint. A
+   retry retains the same plan, artifact, and config checksums while creating a
+   new attempt identity and higher fence generation.
+4. Previous-state creation is a separate immutable-plan mutation. Its reverse
+   order restores and verifies the consumer before restoring the provider.
+
+This is route-mocked UI-contract evidence only. It does not claim a client
+deployment, database mutation, SSH action, CI run, registry push, or server
+observation.
+
 ## 4. Freeze target configuration
 
 Create one Target Config Snapshot from an immutable source commit. It records:

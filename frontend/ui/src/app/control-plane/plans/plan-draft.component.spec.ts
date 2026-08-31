@@ -226,16 +226,21 @@ describe('PlanDraftComponent', () => {
     });
   });
 
-  it('renders exact dependency bindings and stable forward and reverse graph order', async () => {
+  it('renders the exact customer.api requirement and distinguishes included from pinned_existing', async () => {
     const {fixture, component} = await createComponent('draft-1', {deploymentUnitId: 'unit-1'});
 
     await (component as any).validateDraft();
     fixture.detectChanges();
 
     const text = fixture.nativeElement.textContent;
-    expect(text).toContain('customer-api >=2.4.0');
-    expect(text).toContain('shared_provider');
-    expect(text).toContain('sha256:binding');
+    expect(text).toContain('transaction-api requires customer.api =1.1.0');
+    expect(text).toContain('included');
+    expect(text).toContain('pinned_existing');
+    expect(text).toContain('1.1.0 · linux/amd64');
+    expect(text).toContain('v2');
+    expect(text).toContain('sha256:expected-customer-state');
+    expect(text).toContain('sha256:binding-included');
+    expect(text).toContain('sha256:binding-pinned');
     expect(text).toContain('sha256:preview');
 
     const forward = fixture.nativeElement.querySelector('[aria-labelledby="forward-heading"]').textContent;
@@ -298,20 +303,36 @@ describe('PlanDraftComponent', () => {
       draft: {...draft, previewChecksum: 'sha256:preview'},
       resolutions: [
         {
-          requirementKey: 'transaction-api:customer-api',
+          requirementKey: 'transaction-api:customer.api:included',
           consumerKey: 'transaction-api',
-          capability: 'customer-api',
-          versionRange: '>=2.4.0',
-          mode: 'shared_provider',
+          capability: 'customer.api',
+          versionRange: '=1.1.0',
+          mode: 'included',
           providerReleaseId: 'customer-release-1',
-          providerVersion: '2.4.7',
+          providerVersion: '1.1.0',
           providerPlatform: 'linux/amd64',
           providerReleaseChecksum: 'sha256:customer-release',
           providerDeploymentUnitId: 'customer-unit-1',
-          expectedStateVersion: 7,
-          expectedStateChecksum: 'sha256:expected-state',
-          bindingChecksum: 'sha256:binding',
+          expectedStateVersion: 1,
+          expectedStateChecksum: 'sha256:expected-customer-state',
+          bindingChecksum: 'sha256:binding-included',
           sortOrder: 0,
+        },
+        {
+          requirementKey: 'transaction-api:customer.api:pinned',
+          consumerKey: 'transaction-api',
+          capability: 'customer.api',
+          versionRange: '=1.1.0',
+          mode: 'pinned_existing',
+          observationId: 'customer-observation-c1',
+          providerVersion: '1.1.0',
+          providerPlatform: 'linux/amd64',
+          providerReleaseChecksum: 'sha256:customer-release',
+          providerDeploymentUnitId: 'customer-unit-1',
+          expectedStateVersion: 2,
+          expectedStateChecksum: 'sha256:expected-customer-state',
+          bindingChecksum: 'sha256:binding-pinned',
+          sortOrder: 1,
         },
       ],
       graph: {

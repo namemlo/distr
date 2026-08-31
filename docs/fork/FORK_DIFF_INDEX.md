@@ -1694,14 +1694,16 @@ Use one entry per pull request:
 - Agent protocol changes: None.
 - Documentation: Added PR-080 fork notes and a deterministic Playwright
   control-plane configuration.
-- Tests: Added 140 integrated Angular tests and a 26-test, single-worker
+- Tests: Added 140 integrated Angular tests and a 27-test, single-worker
   route-mocked Playwright suite with HTML, JUnit, trace, screenshot, video, and
   JSON evidence artifacts. AC-63 selects one purpose-built `@evidence`
   reference-client DEV release, approval, and previous-state journey with
   zero retries and eleven retained visual checkpoints. Its retained checkpoint
   manifest binds every PNG to the exact route, actor/entity IDs, domain
-  checksums, filename, and immutable SHA-256. The community production build
-  passes.
+  checksums, filename, and immutable SHA-256. A second `@evidence` two-service
+  journey retains nine checkpoints for exact included/pinned-existing
+  dependency resolution, failed-attempt retry lineage, and UI-created
+  previous-state ordering. The community production build passes.
 - Upstream contribution notes: Community-neutral UI and fixture contracts; no
   adopter, infrastructure, credential, or client-specific core behavior.
 - Compatibility notes: `/deployments` redirects to
@@ -1871,7 +1873,7 @@ Use one entry per pull request:
   require exact plan/release/config/component/provenance/current-observation/audit
   coverage, while task/external-execution guards cover insert and reassignment.
 - API changes: Adds `POST
-  /api/v1/deployment-plans/{id}/baseline-adoptions` with exact checksum-bound
+/api/v1/deployment-plans/{id}/baseline-adoptions` with exact checksum-bound
   evidence and idempotent replay.
 - UI changes: None; this is an API-first state-lineage boundary.
 - Agent protocol changes: None.

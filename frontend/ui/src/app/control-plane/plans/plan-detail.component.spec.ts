@@ -234,6 +234,65 @@ describe('PlanDetailComponent', () => {
     expect(text).toContain('sha256:evidence');
   });
 
+  it('renders forward and previous-state Customer and Transaction checkpoints as immutable facts', () => {
+    service.getPlan.mockReturnValue(
+      of({
+        detail: {
+          ...detail,
+          baselines: [
+            {
+              ...fact('Baseline checkpoint C0/T0', 'sha256:c0-t0'),
+              expected: 'C0/T0',
+              actual: 'C0/T0',
+              message: 'customer-api 1.0.0 and transaction-api 2.0.0 are healthy',
+            },
+          ],
+          requirements: [
+            {
+              ...fact('customer.api exact requirement', 'sha256:customer-binding'),
+              status: 'included',
+              expected: 'customer.api =1.1.0',
+              actual: 'customer-api 1.1.0 (included)',
+            },
+          ],
+          steps: [
+            {
+              ...fact('Forward checkpoint C1/T0', 'sha256:c1-t0'),
+              expected: 'C1/T0',
+              actual: 'C1/T0',
+            },
+            {
+              ...fact('Forward checkpoint C1/T1', 'sha256:c1-t1'),
+              expected: 'C1/T1',
+              actual: 'C1/T1',
+            },
+            {
+              ...fact('Previous-state checkpoint C1/T0', 'sha256:previous-c1-t0'),
+              expected: 'C1/T0',
+              actual: 'C1/T0',
+            },
+            {
+              ...fact('Previous-state checkpoint C0/T0', 'sha256:previous-c0-t0'),
+              expected: 'C0/T0',
+              actual: 'C0/T0',
+            },
+          ],
+        },
+      } satisfies OperatorPlanDetailResponse)
+    );
+
+    const {fixture} = createComponent();
+    const text = fixture.nativeElement.textContent;
+
+    expect(text).toContain('Baseline checkpoint C0/T0');
+    expect(text).toContain('customer.api =1.1.0');
+    expect(text).toContain('customer-api 1.1.0 (included)');
+    expect(text).toContain('Forward checkpoint C1/T0');
+    expect(text).toContain('Forward checkpoint C1/T1');
+    expect(text).toContain('Previous-state checkpoint C1/T0');
+    expect(text).toContain('Previous-state checkpoint C0/T0');
+  });
+
   it('keeps loading visible and renders partial evidence without hiding the plan review', () => {
     const response = new Subject<OperatorPlanDetailResponse>();
     const evidenceResponse = new Subject<OperatorEvidencePage>();

@@ -420,6 +420,313 @@ test.describe('operator control room route-mocked contract', () => {
       await attachVisualCheckpointManifest(testInfo, checkpoints);
     });
 
+    test('@evidence proves the Choice TP Customer and Transaction dependency checkpoints', async ({
+      page,
+      controlPlane,
+    }, testInfo) => {
+      test.setTimeout(90_000);
+      const checkpoints = [];
+
+      await page.goto(`/deployments/plans/drafts/${fixtureIds.choiceTpIncludedDraft}`);
+      await expect(page.getByRole('heading', {name: 'Target deployment plan draft'})).toBeVisible();
+      const includedValidationResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname ===
+            `/api/v1/deployment-plan-drafts/${fixtureIds.choiceTpIncludedDraft}/validate`
+      );
+      await page.getByRole('button', {name: 'Save and validate exact plan'}).click();
+      const includedValidation = (await (await includedValidationResponse).json()) as {
+        resolutions: Array<Record<string, unknown>>;
+      };
+      expect(includedValidation.resolutions[0]).toMatchObject({
+        mode: 'included',
+        providerReleaseId: fixtureIds.choiceTpCustomerRelease,
+        componentInstanceId: fixtureIds.choiceTpCustomerInstance,
+      });
+      const includedResolution = page
+        .getByRole('heading', {name: 'Exact dependency resolution'})
+        .locator('xpath=ancestor::section[1]');
+      await expect(includedResolution).toContainText('transaction-api:customer.api');
+      await expect(includedResolution).toContainText('transaction-api requires customer.api =1.1.0');
+      await expect(includedResolution).toContainText('included');
+      await expect(includedResolution).toContainText('1.1.0 · linux/amd64');
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 1,
+            slug: 'choice-tp-included-customer-binding',
+            actor: 'vendorAdmin',
+            entityIds: {draftId: fixtureIds.choiceTpIncludedDraft},
+            checksums: {binding: 'sha256:1616161616161616161616161616161616161616161616161616161616161616'},
+          },
+          includedResolution
+        )
+      );
+
+      await page.goto(`/deployments/plans/drafts/${fixtureIds.choiceTpPinnedDraft}`);
+      const pinnedValidationResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname ===
+            `/api/v1/deployment-plan-drafts/${fixtureIds.choiceTpPinnedDraft}/validate`
+      );
+      await page.getByRole('button', {name: 'Save and validate exact plan'}).click();
+      const pinnedValidation = (await (await pinnedValidationResponse).json()) as {
+        resolutions: Array<Record<string, unknown>>;
+      };
+      expect(pinnedValidation.resolutions[0]).toMatchObject({
+        mode: 'pinned_existing',
+        providerReleaseId: fixtureIds.choiceTpCustomerRelease,
+        observationId: fixtureIds.choiceTpCustomerObservation,
+        componentInstanceId: fixtureIds.choiceTpCustomerInstance,
+        provenanceBindingChecksum: 'sha256:1616161616161616161616161616161616161616161616161616161616161616',
+        subscriberSetChecksum: 'sha256:5555555555555555555555555555555555555555555555555555555555555555',
+      });
+      const pinnedResolution = page
+        .getByRole('heading', {name: 'Exact dependency resolution'})
+        .locator('xpath=ancestor::section[1]');
+      await expect(pinnedResolution).toContainText('transaction-api requires customer.api =1.1.0');
+      await expect(pinnedResolution).toContainText('pinned_existing');
+      await expect(pinnedResolution).toContainText(fixtureIds.choiceTpCustomerRelease);
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 2,
+            slug: 'choice-tp-pinned-existing-customer-binding',
+            actor: 'vendorAdmin',
+            entityIds: {
+              draftId: fixtureIds.choiceTpPinnedDraft,
+              observationId: fixtureIds.choiceTpCustomerObservation,
+            },
+            checksums: {state: 'sha256:1515151515151515151515151515151515151515151515151515151515151515'},
+          },
+          pinnedResolution
+        )
+      );
+
+      await page.goto(`/deployments/plans/${fixtureIds.choiceTpPlan}`);
+      const baseline = page.getByRole('region', {name: 'Baselines'});
+      await expect(baseline).toContainText('Baseline checkpoint C0/T0');
+      await expect(baseline).toContainText('customer-api 1.0.0 and transaction-api 2.0.0');
+      await expect(page.getByRole('region', {name: 'Provider requirements'})).toContainText('customer.api =1.1.0');
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 3,
+            slug: 'choice-tp-checkpoint-c0-t0',
+            actor: 'vendorAdmin',
+            entityIds: {planId: fixtureIds.choiceTpPlan},
+            checksums: {plan: 'sha256:1212121212121212121212121212121212121212121212121212121212121212'},
+          },
+          baseline
+        )
+      );
+
+      await controlPlane.signInAs('executorOperator');
+      await page.goto(`/deployments/executions/${fixtureIds.choiceTpCustomerExecution}`);
+      const customerObservations = page
+        .getByRole('heading', {name: 'Observations'})
+        .locator('xpath=ancestor::article[1]');
+      await expect(customerObservations).toContainText('Checkpoint C1/T0');
+      await expect(customerObservations).toContainText('customer-api 1.1.0 is healthy');
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 4,
+            slug: 'choice-tp-checkpoint-c1-t0',
+            actor: 'executorOperator',
+            entityIds: {executionId: fixtureIds.choiceTpCustomerExecution},
+            checksums: {state: 'sha256:1515151515151515151515151515151515151515151515151515151515151515'},
+          },
+          customerObservations
+        )
+      );
+
+      await page.goto(`/deployments/executions/${fixtureIds.choiceTpTransactionExecution}`);
+      const failedAttemptHistory = page
+        .getByRole('heading', {name: 'Task and attempt correlation'})
+        .locator('xpath=ancestor::article[1]');
+      await expect(failedAttemptHistory).toContainText(`${fixtureIds.choiceTpTransactionAttempt1} · attempt 1`);
+      await expect(failedAttemptHistory).toContainText('FAILED');
+      await expect(failedAttemptHistory).toContainText('Controlled pre-mutation failure');
+      const failedObservations = page
+        .getByRole('heading', {name: 'Observations'})
+        .locator('xpath=ancestor::article[1]');
+      await expect(failedObservations).toContainText('Checkpoint C1/T0');
+      await expect(failedObservations).toContainText('Transaction remains T0');
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 5,
+            slug: 'choice-tp-transaction-failed-attempt',
+            actor: 'executorOperator',
+            entityIds: {
+              executionId: fixtureIds.choiceTpTransactionExecution,
+              attemptId: fixtureIds.choiceTpTransactionAttempt1,
+            },
+            checksums: {plan: 'sha256:1212121212121212121212121212121212121212121212121212121212121212'},
+          },
+          failedAttemptHistory
+        )
+      );
+
+      await page.goto(`/deployments/campaigns/${fixtureIds.choiceTpCampaign}`);
+      const members = page.getByRole('heading', {name: 'Members'}).locator('xpath=ancestor::section[1]');
+      await expect(members).toContainText('failed');
+      await page.getByLabel('Retry protocol').selectOption('v2');
+      await page.getByLabel('Reason').fill('Retry Transaction with the exact approved material');
+      await expect(page.getByRole('button', {name: 'Retry member'})).toBeEnabled();
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 6,
+            slug: 'choice-tp-distr-retry-ready',
+            actor: 'executorOperator',
+            entityIds: {
+              campaignId: fixtureIds.choiceTpCampaign,
+              memberRunId: fixtureIds.choiceTpCampaignMemberRun,
+            },
+            checksums: {plan: 'sha256:1212121212121212121212121212121212121212121212121212121212121212'},
+          },
+          members
+        )
+      );
+      await page.getByRole('button', {name: 'Retry member'}).click();
+      await confirmOverlay(page, 'Retry member');
+      await expect(members).toContainText('succeeded');
+
+      await page.goto(`/deployments/executions/${fixtureIds.choiceTpTransactionExecution}`);
+      const retriedAttemptHistory = page
+        .getByRole('heading', {name: 'Task and attempt correlation'})
+        .locator('xpath=ancestor::article[1]');
+      await expect(retriedAttemptHistory).toContainText(`${fixtureIds.choiceTpTransactionAttempt1} · attempt 1`);
+      await expect(retriedAttemptHistory).toContainText(`${fixtureIds.choiceTpTransactionAttempt2} · attempt 2`);
+      await expect(retriedAttemptHistory).toContainText('Fence');
+      await expect(retriedAttemptHistory).toContainText('choice-tp-dev/transaction-api #42');
+      const succeededObservations = page
+        .getByRole('heading', {name: 'Observations'})
+        .locator('xpath=ancestor::article[1]');
+      await expect(succeededObservations).toContainText('Checkpoint C1/T1');
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 7,
+            slug: 'choice-tp-checkpoint-c1-t1-after-retry',
+            actor: 'executorOperator',
+            entityIds: {
+              executionId: fixtureIds.choiceTpTransactionExecution,
+              failedAttemptId: fixtureIds.choiceTpTransactionAttempt1,
+              retryAttemptId: fixtureIds.choiceTpTransactionAttempt2,
+            },
+            checksums: {
+              plan: 'sha256:1212121212121212121212121212121212121212121212121212121212121212',
+              transaction: 'sha256:1414141414141414141414141414141414141414141414141414141414141414',
+            },
+          },
+          retriedAttemptHistory
+        )
+      );
+
+      const unavailablePreviousState = await getFromPage(
+        page,
+        `/api/v1/control-plane/plans/${fixtureIds.choiceTpPreviousPlan}`
+      );
+      expect(unavailablePreviousState.status).toBe(404);
+
+      await controlPlane.signInAs('vendorAdmin');
+      await page.goto(`/deployments/plans/${fixtureIds.choiceTpPlan}`);
+      await page.getByLabel('Successful plan ID').fill(fixtureIds.choiceTpBaselinePlan);
+      await page.getByLabel('Reason').fill('Restore the verified Choice TP C0/T0 state');
+      await page.getByRole('button', {name: 'Create previous-state plan'}).click();
+      await confirmOverlay(page, 'Create previous-state plan', fixtureIds.choiceTpBaselinePlan);
+      await expect(page).toHaveURL(new RegExp(`/deployments/plans/${fixtureIds.choiceTpPreviousPlan}`));
+      const previousSteps = page.getByRole('region', {name: 'Steps'});
+      const previousC1T0 = previousSteps
+        .getByText('Previous-state checkpoint C1/T0')
+        .locator('xpath=ancestor::article[1]');
+      await expect(previousC1T0).toContainText('customer-api 1.1.0 with transaction-api 2.0.0');
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 8,
+            slug: 'choice-tp-previous-state-c1-t0',
+            actor: 'vendorAdmin',
+            entityIds: {planId: fixtureIds.choiceTpPreviousPlan},
+            checksums: {plan: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},
+          },
+          previousC1T0
+        )
+      );
+      const previousC0T0 = previousSteps
+        .getByText('Previous-state checkpoint C0/T0')
+        .locator('xpath=ancestor::article[1]');
+      await expect(previousC0T0).toContainText('customer-api 1.0.0 with transaction-api 2.0.0');
+      checkpoints.push(
+        await attachVisualCheckpoint(
+          page,
+          testInfo,
+          {
+            sequence: 9,
+            slug: 'choice-tp-previous-state-c0-t0',
+            actor: 'vendorAdmin',
+            entityIds: {planId: fixtureIds.choiceTpPreviousPlan},
+            checksums: {plan: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},
+          },
+          previousC0T0
+        )
+      );
+
+      const retryAction = controlPlane.successfulActions.find(
+        (action) => action.path === `/api/v1/deployment-campaigns/${fixtureIds.choiceTpCampaignRun}/retry`
+      );
+      const previousStateAction = controlPlane.successfulActions.find(
+        (action) => action.path === `/api/v1/deployment-plans/${fixtureIds.choiceTpPlan}/previous-state`
+      );
+      expect(retryAction).toMatchObject({
+        method: 'POST',
+        body: expect.objectContaining({
+          memberRunId: fixtureIds.choiceTpCampaignMemberRun,
+          protocolVersion: 'v2',
+          reason: 'Retry Transaction with the exact approved material',
+        }),
+      });
+      expect(previousStateAction).toMatchObject({
+        method: 'POST',
+        body: {
+          successfulDeploymentPlanId: fixtureIds.choiceTpBaselinePlan,
+          reason: 'Restore the verified Choice TP C0/T0 state',
+        },
+      });
+      expect(controlPlane.externalAttempts).toEqual([]);
+      expect(checkpoints).toHaveLength(9);
+      await attachContractEvidence(testInfo, 'choice-tp-customer-transaction-checkpoints.json', {
+        client: 'choice-tp-dev',
+        exactRequirement: 'customer.api =1.1.0',
+        modes: ['included', 'pinned_existing'],
+        checkpoints: ['C0/T0', 'C1/T0', 'FAILED_T1', 'C1/T1', 'PREVIOUS_C1/T0', 'PREVIOUS_C0/T0'],
+        retryAction,
+        previousStateAction,
+        visualCheckpoints: checkpoints,
+      });
+    });
+
     test('assembles, validates, and publishes a component release with typed confirmation', async ({
       page,
       controlPlane,

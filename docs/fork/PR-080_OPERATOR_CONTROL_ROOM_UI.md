@@ -43,17 +43,22 @@ The suite covers:
 - component and product release history, immutable comparison, assembly, validation, typed publication confirmation, and resulting release deep links;
 - two deployment units sharing one physical target;
 - all visible plan checksums and blocking facts;
+- exact two-service dependency resolution in `included` and
+  `pinned_existing` modes, including immutable provider identity and observed
+  state evidence;
 - scoped approval plus server-reported invalidation;
 - guided campaign draft creation and update, validation, immutable publication,
   run creation, and allowed version-bound run transitions;
 - campaign pause/resume with server-provided run versions;
+- retained failed and retried execution attempts with unchanged plan,
+  artifact, and config material plus an increased fence generation;
 - execution previous-known-state evidence and a current-status request;
 - drift detail, evidence, and reasoned resolution;
 - audit query hydration, event detail, evidence deep link, export health, and evidence-bundle metadata;
 - legacy route preservation, disabled feature behavior, unauthorized access, and loading, empty, structured error, partial, stale, and unknown states.
 
 Significant contract evidence is attached to the corresponding Playwright result as JSON. Failures retain a trace, screenshot, and video.
-The current suite contains 26 Playwright tests. AC-63 executes the purpose-built
+The current suite contains 27 Playwright tests. AC-63 executes the purpose-built
 `@evidence` reference-client DEV release, approval, and previous-state journey
 through `playwright.control-plane-evidence.config.ts`. Each of its eleven visual
 checkpoints centers the viewport on the exact asserted claim, and the evidence
@@ -62,6 +67,13 @@ screenshot bytes and retains `AC-63-checkpoints.json`, which binds every PNG to
 its exact route, actor, entity IDs, domain checksums, filename, and immutable
 SHA-256. The screenshots and JSON evidence remain local route-mocked browser
 proof, not deployed-client evidence.
+
+The same evidence configuration also selects a client-shaped two-service
+journey with nine visual checkpoints. It proves an exact capability binding,
+the `included` and `pinned_existing` plans, baseline and mixed-version states,
+a controlled pre-mutation failure, a version-bound retry with retained attempt
+history, and UI-created previous-state lineage. The previous-state detail is
+unavailable until the recorded creation request succeeds.
 
 ## Running the proof
 
