@@ -725,6 +725,7 @@ test.describe('operator control room route-mocked contract', () => {
         previousStateAction,
         visualCheckpoints: checkpoints,
       });
+      await attachVisualCheckpointManifest(testInfo, checkpoints);
     });
 
     test('assembles, validates, and publishes a component release with typed confirmation', async ({
