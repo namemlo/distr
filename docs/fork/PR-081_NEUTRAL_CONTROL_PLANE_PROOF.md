@@ -168,15 +168,22 @@ The operator-facing reproduction guide is
 - raw reports, percentiles, counts, errors, isolation results, and SHA-256
   sidecars.
 
+AC-53 uses `hack/control-plane-neutral-live-evidence.mjs` to enforce those
+bindings. It requires the exact clean source commit, executes the selected
+reference-executor tests and local live A-B-A runner from a detached checkout,
+retains checksums for every runtime/fixture source, and records an independent
+zero-finding adopter-term scan over those complete sources. The prebuilt local
+Hub image is accepted only when Docker reports an immutable SHA-256 image ID
+and an `org.opencontainers.image.revision` label equal to that source commit.
+
 The reports prove only the recorded local simulated, local Compose, or remote
 environment. They are not automatically staging or production proof.
 
-Clean mode may start loopback-only services and verify readiness, but its
-release-flow result is still produced by the deterministic contract model. If
-Docker, its daemon, or a Hub binary is unavailable, clean mode falls back to
-contract mode and may exit successfully while recording the blocker. Consumers
-must inspect `proofMode`, `liveStack.started`, `liveStack.blocker`, and cleanup
-metadata before classifying the result.
+Clean mode starts the loopback `live-hub-api` path only when every local
+prerequisite is present. If Docker, its daemon, or a Hub binary is unavailable,
+it falls back to contract mode and may exit successfully while recording the
+blocker. Consumers must inspect `proofMode`, `liveStack.started`,
+`liveStack.blocker`, and cleanup metadata before classifying the result.
 
 ## Root-verified result
 

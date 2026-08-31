@@ -8,6 +8,14 @@ import {test} from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
 import {deflateSync} from 'node:zlib';
+import {
+  browserCheckpointClaims,
+  browserCheckpointManifestName,
+  browserCheckpointManifestSchema,
+  browserScreenshotNames,
+  browserEvidenceTitle as browserTitle,
+} from './control-plane-browser-evidence-contract.mjs';
+import {neutralLiveExecutionSourcePaths} from './control-plane-neutral-live-evidence-contract.mjs';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,7 +27,6 @@ const browserConfig = 'playwright.control-plane-evidence.config.ts';
 const browserFixture = 'frontend/ui/e2e/fixtures/control-plane.ts';
 const browserProject = 'chromium';
 const browserPlaywrightCLI = 'node_modules/@playwright/test/cli.js';
-const browserTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const browserGrep = `${browserTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const browserCommand = [
   'node',
@@ -35,23 +42,13 @@ const browserCommand = [
   '--reporter',
   'json',
 ];
-const browserScreenshotNames = [
-  '01-version-build.png',
-  '02-accumulated-changelog.png',
-  '03-dependency-constraints.png',
-  '04-plan-approval-pending.png',
-  '05-approval-request.png',
-  '06-approval-approved.png',
-  '07-plan-approval-satisfied.png',
-  '08-previous-state-plan.png',
-  '09-previous-state-comparison.png',
-  '10-release-b-history-preserved.png',
-  '11-immutable-history-audit.png',
-];
+const browserContract = 'hack/control-plane-browser-evidence-contract.mjs';
+const browserContractSource = await readFile(path.join(repoRoot, browserContract), 'utf8');
 const browserExecutionSourcePaths = [
   browserConfig,
   'playwright.control-plane.config.ts',
   browserFixture,
+  browserContract,
   'package.json',
   'pnpm-lock.yaml',
 ];
@@ -252,6 +249,8 @@ async function fixtureWorkspace({
   proofOverride,
   browserRuntimeBinding = true,
   browserLockImporterVersion = '1.52.0',
+  browserRetriesZero = true,
+  neutralProhibitedTerm = false,
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-acceptance-'));
   await mkdir(path.join(directory, 'docs', 'release'), {recursive: true});
@@ -264,18 +263,42 @@ async function fixtureWorkspace({
   const browserSources = {
     [browserAutomatedTest]: `test('${browserTitle}', async ({controlPlane}) => {\n${browserRuntimeAssertion}  expect(controlPlane.externalAttempts).toEqual([]);\n});\n`,
     [browserManualEvidence]: '# AC-63 browser evidence\n',
-    [browserConfig]: `export default {projects: [{name: '${browserProject}'}]};\n`,
+    [browserConfig]: `export default {projects: [{name: '${browserProject}'}], retries: ${
+      browserRetriesZero ? 0 : 1
+    }};\n`,
     'playwright.control-plane.config.ts': 'export default {};\n',
     [browserFixture]:
       "const externalAttempts = [];\npage.route('**/*', async (route) => {\n  if (!isLocalHost(new URL(route.request().url()).hostname)) {\n    externalAttempts.push(route.request().url());\n    await route.abort('blockedbyclient');\n  }\n});\n",
+    [browserContract]: browserContractSource,
     'package.json':
       '{"name":"acceptance-browser-fixture","private":true,"packageManager":"pnpm@11.7.0","devDependencies":{"@playwright/test":"^1.52.0"}}\n',
     'pnpm-lock.yaml': `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    devDependencies:\n      '@playwright/test':\n        specifier: ^1.52.0\n        version: ${browserLockImporterVersion}\n\npackages:\n\n  '@playwright/test@1.52.0':\n    resolution: {integrity: sha512-YWN0dWFsLWxvY2tmaWxlLWJvdW5kLXBsYXl3cmlnaHQtdGVzdA==}\n\nsnapshots:\n\n  '@playwright/test@1.52.0': {}\n`,
   };
+  const neutralExecutionSources = Object.fromEntries(
+    neutralLiveExecutionSourcePaths.map((sourcePath) => [
+      sourcePath,
+      sourcePath.endsWith('.json')
+        ? '{"schemaVersion":"neutral-fixture/v1"}\n'
+        : sourcePath.endsWith('.yaml')
+          ? 'services: {}\n'
+          : sourcePath.endsWith('.go')
+            ? 'package main\n'
+            : 'export const neutralFixture = true;\n',
+    ])
+  );
+  if (neutralProhibitedTerm) {
+    neutralExecutionSources['examples/control-plane-e2e/external-executor.mjs'] =
+      `// ${['Jenk', 'ins'].join('')}-specific execution is prohibited in the neutral source.\n`;
+  }
   const contract = fixtureContract(proofOverride);
   await writeFile(path.join(directory, 'evidence.test.mjs'), automatedTest);
   await writeFile(path.join(directory, 'evidence.md'), evidence);
   for (const [relative, contents] of Object.entries(browserSources)) {
+    const target = path.join(directory, relative);
+    await mkdir(path.dirname(target), {recursive: true});
+    await writeFile(target, contents);
+  }
+  for (const [relative, contents] of Object.entries(neutralExecutionSources)) {
     const target = path.join(directory, relative);
     await mkdir(path.dirname(target), {recursive: true});
     await writeFile(target, contents);
@@ -444,7 +467,23 @@ async function fixtureWorkspace({
       proofMode: 'live-hub-api',
       status: 'passed',
       acceptanceEligible: true,
-      liveStack: {started: true},
+      liveStack: {
+        started: true,
+        hubImage: {
+          reference: 'distr-hub:acceptance',
+          imageId: `sha256:${'f'.repeat(64)}`,
+          sourceCommit,
+        },
+      },
+      executionSources: neutralLiveExecutionSourcePaths.map((sourcePath) => ({
+        path: sourcePath,
+        sha256: sha256(neutralExecutionSources[sourcePath]),
+      })),
+      neutralityProof: {
+        mode: 'source-bound-community-neutrality',
+        scannedPaths: neutralLiveExecutionSourcePaths,
+        findings: [],
+      },
       releaseLineage,
       productReleaseHistory: ['product-release-a', 'product-release-b', 'product-release-a'],
       targets: [
@@ -594,6 +633,23 @@ async function fixtureWorkspace({
       });
       screenshots.push({name, path: screenshotPath, sha256: sha256(bytes), width: 1440, height: 1200});
     }
+    const checkpointManifest = {
+      schema: browserCheckpointManifestSchema,
+      testTitle: browserTitle,
+      checkpoints: browserCheckpointClaims.map((claim, index) => ({
+        ...claim,
+        filename: screenshots[index].name,
+        sha256: screenshots[index].sha256,
+      })),
+    };
+    const checkpointManifestBytes = `${JSON.stringify(checkpointManifest, null, 2)}\n`;
+    const checkpointManifestPath = `results/${browserCheckpointManifestName}`;
+    await writeFile(path.join(directory, checkpointManifestPath), checkpointManifestBytes);
+    attachments.push({
+      name: browserCheckpointManifestName,
+      path: `output/playwright/control-plane-evidence/result/${browserCheckpointManifestName}`,
+      contentType: 'application/json',
+    });
     const rawReport = {
       config: {version: '1.52.0', projects: [{name: browserProject}]},
       suites: [
@@ -642,6 +698,7 @@ async function fixtureWorkspace({
       tests: {expected: 1, passed: 1, unexpected: 0, flaky: 0, skipped: 0},
       rawResult: {path: 'results/raw/browser-raw.json', sha256: sha256(rawBytes)},
       screenshots,
+      checkpointManifest: {path: checkpointManifestPath, sha256: sha256(checkpointManifestBytes)},
       networkProof: {mode: 'bound-test-assertion', testTitle: browserTitle, externalAttempts: 0},
       executionSources: browserExecutionSourcePaths.map((sourcePath) => ({
         path: sourcePath,
@@ -979,7 +1036,12 @@ async function rewriteBrowserEvidence(directory, mutate, message) {
       const report = JSON.parse(await readFile(reportPath, 'utf8'));
       const rawPath = path.join(directory, report.rawResult.path);
       const raw = JSON.parse(await readFile(rawPath, 'utf8'));
-      await mutate({artifact, report, raw, directory});
+      const checkpointManifestPath = path.join(directory, report.checkpointManifest.path);
+      const checkpointManifest = JSON.parse(await readFile(checkpointManifestPath, 'utf8'));
+      await mutate({artifact, report, raw, checkpointManifest, directory});
+      const checkpointManifestBytes = `${JSON.stringify(checkpointManifest, null, 2)}\n`;
+      await writeFile(checkpointManifestPath, checkpointManifestBytes);
+      report.checkpointManifest.sha256 = sha256(checkpointManifestBytes);
       const rawBytes = `${JSON.stringify(raw, null, 2)}\n`;
       await writeFile(rawPath, rawBytes);
       report.rawResult.sha256 = sha256(rawBytes);
@@ -1427,6 +1489,70 @@ test('rejects neutral-live proof without two successful separately configured ta
   assert.match(result.stderr, /AC-03 neutral-live report must contain exactly two targets/);
 });
 
+test('rejects neutral-live Hub image identity that is not bound to the evidence source commit', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
+  });
+  await rewriteClassReport(
+    directory,
+    'AC-03',
+    (report) => {
+      report.liveStack.hubImage.sourceCommit = 'a'.repeat(40);
+    },
+    'forge neutral Hub image revision'
+  );
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /AC-03 neutral-live Hub image must bind an immutable image ID to the exact source commit/
+  );
+});
+
+test('rejects missing or drifted neutral-live execution-source and neutrality manifests', async () => {
+  for (const [name, mutate, expected] of [
+    [
+      'execution source',
+      (report) => report.executionSources.pop(),
+      /AC-03 neutral-live execution sources must exactly bind the local proof runtime and fixture/,
+    ],
+    [
+      'scanned path',
+      (report) => report.neutralityProof.scannedPaths.pop(),
+      /AC-03 neutral-live neutrality proof must scan every exact execution source with zero findings/,
+    ],
+    [
+      'reported finding',
+      (report) => report.neutralityProof.findings.push({file: 'forged', line: 1, label: 'forged'}),
+      /AC-03 neutral-live neutrality proof must scan every exact execution source with zero findings/,
+    ],
+  ]) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
+    });
+    await rewriteClassReport(directory, 'AC-03', mutate, `change neutral ${name}`);
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, name);
+    assert.match(result.stderr, expected, name);
+  }
+});
+
+test('independently rejects prohibited adopter terms in a bound neutral-live execution source', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
+    neutralProhibitedTerm: true,
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-03 neutral-live execution sources contain prohibited adopter terms/);
+});
+
 test('rejects legacy neutral-live target copies of shared release lineage', async () => {
   const {directory} = await fixtureWorkspace({
     proofOverride: {id: 'AC-03', proofClass: 'neutral-live-execution'},
@@ -1685,7 +1811,7 @@ test('rejects AC-63 raw Playwright evidence with a different title or attachment
     assert.notEqual(result.status, 0, field);
     assert.match(
       result.stderr,
-      /AC-63 raw Playwright report must contain the exact passed test and 11 attachments/,
+      /AC-63 raw Playwright report must contain the exact passed test, 11 PNGs, and checkpoint manifest/,
       field
     );
   }
@@ -1744,6 +1870,27 @@ test('rejects AC-63 screenshot claims that retain duplicate rendered bytes', asy
   assert.match(result.stderr, /AC-63 browser screenshot bytes must be distinct for every checkpoint/);
 });
 
+test('rejects AC-63 checkpoint route, entity, or checksum metadata drift', async () => {
+  for (const [field, mutate] of [
+    ['route', ({checkpointManifest}) => (checkpointManifest.checkpoints[0].route = '/forged-route')],
+    ['entity', ({checkpointManifest}) => (checkpointManifest.checkpoints[0].entityIds.releaseId = 'forged-release')],
+    [
+      'checksum',
+      ({checkpointManifest}) => (checkpointManifest.checkpoints[0].checksums.release = `sha256:${'f'.repeat(64)}`),
+    ],
+  ]) {
+    const {directory} = await fixtureWorkspace({
+      proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    });
+    await rewriteBrowserEvidence(directory, mutate, `change checkpoint ${field}`);
+
+    const result = await run(directory);
+
+    assert.notEqual(result.status, 0, field);
+    assert.match(result.stderr, /AC-63 browser checkpoint manifest mismatch at sequence 1/, field);
+  }
+});
+
 test('rejects AC-63 browser proof without exact network isolation, source bindings, and tool identity', async () => {
   for (const [field, mutate, expected] of [
     [
@@ -1784,6 +1931,18 @@ test('rejects AC-63 browser source without the Playwright worker Node version bi
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /AC-63 browser automated test must bind the Playwright worker Node version/);
+});
+
+test('rejects AC-63 browser evidence when the purpose-built config enables retries', async () => {
+  const {directory} = await fixtureWorkspace({
+    proofOverride: {id: 'AC-63', proofClass: 'browser-e2e'},
+    browserRetriesZero: false,
+  });
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AC-63 purpose-built browser evidence config must disable retries/);
 });
 
 test('rejects AC-63 browser evidence when the source pnpm lock importer does not match its integrity-bound package', async () => {

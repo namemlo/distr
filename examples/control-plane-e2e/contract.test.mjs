@@ -9,7 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {createExternalExecutor} from './external-executor.mjs';
-import {bootstrapLiveHub, createRuntimeKeyMaterial} from './run.mjs';
+import {bootstrapLiveHub, createRuntimeKeyMaterial, parseHubImageIdentity} from './run.mjs';
 
 const fixtureDir = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = path.resolve(fixtureDir, '../..');
@@ -2476,6 +2476,7 @@ test('clean acceptance mode exits nonzero when only fixture fallback is availabl
       ...process.env,
       DISTR_CP_FORCE_CONTRACT: 'true',
       DISTR_CP_ALLOW_LIVE: '',
+      DISTR_CP_SOURCE_COMMIT: 'a'.repeat(40),
     },
   });
 
@@ -2485,6 +2486,62 @@ test('clean acceptance mode exits nonzero when only fixture fallback is availabl
   assert.equal(report.proofMode, 'fixture-contract');
   assert.equal(report.acceptanceEligible, false);
   assert.equal(report.liveStack.started, false);
+});
+
+test('clean acceptance mode requires an exact source commit before evaluating live prerequisites', () => {
+  const result = spawnSync(node, [path.join(fixtureDir, 'run.mjs'), '--mode', 'clean', '--acceptance', '--json'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {...process.env, DISTR_CP_FORCE_CONTRACT: 'true', DISTR_CP_SOURCE_COMMIT: ''},
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--acceptance requires DISTR_CP_SOURCE_COMMIT as a full lowercase 40-character commit/);
+});
+
+test('Hub image identity binds an immutable local image ID to its exact source revision label', () => {
+  const sourceCommit = 'b'.repeat(40);
+  const identity = parseHubImageIdentity(
+    'distr-hub:acceptance',
+    JSON.stringify([
+      {
+        Id: `sha256:${'c'.repeat(64)}`,
+        Config: {Labels: {'org.opencontainers.image.revision': sourceCommit}},
+      },
+    ]),
+    sourceCommit
+  );
+
+  assert.deepEqual(identity, {
+    reference: 'distr-hub:acceptance',
+    imageId: `sha256:${'c'.repeat(64)}`,
+    sourceCommit,
+  });
+  assert.throws(
+    () =>
+      parseHubImageIdentity(
+        'distr-hub:acceptance',
+        JSON.stringify([
+          {
+            Id: `sha256:${'c'.repeat(64)}`,
+            Config: {Labels: {'org.opencontainers.image.revision': 'd'.repeat(40)}},
+          },
+        ]),
+        sourceCommit
+      ),
+    /Hub image revision label must match DISTR_CP_SOURCE_COMMIT/
+  );
+  assert.throws(
+    () =>
+      parseHubImageIdentity(
+        'distr-hub:acceptance',
+        JSON.stringify([
+          {Id: 'distr-hub:acceptance', Config: {Labels: {'org.opencontainers.image.revision': sourceCommit}}},
+        ]),
+        sourceCommit
+      ),
+    /Hub image ID must be an immutable sha256 digest/
+  );
 });
 
 test('HTTP external executor is target-bound, fenced, idempotent, cancellable, and redacts logs', async () => {

@@ -1698,7 +1698,10 @@ Use one entry per pull request:
   route-mocked Playwright suite with HTML, JUnit, trace, screenshot, video, and
   JSON evidence artifacts. AC-63 selects one purpose-built `@evidence`
   reference-client DEV release, approval, and previous-state journey with
-  eleven retained visual checkpoints. The community production build passes.
+  zero retries and eleven retained visual checkpoints. Its retained checkpoint
+  manifest binds every PNG to the exact route, actor/entity IDs, domain
+  checksums, filename, and immutable SHA-256. The community production build
+  passes.
 - Upstream contribution notes: Community-neutral UI and fixture contracts; no
   adopter, infrastructure, credential, or client-specific core behavior.
 - Compatibility notes: `/deployments` redirects to
@@ -1740,6 +1743,13 @@ Use one entry per pull request:
   bounded 1 MiB log streaming. The runner emits compact checksummed AC-50 and
   AC-51 performance-result/raw-sample artifacts without retaining its bearer
   token.
+- Acceptance evidence: AC-53 is generated only by
+  `hack/control-plane-neutral-live-evidence.mjs` from an exact clean source
+  commit. It executes the contract-selected reference-executor tests and the
+  local `live-hub-api` A-B-A runner in a detached checkout, binds the complete
+  runtime/fixture source list, independently scans those sources for zero
+  prohibited adopter terms, and retains the immutable local Hub image ID plus
+  its matching OCI source-revision label.
 - Upstream contribution notes: Community-neutral fixtures and harnesses with no
   adopter/client names, private paths, provider assumptions, credentials, or
   proprietary artifacts.
@@ -1833,7 +1843,7 @@ Use one entry per pull request:
 - Database changes: Migration 165 adds append-only, expiring, checksum-bound
   `ReviewAdmissionDecision` rows with supersession and revocation lineage.
 - API changes: Adds `GET/POST
-  /api/v1/deployment-plans/{id}/review-decisions`.
+/api/v1/deployment-plans/{id}/review-decisions`.
 - UI changes: None; this is an API-first safety boundary.
 - Agent protocol changes: None.
 - Documentation: Adds ADR-0071 and PR-084 fork notes.

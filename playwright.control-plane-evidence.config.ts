@@ -4,6 +4,7 @@ import baseConfig from './playwright.control-plane.config';
 export default defineConfig({
   ...baseConfig,
   grep: /@evidence/,
+  retries: 0,
   timeout: 90_000,
   outputDir: 'output/playwright/control-plane-evidence',
   reporter: [

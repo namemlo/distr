@@ -7,6 +7,13 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {promisify} from 'node:util';
 import {inflateSync} from 'node:zlib';
+import {
+  browserCheckpointClaims as checkpointClaims,
+  browserCheckpointManifestName as checkpointManifestName,
+  browserCheckpointManifestSchema as checkpointManifestSchema,
+  browserEvidenceTitle as exactTitle,
+  browserScreenshotNames as screenshotNames,
+} from './control-plane-browser-evidence-contract.mjs';
 
 const execFileAsync = promisify(execFile);
 const acceptanceId = 'AC-63';
@@ -15,10 +22,10 @@ const evidenceConfig = 'playwright.control-plane-evidence.config.ts';
 const baseConfig = 'playwright.control-plane.config.ts';
 const automatedTest = 'frontend/ui/e2e/control-plane.spec.ts';
 const fixtureSource = 'frontend/ui/e2e/fixtures/control-plane.ts';
+const evidenceContract = 'hack/control-plane-browser-evidence-contract.mjs';
 const manualEvidence = 'docs/fork/PR-080_OPERATOR_CONTROL_ROOM_UI.md';
 const project = 'chromium';
 const playwrightCLI = 'node_modules/@playwright/test/cli.js';
-const exactTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const exactGrep = `${exactTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const exactCommand = [
   'node',
@@ -33,19 +40,6 @@ const exactCommand = [
   exactGrep,
   '--reporter',
   'json',
-];
-const screenshotNames = [
-  '01-version-build.png',
-  '02-accumulated-changelog.png',
-  '03-dependency-constraints.png',
-  '04-plan-approval-pending.png',
-  '05-approval-request.png',
-  '06-approval-approved.png',
-  '07-plan-approval-satisfied.png',
-  '08-previous-state-plan.png',
-  '09-previous-state-comparison.png',
-  '10-release-b-history-preserved.png',
-  '11-immutable-history-audit.png',
 ];
 const testResultSchema = 'distr.control-plane-test-result/v1';
 const browserResultSchema = 'distr.control-plane-browser-e2e-result/v1';
@@ -69,6 +63,10 @@ function gitPath(value) {
 
 function stableJSON(value) {
   return Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function jsonEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function parseArguments(argv) {
@@ -777,15 +775,20 @@ function validatePlaywrightReport(root, report, toolVersions) {
     fail('direct Playwright evidence must contain exactly one passed, non-retried attempt');
   }
   const attachments = item.results[0].attachments;
-  if (!Array.isArray(attachments)) fail('direct Playwright evidence screenshot set mismatch');
-  const actualNames = attachments.map((attachment) => attachment?.name);
+  if (!Array.isArray(attachments)) fail('direct Playwright evidence attachment set mismatch');
+  const screenshotAttachments = attachments.slice(0, screenshotNames.length);
+  const checkpointAttachment = attachments.at(-1);
+  const actualNames = screenshotAttachments.map((attachment) => attachment?.name);
   if (
+    attachments.length !== screenshotNames.length + 1 ||
     actualNames.length !== screenshotNames.length ||
     new Set(actualNames).size !== actualNames.length ||
     screenshotNames.some((name, index) => actualNames[index] !== name) ||
-    attachments.some((attachment) => attachment?.contentType !== 'image/png')
+    screenshotAttachments.some((attachment) => attachment?.contentType !== 'image/png') ||
+    checkpointAttachment?.name !== checkpointManifestName ||
+    checkpointAttachment?.contentType !== 'application/json'
   ) {
-    fail('direct Playwright evidence screenshot set mismatch');
+    fail('direct Playwright evidence attachment set mismatch');
   }
   const started = Date.parse(stats.startTime);
   if (!Number.isFinite(started) || !Number.isFinite(stats.duration) || stats.duration < 0) {
@@ -794,7 +797,8 @@ function validatePlaywrightReport(root, report, toolVersions) {
   return {
     startedAt: new Date(started).toISOString(),
     completedAt: new Date(started + stats.duration).toISOString(),
-    attachments,
+    screenshotAttachments,
+    checkpointAttachment,
   };
 }
 
@@ -913,11 +917,59 @@ async function inspectScreenshots(root, attachments, prefix) {
   return screenshots;
 }
 
+async function inspectCheckpointManifest(root, attachment, screenshots, prefix) {
+  const source = await attachmentPath(root, attachment?.path, checkpointManifestName);
+  let bytes;
+  let manifest;
+  try {
+    bytes = await readFile(source);
+    manifest = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    fail('browser evidence checkpoint manifest must be valid JSON');
+  }
+  if (containsJSONSecret(manifest)) fail('browser evidence checkpoint manifest contains a secret-like value');
+  if (
+    !manifest ||
+    Object.keys(manifest).sort().join(',') !== 'checkpoints,schema,testTitle' ||
+    manifest.schema !== checkpointManifestSchema ||
+    manifest.testTitle !== exactTitle ||
+    !Array.isArray(manifest.checkpoints) ||
+    manifest.checkpoints.length !== checkpointClaims.length
+  ) {
+    fail('browser evidence checkpoint manifest must bind the exact test and checkpoint count');
+  }
+  for (const [index, checkpoint] of manifest.checkpoints.entries()) {
+    const claim = checkpointClaims[index];
+    const screenshot = screenshots[index];
+    if (
+      !checkpoint ||
+      Object.keys(checkpoint).sort().join(',') !== 'actor,checksums,entityIds,filename,route,sequence,sha256,slug' ||
+      checkpoint.sequence !== claim.sequence ||
+      checkpoint.slug !== claim.slug ||
+      checkpoint.actor !== claim.actor ||
+      checkpoint.route !== claim.route ||
+      !jsonEqual(checkpoint.entityIds, claim.entityIds) ||
+      !jsonEqual(checkpoint.checksums, claim.checksums) ||
+      checkpoint.filename !== screenshot.name ||
+      checkpoint.sha256 !== screenshot.sha256
+    ) {
+      fail(`browser evidence checkpoint manifest mismatch at sequence ${claim.sequence}`);
+    }
+  }
+  return {
+    bytes,
+    binding: {
+      path: `${prefix}/results/${checkpointManifestName}`,
+      sha256: sha256(bytes),
+    },
+  };
+}
+
 function binding(prefix, relative, bytes) {
   return {path: `${prefix}/${relative}`, sha256: sha256(bytes)};
 }
 
-function requireBoundNetworkProof(testSource, fixtureText) {
+function requireBoundBrowserSource(testSource, fixtureText, configText) {
   const titleOffset = testSource.indexOf(exactTitle);
   if (titleOffset < 0) fail('exact browser evidence title is absent from the automated test');
   const nextTest = /\n\s*test(?:\.(?:only|skip|fixme))?\s*\(/g;
@@ -941,6 +993,9 @@ function requireBoundNetworkProof(testSource, fixtureText) {
     )
   ) {
     fail('exact browser evidence test must verify the Playwright Node runtime');
+  }
+  if (!/\bretries\s*:\s*0\b/.test(configText)) {
+    fail('purpose-built browser evidence config must disable retries');
   }
 }
 
@@ -982,6 +1037,7 @@ async function main() {
       [evidenceConfig, 'evidence Playwright config'],
       [baseConfig, 'base Playwright config'],
       [fixtureSource, 'control-plane fixture'],
+      [evidenceContract, 'browser evidence contract'],
       ['package.json', 'package manifest'],
     ]) {
       executionSources.push(await sourceBinding(isolated.isolatedRoot, tracked, options.sourceCommit, source, label));
@@ -999,7 +1055,8 @@ async function main() {
     }
     const testSource = await readFile(path.join(isolated.isolatedRoot, ...automatedTest.split('/')), 'utf8');
     const fixtureText = await readFile(path.join(isolated.isolatedRoot, ...fixtureSource.split('/')), 'utf8');
-    requireBoundNetworkProof(testSource, fixtureText);
+    const configText = await readFile(path.join(isolated.isolatedRoot, evidenceConfig), 'utf8');
+    requireBoundBrowserSource(testSource, fixtureText, configText);
 
     let executed;
     let toolVersions;
@@ -1032,7 +1089,13 @@ async function main() {
     }
     const report = parseRawReport(executed.stdout);
     const run = validatePlaywrightReport(isolated.isolatedRoot, report, toolVersions);
-    const screenshots = await inspectScreenshots(isolated.isolatedRoot, run.attachments, prefix);
+    const screenshots = await inspectScreenshots(isolated.isolatedRoot, run.screenshotAttachments, prefix);
+    const checkpointManifest = await inspectCheckpointManifest(
+      isolated.isolatedRoot,
+      run.checkpointAttachment,
+      screenshots,
+      prefix
+    );
 
     const rawRelative = `raw/${acceptanceId}-playwright.json`;
     const genericRelative = `results/${acceptanceId}-test-result.json`;
@@ -1064,6 +1127,7 @@ async function main() {
       tests: {expected: 1, passed: 1, unexpected: 0, flaky: 0, skipped: 0},
       rawResult: binding(prefix, rawRelative, rawBytes),
       screenshots: screenshots.map(({bytes: _bytes, ...screenshot}) => screenshot),
+      checkpointManifest: checkpointManifest.binding,
       networkProof: {
         mode: 'bound-test-assertion',
         testTitle: exactTitle,
@@ -1088,6 +1152,7 @@ async function main() {
       {relative: rawRelative, bytes: rawBytes},
       {relative: genericRelative, bytes: genericBytes},
       {relative: classRelative, bytes: classBytes},
+      {relative: `results/${checkpointManifestName}`, bytes: checkpointManifest.bytes},
       {relative: wrapperRelative, bytes: wrapperBytes},
       ...screenshots.map((screenshot) => ({relative: `screenshots/${screenshot.name}`, bytes: screenshot.bytes})),
     ];

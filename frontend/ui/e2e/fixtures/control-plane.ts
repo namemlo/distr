@@ -1,5 +1,6 @@
 import {test as base, expect, type Locator, type Page, type Route, type TestInfo} from '@playwright/test';
 import {createHash} from 'node:crypto';
+import {writeFile} from 'node:fs/promises';
 
 export type OperatorActor = 'vendorAdmin' | 'scopedApprover' | 'executorOperator' | 'auditViewer' | 'unauthorized';
 export type ControlPlaneScenario = 'ready' | 'loading' | 'empty' | 'error' | 'disabled';
@@ -22,6 +23,12 @@ export interface VisualCheckpointRecord extends VisualCheckpointInput {
   route: string;
   filename: string;
   sha256: string;
+}
+
+export interface VisualCheckpointManifest {
+  schema: 'distr.control-plane-browser-checkpoints/v1';
+  testTitle: string;
+  checkpoints: VisualCheckpointRecord[];
 }
 
 interface ControlPlaneMock {
@@ -687,6 +694,21 @@ export async function attachVisualCheckpoint(
     filename,
     sha256,
   };
+}
+
+export async function attachVisualCheckpointManifest(
+  testInfo: TestInfo,
+  checkpoints: VisualCheckpointRecord[]
+): Promise<void> {
+  const manifest: VisualCheckpointManifest = {
+    schema: 'distr.control-plane-browser-checkpoints/v1',
+    testTitle: testInfo.title,
+    checkpoints,
+  };
+  const filename = 'AC-63-checkpoints.json';
+  const path = testInfo.outputPath(filename);
+  await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`, {encoding: 'utf8', flag: 'wx'});
+  await testInfo.attach(filename, {path, contentType: 'application/json'});
 }
 
 async function seedBrowserIdentity(page: Page, actor: OperatorActor): Promise<void> {

@@ -418,6 +418,14 @@ to live evidence or prove that an unrecorded external dependency participated.
   recreate top-level shared plans, per-target release-lineage copies, scalar
   target execution/observation IDs, or a synthetic `releaseHistory`
   compatibility shape.
+- AC-53 evidence must be generated with
+  `node hack/control-plane-neutral-live-evidence.mjs --source-commit <commit> --out-dir <repository-relative-directory>`.
+  The packager requires an exact clean HEAD, runs the contract-selected Go
+  tests and local live A-B-A command from a detached checkout, binds every
+  runtime/fixture source blob, and independently records zero prohibited
+  adopter-term findings. The local Hub image must already exist without a pull;
+  its immutable image ID and `org.opencontainers.image.revision` label must
+  match the selected source commit.
 - Live A-B-A acceptance remains pending until a retained clean run completes
   the `live-hub-api` path against the runtime contracts. Commits `14545aef` and
   `0dcd56ff` passed independent source re-review, but no retained live A-B-A

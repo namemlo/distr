@@ -57,8 +57,11 @@ The current suite contains 26 Playwright tests. AC-63 executes the purpose-built
 `@evidence` reference-client DEV release, approval, and previous-state journey
 through `playwright.control-plane-evidence.config.ts`. Each of its eleven visual
 checkpoints centers the viewport on the exact asserted claim, and the evidence
-packager rejects reused screenshot bytes. The screenshots and JSON evidence
-remain local route-mocked browser proof, not deployed-client evidence.
+configuration fixes retries at zero. The evidence packager rejects reused
+screenshot bytes and retains `AC-63-checkpoints.json`, which binds every PNG to
+its exact route, actor, entity IDs, domain checksums, filename, and immutable
+SHA-256. The screenshots and JSON evidence remain local route-mocked browser
+proof, not deployed-client evidence.
 
 ## Running the proof
 

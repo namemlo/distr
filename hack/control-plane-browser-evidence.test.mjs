@@ -7,6 +7,13 @@ import path from 'node:path';
 import {test} from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
+import {
+  browserCheckpointClaims as checkpointClaims,
+  browserCheckpointManifestName as checkpointManifestName,
+  browserCheckpointManifestSchema as checkpointManifestSchema,
+  browserEvidenceTitle as exactTitle,
+  browserScreenshotNames as screenshotNames,
+} from './control-plane-browser-evidence-contract.mjs';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -16,7 +23,6 @@ const automatedTest = 'frontend/ui/e2e/control-plane.spec.ts';
 const manualEvidence = 'docs/fork/PR-080_OPERATOR_CONTROL_ROOM_UI.md';
 const project = 'chromium';
 const playwrightCLI = 'node_modules/@playwright/test/cli.js';
-const exactTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const exactGrep = `${exactTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const exactCommand = [
   'node',
@@ -32,19 +38,8 @@ const exactCommand = [
   '--reporter',
   'json',
 ];
-const screenshotNames = [
-  '01-version-build.png',
-  '02-accumulated-changelog.png',
-  '03-dependency-constraints.png',
-  '04-plan-approval-pending.png',
-  '05-approval-request.png',
-  '06-approval-approved.png',
-  '07-plan-approval-satisfied.png',
-  '08-previous-state-plan.png',
-  '09-previous-state-comparison.png',
-  '10-release-b-history-preserved.png',
-  '11-immutable-history-audit.png',
-];
+const browserContract = 'hack/control-plane-browser-evidence-contract.mjs';
+const browserContractSource = await readFile(path.join(repoRoot, browserContract), 'utf8');
 
 test('places the test filter before Playwright variadic project options', () => {
   assert.ok(exactCommand.indexOf(automatedTest) < exactCommand.indexOf('--project'));
@@ -72,6 +67,7 @@ const lockedPlaywrightIntegrity = 'sha512-YWN0dWFsLWxvY2tmaWxlLWJvdW5kLXBsYXl3cm
 
 const fakePlaywrightCLISource = String.raw`
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {appendFile, mkdir, symlink, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
@@ -107,6 +103,7 @@ const title = process.env.EXACT_EVIDENCE_TITLE;
 const source = process.env.EXACT_EVIDENCE_SOURCE;
 const project = process.env.EXACT_EVIDENCE_PROJECT;
 const names = JSON.parse(process.env.EXACT_SCREENSHOT_NAMES);
+const checkpointClaims = JSON.parse(process.env.EXACT_CHECKPOINT_CLAIMS);
 const output = path.resolve('output/playwright/control-plane-evidence/fake-result');
 if (scenario === 'symlink-transient') {
   await mkdir(path.dirname(output), {recursive: true});
@@ -151,6 +148,7 @@ function png(secret = false, zeroWidth = false, checkpoint = 0) {
 }
 
 const attachments = [];
+const screenshotDigests = new Map();
 for (const [index, name] of names.entries()) {
   if (scenario === 'missing-png' && index === 0) continue;
   const target = path.join(output, name);
@@ -163,8 +161,30 @@ for (const [index, name] of names.entries()) {
           scenario === 'duplicate-png' ? 0 : index + 1
         );
   await writeFile(target, bytes);
+  screenshotDigests.set(name, 'sha256:' + createHash('sha256').update(bytes).digest('hex'));
   attachments.push({name, path: target, contentType: 'image/png'});
 }
+const manifest = {
+  schema: process.env.EXACT_CHECKPOINT_MANIFEST_SCHEMA,
+  testTitle: title,
+  checkpoints: checkpointClaims.map((claim, index) => ({
+    ...claim,
+    route: scenario === 'bad-checkpoint-route' && index === 0 ? '/forged-route' : claim.route,
+    entityIds:
+      scenario === 'bad-checkpoint-entity' && index === 0 ? {releaseId: 'forged-release'} : claim.entityIds,
+    checksums:
+      scenario === 'bad-checkpoint-checksum' && index === 0
+        ? {release: 'sha256:' + 'f'.repeat(64)}
+        : claim.checksums,
+    filename: names[index],
+    sha256: screenshotDigests.get(names[index]) || 'sha256:' + '0'.repeat(64)
+  }))
+};
+if (scenario === 'secret-manifest') manifest.apiToken = 'browser-secret-value';
+const manifestName = process.env.EXACT_CHECKPOINT_MANIFEST_NAME;
+const manifestPath = path.join(output, manifestName);
+await writeFile(manifestPath, JSON.stringify(manifest));
+attachments.push({name: manifestName, path: manifestPath, contentType: 'application/json'});
 if (scenario === 'process-failure') {
   process.stderr.write('password=playwright-stderr-secret cwd=' + process.cwd() + '\n');
   process.exit(92);
@@ -276,6 +296,7 @@ async function fixtureWorkspace({
   runtimeBinding = 'exact',
   dependencyVariant = 'valid',
   lockVariant = 'valid',
+  retriesZero = true,
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'control-plane-browser-direct-'));
   const externalDirectory = await mkdtemp(path.join(tmpdir(), 'control-plane-browser-external-'));
@@ -309,10 +330,11 @@ async function fixtureWorkspace({
       2
     )}\n`,
     'pnpm-lock.yaml': `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    devDependencies:\n      '@playwright/test':\n        specifier: ^1.52.0\n        version: ${importerVersion}\n\npackages:\n\n  '@playwright/test@${lockedPlaywrightVersion}':\n    resolution: {integrity: ${lockedPlaywrightIntegrity}}\n    engines: {node: '>=20'}\n    hasBin: true\n\nsnapshots:\n\n  '@playwright/test@${lockedPlaywrightVersion}': {}\n`,
-    [evidenceConfig]: `export default {projects: [{name: '${project}'}]};\n`,
+    [evidenceConfig]: `export default {projects: [{name: '${project}'}], retries: ${retriesZero ? 0 : 1}};\n`,
     'playwright.control-plane.config.ts': 'export default {};\n',
     [automatedTest]: evidenceTest,
     'frontend/ui/e2e/fixtures/control-plane.ts': fixture,
+    [browserContract]: browserContractSource,
     [manualEvidence]: '# Browser evidence fixture\n',
   };
   for (const [relative, contents] of Object.entries(files)) {
@@ -390,6 +412,9 @@ async function fixtureWorkspace({
       EXACT_EVIDENCE_SOURCE: automatedTest,
       EXACT_EVIDENCE_PROJECT: project,
       EXACT_SCREENSHOT_NAMES: JSON.stringify(screenshotNames),
+      EXACT_CHECKPOINT_CLAIMS: JSON.stringify(checkpointClaims),
+      EXACT_CHECKPOINT_MANIFEST_NAME: checkpointManifestName,
+      EXACT_CHECKPOINT_MANIFEST_SCHEMA: checkpointManifestSchema,
       EXPECTED_ORIGINAL_ROOT: directory,
       EXPECTED_SOURCE_COMMIT: sourceCommit,
       ALTERNATE_SOURCE_COMMIT: alternateSourceCommit,
@@ -456,6 +481,20 @@ test('directly runs the exact AC-63 evidence test and derives retained raw, PNG,
     screenshotNames.map((name) => ({name, width: 1440, height: 1200}))
   );
   assert.equal(new Set(classReport.screenshots.map(({sha256: digest}) => digest)).size, screenshotNames.length);
+  const checkpointManifestBytes = await readFile(path.join(out, 'results', checkpointManifestName));
+  const checkpointManifest = JSON.parse(checkpointManifestBytes);
+  assert.equal(classReport.checkpointManifest.sha256, sha256(checkpointManifestBytes));
+  assert.equal(classReport.checkpointManifest.path, `${fixture.outDir}/results/${checkpointManifestName}`);
+  assert.equal(checkpointManifest.schema, checkpointManifestSchema);
+  assert.equal(checkpointManifest.testTitle, exactTitle);
+  assert.deepEqual(
+    checkpointManifest.checkpoints.map(({filename, sha256: digest, ...claim}) => claim),
+    checkpointClaims
+  );
+  assert.deepEqual(
+    checkpointManifest.checkpoints.map(({filename, sha256: digest}) => ({filename, sha256: digest})),
+    classReport.screenshots.map(({name, sha256: digest}) => ({filename: name, sha256: digest}))
+  );
   assert.deepEqual(classReport.networkProof, {
     mode: 'bound-test-assertion',
     testTitle: exactTitle,
@@ -472,6 +511,7 @@ test('directly runs the exact AC-63 evidence test and derives retained raw, PNG,
       evidenceConfig,
       'playwright.control-plane.config.ts',
       'frontend/ui/e2e/fixtures/control-plane.ts',
+      browserContract,
       'package.json',
       'pnpm-lock.yaml',
     ]
@@ -544,11 +584,15 @@ for (const [scenario, message] of [
   ['wrong-title', /direct Playwright evidence title set mismatch/],
   ['wrong-project', /direct Playwright evidence project must be chromium/],
   ['wrong-source', /direct Playwright evidence source must be frontend\/ui\/e2e\/control-plane\.spec\.ts/],
-  ['missing-png', /direct Playwright evidence screenshot set mismatch/],
+  ['missing-png', /direct Playwright evidence attachment set mismatch/],
   ['bad-signature', /invalid PNG signature: 01-version-build\.png/],
   ['zero-dimension', /invalid PNG dimensions: 01-version-build\.png/],
   ['secret-json', /retained Playwright JSON contains a secret-like value/],
   ['secret-png', /PNG metadata contains a secret-like value: 01-version-build\.png/],
+  ['secret-manifest', /browser evidence checkpoint manifest contains a secret-like value/],
+  ['bad-checkpoint-route', /browser evidence checkpoint manifest mismatch at sequence 1/],
+  ['bad-checkpoint-entity', /browser evidence checkpoint manifest mismatch at sequence 1/],
+  ['bad-checkpoint-checksum', /browser evidence checkpoint manifest mismatch at sequence 1/],
 ]) {
   test(`rejects ${scenario} direct evidence`, async () => {
     const fixture = await fixtureWorkspace();
@@ -646,6 +690,15 @@ test('requires the bound fixture to record and block non-local network attempts'
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /bound control-plane fixture must record and block non-local requests/);
+});
+
+test('requires the purpose-built browser evidence config to disable retries', async () => {
+  const fixture = await fixtureWorkspace({retriesZero: false});
+
+  const result = await run(fixture);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /purpose-built browser evidence config must disable retries/);
 });
 
 test('rejects source drift in the mutable worktree after isolated execution', async () => {

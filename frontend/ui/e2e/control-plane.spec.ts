@@ -1,5 +1,12 @@
 import type {Page} from '@playwright/test';
-import {attachContractEvidence, attachVisualCheckpoint, expect, fixtureIds, test} from './fixtures/control-plane';
+import {
+  attachContractEvidence,
+  attachVisualCheckpoint,
+  attachVisualCheckpointManifest,
+  expect,
+  fixtureIds,
+  test,
+} from './fixtures/control-plane';
 
 test.describe('operator control room route-mocked contract', () => {
   test.describe('vendor administrator', () => {
@@ -410,6 +417,7 @@ test.describe('operator control room route-mocked contract', () => {
       );
       expect(controlPlane.externalAttempts).toEqual([]);
       expect(checkpoints).toHaveLength(11);
+      await attachVisualCheckpointManifest(testInfo, checkpoints);
     });
 
     test('assembles, validates, and publishes a component release with typed confirmation', async ({

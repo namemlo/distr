@@ -8,6 +8,15 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
 import {inflateSync} from 'node:zlib';
+import {scanLines} from './control-plane-adopter-term-scan.mjs';
+import {
+  browserCheckpointClaims,
+  browserCheckpointManifestName,
+  browserCheckpointManifestSchema,
+  browserScreenshotNames,
+  browserEvidenceTitle as browserTitle,
+} from './control-plane-browser-evidence-contract.mjs';
+import {neutralLiveExecutionSourcePaths} from './control-plane-neutral-live-evidence-contract.mjs';
 
 const execFileAsync = promisify(execFile);
 const goTestDeclarationsHelper = fileURLToPath(
@@ -39,7 +48,6 @@ const browserConfig = 'playwright.control-plane-evidence.config.ts';
 const browserFixture = 'frontend/ui/e2e/fixtures/control-plane.ts';
 const browserProject = 'chromium';
 const browserPlaywrightCLI = 'node_modules/@playwright/test/cli.js';
-const browserTitle = '@evidence proves the reference client DEV release, approval, and previous-state journey';
 const browserGrep = `${browserTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 const browserCommand = [
   'node',
@@ -55,23 +63,11 @@ const browserCommand = [
   '--reporter',
   'json',
 ];
-const browserScreenshotNames = [
-  '01-version-build.png',
-  '02-accumulated-changelog.png',
-  '03-dependency-constraints.png',
-  '04-plan-approval-pending.png',
-  '05-approval-request.png',
-  '06-approval-approved.png',
-  '07-plan-approval-satisfied.png',
-  '08-previous-state-plan.png',
-  '09-previous-state-comparison.png',
-  '10-release-b-history-preserved.png',
-  '11-immutable-history-audit.png',
-];
 const browserExecutionSourcePaths = [
   browserConfig,
   'playwright.control-plane.config.ts',
   browserFixture,
+  'hack/control-plane-browser-evidence-contract.mjs',
   'package.json',
 ];
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -1158,6 +1154,55 @@ function validateNeutralReleaseLineage(row, lineage) {
   return lineage.productReleases;
 }
 
+async function validateNeutralExecutionSources(root, gitFacts, row, sourceCommit, report) {
+  if (
+    !Array.isArray(report.executionSources) ||
+    report.executionSources.length !== neutralLiveExecutionSourcePaths.length ||
+    report.executionSources.some(
+      (binding, index) =>
+        !binding ||
+        !jsonEqual(Object.keys(binding).sort(), ['path', 'sha256']) ||
+        binding.path !== neutralLiveExecutionSourcePaths[index] ||
+        !checksumPattern.test(binding.sha256 ?? '')
+    )
+  ) {
+    fail(`${row.id} neutral-live execution sources must exactly bind the local proof runtime and fixture`);
+  }
+  if (
+    !report.neutralityProof ||
+    !jsonEqual(Object.keys(report.neutralityProof).sort(), ['findings', 'mode', 'scannedPaths']) ||
+    report.neutralityProof.mode !== 'source-bound-community-neutrality' ||
+    !jsonEqual(report.neutralityProof.scannedPaths, neutralLiveExecutionSourcePaths) ||
+    !jsonEqual(report.neutralityProof.findings, [])
+  ) {
+    fail(`${row.id} neutral-live neutrality proof must scan every exact execution source with zero findings`);
+  }
+  const independentFindings = [];
+  for (const binding of report.executionSources) {
+    requireTracked(gitFacts, binding.path, row.id, 'neutral-live execution source');
+    const currentPath = await requireFile(root, binding.path, row.id, 'neutral-live execution source');
+    const [current, committed] = await Promise.all([
+      readFile(currentPath),
+      sourceBlob(root, gitFacts, sourceCommit, binding.path, row.id, 'neutral-live execution source'),
+    ]);
+    if (sha256(current) !== binding.sha256 || sha256(committed) !== binding.sha256) {
+      fail(`${row.id} neutral-live execution source checksum mismatch for ${binding.path}`);
+    }
+    independentFindings.push(
+      ...scanLines(
+        binding.path,
+        committed
+          .toString('utf8')
+          .split(/\r?\n/)
+          .map((text, index) => ({line: index + 1, text}))
+      )
+    );
+  }
+  if (independentFindings.length !== 0) {
+    fail(`${row.id} neutral-live execution sources contain prohibited adopter terms`);
+  }
+}
+
 async function validateNeutralLiveEvidence(root, gitFacts, row, sourceCommit, binding) {
   const report = await readTrackedBinding(root, gitFacts, row, binding, 'neutral-live report');
   if (report.schema !== neutralLiveResultSchema) {
@@ -1179,6 +1224,17 @@ async function validateNeutralLiveEvidence(root, gitFacts, row, sourceCommit, bi
       `${row.id} neutral-live report must be an acceptance-eligible passed live-hub-api run with a started live stack`
     );
   }
+  if (
+    !report.liveStack?.hubImage ||
+    !jsonEqual(Object.keys(report.liveStack.hubImage).sort(), ['imageId', 'reference', 'sourceCommit']) ||
+    typeof report.liveStack.hubImage.reference !== 'string' ||
+    report.liveStack.hubImage.reference === '' ||
+    !checksumPattern.test(report.liveStack.hubImage.imageId ?? '') ||
+    report.liveStack.hubImage.sourceCommit !== sourceCommit
+  ) {
+    fail(`${row.id} neutral-live Hub image must bind an immutable image ID to the exact source commit`);
+  }
+  await validateNeutralExecutionSources(root, gitFacts, row, sourceCommit, report);
   if (!Array.isArray(report.targets) || report.targets.length !== 2) {
     fail(`${row.id} neutral-live report must contain exactly two targets`);
   }
@@ -1396,6 +1452,8 @@ function validateRawBrowserReport(row, raw, toolVersions) {
   const test = spec?.tests?.[0];
   const attempt = test?.results?.[0];
   const attachments = attempt?.attachments;
+  const screenshotAttachments = attachments?.slice(0, browserScreenshotNames.length);
+  const checkpointAttachment = attachments?.at(-1);
   if (
     !Array.isArray(raw?.errors) ||
     raw.errors.length !== 0 ||
@@ -1421,17 +1479,21 @@ function validateRawBrowserReport(row, raw, toolVersions) {
     !Array.isArray(attempt.errors) ||
     attempt.errors.length !== 0 ||
     !Array.isArray(attachments) ||
-    attachments.length !== browserScreenshotNames.length ||
-    attachments.some(
+    attachments.length !== browserScreenshotNames.length + 1 ||
+    screenshotAttachments.some(
       (attachment, index) =>
         attachment?.name !== browserScreenshotNames[index] ||
         attachment?.contentType !== 'image/png' ||
         typeof attachment?.path !== 'string' ||
         path.posix.basename(gitPath(attachment.path)) !== browserScreenshotNames[index]
     ) ||
+    checkpointAttachment?.name !== browserCheckpointManifestName ||
+    checkpointAttachment?.contentType !== 'application/json' ||
+    typeof checkpointAttachment?.path !== 'string' ||
+    path.posix.basename(gitPath(checkpointAttachment.path)) !== browserCheckpointManifestName ||
     raw?.config?.version !== toolVersions.playwright
   ) {
-    fail(`${row.id} raw Playwright report must contain the exact passed test and 11 attachments`);
+    fail(`${row.id} raw Playwright report must contain the exact passed test, 11 PNGs, and checkpoint manifest`);
   }
   if (normalizedRawBrowserSource(raw, spec.file) !== browserAutomatedTest) {
     fail(`${row.id} raw Playwright report source must normalize to the bound automated test`);
@@ -1551,9 +1613,10 @@ async function validateBrowserExecutionSources(root, gitFacts, row, sourceCommit
   }
 }
 
-function requireBrowserNetworkSource(row, automatedSource, fixtureSource, networkProof) {
+function requireBrowserNetworkSource(row, automatedSource, fixtureSource, configSource, networkProof) {
   const automated = automatedSource.toString('utf8');
   const fixture = fixtureSource.toString('utf8');
+  const config = configSource.toString('utf8');
   const titleOffset = automated.indexOf(browserTitle);
   const nextTest = /\n\s*test(?:\.(?:only|skip|fixme))?\s*\(/g;
   nextTest.lastIndex = Math.max(0, titleOffset + browserTitle.length);
@@ -1580,6 +1643,56 @@ function requireBrowserNetworkSource(row, automatedSource, fixtureSource, networ
     !/route\.abort\s*\(/.test(fixture)
   ) {
     fail(`${row.id} browser network proof must bind the exact test assertion and zero external attempts`);
+  }
+  if (!/\bretries\s*:\s*0\b/.test(config)) {
+    fail(`${row.id} purpose-built browser evidence config must disable retries`);
+  }
+}
+
+async function validateBrowserCheckpointManifest(root, gitFacts, row, report) {
+  requireExactObjectKeys(report.checkpointManifest, ['path', 'sha256'], row.id, 'browser checkpoint manifest binding');
+  if (path.posix.basename(gitPath(report.checkpointManifest.path)) !== browserCheckpointManifestName) {
+    fail(`${row.id} browser checkpoint manifest must retain ${browserCheckpointManifestName}`);
+  }
+  await requireNoReparsePath(root, report.checkpointManifest.path, row, 'browser checkpoint manifest');
+  const manifest = await readTrackedBinding(
+    root,
+    gitFacts,
+    row,
+    report.checkpointManifest,
+    'browser checkpoint manifest'
+  );
+  if (containsJSONSecret(manifest)) fail(`${row.id} browser checkpoint manifest contains a secret-like value`);
+  requireExactObjectKeys(manifest, ['schema', 'testTitle', 'checkpoints'], row.id, 'browser checkpoint manifest');
+  if (
+    manifest.schema !== browserCheckpointManifestSchema ||
+    manifest.testTitle !== browserTitle ||
+    !Array.isArray(manifest.checkpoints) ||
+    manifest.checkpoints.length !== browserCheckpointClaims.length
+  ) {
+    fail(`${row.id} browser checkpoint manifest must bind the exact test and checkpoint count`);
+  }
+  for (const [index, checkpoint] of manifest.checkpoints.entries()) {
+    const claim = browserCheckpointClaims[index];
+    const screenshot = report.screenshots[index];
+    requireExactObjectKeys(
+      checkpoint,
+      ['sequence', 'slug', 'actor', 'route', 'entityIds', 'checksums', 'filename', 'sha256'],
+      row.id,
+      `browser checkpoint ${claim.sequence}`
+    );
+    if (
+      checkpoint.sequence !== claim.sequence ||
+      checkpoint.slug !== claim.slug ||
+      checkpoint.actor !== claim.actor ||
+      checkpoint.route !== claim.route ||
+      !jsonEqual(checkpoint.entityIds, claim.entityIds) ||
+      !jsonEqual(checkpoint.checksums, claim.checksums) ||
+      checkpoint.filename !== screenshot.name ||
+      checkpoint.sha256 !== screenshot.sha256
+    ) {
+      fail(`${row.id} browser checkpoint manifest mismatch at sequence ${claim.sequence}`);
+    }
   }
 }
 
@@ -1660,6 +1773,7 @@ async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, bindin
       'tests',
       'rawResult',
       'screenshots',
+      'checkpointManifest',
       'networkProof',
       'executionSources',
       'toolVersions',
@@ -1741,6 +1855,7 @@ async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, bindin
     }
     retainedScreenshotDigests.set(digest, screenshot.name);
   }
+  await validateBrowserCheckpointManifest(root, gitFacts, row, report);
 
   await validateBrowserExecutionSources(root, gitFacts, row, sourceCommit, report.executionSources);
   let packageManifest;
@@ -1771,11 +1886,12 @@ async function validateBrowserEvidence(root, gitFacts, row, sourceCommit, bindin
   } catch {
     fail(`${row.id} browser Playwright version must match the source pnpm lock importer and integrity-bound package`);
   }
-  const [automatedSource, fixtureSource] = await Promise.all([
+  const [automatedSource, fixtureSource, configSource] = await Promise.all([
     sourceBlob(root, gitFacts, sourceCommit, browserAutomatedTest, row.id, 'browser automated test'),
     sourceBlob(root, gitFacts, sourceCommit, browserFixture, row.id, 'browser fixture'),
+    sourceBlob(root, gitFacts, sourceCommit, browserConfig, row.id, 'browser evidence config'),
   ]);
-  requireBrowserNetworkSource(row, automatedSource, fixtureSource, report.networkProof);
+  requireBrowserNetworkSource(row, automatedSource, fixtureSource, configSource, report.networkProof);
 }
 
 async function validateProofClassEvidence(root, gitFacts, row, profile, evidence, testResult) {

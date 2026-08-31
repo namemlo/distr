@@ -14,6 +14,7 @@ const repoRoot = path.resolve(fixtureDir, '../..');
 const fixturePath = path.join(fixtureDir, 'fixture.json');
 const composePath = path.join(fixtureDir, 'compose.yaml');
 const checksumPattern = /^sha256:[0-9a-f]{64}$/;
+const commitPattern = /^[0-9a-f]{40}$/;
 let provenanceFixtureBinaryPath;
 let provenanceFixtureWorkDir;
 let requiredGoToolchain;
@@ -622,6 +623,34 @@ function run(command, args, {env = {}, allowFailure = false} = {}) {
   return result;
 }
 
+export function parseHubImageIdentity(reference, inspectOutput, expectedSourceCommit) {
+  assert(
+    typeof reference === 'string' && reference.trim() === reference && reference !== '',
+    'Hub image reference is required'
+  );
+  let images;
+  try {
+    images = JSON.parse(inspectOutput);
+  } catch {
+    assert(false, 'Hub image inspection must return valid JSON');
+  }
+  assert(Array.isArray(images) && images.length === 1, 'Hub image inspection must return exactly one image');
+  const imageId = images[0]?.Id;
+  const sourceCommit = images[0]?.Config?.Labels?.['org.opencontainers.image.revision'];
+  assert(checksumPattern.test(imageId ?? ''), 'Hub image ID must be an immutable sha256 digest');
+  assert(commitPattern.test(sourceCommit ?? ''), 'Hub image revision label must be a full lowercase source commit');
+  if (expectedSourceCommit !== undefined) {
+    assert(commitPattern.test(expectedSourceCommit), 'expected Hub image source commit must be full lowercase hex');
+    assert(sourceCommit === expectedSourceCommit, 'Hub image revision label must match DISTR_CP_SOURCE_COMMIT');
+  }
+  return {reference, imageId, sourceCommit};
+}
+
+function inspectLocalHubImage(reference, expectedSourceCommit) {
+  const inspected = run('docker', ['image', 'inspect', reference]);
+  return parseHubImageIdentity(reference, inspected.stdout, expectedSourceCommit);
+}
+
 function offlineGoEnvironment() {
   if (!requiredGoToolchain) {
     const goDirective = readFileSync(path.join(repoRoot, 'go.mod'), 'utf8').match(/^go\s+(\d+\.\d+\.\d+)\s*$/m);
@@ -742,6 +771,11 @@ function liveStackBlocker() {
     if (run('docker', ['image', 'inspect', image], {allowFailure: true}).status !== 0) {
       return `required local image ${image} is unavailable; preload it without using this runner`;
     }
+  }
+  try {
+    inspectLocalHubImage(hubImage, process.env.DISTR_CP_SOURCE_COMMIT?.trim() || undefined);
+  } catch (error) {
+    return error.message;
   }
   try {
     ensureProvenanceFixtureBinary();
@@ -2380,6 +2414,10 @@ async function runDisposableStack(fixture) {
   const goModuleCache = run('go', ['env', 'GOMODCACHE'], {
     env: offlineGoEnvironment(),
   }).stdout.trim();
+  const hubImage = inspectLocalHubImage(
+    process.env.DISTR_CP_HUB_IMAGE,
+    process.env.DISTR_CP_SOURCE_COMMIT?.trim() || undefined
+  );
   const composeEnv = {
     DISTR_CP_POSTGRES_PORT: String(ports.postgres),
     DISTR_CP_EXTERNAL_EXECUTOR_PORT: String(ports.external),
@@ -2439,6 +2477,7 @@ async function runDisposableStack(fixture) {
       started: true,
       project,
       loopbackOnly: true,
+      hubImage,
       services: ['postgres', 'hub', 'external-executor', 'reference-executor', 'observer-alpha', 'observer-beta'],
       nonLocalCalls: 0,
     };
@@ -2514,6 +2553,9 @@ async function main() {
   const acceptance = args.includes('--acceptance');
   if (!['contract', 'clean'].includes(mode)) {
     throw new Error(`unsupported mode ${JSON.stringify(mode)}; expected contract or clean`);
+  }
+  if (acceptance && !commitPattern.test(process.env.DISTR_CP_SOURCE_COMMIT?.trim() ?? '')) {
+    throw new Error('--acceptance requires DISTR_CP_SOURCE_COMMIT as a full lowercase 40-character commit');
   }
 
   const fixture = await loadFixture();
