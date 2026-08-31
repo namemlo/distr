@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
@@ -42,14 +41,6 @@ func TestCreateBaselineAdoptionRequestRejectsSyntheticOrIncompleteMaterial(t *te
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("platform")))
 
 	request = validBaselineAdoptionRequest()
-	request.Components[0].HealthEvidenceKind = "HEALTHY"
-	g.Expect(request.Validate()).To(MatchError(ContainSubstring("healthEvidenceKind")))
-
-	request = validBaselineAdoptionRequest()
-	request.Components[0].HealthEvidenceUse = types.BaselineAdoptionHealthUsePromotionEligible
-	g.Expect(request.Validate()).To(MatchError(ContainSubstring("BASELINE_OR_ROLLBACK_ONLY")))
-
-	request = validBaselineAdoptionRequest()
 	request.Reason = "manual\ndatabase edit"
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("reason")))
 }
@@ -82,9 +73,6 @@ func validBaselineAdoptionRequest() CreateBaselineAdoptionRequest {
 			ObservationEvidenceChecksum:     baselineAdoptionTestChecksum("9"),
 			ObservationStateChecksum:        baselineAdoptionTestChecksum("a"),
 			ObservationRuntimeStateChecksum: baselineAdoptionTestChecksum("b"),
-			HealthEvidenceKind:              types.BaselineAdoptionHealthLegacyLiveness,
-			HealthEvidenceUse:               types.BaselineAdoptionHealthUseBaselineRollback,
-			HealthPolicyChecksum:            baselineAdoptionTestChecksum("c"),
 		}},
 	}
 }

@@ -1,6 +1,52 @@
 SET LOCAL lock_timeout = '10s';
 SET LOCAL statement_timeout = '5min';
 
+ALTER TABLE ObservedComponentState
+  ADD COLUMN health_evidence_kind TEXT,
+  ADD COLUMN health_evidence_use TEXT,
+  ADD COLUMN health_policy_checksum TEXT,
+  ADD CONSTRAINT observedcomponentstate_health_evidence_shape CHECK (
+    (
+      health_evidence_kind IS NULL
+      AND health_evidence_use IS NULL
+      AND health_policy_checksum IS NULL
+    ) OR (
+      health_policy_checksum ~ '^sha256:[0-9a-f]{64}$'
+      AND evidence_reference ~ '^evidence://sha256/[0-9a-f]{64}$'
+      AND evidence_reference = 'evidence://sha256/' ||
+        substring(evidence_checksum FROM 8)
+      AND (
+        (
+          health_evidence_kind = 'STANDARD_READINESS'
+          AND health_evidence_use = 'STANDARD_PROMOTION_ELIGIBLE'
+        ) OR (
+          health_evidence_kind = 'LEGACY_LIVENESS_ONLY'
+          AND health_evidence_use = 'BASELINE_OR_ROLLBACK_ONLY'
+        )
+      )
+    )
+  );
+
+CREATE FUNCTION observed_component_health_evidence_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.health_evidence_kind IS NOT DISTINCT FROM OLD.health_evidence_kind
+     AND NEW.health_evidence_use IS NOT DISTINCT FROM OLD.health_evidence_use
+     AND NEW.health_policy_checksum IS NOT DISTINCT FROM OLD.health_policy_checksum THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'observed health evidence is immutable'
+    USING ERRCODE = '23514';
+END;
+$$;
+
+CREATE TRIGGER ObservedComponentState_health_evidence_immutable
+BEFORE UPDATE OF health_evidence_kind, health_evidence_use,
+  health_policy_checksum ON ObservedComponentState
+FOR EACH ROW EXECUTE FUNCTION observed_component_health_evidence_guard();
+
 CREATE TABLE BaselineAdoption (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -135,7 +181,9 @@ CREATE TABLE BaselineAdoptionComponent (
     observation_evidence_checksum ~ '^sha256:[0-9a-f]{64}$'
   ),
   observation_evidence_reference TEXT NOT NULL CHECK (
-    length(btrim(observation_evidence_reference)) BETWEEN 1 AND 2048
+    observation_evidence_reference ~ '^evidence://sha256/[0-9a-f]{64}$'
+    AND observation_evidence_reference = 'evidence://sha256/' ||
+      substring(observation_evidence_checksum FROM 8)
   ),
   observation_state_checksum TEXT NOT NULL CHECK (
     observation_state_checksum ~ '^sha256:[0-9a-f]{64}$'
@@ -325,11 +373,11 @@ END;
 $$;
 
 CREATE TRIGGER Task_baseline_adoption_exclusion
-BEFORE INSERT ON Task
+BEFORE INSERT OR UPDATE OF deployment_plan_id, organization_id ON Task
 FOR EACH ROW EXECUTE FUNCTION baseline_adoption_execution_exclusion_guard();
 
 CREATE TRIGGER ExternalExecution_baseline_adoption_exclusion
-BEFORE INSERT ON ExternalExecution
+BEFORE INSERT OR UPDATE OF deployment_plan_id, organization_id ON ExternalExecution
 FOR EACH ROW EXECUTE FUNCTION baseline_adoption_execution_exclusion_guard();
 
 CREATE FUNCTION baseline_adoption_plan_status_guard()
@@ -497,6 +545,9 @@ BEGIN
      AND observation.evidence_checksum = component.observation_evidence_checksum
      AND observation.evidence_reference
        = component.observation_evidence_reference
+     AND observation.evidence_reference ~ '^evidence://sha256/[0-9a-f]{64}$'
+     AND observation.evidence_reference = 'evidence://sha256/' ||
+       substring(observation.evidence_checksum FROM 8)
      AND observation.artifact_digest = component.artifact_digest
      AND observation.config_checksum = component.config_checksum
      AND observation.schema_version = component.schema_version
@@ -506,6 +557,9 @@ BEGIN
      AND observation.state_checksum = component.observation_state_checksum
      AND observation.runtime_state_checksum
        = component.observation_runtime_state_checksum
+     AND observation.health_evidence_kind = component.health_evidence_kind
+     AND observation.health_evidence_use = component.health_evidence_use
+     AND observation.health_policy_checksum = component.health_policy_checksum
      AND observation.is_current
      AND observation.trusted
      AND observation.disposition = 'ACCEPTED'
@@ -523,7 +577,9 @@ BEGIN
      AND observation_head.observation_id = observation.id
      AND observation_head.evidence_checksum = observation.evidence_checksum
      AND observation_head.captured_at = observation.captured_at
-     AND length(btrim(observation.evidence_reference)) > 0
+     AND observation.health_evidence_kind IS NOT NULL
+     AND observation.health_evidence_use IS NOT NULL
+     AND observation.health_policy_checksum IS NOT NULL
     WHERE component.baseline_adoption_id = NEW.id
       AND component.organization_id = NEW.organization_id
       AND (

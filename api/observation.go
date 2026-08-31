@@ -13,26 +13,34 @@ import (
 	"github.com/google/uuid"
 )
 
-var observationChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	observationChecksumPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	observationEvidenceReferencePattern = regexp.MustCompile(
+		`^evidence://sha256/([0-9a-f]{64})$`,
+	)
+)
 
 type ObservationRequest struct {
-	OrganizationID      uuid.UUID                `json:"organizationId"`
-	ObserverID          uuid.UUID                `json:"observerId"`
-	DeploymentUnitID    uuid.UUID                `json:"deploymentUnitId"`
-	ComponentInstanceID uuid.UUID                `json:"componentInstanceId"`
-	ComponentKey        string                   `json:"componentKey"`
-	SourceSequence      int64                    `json:"sourceSequence"`
-	CapturedAt          time.Time                `json:"capturedAt"`
-	EvidenceChecksum    string                   `json:"evidenceChecksum"`
-	EvidenceReference   string                   `json:"evidenceReference,omitempty"`
-	ArtifactDigest      string                   `json:"artifactDigest"`
-	ConfigChecksum      string                   `json:"configChecksum"`
-	SchemaVersion       string                   `json:"schemaVersion"`
-	CapabilityChecksum  string                   `json:"capabilityChecksum"`
-	Platform            string                   `json:"platform"`
-	TopologyChecksum    string                   `json:"topologyChecksum"`
-	Health              types.ObservedHealth     `json:"health"`
-	Outcome             types.ObservationOutcome `json:"outcome"`
+	OrganizationID       uuid.UUID                                `json:"organizationId"`
+	ObserverID           uuid.UUID                                `json:"observerId"`
+	DeploymentUnitID     uuid.UUID                                `json:"deploymentUnitId"`
+	ComponentInstanceID  uuid.UUID                                `json:"componentInstanceId"`
+	ComponentKey         string                                   `json:"componentKey"`
+	SourceSequence       int64                                    `json:"sourceSequence"`
+	CapturedAt           time.Time                                `json:"capturedAt"`
+	EvidenceChecksum     string                                   `json:"evidenceChecksum"`
+	EvidenceReference    string                                   `json:"evidenceReference,omitempty"`
+	ArtifactDigest       string                                   `json:"artifactDigest"`
+	ConfigChecksum       string                                   `json:"configChecksum"`
+	SchemaVersion        string                                   `json:"schemaVersion"`
+	CapabilityChecksum   string                                   `json:"capabilityChecksum"`
+	Platform             string                                   `json:"platform"`
+	TopologyChecksum     string                                   `json:"topologyChecksum"`
+	Health               types.ObservedHealth                     `json:"health"`
+	Outcome              types.ObservationOutcome                 `json:"outcome"`
+	HealthEvidenceKind   types.BaselineAdoptionHealthEvidenceKind `json:"healthEvidenceKind,omitempty"`
+	HealthEvidenceUse    types.BaselineAdoptionHealthEvidenceUse  `json:"healthEvidenceUse,omitempty"`
+	HealthPolicyChecksum string                                   `json:"healthPolicyChecksum,omitempty"`
 }
 
 func (r ObservationRequest) Validate() error {
@@ -75,6 +83,33 @@ func (r ObservationRequest) Validate() error {
 	}, r.Outcome) {
 		return validation.NewValidationFailedError("outcome is invalid")
 	}
+	if err := validateObservationHealthEvidence(r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateObservationHealthEvidence(r ObservationRequest) error {
+	hasPolicy := r.HealthEvidenceKind != "" || r.HealthEvidenceUse != "" ||
+		strings.TrimSpace(r.HealthPolicyChecksum) != ""
+	if !hasPolicy {
+		return nil
+	}
+	validPair := r.HealthEvidenceKind == types.BaselineAdoptionHealthStandardReadiness &&
+		r.HealthEvidenceUse == types.BaselineAdoptionHealthUsePromotionEligible ||
+		r.HealthEvidenceKind == types.BaselineAdoptionHealthLegacyLiveness &&
+			r.HealthEvidenceUse == types.BaselineAdoptionHealthUseBaselineRollback
+	if !validPair || !observationChecksumPattern.MatchString(r.HealthPolicyChecksum) {
+		return validation.NewValidationFailedError("observation health evidence policy is invalid")
+	}
+	match := observationEvidenceReferencePattern.FindStringSubmatch(
+		strings.TrimSpace(r.EvidenceReference),
+	)
+	if len(match) != 2 || match[1] != strings.TrimPrefix(r.EvidenceChecksum, "sha256:") {
+		return validation.NewValidationFailedError(
+			"health evidence reference must be evidence://sha256/<evidence checksum>",
+		)
+	}
 	return nil
 }
 
@@ -92,6 +127,8 @@ func (r ObservationRequest) ToEnvelope(
 		SchemaVersion:      strings.TrimSpace(r.SchemaVersion),
 		CapabilityChecksum: r.CapabilityChecksum, Platform: strings.TrimSpace(r.Platform),
 		TopologyChecksum: r.TopologyChecksum, Health: r.Health, Outcome: r.Outcome,
+		HealthEvidenceKind: r.HealthEvidenceKind, HealthEvidenceUse: r.HealthEvidenceUse,
+		HealthPolicyChecksum: r.HealthPolicyChecksum,
 	}
 }
 
@@ -158,29 +195,32 @@ type ObserverRegistration struct {
 }
 
 type ObservedComponentState struct {
-	ID                   uuid.UUID                    `json:"id"`
-	CreatedAt            time.Time                    `json:"createdAt"`
-	ObserverID           uuid.UUID                    `json:"observerId"`
-	DeploymentUnitID     uuid.UUID                    `json:"deploymentUnitId"`
-	ComponentInstanceID  uuid.UUID                    `json:"componentInstanceId"`
-	ComponentKey         string                       `json:"componentKey"`
-	SourceSequence       int64                        `json:"sourceSequence"`
-	CapturedAt           time.Time                    `json:"capturedAt"`
-	ReceivedAt           time.Time                    `json:"receivedAt"`
-	FreshUntil           time.Time                    `json:"freshUntil"`
-	EvidenceChecksum     string                       `json:"evidenceChecksum"`
-	EvidenceReference    string                       `json:"evidenceReference,omitempty"`
-	ArtifactDigest       string                       `json:"artifactDigest"`
-	ConfigChecksum       string                       `json:"configChecksum"`
-	SchemaVersion        string                       `json:"schemaVersion"`
-	CapabilityChecksum   string                       `json:"capabilityChecksum"`
-	Platform             string                       `json:"platform"`
-	TopologyChecksum     string                       `json:"topologyChecksum"`
-	Health               types.ObservedHealth         `json:"health"`
-	Outcome              types.ObservationOutcome     `json:"outcome"`
-	Disposition          types.ObservationDisposition `json:"disposition"`
-	Trusted              bool                         `json:"trusted"`
-	Current              bool                         `json:"current"`
-	StateChecksum        string                       `json:"stateChecksum"`
-	RuntimeStateChecksum string                       `json:"runtimeStateChecksum"`
+	ID                   uuid.UUID                                 `json:"id"`
+	CreatedAt            time.Time                                 `json:"createdAt"`
+	ObserverID           uuid.UUID                                 `json:"observerId"`
+	DeploymentUnitID     uuid.UUID                                 `json:"deploymentUnitId"`
+	ComponentInstanceID  uuid.UUID                                 `json:"componentInstanceId"`
+	ComponentKey         string                                    `json:"componentKey"`
+	SourceSequence       int64                                     `json:"sourceSequence"`
+	CapturedAt           time.Time                                 `json:"capturedAt"`
+	ReceivedAt           time.Time                                 `json:"receivedAt"`
+	FreshUntil           time.Time                                 `json:"freshUntil"`
+	EvidenceChecksum     string                                    `json:"evidenceChecksum"`
+	EvidenceReference    string                                    `json:"evidenceReference,omitempty"`
+	ArtifactDigest       string                                    `json:"artifactDigest"`
+	ConfigChecksum       string                                    `json:"configChecksum"`
+	SchemaVersion        string                                    `json:"schemaVersion"`
+	CapabilityChecksum   string                                    `json:"capabilityChecksum"`
+	Platform             string                                    `json:"platform"`
+	TopologyChecksum     string                                    `json:"topologyChecksum"`
+	Health               types.ObservedHealth                      `json:"health"`
+	Outcome              types.ObservationOutcome                  `json:"outcome"`
+	Disposition          types.ObservationDisposition              `json:"disposition"`
+	Trusted              bool                                      `json:"trusted"`
+	Current              bool                                      `json:"current"`
+	StateChecksum        string                                    `json:"stateChecksum"`
+	RuntimeStateChecksum string                                    `json:"runtimeStateChecksum"`
+	HealthEvidenceKind   *types.BaselineAdoptionHealthEvidenceKind `json:"healthEvidenceKind,omitempty"`
+	HealthEvidenceUse    *types.BaselineAdoptionHealthEvidenceUse  `json:"healthEvidenceUse,omitempty"`
+	HealthPolicyChecksum *string                                   `json:"healthPolicyChecksum,omitempty"`
 }

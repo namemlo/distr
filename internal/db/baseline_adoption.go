@@ -88,6 +88,15 @@ type baselineAdoptionExpectedComponent struct {
 	Binding types.ConfigComponentBinding
 }
 
+type baselineAdoptionObservationEvidence struct {
+	CapturedAt           time.Time
+	FreshUntil           time.Time
+	Reference            string
+	HealthKind           types.BaselineAdoptionHealthEvidenceKind
+	HealthUse            types.BaselineAdoptionHealthEvidenceUse
+	HealthPolicyChecksum string
+}
+
 func AdoptDeploymentPlanBaseline(
 	ctx context.Context,
 	input types.CreateBaselineAdoptionInput,
@@ -164,9 +173,33 @@ func AdoptDeploymentPlanBaseline(
 		return nil
 	})
 	if err != nil {
+		if baselineAdoptionConcurrentWriteConflict(err) {
+			existing, replayErr := getBaselineAdoptionByIdempotencyKey(
+				ctx, input.OrganizationID, input.IdempotencyKey,
+			)
+			switch {
+			case replayErr == nil && baselineAdoptionReplayMatches(
+				*existing, input, requestChecksum,
+			):
+				return existing, nil
+			case replayErr == nil:
+				return nil, apierrors.NewConflict(
+					"idempotency key is already bound to different baseline adoption material",
+				)
+			case !errors.Is(replayErr, apierrors.ErrNotFound):
+				return nil, replayErr
+			}
+		}
 		return nil, mapBaselineAdoptionWriteError(err)
 	}
 	return result, nil
+}
+
+func baselineAdoptionConcurrentWriteConflict(err error) bool {
+	var pgError *pgconn.PgError
+	return errors.As(err, &pgError) &&
+		(pgError.Code == pgerrcode.UniqueViolation ||
+			pgError.Code == pgerrcode.SerializationFailure)
 }
 
 func baselineAdoptionReplayMatches(
@@ -250,25 +283,6 @@ func validateBaselineAdoptionInput(input types.CreateBaselineAdoptionInput) erro
 	}
 	if len(input.Components) < 1 || len(input.Components) > baselineAdoptionMaximumComponents {
 		return apierrors.NewBadRequest("baseline adoption component count is invalid")
-	}
-	for _, component := range input.Components {
-		if component.HealthEvidenceKind != types.BaselineAdoptionHealthStandardReadiness &&
-			component.HealthEvidenceKind != types.BaselineAdoptionHealthLegacyLiveness {
-			return apierrors.NewBadRequest("baseline adoption health evidence kind is invalid")
-		}
-		if component.HealthEvidenceKind == types.BaselineAdoptionHealthLegacyLiveness &&
-			component.HealthEvidenceUse != types.BaselineAdoptionHealthUseBaselineRollback {
-			return apierrors.NewBadRequest(
-				"legacy liveness evidence is restricted to baseline or rollback use",
-			)
-		}
-		if component.HealthEvidenceKind == types.BaselineAdoptionHealthStandardReadiness &&
-			component.HealthEvidenceUse != types.BaselineAdoptionHealthUsePromotionEligible {
-			return apierrors.NewBadRequest("standard readiness evidence use is invalid")
-		}
-		if !baselineAdoptionChecksumPattern.MatchString(component.HealthPolicyChecksum) {
-			return apierrors.NewBadRequest("baseline adoption health policy checksum is invalid")
-		}
 	}
 	return nil
 }
@@ -601,7 +615,7 @@ func adoptBaselineComponent(
 	if err := establishEmptyBaselineDesiredHead(ctx, plan, expected.Input); err != nil {
 		return nil, err
 	}
-	capturedAt, freshUntil, evidenceReference, err := validateRetainedBaselineEvidence(
+	evidence, err := validateRetainedBaselineEvidence(
 		ctx, adoption, plan, expected, now,
 	)
 	if err != nil {
@@ -609,14 +623,13 @@ func adoptBaselineComponent(
 	}
 	componentID, activeID := uuid.New(), uuid.New()
 	component, err := insertBaselineAdoptionComponent(
-		ctx, adoption, plan, expected.Input, componentID, activeID,
-		capturedAt, freshUntil, evidenceReference,
+		ctx, adoption, plan, expected.Input, evidence, componentID, activeID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	if err := insertBaselineActiveDesiredRevision(
-		ctx, adoption, plan, expected.Input, componentID, activeID,
+		ctx, adoption, plan, expected.Input, evidence, componentID, activeID,
 	); err != nil {
 		return nil, err
 	}
@@ -717,12 +730,14 @@ func validateRetainedBaselineEvidence(
 	plan baselineAdoptionPlan,
 	expected baselineAdoptionExpectedComponent,
 	now time.Time,
-) (time.Time, time.Time, string, error) {
-	var capturedAt, freshUntil time.Time
-	var evidenceReference string
+) (baselineAdoptionObservationEvidence, error) {
+	var evidence baselineAdoptionObservationEvidence
 	err := internalctx.GetDb(ctx).QueryRow(ctx, `
 		SELECT observation.captured_at, observation.fresh_until,
-		       observation.evidence_reference
+		       observation.evidence_reference,
+		       observation.health_evidence_kind,
+		       observation.health_evidence_use,
+		       observation.health_policy_checksum
 		FROM ProductReleaseComponent product_component
 		JOIN ReleaseBundle component_release
 		  ON component_release.id = product_component.component_release_bundle_id
@@ -795,7 +810,12 @@ func validateRetainedBaselineEvidence(
 		 AND observation_head.observation_id = observation.id
 		 AND observation_head.evidence_checksum = observation.evidence_checksum
 		 AND observation_head.captured_at = observation.captured_at
-		WHERE length(btrim(observation.evidence_reference)) > 0
+		WHERE observation.evidence_reference ~ '^evidence://sha256/[0-9a-f]{64}$'
+		  AND observation.evidence_reference = 'evidence://sha256/' ||
+		      substring(observation.evidence_checksum FROM 8)
+		  AND observation.health_evidence_kind IS NOT NULL
+		  AND observation.health_evidence_use IS NOT NULL
+		  AND observation.health_policy_checksum IS NOT NULL
 		  AND product_component.product_release_bundle_id = @productReleaseID
 		  AND product_component.organization_id = @organizationID
 		  AND product_component.component_release_bundle_id = @componentReleaseID
@@ -833,16 +853,19 @@ func validateRetainedBaselineEvidence(
 			"observationRuntimeStateChecksum": expected.Input.ObservationRuntimeStateChecksum,
 			"now":                             now.UTC(),
 		},
-	).Scan(&capturedAt, &freshUntil, &evidenceReference)
+	).Scan(
+		&evidence.CapturedAt, &evidence.FreshUntil, &evidence.Reference,
+		&evidence.HealthKind, &evidence.HealthUse, &evidence.HealthPolicyChecksum,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return time.Time{}, time.Time{}, "", apierrors.NewConflict(
+		return baselineAdoptionObservationEvidence{}, apierrors.NewConflict(
 			"baseline adoption lacks exact current release, provenance, config, or observation evidence",
 		)
 	}
 	if err != nil {
-		return time.Time{}, time.Time{}, "", fmt.Errorf("validate baseline adoption evidence: %w", err)
+		return baselineAdoptionObservationEvidence{}, fmt.Errorf("validate baseline adoption evidence: %w", err)
 	}
-	return capturedAt, freshUntil, evidenceReference, nil
+	return evidence, nil
 }
 
 func insertBaselineAdoptionComponent(
@@ -850,11 +873,9 @@ func insertBaselineAdoptionComponent(
 	adoption types.BaselineAdoption,
 	plan baselineAdoptionPlan,
 	input types.BaselineAdoptionComponentInput,
+	evidence baselineAdoptionObservationEvidence,
 	componentID,
 	activeID uuid.UUID,
-	capturedAt,
-	freshUntil time.Time,
-	evidenceReference string,
 ) (*types.BaselineAdoptionComponent, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		INSERT INTO BaselineAdoptionComponent (
@@ -902,14 +923,15 @@ func insertBaselineAdoptionComponent(
 			"topologyChecksum":   input.TopologyChecksum,
 			"observationID":      input.ObservationID, "observerID": input.ObserverID,
 			"observationEvidenceChecksum":     input.ObservationEvidenceChecksum,
-			"observationEvidenceReference":    evidenceReference,
+			"observationEvidenceReference":    evidence.Reference,
 			"observationStateChecksum":        input.ObservationStateChecksum,
 			"observationRuntimeStateChecksum": input.ObservationRuntimeStateChecksum,
-			"healthEvidenceKind":              input.HealthEvidenceKind,
-			"healthEvidenceUse":               input.HealthEvidenceUse,
-			"healthPolicyChecksum":            input.HealthPolicyChecksum,
-			"observationCapturedAt":           capturedAt, "observationFreshUntil": freshUntil,
-			"activeDesiredRevisionID": activeID,
+			"healthEvidenceKind":              evidence.HealthKind,
+			"healthEvidenceUse":               evidence.HealthUse,
+			"healthPolicyChecksum":            evidence.HealthPolicyChecksum,
+			"observationCapturedAt":           evidence.CapturedAt,
+			"observationFreshUntil":           evidence.FreshUntil,
+			"activeDesiredRevisionID":         activeID,
 		},
 	)
 	if err != nil {
@@ -929,6 +951,7 @@ func insertBaselineActiveDesiredRevision(
 	adoption types.BaselineAdoption,
 	plan baselineAdoptionPlan,
 	input types.BaselineAdoptionComponentInput,
+	evidence baselineAdoptionObservationEvidence,
 	componentID,
 	activeID uuid.UUID,
 ) error {
@@ -958,8 +981,8 @@ func insertBaselineActiveDesiredRevision(
 			"topologyChecksum":            input.TopologyChecksum,
 			"verifiedObservationID":       input.ObservationID,
 			"baselineAdoptionComponentID": componentID,
-			"healthEvidenceKind":          input.HealthEvidenceKind,
-			"healthEvidenceUse":           input.HealthEvidenceUse,
+			"healthEvidenceKind":          evidence.HealthKind,
+			"healthEvidenceUse":           evidence.HealthUse,
 		},
 	)
 	if err != nil {

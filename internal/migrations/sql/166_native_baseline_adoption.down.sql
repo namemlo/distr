@@ -2,7 +2,8 @@ SET LOCAL lock_timeout = '10s';
 SET LOCAL statement_timeout = '5min';
 
 LOCK TABLE BaselineAdoption, BaselineAdoptionComponent,
-  ActiveDesiredRevision, DeploymentPlan IN ACCESS EXCLUSIVE MODE;
+  ActiveDesiredRevision, ObservedComponentState,
+  DeploymentPlan IN ACCESS EXCLUSIVE MODE;
 
 DO $$
 BEGIN
@@ -11,13 +12,22 @@ BEGIN
      OR EXISTS (
        SELECT 1 FROM ActiveDesiredRevision
        WHERE source_kind = 'BASELINE_ADOPTION'
+     ) OR EXISTS (
+       SELECT 1 FROM ObservedComponentState
+       WHERE health_evidence_kind IS NOT NULL
+          OR health_evidence_use IS NOT NULL
+          OR health_policy_checksum IS NOT NULL
      ) THEN
     RAISE EXCEPTION
-      'refusing migration 166 rollback: native baseline adoption evidence exists'
+      'refusing migration 166 rollback: native baseline or observation health evidence exists'
       USING ERRCODE = '23514';
   END IF;
 END;
 $$;
+
+DROP TRIGGER ObservedComponentState_health_evidence_immutable
+  ON ObservedComponentState;
+DROP FUNCTION observed_component_health_evidence_guard();
 
 DROP TRIGGER BaselineAdoptionComponent_no_truncate
   ON BaselineAdoptionComponent;
@@ -54,3 +64,9 @@ ALTER TABLE ActiveDesiredRevision
 
 DROP TABLE BaselineAdoptionComponent;
 DROP TABLE BaselineAdoption;
+
+ALTER TABLE ObservedComponentState
+  DROP CONSTRAINT observedcomponentstate_health_evidence_shape,
+  DROP COLUMN health_policy_checksum,
+  DROP COLUMN health_evidence_use,
+  DROP COLUMN health_evidence_kind;

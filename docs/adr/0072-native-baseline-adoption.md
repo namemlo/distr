@@ -30,7 +30,10 @@ schema and protocol, exact plan/Product Release/target-config checksums, a
 published component release and provenance verification for every frozen pin,
 and fresh current independent observations that exactly match artifact digest,
 config checksum, schema, capability, platform, topology, component placement,
-and observer evidence.
+and observer evidence. The authenticated observation, rather than the adoption
+caller, owns immutable health-evidence kind/use/policy fields. Policy-bearing
+observations require an `evidence://sha256/<digest>` reference exactly bound to
+their evidence checksum.
 
 Success appends an `ADOPTED` outcome and `baseline_adoption.adopted` audit event,
 creates one active desired revision per component, and moves the plan to its
@@ -43,7 +46,8 @@ report.
 `BASELINE_ADOPTION`. The two lineage shapes are mutually exclusive and enforced
 by database constraints. A deferred commit guard verifies the exact plan,
 release, configuration, component pins, provenance, desired/observed state,
-current observation heads, health evidence, and correlated audit event.
+current observation heads, observer-retained health evidence, digest-addressed
+evidence identity, and correlated audit event.
 
 Health evidence is classified as either `STANDARD_READINESS` with
 `STANDARD_PROMOTION_ELIGIBLE` use or `LEGACY_LIVENESS_ONLY` with
@@ -57,7 +61,8 @@ discovery excludes it from `pinned_existing` or shared-provider promotion.
 The route requires scoped `plan.execute` authorization for the deployment unit,
 organization/environment enrollment, the existing operator and executor feature
 gates, and a non-super-admin organization actor. A canonical request checksum
-provides idempotency: exact replay returns the retained outcome, while changed
+provides idempotency: exact replay, including a request racing the original
+serializable write, re-reads and returns the retained outcome, while changed
 material under the same key conflicts.
 
 ## Consequences
@@ -67,12 +72,13 @@ inventing deployment history. Planning, drift, and previous-state reads continue
 to consume `ActiveDesiredRevision` without an alternate projection.
 
 Adoption is initial lineage only. Existing pending or active desired history,
-tasks, or external executions block it. Evidence must still be current and fresh
-at commit. Legacy liveness remains an explicit operational limitation and does
+tasks, or external executions block it, including task or execution reassignment
+after adoption. Evidence must still be current and fresh at commit. Legacy liveness remains an explicit operational limitation and does
 not relax standard observation requirements for later deployment execution.
 
-Migration 166 is additive. Its down migration refuses while adoption evidence
-or adoption-sourced active desired revisions exist.
+Migration 166 is additive. Its down migration refuses while adoption evidence,
+adoption-sourced active desired revisions, or retained observation health-policy
+evidence exists.
 
 ## Alternatives Considered
 

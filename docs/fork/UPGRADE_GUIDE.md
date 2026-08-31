@@ -26,8 +26,8 @@ Migration 164 preserves legacy planning evidence while allowing authoritative `A
 refuses once native lineage exists.
 Migration 165 adds append-only review-material `GO/NO_GO` decisions and refuses downgrade while any decision exists.
 Migration 166 adds immutable native baseline adoption and source/health-policy lineage. It creates no deployment
-task or execution history, and its down migration refuses while any adoption evidence or adoption-sourced active
-desired revision exists.
+task or execution history, and its down migration refuses while any adoption evidence, adoption-sourced active
+desired revision, or retained observation health-policy evidence exists.
 Before a release can be signed, retain separate results for clean install, upgrade, safe down/refusal, checkpoint
 restart, v1-only flags-off, mixed v1/v2, and retained-v2-history flags-off paths on the supported PostgreSQL 16.14
 and 18.4 images through migration 166. The required matrix and current pending status are recorded in the

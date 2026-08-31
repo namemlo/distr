@@ -58,7 +58,8 @@ const observedStateOutputExpr = `
 	o.config_checksum, o.schema_version, o.capability_checksum,
 	o.platform, o.topology_checksum, o.health, o.outcome,
 	o.disposition, o.trusted, o.is_current, o.state_checksum,
-	o.runtime_state_checksum,
+	o.runtime_state_checksum, o.health_evidence_kind,
+	o.health_evidence_use, o.health_policy_checksum,
 	o.executor_outcome
 `
 
@@ -1023,6 +1024,8 @@ func IngestObservationWithTask(
 		if err != nil {
 			return apierrors.NewBadRequest(err.Error())
 		}
+		healthEvidenceKind, healthEvidenceUse, healthPolicyChecksum :=
+			observationHealthEvidenceValues(envelope)
 		if decision.AdvanceHead {
 			_, err = internalctx.GetDb(txCtx).Exec(txCtx, `
 				UPDATE ObservedComponentState
@@ -1051,7 +1054,8 @@ func IngestObservationWithTask(
 				artifact_digest, config_checksum, schema_version,
 				capability_checksum, platform, topology_checksum, health,
 				outcome, disposition, trusted, is_current, state_checksum,
-				runtime_state_checksum
+				runtime_state_checksum, health_evidence_kind,
+				health_evidence_use, health_policy_checksum
 			) VALUES (
 				@id, @organizationID, @observerID, @deploymentUnitID,
 				@componentInstanceID, @componentKey, @sourceSequence,
@@ -1060,7 +1064,8 @@ func IngestObservationWithTask(
 				@artifactDigest, @configChecksum, @schemaVersion,
 				@capabilityChecksum, @platform, @topologyChecksum, @health,
 				@outcome, @disposition, @trusted, @isCurrent, @stateChecksum,
-				@runtimeStateChecksum
+				@runtimeStateChecksum, @healthEvidenceKind,
+				@healthEvidenceUse, @healthPolicyChecksum
 			)
 			RETURNING `+observedStateOutputExpr,
 			pgx.NamedArgs{
@@ -1081,6 +1086,9 @@ func IngestObservationWithTask(
 				"trusted": decision.Trusted, "isCurrent": decision.AdvanceHead,
 				"stateChecksum":        stateChecksum,
 				"runtimeStateChecksum": runtimeStateChecksum,
+				"healthEvidenceKind":   healthEvidenceKind,
+				"healthEvidenceUse":    healthEvidenceUse,
+				"healthPolicyChecksum": healthPolicyChecksum,
 			},
 		)
 		if err != nil {
@@ -1182,6 +1190,15 @@ func IngestObservationWithTask(
 		}
 	}
 	return ingested, task, nil
+}
+
+func observationHealthEvidenceValues(envelope types.ObservationEnvelope) (any, any, any) {
+	if envelope.HealthEvidenceKind == "" && envelope.HealthEvidenceUse == "" &&
+		strings.TrimSpace(envelope.HealthPolicyChecksum) == "" {
+		return nil, nil, nil
+	}
+	return envelope.HealthEvidenceKind, envelope.HealthEvidenceUse,
+		envelope.HealthPolicyChecksum
 }
 
 func openAutomaticDriftCaseForObservation(
@@ -1648,30 +1665,34 @@ func getObservedEvidence(
 
 func observationStateChecksum(envelope types.ObservationEnvelope) (string, error) {
 	payload, err := json.Marshal(struct {
-		OrganizationID      uuid.UUID                `json:"organizationId"`
-		ObserverID          uuid.UUID                `json:"observerId"`
-		DeploymentUnitID    uuid.UUID                `json:"deploymentUnitId"`
-		ComponentInstanceID uuid.UUID                `json:"componentInstanceId"`
-		ComponentKey        string                   `json:"componentKey"`
-		SourceSequence      int64                    `json:"sourceSequence"`
-		CapturedAt          time.Time                `json:"capturedAt"`
-		EvidenceChecksum    string                   `json:"evidenceChecksum"`
-		EvidenceReference   string                   `json:"evidenceReference"`
-		ArtifactDigest      string                   `json:"artifactDigest"`
-		ConfigChecksum      string                   `json:"configChecksum"`
-		SchemaVersion       string                   `json:"schemaVersion"`
-		CapabilityChecksum  string                   `json:"capabilityChecksum"`
-		Platform            string                   `json:"platform"`
-		TopologyChecksum    string                   `json:"topologyChecksum"`
-		Health              types.ObservedHealth     `json:"health"`
-		Outcome             types.ObservationOutcome `json:"outcome"`
+		OrganizationID       uuid.UUID                                `json:"organizationId"`
+		ObserverID           uuid.UUID                                `json:"observerId"`
+		DeploymentUnitID     uuid.UUID                                `json:"deploymentUnitId"`
+		ComponentInstanceID  uuid.UUID                                `json:"componentInstanceId"`
+		ComponentKey         string                                   `json:"componentKey"`
+		SourceSequence       int64                                    `json:"sourceSequence"`
+		CapturedAt           time.Time                                `json:"capturedAt"`
+		EvidenceChecksum     string                                   `json:"evidenceChecksum"`
+		EvidenceReference    string                                   `json:"evidenceReference"`
+		ArtifactDigest       string                                   `json:"artifactDigest"`
+		ConfigChecksum       string                                   `json:"configChecksum"`
+		SchemaVersion        string                                   `json:"schemaVersion"`
+		CapabilityChecksum   string                                   `json:"capabilityChecksum"`
+		Platform             string                                   `json:"platform"`
+		TopologyChecksum     string                                   `json:"topologyChecksum"`
+		Health               types.ObservedHealth                     `json:"health"`
+		Outcome              types.ObservationOutcome                 `json:"outcome"`
+		HealthEvidenceKind   types.BaselineAdoptionHealthEvidenceKind `json:"healthEvidenceKind,omitempty"`
+		HealthEvidenceUse    types.BaselineAdoptionHealthEvidenceUse  `json:"healthEvidenceUse,omitempty"`
+		HealthPolicyChecksum string                                   `json:"healthPolicyChecksum,omitempty"`
 	}{
 		envelope.OrganizationID, envelope.ObserverID, envelope.DeploymentUnitID,
 		envelope.ComponentInstanceID, envelope.ComponentKey, envelope.SourceSequence,
 		envelope.CapturedAt.UTC(), envelope.EvidenceChecksum, envelope.EvidenceReference,
 		envelope.ArtifactDigest, envelope.ConfigChecksum, envelope.SchemaVersion,
 		envelope.CapabilityChecksum, envelope.Platform, envelope.TopologyChecksum,
-		envelope.Health, envelope.Outcome,
+		envelope.Health, envelope.Outcome, envelope.HealthEvidenceKind,
+		envelope.HealthEvidenceUse, envelope.HealthPolicyChecksum,
 	})
 	if err != nil {
 		return "", fmt.Errorf("could not canonicalize observed state: %w", err)

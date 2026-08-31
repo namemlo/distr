@@ -37,29 +37,26 @@ type CreateBaselineAdoptionInput struct {
 }
 
 type BaselineAdoptionComponentInput struct {
-	ComponentInstanceID             uuid.UUID                          `json:"componentInstanceId"`
-	ComponentKey                    string                             `json:"componentKey"`
-	ComponentReleaseID              uuid.UUID                          `json:"componentReleaseId"`
-	ComponentReleaseChecksum        string                             `json:"componentReleaseChecksum"`
-	SourceCommit                    string                             `json:"sourceCommit"`
-	BuildID                         string                             `json:"buildId"`
-	ProvenanceVerificationID        uuid.UUID                          `json:"provenanceVerificationId"`
-	ProvenanceEvidenceDigest        string                             `json:"provenanceEvidenceDigest"`
-	ProvenancePolicyChecksum        string                             `json:"provenancePolicyChecksum"`
-	ArtifactDigest                  string                             `json:"artifactDigest"`
-	Platform                        string                             `json:"platform"`
-	ConfigChecksum                  string                             `json:"configChecksum"`
-	SchemaVersion                   string                             `json:"schemaVersion"`
-	CapabilityChecksum              string                             `json:"capabilityChecksum"`
-	TopologyChecksum                string                             `json:"topologyChecksum"`
-	ObservationID                   uuid.UUID                          `json:"observationId"`
-	ObserverID                      uuid.UUID                          `json:"observerId"`
-	ObservationEvidenceChecksum     string                             `json:"observationEvidenceChecksum"`
-	ObservationStateChecksum        string                             `json:"observationStateChecksum"`
-	ObservationRuntimeStateChecksum string                             `json:"observationRuntimeStateChecksum"`
-	HealthEvidenceKind              BaselineAdoptionHealthEvidenceKind `json:"healthEvidenceKind"`
-	HealthEvidenceUse               BaselineAdoptionHealthEvidenceUse  `json:"healthEvidenceUse"`
-	HealthPolicyChecksum            string                             `json:"healthPolicyChecksum"`
+	ComponentInstanceID             uuid.UUID `json:"componentInstanceId"`
+	ComponentKey                    string    `json:"componentKey"`
+	ComponentReleaseID              uuid.UUID `json:"componentReleaseId"`
+	ComponentReleaseChecksum        string    `json:"componentReleaseChecksum"`
+	SourceCommit                    string    `json:"sourceCommit"`
+	BuildID                         string    `json:"buildId"`
+	ProvenanceVerificationID        uuid.UUID `json:"provenanceVerificationId"`
+	ProvenanceEvidenceDigest        string    `json:"provenanceEvidenceDigest"`
+	ProvenancePolicyChecksum        string    `json:"provenancePolicyChecksum"`
+	ArtifactDigest                  string    `json:"artifactDigest"`
+	Platform                        string    `json:"platform"`
+	ConfigChecksum                  string    `json:"configChecksum"`
+	SchemaVersion                   string    `json:"schemaVersion"`
+	CapabilityChecksum              string    `json:"capabilityChecksum"`
+	TopologyChecksum                string    `json:"topologyChecksum"`
+	ObservationID                   uuid.UUID `json:"observationId"`
+	ObserverID                      uuid.UUID `json:"observerId"`
+	ObservationEvidenceChecksum     string    `json:"observationEvidenceChecksum"`
+	ObservationStateChecksum        string    `json:"observationStateChecksum"`
+	ObservationRuntimeStateChecksum string    `json:"observationRuntimeStateChecksum"`
 }
 
 type BaselineAdoption struct {

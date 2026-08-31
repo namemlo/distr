@@ -113,6 +113,8 @@ func TestDesiredObservedRepositoryUsesTenantFencesAndSerializedHeadUpdates(t *te
 	g.Expect(text).To(ContainSubstring("health = 'HEALTHY'"))
 	g.Expect(text).To(ContainSubstring("fresh_until >= now()"))
 	g.Expect(text).To(ContainSubstring("length(btrim(evidence_reference)) > 0"))
+	g.Expect(text).To(ContainSubstring("o.health_evidence_kind"))
+	g.Expect(text).To(ContainSubstring("health_policy_checksum"))
 	g.Expect(text).To(ContainSubstring("o.disposition IN ('ACCEPTED', 'CONFLICT')"))
 	g.Expect(text).NotTo(ContainSubstring("SELECT DISTINCT ON (o.observer_id)"))
 }
@@ -215,6 +217,9 @@ func TestObservationStateChecksumCoversEvidenceReferenceAndComponentScope(t *tes
 		CapabilityChecksum: desiredObservedDigest("capability"),
 		Platform:           "linux/amd64", TopologyChecksum: desiredObservedDigest("topology"),
 		Health: types.ObservedHealthHealthy, Outcome: types.ObservationOutcomeComplete,
+		HealthEvidenceKind:   types.BaselineAdoptionHealthStandardReadiness,
+		HealthEvidenceUse:    types.BaselineAdoptionHealthUsePromotionEligible,
+		HealthPolicyChecksum: desiredObservedDigest("readiness-policy"),
 	}
 	original, err := observationStateChecksum(envelope)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -230,6 +235,12 @@ func TestObservationStateChecksumCoversEvidenceReferenceAndComponentScope(t *tes
 	componentChecksum, err := observationStateChecksum(changedComponent)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(componentChecksum).NotTo(Equal(original))
+
+	changedPolicy := envelope
+	changedPolicy.HealthPolicyChecksum = desiredObservedDigest("different-policy")
+	policyChecksum, err := observationStateChecksum(changedPolicy)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(policyChecksum).NotTo(Equal(original))
 }
 
 func TestDesiredObservationDeadlineSweepUsesExactAttemptProjection(t *testing.T) {

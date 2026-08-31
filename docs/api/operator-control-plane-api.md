@@ -142,8 +142,9 @@ Product Release, and target-config checksums, and one component entry for every
 frozen plan pin. Each entry binds component instance/key, Component Release,
 source commit/build, provenance verification and policy, artifact digest,
 platform, config/schema/capability/topology, current observation and observer,
-observation evidence/state/runtime checksums, health evidence classification,
-use restriction, and health-policy checksum.
+and observation evidence/state/runtime checksums. Health classification, use,
+and policy checksum are not accepted from the adoption caller: they must already
+exist on the authenticated immutable observation selected by the request.
 
 An exact replay returns the retained immutable result. Changed material under
 the same key returns `409`. Success returns `ADOPTED` with
@@ -154,14 +155,17 @@ enters its successful terminal lifecycle state only after the deferred database
 guard verifies every active head, current observation head, release/config pin,
 and correlated `baseline_adoption.adopted` audit event.
 
-`LEGACY_LIVENESS_ONLY` must be paired with
-`BASELINE_OR_ROLLBACK_ONLY`. Its retained observer evidence reference should
-identify a digest-addressed artifact containing portable logical probe paths,
+Observer health-policy evidence requires an exact
+`evidence://sha256/<64-lowercase-hex>` reference whose digest matches the
+retained observation evidence checksum. `LEGACY_LIVENESS_ONLY` must be paired
+with `BASELINE_OR_ROLLBACK_ONLY`. Its retained artifact should contain portable logical probe paths,
 HTTP status, response size, and response checksum. Ephemeral transport addresses
 must not be used as canonical evidence. This classification cannot be written as
 execution-sourced desired-state promotion; later deployments retain the normal
 standard-readiness observation gate, and provider discovery will not use legacy
-liveness for `pinned_existing` or shared-provider promotion.
+liveness for `pinned_existing` or shared-provider promotion. Concurrent exact
+idempotent requests re-read and return the committed adoption; changed material
+under the same key remains a conflict.
 
 The standard controlled-client policy requires four-eyes approval: the
 execution requester cannot decide the same plan or campaign approval. A

@@ -72,6 +72,12 @@ func SameObservationMaterial(
 	envelope types.ObservationEnvelope,
 	retained types.ObservedComponentState,
 ) bool {
+	healthKindMatches := retained.HealthEvidenceKind == nil && envelope.HealthEvidenceKind == "" ||
+		retained.HealthEvidenceKind != nil && envelope.HealthEvidenceKind == *retained.HealthEvidenceKind
+	healthUseMatches := retained.HealthEvidenceUse == nil && envelope.HealthEvidenceUse == "" ||
+		retained.HealthEvidenceUse != nil && envelope.HealthEvidenceUse == *retained.HealthEvidenceUse
+	healthPolicyMatches := retained.HealthPolicyChecksum == nil && envelope.HealthPolicyChecksum == "" ||
+		retained.HealthPolicyChecksum != nil && envelope.HealthPolicyChecksum == *retained.HealthPolicyChecksum
 	return envelope.OrganizationID == retained.OrganizationID &&
 		envelope.ObserverID == retained.ObserverID &&
 		envelope.DeploymentUnitID == retained.DeploymentUnitID &&
@@ -88,7 +94,8 @@ func SameObservationMaterial(
 		envelope.Platform == retained.Platform &&
 		envelope.TopologyChecksum == retained.TopologyChecksum &&
 		envelope.Health == retained.Health &&
-		envelope.Outcome == retained.Outcome
+		envelope.Outcome == retained.Outcome && healthKindMatches &&
+		healthUseMatches && healthPolicyMatches
 }
 
 func EvaluateAdmission(

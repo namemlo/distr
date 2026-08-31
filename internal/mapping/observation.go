@@ -38,5 +38,8 @@ func ObservedComponentStateToAPI(
 		Outcome: state.Outcome, Disposition: state.Disposition, Trusted: state.Trusted,
 		Current: state.Current, StateChecksum: state.StateChecksum,
 		RuntimeStateChecksum: state.RuntimeStateChecksum,
+		HealthEvidenceKind:   state.HealthEvidenceKind,
+		HealthEvidenceUse:    state.HealthEvidenceUse,
+		HealthPolicyChecksum: state.HealthPolicyChecksum,
 	}
 }

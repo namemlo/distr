@@ -1866,8 +1866,10 @@ Use one entry per pull request:
   runtime as native desired state without claiming that Distr deployed it.
 - Database changes: Migration 166 adds immutable `BaselineAdoption` and
   `BaselineAdoptionComponent` evidence and mutually exclusive execution versus
-  adoption lineage on `ActiveDesiredRevision`. Deferred guards require exact
-  plan/release/config/component/provenance/current-observation/audit coverage.
+  adoption lineage on `ActiveDesiredRevision`. Immutable observation columns own
+  health kind/use/policy, with digest-bound evidence references. Deferred guards
+  require exact plan/release/config/component/provenance/current-observation/audit
+  coverage, while task/external-execution guards cover insert and reassignment.
 - API changes: Adds `POST
   /api/v1/deployment-plans/{id}/baseline-adoptions` with exact checksum-bound
   evidence and idempotent replay.
@@ -1875,7 +1877,7 @@ Use one entry per pull request:
 - Agent protocol changes: None.
 - Documentation: Adds ADR-0072, PR-085 fork notes, API guidance, migration-166
   upgrade and release-matrix coverage.
-- Tests: Focused API validation, canonical material/idempotency, desired-state
+- Tests: Focused API validation, canonical and concurrent idempotency, desired-state
   source projection, handler authorization, repository mutation-shape,
   migration guard/down-refusal, planning/observation/reconciliation, and
   migration-matrix validation.

@@ -33,29 +33,26 @@ type CreateBaselineAdoptionRequest struct {
 }
 
 type BaselineAdoptionComponentRequest struct {
-	ComponentInstanceID             uuid.UUID                                `json:"componentInstanceId"`
-	ComponentKey                    string                                   `json:"componentKey"`
-	ComponentReleaseID              uuid.UUID                                `json:"componentReleaseId"`
-	ComponentReleaseChecksum        string                                   `json:"componentReleaseChecksum"`
-	SourceCommit                    string                                   `json:"sourceCommit"`
-	BuildID                         string                                   `json:"buildId"`
-	ProvenanceVerificationID        uuid.UUID                                `json:"provenanceVerificationId"`
-	ProvenanceEvidenceDigest        string                                   `json:"provenanceEvidenceDigest"`
-	ProvenancePolicyChecksum        string                                   `json:"provenancePolicyChecksum"`
-	ArtifactDigest                  string                                   `json:"artifactDigest"`
-	Platform                        string                                   `json:"platform"`
-	ConfigChecksum                  string                                   `json:"configChecksum"`
-	SchemaVersion                   string                                   `json:"schemaVersion"`
-	CapabilityChecksum              string                                   `json:"capabilityChecksum"`
-	TopologyChecksum                string                                   `json:"topologyChecksum"`
-	ObservationID                   uuid.UUID                                `json:"observationId"`
-	ObserverID                      uuid.UUID                                `json:"observerId"`
-	ObservationEvidenceChecksum     string                                   `json:"observationEvidenceChecksum"`
-	ObservationStateChecksum        string                                   `json:"observationStateChecksum"`
-	ObservationRuntimeStateChecksum string                                   `json:"observationRuntimeStateChecksum"`
-	HealthEvidenceKind              types.BaselineAdoptionHealthEvidenceKind `json:"healthEvidenceKind"`
-	HealthEvidenceUse               types.BaselineAdoptionHealthEvidenceUse  `json:"healthEvidenceUse"`
-	HealthPolicyChecksum            string                                   `json:"healthPolicyChecksum"`
+	ComponentInstanceID             uuid.UUID `json:"componentInstanceId"`
+	ComponentKey                    string    `json:"componentKey"`
+	ComponentReleaseID              uuid.UUID `json:"componentReleaseId"`
+	ComponentReleaseChecksum        string    `json:"componentReleaseChecksum"`
+	SourceCommit                    string    `json:"sourceCommit"`
+	BuildID                         string    `json:"buildId"`
+	ProvenanceVerificationID        uuid.UUID `json:"provenanceVerificationId"`
+	ProvenanceEvidenceDigest        string    `json:"provenanceEvidenceDigest"`
+	ProvenancePolicyChecksum        string    `json:"provenancePolicyChecksum"`
+	ArtifactDigest                  string    `json:"artifactDigest"`
+	Platform                        string    `json:"platform"`
+	ConfigChecksum                  string    `json:"configChecksum"`
+	SchemaVersion                   string    `json:"schemaVersion"`
+	CapabilityChecksum              string    `json:"capabilityChecksum"`
+	TopologyChecksum                string    `json:"topologyChecksum"`
+	ObservationID                   uuid.UUID `json:"observationId"`
+	ObserverID                      uuid.UUID `json:"observerId"`
+	ObservationEvidenceChecksum     string    `json:"observationEvidenceChecksum"`
+	ObservationStateChecksum        string    `json:"observationStateChecksum"`
+	ObservationRuntimeStateChecksum string    `json:"observationRuntimeStateChecksum"`
 }
 
 type BaselineAdoption = types.BaselineAdoption
@@ -154,21 +151,6 @@ func validateBaselineAdoptionComponent(
 		return validation.NewValidationFailedError("observationId is required")
 	case component.ObserverID == uuid.Nil:
 		return validation.NewValidationFailedError("observerId is required")
-	case component.HealthEvidenceKind != types.BaselineAdoptionHealthStandardReadiness &&
-		component.HealthEvidenceKind != types.BaselineAdoptionHealthLegacyLiveness:
-		return validation.NewValidationFailedError("healthEvidenceKind is invalid")
-	case component.HealthEvidenceKind == types.BaselineAdoptionHealthLegacyLiveness &&
-		component.HealthEvidenceUse != types.BaselineAdoptionHealthUseBaselineRollback:
-		return validation.NewValidationFailedError(
-			"LEGACY_LIVENESS_ONLY requires BASELINE_OR_ROLLBACK_ONLY healthEvidenceUse",
-		)
-	case component.HealthEvidenceKind == types.BaselineAdoptionHealthStandardReadiness &&
-		component.HealthEvidenceUse != types.BaselineAdoptionHealthUsePromotionEligible:
-		return validation.NewValidationFailedError(
-			"STANDARD_READINESS requires STANDARD_PROMOTION_ELIGIBLE healthEvidenceUse",
-		)
-	case !baselineAdoptionChecksumPattern.MatchString(component.HealthPolicyChecksum):
-		return validation.NewValidationFailedError("healthPolicyChecksum is invalid")
 	}
 	if !baselineAdoptionChecksumPattern.MatchString(component.ObservationEvidenceChecksum) {
 		return validation.NewValidationFailedError("observationEvidenceChecksum is invalid")

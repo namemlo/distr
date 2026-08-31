@@ -9,8 +9,20 @@ import (
 
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	. "github.com/onsi/gomega"
 )
+
+func TestBaselineAdoptionConcurrentReplayRecognizesRetryableWriteConflicts(t *testing.T) {
+	g := NewWithT(t)
+	for _, code := range []string{pgerrcode.UniqueViolation, pgerrcode.SerializationFailure} {
+		g.Expect(baselineAdoptionConcurrentWriteConflict(&pgconn.PgError{Code: code})).To(BeTrue())
+	}
+	g.Expect(baselineAdoptionConcurrentWriteConflict(
+		&pgconn.PgError{Code: pgerrcode.CheckViolation},
+	)).To(BeFalse())
+}
 
 func TestMigration166CreatesImmutableNativeBaselineAdoption(t *testing.T) {
 	g := NewWithT(t)
@@ -33,6 +45,9 @@ func TestMigration166CreatesImmutableNativeBaselineAdoption(t *testing.T) {
 		"LEGACY_LIVENESS_ONLY",
 		"BASELINE_OR_ROLLBACK_ONLY",
 		"observation_evidence_reference",
+		"ObservedComponentState_health_evidence_immutable",
+		"observedcomponentstate_health_evidence_shape",
+		"evidence://sha256/",
 		"baseline_adoption.adopted",
 		"event.outcome = 'ADOPTED'",
 	} {
@@ -42,8 +57,15 @@ func TestMigration166CreatesImmutableNativeBaselineAdoption(t *testing.T) {
 	g.Expect(upText).To(ContainSubstring("task_count = 0"))
 	g.Expect(upText).To(ContainSubstring("lock_count = 0"))
 	g.Expect(upText).To(ContainSubstring("execution_count = 0"))
+	g.Expect(upText).To(ContainSubstring("substring(evidence_checksum FROM 8)"))
 	g.Expect(downText).To(ContainSubstring(
-		"refusing migration 166 rollback: native baseline adoption evidence exists",
+		"refusing migration 166 rollback: native baseline or observation health evidence exists",
+	))
+	g.Expect(upText).To(ContainSubstring(
+		"BEFORE INSERT OR UPDATE OF deployment_plan_id, organization_id ON Task",
+	))
+	g.Expect(upText).To(ContainSubstring(
+		"BEFORE INSERT OR UPDATE OF deployment_plan_id, organization_id ON ExternalExecution",
 	))
 }
 
@@ -78,7 +100,7 @@ func TestBaselineAdoptionReplayRequiresIdenticalImmutableMaterial(t *testing.T) 
 
 	changed := input
 	changed.Components = slices.Clone(input.Components)
-	changed.Components[0].HealthPolicyChecksum = baselineAdoptionDBTestChecksum("f")
+	changed.Components[0].ObservationEvidenceChecksum = baselineAdoptionDBTestChecksum("f")
 	_, changedChecksum, err := canonicalizeBaselineAdoptionInput(changed)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(baselineAdoptionReplayMatches(existing, changed, changedChecksum)).To(BeFalse())
@@ -102,6 +124,14 @@ func TestBaselineAdoptionRepositoryHasNoSyntheticExecutionPath(t *testing.T) {
 	g.Expect(text).To(ContainSubstring("baseline_adoption.adopted"))
 	g.Expect(text).To(ContainSubstring(`Outcome:                "ADOPTED"`))
 	g.Expect(text).NotTo(ContainSubstring("DEPLOYED"))
+	g.Expect(text).To(ContainSubstring("baselineAdoptionConcurrentWriteConflict"))
+	g.Expect(text).To(ContainSubstring(
+		"case replayErr == nil && baselineAdoptionReplayMatches(",
+	))
+	g.Expect(strings.Count(text, "getBaselineAdoptionByIdempotencyKey(")).To(
+		BeNumerically(">=", 3),
+	)
+	g.Expect(text).NotTo(ContainSubstring("input.HealthEvidenceKind"))
 }
 
 func TestBaselineAdoptionRequiresExactCurrentDesiredObservedLineage(t *testing.T) {
@@ -127,6 +157,9 @@ func TestBaselineAdoptionRequiresExactCurrentDesiredObservedLineage(t *testing.T
 		"BASELINE_OR_ROLLBACK_ONLY",
 		"source_kind = 'EXECUTION'",
 		"health_evidence_kind = 'STANDARD_READINESS'",
+		"observation.health_evidence_kind",
+		"observation.health_policy_checksum",
+		"evidence://sha256/",
 	} {
 		g.Expect(text).To(ContainSubstring(fact))
 	}
@@ -185,9 +218,6 @@ func baselineAdoptionCanonicalTestInput() types.CreateBaselineAdoptionInput {
 			ObservationEvidenceChecksum:     baselineAdoptionDBTestChecksum(seed),
 			ObservationStateChecksum:        baselineAdoptionDBTestChecksum(seed),
 			ObservationRuntimeStateChecksum: baselineAdoptionDBTestChecksum(seed),
-			HealthEvidenceKind:              types.BaselineAdoptionHealthLegacyLiveness,
-			HealthEvidenceUse:               types.BaselineAdoptionHealthUseBaselineRollback,
-			HealthPolicyChecksum:            baselineAdoptionDBTestChecksum(seed),
 		}
 	}
 	return types.CreateBaselineAdoptionInput{

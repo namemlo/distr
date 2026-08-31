@@ -116,6 +116,10 @@ func TestObservationReplayRequiresExactMaterialAndComponentScope(t *testing.T) {
 	mutated = envelope
 	mutated.ComponentInstanceID = uuid.New()
 	g.Expect(SameObservationMaterial(mutated, retained)).To(BeFalse())
+
+	mutated = envelope
+	mutated.HealthPolicyChecksum = digest("different-health-policy")
+	g.Expect(SameObservationMaterial(mutated, retained)).To(BeFalse())
 }
 
 func TestRuntimeStateChecksumMatchesCampaignExpectationAndIgnoresEvidenceMetadata(t *testing.T) {
@@ -163,7 +167,7 @@ func TestRuntimeStateChecksumMatchesCampaignExpectationAndIgnoresEvidenceMetadat
 }
 
 func retainedObservation(envelope types.ObservationEnvelope) types.ObservedComponentState {
-	return types.ObservedComponentState{
+	result := types.ObservedComponentState{
 		OrganizationID: envelope.OrganizationID, ObserverID: envelope.ObserverID,
 		DeploymentUnitID:    envelope.DeploymentUnitID,
 		ComponentInstanceID: envelope.ComponentInstanceID,
@@ -176,6 +180,12 @@ func retainedObservation(envelope types.ObservationEnvelope) types.ObservedCompo
 		TopologyChecksum: envelope.TopologyChecksum, Health: envelope.Health,
 		Outcome: envelope.Outcome,
 	}
+	if envelope.HealthEvidenceKind != "" {
+		result.HealthEvidenceKind = new(envelope.HealthEvidenceKind)
+		result.HealthEvidenceUse = new(envelope.HealthEvidenceUse)
+		result.HealthPolicyChecksum = new(envelope.HealthPolicyChecksum)
+	}
+	return result
 }
 
 func validObservation(now time.Time) (types.ObserverRegistration, types.ObservationEnvelope) {
@@ -200,6 +210,7 @@ func validObservation(now time.Time) (types.ObserverRegistration, types.Observat
 		CapturedAt:            now.Add(-10 * time.Second),
 		CredentialFingerprint: registration.CredentialFingerprint,
 		EvidenceChecksum:      digest("evidence"),
+		EvidenceReference:     "evidence://sha256/" + strings.TrimPrefix(digest("evidence"), "sha256:"),
 		ArtifactDigest:        digest("artifact"),
 		ConfigChecksum:        digest("config"),
 		SchemaVersion:         "2026071801",
@@ -208,6 +219,9 @@ func validObservation(now time.Time) (types.ObserverRegistration, types.Observat
 		TopologyChecksum:      digest("topology"),
 		Health:                types.ObservedHealthHealthy,
 		Outcome:               types.ObservationOutcomeComplete,
+		HealthEvidenceKind:    types.BaselineAdoptionHealthStandardReadiness,
+		HealthEvidenceUse:     types.BaselineAdoptionHealthUsePromotionEligible,
+		HealthPolicyChecksum:  digest("readiness-policy"),
 	}
 	return registration, envelope
 }
