@@ -14,6 +14,9 @@ const safeRemoteValuePattern = /^[A-Za-z0-9_./:@%+=,-]+$/;
 const maximumIntentBytes = 64 * 1024;
 const maximumEvidenceBytes = 64 * 1024;
 const maximumCommandBytes = 32 * 1024;
+const maximumRuntimeProbeBytes = 4096;
+const runtimeSchemaVersionPattern = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const safeProbeExecutablePattern = /^\/usr\/local\/libexec\/[a-z0-9][a-z0-9._-]{0,127}$/;
 const fixedProfileIdentity = Object.freeze({
   profileId: 'choice-tp-dev',
   host: '217.15.166.6',
@@ -93,6 +96,45 @@ function constantTimeTextEqual(actual, expected) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function validateRuntimeProbe(probe, label) {
+  if (probe?.adapter === 'http-json/v1') {
+    requireExactKeys(probe, ['adapter', 'path', 'timeoutMs'], label);
+    requireString(probe.path, `${label} path`, 512);
+    if (
+      !/^\/[A-Za-z0-9._~:/@%+=,-]+$/.test(probe.path) ||
+      probe.path.includes('..') ||
+      probe.path.includes('//')
+    ) {
+      throw new Error(`${label} path is not a safe local metadata path`);
+    }
+  } else if (probe?.adapter === 'command-json/v1') {
+    requireExactKeys(probe, ['adapter', 'executable', 'arguments', 'timeoutMs'], label);
+    if (!safeProbeExecutablePattern.test(probe.executable ?? '')) {
+      throw new Error(`${label} must use a safe probe executable under /usr/local/libexec`);
+    }
+    if (!Array.isArray(probe.arguments) || probe.arguments.length > 16) {
+      throw new Error(`${label} arguments are invalid`);
+    }
+    for (const argument of probe.arguments) {
+      requireString(argument, `${label} argument`, 256);
+      if (!safeRemoteValuePattern.test(argument)) {
+        throw new Error(`${label} argument contains unsupported characters`);
+      }
+    }
+  } else {
+    throw new Error(`${label} adapter is unsupported`);
+  }
+  if (
+    !Number.isSafeInteger(probe.timeoutMs) ||
+    probe.timeoutMs < 1000 ||
+    probe.timeoutMs > 10_000 ||
+    probe.timeoutMs % 1000 !== 0
+  ) {
+    throw new Error(`${label} timeoutMs must be a whole second from 1000 through 10000`);
+  }
+  return probe;
+}
+
 export function validateProfile(profile) {
   requireExactKeys(
     profile,
@@ -115,7 +157,7 @@ export function validateProfile(profile) {
       throw new Error(`target profile ${key} is not the fixed Choice TP DEV value`);
     }
   }
-  if (profile.schemaVersion !== 'emlo.choice-tp-observer-profile/v1') {
+  if (profile.schemaVersion !== 'emlo.choice-tp-observer-profile/v2') {
     throw new Error('target profile schema is unsupported');
   }
   requireExactKeys(profile.gateway, ['url', 'hostHeader'], 'target profile gateway');
@@ -128,7 +170,7 @@ export function validateProfile(profile) {
   requireExactKeys(profile.components, Object.keys(fixedComponents), 'target profile components');
   for (const [componentKey, expected] of Object.entries(fixedComponents)) {
     const actual = profile.components[componentKey];
-    requireExactKeys(actual, Object.keys(expected), `${componentKey} target profile`);
+    requireExactKeys(actual, [...Object.keys(expected), 'runtimeProbe'], `${componentKey} target profile`);
     for (const [key, value] of Object.entries(expected)) {
       if (actual[key] !== value) {
         throw new Error(`${componentKey} ${key} is not the fixed Choice TP DEV value`);
@@ -137,6 +179,7 @@ export function validateProfile(profile) {
         throw new Error(`${componentKey} ${key} is unsafe for a read-only SSH command`);
       }
     }
+    validateRuntimeProbe(actual.runtimeProbe, `${componentKey} runtime probe`);
   }
   requireDigest(profile.canonicalChecksum, 'target profile canonicalChecksum');
   const calculated = sha256(withoutField(profile, 'canonicalChecksum'));
@@ -255,7 +298,7 @@ function shellQuote(value) {
 }
 
 function remoteCommand(executable, args) {
-  const allowlist = new Set(['/usr/bin/docker', '/usr/bin/sha256sum', '/usr/bin/curl']);
+  const allowlist = new Set(['/usr/bin/docker', '/usr/bin/sha256sum', '/usr/bin/curl', '/usr/bin/timeout']);
   if (!allowlist.has(executable)) {
     throw new Error('remote executable is not in the read-only allowlist');
   }
@@ -290,6 +333,39 @@ export function buildReadOnlyCommands(profile, componentKey) {
       `Host: ${profile.gateway.hostHeader}`,
       `${profile.gateway.url}${path}`,
     ]);
+  const runtimeProbe = (() => {
+    const probe = validateRuntimeProbe(component.runtimeProbe, `${componentKey} runtime probe`);
+    const timeoutSeconds = String(probe.timeoutMs / 1000);
+    if (probe.adapter === 'http-json/v1') {
+      return remoteCommand('/usr/bin/curl', [
+        '--silent',
+        '--show-error',
+        '--fail',
+        '--request',
+        'GET',
+        '--proto',
+        '=http',
+        '--connect-timeout',
+        '2',
+        '--max-time',
+        timeoutSeconds,
+        '--max-filesize',
+        String(maximumRuntimeProbeBytes),
+        '--header',
+        'Accept: application/json',
+        '--header',
+        `Host: ${profile.gateway.hostHeader}`,
+        `${profile.gateway.url}${probe.path}`,
+      ]);
+    }
+    return remoteCommand('/usr/bin/timeout', [
+      '--signal=KILL',
+      '--kill-after=1s',
+      `${timeoutSeconds}s`,
+      probe.executable,
+      ...probe.arguments,
+    ]);
+  })();
   return {
     containerInspect,
     imageInspect: (imageId) => {
@@ -305,6 +381,7 @@ export function buildReadOnlyCommands(profile, componentKey) {
     checksum,
     alive: health(component.alivePath),
     healthz: health(component.healthzPath),
+    runtimeProbe,
   };
 }
 
@@ -316,7 +393,11 @@ export function createSSHRunner({profile, sshKeyFile, knownHostsFile, sshBinary 
     requireString(value, label, 4096);
   }
   const target = `${profile.user}@${profile.host}`;
-  return async (kind, command) => {
+  return async (kind, command, options = {}) => {
+    const timeoutMs = options.timeoutMs ?? 20_000;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 20_000) {
+      throw new Error('read-only SSH probe timeout is invalid');
+    }
     const args = [
       '-F',
       hostPlatform() === 'win32' ? 'NUL' : '/dev/null',
@@ -341,10 +422,10 @@ export function createSSHRunner({profile, sshKeyFile, knownHostsFile, sshBinary 
       const {stdout} = await execFileAsync(sshBinary, args, {
         encoding: 'utf8',
         maxBuffer: maximumCommandBytes,
-        timeout: 20_000,
+        timeout: timeoutMs,
         windowsHide: true,
       });
-      return stdout.trim();
+      return stdout;
     } catch (error) {
       throw new Error(`read-only SSH ${kind} probe failed (exit ${error.code ?? 'unknown'})`);
     }
@@ -352,7 +433,7 @@ export function createSSHRunner({profile, sshKeyFile, knownHostsFile, sshBinary 
 }
 
 function parseContainerInspect(output) {
-  const fields = output.split('\t');
+  const fields = output.trim().split('\t');
   if (fields.length !== 3) {
     throw new Error('container inspection returned an invalid bounded record');
   }
@@ -369,7 +450,7 @@ function parseContainerInspect(output) {
 }
 
 function parseImageInspect(output, expectedPlatform) {
-  const fields = output.split('\t');
+  const fields = output.trim().split('\t');
   if (fields.length !== 2) {
     throw new Error('image inspection returned an invalid bounded record');
   }
@@ -400,7 +481,7 @@ function parseImageInspect(output, expectedPlatform) {
 
 export function parseChecksums(output, component) {
   const byPath = new Map();
-  for (const line of output.split(/\r?\n/)) {
+  for (const line of output.trim().split(/\r?\n/)) {
     const match = /^([0-9a-f]{64})\s+(.+)$/.exec(line);
     if (!match || byPath.has(match[2])) {
       throw new Error('sha256sum returned an invalid bounded record');
@@ -417,14 +498,48 @@ export function parseChecksums(output, component) {
 }
 
 function parseHealthStatus(output) {
-  if (!/^[0-9]{3}$/.test(output)) {
+  const status = output.trim();
+  if (!/^[0-9]{3}$/.test(status)) {
     throw new Error('health probe did not return one HTTP status code');
   }
-  return Number.parseInt(output, 10);
+  return Number.parseInt(status, 10);
 }
 
 function isHealthyStatus(status) {
   return status >= 200 && status < 300;
+}
+
+export function parseRuntimeProbe(output, adapter) {
+  if (
+    typeof output !== 'string' ||
+    Buffer.byteLength(output) === 0 ||
+    Buffer.byteLength(output) > maximumRuntimeProbeBytes
+  ) {
+    throw new Error('runtime probe returned an invalid bounded record');
+  }
+  let measurement;
+  try {
+    measurement = JSON.parse(output);
+  } catch {
+    throw new Error('runtime probe returned invalid JSON');
+  }
+  requireExactKeys(
+    measurement,
+    ['schemaVersion', 'capabilityChecksum', 'topologyChecksum'],
+    'runtime probe'
+  );
+  if (!runtimeSchemaVersionPattern.test(measurement.schemaVersion ?? '')) {
+    throw new Error('runtime probe schemaVersion is invalid');
+  }
+  requireDigest(measurement.capabilityChecksum, 'runtime probe capabilityChecksum');
+  requireDigest(measurement.topologyChecksum, 'runtime probe topologyChecksum');
+  return {
+    ...measurement,
+    evidence: {
+      adapter,
+      evidenceChecksum: sha256(measurement),
+    },
+  };
 }
 
 export async function observeComponent({profile, intentComponent, runSSH, capturedAt}) {
@@ -436,6 +551,12 @@ export async function observeComponent({profile, intentComponent, runSSH, captur
     intentComponent.expected.platform
   );
   const checksums = parseChecksums(await runSSH('checksums', commands.checksum), profileComponent);
+  const measuredRuntime = parseRuntimeProbe(
+    await runSSH('runtime-probe', commands.runtimeProbe, {
+      timeoutMs: Math.min(profileComponent.runtimeProbe.timeoutMs + 5000, 15_000),
+    }),
+    profileComponent.runtimeProbe.adapter
+  );
   const aliveStatus = parseHealthStatus(await runSSH('alive', commands.alive));
   let healthzStatus = null;
   let healthPath = profileComponent.alivePath;
@@ -450,7 +571,11 @@ export async function observeComponent({profile, intentComponent, runSSH, captur
     artifactDigest: Boolean(exactArtifact),
     composeChecksum: checksums.composeChecksum === intentComponent.expected.composeChecksum,
     configChecksum: checksums.configChecksum === intentComponent.expected.configChecksum,
+    schemaVersion: measuredRuntime.schemaVersion === intentComponent.expected.schemaVersion,
+    capabilityChecksum:
+      measuredRuntime.capabilityChecksum === intentComponent.expected.capabilityChecksum,
     platform: image.platform === intentComponent.expected.platform,
+    topologyChecksum: measuredRuntime.topologyChecksum === intentComponent.expected.topologyChecksum,
     running: container.state === 'running',
     health: isHealthyStatus(healthStatus),
   };
@@ -464,13 +589,14 @@ export async function observeComponent({profile, intentComponent, runSSH, captur
     configuredImageChecksum: sha256(container.configuredImage),
     configChecksum: checksums.configChecksum,
     composeChecksum: checksums.composeChecksum,
-    schemaVersion: intentComponent.expected.schemaVersion,
-    capabilityChecksum: intentComponent.expected.capabilityChecksum,
+    schemaVersion: measuredRuntime.schemaVersion,
+    capabilityChecksum: measuredRuntime.capabilityChecksum,
     platform: image.platform,
-    topologyChecksum: intentComponent.expected.topologyChecksum,
+    topologyChecksum: measuredRuntime.topologyChecksum,
     health: complete ? 'HEALTHY' : 'UNHEALTHY',
     outcome: complete ? 'COMPLETE' : 'FAILED',
     comparisons,
+    runtimeProbe: measuredRuntime.evidence,
     healthProbe: {preferredPath: profileComponent.alivePath, aliveStatus, healthzStatus, selectedPath: healthPath},
   };
 }
@@ -601,7 +727,7 @@ export async function runObserver({
     components.push(await observeComponent({profile, intentComponent, runSSH, capturedAt}));
   }
   const evidenceCore = {
-    schemaVersion: 'emlo.choice-tp-observation-evidence/v1',
+    schemaVersion: 'emlo.choice-tp-observation-evidence/v2',
     intentId: intent.intentId,
     intentChecksum: intent.canonicalChecksum,
     targetProfileChecksum: profile.canonicalChecksum,

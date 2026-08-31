@@ -1,7 +1,7 @@
 {
   "schemaVersion": "emlo.choice-tp-observation-intent/v1",
   "intentId": "example-only-replace-with-frozen-plan-intent",
-  "targetProfileChecksum": "sha256:fa368e72b7d8f8c7f060dbd91a36377d588a0462b8da8e0a6be7f6239b8d72ad",
+  "targetProfileChecksum": "sha256:fcf7f62ed8d0207582cbc28e99fa83437b430e627a5c69fe73cb1862577f3a2e",
   "organizationId": "10000000-0000-4000-8000-000000000001",
   "observerId": "10000000-0000-4000-8000-000000000002",
   "deploymentUnitId": "10000000-0000-4000-8000-000000000003",
@@ -18,7 +18,7 @@
         "artifactDigest": "sha256:6e953caf3153a76bdd15c2ee4a3826ebe36c671ff960a1d427398474cf42006c",
         "composeChecksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
         "configChecksum": "sha256:9fc5daa5be6f84f375b2b1566cd635981d4cf5343fbf80410b2f6d507005b75c",
-        "schemaVersion": "example-no-workload-db-query",
+        "schemaVersion": "1.0.0",
         "capabilityChecksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "platform": "linux/amd64",
         "topologyChecksum": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
@@ -32,12 +32,12 @@
         "artifactDigest": "sha256:5ac3a4528ceb716ca3abb3cc4e152ce31a7ce8107d679d9e534c8a9b14f02d98",
         "composeChecksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
         "configChecksum": "sha256:1177424488b2bebd163b84a56af66a3b325f9e13845e8be800b664a5de5a806e",
-        "schemaVersion": "example-no-workload-db-query",
+        "schemaVersion": "1.0.0",
         "capabilityChecksum": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
         "platform": "linux/amd64",
         "topologyChecksum": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
       }
     }
   ],
-  "canonicalChecksum": "sha256:f2141bda0e3cadc1d54511aad840e46b4cc49048a888be183ab7d78ad4beeb11"
+  "canonicalChecksum": "sha256:f871dcaf1cb923868f005b3c6d5e47444477ade5590a257d625f6582dea82c95"
 }

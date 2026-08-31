@@ -1918,3 +1918,27 @@ Use one entry per pull request:
   volume names are unchanged. Post-schema rollback now has a separate,
   checksum-bound database/object restore path; it never invokes a down migration
   or deletes retained volumes.
+
+### PR-091 - Independent runtime measurement probes
+
+- Status: Implemented with focused local verification; no live environment is
+  contacted or claimed.
+- Upstream base: `50c1e187`.
+- Feature flags: Uses the existing observer boundary; no new process flag.
+- User-facing behavior: Choice TP observer evidence independently measures and
+  compares schema version, capability checksum, and topology checksum instead
+  of copying them from plan intent.
+- Database changes: None.
+- API changes: None; existing observation requests now carry the measured
+  values.
+- UI changes: None.
+- Agent protocol changes: None; this is an adopter-side observer adapter.
+- Documentation: Adds ADR-0078, PR-091 fork notes, and the Choice TP profile v2
+  runtime-probe contract.
+- Tests: Focused in-memory Node tests cover safe HTTP/command adapters, strict
+  deadlines/output bounds, exact records and checksums, mismatch submission,
+  malformed-record refusal, and redaction. No database or live system is used.
+- Upstream contribution notes: Generic, bounded observer probe adapters remain
+  outside core and contain no provider or database dependency.
+- Compatibility notes: Profile v1 is rejected; profile and intent canonical
+  checksums must be regenerated for v2 independent measurement.

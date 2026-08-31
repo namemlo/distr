@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "emlo.choice-tp-observer-profile/v1",
+  "schemaVersion": "emlo.choice-tp-observer-profile/v2",
   "profileId": "choice-tp-dev",
   "host": "217.15.166.6",
   "port": 22,
@@ -16,15 +16,25 @@
       "composePath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/docker-compose.yaml",
       "configPath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/appsettings.Production.json",
       "alivePath": "/customer-api/alive",
-      "healthzPath": "/customer-api/healthz"
+      "healthzPath": "/customer-api/healthz",
+      "runtimeProbe": {
+        "adapter": "http-json/v1",
+        "path": "/customer-api/.well-known/distr-runtime-state",
+        "timeoutMs": 5000
+      }
     },
     "transaction-api": {
       "container": "transaction-api",
       "composePath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/docker-compose.yaml",
       "configPath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/appsettings.Production.json",
       "alivePath": "/transaction-api/alive",
-      "healthzPath": "/transaction-api/healthz"
+      "healthzPath": "/transaction-api/healthz",
+      "runtimeProbe": {
+        "adapter": "http-json/v1",
+        "path": "/transaction-api/.well-known/distr-runtime-state",
+        "timeoutMs": 5000
+      }
     }
   },
-  "canonicalChecksum": "sha256:fa368e72b7d8f8c7f060dbd91a36377d588a0462b8da8e0a6be7f6239b8d72ad"
+  "canonicalChecksum": "sha256:fcf7f62ed8d0207582cbc28e99fa83437b430e627a5c69fe73cb1862577f3a2e"
 }

@@ -8,6 +8,7 @@ import {
   buildObservationRequests,
   buildReadOnlyCommands,
   canonicalJSONString,
+  parseRuntimeProbe,
   runObserver,
   sha256,
   signEvidence,
@@ -16,7 +17,7 @@ import {
 } from './observer.mjs';
 
 const profileWithoutChecksum = {
-  schemaVersion: 'emlo.choice-tp-observer-profile/v1',
+  schemaVersion: 'emlo.choice-tp-observer-profile/v2',
   profileId: 'choice-tp-dev',
   host: '217.15.166.6',
   port: 22,
@@ -34,6 +35,11 @@ const profileWithoutChecksum = {
       configPath: '/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/appsettings.Production.json',
       alivePath: '/customer-api/alive',
       healthzPath: '/customer-api/healthz',
+      runtimeProbe: {
+        adapter: 'http-json/v1',
+        path: '/customer-api/.well-known/distr-runtime-state',
+        timeoutMs: 5000,
+      },
     },
     'transaction-api': {
       container: 'transaction-api',
@@ -41,6 +47,11 @@ const profileWithoutChecksum = {
       configPath: '/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/appsettings.Production.json',
       alivePath: '/transaction-api/alive',
       healthzPath: '/transaction-api/healthz',
+      runtimeProbe: {
+        adapter: 'http-json/v1',
+        path: '/transaction-api/.well-known/distr-runtime-state',
+        timeoutMs: 5000,
+      },
     },
   },
 };
@@ -50,11 +61,17 @@ const expectedByComponent = {
     artifactDigest: 'sha256:6e953caf3153a76bdd15c2ee4a3826ebe36c671ff960a1d427398474cf42006c',
     composeChecksum: 'sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63',
     configChecksum: 'sha256:9fc5daa5be6f84f375b2b1566cd635981d4cf5343fbf80410b2f6d507005b75c',
+    schemaVersion: '1.0.0',
+    capabilityChecksum: `sha256:${'1'.repeat(64)}`,
+    topologyChecksum: `sha256:${'3'.repeat(64)}`,
   },
   'transaction-api': {
     artifactDigest: 'sha256:5ac3a4528ceb716ca3abb3cc4e152ce31a7ce8107d679d9e534c8a9b14f02d98',
     composeChecksum: 'sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63',
     configChecksum: 'sha256:1177424488b2bebd163b84a56af66a3b325f9e13845e8be800b664a5de5a806e',
+    schemaVersion: '1.0.0',
+    capabilityChecksum: `sha256:${'2'.repeat(64)}`,
+    topologyChecksum: `sha256:${'4'.repeat(64)}`,
   },
 };
 
@@ -76,22 +93,29 @@ function createIntent(now = new Date('2030-01-01T00:05:00.000Z')) {
       sourceSequence: index + 1,
       expected: {
         ...expectedByComponent[componentKey],
-        schemaVersion: 'no-workload-db-query',
-        capabilityChecksum: `sha256:${String(index + 1).repeat(64)}`,
+        schemaVersion: expectedByComponent[componentKey].schemaVersion,
+        capabilityChecksum: expectedByComponent[componentKey].capabilityChecksum,
         platform: 'linux/amd64',
-        topologyChecksum: `sha256:${String(index + 3).repeat(64)}`,
+        topologyChecksum: expectedByComponent[componentKey].topologyChecksum,
       },
     })),
   };
   return {...intent, canonicalChecksum: sha256(intent)};
 }
 
-function createMockSSH({aliveStatus = 200, healthzStatus = 200, configMismatch = false} = {}) {
+function createMockSSH({
+  aliveStatus = 200,
+  healthzStatus = 200,
+  configMismatch = false,
+  runtimeMismatch = false,
+  runtimeProbeOutput,
+} = {}) {
   const calls = [];
   const runSSH = async (kind, command) => {
     calls.push({kind, command});
     const componentKey =
       command.includes("'transaction-api'") ||
+      command.includes('/transaction-api/') ||
       command.includes('emlo-remittance-transaction') ||
       command.includes('e77fe1d2b9a1d08f417678aa6bd85824f9c7e0277c28afc34a6f049b51713b39')
         ? 'transaction-api'
@@ -115,6 +139,16 @@ function createMockSSH({aliveStatus = 200, healthzStatus = 200, configMismatch =
     }
     if (kind === 'healthz') {
       return String(healthzStatus);
+    }
+    if (kind === 'runtime-probe') {
+      if (runtimeProbeOutput !== undefined) {
+        return runtimeProbeOutput;
+      }
+      return canonicalJSONString({
+        schemaVersion: runtimeMismatch ? '0.9.0' : expected.schemaVersion,
+        capabilityChecksum: runtimeMismatch ? `sha256:${'a'.repeat(64)}` : expected.capabilityChecksum,
+        topologyChecksum: runtimeMismatch ? `sha256:${'b'.repeat(64)}` : expected.topologyChecksum,
+      });
     }
     throw new Error(`unexpected mock SSH command kind ${kind}`);
   };
@@ -152,6 +186,7 @@ test('SSH command surface is fixed, bounded, and read-only', () => {
       commands.checksum,
       commands.alive,
       commands.healthz,
+      commands.runtimeProbe,
     ];
     for (const command of rendered) {
       assert.match(command, /^'\/usr\/bin\/(docker|sha256sum|curl)'/);
@@ -162,7 +197,38 @@ test('SSH command surface is fixed, bounded, and read-only', () => {
       assert.doesNotMatch(command, /'\/usr\/bin\/(?:psql|mysql|mongo)'/);
       assert.doesNotMatch(command, /[\r\n;&><`]/);
     }
+    assert.match(commands.runtimeProbe, /'--max-filesize'\s+'4096'/);
+    assert.match(commands.runtimeProbe, /'--max-time'\s+'5'/);
+    assert.match(commands.runtimeProbe, /\.well-known\/distr-runtime-state/);
   }
+});
+
+test('profile accepts only bounded HTTP metadata or exact safe-command runtime probes', () => {
+  const commandProfileWithoutChecksum = structuredClone(profileWithoutChecksum);
+  commandProfileWithoutChecksum.components['customer-api'].runtimeProbe = {
+    adapter: 'command-json/v1',
+    executable: '/usr/local/libexec/distr-runtime-state',
+    arguments: ['--component', 'customer-api'],
+    timeoutMs: 4000,
+  };
+  const commandProfile = {
+    ...commandProfileWithoutChecksum,
+    canonicalChecksum: sha256(commandProfileWithoutChecksum),
+  };
+  assert.equal(validateProfile(commandProfile), commandProfile);
+  const command = buildReadOnlyCommands(commandProfile, 'customer-api').runtimeProbe;
+  assert.match(command, /^'\/usr\/bin\/timeout'/);
+  assert.match(command, /'\/usr\/local\/libexec\/distr-runtime-state'/);
+  assert.match(command, /'4s'/);
+  assert.doesNotMatch(command, /(?:psql|mysql|mongo|bash|sh|powershell)/);
+
+  const unsafeProfileWithoutChecksum = structuredClone(commandProfileWithoutChecksum);
+  unsafeProfileWithoutChecksum.components['customer-api'].runtimeProbe.executable = '/bin/sh';
+  const unsafeProfile = {
+    ...unsafeProfileWithoutChecksum,
+    canonicalChecksum: sha256(unsafeProfileWithoutChecksum),
+  };
+  assert.throws(() => validateProfile(unsafeProfile), /safe probe executable/);
 });
 
 test('observer verifies exact runtime evidence, signs it, writes mode-safe output, and submits only Distr observation requests', async () => {
@@ -192,6 +258,19 @@ test('observer verifies exact runtime evidence, signs it, writes mode-safe outpu
     assert.match(result.evidenceChecksum, /^sha256:[0-9a-f]{64}$/);
     assert.equal(result.signedEvidence.components.length, 2);
     assert.ok(result.signedEvidence.components.every(({health}) => health === 'HEALTHY'));
+    assert.ok(
+      result.signedEvidence.components.every(
+        ({comparisons}) =>
+          comparisons.schemaVersion && comparisons.capabilityChecksum && comparisons.topologyChecksum
+      )
+    );
+    assert.ok(
+      result.signedEvidence.components.every(
+        ({runtimeProbe}) =>
+          runtimeProbe.adapter === 'http-json/v1' && /^sha256:[0-9a-f]{64}$/.test(runtimeProbe.evidenceChecksum)
+      )
+    );
+    assert.equal(calls.filter(({kind}) => kind === 'runtime-probe').length, 2);
     assert.equal(calls.filter(({kind}) => kind === 'healthz').length, 0);
     assert.equal(submissions.length, 2);
     for (const {url, request} of submissions) {
@@ -257,11 +336,76 @@ test('observer probes /alive first, falls back to /healthz, and reports mismatch
   assert.ok(bodies.every(({health, outcome}) => health === 'UNHEALTHY' && outcome === 'FAILED'));
 });
 
+test('observer submits independently probed runtime values instead of copying plan intent', async () => {
+  const now = new Date('2030-01-01T00:05:00.000Z');
+  const intent = createIntent(now);
+  const {privateKey} = generateKeyPairSync('ed25519');
+  const {runSSH} = createMockSSH({runtimeMismatch: true});
+  const bodies = [];
+  const result = await runObserver({
+    profile,
+    intent,
+    runSSH,
+    token: 'observer-token-that-is-distinct-and-long-enough',
+    privateKeyPEM: privateKey.export({type: 'pkcs8', format: 'pem'}),
+    now,
+    fetchImpl: async (_url, request) => {
+      bodies.push(JSON.parse(request.body));
+      return new Response('{}', {status: 202});
+    },
+  });
+  assert.ok(result.signedEvidence.components.every(({health, outcome}) => health === 'UNHEALTHY' && outcome === 'FAILED'));
+  assert.ok(
+    result.signedEvidence.components.every(
+      ({comparisons}) =>
+        !comparisons.schemaVersion && !comparisons.capabilityChecksum && !comparisons.topologyChecksum
+    )
+  );
+  assert.ok(bodies.every(({schemaVersion}) => schemaVersion === '0.9.0'));
+  assert.ok(bodies.every(({capabilityChecksum}) => capabilityChecksum === `sha256:${'a'.repeat(64)}`));
+  assert.ok(bodies.every(({topologyChecksum}) => topologyChecksum === `sha256:${'b'.repeat(64)}`));
+});
+
+test('runtime probe rejects unbounded, secret-bearing, or unsupported records without submission', async () => {
+  const now = new Date('2030-01-01T00:05:00.000Z');
+  const intent = createIntent(now);
+  const {privateKey} = generateKeyPairSync('ed25519');
+  const {runSSH} = createMockSSH({
+    runtimeProbeOutput: canonicalJSONString({
+      schemaVersion: '1.0.0',
+      capabilityChecksum: `sha256:${'1'.repeat(64)}`,
+      topologyChecksum: `sha256:${'3'.repeat(64)}`,
+      connectionString: 'must-not-be-accepted',
+    }),
+  });
+  let submissions = 0;
+  await assert.rejects(
+    runObserver({
+      profile,
+      intent,
+      runSSH,
+      token: 'observer-token-that-is-distinct-and-long-enough',
+      privateKeyPEM: privateKey.export({type: 'pkcs8', format: 'pem'}),
+      now,
+      fetchImpl: async () => {
+        submissions += 1;
+        return new Response('{}', {status: 202});
+      },
+    }),
+    /runtime probe contains unsupported or missing fields/
+  );
+  assert.equal(submissions, 0);
+  assert.throws(
+    () => parseRuntimeProbe(' '.repeat(4097), 'command-json/v1'),
+    /runtime probe returned an invalid bounded record/
+  );
+});
+
 test('signed evidence and API requests are bounded and never include credentials', () => {
   const {privateKey} = generateKeyPairSync('ed25519');
   const evidence = signEvidence(
     {
-      schemaVersion: 'emlo.choice-tp-observation-evidence/v1',
+      schemaVersion: 'emlo.choice-tp-observation-evidence/v2',
       intentId: 'intent',
       intentChecksum: `sha256:${'a'.repeat(64)}`,
       targetProfileChecksum: `sha256:${'b'.repeat(64)}`,

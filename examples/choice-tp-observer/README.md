@@ -3,7 +3,8 @@
 This example is an adopter-side, read-only observer for the Choice TP DEV `customer-api` and
 `transaction-api` pilot. It is deliberately outside Distr core. It verifies the exact running OCI RepoDigest,
 `linux/amd64` platform, fixed Compose/config files, container state, and HTTP health before submitting the
-documented independent-observation payload to Distr.
+documented independent-observation payload to Distr. Schema, capability, and topology facts are measured through
+a separately configured read-only runtime probe; they are never copied from the plan intent.
 
 The observer never deploys, pulls, starts, stops, restarts, removes, copies, or executes inside a container. It
 does not query a client database and does not contact or change Suria, MC, Jenkins, or another service.
@@ -49,6 +50,8 @@ observer can construct are:
 /usr/bin/docker image inspect
 /usr/bin/sha256sum
 /usr/bin/curl (GET with body discarded)
+/usr/bin/curl (bounded local JSON metadata GET)
+/usr/bin/timeout (only around a profile-pinned probe under /usr/local/libexec)
 ```
 
 The code has no command path for Docker Compose, Docker mutation, arbitrary shell, file writes, database clients,
@@ -72,9 +75,31 @@ source sequence and do not commit a live intent. The intent binds:
 Replace all plan-specific values and validity times, then recalculate the checksum before use. The observer rejects
 unknown fields, expired intents, checksum changes, component additions, and target rebinding.
 
-The observer does not query a workload database. `schemaVersion`, `capabilityChecksum`, and `topologyChecksum` are
-the immutable plan bindings included in the signed evidence; the independent runtime measurements in this adapter
-are image, platform, Compose/config content, running state, and health.
+The observer does not query a workload database. Each component has one profile-pinned `runtimeProbe`. The committed
+Choice TP DEV profile uses `http-json/v1` against a loopback-only application metadata route through the fixed local
+gateway. A deployment may instead select `command-json/v1`, but only for an exact executable below
+`/usr/local/libexec`, with fixed profile arguments and `/usr/bin/timeout`. Neither adapter accepts a command, path,
+endpoint, or argument from the plan intent.
+
+The probe must return one bounded JSON object and no other fields:
+
+```json
+{
+  "schemaVersion": "1.1.0",
+  "capabilityChecksum": "sha256:<component-release-checksum>",
+  "topologyChecksum": "sha256:<frozen-placement-topology-checksum>"
+}
+```
+
+`schemaVersion` is release/build metadata, not a database migration query. The two checksums are runtime-published
+immutable facts generated from the sealed Component Release and frozen placement topology. The service endpoint or
+approved safe probe obtains them from non-database build/runtime metadata only. Direct or indirect `psql`, SQL,
+connection-string, ORM migration-table, or client workload database access is outside this observer contract.
+
+The observer rejects extra keys, malformed digests, output over 4 KiB, redirects, non-loopback HTTP rebinding,
+timeouts, and unsupported command paths. It computes a canonical SHA-256 checksum of the accepted measurement,
+retains only that checksum plus the adapter identity in signed evidence, and discards the raw response. Probe output,
+stderr, authorization material, config contents, and command output are never included in errors or submissions.
 
 ## Run
 
@@ -99,16 +124,18 @@ node examples/choice-tp-observer/observer.mjs \
 ```
 
 The process exits non-zero if SSH host verification fails, the intent/profile changes, a command returns malformed
-or oversized output, a container is not running, a digest/platform/checksum differs, both health endpoints fail, or
-Distr does not return HTTP `202` for both components.
+or oversized output, a required runtime measurement is incomplete, a container is not running, both health endpoints
+fail, or Distr does not return HTTP `202` for both components.
 
-Runtime mismatches are submitted truthfully as `UNHEALTHY`/`FAILED` evidence when the observer can still complete
-all measurements. Transport, authentication, malformed-output, and incomplete-measurement failures are not submitted.
+Digest, config, schema, capability, platform, topology, and health mismatches are submitted truthfully as
+`UNHEALTHY`/`FAILED` evidence using the measured values. Transport, authentication, malformed-output, and
+incomplete-measurement failures are not submitted.
 
 ## Evidence
 
 The output is a bounded canonical record containing only fixed identities, checksums, comparison booleans, HTTP
-status codes, and timestamps. It is written with mode `0600`, signed with Ed25519, and linked to each Distr request
+status codes, canonical runtime-probe evidence checksums, and timestamps. It is written with mode `0600`, signed
+with Ed25519, and linked to each Distr request
 using its canonical `evidenceChecksum` and a `urn:sha256:` evidence reference. Raw SSH output, HTTP bodies,
 authorization headers, tokens, keys, environment variables, and config contents are discarded.
 
