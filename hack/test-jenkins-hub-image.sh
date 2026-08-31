@@ -394,7 +394,7 @@ const stable = (value) => {
 const scenarioIds = [
   'migration-file-integrity',
   'postgres-runtime-version',
-  'migration-138-to-162-upgrade',
+  'migration-138-to-166-upgrade',
   'clean-install',
   'single-step-down-and-refusal-contracts',
   'checkpoint-idempotency-and-cursor-resume',
@@ -411,7 +411,7 @@ function migration(version) {
     startedAt: '2026-07-29T00:00:00Z',
     completedAt: '2026-07-29T00:01:00Z',
     source: {commit, workingTreeDirty: false},
-    range: {from: 138, to: 162},
+    range: {from: 138, to: 166},
     database: {
       scheme: 'postgres',
       host: '127.0.0.1',
@@ -423,7 +423,7 @@ function migration(version) {
       expectedServerVersion: version,
       observedServerVersion: version,
     },
-    migrationFiles: Array.from({length: 25}, (_, index) => ({
+    migrationFiles: Array.from({length: 29}, (_, index) => ({
       version: 138 + index,
       upFile: `${138 + index}.up.sql`,
       upSha256: 'sha256:' + 'b'.repeat(64),
@@ -438,7 +438,7 @@ function migration(version) {
         startedAt: '2026-07-29T00:00:00Z',
         durationMs: 1,
         checks: id === 'migration-file-integrity'
-          ? [{description: 'migration inventory', count: 25, checksum: sha('inventory')}]
+          ? [{description: 'migration inventory', count: 29, checksum: sha('inventory')}]
           : [{
               description: `${id} executed`,
               exitCode: 0,
@@ -451,8 +451,8 @@ function migration(version) {
       };
     }),
     coverage: {
-      schemaUpgrade: {from: 138, to: 162},
-      schemaDown: {mode: 'single-step', from: 162, to: 161},
+      schemaUpgrade: {from: 138, to: 166},
+      schemaDown: {mode: 'single-step', from: 166, to: 165},
       checkpoint: 'idempotency-and-cursor-resume-tests',
       notExecuted: ['process-interruption-and-restart', 'binary-rollback'],
     },
@@ -643,6 +643,12 @@ require_pipeline_text 'deleteDir()'
   fail "Jenkinsfile contains a deployment action"
 ! grep -Eiq 'choice[-_ ]?tp|emlo' "$HELPER" "$JENKINSFILE" ||
   fail "pipeline contains adopter-specific values"
+for release_contract in "$HELPER" "$RELEASE_WORKFLOW"; do
+  grep -Fq 'range=138..166' "$release_contract" ||
+    fail "release evidence contract is not aligned to migration 166: $release_contract"
+  ! grep -Fq 'range=138..164' "$release_contract" ||
+    fail "release evidence contract retains stale migration 164 selector: $release_contract"
+done
 pass "Jenkinsfile is concurrent-safe, exact-checkout, credential-bound, publish-only, and adopter-neutral"
 
 for required_deploy_text in \
