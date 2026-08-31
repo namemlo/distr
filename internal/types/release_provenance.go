@@ -21,7 +21,10 @@ type EvidenceVerification struct {
 	EvidenceReference          string    `db:"evidence_reference" json:"evidenceReference"`
 	EvidenceDigest             string    `db:"evidence_digest" json:"evidenceDigest"`
 	PolicyChecksum             string    `db:"policy_checksum" json:"policyChecksum"`
+	VerificationMode           string    `db:"verification_mode" json:"verificationMode"`
 	TrustRootID                string    `db:"trust_root_id" json:"trustRootId"`
+	KeyID                      string    `db:"key_id" json:"keyId,omitempty"`
+	KeyFingerprint             string    `db:"key_fingerprint" json:"keyFingerprint,omitempty"`
 	PredicateType              string    `db:"predicate_type" json:"predicateType"`
 	BuilderID                  string    `db:"builder_id" json:"builderId"`
 	BuildID                    string    `db:"build_id" json:"buildId"`

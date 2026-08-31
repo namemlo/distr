@@ -304,7 +304,7 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/sigstore/sigstore v1.10.4 // indirect
+	github.com/sigstore/sigstore v1.10.4
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/spf13/cast v1.10.0 // indirect

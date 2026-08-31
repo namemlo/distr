@@ -13,6 +13,8 @@ legacy releases without changing historical evidence.
   invocation ID/builder to the Component Release; and evaluate the configured predicate, canonical source, build
   type, and external parameters.
 - Use only caller-supplied, frozen trust roots and policy inputs. Verification is deterministic and offline.
+- Accept additive key-backed Cosign bundles through a frozen PKIX public-key document while retaining the existing
+  keyless certificate/root contract.
 - Persist an immutable, bounded verification receipt and evidence digest instead of the raw envelope or
   unbounded verifier diagnostics.
 - Expose the same verification-result seam for target-plan preflight without adding a PR-063 planner dependency.
@@ -66,6 +68,12 @@ Verification rejects:
 - external parameters that differ from the canonical expected value;
 - a policy with no usable trust root or signer identity; and
 - any verifier outcome that cannot be reduced to one deterministic accepted result.
+
+Key-backed verification uses policy `distr.provenance-policy/v2`, mode `keyful`, and exact trust-document media
+type `application/vnd.distr.cosign.public-key.v1+json`. The document binds a stable key ID, PKIX public-key PEM,
+and SHA-256 of the canonical SPKI DER. Its allowed signer identity is `keyid:<keyId>` plus that fingerprint, and
+the bundle public-key hint must be base64 of the same raw digest. There is no Hub trust-key environment variable;
+the reviewed publication policy is the complete frozen trust input.
 
 The verifier does not use ambient machine trust, a default public-good instance, live TUF metadata, or a network
 fallback. Operators update trust by reviewing and distributing a new policy/root version; changing trust does not
@@ -183,6 +191,9 @@ migration number or rewrite release rows.
 No new public route family is introduced. Existing release-bundle create, validate, publish, list, and get routes
 retain v1 compatibility. Component publication now fails closed when required signed provenance cannot be
 verified. Existing responses expose the release kind/schema and immutable checksums/digests needed by the CLI.
+The publish policy adds optional `verificationMode`; keyful v2 policies use the public-key document contract above.
+Operator source/build proof reads add `verificationMode`, `keyId`, and `keyFingerprint` while retaining keyless
+`trustRootId` behavior.
 
 ### CLI impact
 
@@ -207,6 +218,8 @@ None. No task lease, executor protocol, external callback, or deployment payload
 Verification is offline, explicit, size-bounded, fail-closed, and bound to an exact artifact digest and frozen
 policy. Only redacted bounded facts are persisted. Trust roots and policy are never discovered implicitly from the
 network or supplied by an untrusted release payload.
+Keyful verification additionally binds the bundle hint, configured key ID, canonical public-key fingerprint, and
+recorded signer identity so a different supplied key cannot satisfy an existing frozen policy.
 
 ## Validation
 

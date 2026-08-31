@@ -2,12 +2,58 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
+
+func TestReleaseControlPlaneAuditInputExposesKeyfulProvenanceIdentity(t *testing.T) {
+	bundle := types.ReleaseBundle{
+		ID: uuid.New(), OrganizationID: uuid.New(), Kind: types.ReleaseBundleKindComponent,
+		CanonicalChecksum: "sha256:" + strings.Repeat("a", 64),
+	}
+	policyChecksum := "sha256:" + strings.Repeat("b", 64)
+	keyFingerprint := "sha256:" + strings.Repeat("c", 64)
+	input, err := releaseControlPlaneAuditInputWithProvenance(
+		bundle,
+		"component_release.published",
+		nil,
+		"SUCCEEDED",
+		[]types.EvidenceVerification{{
+			ArtifactKey: "service", Platform: "linux/amd64",
+			ArtifactDigest: "sha256:" + strings.Repeat("d", 64),
+			EvidenceDigest: "sha256:" + strings.Repeat("e", 64),
+			PolicyChecksum: policyChecksum, VerificationMode: "keyful",
+			TrustRootID: "release-key-1", KeyID: "release-key-1", KeyFingerprint: keyFingerprint,
+		}},
+	)
+	if err != nil {
+		t.Fatalf("releaseControlPlaneAuditInputWithProvenance() error = %v", err)
+	}
+	if input.PolicyChecksum != policyChecksum {
+		t.Fatalf("policy checksum = %q", input.PolicyChecksum)
+	}
+	var payload struct {
+		ProvenanceVerifications []struct {
+			VerificationMode string `json:"verificationMode"`
+			KeyID            string `json:"keyId"`
+			KeyFingerprint   string `json:"keyFingerprint"`
+		} `json:"provenanceVerifications"`
+	}
+	if err := json.Unmarshal(input.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal audit payload: %v", err)
+	}
+	if len(payload.ProvenanceVerifications) != 1 ||
+		payload.ProvenanceVerifications[0].VerificationMode != "keyful" ||
+		payload.ProvenanceVerifications[0].KeyID != "release-key-1" ||
+		payload.ProvenanceVerifications[0].KeyFingerprint != keyFingerprint {
+		t.Fatalf("provenance audit payload = %s", input.Payload)
+	}
+}
 
 func TestDomainAuditAppendHookFailurePropagatesToOwningBoundary(t *testing.T) {
 	expected := errors.New("audit append failed")

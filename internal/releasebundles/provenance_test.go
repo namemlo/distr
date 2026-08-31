@@ -9,8 +9,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"math/big"
 	"strings"
@@ -203,6 +205,156 @@ func TestSigstoreProvenanceVerifierRejectsMalformedEvidenceWithValidFrozenRoot(t
 	g.Expect(err).To(MatchError("provenance verification failed: evidence_malformed"))
 }
 
+func TestSigstoreProvenanceVerifierAcceptsFrozenKeyfulPolicy(t *testing.T) {
+	g := NewWithT(t)
+	fixture := newKeyfulProvenanceFixture(t, testArtifactDigest("artifact"))
+
+	result, err := (SigstoreProvenanceVerifier{}).Verify(
+		context.Background(),
+		fixture.policy,
+		testProvenanceArtifact(testArtifactDigest("artifact")),
+		fixture.evidence,
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.VerificationMode).To(Equal(ProvenanceVerificationModeKeyful))
+	g.Expect(result.KeyID).To(Equal(fixture.policy.TrustedRoots[0].ID))
+	g.Expect(result.KeyFingerprint).To(Equal(fixture.fingerprint))
+	g.Expect(result.TrustRootID).To(Equal(fixture.policy.TrustedRoots[0].ID))
+	g.Expect(result.SignerIssuer).To(Equal("keyid:release-key-1"))
+	g.Expect(result.SignerIdentity).To(Equal(fixture.fingerprint))
+	g.Expect(result.PolicyChecksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
+}
+
+func TestVerifyComponentReleasePublicationRecordsKeyfulModeAndIdentity(t *testing.T) {
+	g := NewWithT(t)
+	bundle := componentPublicationBundle()
+	fixture := newKeyfulProvenanceFixture(t, testArtifactDigest("artifact"))
+
+	facts, result := VerifyComponentReleasePublication(
+		context.Background(),
+		bundle,
+		&PublicationProvenance{
+			Policy: fixture.policy,
+			Evidence: []PublicationProvenanceEvidence{{
+				ArtifactKey: "service", Platform: "linux/amd64", Evidence: fixture.evidence,
+			}},
+		},
+		SigstoreProvenanceVerifier{},
+	)
+
+	g.Expect(result.Valid).To(BeTrue(), result.Errors)
+	g.Expect(facts).To(HaveLen(1))
+	g.Expect(facts[0].VerificationMode).To(Equal(ProvenanceVerificationModeKeyful))
+	g.Expect(facts[0].TrustRootID).To(Equal("release-key-1"))
+	g.Expect(facts[0].KeyID).To(Equal("release-key-1"))
+	g.Expect(facts[0].KeyFingerprint).To(Equal(fixture.fingerprint))
+}
+
+func TestSigstoreProvenanceVerifierRejectsKeyfulSubstitutionUnknownKeyWrongDigestAndMalformedSignature(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*testing.T, *keyfulProvenanceFixture)
+		digest    string
+		errorCode string
+	}{
+		{
+			name: "unknown key id",
+			mutate: func(_ *testing.T, fixture *keyfulProvenanceFixture) {
+				fixture.evidence.TrustRootID = "unknown-key"
+			},
+			errorCode: "trusted_key_unknown",
+		},
+		{
+			name: "substituted configured key",
+			mutate: func(t *testing.T, fixture *keyfulProvenanceFixture) {
+				replacement := newKeyfulProvenanceFixture(t, testArtifactDigest("artifact"))
+				fixture.policy.TrustedRoots[0].JSON = replacement.policy.TrustedRoots[0].JSON
+				fixture.policy.AllowedSignerIdentities[0].Subject = replacement.fingerprint
+			},
+			errorCode: "key_substitution",
+		},
+		{
+			name:      "wrong artifact digest",
+			digest:    testArtifactDigest("different"),
+			errorCode: "signature_untrusted",
+		},
+		{
+			name: "malformed signature",
+			mutate: func(t *testing.T, fixture *keyfulProvenanceFixture) {
+				var document map[string]any
+				g := NewWithT(t)
+				g.Expect(json.Unmarshal(fixture.evidence.BundleJSON, &document)).To(Succeed())
+				envelope := document["dsseEnvelope"].(map[string]any)
+				signatures := envelope["signatures"].([]any)
+				signatures[0].(map[string]any)["sig"] = []byte("not-an-ecdsa-signature")
+				encoded, err := json.Marshal(document)
+				g.Expect(err).NotTo(HaveOccurred())
+				fixture.evidence.BundleJSON = encoded
+			},
+			errorCode: "signature_untrusted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			fixture := newKeyfulProvenanceFixture(t, testArtifactDigest("artifact"))
+			if tt.mutate != nil {
+				tt.mutate(t, &fixture)
+			}
+			digest := tt.digest
+			if digest == "" {
+				digest = testArtifactDigest("artifact")
+			}
+
+			result, err := (SigstoreProvenanceVerifier{}).Verify(
+				context.Background(), fixture.policy, testProvenanceArtifact(digest), fixture.evidence,
+			)
+
+			g.Expect(result).To(Equal(ProvenanceVerificationResult{}))
+			g.Expect(err).To(MatchError("provenance verification failed: " + tt.errorCode))
+		})
+	}
+}
+
+func TestKeyfulProvenancePolicyRejectsFingerprintOrMediaTypeMismatchAndChangesChecksumWithKeyIdentity(t *testing.T) {
+	g := NewWithT(t)
+	fixture := newKeyfulProvenanceFixture(t, testArtifactDigest("artifact"))
+
+	original, err := provenancePolicyChecksum(fixture.policy)
+	g.Expect(err).NotTo(HaveOccurred())
+	changed := fixture.policy
+	replacement := newKeyfulProvenanceFixture(t, testArtifactDigest("artifact"))
+	changed.TrustedRoots = append([]TrustRoot(nil), fixture.policy.TrustedRoots...)
+	changed.TrustedRoots[0].JSON = replacement.policy.TrustedRoots[0].JSON
+	changed.AllowedSignerIdentities = append([]SignerIdentity(nil), fixture.policy.AllowedSignerIdentities...)
+	changed.AllowedSignerIdentities[0].Subject = replacement.fingerprint
+	changedChecksum, err := provenancePolicyChecksum(changed)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(changedChecksum).NotTo(Equal(original))
+
+	var rootDocument map[string]any
+	g.Expect(json.Unmarshal(fixture.policy.TrustedRoots[0].JSON, &rootDocument)).To(Succeed())
+	rootDocument["fingerprint"] = "sha256:" + strings.Repeat("f", 64)
+	fixture.policy.TrustedRoots[0].JSON, err = json.Marshal(rootDocument)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = (SigstoreProvenanceVerifier{}).Verify(
+		context.Background(), fixture.policy, testProvenanceArtifact(testArtifactDigest("artifact")), fixture.evidence,
+	)
+	g.Expect(err).To(MatchError("provenance verification failed: policy_invalid"))
+
+	fixture = newKeyfulProvenanceFixture(t, testArtifactDigest("artifact"))
+	g.Expect(json.Unmarshal(fixture.policy.TrustedRoots[0].JSON, &rootDocument)).To(Succeed())
+	rootDocument["mediaType"] = "application/vnd.example.cosign.public-key.v1+json"
+	fixture.policy.TrustedRoots[0].JSON, err = json.Marshal(rootDocument)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = (SigstoreProvenanceVerifier{}).Verify(
+		context.Background(), fixture.policy, testProvenanceArtifact(testArtifactDigest("artifact")), fixture.evidence,
+	)
+	g.Expect(err).To(MatchError("provenance verification failed: policy_invalid"))
+}
+
 func TestVerifySignedProvenanceRejectsDuplicateSignedStatementMembers(t *testing.T) {
 	g := NewWithT(t)
 	statement := string(validProvenanceStatement(t, testArtifactDigest("artifact")))
@@ -253,6 +405,7 @@ func TestVerifyComponentReleasePublicationRequiresEveryPlatformAndReturnsBounded
 		return ProvenanceVerificationResult{
 			EvidenceDigest:             "sha256:" + strings.Repeat("1", 64),
 			PolicyChecksum:             "sha256:" + strings.Repeat("2", 64),
+			VerificationMode:           ProvenanceVerificationModeKeyless,
 			TrustRootID:                evidence.TrustRootID,
 			PredicateType:              testPredicateType,
 			BuilderID:                  testBuilderID,
@@ -483,6 +636,75 @@ type provenanceFixture struct {
 	policy          ProvenancePolicy
 	policyChecksum  string
 	trustedMaterial root.TrustedMaterial
+}
+
+type keyfulProvenanceFixture struct {
+	policy      ProvenancePolicy
+	evidence    ComponentReleaseEvidence
+	fingerprint string
+}
+
+func newKeyfulProvenanceFixture(t *testing.T, artifactDigest string) keyfulProvenanceFixture {
+	t.Helper()
+	g := NewWithT(t)
+	now := time.Now().UTC()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	g.Expect(err).NotTo(HaveOccurred())
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	g.Expect(err).NotTo(HaveOccurred())
+	fingerprintBytes := sha256.Sum256(publicKeyDER)
+	fingerprint := "sha256:" + hex.EncodeToString(fingerprintBytes[:])
+	hint := base64.StdEncoding.EncodeToString(fingerprintBytes[:])
+	publicKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicKeyDER})
+	trustedRootJSON, err := json.Marshal(map[string]any{
+		"mediaType": KeyfulProvenanceTrustRootMediaType,
+		"keyId":     "release-key-1", "fingerprint": fingerprint, "publicKeyPem": string(publicKeyPEM),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	statement := validProvenanceStatement(t, artifactDigest)
+	preAuthEncoding := []byte(fmt.Sprintf(
+		"DSSEv1 %d %s %d %s",
+		len(bundle.IntotoMediaType),
+		bundle.IntotoMediaType,
+		len(statement),
+		statement,
+	))
+	preAuthDigest := sha256.Sum256(preAuthEncoding)
+	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, preAuthDigest[:])
+	g.Expect(err).NotTo(HaveOccurred())
+	bundleDocument := map[string]any{
+		"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+		"verificationMaterial": map[string]any{
+			"publicKey": map[string]any{"hint": hint},
+		},
+		"dsseEnvelope": map[string]any{
+			"payload":     statement,
+			"payloadType": bundle.IntotoMediaType,
+			"signatures":  []any{map[string]any{"sig": signature}},
+		},
+	}
+	bundleJSON, err := json.Marshal(bundleDocument)
+	g.Expect(err).NotTo(HaveOccurred())
+	policy := ProvenancePolicy{
+		Version:          KeyfulProvenancePolicyVersion,
+		VerificationMode: ProvenanceVerificationModeKeyful,
+		TrustedRoots: []TrustRoot{{
+			ID: "release-key-1", JSON: trustedRootJSON,
+			ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour),
+		}},
+		AllowedSignerIdentities:    []SignerIdentity{{Issuer: "keyid:release-key-1", Subject: fingerprint}},
+		AllowedPredicateTypes:      []string{testPredicateType},
+		AllowedBuilders:            []string{testBuilderID},
+		AllowedSourcePrefixes:      []string{testSourcePrefix},
+		AllowedBuildTypes:          []string{testBuildType},
+		ExpectedExternalParameters: json.RawMessage(`{"release":true,"target":"container"}`),
+	}
+	return keyfulProvenanceFixture{
+		policy: policy, fingerprint: fingerprint,
+		evidence: ComponentReleaseEvidence{
+			Reference: "oci://evidence/provenance", TrustRootID: "release-key-1", BundleJSON: bundleJSON,
+		},
+	}
 }
 
 func newProvenanceFixture(t *testing.T, statement []byte) provenanceFixture {

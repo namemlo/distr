@@ -230,6 +230,10 @@ type OperatorReleaseSourceBuildProof struct {
 	VerifiedBuildType    string `json:"verifiedBuildType,omitempty"`
 	ProvenanceReference  string `json:"provenanceReference,omitempty"`
 	ProvenanceDigest     string `json:"provenanceDigest,omitempty"`
+	VerificationMode     string `json:"verificationMode,omitempty"`
+	TrustRootID          string `json:"trustRootId,omitempty"`
+	KeyID                string `json:"keyId,omitempty"`
+	KeyFingerprint       string `json:"keyFingerprint,omitempty"`
 	SBOMReference        string `json:"sbomReference,omitempty"`
 	SBOMDigest           string `json:"sbomDigest,omitempty"`
 	VerificationState    string `json:"verificationState"`

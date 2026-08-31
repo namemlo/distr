@@ -2,7 +2,10 @@ package db
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 
+	"github.com/distr-sh/distr/internal/releasebundles"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -49,6 +52,61 @@ func releaseControlPlaneAuditInput(
 		input.ProductReleaseChecksum = bundle.CanonicalChecksum
 	}
 	return input
+}
+
+func releaseControlPlaneAuditInputWithProvenance(
+	bundle types.ReleaseBundle,
+	eventType string,
+	actorID *uuid.UUID,
+	outcome string,
+	verifications []types.EvidenceVerification,
+) (types.ControlPlaneAuditEventInput, error) {
+	input := releaseControlPlaneAuditInput(bundle, eventType, actorID, outcome)
+	if len(verifications) == 0 {
+		return input, nil
+	}
+	type verificationPayload struct {
+		ArtifactKey      string `json:"artifactKey"`
+		Platform         string `json:"platform"`
+		ArtifactDigest   string `json:"artifactDigest"`
+		EvidenceDigest   string `json:"evidenceDigest"`
+		PolicyChecksum   string `json:"policyChecksum"`
+		VerificationMode string `json:"verificationMode"`
+		TrustRootID      string `json:"trustRootId,omitempty"`
+		KeyID            string `json:"keyId,omitempty"`
+		KeyFingerprint   string `json:"keyFingerprint,omitempty"`
+	}
+	items := make([]verificationPayload, 0, len(verifications))
+	for _, verification := range verifications {
+		if input.PolicyChecksum == "" {
+			input.PolicyChecksum = verification.PolicyChecksum
+		}
+		trustRootID := verification.TrustRootID
+		if verification.VerificationMode == releasebundles.ProvenanceVerificationModeKeyful {
+			trustRootID = ""
+		}
+		items = append(items, verificationPayload{
+			ArtifactKey: verification.ArtifactKey, Platform: verification.Platform,
+			ArtifactDigest: verification.ArtifactDigest, EvidenceDigest: verification.EvidenceDigest,
+			PolicyChecksum: verification.PolicyChecksum, VerificationMode: verification.VerificationMode,
+			TrustRootID: trustRootID, KeyID: verification.KeyID,
+			KeyFingerprint: verification.KeyFingerprint,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].ArtifactKey == items[j].ArtifactKey {
+			return items[i].Platform < items[j].Platform
+		}
+		return items[i].ArtifactKey < items[j].ArtifactKey
+	})
+	payload, err := json.Marshal(struct {
+		ProvenanceVerifications []verificationPayload `json:"provenanceVerifications"`
+	}{ProvenanceVerifications: items})
+	if err != nil {
+		return types.ControlPlaneAuditEventInput{}, err
+	}
+	input.Payload = payload
+	return input, nil
 }
 
 func recordReleaseControlPlaneAuditMutation(

@@ -1156,8 +1156,9 @@ Use one entry per pull request:
 - Feature flag: Uses `operator_control_plane_v2` for new component-release publication. Historical reads and
   untouched v1 behavior retain their existing gates.
 - User-facing behavior: Component publication verifies signed in-toto/Sigstore provenance offline against frozen
-  trusted roots and policy. Operators can preview and apply a checkpointed v1-to-v2 release backfill without
-  changing historical release evidence.
+  trusted roots and policy, including additive key-backed Cosign bundles bound to an exact reviewed PKIX public-key
+  fingerprint. Operators can preview and apply a checkpointed v1-to-v2 release backfill without changing
+  historical release evidence.
 - Database changes: No new migration is allocated to PR-061. It consumes the additive, organization-scoped,
   append-only evidence-verification and release-lineage/checkpoint relations reserved with the Component Release
   v2 schema foundation. Verification receipts include the exact source repository/commit and
@@ -1165,9 +1166,11 @@ Use one entry per pull request:
   Backfill checkpoints bind the reviewed document reference/SHA-256, and lineage binds the selected reviewed
   artifact row. Stored verification facts and blocker diagnostics are bounded and redacted.
 - API changes: No new route family. Existing component publication fails closed for missing, untrusted, malformed,
-  expired, oversized, tampered, or policy-mismatched provenance. The release-bundle preflight seam exposes the same
-  bounded verification facts without coupling to the future target-plan package. Signed dependency
-  repository/commit and invocation/builder values must exactly match the Component Release.
+  expired, oversized, tampered, or policy-mismatched provenance. Provenance policy v2 adds explicit keyful mode and
+  a community-neutral public-key document; operator source/build proof reads expose verification mode and key
+  identity. The release-bundle preflight seam exposes the same bounded verification facts without coupling to the
+  future target-plan package. Signed dependency repository/commit and invocation/builder values must exactly match
+  the Component Release.
 - UI changes: None.
 - CLI changes: Existing `distr release` flags remain compatible; create adds optional local `--schema v1|v2`
   assertion, publish adds optional `--provenance-file`, and v2 text output includes schema, canonical checksum, and
@@ -1177,7 +1180,8 @@ Use one entry per pull request:
   byte-exact evidence document on resume, and returns `nextCursor`/`awaitingEvidence` without permanently blocking
   unreviewed rows.
 - Agent protocol changes: None.
-- Documentation: Added PR-061 fork notes and updated the release CLI and community API index.
+- Documentation: Added PR-061 fork notes and updated the release CLI and community API index, including the exact
+  keyful Cosign public-key and configuration contract.
 - Tests: Added trusted and invalid provenance cases, exact subject/source/build/policy matching,
   malformed/oversized/tampered inputs, bounded persistence and migration constraints, publication/preflight gates,
   backfill reviewed-media-type/dry-run/checkpoint checksum/one-batch/blocker and v1 immutability coverage, and

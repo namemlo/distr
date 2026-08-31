@@ -105,6 +105,7 @@ func TestOperatorProductReleaseDetailExposesPinsAndCapabilityDAG(t *testing.T) {
 		componentDigest,
 	)
 	provenanceDigest := "sha256:" + strings.Repeat("1", 64)
+	keyFingerprint := "sha256:" + strings.Repeat("5", 64)
 	sbomDigest := "sha256:" + strings.Repeat("2", 64)
 	_, err := internalctx.GetDb(ctx).Exec(ctx, `
 		INSERT INTO ComponentReleaseEvidence (
@@ -120,14 +121,14 @@ func TestOperatorProductReleaseDetailExposesPinsAndCapabilityDAG(t *testing.T) {
 		) VALUES (
 		  @organizationID, @componentID, 'worker', 'linux/amd64', @componentDigest,
 		  'oci://evidence.invalid/worker/provenance', @provenanceDigest,
-		  'sha256:' || repeat('3', 64), 'prod-trust-root', 'https://slsa.dev/provenance/v1',
+		  'sha256:' || repeat('3', 64), 'release-key-1', 'https://slsa.dev/provenance/v1',
 		  'verified-builder', 'verified-build-200', 'git+https://example.invalid/worker.git',
 		  'fedcba9876543210fedcba9876543210fedcba98', 'https://slsa.dev/provenance/v1',
-		  'sha256:' || repeat('4', 64), 'https://issuer.invalid', 'worker-builder', now()
+		  'sha256:' || repeat('4', 64), 'keyid:release-key-1', @keyFingerprint, now()
 		)`, pgx.NamedArgs{
 		"componentID": componentID, "organizationID": organizationID,
 		"componentDigest": componentDigest, "provenanceDigest": provenanceDigest,
-		"sbomDigest": sbomDigest,
+		"sbomDigest": sbomDigest, "keyFingerprint": keyFingerprint,
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	productID := insertOperatorReleaseFixture(
@@ -219,6 +220,9 @@ func TestOperatorProductReleaseDetailExposesPinsAndCapabilityDAG(t *testing.T) {
 		VerifiedBuildType:   "https://slsa.dev/provenance/v1",
 		ProvenanceReference: "oci://evidence.invalid/worker/provenance",
 		ProvenanceDigest:    provenanceDigest,
+		VerificationMode:    "keyful",
+		KeyID:               "release-key-1",
+		KeyFingerprint:      keyFingerprint,
 		SBOMReference:       "oci://evidence.invalid/worker/sbom@" + sbomDigest,
 		SBOMDigest:          sbomDigest,
 		VerificationState:   "VERIFIED",
@@ -644,6 +648,11 @@ func TestOperatorReleaseDetailSQLUsesQualifiedProviderAndVerifiedEvidence(t *tes
 		"'verifiedBuilderId', verification.builder_id",
 		"'verifiedBuildId', verification.build_id",
 		"'verifiedSourceUri', verification.source_uri",
+		"'verificationMode'",
+		"'trustRootId'",
+		"'keyId'",
+		"'keyFingerprint'",
+		"verification.signer_issuer LIKE 'keyid:%'",
 		"evidence.evidence_type = 'sbom'",
 		"'changeContextSource'",
 		"DeploymentPlanBaseline",

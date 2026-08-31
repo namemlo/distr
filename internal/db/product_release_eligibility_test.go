@@ -389,6 +389,7 @@ func productReleasePublicationComponentFixture(
 		return releasebundles.ProvenanceVerificationResult{
 			EvidenceDigest:             "sha256:" + strings.Repeat("1", 64),
 			PolicyChecksum:             "sha256:" + strings.Repeat("2", 64),
+			VerificationMode:           releasebundles.ProvenanceVerificationModeKeyless,
 			TrustRootID:                evidence.TrustRootID,
 			PredicateType:              "https://slsa.dev/provenance/v1",
 			BuilderID:                  artifact.BuilderID,

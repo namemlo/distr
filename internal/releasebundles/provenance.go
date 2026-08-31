@@ -3,9 +3,13 @@ package releasebundles
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -22,20 +26,27 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+	"github.com/sigstore/sigstore/pkg/signature"
 )
 
 const (
-	ProvenancePolicyVersion    = "distr.provenance-policy/v1"
-	maxProvenanceBundleBytes   = 4 << 20
-	maxTrustedRootBytes        = 1 << 20
-	maxPolicyValues            = 64
-	maxProvenanceTextBytes     = 1024
-	maxSourceURIBytes          = 2048
-	maxEvidenceReferenceBytes  = 2048
-	maxArtifactKeyBytes        = 128
-	maxTrustRootIDBytes        = 256
-	maxExternalParametersBytes = 1 << 20
-	maxPublicationEvidence     = 128
+	ProvenancePolicyVersion            = "distr.provenance-policy/v1"
+	KeyfulProvenancePolicyVersion      = "distr.provenance-policy/v2"
+	KeyfulProvenanceTrustRootMediaType = "application/vnd.distr.cosign.public-key.v1+json"
+	ProvenanceVerificationModeKeyless  = "keyless"
+	ProvenanceVerificationModeKeyful   = "keyful"
+	maxProvenanceBundleBytes           = 4 << 20
+	maxTrustedRootBytes                = 1 << 20
+	maxTrustedPublicKeyBytes           = 64 << 10
+	maxPolicyValues                    = 64
+	maxProvenanceTextBytes             = 1024
+	maxSourceURIBytes                  = 2048
+	maxEvidenceReferenceBytes          = 2048
+	maxArtifactKeyBytes                = 128
+	maxTrustRootIDBytes                = 256
+	maxExternalParametersBytes         = 1 << 20
+	maxPublicationEvidence             = 128
+	keyfulSignerIssuerPrefix           = "keyid:"
 )
 
 type TrustRoot struct {
@@ -55,6 +66,7 @@ type SignerIdentity struct {
 // the network.
 type ProvenancePolicy struct {
 	Version                    string
+	VerificationMode           string
 	TrustedRoots               []TrustRoot
 	AllowedSignerIdentities    []SignerIdentity
 	AllowedPredicateTypes      []string
@@ -83,7 +95,10 @@ type ComponentReleaseEvidence struct {
 type ProvenanceVerificationResult struct {
 	EvidenceDigest             string
 	PolicyChecksum             string
+	VerificationMode           string
 	TrustRootID                string
+	KeyID                      string
+	KeyFingerprint             string
 	PredicateType              string
 	BuilderID                  string
 	BuildID                    string
@@ -145,6 +160,9 @@ func (SigstoreProvenanceVerifier) Verify(
 	if len(evidence.BundleJSON) > maxProvenanceBundleBytes {
 		return ProvenanceVerificationResult{}, provenanceError("evidence_oversized")
 	}
+	if policy.Version == KeyfulProvenancePolicyVersion {
+		return verifyKeyfulProvenance(ctx, policy, artifact, evidence)
+	}
 	trustRoot, policyChecksum, err := validateAndSelectProvenancePolicy(policy, evidence.TrustRootID)
 	if err != nil {
 		return ProvenanceVerificationResult{}, err
@@ -179,6 +197,68 @@ func (SigstoreProvenanceVerifier) Verify(
 	)
 }
 
+type provenanceVerificationTrust struct {
+	mode            string
+	trustMaterialID string
+	keyID           string
+	keyFingerprint  string
+	keyHint         string
+	validFrom       time.Time
+	validUntil      time.Time
+}
+
+func verifyKeyfulProvenance(
+	ctx context.Context,
+	policy ProvenancePolicy,
+	artifact ProvenanceArtifact,
+	evidence ComponentReleaseEvidence,
+) (ProvenanceVerificationResult, error) {
+	trustedKey, publicKey, keyHint, keyFingerprint, policyChecksum, err := validateAndSelectKeyfulProvenancePolicy(
+		policy,
+		evidence.TrustRootID,
+	)
+	if err != nil {
+		return ProvenanceVerificationResult{}, err
+	}
+	if err := ValidateProvenanceJSONDocument(evidence.BundleJSON); err != nil {
+		return ProvenanceVerificationResult{}, provenanceError("evidence_malformed")
+	}
+	var signedBundle bundle.Bundle
+	if err := signedBundle.UnmarshalJSON(evidence.BundleJSON); err != nil {
+		return ProvenanceVerificationResult{}, provenanceError("evidence_malformed")
+	}
+	verificationContent, err := signedBundle.VerificationContent()
+	if err != nil || verificationContent.PublicKey() == nil {
+		return ProvenanceVerificationResult{}, provenanceError("key_signature_required")
+	}
+	if verificationContent.PublicKey().Hint() != keyHint {
+		return ProvenanceVerificationResult{}, provenanceError("key_substitution")
+	}
+	publicKeyVerifier, err := signature.LoadDefaultVerifier(publicKey)
+	if err != nil {
+		return ProvenanceVerificationResult{}, provenanceError("trusted_key_invalid")
+	}
+	trustedMaterial := root.NewTrustedPublicKeyMaterialFromMapping(map[string]*root.ExpiringKey{
+		keyHint: root.NewExpiringKey(publicKeyVerifier, trustedKey.ValidFrom, trustedKey.ValidUntil),
+	})
+	sum := sha256.Sum256(evidence.BundleJSON)
+	return verifySignedProvenanceWithTrust(
+		ctx,
+		policy,
+		artifact,
+		"sha256:"+hex.EncodeToString(sum[:]),
+		policyChecksum,
+		provenanceVerificationTrust{
+			mode: ProvenanceVerificationModeKeyful, trustMaterialID: trustedKey.ID,
+			keyID: trustedKey.ID, keyFingerprint: keyFingerprint, keyHint: keyHint,
+			validFrom: trustedKey.ValidFrom, validUntil: trustedKey.ValidUntil,
+		},
+		&signedBundle,
+		trustedMaterial,
+		verify.WithCurrentTime(),
+	)
+}
+
 func verifySignedProvenance(
 	ctx context.Context,
 	policy ProvenancePolicy,
@@ -186,6 +266,33 @@ func verifySignedProvenance(
 	evidenceDigest string,
 	policyChecksum string,
 	trustRoot TrustRoot,
+	entity verify.SignedEntity,
+	trustedMaterial root.TrustedMaterial,
+	verifierOptions ...verify.VerifierOption,
+) (ProvenanceVerificationResult, error) {
+	return verifySignedProvenanceWithTrust(
+		ctx,
+		policy,
+		artifact,
+		evidenceDigest,
+		policyChecksum,
+		provenanceVerificationTrust{
+			mode: ProvenanceVerificationModeKeyless, trustMaterialID: trustRoot.ID,
+			validFrom: trustRoot.ValidFrom, validUntil: trustRoot.ValidUntil,
+		},
+		entity,
+		trustedMaterial,
+		verifierOptions...,
+	)
+}
+
+func verifySignedProvenanceWithTrust(
+	ctx context.Context,
+	policy ProvenancePolicy,
+	artifact ProvenanceArtifact,
+	evidenceDigest string,
+	policyChecksum string,
+	trust provenanceVerificationTrust,
 	entity verify.SignedEntity,
 	trustedMaterial root.TrustedMaterial,
 	verifierOptions ...verify.VerifierOption,
@@ -208,18 +315,22 @@ func verifySignedProvenance(
 	if err != nil {
 		return ProvenanceVerificationResult{}, provenanceError("trusted_root_invalid")
 	}
-	policyOptions := make([]verify.PolicyOption, 0, len(policy.AllowedSignerIdentities))
-	for _, identity := range policy.AllowedSignerIdentities {
-		certificateIdentity, err := verify.NewShortCertificateIdentity(
-			identity.Issuer,
-			"",
-			identity.Subject,
-			"",
-		)
-		if err != nil {
-			return ProvenanceVerificationResult{}, provenanceError("policy_invalid")
+	policyOptions := make([]verify.PolicyOption, 0, len(policy.AllowedSignerIdentities)+1)
+	if trust.mode == ProvenanceVerificationModeKeyful {
+		policyOptions = append(policyOptions, verify.WithKey())
+	} else {
+		for _, identity := range policy.AllowedSignerIdentities {
+			certificateIdentity, err := verify.NewShortCertificateIdentity(
+				identity.Issuer,
+				"",
+				identity.Subject,
+				"",
+			)
+			if err != nil {
+				return ProvenanceVerificationResult{}, provenanceError("policy_invalid")
+			}
+			policyOptions = append(policyOptions, verify.WithCertificateIdentity(certificateIdentity))
 		}
-		policyOptions = append(policyOptions, verify.WithCertificateIdentity(certificateIdentity))
 	}
 	verification, err := verifier.Verify(
 		entity,
@@ -235,7 +346,7 @@ func verifySignedProvenance(
 	if !ok {
 		return ProvenanceVerificationResult{}, provenanceError("timestamp_missing")
 	}
-	if !timestampsWithinTrustRoot(verification.VerifiedTimestamps, trustRoot) {
+	if !timestampsWithinValidity(verification.VerifiedTimestamps, trust.validFrom, trust.validUntil) {
 		return ProvenanceVerificationResult{}, provenanceError("trusted_root_expired")
 	}
 	statement, err := decodeVerifiedStatement(statementJSON)
@@ -247,14 +358,24 @@ func verifySignedProvenance(
 		return ProvenanceVerificationResult{}, err
 	}
 	signerIssuer, signerIdentity := "", ""
-	if verification.VerifiedIdentity != nil {
+	if trust.mode == ProvenanceVerificationModeKeyful {
+		if verification.Signature == nil || verification.Signature.PublicKeyID == nil ||
+			string(*verification.Signature.PublicKeyID) != trust.keyHint {
+			return ProvenanceVerificationResult{}, provenanceError("key_substitution")
+		}
+		signerIssuer = keyfulSignerIssuerPrefix + trust.keyID
+		signerIdentity = trust.keyFingerprint
+	} else if verification.VerifiedIdentity != nil {
 		signerIssuer = verification.VerifiedIdentity.Issuer.Issuer
 		signerIdentity = verification.VerifiedIdentity.SubjectAlternativeName.SubjectAlternativeName
 	}
 	return ProvenanceVerificationResult{
 		EvidenceDigest:             evidenceDigest,
 		PolicyChecksum:             policyChecksum,
-		TrustRootID:                trustRoot.ID,
+		VerificationMode:           trust.mode,
+		TrustRootID:                trust.trustMaterialID,
+		KeyID:                      trust.keyID,
+		KeyFingerprint:             trust.keyFingerprint,
 		PredicateType:              statement.PredicateType,
 		BuilderID:                  statement.Predicate.RunDetails.Builder.ID,
 		BuildID:                    statement.Predicate.RunDetails.Metadata.InvocationID,
@@ -398,14 +519,7 @@ func validateProvenanceStatement(
 	return artifact.SourceRepository, "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func validateAndSelectProvenancePolicy(policy ProvenancePolicy, trustRootID string) (TrustRoot, string, error) {
-	if policy.Version != ProvenancePolicyVersion ||
-		len(policy.TrustedRoots) == 0 ||
-		len(policy.TrustedRoots) > maxPolicyValues ||
-		len(policy.AllowedSignerIdentities) == 0 ||
-		len(policy.AllowedSignerIdentities) > maxPolicyValues {
-		return TrustRoot{}, "", provenanceError("policy_invalid")
-	}
+func validateCommonProvenancePolicy(policy ProvenancePolicy) error {
 	lists := [][]string{
 		policy.AllowedPredicateTypes,
 		policy.AllowedBuilders,
@@ -413,37 +527,52 @@ func validateAndSelectProvenancePolicy(policy ProvenancePolicy, trustRootID stri
 	}
 	for _, values := range lists {
 		if len(values) == 0 || len(values) > maxPolicyValues {
-			return TrustRoot{}, "", provenanceError("policy_invalid")
+			return provenanceError("policy_invalid")
 		}
 		seen := map[string]struct{}{}
 		for _, value := range values {
 			if !safeProvenanceText(value) {
-				return TrustRoot{}, "", provenanceError("policy_invalid")
+				return provenanceError("policy_invalid")
 			}
 			if _, duplicate := seen[value]; duplicate {
-				return TrustRoot{}, "", provenanceError("policy_invalid")
+				return provenanceError("policy_invalid")
 			}
 			seen[value] = struct{}{}
 		}
 	}
 	if len(policy.AllowedSourcePrefixes) == 0 || len(policy.AllowedSourcePrefixes) > maxPolicyValues {
-		return TrustRoot{}, "", provenanceError("policy_invalid")
+		return provenanceError("policy_invalid")
 	}
 	seenPrefixes := map[string]struct{}{}
 	for _, prefix := range policy.AllowedSourcePrefixes {
 		if !canonicalSourcePrefix(prefix) {
-			return TrustRoot{}, "", provenanceError("policy_invalid")
+			return provenanceError("policy_invalid")
 		}
 		if _, duplicate := seenPrefixes[prefix]; duplicate {
-			return TrustRoot{}, "", provenanceError("policy_invalid")
+			return provenanceError("policy_invalid")
 		}
 		seenPrefixes[prefix] = struct{}{}
 	}
 	if len(policy.ExpectedExternalParameters) > maxExternalParametersBytes {
-		return TrustRoot{}, "", provenanceError("policy_invalid")
+		return provenanceError("policy_invalid")
 	}
 	if _, err := canonicalExternalParameters(policy.ExpectedExternalParameters); err != nil {
+		return provenanceError("policy_invalid")
+	}
+	return nil
+}
+
+func validateAndSelectProvenancePolicy(policy ProvenancePolicy, trustRootID string) (TrustRoot, string, error) {
+	if policy.Version != ProvenancePolicyVersion ||
+		policy.VerificationMode != "" ||
+		len(policy.TrustedRoots) == 0 ||
+		len(policy.TrustedRoots) > maxPolicyValues ||
+		len(policy.AllowedSignerIdentities) == 0 ||
+		len(policy.AllowedSignerIdentities) > maxPolicyValues {
 		return TrustRoot{}, "", provenanceError("policy_invalid")
+	}
+	if err := validateCommonProvenancePolicy(policy); err != nil {
+		return TrustRoot{}, "", err
 	}
 	var selected TrustRoot
 	seenRoots := map[string]struct{}{}
@@ -475,7 +604,8 @@ func validateAndSelectProvenancePolicy(policy ProvenancePolicy, trustRootID stri
 		}
 	}
 	for _, identity := range policy.AllowedSignerIdentities {
-		if !safeProvenanceText(identity.Issuer) || !safeProvenanceText(identity.Subject) {
+		if !safeProvenanceText(identity.Issuer) || !safeProvenanceText(identity.Subject) ||
+			strings.HasPrefix(identity.Issuer, keyfulSignerIssuerPrefix) {
 			return TrustRoot{}, "", provenanceError("policy_invalid")
 		}
 	}
@@ -497,7 +627,130 @@ func validateAndSelectProvenancePolicy(policy ProvenancePolicy, trustRootID stri
 	return selected, checksum, nil
 }
 
+func validateAndSelectKeyfulProvenancePolicy(
+	policy ProvenancePolicy,
+	keyID string,
+) (TrustRoot, crypto.PublicKey, string, string, string, error) {
+	if policy.Version != KeyfulProvenancePolicyVersion ||
+		policy.VerificationMode != ProvenanceVerificationModeKeyful ||
+		len(policy.TrustedRoots) == 0 ||
+		len(policy.TrustedRoots) > maxPolicyValues ||
+		len(policy.AllowedSignerIdentities) != len(policy.TrustedRoots) ||
+		!safeBoundedProvenanceText(keyID, maxTrustRootIDBytes) {
+		return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+	}
+	if err := validateCommonProvenancePolicy(policy); err != nil {
+		return TrustRoot{}, nil, "", "", "", err
+	}
+	var selected TrustRoot
+	var selectedPublicKey crypto.PublicKey
+	var selectedHint string
+	var selectedFingerprint string
+	seenIDs := map[string]struct{}{}
+	seenFingerprints := map[string]struct{}{}
+	totalRootBytes := 0
+	for _, candidate := range policy.TrustedRoots {
+		totalRootBytes += len(candidate.JSON)
+		if !safeBoundedProvenanceText(candidate.ID, maxTrustRootIDBytes) ||
+			len(candidate.JSON) == 0 ||
+			len(candidate.JSON) > maxTrustedRootBytes ||
+			totalRootBytes > maxProvenanceBundleBytes ||
+			candidate.ValidFrom.IsZero() ||
+			candidate.ValidUntil.IsZero() ||
+			!candidate.ValidFrom.Before(candidate.ValidUntil) {
+			return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+		}
+		if _, duplicate := seenIDs[candidate.ID]; duplicate {
+			return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+		}
+		seenIDs[candidate.ID] = struct{}{}
+		publicKeyPEM, declaredKeyID, declaredFingerprint, err := parseKeyfulTrustedRoot(candidate.JSON)
+		if err != nil || declaredKeyID != candidate.ID {
+			return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+		}
+		publicKey, fingerprint, hint, err := parseTrustedPublicKey(publicKeyPEM)
+		if err != nil || fingerprint != declaredFingerprint {
+			return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+		}
+		if _, duplicate := seenFingerprints[fingerprint]; duplicate {
+			return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+		}
+		seenFingerprints[fingerprint] = struct{}{}
+		if !slices.Contains(policy.AllowedSignerIdentities, SignerIdentity{
+			Issuer:  "keyid:" + candidate.ID,
+			Subject: fingerprint,
+		}) {
+			return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+		}
+		if candidate.ID == keyID {
+			selected = candidate
+			selectedPublicKey = publicKey
+			selectedHint = hint
+			selectedFingerprint = fingerprint
+		}
+	}
+	if selected.ID == "" {
+		return TrustRoot{}, nil, "", "", "", provenanceError("trusted_key_unknown")
+	}
+	checksum, err := provenancePolicyChecksum(policy)
+	if err != nil {
+		return TrustRoot{}, nil, "", "", "", provenanceError("policy_invalid")
+	}
+	return selected, selectedPublicKey, selectedHint, selectedFingerprint, checksum, nil
+}
+
+func parseKeyfulTrustedRoot(raw []byte) ([]byte, string, string, error) {
+	if err := ValidateProvenanceJSONDocument(raw); err != nil {
+		return nil, "", "", err
+	}
+	var document struct {
+		MediaType    string `json:"mediaType"`
+		KeyID        string `json:"keyId"`
+		Fingerprint  string `json:"fingerprint"`
+		PublicKeyPEM string `json:"publicKeyPem"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&document); err != nil {
+		return nil, "", "", err
+	}
+	if !validKeyfulTrustedRootMediaType(document.MediaType) ||
+		!safeBoundedProvenanceText(document.KeyID, maxTrustRootIDBytes) ||
+		!IsSHA256Digest(document.Fingerprint) ||
+		len(document.PublicKeyPEM) == 0 || len(document.PublicKeyPEM) > maxTrustedPublicKeyBytes {
+		return nil, "", "", fmt.Errorf("keyful trusted root is invalid")
+	}
+	return []byte(document.PublicKeyPEM), document.KeyID, document.Fingerprint, nil
+}
+
+func validKeyfulTrustedRootMediaType(value string) bool {
+	return value == KeyfulProvenanceTrustRootMediaType
+}
+
+func parseTrustedPublicKey(publicKeyPEM []byte) (crypto.PublicKey, string, string, error) {
+	block, rest := pem.Decode(publicKeyPEM)
+	if block == nil || block.Type != "PUBLIC KEY" || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, "", "", fmt.Errorf("public key PEM is invalid")
+	}
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, "", "", err
+	}
+	canonicalDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return nil, "", "", err
+	}
+	sum := sha256.Sum256(canonicalDER)
+	return publicKey,
+		"sha256:" + hex.EncodeToString(sum[:]),
+		base64.StdEncoding.EncodeToString(sum[:]),
+		nil
+}
+
 func provenancePolicyChecksum(policy ProvenancePolicy) (string, error) {
+	if policy.Version == KeyfulProvenancePolicyVersion {
+		return keyfulProvenancePolicyChecksum(policy)
+	}
 	type rootChecksum struct {
 		ID         string `json:"id"`
 		Digest     string `json:"digest"`
@@ -537,6 +790,63 @@ func provenancePolicyChecksum(policy ProvenancePolicy) (string, error) {
 		ExpectedExternalParameters json.RawMessage  `json:"expectedExternalParameters"`
 	}{
 		Version:                    policy.Version,
+		TrustedRoots:               roots,
+		AllowedSignerIdentities:    identities,
+		AllowedPredicateTypes:      sortedUnique(policy.AllowedPredicateTypes),
+		AllowedBuilders:            sortedUnique(policy.AllowedBuilders),
+		AllowedSourcePrefixes:      sortedUnique(policy.AllowedSourcePrefixes),
+		AllowedBuildTypes:          sortedUnique(policy.AllowedBuildTypes),
+		ExpectedExternalParameters: external,
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func keyfulProvenancePolicyChecksum(policy ProvenancePolicy) (string, error) {
+	type rootChecksum struct {
+		ID         string `json:"id"`
+		Digest     string `json:"digest"`
+		ValidFrom  string `json:"validFrom"`
+		ValidUntil string `json:"validUntil"`
+	}
+	roots := make([]rootChecksum, 0, len(policy.TrustedRoots))
+	for _, trustRoot := range policy.TrustedRoots {
+		sum := sha256.Sum256(trustRoot.JSON)
+		roots = append(roots, rootChecksum{
+			ID: trustRoot.ID, Digest: "sha256:" + hex.EncodeToString(sum[:]),
+			ValidFrom:  trustRoot.ValidFrom.UTC().Format(time.RFC3339Nano),
+			ValidUntil: trustRoot.ValidUntil.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	sort.Slice(roots, func(i, j int) bool { return roots[i].ID < roots[j].ID })
+	identities := slices.Clone(policy.AllowedSignerIdentities)
+	sort.Slice(identities, func(i, j int) bool {
+		if identities[i].Issuer == identities[j].Issuer {
+			return identities[i].Subject < identities[j].Subject
+		}
+		return identities[i].Issuer < identities[j].Issuer
+	})
+	external, err := canonicalExternalParameters(policy.ExpectedExternalParameters)
+	if err != nil {
+		return "", err
+	}
+	document := struct {
+		Version                    string           `json:"version"`
+		VerificationMode           string           `json:"verificationMode"`
+		TrustedRoots               []rootChecksum   `json:"trustedRoots"`
+		AllowedSignerIdentities    []SignerIdentity `json:"allowedSignerIdentities"`
+		AllowedPredicateTypes      []string         `json:"allowedPredicateTypes"`
+		AllowedBuilders            []string         `json:"allowedBuilders"`
+		AllowedSourcePrefixes      []string         `json:"allowedSourcePrefixes"`
+		AllowedBuildTypes          []string         `json:"allowedBuildTypes"`
+		ExpectedExternalParameters json.RawMessage  `json:"expectedExternalParameters"`
+	}{
+		Version:                    policy.Version,
+		VerificationMode:           policy.VerificationMode,
 		TrustedRoots:               roots,
 		AllowedSignerIdentities:    identities,
 		AllowedPredicateTypes:      sortedUnique(policy.AllowedPredicateTypes),
@@ -664,8 +974,11 @@ func VerifyComponentReleasePublication(
 				result.AddError(field, code, "signed provenance did not satisfy the frozen publication policy")
 				continue
 			}
+			trustIdentityMatches := verified.TrustRootID == input.Evidence.TrustRootID &&
+				(verified.VerificationMode != ProvenanceVerificationModeKeyful ||
+					verified.KeyID == input.Evidence.TrustRootID)
 			if !validProvenanceVerificationResult(verified) ||
-				verified.TrustRootID != input.Evidence.TrustRootID ||
+				!trustIdentityMatches ||
 				verified.SourceURI != contract.Source.Repository ||
 				verified.SourceCommit != contract.Source.Commit ||
 				verified.BuildID != contract.Build.ID ||
@@ -677,6 +990,10 @@ func VerifyComponentReleasePublication(
 				)
 				continue
 			}
+			storedTrustMaterialID := verified.TrustRootID
+			if verified.VerificationMode == ProvenanceVerificationModeKeyful {
+				storedTrustMaterialID = verified.KeyID
+			}
 			facts = append(facts, types.EvidenceVerification{
 				OrganizationID:             releaseBundle.OrganizationID,
 				ReleaseBundleID:            releaseBundle.ID,
@@ -686,7 +1003,10 @@ func VerifyComponentReleasePublication(
 				EvidenceReference:          input.Evidence.Reference,
 				EvidenceDigest:             verified.EvidenceDigest,
 				PolicyChecksum:             verified.PolicyChecksum,
-				TrustRootID:                verified.TrustRootID,
+				VerificationMode:           verified.VerificationMode,
+				TrustRootID:                storedTrustMaterialID,
+				KeyID:                      verified.KeyID,
+				KeyFingerprint:             verified.KeyFingerprint,
 				PredicateType:              verified.PredicateType,
 				BuilderID:                  verified.BuilderID,
 				BuildID:                    verified.BuildID,
@@ -808,13 +1128,17 @@ func earliestVerifiedTimestamp(values []verify.TimestampVerificationResult) (tim
 }
 
 func timestampsWithinTrustRoot(values []verify.TimestampVerificationResult, trustRoot TrustRoot) bool {
+	return timestampsWithinValidity(values, trustRoot.ValidFrom, trustRoot.ValidUntil)
+}
+
+func timestampsWithinValidity(values []verify.TimestampVerificationResult, validFrom, validUntil time.Time) bool {
 	found := false
 	for _, value := range values {
 		if value.Timestamp.IsZero() {
 			continue
 		}
 		found = true
-		if value.Timestamp.Before(trustRoot.ValidFrom) || !value.Timestamp.Before(trustRoot.ValidUntil) {
+		if value.Timestamp.Before(validFrom) || !value.Timestamp.Before(validUntil) {
 			return false
 		}
 	}
@@ -970,10 +1294,9 @@ func safeBoundedProvenanceText(value string, limit int) bool {
 }
 
 func validProvenanceVerificationResult(result ProvenanceVerificationResult) bool {
-	return IsSHA256Digest(result.EvidenceDigest) &&
+	baseValid := IsSHA256Digest(result.EvidenceDigest) &&
 		IsSHA256Digest(result.PolicyChecksum) &&
 		IsSHA256Digest(result.ExternalParametersChecksum) &&
-		safeBoundedProvenanceText(result.TrustRootID, maxTrustRootIDBytes) &&
 		safeProvenanceText(result.PredicateType) &&
 		safeProvenanceText(result.BuilderID) &&
 		safeProvenanceText(result.BuildID) &&
@@ -983,6 +1306,23 @@ func validProvenanceVerificationResult(result ProvenanceVerificationResult) bool
 		safeProvenanceText(result.SignerIssuer) &&
 		safeProvenanceText(result.SignerIdentity) &&
 		!result.VerifiedAt.IsZero()
+	if !baseValid {
+		return false
+	}
+	switch result.VerificationMode {
+	case ProvenanceVerificationModeKeyless:
+		return safeBoundedProvenanceText(result.TrustRootID, maxTrustRootIDBytes) &&
+			result.KeyID == "" && result.KeyFingerprint == "" &&
+			!strings.HasPrefix(result.SignerIssuer, keyfulSignerIssuerPrefix)
+	case ProvenanceVerificationModeKeyful:
+		return safeBoundedProvenanceText(result.KeyID, maxTrustRootIDBytes) &&
+			result.TrustRootID == result.KeyID &&
+			IsSHA256Digest(result.KeyFingerprint) &&
+			result.SignerIssuer == keyfulSignerIssuerPrefix+result.KeyID &&
+			result.SignerIdentity == result.KeyFingerprint
+	default:
+		return false
+	}
 }
 
 func sortedUnique(values []string) []string {

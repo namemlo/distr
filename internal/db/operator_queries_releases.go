@@ -428,6 +428,23 @@ SELECT jsonb_build_object(
       'verifiedBuildType', verification.build_type,
       'provenanceReference', verification.evidence_reference,
       'provenanceDigest', verification.evidence_digest,
+      'verificationMode', CASE
+        WHEN verification.id IS NULL THEN ''
+        WHEN verification.signer_issuer LIKE 'keyid:%' THEN 'keyful'
+        ELSE 'keyless'
+      END,
+      'trustRootId', CASE
+        WHEN verification.signer_issuer LIKE 'keyid:%' THEN ''
+        ELSE COALESCE(verification.trust_root_id, '')
+      END,
+      'keyId', CASE
+        WHEN verification.signer_issuer LIKE 'keyid:%' THEN verification.trust_root_id
+        ELSE ''
+      END,
+      'keyFingerprint', CASE
+        WHEN verification.signer_issuer LIKE 'keyid:%' THEN verification.signer_identity
+        ELSE ''
+      END,
       'sbomReference', COALESCE(sbom.reference, ''),
       'sbomDigest', COALESCE(substring(sbom.reference from '(sha256:[0-9a-f]{64})$'), ''),
       'verificationState', CASE WHEN verification.id IS NULL THEN 'UNVERIFIED' ELSE 'VERIFIED' END
@@ -450,7 +467,8 @@ SELECT jsonb_build_object(
     LEFT JOIN LATERAL (
       SELECT candidate.id, candidate.source_uri, candidate.source_commit,
              candidate.builder_id, candidate.build_id, candidate.build_type,
-             candidate.evidence_reference, candidate.evidence_digest
+             candidate.evidence_reference, candidate.evidence_digest,
+             candidate.trust_root_id, candidate.signer_issuer, candidate.signer_identity
       FROM ComponentReleaseEvidenceVerification candidate
       WHERE candidate.organization_id = release.organization_id
         AND candidate.release_bundle_id = contract.component_release_id

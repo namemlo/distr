@@ -42,6 +42,32 @@ func TestSameEvidenceVerificationBindsSourceCommitAndBuildID(t *testing.T) {
 	g.Expect(sameEvidenceVerification(verification, changedBuildID)).To(BeFalse())
 }
 
+func TestEvidenceVerificationBindsVerificationModeAndKeyIdentityWithoutSchemaColumns(t *testing.T) {
+	g := NewWithT(t)
+	verification := boundedEvidenceVerificationFixture()
+
+	g.Expect(verification.VerificationMode).To(Equal("keyless"))
+	g.Expect(validateEvidenceVerification(verification)).To(Succeed())
+
+	keyful := verification
+	keyful.VerificationMode = "keyful"
+	keyful.TrustRootID = "release-key-1"
+	keyful.KeyID = "release-key-1"
+	keyful.KeyFingerprint = "sha256:" + strings.Repeat("e", 64)
+	keyful.SignerIssuer = keyfulEvidenceSignerIssuerPrefix + keyful.KeyID
+	keyful.SignerIdentity = keyful.KeyFingerprint
+	g.Expect(validateEvidenceVerification(keyful)).To(Succeed())
+	g.Expect(sameEvidenceVerification(verification, keyful)).To(BeFalse())
+
+	wrongKey := keyful
+	wrongKey.KeyID = "release-key-2"
+	g.Expect(validateEvidenceVerification(wrongKey)).To(HaveOccurred())
+
+	wrongFingerprint := keyful
+	wrongFingerprint.SignerIdentity = "sha256:" + strings.Repeat("f", 64)
+	g.Expect(validateEvidenceVerification(wrongFingerprint)).To(HaveOccurred())
+}
+
 func boundedEvidenceVerificationFixture() types.EvidenceVerification {
 	return types.EvidenceVerification{
 		OrganizationID:             uuid.New(),
@@ -52,6 +78,7 @@ func boundedEvidenceVerificationFixture() types.EvidenceVerification {
 		EvidenceReference:          "oci://evidence/service",
 		EvidenceDigest:             "sha256:" + strings.Repeat("b", 64),
 		PolicyChecksum:             "sha256:" + strings.Repeat("c", 64),
+		VerificationMode:           "keyless",
 		TrustRootID:                "root-1",
 		PredicateType:              "https://slsa.dev/provenance/v1",
 		BuilderID:                  "https://builder.example.invalid/worker",

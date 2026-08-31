@@ -205,6 +205,10 @@ export interface OperatorReleaseSourceBuildProof {
   verifiedBuildType?: string;
   provenanceReference?: string;
   provenanceDigest?: string;
+  verificationMode?: string;
+  trustRootId?: string;
+  keyId?: string;
+  keyFingerprint?: string;
   sbomReference?: string;
   sbomDigest?: string;
   verificationState: string;

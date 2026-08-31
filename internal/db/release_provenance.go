@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const keyfulEvidenceSignerIssuerPrefix = "keyid:"
+
 const evidenceVerificationOutputExpr = `
 	id,
 	created_at,
@@ -27,7 +29,10 @@ const evidenceVerificationOutputExpr = `
 	evidence_reference,
 	evidence_digest,
 	policy_checksum,
+	CASE WHEN signer_issuer LIKE 'keyid:%' THEN 'keyful' ELSE 'keyless' END AS verification_mode,
 	trust_root_id,
+	CASE WHEN signer_issuer LIKE 'keyid:%' THEN trust_root_id ELSE '' END AS key_id,
+	CASE WHEN signer_issuer LIKE 'keyid:%' THEN signer_identity ELSE '' END AS key_fingerprint,
 	predicate_type,
 	builder_id,
 	build_id,
@@ -273,6 +278,22 @@ func validateEvidenceVerification(verification types.EvidenceVerification) error
 	if !releaseBackfillCommitPattern.MatchString(verification.SourceCommit) {
 		return apierrors.NewBadRequest("bounded Component Release provenance verification is invalid")
 	}
+	switch verification.VerificationMode {
+	case releasebundles.ProvenanceVerificationModeKeyless:
+		if verification.KeyID != "" || verification.KeyFingerprint != "" ||
+			strings.HasPrefix(verification.SignerIssuer, keyfulEvidenceSignerIssuerPrefix) {
+			return apierrors.NewBadRequest("bounded Component Release provenance verification is invalid")
+		}
+	case releasebundles.ProvenanceVerificationModeKeyful:
+		if verification.KeyID != verification.TrustRootID ||
+			!releasebundles.IsSHA256Digest(verification.KeyFingerprint) ||
+			verification.SignerIssuer != keyfulEvidenceSignerIssuerPrefix+verification.KeyID ||
+			verification.SignerIdentity != verification.KeyFingerprint {
+			return apierrors.NewBadRequest("bounded Component Release provenance verification is invalid")
+		}
+	default:
+		return apierrors.NewBadRequest("bounded Component Release provenance verification is invalid")
+	}
 	return nil
 }
 
@@ -285,7 +306,10 @@ func sameEvidenceVerification(a, b types.EvidenceVerification) bool {
 		a.EvidenceReference == b.EvidenceReference &&
 		a.EvidenceDigest == b.EvidenceDigest &&
 		a.PolicyChecksum == b.PolicyChecksum &&
+		a.VerificationMode == b.VerificationMode &&
 		a.TrustRootID == b.TrustRootID &&
+		a.KeyID == b.KeyID &&
+		a.KeyFingerprint == b.KeyFingerprint &&
 		a.PredicateType == b.PredicateType &&
 		a.BuilderID == b.BuilderID &&
 		a.BuildID == b.BuildID &&

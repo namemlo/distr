@@ -22,6 +22,14 @@ evidence reference alone is not treated as verified. Preflight compares those pe
 contract. The existing publish route accepts an optional `provenance` object containing the frozen policy and
 embedded bundles; it remains optional for v1 and is required for Component Release v2.
 
+Key-backed Cosign verification is additive through provenance policy `distr.provenance-policy/v2` and
+`verificationMode: "keyful"`. Its frozen trust material uses
+`application/vnd.distr.cosign.public-key.v1+json`, a stable `keyId`, a PKIX public-key PEM, and the SHA-256
+fingerprint of the canonical SPKI DER. The evidence bundle selects that key with `trustRootId` and carries the
+matching base64 fingerprint hint. Operator release proof responses expose `verificationMode`, `keyId`, and
+`keyFingerprint`; keyless rows continue to expose `trustRootId`. No Hub environment variable or ambient key store
+participates in verification.
+
 ## Execution and Agents
 
 - Task queue and task state APIs.

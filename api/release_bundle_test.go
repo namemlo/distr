@@ -127,6 +127,48 @@ func TestPublishReleaseBundleRequestPreservesFrozenProvenanceInputs(t *testing.T
 	g.Expect(string(publication.Evidence[0].Evidence.BundleJSON)).To(HavePrefix("{"))
 }
 
+func TestPublishReleaseBundleRequestPreservesFrozenKeyfulProvenanceInputs(t *testing.T) {
+	g := NewWithT(t)
+	trustedRootJSON := json.RawMessage(`{"mediaType":"application/vnd.distr.cosign.public-key.v1+json","keyId":"release-key-1","fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publicKeyPem":"-----BEGIN PUBLIC KEY-----\nZmFrZQ==\n-----END PUBLIC KEY-----\n"}`)
+	bundleJSON := json.RawMessage(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`)
+	request := PublishReleaseBundleRequest{
+		Provenance: &ComponentReleasePublicationProvenance{
+			Policy: ComponentReleaseProvenancePolicy{
+				Version:          "distr.provenance-policy/v2",
+				VerificationMode: "keyful",
+				TrustedRoots: []ComponentReleaseProvenanceTrustRoot{{
+					ID: "release-key-1", TrustedRoot: trustedRootJSON,
+					ValidFrom:  time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+					ValidUntil: time.Date(2027, 7, 1, 0, 0, 0, 0, time.UTC),
+				}},
+				AllowedSignerIdentities: []ComponentReleaseProvenanceSignerIdentity{{
+					Issuer: "keyid:release-key-1", Subject: "sha256:" + strings.Repeat("a", 64),
+				}},
+				AllowedPredicateTypes:      []string{"https://slsa.dev/provenance/v1"},
+				AllowedBuilders:            []string{"https://builder.example.invalid/worker"},
+				AllowedSourcePrefixes:      []string{"git+https://code.example.invalid/"},
+				AllowedBuildTypes:          []string{"https://build.example.invalid/container/v1"},
+				ExpectedExternalParameters: json.RawMessage(`{"release":true}`),
+			},
+			Evidence: []ComponentReleaseProvenanceEvidence{{
+				ArtifactKey: "service", Platform: "linux/amd64", Reference: "oci://evidence/service",
+				TrustRootID: "release-key-1", Bundle: bundleJSON,
+			}},
+		},
+	}
+
+	publication := request.PublicationProvenance()
+
+	g.Expect(publication.Policy.VerificationMode).To(Equal(releasebundles.ProvenanceVerificationModeKeyful))
+	g.Expect(publication.Policy.TrustedRoots).To(HaveLen(1))
+	g.Expect(publication.Policy.TrustedRoots[0].ID).To(Equal("release-key-1"))
+	g.Expect(publication.Evidence[0].Evidence.TrustRootID).To(Equal("release-key-1"))
+	trustedRootJSON[0] = '['
+	bundleJSON[0] = '['
+	g.Expect(string(publication.Policy.TrustedRoots[0].JSON)).To(HavePrefix("{"))
+	g.Expect(string(publication.Evidence[0].Evidence.BundleJSON)).To(HavePrefix("{"))
+}
+
 func TestCreateUpdateReleaseBundleRequestValidateOCIComponentsRequireFullSHA256Digest(t *testing.T) {
 	applicationID := uuid.New()
 	channelID := uuid.New()

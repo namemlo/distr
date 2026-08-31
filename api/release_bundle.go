@@ -241,6 +241,7 @@ type ComponentReleasePublicationProvenance struct {
 
 type ComponentReleaseProvenancePolicy struct {
 	Version                    string                                     `json:"version"`
+	VerificationMode           string                                     `json:"verificationMode,omitempty"`
 	TrustedRoots               []ComponentReleaseProvenanceTrustRoot      `json:"trustedRoots"`
 	AllowedSignerIdentities    []ComponentReleaseProvenanceSignerIdentity `json:"allowedSignerIdentities"`
 	AllowedPredicateTypes      []string                                   `json:"allowedPredicateTypes"`
@@ -276,6 +277,7 @@ func (r PublishReleaseBundleRequest) PublicationProvenance() *releasebundles.Pub
 	}
 	policy := releasebundles.ProvenancePolicy{
 		Version:                    r.Provenance.Policy.Version,
+		VerificationMode:           r.Provenance.Policy.VerificationMode,
 		AllowedPredicateTypes:      append([]string(nil), r.Provenance.Policy.AllowedPredicateTypes...),
 		AllowedBuilders:            append([]string(nil), r.Provenance.Policy.AllowedBuilders...),
 		AllowedSourcePrefixes:      append([]string(nil), r.Provenance.Policy.AllowedSourcePrefixes...),

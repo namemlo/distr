@@ -109,6 +109,32 @@ the evidence digest, not the raw envelope or unbounded verifier errors. A future
 those persisted values to the exact release source/build identity through the same verification-result seam;
 `distr release publish` never deploys a target.
 
+Key-backed Cosign verification uses `distr.provenance-policy/v2` with `verificationMode: "keyful"`. The frozen
+policy carries one reviewed public-key document per key using media type
+`application/vnd.distr.cosign.public-key.v1+json`:
+
+```json
+{
+  "mediaType": "application/vnd.distr.cosign.public-key.v1+json",
+  "keyId": "release-key-1",
+  "fingerprint": "sha256:<64 lowercase hex characters>",
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n"
+}
+```
+
+The fingerprint is SHA-256 of the canonical PKIX/SPKI DER bytes. The matching policy signer identity is
+`{"issuer":"keyid:release-key-1","subject":"sha256:<fingerprint>"}`, and each evidence item selects the same
+key through `trustRootId`. The embedded Sigstore v0.3 bundle must contain DSSE provenance plus a
+`verificationMaterial.publicKey.hint` equal to base64 of the raw fingerprint bytes. Distr verifies the bundle
+offline with the supplied key and records `verificationMode`, `keyId`, and `keyFingerprint` in bounded audit and
+operator read models.
+
+The Hub does not read a provenance public key from an environment variable: trust is explicit and frozen in the
+reviewed publish request. In the Jenkins image-publication workflow, `PROVENANCE_SIGNING_PUBLIC_KEY` is the public
+key file that must match this document; `PROVENANCE_SIGNING_PUBLIC_KEY_CREDENTIALS_ID` selects that Jenkins file
+credential. The producer must provide a Sigstore bundle, not only the detached `.sig` file retained by the current
+publication handoff.
+
 ## Safe v1-to-v2 Backfill
 
 The hub binary includes a separate organization-scoped operator command. It is a dry-run unless `--apply` is

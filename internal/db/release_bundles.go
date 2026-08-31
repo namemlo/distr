@@ -839,12 +839,17 @@ func PublishReleaseBundleWithProvenance(
 		)); err != nil {
 			return err
 		}
-		if err := recordReleaseControlPlaneAuditMutation(ctx, releaseControlPlaneAuditInput(
+		auditInput, err := releaseControlPlaneAuditInputWithProvenance(
 			*updated,
 			releaseControlPlaneEventType(*updated, "published"),
 			&actorUserAccountID,
 			"SUCCEEDED",
-		)); err != nil {
+			evidenceVerifications,
+		)
+		if err != nil {
+			return err
+		}
+		if err := recordReleaseControlPlaneAuditMutation(ctx, auditInput); err != nil {
 			return err
 		}
 		published = updated
