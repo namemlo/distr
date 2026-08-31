@@ -359,6 +359,11 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  PERFORM 1
+  FROM DeploymentPlan
+  WHERE id = NEW.deployment_plan_id
+    AND organization_id = NEW.organization_id
+  FOR UPDATE;
   IF EXISTS (
     SELECT 1 FROM BaselineAdoption
     WHERE deployment_plan_id = NEW.deployment_plan_id

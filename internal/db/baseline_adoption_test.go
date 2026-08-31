@@ -67,6 +67,13 @@ func TestMigration166CreatesImmutableNativeBaselineAdoption(t *testing.T) {
 	g.Expect(upText).To(ContainSubstring(
 		"BEFORE INSERT OR UPDATE OF deployment_plan_id, organization_id ON ExternalExecution",
 	))
+	guardStart := strings.Index(upText, "CREATE FUNCTION baseline_adoption_execution_exclusion_guard()")
+	g.Expect(guardStart).To(BeNumerically(">=", 0))
+	guardEnd := strings.Index(upText[guardStart:], "CREATE TRIGGER Task_baseline_adoption_exclusion")
+	g.Expect(guardEnd).To(BeNumerically(">", 0))
+	guardText := upText[guardStart : guardStart+guardEnd]
+	g.Expect(guardText).To(ContainSubstring("FROM DeploymentPlan"))
+	g.Expect(guardText).To(ContainSubstring("FOR UPDATE"))
 }
 
 func TestBaselineAdoptionCanonicalMaterialIsOrderStableAndEvidenceBound(t *testing.T) {
