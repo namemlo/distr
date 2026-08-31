@@ -4,7 +4,7 @@ param(
     [int]$FromMigration = 138,
 
     [ValidateRange(0, [int]::MaxValue)]
-    [int]$ToMigration = 162,
+    [int]$ToMigration = 164,
 
     [string]$DatabaseUrl,
 
@@ -29,7 +29,7 @@ $AllowedQueryKeys = @('application_name', 'connect_timeout', 'sslmode')
 $MatrixJwtSecret = ''
 $ScenarioIds = @(
     'postgres-runtime-version',
-    'migration-138-to-162-upgrade',
+    'migration-138-to-164-upgrade',
     'clean-install',
     'single-step-down-and-refusal-contracts',
     'checkpoint-idempotency-and-cursor-resume',
@@ -546,7 +546,7 @@ if ($PlanOnly) {
             }
         }))
 
-        $scenarioResults.Add((Invoke-MatrixScenario -Id 'migration-138-to-162-upgrade' -Password $database.password -Operation {
+        $scenarioResults.Add((Invoke-MatrixScenario -Id 'migration-138-to-164-upgrade' -Password $database.password -Operation {
             param($checks)
             $schema = & $newSchema
             & $createSchema $checks $schema
