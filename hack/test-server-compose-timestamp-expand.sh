@@ -301,6 +301,7 @@ test_ordinary_release_audit_history_requires_exact_authoritative_order() (
   need_cmd(){ :; }
   curl(){
     local output=''
+    cat >"$TMP/ordinary-release-audit-curl-config"
     while (($#)); do
       if [[ "$1" == --output ]]; then
         output="$2"
@@ -345,7 +346,7 @@ process.stdout.write(
 NODE
   }
   DISTR_AUDIT_HISTORY_PROBE_URL="http://127.0.0.1:8080/api/v1/external-executions/$expected_execution_id/"
-  DISTR_AUDIT_HISTORY_PROBE_TOKEN=releaseReadOnlyToken
+  DISTR_AUDIT_HISTORY_PROBE_TOKEN=distr-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   export DISTR_AUDIT_HISTORY_PROBE_URL DISTR_AUDIT_HISTORY_PROBE_TOKEN
   authoritative="$(printf '1|%s\n2|%s' "$event_one" "$event_two")"
   postgres_scalar(){
@@ -388,6 +389,9 @@ NODE
   export AUDIT_RESPONSE
   [[ "$(verify_release_audit_history \
     "$evidence" "$expected_execution_id" "$authoritative")" == "$expected_execution_id" ]]
+  grep -Fq \
+    'Authorization: AccessToken distr-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+    "$TMP/ordinary-release-audit-curl-config"
 )
 test_ordinary_postdeploy_evidence_is_create_new_and_checksummed() (
   source "$ROOT/deploy/server-docker-compose/deploy.sh"
@@ -1513,6 +1517,24 @@ test_post_start_audit_helper_checks_readiness_and_authenticated_history() {
   grep -Fq 'curl ' <<<"$body"
 }
 
+test_audit_probe_authorization_scheme_is_type_bound() (
+  source "$ROOT/deploy/server-docker-compose/deploy.sh"
+  [[ "$(audit_probe_authorization_scheme \
+    distr-0123456789abcdef0123456789abcdef)" == AccessToken ]]
+  [[ "$(audit_probe_authorization_scheme \
+    eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhdWRpdCJ9.signature)" == Bearer ]]
+  for invalid in \
+      readOnlyToken \
+      distr-0123456789abcdef \
+      'header.payload' \
+      'header.payload.signature.extra'; do
+    if audit_probe_authorization_scheme "$invalid" >/dev/null 2>&1; then
+      printf 'invalid audit token shape unexpectedly accepted: %s\n' "$invalid" >&2
+      return 1
+    fi
+  done
+)
+
 test_audit_history_probe_is_bound_authenticated_and_rejects_empty_history() (
   local fakebin="$TMP/audit-fakebin" evidence="$TMP/audit-evidence"
   local execution_id=11111111-1111-4111-8111-111111111111
@@ -1550,21 +1572,25 @@ SH
     ' "$file" "$expected"
   }
   DISTR_AUDIT_HISTORY_PROBE_URL="http://127.0.0.1:8080/api/v1/external-executions/$execution_id/"
-  DISTR_AUDIT_HISTORY_PROBE_TOKEN=superSecretReadOnlyToken
+  DISTR_AUDIT_HISTORY_PROBE_TOKEN=distr-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   export DISTR_AUDIT_HISTORY_PROBE_URL DISTR_AUDIT_HISTORY_PROBE_TOKEN
   : >"$TMP/audit-curl-argv"
   : >"$TMP/audit-curl-config"
   AUDIT_RESPONSE="{\"id\":\"$execution_id\",\"events\":[{\"id\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":1}]}"
   verify_audit_history_visibility "$execution_id" "$evidence"
   grep -Fq -- '--config -' "$TMP/audit-curl-argv"
-  ! grep -Fq superSecretReadOnlyToken "$TMP/audit-curl-argv"
-  grep -Fq 'Authorization: Bearer superSecretReadOnlyToken' \
+  ! grep -Fq "$DISTR_AUDIT_HISTORY_PROBE_TOKEN" "$TMP/audit-curl-argv"
+  grep -Fq \
+    'Authorization: AccessToken distr-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
     "$TMP/audit-curl-config"
   AUDIT_RESPONSE="{\"id\":\"$execution_id\",\"events\":[]}"
-  if verify_audit_history_visibility "$execution_id" "$evidence"; then
+  local failure_output
+  if failure_output="$(verify_audit_history_visibility \
+      "$execution_id" "$evidence" 2>&1)"; then
     printf 'empty audit history unexpectedly accepted\n' >&2
     return 1
   fi
+  [[ "$failure_output" != *"$DISTR_AUDIT_HISTORY_PROBE_TOKEN"* ]]
 )
 
 test_audit_probe_uses_canonical_table_and_requires_bound_history() (
@@ -1600,7 +1626,7 @@ JSON
     ' "$file" "$expected"
   }
   DISTR_AUDIT_HISTORY_PROBE_URL="http://127.0.0.1:8080/api/v1/external-executions/$execution_id/"
-  DISTR_AUDIT_HISTORY_PROBE_TOKEN=readOnlyToken
+  DISTR_AUDIT_HISTORY_PROBE_TOKEN=distr-cccccccccccccccccccccccccccccccc
   DISTR_TIMESTAMP_EVIDENCE_CHECKSUM="sha256:$(printf 'a%.0s' {1..64})"
   export DISTR_AUDIT_HISTORY_PROBE_URL DISTR_AUDIT_HISTORY_PROBE_TOKEN
   export DISTR_TIMESTAMP_EVIDENCE_CHECKSUM
@@ -2065,7 +2091,7 @@ test_nested_command_failure_matrix() (
   curl(){ record_failure curl; return 42; }
   jq(){ record_failure jq-after-curl; return 0; }
   DISTR_AUDIT_HISTORY_PROBE_URL='http://127.0.0.1:8080/api/v1/external-executions/11111111-1111-4111-8111-111111111111/'
-  DISTR_AUDIT_HISTORY_PROBE_TOKEN=token
+  DISTR_AUDIT_HISTORY_PROBE_TOKEN=distr-dddddddddddddddddddddddddddddddd
   export DISTR_AUDIT_HISTORY_PROBE_URL DISTR_AUDIT_HISTORY_PROBE_TOKEN
   if verify_audit_history_visibility \
       11111111-1111-4111-8111-111111111111 "$evidence"; then
@@ -3648,6 +3674,7 @@ fi
 
 if [[ "${DISTR_TIMESTAMP_TEST_GROUP:-}" == audit-focused ]]; then
   test_post_start_audit_helper_checks_readiness_and_authenticated_history
+  test_audit_probe_authorization_scheme_is_type_bound
   test_audit_history_probe_is_bound_authenticated_and_rejects_empty_history
   test_audit_probe_uses_canonical_table_and_requires_bound_history
   test_ordinary_release_audit_history_requires_exact_authoritative_order
@@ -3710,6 +3737,7 @@ test_apply_revalidates_cross_evidence_and_bundle_before_staging
 test_invalid_dry_run_report_prevents_migration
 test_real_apply_report_semantic_gate_matrix
 test_post_start_audit_helper_checks_readiness_and_authenticated_history
+test_audit_probe_authorization_scheme_is_type_bound
 test_audit_history_probe_is_bound_authenticated_and_rejects_empty_history
 test_audit_probe_uses_canonical_table_and_requires_bound_history
 test_timed_out_operator_is_stopped_and_removed

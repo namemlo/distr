@@ -260,15 +260,34 @@ audit_probe_execution_id() {
   printf '%s' "$execution_id" || return
 }
 
+audit_probe_authorization_scheme() {
+  local token="${1:-}"
+  if [[ "$token" =~ ^distr-[0-9a-f]{32}$ ]]; then
+    printf '%s' AccessToken
+    return
+  fi
+  if [[ "$token" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+    printf '%s' Bearer
+    return
+  fi
+  return 1
+}
+
+write_audit_probe_curl_config() {
+  local token="${1:-}" scheme
+  scheme="$(audit_probe_authorization_scheme "$token")" || return
+  printf 'header = "Authorization: %s %s"\n' "$scheme" "$token"
+}
+
 check_release_audit_probe_env() {
   local audit_url="${DISTR_AUDIT_HISTORY_PROBE_URL:-}"
   [[ "$audit_url" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]+)?/api/v1/external-executions/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/$ ]] || {
     die "DISTR_AUDIT_HISTORY_PROBE_URL must be an exact loopback history route with trailing slash"
     return 1
   }
-  [[ "${DISTR_AUDIT_HISTORY_PROBE_TOKEN:-}" =~ ^[A-Za-z0-9._~+/=-]+$ &&
-     "$DISTR_AUDIT_HISTORY_PROBE_TOKEN" != *CHANGE_ME* ]] || {
-    die "DISTR_AUDIT_HISTORY_PROBE_TOKEN must be a configured read-only token"
+  audit_probe_authorization_scheme \
+    "${DISTR_AUDIT_HISTORY_PROBE_TOKEN:-}" >/dev/null || {
+    die "DISTR_AUDIT_HISTORY_PROBE_TOKEN must be a read-only PAT or compact JWT"
     return 1
   }
 }
@@ -336,9 +355,9 @@ check_timestamp_apply_env() {
   [[ -n "$evidence_dir" ]] || return 1
   source="$evidence_dir/source-inspection.json"
   verify_sha256_sidecar "$source" || return
-  [[ "${DISTR_AUDIT_HISTORY_PROBE_TOKEN:-}" =~ ^[A-Za-z0-9._~+/=-]+$ &&
-     "$DISTR_AUDIT_HISTORY_PROBE_TOKEN" != *CHANGE_ME* ]] || {
-    die "DISTR_AUDIT_HISTORY_PROBE_TOKEN must be a configured read-only token"
+  audit_probe_authorization_scheme \
+    "${DISTR_AUDIT_HISTORY_PROBE_TOKEN:-}" >/dev/null || {
+    die "DISTR_AUDIT_HISTORY_PROBE_TOKEN must be a read-only PAT or compact JWT"
     return 1
   }
   execution_id="$(audit_probe_execution_id "$source")" || return
@@ -2196,7 +2215,7 @@ verify_audit_history_visibility() {
   need_cmd curl || return
   need_cmd jq || return
   temporary="$(mktemp "$evidence_dir/.audit-history-probe.XXXXXX")" || return
-  printf 'header = "Authorization: Bearer %s"\n' "$audit_token" | \
+  write_audit_probe_curl_config "$audit_token" | \
     curl --config - --fail --silent --show-error --connect-timeout 2 --max-time 10 \
       --output "$temporary" "$audit_url" || {
     rm -f -- "$temporary" || true
@@ -2231,7 +2250,7 @@ verify_release_audit_history() {
   need_cmd curl || return
   need_cmd jq || return
   temporary="$(mktemp "$evidence_dir/.release-audit-history.XXXXXX")" || return
-  printf 'header = "Authorization: Bearer %s"\n' "$audit_token" | \
+  write_audit_probe_curl_config "$audit_token" | \
     curl --config - --fail --silent --show-error --connect-timeout 2 --max-time 10 \
       --output "$temporary" "$audit_url" || {
     rm -f -- "$temporary" || true

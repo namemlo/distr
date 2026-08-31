@@ -81,8 +81,10 @@ Set at least:
 - `DISTR_CALLBACK_PROBE_URL` set to a non-`CHANGE_ME` loopback callbacks route for one known historical execution.
 - `DISTR_AUDIT_HISTORY_PROBE_URL` set to the exact loopback history route, including the trailing slash, for one
   known historical execution that is present in the release source inspection.
-- `DISTR_AUDIT_HISTORY_PROBE_TOKEN` set to a read-only token that can retrieve that execution history. The helper
-  passes it to `curl` through standard input and does not retain it in release evidence.
+- `DISTR_AUDIT_HISTORY_PROBE_TOKEN` set to either a canonical read-only Distr PAT (`distr-` plus 32 lowercase hex
+  characters) or a compact three-segment JWT that can retrieve that execution history. The helper selects
+  `Authorization: AccessToken` for a PAT and `Authorization: Bearer` for a JWT, passes the header to `curl` through
+  standard input, and does not retain it in release evidence.
 - `DISTR_HOST=https://distr.example.com`
 - `REGISTRY_HOST=registry.example.com`
 - `REGISTRATION=enabled` for first admin setup, then change to `hidden` or `disabled`.
@@ -314,8 +316,9 @@ The explicit text-mode, relative `sha256sum` input writes the canonical `approve
 apply. `noclobber` refuses a pre-existing sidecar.
 
 Timestamp-expand apply additionally requires `DISTR_AUDIT_HISTORY_PROBE_URL` for that captured historical execution
-and its read-only `DISTR_AUDIT_HISTORY_PROBE_TOKEN`. Keep the URL and token only in the restricted server `.env`; the
-token is not part of the Jenkins artifact, and this guide intentionally contains no real credential assignment.
+and its read-only `DISTR_AUDIT_HISTORY_PROBE_TOKEN`. Use a canonical Distr PAT for `AccessToken` authentication or a
+compact JWT for `Bearer` authentication. Keep the URL and token only in the restricted server `.env`; the token is not
+part of the Jenkins artifact, and this guide intentionally contains no real credential assignment.
 
 Apply only the sealed manifest and its pre-existing valid sidecar from the active evidence directory:
 

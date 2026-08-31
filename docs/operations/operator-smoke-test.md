@@ -54,7 +54,8 @@ Then manually verify:
 
 For a digest-pinned server `release`, acceptance is part of the deployment command rather than a later best-effort
 check. Before running it, configure the exact loopback `DISTR_AUDIT_HISTORY_PROBE_URL` for one preserved historical
-execution and a read-only `DISTR_AUDIT_HISTORY_PROBE_TOKEN`.
+execution and a read-only `DISTR_AUDIT_HISTORY_PROBE_TOKEN`. Use a canonical Distr PAT (`distr-` plus 32 lowercase hex
+characters) for `Authorization: AccessToken`, or a compact three-segment JWT for `Authorization: Bearer`.
 
 After `release` returns successfully, use the evidence directory printed by the helper and confirm:
 
