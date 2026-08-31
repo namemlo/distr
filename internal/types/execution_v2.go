@@ -32,6 +32,13 @@ type ExecutionFence struct {
 
 type ExecutionAttemptStatus string
 
+type ExecutionRuntimeContractVersion string
+
+const (
+	ExecutionRuntimeContractVersionLegacyV2 ExecutionRuntimeContractVersion = "legacy-v2"
+	ExecutionRuntimeContractVersionV3       ExecutionRuntimeContractVersion = "v3"
+)
+
 const (
 	ExecutionAttemptStatusPending   ExecutionAttemptStatus = "PENDING"
 	ExecutionAttemptStatusClaimed   ExecutionAttemptStatus = "CLAIMED"
@@ -56,29 +63,37 @@ func (s ExecutionAttemptStatus) IsTerminal() bool {
 }
 
 type ExecutionAttempt struct {
-	ID                 uuid.UUID              `db:"id" json:"id"`
-	CreatedAt          time.Time              `db:"created_at" json:"createdAt"`
-	UpdatedAt          time.Time              `db:"updated_at" json:"updatedAt"`
-	OrganizationID     uuid.UUID              `db:"organization_id" json:"organizationId"`
-	DeploymentTargetID uuid.UUID              `db:"deployment_target_id" json:"deploymentTargetId"`
-	TaskID             uuid.UUID              `db:"task_id" json:"taskId"`
-	StepRunID          uuid.UUID              `db:"step_run_id" json:"stepRunId"`
-	Identity           ExecutionIdentity      `db:"-" json:"identity"`
-	Status             ExecutionAttemptStatus `db:"status" json:"status"`
-	ClaimedBy          string                 `db:"claimed_by" json:"claimedBy,omitempty"`
-	PlanChecksum       string                 `db:"plan_checksum" json:"planChecksum"`
-	ArtifactDigest     string                 `db:"artifact_digest" json:"artifactDigest"`
-	ConfigChecksum     string                 `db:"config_checksum" json:"configChecksum"`
-	AdapterRevision    string                 `db:"adapter_revision" json:"adapterRevision"`
-	IntentIssuedAt     time.Time              `db:"intent_issued_at" json:"intentIssuedAt"`
-	IntentExpiresAt    time.Time              `db:"intent_expires_at" json:"intentExpiresAt"`
-	LastEventSequence  int64                  `db:"last_event_sequence" json:"lastEventSequence"`
-	AcknowledgedAt     *time.Time             `db:"acknowledged_at" json:"acknowledgedAt,omitempty"`
-	CompletedAt        *time.Time             `db:"completed_at" json:"completedAt,omitempty"`
-	Cancellable        bool                   `db:"cancellable" json:"cancellable"`
-	RetrySafe          bool                   `db:"retry_safe" json:"retrySafe"`
-	FailureReason      string                 `db:"failure_reason" json:"failureReason,omitempty"`
-	Fence              ExecutionFence         `db:"-" json:"fence"`
+	ID                            uuid.UUID                       `db:"id" json:"id"`
+	CreatedAt                     time.Time                       `db:"created_at" json:"createdAt"`
+	UpdatedAt                     time.Time                       `db:"updated_at" json:"updatedAt"`
+	OrganizationID                uuid.UUID                       `db:"organization_id" json:"organizationId"`
+	DeploymentTargetID            uuid.UUID                       `db:"deployment_target_id" json:"deploymentTargetId"`
+	TaskID                        uuid.UUID                       `db:"task_id" json:"taskId"`
+	StepRunID                     uuid.UUID                       `db:"step_run_id" json:"stepRunId"`
+	Identity                      ExecutionIdentity               `db:"-" json:"identity"`
+	Status                        ExecutionAttemptStatus          `db:"status" json:"status"`
+	ClaimedBy                     string                          `db:"claimed_by" json:"claimedBy,omitempty"`
+	PlanChecksum                  string                          `db:"plan_checksum" json:"planChecksum"`
+	ArtifactDigest                string                          `db:"artifact_digest" json:"artifactDigest"`
+	ConfigChecksum                string                          `db:"config_checksum" json:"configChecksum"`
+	AdapterRevision               string                          `db:"adapter_revision" json:"adapterRevision"`
+	RuntimeContractVersion        ExecutionRuntimeContractVersion `db:"runtime_contract_version" json:"runtimeContractVersion"`
+	ExpectedObservedStateVersion  int64                           `db:"expected_observed_state_revision" json:"expectedObservedStateVersion"`
+	ExpectedObservedStateChecksum string                          `db:"expected_observed_state_checksum" json:"expectedObservedStateChecksum"`
+	ExpectedCurrentImageDigest    string                          `db:"expected_current_image_digest" json:"expectedCurrentImageDigest"`
+	ExpectedCurrentConfigChecksum string                          `db:"expected_current_config_checksum" json:"expectedCurrentConfigChecksum"`
+	ExpectedPlatform              DeploymentTargetPlatform        `db:"expected_platform" json:"expectedPlatform"`
+	CallerBinding                 string                          `db:"intent_caller" json:"callerBinding"`
+	Audience                      string                          `db:"intent_audience" json:"audience"`
+	IntentIssuedAt                time.Time                       `db:"intent_issued_at" json:"intentIssuedAt"`
+	IntentExpiresAt               time.Time                       `db:"intent_expires_at" json:"intentExpiresAt"`
+	LastEventSequence             int64                           `db:"last_event_sequence" json:"lastEventSequence"`
+	AcknowledgedAt                *time.Time                      `db:"acknowledged_at" json:"acknowledgedAt,omitempty"`
+	CompletedAt                   *time.Time                      `db:"completed_at" json:"completedAt,omitempty"`
+	Cancellable                   bool                            `db:"cancellable" json:"cancellable"`
+	RetrySafe                     bool                            `db:"retry_safe" json:"retrySafe"`
+	FailureReason                 string                          `db:"failure_reason" json:"failureReason,omitempty"`
+	Fence                         ExecutionFence                  `db:"-" json:"fence"`
 }
 
 type SignedExecutionIntent struct {
@@ -89,11 +104,18 @@ type SignedExecutionIntent struct {
 }
 
 type TrustPolicy struct {
-	Keys                   map[string]ed25519.PublicKey
-	RevokedKeyIDs          map[string]time.Time
-	Now                    func() time.Time
-	ExpectedArtifactDigest string
-	ExpectedConfigChecksum string
+	Keys                          map[string]ed25519.PublicKey
+	RevokedKeyIDs                 map[string]time.Time
+	Now                           func() time.Time
+	ExpectedArtifactDigest        string
+	ExpectedConfigChecksum        string
+	ExpectedObservedStateVersion  int64
+	ExpectedObservedStateChecksum string
+	ExpectedCurrentImageDigest    string
+	ExpectedCurrentConfigChecksum string
+	ExpectedPlatform              DeploymentTargetPlatform
+	ExpectedCallerBinding         string
+	ExpectedAudience              string
 }
 
 type ClaimRequest struct {
@@ -165,14 +187,72 @@ type ExecutionEvent struct {
 }
 
 type CompletionInput struct {
-	OrganizationID     uuid.UUID
-	DeploymentTargetID uuid.UUID
-	AttemptID          uuid.UUID
-	ExecutorID         string
-	FenceGeneration    int64
-	Status             ExecutionAttemptStatus
-	CompletedAt        time.Time
-	FailureReason      string
+	OrganizationID          uuid.UUID
+	DeploymentTargetID      uuid.UUID
+	AttemptID               uuid.UUID
+	ExecutorID              string
+	FenceGeneration         int64
+	Status                  ExecutionAttemptStatus
+	CompletedAt             time.Time
+	FailureReason           string
+	RuntimeEvidenceID       uuid.UUID
+	RuntimeEvidenceChecksum string
+}
+
+const ExecutionRuntimeEvidenceSchemaV1 = "distr.execution-runtime-evidence/v1"
+
+type ExecutionRuntimeEvidenceInput struct {
+	OrganizationID                uuid.UUID
+	DeploymentTargetID            uuid.UUID
+	AttemptID                     uuid.UUID
+	EventIdentity                 uuid.UUID
+	SchemaVersion                 string
+	IntentChecksum                string
+	ExecutorID                    string
+	CallerIdentity                string
+	Audience                      string
+	FenceGeneration               int64
+	ExpectedObservedStateVersion  int64
+	ExpectedObservedStateChecksum string
+	PreExecutionImageDigest       string
+	PreExecutionConfigChecksum    string
+	ResultImageDigest             string
+	ResultConfigChecksum          string
+	Platform                      DeploymentTargetPlatform
+	HealthStatus                  TargetComponentHealth
+	ResultChecksum                string
+	EvidenceReference             string
+	EvidenceChecksum              string
+	CapturedAt                    time.Time
+}
+
+type ExecutionRuntimeEvidence struct {
+	ID                            uuid.UUID                `db:"id" json:"id"`
+	CreatedAt                     time.Time                `db:"created_at" json:"createdAt"`
+	OrganizationID                uuid.UUID                `db:"organization_id" json:"organizationId"`
+	DeploymentTargetID            uuid.UUID                `db:"deployment_target_id" json:"deploymentTargetId"`
+	AttemptID                     uuid.UUID                `db:"execution_attempt_id" json:"attemptId"`
+	Identity                      ExecutionIdentity        `db:"-" json:"identity"`
+	EventIdentity                 uuid.UUID                `db:"event_identity" json:"eventIdentity"`
+	SchemaVersion                 string                   `db:"schema_version" json:"schemaVersion"`
+	IntentChecksum                string                   `db:"intent_checksum" json:"intentChecksum"`
+	ExecutorID                    string                   `db:"executor_id" json:"executorId"`
+	CallerIdentity                string                   `db:"caller_identity" json:"callerIdentity"`
+	Audience                      string                   `db:"audience" json:"audience"`
+	FenceGeneration               int64                    `db:"fence_generation" json:"fenceGeneration"`
+	ExpectedObservedStateVersion  int64                    `db:"expected_observed_state_revision" json:"expectedObservedStateVersion"`
+	ExpectedObservedStateChecksum string                   `db:"expected_observed_state_checksum" json:"expectedObservedStateChecksum"`
+	PreExecutionImageDigest       string                   `db:"pre_execution_image_digest" json:"preExecutionImageDigest"`
+	PreExecutionConfigChecksum    string                   `db:"pre_execution_config_checksum" json:"preExecutionConfigChecksum"`
+	ResultImageDigest             string                   `db:"result_image_digest" json:"resultImageDigest"`
+	ResultConfigChecksum          string                   `db:"result_config_checksum" json:"resultConfigChecksum"`
+	Platform                      DeploymentTargetPlatform `db:"platform" json:"platform"`
+	HealthStatus                  TargetComponentHealth    `db:"health_status" json:"healthStatus"`
+	ResultChecksum                string                   `db:"result_checksum" json:"resultChecksum"`
+	EvidenceReference             string                   `db:"evidence_reference" json:"evidenceReference"`
+	EvidenceChecksum              string                   `db:"evidence_checksum" json:"evidenceChecksum"`
+	CanonicalChecksum             string                   `db:"canonical_checksum" json:"canonicalChecksum"`
+	CapturedAt                    time.Time                `db:"captured_at" json:"capturedAt"`
 }
 
 type CancelRequest struct {

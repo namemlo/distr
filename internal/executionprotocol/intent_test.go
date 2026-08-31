@@ -31,10 +31,18 @@ func TestSignedIntentGoldenAndTamperCases(t *testing.T) {
 			AttemptNumber: 2,
 			StepKey:       "deploy",
 		},
-		PlanChecksum:    "sha256:" + repeatHex("11"),
-		ArtifactDigest:  "sha256:" + repeatHex("22"),
-		ConfigChecksum:  "sha256:" + repeatHex("33"),
-		AdapterRevision: "adapter.compose@2",
+		PlanChecksum:                  "sha256:" + repeatHex("11"),
+		ArtifactDigest:                "sha256:" + repeatHex("22"),
+		ConfigChecksum:                "sha256:" + repeatHex("33"),
+		AdapterRevision:               "adapter.compose@2",
+		RuntimeContractVersion:        types.ExecutionRuntimeContractVersionV3,
+		ExpectedObservedStateVersion:  17,
+		ExpectedObservedStateChecksum: "sha256:" + repeatHex("44"),
+		ExpectedCurrentImageDigest:    "sha256:" + repeatHex("55"),
+		ExpectedCurrentConfigChecksum: "sha256:" + repeatHex("66"),
+		ExpectedPlatform:              types.DeploymentTargetPlatformLinuxAMD64,
+		CallerBinding:                 "urn:distr:caller:organization:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb:deployment-target:dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+		Audience:                      "urn:distr:audience:adapter-assignment:99999999-9999-4999-8999-999999999999",
 		Fence: types.ExecutionFence{
 			ResourceKey:    "deployment-target:dddddddd-dddd-4ddd-8ddd-dddddddddddd",
 			Generation:     7,
@@ -49,10 +57,13 @@ func TestSignedIntentGoldenAndTamperCases(t *testing.T) {
 	signed, err := BuildExecutionIntent(WithIntentSigner(context.Background(), signer), attempt)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	expectedPayload := `{"schema":"distr.execution-intent/v2","organizationId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","deploymentTargetId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","attemptId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","taskId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","stepRunId":"ffffffff-ffff-4fff-8fff-ffffffffffff","executionId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","attemptNumber":2,"stepKey":"deploy","planChecksum":"sha256:` +
+	expectedPayload := `{"schema":"distr.execution-intent/v3","organizationId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","deploymentTargetId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","attemptId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","taskId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","stepRunId":"ffffffff-ffff-4fff-8fff-ffffffffffff","executionId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","attemptNumber":2,"stepKey":"deploy","planChecksum":"sha256:` +
 		repeatHex("11") + `","artifactDigest":"sha256:` + repeatHex("22") +
 		`","configChecksum":"sha256:` + repeatHex("33") +
-		`","adapterRevision":"adapter.compose@2","resourceKey":"deployment-target:dddddddd-dddd-4ddd-8ddd-dddddddddddd","fenceGeneration":7,"issuedAt":"2026-07-18T00:00:00Z","expiresAt":"2026-07-18T00:05:00Z"}`
+		`","adapterRevision":"adapter.compose@2","runtimeContractVersion":"v3","expectedObservedStateVersion":17,"expectedObservedStateChecksum":"sha256:` + repeatHex("44") +
+		`","expectedCurrentImageDigest":"sha256:` + repeatHex("55") +
+		`","expectedCurrentConfigChecksum":"sha256:` + repeatHex("66") +
+		`","expectedPlatform":"linux/amd64","callerBinding":"urn:distr:caller:organization:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb:deployment-target:dddddddd-dddd-4ddd-8ddd-dddddddddddd","audience":"urn:distr:audience:adapter-assignment:99999999-9999-4999-8999-999999999999","resourceKey":"deployment-target:dddddddd-dddd-4ddd-8ddd-dddddddddddd","fenceGeneration":7,"issuedAt":"2026-07-18T00:00:00Z","expiresAt":"2026-07-18T00:05:00Z"}`
 	g.Expect(string(signed.Payload)).To(Equal(expectedPayload))
 	sum := sha256.Sum256([]byte(expectedPayload))
 	g.Expect(signed.Checksum).To(Equal("sha256:" + hex.EncodeToString(sum[:])))
@@ -60,10 +71,17 @@ func TestSignedIntentGoldenAndTamperCases(t *testing.T) {
 	g.Expect(signed.Signature).NotTo(BeEmpty())
 
 	policy := types.TrustPolicy{
-		Keys:                   map[string]ed25519.PublicKey{keyID: publicKey},
-		Now:                    func() time.Time { return issuedAt.Add(time.Minute) },
-		ExpectedArtifactDigest: attempt.ArtifactDigest,
-		ExpectedConfigChecksum: attempt.ConfigChecksum,
+		Keys:                          map[string]ed25519.PublicKey{keyID: publicKey},
+		Now:                           func() time.Time { return issuedAt.Add(time.Minute) },
+		ExpectedArtifactDigest:        attempt.ArtifactDigest,
+		ExpectedConfigChecksum:        attempt.ConfigChecksum,
+		ExpectedObservedStateVersion:  attempt.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum: attempt.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:    attempt.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum: attempt.ExpectedCurrentConfigChecksum,
+		ExpectedPlatform:              attempt.ExpectedPlatform,
+		ExpectedCallerBinding:         attempt.CallerBinding,
+		ExpectedAudience:              attempt.Audience,
 	}
 	g.Expect(VerifyExecutionIntent(signed, policy)).To(Succeed())
 	g.Expect(ValidateExecutionIntentBinding(attempt, signed)).To(Succeed())

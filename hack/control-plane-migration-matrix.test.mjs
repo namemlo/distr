@@ -240,7 +240,7 @@ test('plan-only report is checksummed, redacted, bounded, and makes no database 
       '-FromMigration',
       '138',
       '-ToMigration',
-      '166',
+      '167',
       '-DatabaseUrl',
       safeURL,
       '-OutputPath',
@@ -256,17 +256,17 @@ test('plan-only report is checksummed, redacted, bounded, and makes no database 
     assert.equal(report.schemaVersion, 'distr.control-plane-migration-matrix-report/v1');
     assert.equal(report.status, 'PLANNED');
     assert.equal(report.planOnly, true);
-    assert.deepEqual(report.range, {from: 138, to: 166});
+    assert.deepEqual(report.range, {from: 138, to: 167});
     assert.equal(report.database.passwordPresent, true);
     assert.equal(report.database.expectedServerVersion, '18.4');
-    assert.equal(report.migrationFiles.length, 29);
+    assert.equal(report.migrationFiles.length, 30);
     assert.equal(report.scenarios[0].id, 'migration-file-integrity');
     assert.equal(report.scenarios[0].status, 'PASS');
     assert.equal(report.scenarios.slice(1).length, 9);
     assert.ok(report.scenarios.slice(1).every(({status}) => status === 'PLANNED'));
     assert.deepEqual(report.coverage, {
-      schemaUpgrade: {from: 138, to: 166},
-      schemaDown: {mode: 'single-step', from: 166, to: 165},
+      schemaUpgrade: {from: 138, to: 167},
+      schemaDown: {mode: 'single-step', from: 167, to: 166},
       checkpoint: 'idempotency-and-cursor-resume-tests',
       notExecuted: ['process-interruption-and-restart', 'binary-rollback'],
     });
@@ -559,7 +559,7 @@ test('failed commands retain complete redacted evidence before the scenario fail
     const raw = await readFile(output, 'utf8');
     assert.ok(!raw.includes('do-not-retain'));
     const report = JSON.parse(raw);
-    const scenario = report.scenarios.find(({id}) => id === 'migration-138-to-166-upgrade');
+    const scenario = report.scenarios.find(({id}) => id === 'migration-138-to-167-upgrade');
     assert.equal(scenario.status, 'FAIL');
     const failedCheck = scenario.checks.find(({exitCode}) => exitCode === 7);
     assert.ok(failedCheck.output.includes(marker));
@@ -635,7 +635,7 @@ test('unsafe database URLs fail before an evidence report or external command', 
 test('missing migration pairs and reversed ranges fail closed in plan mode', () => {
   const reversed = runScript([
     '-FromMigration',
-    '166',
+    '167',
     '-ToMigration',
     '138',
     '-DatabaseUrl',
@@ -650,7 +650,7 @@ test('missing migration pairs and reversed ranges fail closed in plan mode', () 
     '-FromMigration',
     '138',
     '-ToMigration',
-    '167',
+    '168',
     '-DatabaseUrl',
     safeURL,
     '-OutputPath',
@@ -658,7 +658,7 @@ test('missing migration pairs and reversed ranges fail closed in plan mode', () 
     '-PlanOnly',
   ]);
   assert.notEqual(missing.status, 0);
-  assert.match(`${missing.stdout}${missing.stderr}`, /migration 167 must have exactly one up and one down file/i);
+  assert.match(`${missing.stdout}${missing.stderr}`, /migration 168 must have exactly one up and one down file/i);
 });
 
 test('script source keeps destructive execution scoped and secret-safe', async () => {
@@ -671,7 +671,7 @@ test('script source keeps destructive execution scoped and secret-safe', async (
   assert.match(source, /DISTR_EXPERIMENTAL_FEATURE_FLAGS/);
   assert.match(source, /reportChecksum/);
   for (const scenario of [
-    'migration-138-to-166-upgrade',
+    'migration-138-to-167-upgrade',
     'clean-install',
     'postgres-runtime-version',
     'single-step-down-and-refusal-contracts',

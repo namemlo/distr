@@ -182,11 +182,24 @@ func TestExecutionV2AcknowledgeAndCompletionProjectTaskAndStepExactlyOnce(t *tes
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(running.Status).To(Equal(types.TaskStatusRunning))
 	g.Expect(running.StepRuns[0].Status).To(Equal(types.StepRunStatusRunning))
+	blocked, err := db.CompleteExecutionAttempt(auditCtx, types.CompletionInput{
+		OrganizationID: deps.orgID, DeploymentTargetID: tasks[0].DeploymentTargetID,
+		AttemptID: attemptID, ExecutorID: "executor-projection", FenceGeneration: 1,
+		Status: types.ExecutionAttemptStatusSucceeded, CompletedAt: time.Now().UTC(),
+		RuntimeEvidenceID:       uuid.New(),
+		RuntimeEvidenceChecksum: "sha256:" + executionV2RepeatHex("aa"),
+	})
+	g.Expect(err).To(MatchError(ContainSubstring("has no runtime evidence")))
+	g.Expect(blocked).To(BeNil())
+	evidence := recordHealthyExecutionRuntimeEvidence(
+		t, ctx, deps.orgID, tasks[0].DeploymentTargetID, attemptID, "executor-projection",
+	)
 
 	completion := types.CompletionInput{
 		OrganizationID: deps.orgID, DeploymentTargetID: tasks[0].DeploymentTargetID,
 		AttemptID: attemptID, ExecutorID: "executor-projection", FenceGeneration: 1,
 		Status: types.ExecutionAttemptStatusSucceeded, CompletedAt: time.Now().UTC(),
+		RuntimeEvidenceID: evidence.ID, RuntimeEvidenceChecksum: evidence.CanonicalChecksum,
 	}
 	completed, err := db.CompleteExecutionAttempt(auditCtx, completion)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -303,27 +316,52 @@ func insertClaimedProjectionAttempt(
 	g := NewWithT(t)
 	attemptID := uuid.New()
 	now := time.Now().UTC()
+	intentPayload := []byte(`{}`)
+	intentChecksum := fmt.Sprintf("sha256:%x", sha256.Sum256(intentPayload))
 	_, err := internalctx.GetDb(ctx).Exec(ctx, `
 		INSERT INTO ExecutionAttempt (
 		  id, organization_id, deployment_target_id, task_id, step_run_id,
 		  execution_id, attempt_number, step_key, status, claimed_by,
 		  plan_checksum, artifact_digest, config_checksum, adapter_revision,
+		  runtime_contract_version, expected_observed_state_revision,
+		  expected_observed_state_checksum, expected_current_image_digest,
+		  expected_current_config_checksum, expected_platform,
+		  intent_caller, intent_audience,
 		  intent_issued_at, intent_expires_at, cancellable, retry_safe
 		) VALUES (
 		  @id, @organizationId, @deploymentTargetId, @taskId, @stepRunId,
 		  @executionId, 1, @stepKey, 'CLAIMED', @executorId,
 		  @planChecksum, @artifactDigest, @configChecksum, 'adapter.compose@2',
+		  'v3', 7, @expectedObservedChecksum, @expectedCurrentImage,
+		  @expectedCurrentConfig, 'linux/amd64', @intentCaller, @intentAudience,
 		  @issuedAt, @expiresAt, TRUE, TRUE
 		)`, pgx.NamedArgs{
 		"id": attemptID, "organizationId": organizationID,
 		"deploymentTargetId": task.DeploymentTargetID,
 		"taskId":             task.ID, "stepRunId": task.StepRuns[0].ID,
 		"executionId": task.ID, "stepKey": task.StepRuns[0].StepKey,
-		"executorId":     executorID,
-		"planChecksum":   "sha256:" + executionV2RepeatHex("11"),
-		"artifactDigest": "sha256:" + executionV2RepeatHex("22"),
-		"configChecksum": "sha256:" + executionV2RepeatHex("33"),
-		"issuedAt":       now.Add(-time.Minute), "expiresAt": now.Add(10 * time.Minute),
+		"executorId":               executorID,
+		"planChecksum":             "sha256:" + executionV2RepeatHex("11"),
+		"artifactDigest":           "sha256:" + executionV2RepeatHex("22"),
+		"configChecksum":           "sha256:" + executionV2RepeatHex("33"),
+		"expectedObservedChecksum": "sha256:" + executionV2RepeatHex("44"),
+		"expectedCurrentImage":     "sha256:" + executionV2RepeatHex("55"),
+		"expectedCurrentConfig":    "sha256:" + executionV2RepeatHex("66"),
+		"intentCaller":             "urn:distr:caller:deployment-target:" + task.DeploymentTargetID.String(),
+		"intentAudience":           "urn:distr:audience:adapter-assignment:projection-test",
+		"issuedAt":                 now.Add(-time.Minute), "expiresAt": now.Add(10 * time.Minute),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO ExecutionIntent (
+		  organization_id, execution_attempt_id, payload, checksum, key_id, signature
+		) VALUES (
+		  @organizationId, @attemptId, @payload, @checksum, @keyId, @signature
+		)`, pgx.NamedArgs{
+		"organizationId": organizationID, "attemptId": attemptID,
+		"payload": intentPayload, "checksum": intentChecksum,
+		"keyId":     "sha256:" + executionV2RepeatHex("77"),
+		"signature": strings.Repeat("A", 86),
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	_, err = internalctx.GetDb(ctx).Exec(ctx, `
@@ -337,6 +375,55 @@ func insertClaimedProjectionAttempt(
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	return attemptID
+}
+
+func recordHealthyExecutionRuntimeEvidence(
+	t *testing.T,
+	ctx context.Context,
+	organizationID, deploymentTargetID, attemptID uuid.UUID,
+	executorID string,
+) *types.ExecutionRuntimeEvidence {
+	t.Helper()
+	g := NewWithT(t)
+	input := types.ExecutionRuntimeEvidenceInput{
+		OrganizationID: organizationID, DeploymentTargetID: deploymentTargetID,
+		AttemptID: attemptID, EventIdentity: uuid.New(),
+		SchemaVersion: types.ExecutionRuntimeEvidenceSchemaV1,
+		ExecutorID:    executorID, HealthStatus: types.TargetComponentHealthHealthy,
+		ResultChecksum:    "sha256:" + executionV2RepeatHex("88"),
+		EvidenceReference: "fixture://executor/runtime-evidence/" + attemptID.String(),
+		EvidenceChecksum:  "sha256:" + executionV2RepeatHex("99"),
+		CapturedAt:        time.Now().UTC(),
+	}
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT intent.checksum, fence.generation,
+		  attempt.expected_observed_state_revision,
+		  attempt.expected_observed_state_checksum,
+		  attempt.expected_current_image_digest,
+		  attempt.expected_current_config_checksum,
+		  attempt.artifact_digest, attempt.config_checksum,
+		  attempt.expected_platform, attempt.intent_caller, attempt.intent_audience
+		FROM ExecutionAttempt AS attempt
+		JOIN ExecutionFence AS fence
+		  ON fence.execution_attempt_id = attempt.id
+		 AND fence.organization_id = attempt.organization_id
+		JOIN ExecutionIntent AS intent
+		  ON intent.execution_attempt_id = attempt.id
+		 AND intent.organization_id = attempt.organization_id
+		WHERE attempt.id = @attemptID
+		  AND attempt.organization_id = @organizationID`, pgx.NamedArgs{
+		"attemptID": attemptID, "organizationID": organizationID,
+	}).Scan(
+		&input.IntentChecksum, &input.FenceGeneration,
+		&input.ExpectedObservedStateVersion, &input.ExpectedObservedStateChecksum,
+		&input.PreExecutionImageDigest, &input.PreExecutionConfigChecksum,
+		&input.ResultImageDigest, &input.ResultConfigChecksum,
+		&input.Platform, &input.CallerIdentity, &input.Audience,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	evidence, err := db.RecordExecutionRuntimeEvidence(ctx, input)
+	g.Expect(err).NotTo(HaveOccurred())
+	return evidence
 }
 
 func executionV2ProjectionAuditTestContext(t *testing.T, ctx context.Context) context.Context {

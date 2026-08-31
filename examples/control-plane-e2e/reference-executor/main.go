@@ -55,20 +55,28 @@ type operationRequest struct {
 }
 
 type operationBinding struct {
-	TenantID        uuid.UUID `json:"tenantId"`
-	TargetID        uuid.UUID `json:"targetId"`
-	AttemptID       uuid.UUID `json:"attemptId"`
-	TaskID          uuid.UUID `json:"taskId"`
-	StepRunID       uuid.UUID `json:"stepRunId"`
-	ExecutionID     uuid.UUID `json:"executionId"`
-	AttemptNumber   int       `json:"attemptNumber"`
-	StepKey         string    `json:"stepKey"`
-	PlanChecksum    string    `json:"planChecksum"`
-	ArtifactDigest  string    `json:"artifactDigest"`
-	ConfigChecksum  string    `json:"configChecksum"`
-	AdapterRevision string    `json:"adapterRevision"`
-	ResourceKey     string    `json:"resourceKey"`
-	FenceGeneration int64     `json:"fenceGeneration"`
+	TenantID                      uuid.UUID                             `json:"tenantId"`
+	TargetID                      uuid.UUID                             `json:"targetId"`
+	AttemptID                     uuid.UUID                             `json:"attemptId"`
+	TaskID                        uuid.UUID                             `json:"taskId"`
+	StepRunID                     uuid.UUID                             `json:"stepRunId"`
+	ExecutionID                   uuid.UUID                             `json:"executionId"`
+	AttemptNumber                 int                                   `json:"attemptNumber"`
+	StepKey                       string                                `json:"stepKey"`
+	PlanChecksum                  string                                `json:"planChecksum"`
+	ArtifactDigest                string                                `json:"artifactDigest"`
+	ConfigChecksum                string                                `json:"configChecksum"`
+	AdapterRevision               string                                `json:"adapterRevision"`
+	RuntimeContractVersion        types.ExecutionRuntimeContractVersion `json:"runtimeContractVersion"`
+	ExpectedObservedStateVersion  int64                                 `json:"expectedObservedStateVersion"`
+	ExpectedObservedStateChecksum string                                `json:"expectedObservedStateChecksum"`
+	ExpectedCurrentImageDigest    string                                `json:"expectedCurrentImageDigest"`
+	ExpectedCurrentConfigChecksum string                                `json:"expectedCurrentConfigChecksum"`
+	ExpectedPlatform              types.DeploymentTargetPlatform        `json:"expectedPlatform"`
+	CallerBinding                 string                                `json:"callerBinding"`
+	Audience                      string                                `json:"audience"`
+	ResourceKey                   string                                `json:"resourceKey"`
+	FenceGeneration               int64                                 `json:"fenceGeneration"`
 }
 
 type operationBehavior struct {
@@ -109,23 +117,31 @@ type readinessView struct {
 }
 
 type signedIntentPayload struct {
-	Schema             string    `json:"schema"`
-	OrganizationID     uuid.UUID `json:"organizationId"`
-	DeploymentTargetID uuid.UUID `json:"deploymentTargetId"`
-	AttemptID          uuid.UUID `json:"attemptId"`
-	TaskID             uuid.UUID `json:"taskId"`
-	StepRunID          uuid.UUID `json:"stepRunId"`
-	ExecutionID        uuid.UUID `json:"executionId"`
-	AttemptNumber      int       `json:"attemptNumber"`
-	StepKey            string    `json:"stepKey"`
-	PlanChecksum       string    `json:"planChecksum"`
-	ArtifactDigest     string    `json:"artifactDigest"`
-	ConfigChecksum     string    `json:"configChecksum"`
-	AdapterRevision    string    `json:"adapterRevision"`
-	ResourceKey        string    `json:"resourceKey"`
-	FenceGeneration    int64     `json:"fenceGeneration"`
-	IssuedAt           time.Time `json:"issuedAt"`
-	ExpiresAt          time.Time `json:"expiresAt"`
+	Schema                        string                                `json:"schema"`
+	OrganizationID                uuid.UUID                             `json:"organizationId"`
+	DeploymentTargetID            uuid.UUID                             `json:"deploymentTargetId"`
+	AttemptID                     uuid.UUID                             `json:"attemptId"`
+	TaskID                        uuid.UUID                             `json:"taskId"`
+	StepRunID                     uuid.UUID                             `json:"stepRunId"`
+	ExecutionID                   uuid.UUID                             `json:"executionId"`
+	AttemptNumber                 int                                   `json:"attemptNumber"`
+	StepKey                       string                                `json:"stepKey"`
+	PlanChecksum                  string                                `json:"planChecksum"`
+	ArtifactDigest                string                                `json:"artifactDigest"`
+	ConfigChecksum                string                                `json:"configChecksum"`
+	AdapterRevision               string                                `json:"adapterRevision"`
+	RuntimeContractVersion        types.ExecutionRuntimeContractVersion `json:"runtimeContractVersion"`
+	ExpectedObservedStateVersion  int64                                 `json:"expectedObservedStateVersion"`
+	ExpectedObservedStateChecksum string                                `json:"expectedObservedStateChecksum"`
+	ExpectedCurrentImageDigest    string                                `json:"expectedCurrentImageDigest"`
+	ExpectedCurrentConfigChecksum string                                `json:"expectedCurrentConfigChecksum"`
+	ExpectedPlatform              types.DeploymentTargetPlatform        `json:"expectedPlatform"`
+	CallerBinding                 string                                `json:"callerBinding"`
+	Audience                      string                                `json:"audience"`
+	ResourceKey                   string                                `json:"resourceKey"`
+	FenceGeneration               int64                                 `json:"fenceGeneration"`
+	IssuedAt                      time.Time                             `json:"issuedAt"`
+	ExpiresAt                     time.Time                             `json:"expiresAt"`
 }
 
 type persistedOperation struct {
@@ -379,10 +395,17 @@ func (e *referenceExecutor) validateOperation(
 		return http.StatusBadRequest, errors.New("signed execution intent binding mismatch")
 	}
 	policy := types.TrustPolicy{
-		Keys:                   e.config.TrustedKeys,
-		Now:                    e.config.Now,
-		ExpectedArtifactDigest: input.Binding.ArtifactDigest,
-		ExpectedConfigChecksum: input.Binding.ConfigChecksum,
+		Keys:                          e.config.TrustedKeys,
+		Now:                           e.config.Now,
+		ExpectedArtifactDigest:        input.Binding.ArtifactDigest,
+		ExpectedConfigChecksum:        input.Binding.ConfigChecksum,
+		ExpectedObservedStateVersion:  input.Binding.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum: input.Binding.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:    input.Binding.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum: input.Binding.ExpectedCurrentConfigChecksum,
+		ExpectedPlatform:              input.Binding.ExpectedPlatform,
+		ExpectedCallerBinding:         input.Binding.CallerBinding,
+		ExpectedAudience:              input.Binding.Audience,
 	}
 	if err := executionprotocol.VerifyExecutionIntent(input.Intent, policy); err != nil {
 		return http.StatusUnauthorized, errors.New("signed execution intent is not authorized")
@@ -411,6 +434,18 @@ func (binding operationBinding) validate() error {
 		strings.ContainsAny(binding.AdapterRevision, "\r\n") {
 		return errors.New("adapter binding is invalid")
 	}
+	if binding.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 ||
+		binding.ExpectedObservedStateVersion <= 0 ||
+		!checksumPattern.MatchString(binding.ExpectedObservedStateChecksum) ||
+		!checksumPattern.MatchString(binding.ExpectedCurrentImageDigest) ||
+		!checksumPattern.MatchString(binding.ExpectedCurrentConfigChecksum) ||
+		!binding.ExpectedPlatform.IsValid() ||
+		strings.TrimSpace(binding.CallerBinding) == "" || len(binding.CallerBinding) > 512 ||
+		strings.ContainsAny(binding.CallerBinding, "\r\n") ||
+		strings.TrimSpace(binding.Audience) == "" || len(binding.Audience) > 512 ||
+		strings.ContainsAny(binding.Audience, "\r\n") {
+		return errors.New("runtime trust binding is invalid")
+	}
 	if strings.TrimSpace(binding.ResourceKey) == "" ||
 		len(binding.ResourceKey) > 512 ||
 		strings.ContainsAny(binding.ResourceKey, "\r\n") ||
@@ -421,7 +456,7 @@ func (binding operationBinding) validate() error {
 }
 
 func (payload signedIntentPayload) matches(binding operationBinding) bool {
-	return payload.Schema == "distr.execution-intent/v2" &&
+	return payload.Schema == "distr.execution-intent/v3" &&
 		payload.OrganizationID == binding.TenantID &&
 		payload.DeploymentTargetID == binding.TargetID &&
 		payload.AttemptID == binding.AttemptID &&
@@ -434,6 +469,14 @@ func (payload signedIntentPayload) matches(binding operationBinding) bool {
 		payload.ArtifactDigest == binding.ArtifactDigest &&
 		payload.ConfigChecksum == binding.ConfigChecksum &&
 		payload.AdapterRevision == strings.TrimSpace(binding.AdapterRevision) &&
+		payload.RuntimeContractVersion == binding.RuntimeContractVersion &&
+		payload.ExpectedObservedStateVersion == binding.ExpectedObservedStateVersion &&
+		payload.ExpectedObservedStateChecksum == binding.ExpectedObservedStateChecksum &&
+		payload.ExpectedCurrentImageDigest == binding.ExpectedCurrentImageDigest &&
+		payload.ExpectedCurrentConfigChecksum == binding.ExpectedCurrentConfigChecksum &&
+		payload.ExpectedPlatform == binding.ExpectedPlatform &&
+		payload.CallerBinding == strings.TrimSpace(binding.CallerBinding) &&
+		payload.Audience == strings.TrimSpace(binding.Audience) &&
 		payload.ResourceKey == strings.TrimSpace(binding.ResourceKey) &&
 		payload.FenceGeneration == binding.FenceGeneration
 }

@@ -27,6 +27,15 @@ func TestExecutionV2RepositoryRequestValidation(t *testing.T) {
 	g.Expect(validateExecutionV2ClaimRequest(request)).To(MatchError(ContainSubstring("generation")))
 }
 
+func TestExecutionV2DirectClaimUpdateRequiresV3RuntimeContract(t *testing.T) {
+	g := NewWithT(t)
+	query := strings.ToLower(executionV2DirectClaimUpdate)
+
+	g.Expect(query).To(ContainSubstring("status = 'pending'"))
+	g.Expect(query).To(ContainSubstring("runtime_contract_version = 'v3'"))
+	g.Expect(query).To(ContainSubstring("intent_expires_at > clock_timestamp()"))
+}
+
 func TestExecutionV2AttemptInsertValidation(t *testing.T) {
 	g := NewWithT(t)
 	seed := sha256.Sum256([]byte("repository-key"))
@@ -41,7 +50,15 @@ func TestExecutionV2AttemptInsertValidation(t *testing.T) {
 		Status:       types.ExecutionAttemptStatusPending,
 		PlanChecksum: "sha256:" + repeatDBHex("11"), ArtifactDigest: "sha256:" + repeatDBHex("22"),
 		ConfigChecksum: "sha256:" + repeatDBHex("33"), AdapterRevision: "adapter.compose@2",
-		IntentIssuedAt: time.Now().UTC(), IntentExpiresAt: time.Now().UTC().Add(time.Minute),
+		RuntimeContractVersion:        types.ExecutionRuntimeContractVersionV3,
+		ExpectedObservedStateVersion:  7,
+		ExpectedObservedStateChecksum: "sha256:" + repeatDBHex("44"),
+		ExpectedCurrentImageDigest:    "sha256:" + repeatDBHex("55"),
+		ExpectedCurrentConfigChecksum: "sha256:" + repeatDBHex("66"),
+		ExpectedPlatform:              types.DeploymentTargetPlatformLinuxAMD64,
+		CallerBinding:                 "urn:distr:caller:deployment-target:test",
+		Audience:                      "urn:distr:audience:adapter-assignment:test",
+		IntentIssuedAt:                time.Now().UTC(), IntentExpiresAt: time.Now().UTC().Add(time.Minute),
 		Fence: types.ExecutionFence{ResourceKey: "target:1", Generation: 1},
 	}
 	signer, err := executionprotocol.NewEd25519IntentSigner(keyID, privateKey)

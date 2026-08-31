@@ -137,6 +137,10 @@ const executionAttemptSelect = `
 		ea.task_id, ea.step_run_id, ea.execution_id, ea.attempt_number,
 		ea.step_key, ea.status, ea.claimed_by, ea.plan_checksum,
 		ea.artifact_digest, ea.config_checksum, ea.adapter_revision,
+		ea.runtime_contract_version, ea.expected_observed_state_revision,
+		ea.expected_observed_state_checksum, ea.expected_current_image_digest,
+		ea.expected_current_config_checksum, ea.expected_platform,
+		ea.intent_caller, ea.intent_audience,
 		ea.intent_issued_at, ea.intent_expires_at, ea.last_event_sequence,
 		ea.acknowledged_at, ea.completed_at, ea.cancellable, ea.retry_safe,
 		ea.failure_reason, ef.resource_key, ef.generation,
@@ -146,6 +150,17 @@ const executionAttemptSelect = `
 		ON ef.execution_attempt_id = ea.id
 		AND ef.organization_id = ea.organization_id
 `
+
+const executionV2DirectClaimUpdate = `
+	UPDATE ExecutionAttempt
+	SET status = 'CLAIMED', claimed_by = @executorId,
+		updated_at = clock_timestamp()
+	WHERE id = @attemptId AND organization_id = @organizationId
+		AND deployment_target_id = @deploymentTargetId
+		AND status = 'PENDING'
+		AND runtime_contract_version = 'v3'
+		AND intent_issued_at <= clock_timestamp()
+		AND intent_expires_at > clock_timestamp()`
 
 type rowScanner interface {
 	Scan(...any) error
@@ -174,6 +189,13 @@ func CreateExecutionAttempt(
 		trustPolicy.Now = func() time.Time { return trustedNow }
 		trustPolicy.ExpectedArtifactDigest = attempt.ArtifactDigest
 		trustPolicy.ExpectedConfigChecksum = attempt.ConfigChecksum
+		trustPolicy.ExpectedObservedStateVersion = attempt.ExpectedObservedStateVersion
+		trustPolicy.ExpectedObservedStateChecksum = attempt.ExpectedObservedStateChecksum
+		trustPolicy.ExpectedCurrentImageDigest = attempt.ExpectedCurrentImageDigest
+		trustPolicy.ExpectedCurrentConfigChecksum = attempt.ExpectedCurrentConfigChecksum
+		trustPolicy.ExpectedPlatform = attempt.ExpectedPlatform
+		trustPolicy.ExpectedCallerBinding = attempt.CallerBinding
+		trustPolicy.ExpectedAudience = attempt.Audience
 		if err := executionprotocol.VerifyExecutionIntent(intent, trustPolicy); err != nil {
 			return apierrors.NewBadRequest(err.Error())
 		}
@@ -202,12 +224,18 @@ func CreateExecutionAttempt(
 			INSERT INTO ExecutionAttempt (
 				id, organization_id, deployment_target_id, task_id, step_run_id, execution_id,
 				attempt_number, step_key, status, plan_checksum, artifact_digest,
-				config_checksum, adapter_revision, intent_issued_at,
+				config_checksum, adapter_revision, runtime_contract_version,
+				expected_observed_state_revision, expected_observed_state_checksum,
+				expected_current_image_digest, expected_current_config_checksum,
+				expected_platform, intent_caller, intent_audience, intent_issued_at,
 				intent_expires_at, cancellable, retry_safe
 			) VALUES (
 				@id, @organizationId, @deploymentTargetId, @taskId, @stepRunId, @executionId,
 				@attemptNumber, @stepKey, 'PENDING', @planChecksum, @artifactDigest,
-				@configChecksum, @adapterRevision, @intentIssuedAt,
+				@configChecksum, @adapterRevision, @runtimeContractVersion,
+				@expectedObservedStateVersion, @expectedObservedStateChecksum,
+				@expectedCurrentImageDigest, @expectedCurrentConfigChecksum,
+				@expectedPlatform, @intentCaller, @intentAudience, @intentIssuedAt,
 				@intentExpiresAt, @cancellable, @retrySafe
 			)`,
 			pgx.NamedArgs{
@@ -218,6 +246,13 @@ func CreateExecutionAttempt(
 				"attemptNumber": attempt.Identity.AttemptNumber, "stepKey": attempt.Identity.StepKey,
 				"planChecksum": attempt.PlanChecksum, "artifactDigest": attempt.ArtifactDigest,
 				"configChecksum": attempt.ConfigChecksum, "adapterRevision": attempt.AdapterRevision,
+				"runtimeContractVersion":        attempt.RuntimeContractVersion,
+				"expectedObservedStateVersion":  attempt.ExpectedObservedStateVersion,
+				"expectedObservedStateChecksum": attempt.ExpectedObservedStateChecksum,
+				"expectedCurrentImageDigest":    attempt.ExpectedCurrentImageDigest,
+				"expectedCurrentConfigChecksum": attempt.ExpectedCurrentConfigChecksum,
+				"expectedPlatform":              attempt.ExpectedPlatform,
+				"intentCaller":                  attempt.CallerBinding, "intentAudience": attempt.Audience,
 				"intentIssuedAt":  attempt.IntentIssuedAt.UTC(),
 				"intentExpiresAt": attempt.IntentExpiresAt.UTC(),
 				"cancellable":     attempt.Cancellable, "retrySafe": attempt.RetrySafe,
@@ -446,12 +481,20 @@ func scanExecutionAttempt(row rowScanner) (*types.ExecutionAttempt, error) {
 	var stepKey, resourceKey string
 	var generation int64
 	var leaseExpiresAt *time.Time
+	var expectedObservedStateVersion *int64
+	var expectedObservedStateChecksum, expectedCurrentImageDigest *string
+	var expectedCurrentConfigChecksum, expectedPlatform *string
+	var callerBinding, audience *string
 	err := row.Scan(
 		&attempt.ID, &attempt.CreatedAt, &attempt.UpdatedAt, &attempt.OrganizationID,
 		&attempt.DeploymentTargetID,
 		&attempt.TaskID, &attempt.StepRunID, &executionID, &attemptNumber,
 		&stepKey, &attempt.Status, &attempt.ClaimedBy, &attempt.PlanChecksum,
 		&attempt.ArtifactDigest, &attempt.ConfigChecksum, &attempt.AdapterRevision,
+		&attempt.RuntimeContractVersion, &expectedObservedStateVersion,
+		&expectedObservedStateChecksum, &expectedCurrentImageDigest,
+		&expectedCurrentConfigChecksum, &expectedPlatform,
+		&callerBinding, &audience,
 		&attempt.IntentIssuedAt, &attempt.IntentExpiresAt, &attempt.LastEventSequence,
 		&attempt.AcknowledgedAt, &attempt.CompletedAt, &attempt.Cancellable, &attempt.RetrySafe,
 		&attempt.FailureReason, &resourceKey, &generation, &leaseExpiresAt,
@@ -461,6 +504,27 @@ func scanExecutionAttempt(row rowScanner) (*types.ExecutionAttempt, error) {
 	}
 	attempt.Identity = types.ExecutionIdentity{
 		ExecutionID: executionID, AttemptNumber: attemptNumber, StepKey: stepKey,
+	}
+	if expectedObservedStateVersion != nil {
+		attempt.ExpectedObservedStateVersion = *expectedObservedStateVersion
+	}
+	if expectedObservedStateChecksum != nil {
+		attempt.ExpectedObservedStateChecksum = *expectedObservedStateChecksum
+	}
+	if expectedCurrentImageDigest != nil {
+		attempt.ExpectedCurrentImageDigest = *expectedCurrentImageDigest
+	}
+	if expectedCurrentConfigChecksum != nil {
+		attempt.ExpectedCurrentConfigChecksum = *expectedCurrentConfigChecksum
+	}
+	if expectedPlatform != nil {
+		attempt.ExpectedPlatform = types.DeploymentTargetPlatform(*expectedPlatform)
+	}
+	if callerBinding != nil {
+		attempt.CallerBinding = *callerBinding
+	}
+	if audience != nil {
+		attempt.Audience = *audience
 	}
 	attempt.Fence = types.ExecutionFence{ResourceKey: resourceKey, Generation: generation}
 	if leaseExpiresAt != nil {
@@ -484,6 +548,9 @@ func ClaimExecutionAttempt(
 		)
 		if err != nil {
 			return err
+		}
+		if current.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 {
+			return apierrors.NewConflict("execution attempt has no runtime trust contract")
 		}
 		if current.Fence.Generation != request.ExpectedGeneration {
 			return apierrors.NewConflict("stale execution fence generation")
@@ -510,15 +577,7 @@ func ClaimExecutionAttempt(
 		if current.Status != types.ExecutionAttemptStatusPending {
 			return apierrors.NewConflict("execution attempt is not claimable")
 		}
-		command, err := db.Exec(ctx, `
-			UPDATE ExecutionAttempt
-			SET status = 'CLAIMED', claimed_by = @executorId,
-				updated_at = clock_timestamp()
-			WHERE id = @attemptId AND organization_id = @organizationId
-				AND deployment_target_id = @deploymentTargetId
-				AND status = 'PENDING'
-				AND intent_issued_at <= clock_timestamp()
-				AND intent_expires_at > clock_timestamp()`,
+		command, err := db.Exec(ctx, executionV2DirectClaimUpdate,
 			pgx.NamedArgs{
 				"attemptId": request.AttemptID, "organizationId": request.OrganizationID,
 				"deploymentTargetId": request.DeploymentTargetID,
@@ -831,6 +890,18 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 			input.Status != types.ExecutionAttemptStatusTimedOut) {
 		return nil, apierrors.NewBadRequest("execution completion request is invalid")
 	}
+	if input.Status == types.ExecutionAttemptStatusSucceeded {
+		if input.RuntimeEvidenceID == uuid.Nil ||
+			!intentChecksumPatternDB.MatchString(input.RuntimeEvidenceChecksum) {
+			return nil, apierrors.NewBadRequest(
+				"successful execution completion requires runtime evidence",
+			)
+		}
+	} else if input.RuntimeEvidenceID != uuid.Nil || strings.TrimSpace(input.RuntimeEvidenceChecksum) != "" {
+		return nil, apierrors.NewBadRequest(
+			"runtime evidence may only bind successful execution completion",
+		)
+	}
 	var task *types.Task
 	var pendingRevisionIDs []uuid.UUID
 	err := RunTx(ctx, func(ctx context.Context) error {
@@ -846,6 +917,9 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 			if attempt.Status != input.Status || attempt.FailureReason != failureReason ||
 				attempt.Fence.Generation != input.FenceGeneration {
 				return apierrors.NewConflict("conflicting duplicate execution completion")
+			}
+			if err := validateSuccessfulCompletionRuntimeEvidence(ctx, *attempt, input); err != nil {
+				return err
 			}
 			outcome, mapErr := executorOutcomeForAttemptStatus(input.Status)
 			if mapErr != nil {
@@ -873,6 +947,9 @@ func CompleteExecutionAttempt(ctx context.Context, input types.CompletionInput) 
 			!attempt.Fence.LeaseExpiresAt.After(trustedNow) ||
 			!attempt.IntentExpiresAt.After(trustedNow) {
 			return apierrors.NewConflict("execution completion rejected by lease or fence")
+		}
+		if err := validateSuccessfulCompletionRuntimeEvidence(ctx, *attempt, input); err != nil {
+			return err
 		}
 		command, err := db.Exec(ctx, `
 			UPDATE ExecutionAttempt ea
@@ -1058,6 +1135,16 @@ func validateNewExecutionAttempt(
 		return apierrors.NewBadRequest("execution attempt frozen checksums are invalid")
 	}
 	if strings.TrimSpace(attempt.AdapterRevision) == "" ||
+		attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 ||
+		attempt.ExpectedObservedStateVersion <= 0 ||
+		!intentChecksumPatternDB.MatchString(attempt.ExpectedObservedStateChecksum) ||
+		!intentChecksumPatternDB.MatchString(attempt.ExpectedCurrentImageDigest) ||
+		!intentChecksumPatternDB.MatchString(attempt.ExpectedCurrentConfigChecksum) ||
+		!attempt.ExpectedPlatform.IsValid() ||
+		strings.TrimSpace(attempt.CallerBinding) == "" || len(attempt.CallerBinding) > 512 ||
+		strings.ContainsAny(attempt.CallerBinding, "\r\n") ||
+		strings.TrimSpace(attempt.Audience) == "" || len(attempt.Audience) > 512 ||
+		strings.ContainsAny(attempt.Audience, "\r\n") ||
 		attempt.IntentIssuedAt.IsZero() || !attempt.IntentExpiresAt.After(attempt.IntentIssuedAt) ||
 		attempt.IntentExpiresAt.Sub(attempt.IntentIssuedAt) > 15*time.Minute ||
 		strings.TrimSpace(attempt.Fence.ResourceKey) == "" || attempt.Fence.Generation <= 0 {

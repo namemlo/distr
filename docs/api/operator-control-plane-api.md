@@ -213,6 +213,25 @@ cancel/status acknowledgement, and status response use the separately
 authenticated `/api/executor/v2` surface. Operators must not call executor
 routes with user credentials.
 
+New protocol-v2 attempts carry signed runtime contract `v3`. The intent binds
+the exact verified baseline state version/checksum, current image/configuration,
+platform, target-scoped caller, and adapter-assignment audience in addition to
+the desired artifact/configuration and fence.
+
+| Method | Executor route                                      | Purpose                                                    |
+| ------ | --------------------------------------------------- | ---------------------------------------------------------- |
+| `POST` | `/api/executor/v2/attempts/{attemptId}/runtime-evidence` | Retain immutable pre/result runtime proof for the attempt |
+| `POST` | `/api/executor/v2/attempts/{attemptId}/complete`     | Complete; `SUCCEEDED` binds retained evidence ID/checksum  |
+
+The runtime-evidence response returns a server canonical checksum. A successful
+completion must return that exact row ID and canonical checksum. Unhealthy,
+conflicting, stale-fence, expired-lease, wrong-caller/audience, wrong baseline,
+or wrong result image/configuration evidence cannot authorize success. Failed,
+cancelled, and timed-out outcomes do not require success evidence.
+The request schema is explicitly
+`distr.execution-runtime-evidence/v1`; unknown or missing schema versions fail
+closed.
+
 ### Observation and reconciliation
 
 | Method     | Route                              | Purpose                                             |
@@ -226,6 +245,8 @@ routes with user credentials.
 
 Executor completion is provisional until the required independent observation
 matches the pending desired revision.
+Executor runtime evidence never substitutes for or creates that independent
+observation.
 
 ### Audit and evidence export
 

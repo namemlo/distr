@@ -21,6 +21,7 @@ const executionV2LeaseCandidateQuery = executionAttemptSelect + `
 	WHERE ea.organization_id = @organizationId
 		AND ea.deployment_target_id = @deploymentTargetId
 		AND ea.status = 'PENDING'
+		AND ea.runtime_contract_version = 'v3'
 		AND ea.adapter_revision = @adapterRevision
 		AND ei.key_id = @keyId
 		AND ea.intent_issued_at <= clock_timestamp()
@@ -86,6 +87,7 @@ func LeaseExecutionV2Attempt(
 				AND organization_id = @organizationId
 				AND deployment_target_id = @deploymentTargetId
 				AND status = 'PENDING'
+				AND runtime_contract_version = 'v3'
 				AND adapter_revision = @adapterRevision
 				AND intent_issued_at <= clock_timestamp()
 				AND intent_expires_at > clock_timestamp()`,

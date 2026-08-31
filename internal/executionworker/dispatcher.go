@@ -296,19 +296,27 @@ func (d *ProtocolDispatcher) Dispatch(
 }
 
 type FrozenAttemptInputs struct {
-	AttemptNumber                int
-	PlanChecksum                 string
-	ArtifactDigest               string
-	ConfigChecksum               string
-	AdapterRevision              string
-	ResourceKey                  string
-	FenceGeneration              int64
-	Cancellable                  bool
-	RetrySafe                    bool
-	IntentTTL                    time.Duration
-	PublicKeyFingerprint         string
-	SigningKeyReference          string
-	SigningKeyVersionFingerprint string
+	AttemptNumber                 int
+	PlanChecksum                  string
+	ArtifactDigest                string
+	ConfigChecksum                string
+	AdapterRevision               string
+	RuntimeContractVersion        types.ExecutionRuntimeContractVersion
+	ExpectedObservedStateVersion  int64
+	ExpectedObservedStateChecksum string
+	ExpectedCurrentImageDigest    string
+	ExpectedCurrentConfigChecksum string
+	ExpectedPlatform              types.DeploymentTargetPlatform
+	CallerBinding                 string
+	Audience                      string
+	ResourceKey                   string
+	FenceGeneration               int64
+	Cancellable                   bool
+	RetrySafe                     bool
+	IntentTTL                     time.Duration
+	PublicKeyFingerprint          string
+	SigningKeyReference           string
+	SigningKeyVersionFingerprint  string
 }
 
 type FrozenAttemptInputsLoader interface {
@@ -361,6 +369,13 @@ func (c *RepositoryAttemptCreator) CreateExecutionAttempt(
 		Status:       types.ExecutionAttemptStatusPending,
 		PlanChecksum: inputs.PlanChecksum, ArtifactDigest: inputs.ArtifactDigest,
 		ConfigChecksum: inputs.ConfigChecksum, AdapterRevision: inputs.AdapterRevision,
+		RuntimeContractVersion:        inputs.RuntimeContractVersion,
+		ExpectedObservedStateVersion:  inputs.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum: inputs.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:    inputs.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum: inputs.ExpectedCurrentConfigChecksum,
+		ExpectedPlatform:              inputs.ExpectedPlatform,
+		CallerBinding:                 inputs.CallerBinding, Audience: inputs.Audience,
 		IntentIssuedAt: now, IntentExpiresAt: now.Add(inputs.IntentTTL),
 		Cancellable: inputs.Cancellable, RetrySafe: inputs.RetrySafe,
 		Fence: types.ExecutionFence{

@@ -32,6 +32,7 @@ func TestExecutionV2LeaseCandidateQueryIsCredentialAndFrozenIdentityScoped(t *te
 		"ea.organization_id = @organizationid",
 		"ea.deployment_target_id = @deploymenttargetid",
 		"ea.status = 'pending'",
+		"ea.runtime_contract_version = 'v3'",
 		"ea.adapter_revision = @adapterrevision",
 		"ei.key_id = @keyid",
 		"ea.intent_issued_at <= clock_timestamp()",

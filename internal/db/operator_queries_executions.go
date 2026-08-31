@@ -461,6 +461,16 @@ detail AS (
       ) AS item
       WHERE intent.id IS NOT NULL
       UNION ALL
+	  SELECT runtime.created_at, runtime.id, jsonb_build_object(
+		'id', runtime.id, 'kind', 'executor-runtime-evidence',
+		'label', runtime.health_status, 'href', runtime.evidence_reference,
+		'checksum', runtime.canonical_checksum, 'createdAt', runtime.created_at
+	  ) AS item
+	  FROM ExecutionRuntimeEvidence AS runtime
+	  WHERE runtime.organization_id = attempt.organization_id
+		AND runtime.execution_id = attempt.execution_id
+		AND runtime.execution_attempt_id = attempt.id
+	  UNION ALL
 	  SELECT event.created_at, event.id, jsonb_build_object(
         'id', event.id, 'kind', 'execution-event', 'label', event.status,
         'href', '/api/v1/control-plane/executions/' || attempt.id || '/evidence/events/' || event.id,

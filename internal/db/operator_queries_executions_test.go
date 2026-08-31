@@ -75,6 +75,7 @@ func TestOperatorExecutionListSQLIncludesControlObservationAndPreviousStateEvide
 	combined := operatorExecutionListSQL + operatorExecutionDetailSQL
 	for _, required := range []string{
 		"ExecutionIntent",
+		"ExecutionRuntimeEvidence",
 		"DeploymentPlanStepAdapter",
 		"ExecutionCancelRequest",
 		"ExecutionStatusQuery",
@@ -110,6 +111,9 @@ func TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution
 		"candidate.id = @executionID",
 		"control.organization_id = attempt.organization_id",
 		"control.execution_id = attempt.execution_id",
+		"runtime.organization_id = attempt.organization_id",
+		"runtime.execution_id = attempt.execution_id",
+		"runtime.execution_attempt_id = attempt.id",
 		"observed.organization_id = desired.organization_id",
 		"desired.execution_id = attempt.execution_id",
 		"ORDER BY retry.attempt_number, retry.created_at, retry.id",

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,14 +138,18 @@ func TestComponentDeployCompletionDefersProjectionUntilObservationGate(t *testin
 		},
 	)
 	g.Expect(err).NotTo(HaveOccurred())
+	targetID := readExecutionTargetID(t, fixture.ctx, fixture.executionAttemptID)
+	evidence := recordHealthyExecutionRuntimeEvidence(
+		t, fixture.ctx, fixture.organizationID, targetID,
+		fixture.executionAttemptID, executorID,
+	)
 
 	projected, err := db.CompleteExecutionAttempt(fixture.ctx, types.CompletionInput{
-		OrganizationID: fixture.organizationID, DeploymentTargetID: readExecutionTargetID(
-			t, fixture.ctx, fixture.executionAttemptID,
-		),
+		OrganizationID: fixture.organizationID, DeploymentTargetID: targetID,
 		AttemptID: fixture.executionAttemptID, ExecutorID: executorID,
 		FenceGeneration: 1, Status: types.ExecutionAttemptStatusSucceeded,
-		CompletedAt: time.Now().UTC(),
+		CompletedAt: time.Now().UTC(), RuntimeEvidenceID: evidence.ID,
+		RuntimeEvidenceChecksum: evidence.CanonicalChecksum,
 	})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(projected).To(BeNil())
@@ -519,22 +524,47 @@ func createDesiredObservedExecutionAttempt(
 			id, organization_id, deployment_target_id, task_id, step_run_id,
 			execution_id, attempt_number, step_key, status, plan_checksum,
 			artifact_digest, config_checksum, adapter_revision,
+			runtime_contract_version, expected_observed_state_revision,
+			expected_observed_state_checksum, expected_current_image_digest,
+			expected_current_config_checksum, expected_platform,
+			intent_caller, intent_audience,
 			intent_issued_at, intent_expires_at
 		) VALUES (
 			@id, @organizationID, @deploymentTargetID, @taskID, @stepRunID,
 			@executionID, 1, @stepKey, 'PENDING', @planChecksum,
 			@artifactDigest, @configChecksum, 'test.adapter@2',
+			'v3', 7, @expectedObservedChecksum, @expectedCurrentImage,
+			@expectedCurrentConfig, 'linux/amd64', @intentCaller, @intentAudience,
 			now(), now() + interval '10 minutes'
 		)`,
 		pgx.NamedArgs{
 			"id": attemptID, "organizationID": deps.orgID,
 			"deploymentTargetID": targetID, "taskID": taskID, "stepRunID": stepRunID,
 			"executionID": taskID, "stepKey": step.StepKey,
-			"planChecksum":   desiredObservedTestDigest("plan"),
-			"artifactDigest": desiredObservedTestDigest("artifact"),
-			"configChecksum": desiredObservedTestDigest("config"),
+			"planChecksum":             desiredObservedTestDigest("plan"),
+			"artifactDigest":           desiredObservedTestDigest("artifact"),
+			"configChecksum":           desiredObservedTestDigest("config"),
+			"expectedObservedChecksum": desiredObservedTestDigest("observed-baseline"),
+			"expectedCurrentImage":     desiredObservedTestDigest("current-image"),
+			"expectedCurrentConfig":    desiredObservedTestDigest("current-config"),
+			"intentCaller":             "urn:distr:caller:deployment-target:" + targetID.String(),
+			"intentAudience":           "urn:distr:audience:adapter-assignment:desired-observed-test",
 		},
 	)
+	g.Expect(err).NotTo(HaveOccurred())
+	intentPayload := []byte(`{}`)
+	intentChecksum := fmt.Sprintf("sha256:%x", sha256.Sum256(intentPayload))
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		INSERT INTO ExecutionIntent (
+			organization_id, execution_attempt_id, payload, checksum, key_id, signature
+		) VALUES (
+			@organizationID, @attemptID, @payload, @checksum, @keyID, @signature
+		)`, pgx.NamedArgs{
+		"organizationID": deps.orgID, "attemptID": attemptID,
+		"payload": intentPayload, "checksum": intentChecksum,
+		"keyID":     desiredObservedTestDigest("intent-key"),
+		"signature": strings.Repeat("A", 86),
+	})
 	g.Expect(err).NotTo(HaveOccurred())
 	_, err = internalctx.GetDb(ctx).Exec(ctx, `
 		INSERT INTO ExecutionFence (

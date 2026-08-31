@@ -21,9 +21,45 @@ func MatchesExecutionDispatch(existing, candidate types.ExecutionAttempt) bool {
 		existing.ArtifactDigest == candidate.ArtifactDigest &&
 		existing.ConfigChecksum == candidate.ConfigChecksum &&
 		existing.AdapterRevision == candidate.AdapterRevision &&
+		existing.RuntimeContractVersion == candidate.RuntimeContractVersion &&
+		existing.ExpectedObservedStateVersion == candidate.ExpectedObservedStateVersion &&
+		existing.ExpectedObservedStateChecksum == candidate.ExpectedObservedStateChecksum &&
+		existing.ExpectedCurrentImageDigest == candidate.ExpectedCurrentImageDigest &&
+		existing.ExpectedCurrentConfigChecksum == candidate.ExpectedCurrentConfigChecksum &&
+		existing.ExpectedPlatform == candidate.ExpectedPlatform &&
+		existing.CallerBinding == candidate.CallerBinding &&
+		existing.Audience == candidate.Audience &&
 		existing.Cancellable == candidate.Cancellable &&
 		existing.RetrySafe == candidate.RetrySafe &&
 		existing.Fence.ResourceKey == candidate.Fence.ResourceKey
+}
+
+func IsExactRuntimeEvidenceReplay(
+	existing types.ExecutionRuntimeEvidence,
+	input types.ExecutionRuntimeEvidenceInput,
+) bool {
+	return existing.OrganizationID == input.OrganizationID &&
+		existing.DeploymentTargetID == input.DeploymentTargetID &&
+		existing.AttemptID == input.AttemptID &&
+		existing.EventIdentity == input.EventIdentity &&
+		existing.SchemaVersion == input.SchemaVersion &&
+		existing.IntentChecksum == input.IntentChecksum &&
+		existing.ExecutorID == input.ExecutorID &&
+		existing.CallerIdentity == input.CallerIdentity &&
+		existing.Audience == input.Audience &&
+		existing.FenceGeneration == input.FenceGeneration &&
+		existing.ExpectedObservedStateVersion == input.ExpectedObservedStateVersion &&
+		existing.ExpectedObservedStateChecksum == input.ExpectedObservedStateChecksum &&
+		existing.PreExecutionImageDigest == input.PreExecutionImageDigest &&
+		existing.PreExecutionConfigChecksum == input.PreExecutionConfigChecksum &&
+		existing.ResultImageDigest == input.ResultImageDigest &&
+		existing.ResultConfigChecksum == input.ResultConfigChecksum &&
+		existing.Platform == input.Platform &&
+		existing.HealthStatus == input.HealthStatus &&
+		existing.ResultChecksum == input.ResultChecksum &&
+		existing.EvidenceReference == input.EvidenceReference &&
+		existing.EvidenceChecksum == input.EvidenceChecksum &&
+		existing.CapturedAt.Equal(input.CapturedAt.UTC())
 }
 
 func IsExactExecutionEventReplay(

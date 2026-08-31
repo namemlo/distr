@@ -162,18 +162,131 @@ func (r ExecutionV2EventRequest) ToTypes(
 	}
 }
 
+type ExecutionV2RuntimeEvidenceRequest struct {
+	EventIdentity                 uuid.UUID                      `json:"eventIdentity"`
+	SchemaVersion                 string                         `json:"schemaVersion"`
+	IntentChecksum                string                         `json:"intentChecksum"`
+	ExecutorID                    string                         `json:"executorId"`
+	CallerIdentity                string                         `json:"callerIdentity"`
+	Audience                      string                         `json:"audience"`
+	FenceGeneration               int64                          `json:"fenceGeneration"`
+	ExpectedObservedStateVersion  int64                          `json:"expectedObservedStateVersion"`
+	ExpectedObservedStateChecksum string                         `json:"expectedObservedStateChecksum"`
+	PreExecutionImageDigest       string                         `json:"preExecutionImageDigest"`
+	PreExecutionConfigChecksum    string                         `json:"preExecutionConfigChecksum"`
+	ResultImageDigest             string                         `json:"resultImageDigest"`
+	ResultConfigChecksum          string                         `json:"resultConfigChecksum"`
+	Platform                      types.DeploymentTargetPlatform `json:"platform"`
+	HealthStatus                  types.TargetComponentHealth    `json:"healthStatus"`
+	ResultChecksum                string                         `json:"resultChecksum"`
+	EvidenceReference             string                         `json:"evidenceReference"`
+	EvidenceChecksum              string                         `json:"evidenceChecksum"`
+	CapturedAt                    time.Time                      `json:"capturedAt"`
+}
+
+func (r *ExecutionV2RuntimeEvidenceRequest) Validate() error {
+	r.ExecutorID = strings.TrimSpace(r.ExecutorID)
+	r.CallerIdentity = strings.TrimSpace(r.CallerIdentity)
+	r.Audience = strings.TrimSpace(r.Audience)
+	r.Platform = types.DeploymentTargetPlatform(strings.TrimSpace(string(r.Platform)))
+	r.HealthStatus = types.TargetComponentHealth(strings.TrimSpace(string(r.HealthStatus)))
+	r.EvidenceReference = strings.TrimSpace(r.EvidenceReference)
+	r.SchemaVersion = strings.TrimSpace(r.SchemaVersion)
+
+	if r.EventIdentity == uuid.Nil {
+		return validation.NewValidationFailedError("eventIdentity is required")
+	}
+	if r.SchemaVersion != types.ExecutionRuntimeEvidenceSchemaV1 {
+		return validation.NewValidationFailedError("schemaVersion is invalid")
+	}
+	if !validExecutionV2Identity(r.ExecutorID, 128) {
+		return validation.NewValidationFailedError("executorId is invalid")
+	}
+	if !validExecutionV2Identity(r.CallerIdentity, 512) {
+		return validation.NewValidationFailedError("callerIdentity is invalid")
+	}
+	if !validExecutionV2Identity(r.Audience, 512) {
+		return validation.NewValidationFailedError("audience is invalid")
+	}
+	if r.FenceGeneration <= 0 {
+		return validation.NewValidationFailedError("fenceGeneration must be greater than 0")
+	}
+	if r.ExpectedObservedStateVersion <= 0 {
+		return validation.NewValidationFailedError("expectedObservedStateVersion must be greater than 0")
+	}
+	for name, checksum := range map[string]string{
+		"intentChecksum":                r.IntentChecksum,
+		"expectedObservedStateChecksum": r.ExpectedObservedStateChecksum,
+		"preExecutionImageDigest":       r.PreExecutionImageDigest,
+		"preExecutionConfigChecksum":    r.PreExecutionConfigChecksum,
+		"resultImageDigest":             r.ResultImageDigest,
+		"resultConfigChecksum":          r.ResultConfigChecksum,
+		"resultChecksum":                r.ResultChecksum,
+		"evidenceChecksum":              r.EvidenceChecksum,
+	} {
+		if !executionV2ChecksumPattern.MatchString(checksum) {
+			return validation.NewValidationFailedError(name + " must be a sha256 checksum")
+		}
+	}
+	if !r.Platform.IsValid() {
+		return validation.NewValidationFailedError("platform is invalid")
+	}
+	if r.HealthStatus != types.TargetComponentHealthHealthy &&
+		r.HealthStatus != types.TargetComponentHealthUnhealthy {
+		return validation.NewValidationFailedError("healthStatus is invalid")
+	}
+	if !validExecutionV2Identity(r.EvidenceReference, 2048) {
+		return validation.NewValidationFailedError("evidenceReference is invalid")
+	}
+	if r.CapturedAt.IsZero() {
+		return validation.NewValidationFailedError("capturedAt is required")
+	}
+	return nil
+}
+
+func (r ExecutionV2RuntimeEvidenceRequest) ToTypes(
+	orgID, deploymentTargetID, attemptID uuid.UUID,
+) types.ExecutionRuntimeEvidenceInput {
+	return types.ExecutionRuntimeEvidenceInput{
+		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID, AttemptID: attemptID,
+		ExecutorID: r.ExecutorID, EventIdentity: r.EventIdentity,
+		SchemaVersion:  r.SchemaVersion,
+		IntentChecksum: r.IntentChecksum, CallerIdentity: r.CallerIdentity, Audience: r.Audience,
+		FenceGeneration:               r.FenceGeneration,
+		ExpectedObservedStateVersion:  r.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum: r.ExpectedObservedStateChecksum,
+		PreExecutionImageDigest:       r.PreExecutionImageDigest,
+		PreExecutionConfigChecksum:    r.PreExecutionConfigChecksum,
+		ResultImageDigest:             r.ResultImageDigest, ResultConfigChecksum: r.ResultConfigChecksum,
+		Platform: r.Platform, HealthStatus: r.HealthStatus, ResultChecksum: r.ResultChecksum,
+		EvidenceReference: r.EvidenceReference, EvidenceChecksum: r.EvidenceChecksum,
+		CapturedAt: r.CapturedAt.UTC().Truncate(time.Microsecond),
+	}
+}
+
+type ExecutionV2RuntimeEvidenceResponse struct {
+	RuntimeEvidence types.ExecutionRuntimeEvidence `json:"runtimeEvidence"`
+}
+
+func validExecutionV2Identity(value string, maxLength int) bool {
+	return value != "" && len(value) <= maxLength && !strings.ContainsAny(value, "\r\n")
+}
+
 type ExecutionV2CompletionRequest struct {
-	ExecutorID      string                       `json:"executorId"`
-	FenceGeneration int64                        `json:"fenceGeneration"`
-	Status          types.ExecutionAttemptStatus `json:"status"`
-	FailureReason   string                       `json:"failureReason,omitempty"`
-	CompletedAt     time.Time                    `json:"completedAt"`
+	ExecutorID              string                       `json:"executorId"`
+	FenceGeneration         int64                        `json:"fenceGeneration"`
+	Status                  types.ExecutionAttemptStatus `json:"status"`
+	RuntimeEvidenceID       *uuid.UUID                   `json:"runtimeEvidenceId,omitempty"`
+	RuntimeEvidenceChecksum string                       `json:"runtimeEvidenceChecksum,omitempty"`
+	FailureReason           string                       `json:"failureReason,omitempty"`
+	CompletedAt             time.Time                    `json:"completedAt"`
 }
 
 func (r *ExecutionV2CompletionRequest) Validate() error {
 	r.ExecutorID = strings.TrimSpace(r.ExecutorID)
+	r.RuntimeEvidenceChecksum = strings.TrimSpace(r.RuntimeEvidenceChecksum)
 	r.FailureReason = strings.TrimSpace(r.FailureReason)
-	if r.ExecutorID == "" || r.FenceGeneration <= 0 {
+	if !validExecutionV2Identity(r.ExecutorID, 128) || r.FenceGeneration <= 0 {
 		return validation.NewValidationFailedError("completion identity is invalid")
 	}
 	switch r.Status {
@@ -185,6 +298,19 @@ func (r *ExecutionV2CompletionRequest) Validate() error {
 	if r.CompletedAt.IsZero() {
 		return validation.NewValidationFailedError("completedAt is required")
 	}
+	if r.Status == types.ExecutionAttemptStatusSucceeded {
+		if r.RuntimeEvidenceID == nil || *r.RuntimeEvidenceID == uuid.Nil ||
+			!executionV2ChecksumPattern.MatchString(r.RuntimeEvidenceChecksum) {
+			return validation.NewValidationFailedError(
+				"runtime evidence id and checksum are required for successful completion",
+			)
+		}
+	} else if (r.RuntimeEvidenceID != nil && *r.RuntimeEvidenceID != uuid.Nil) ||
+		r.RuntimeEvidenceChecksum != "" {
+		return validation.NewValidationFailedError(
+			"runtime evidence is only allowed for successful completion",
+		)
+	}
 	if len(r.FailureReason) > 2048 || strings.ContainsAny(r.FailureReason, "\r\n") {
 		return validation.NewValidationFailedError("failureReason is invalid")
 	}
@@ -194,10 +320,15 @@ func (r *ExecutionV2CompletionRequest) Validate() error {
 func (r ExecutionV2CompletionRequest) ToTypes(
 	orgID, deploymentTargetID, attemptID uuid.UUID,
 ) types.CompletionInput {
+	runtimeEvidenceID := uuid.Nil
+	if r.RuntimeEvidenceID != nil {
+		runtimeEvidenceID = *r.RuntimeEvidenceID
+	}
 	return types.CompletionInput{
 		OrganizationID: orgID, DeploymentTargetID: deploymentTargetID,
 		AttemptID: attemptID, ExecutorID: r.ExecutorID,
 		FenceGeneration: r.FenceGeneration, Status: r.Status,
+		RuntimeEvidenceID: runtimeEvidenceID, RuntimeEvidenceChecksum: r.RuntimeEvidenceChecksum,
 		FailureReason: r.FailureReason, CompletedAt: r.CompletedAt.UTC(),
 	}
 }

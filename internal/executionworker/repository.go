@@ -290,6 +290,16 @@ type frozenAdapterEvidence struct {
 	TimeoutSeconds               int
 }
 
+type frozenRuntimeTrustEvidence struct {
+	ExpectedObservedStateVersion  int64
+	ExpectedObservedStateChecksum string
+	ExpectedCurrentImageDigest    string
+	ExpectedCurrentConfigChecksum string
+	ExpectedPlatform              types.DeploymentTargetPlatform
+	CallerBinding                 string
+	Audience                      string
+}
+
 func (DatabaseRuntimeRepository) LoadFrozenAttemptInputs(
 	ctx context.Context,
 	request CreateAttemptRequest,
@@ -339,13 +349,74 @@ func (DatabaseRuntimeRepository) LoadFrozenAttemptInputs(
 	if err != nil {
 		return FrozenAttemptInputs{}, err
 	}
+	runtimeTrust, err := resolveFrozenRuntimeTrust(
+		canonical, step, request.OrganizationID, request.DeploymentTargetID,
+		adapter.AssignmentID,
+	)
+	if err != nil {
+		return FrozenAttemptInputs{}, err
+	}
 	resourceKey, err := db.CanonicalExecutionFenceResourceKey(task.Locks)
 	if err != nil {
 		return FrozenAttemptInputs{}, err
 	}
 	return deriveFrozenAttemptInputs(
-		*plan, step, artifact.PlatformDigest, adapter, resourceKey, latest, request.Retry,
+		*plan, step, artifact.PlatformDigest, adapter, runtimeTrust,
+		resourceKey, latest, request.Retry,
 	)
+}
+
+func resolveFrozenRuntimeTrust(
+	canonical types.TargetDeploymentPlanCanonical,
+	step types.TargetPlanStep,
+	organizationID, deploymentTargetID, adapterAssignmentID uuid.UUID,
+) (frozenRuntimeTrustEvidence, error) {
+	if step.ComponentInstanceID == nil || *step.ComponentInstanceID == uuid.Nil ||
+		strings.TrimSpace(step.ComponentKey) == "" {
+		return frozenRuntimeTrustEvidence{}, errors.New(
+			"frozen plan step has no exact component-instance baseline binding",
+		)
+	}
+	matching := make([]types.DeploymentPlanBaseline, 0, 1)
+	for _, baseline := range canonical.Baselines {
+		if baseline.ComponentInstanceID == *step.ComponentInstanceID &&
+			strings.TrimSpace(baseline.ComponentKey) == strings.TrimSpace(step.ComponentKey) {
+			matching = append(matching, baseline)
+		}
+	}
+	if len(matching) != 1 {
+		return frozenRuntimeTrustEvidence{}, errors.New(
+			"frozen plan step requires exactly one authoritative runtime baseline",
+		)
+	}
+	baseline := matching[0]
+	platform := types.DeploymentTargetPlatform(strings.TrimSpace(baseline.Platform))
+	if baseline.Bootstrap || !baseline.AuthorizesV2Execution ||
+		baseline.Projection != types.BaselineProjectionVerifiedV2 ||
+		baseline.DesiredRevision <= 0 ||
+		!frozenChecksumPattern.MatchString(baseline.DesiredChecksum) ||
+		!frozenChecksumPattern.MatchString(baseline.Image) ||
+		!frozenChecksumPattern.MatchString(baseline.ConfigChecksum) ||
+		!platform.IsValid() || string(platform) != strings.TrimSpace(canonical.TargetPlatform) {
+		return frozenRuntimeTrustEvidence{}, errors.New(
+			"frozen runtime baseline is not an authoritative verified v2 state",
+		)
+	}
+	if organizationID == uuid.Nil || deploymentTargetID == uuid.Nil || adapterAssignmentID == uuid.Nil {
+		return frozenRuntimeTrustEvidence{}, errors.New("runtime caller or audience scope is invalid")
+	}
+	return frozenRuntimeTrustEvidence{
+		ExpectedObservedStateVersion:  baseline.DesiredRevision,
+		ExpectedObservedStateChecksum: baseline.DesiredChecksum,
+		ExpectedCurrentImageDigest:    baseline.Image,
+		ExpectedCurrentConfigChecksum: baseline.ConfigChecksum,
+		ExpectedPlatform:              platform,
+		CallerBinding: fmt.Sprintf(
+			"urn:distr:caller:organization:%s:deployment-target:%s",
+			organizationID, deploymentTargetID,
+		),
+		Audience: "urn:distr:audience:adapter-assignment:" + adapterAssignmentID.String(),
+	}, nil
 }
 
 func resolveFrozenPlanArtifact(
@@ -528,6 +599,7 @@ func deriveFrozenAttemptInputs(
 	step types.TargetPlanStep,
 	artifactDigest string,
 	adapter frozenAdapterEvidence,
+	runtimeTrust frozenRuntimeTrustEvidence,
 	resourceKey string,
 	latest *types.ExecutionAttempt,
 	retry bool,
@@ -537,6 +609,15 @@ func deriveFrozenAttemptInputs(
 	}
 	if adapter.TimeoutSeconds != step.TimeoutSeconds {
 		return FrozenAttemptInputs{}, errors.New("canonical and persisted frozen step timeouts do not match")
+	}
+	if runtimeTrust.ExpectedObservedStateVersion <= 0 ||
+		!frozenChecksumPattern.MatchString(runtimeTrust.ExpectedObservedStateChecksum) ||
+		!frozenChecksumPattern.MatchString(runtimeTrust.ExpectedCurrentImageDigest) ||
+		!frozenChecksumPattern.MatchString(runtimeTrust.ExpectedCurrentConfigChecksum) ||
+		!runtimeTrust.ExpectedPlatform.IsValid() ||
+		strings.TrimSpace(runtimeTrust.CallerBinding) == "" ||
+		strings.TrimSpace(runtimeTrust.Audience) == "" {
+		return FrozenAttemptInputs{}, errors.New("frozen runtime trust evidence is incomplete")
 	}
 	intentTTL := time.Duration(adapter.TimeoutSeconds) * time.Second
 	if intentTTL <= 0 || intentTTL > executionprotocolMaxIntentTTL {
@@ -556,6 +637,14 @@ func deriveFrozenAttemptInputs(
 			latest.ArtifactDigest != artifactDigest ||
 			latest.ConfigChecksum != adapter.ConfigChecksum ||
 			latest.AdapterRevision != adapterRevision ||
+			latest.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 ||
+			latest.ExpectedObservedStateVersion != runtimeTrust.ExpectedObservedStateVersion ||
+			latest.ExpectedObservedStateChecksum != runtimeTrust.ExpectedObservedStateChecksum ||
+			latest.ExpectedCurrentImageDigest != runtimeTrust.ExpectedCurrentImageDigest ||
+			latest.ExpectedCurrentConfigChecksum != runtimeTrust.ExpectedCurrentConfigChecksum ||
+			latest.ExpectedPlatform != runtimeTrust.ExpectedPlatform ||
+			latest.CallerBinding != runtimeTrust.CallerBinding ||
+			latest.Audience != runtimeTrust.Audience ||
 			latest.Fence.ResourceKey != resourceKey ||
 			latest.IntentExpiresAt.Sub(latest.IntentIssuedAt) != intentTTL ||
 			latest.Cancellable != cancellable ||
@@ -566,6 +655,13 @@ func deriveFrozenAttemptInputs(
 			AttemptNumber: latest.Identity.AttemptNumber, PlanChecksum: latest.PlanChecksum,
 			ArtifactDigest: latest.ArtifactDigest, ConfigChecksum: latest.ConfigChecksum,
 			AdapterRevision: latest.AdapterRevision, ResourceKey: latest.Fence.ResourceKey,
+			RuntimeContractVersion:        latest.RuntimeContractVersion,
+			ExpectedObservedStateVersion:  latest.ExpectedObservedStateVersion,
+			ExpectedObservedStateChecksum: latest.ExpectedObservedStateChecksum,
+			ExpectedCurrentImageDigest:    latest.ExpectedCurrentImageDigest,
+			ExpectedCurrentConfigChecksum: latest.ExpectedCurrentConfigChecksum,
+			ExpectedPlatform:              latest.ExpectedPlatform,
+			CallerBinding:                 latest.CallerBinding, Audience: latest.Audience,
 			FenceGeneration: latest.Fence.Generation, Cancellable: latest.Cancellable,
 			RetrySafe: latest.RetrySafe, IntentTTL: latest.IntentExpiresAt.Sub(latest.IntentIssuedAt),
 			PublicKeyFingerprint:         adapter.PublicKeyFingerprint,
@@ -586,6 +682,13 @@ func deriveFrozenAttemptInputs(
 		AttemptNumber: attemptNumber, PlanChecksum: plan.CanonicalChecksum,
 		ArtifactDigest: artifactDigest, ConfigChecksum: adapter.ConfigChecksum,
 		AdapterRevision: adapterRevision, ResourceKey: resourceKey,
+		RuntimeContractVersion:        types.ExecutionRuntimeContractVersionV3,
+		ExpectedObservedStateVersion:  runtimeTrust.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum: runtimeTrust.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:    runtimeTrust.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum: runtimeTrust.ExpectedCurrentConfigChecksum,
+		ExpectedPlatform:              runtimeTrust.ExpectedPlatform,
+		CallerBinding:                 runtimeTrust.CallerBinding, Audience: runtimeTrust.Audience,
 		FenceGeneration: fenceGeneration,
 		Cancellable:     cancellable,
 		RetrySafe:       retrySafe,

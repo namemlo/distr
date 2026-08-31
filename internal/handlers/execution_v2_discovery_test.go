@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/api"
 	"github.com/distr-sh/distr/internal/auth"
@@ -87,6 +88,57 @@ func TestLeaseExecutionV2HandlerReturnsNoContentWhenNoAttemptMatches(t *testing.
 	g.Expect(recorder.Body.Len()).To(Equal(0))
 }
 
+func TestRuntimeEvidenceHandlerUsesCredentialScope(t *testing.T) {
+	g := NewWithT(t)
+	credential := executionV2LeaseTestAuth{orgID: uuid.New(), targetID: uuid.New()}
+	attemptID, evidenceID := uuid.New(), uuid.New()
+	checksum := "sha256:" + repeatHandlerHex("ab")
+	canonicalChecksum := "sha256:" + repeatHandlerHex("cd")
+	var captured types.ExecutionRuntimeEvidenceInput
+	handler := recordExecutionV2RuntimeEvidenceHandlerWith(func(
+		_ context.Context,
+		input types.ExecutionRuntimeEvidenceInput,
+	) (*types.ExecutionRuntimeEvidence, error) {
+		captured = input
+		return &types.ExecutionRuntimeEvidence{
+			ID: evidenceID, CanonicalChecksum: canonicalChecksum,
+		}, nil
+	})
+	body, err := json.Marshal(api.ExecutionV2RuntimeEvidenceRequest{
+		SchemaVersion: types.ExecutionRuntimeEvidenceSchemaV1,
+		EventIdentity: uuid.New(), IntentChecksum: checksum, ExecutorID: "executor-a",
+		CallerIdentity: "target:choice-tp-dev", Audience: "adapter:compose@2",
+		FenceGeneration: 3, ExpectedObservedStateVersion: 12,
+		ExpectedObservedStateChecksum: checksum, PreExecutionImageDigest: checksum,
+		PreExecutionConfigChecksum: checksum, ResultImageDigest: checksum,
+		ResultConfigChecksum: checksum, Platform: types.DeploymentTargetPlatformLinuxAMD64,
+		HealthStatus:   types.TargetComponentHealthHealthy,
+		ResultChecksum: checksum, EvidenceReference: "jenkins://job/choice-tp-dev/42",
+		EvidenceChecksum: checksum, CapturedAt: time.Now().UTC(),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/executor/v2/attempts/"+attemptID.String()+"/runtime-evidence",
+		strings.NewReader(string(body)),
+	)
+	request.SetPathValue("attemptId", attemptID.String())
+	request = request.WithContext(auth.AgentAuthentication.NewContext(request.Context(), credential))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	g.Expect(recorder.Code).To(Equal(http.StatusOK))
+	g.Expect(captured.OrganizationID).To(Equal(credential.orgID))
+	g.Expect(captured.DeploymentTargetID).To(Equal(credential.targetID))
+	g.Expect(captured.AttemptID).To(Equal(attemptID))
+	g.Expect(captured.ExecutorID).To(Equal("executor-a"))
+	var response api.ExecutionV2RuntimeEvidenceResponse
+	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &response)).To(Succeed())
+	g.Expect(response.RuntimeEvidence.ID).To(Equal(evidenceID))
+	g.Expect(response.RuntimeEvidence.CanonicalChecksum).To(Equal(canonicalChecksum))
+}
+
 func TestExecutionV2ExecutorRouterPublishesAtomicLeaseContract(t *testing.T) {
 	g := NewWithT(t)
 	base := chi.NewRouter()
@@ -100,6 +152,8 @@ func TestExecutionV2ExecutorRouterPublishesAtomicLeaseContract(t *testing.T) {
 	g.Expect(json.Unmarshal(document, &schema)).To(Succeed())
 	g.Expect(schema.Paths).To(HaveKey("/api/executor/v2/executions/lease"))
 	g.Expect(schema.Paths["/api/executor/v2/executions/lease"]).To(HaveKey("post"))
+	g.Expect(schema.Paths).To(HaveKey("/api/executor/v2/attempts/{attemptId}/runtime-evidence"))
+	g.Expect(schema.Paths["/api/executor/v2/attempts/{attemptId}/runtime-evidence"]).To(HaveKey("post"))
 }
 
 type executionV2LeaseTestAuth struct {

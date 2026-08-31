@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-Entries through PR-085 are recorded below; each entry's status and evidence
+Entries through PR-087 are recorded below; each entry's status and evidence
 boundary remain authoritative. PR-054A timestamp-expand runtime, migration,
 audited dirty-marker recovery, and operator documentation are implemented
 locally, while final acceptance remains pending. PR-055 through PR-082 build
@@ -15,6 +15,8 @@ evidence, and post-deployment sign-off remain pending.
 PR-084 and PR-085 add the review-decision and native baseline-adoption safety
 boundaries through migration 166; their live PostgreSQL and final release gates
 also remain pending.
+PR-087 adds the executor runtime-trust boundary and migration 167; its live
+PostgreSQL, neutral-adapter, and final release gates remain pending.
 
 ## Tracking Template
 
@@ -1918,6 +1920,35 @@ Use one entry per pull request:
   volume names are unchanged. Post-schema rollback now has a separate,
   checksum-bound database/object restore path; it never invokes a down migration
   or deletes retained volumes.
+
+### PR-087 - Executor runtime trust contract
+
+- Status: Implemented with focused local verification; live PostgreSQL,
+  neutral-adapter, and final release gates remain pending.
+- Upstream base: `5dd2e822` (post-PR-085 integration checkpoint).
+- Feature flags: Uses the existing default-off `operator_control_plane_v2` and
+  `executor_protocol_v2` boundary.
+- User-facing behavior: Protocol-v2 success now requires retained healthy
+  runtime evidence matching the exact signed desired image/configuration.
+- Database changes: Migration 167 retains old attempts as `legacy-v2`, adds
+  immutable v3 trust bindings, and creates append-only
+  `ExecutionRuntimeEvidence` with exact attempt and intent lineage.
+- API changes: Adds `POST
+  /api/executor/v2/attempts/{attemptId}/runtime-evidence`; successful completion
+  binds the retained evidence ID and server canonical checksum.
+- UI changes: No new route; operator execution evidence includes the retained
+  executor runtime proof.
+- Agent protocol changes: Signed intent schema v3 binds the verified baseline,
+  current image/configuration, platform, target caller, and adapter audience.
+- Documentation: Adds ADR-0074, PR-087 fork notes, API guidance, and
+  migration-167 release-matrix coverage.
+- Tests: Focused intent, baseline derivation, evidence API/DB, completion gate,
+  operator query, migration, and release-selector validation.
+- Upstream contribution notes: Generic trust primitives only; no adopter,
+  Jenkins, registry, host, or credential assumptions.
+- Compatibility notes: Retained rows remain explicit legacy-v2. New v2 attempts
+  require an authoritative non-bootstrap baseline. Executor evidence never
+  promotes observed state; independent observation remains authoritative.
 
 ### PR-091 - Independent runtime measurement probes
 

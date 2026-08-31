@@ -22,6 +22,18 @@ type frozenSignerProviderStub struct {
 	signer    executionprotocol.IntentSigner
 }
 
+func runtimeTrustFixture() frozenRuntimeTrustEvidence {
+	return frozenRuntimeTrustEvidence{
+		ExpectedObservedStateVersion:  7,
+		ExpectedObservedStateChecksum: "sha256:" + strings.Repeat("7", 64),
+		ExpectedCurrentImageDigest:    "sha256:" + strings.Repeat("8", 64),
+		ExpectedCurrentConfigChecksum: "sha256:" + strings.Repeat("9", 64),
+		ExpectedPlatform:              types.DeploymentTargetPlatformLinuxAMD64,
+		CallerBinding:                 "urn:distr:caller:deployment-target:test",
+		Audience:                      "urn:distr:audience:adapter-assignment:test",
+	}
+}
+
 func TestResolveFrozenPlanArtifactRequiresExactlyOnePlatformArtifact(t *testing.T) {
 	g := NewWithT(t)
 	releaseID := uuid.New()
@@ -60,6 +72,43 @@ func TestResolveFrozenPlanArtifactRequiresExactlyOnePlatformArtifact(t *testing.
 	g.Expect(err).To(MatchError(ContainSubstring("exactly one")))
 }
 
+func TestResolveFrozenRuntimeTrustRequiresOneAuthoritativeBaseline(t *testing.T) {
+	g := NewWithT(t)
+	componentInstanceID := uuid.New()
+	step := types.TargetPlanStep{
+		StepKey: "deploy-api", ComponentKey: "transaction-api",
+		ComponentInstanceID: &componentInstanceID,
+	}
+	baseline := types.DeploymentPlanBaseline{
+		ComponentInstanceID: componentInstanceID, ComponentKey: step.ComponentKey,
+		DesiredRevision: 9, DesiredChecksum: "sha256:" + strings.Repeat("a", 64),
+		Image: "sha256:" + strings.Repeat("b", 64),
+		ConfigChecksum: "sha256:" + strings.Repeat("c", 64),
+		Platform: "linux/amd64", Projection: types.BaselineProjectionVerifiedV2,
+		AuthorizesV2Execution: true,
+	}
+	canonical := types.TargetDeploymentPlanCanonical{
+		TargetPlatform: "linux/amd64", Baselines: []types.DeploymentPlanBaseline{baseline},
+	}
+	orgID, targetID, assignmentID := uuid.New(), uuid.New(), uuid.New()
+	trust, err := resolveFrozenRuntimeTrust(canonical, step, orgID, targetID, assignmentID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(trust.ExpectedObservedStateVersion).To(Equal(int64(9)))
+	g.Expect(trust.ExpectedObservedStateChecksum).To(Equal(baseline.DesiredChecksum))
+	g.Expect(trust.ExpectedCurrentImageDigest).To(Equal(baseline.Image))
+	g.Expect(trust.ExpectedCurrentConfigChecksum).To(Equal(baseline.ConfigChecksum))
+	g.Expect(trust.CallerBinding).To(ContainSubstring(orgID.String()))
+	g.Expect(trust.CallerBinding).To(ContainSubstring(targetID.String()))
+	g.Expect(trust.Audience).To(ContainSubstring(assignmentID.String()))
+
+	canonical.Baselines[0].Bootstrap = true
+	_, err = resolveFrozenRuntimeTrust(canonical, step, orgID, targetID, assignmentID)
+	g.Expect(err).To(MatchError(ContainSubstring("authoritative verified v2")))
+	canonical.Baselines = nil
+	_, err = resolveFrozenRuntimeTrust(canonical, step, orgID, targetID, assignmentID)
+	g.Expect(err).To(MatchError(ContainSubstring("exactly one")))
+}
+
 func TestDeriveFrozenAttemptInputsBindsAdapterLineageAndExactTimeout(t *testing.T) {
 	g := NewWithT(t)
 	adapter := frozenAdapterEvidence{
@@ -81,7 +130,7 @@ func TestDeriveFrozenAttemptInputsBindsAdapterLineageAndExactTimeout(t *testing.
 	}
 	plan := types.DeploymentPlan{CanonicalChecksum: "sha256:" + strings.Repeat("f", 64)}
 	inputs, err := deriveFrozenAttemptInputs(
-		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter, runtimeTrustFixture(),
 		"sha256:"+strings.Repeat("b", 64), nil, false,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -108,7 +157,8 @@ func TestDeriveFrozenAttemptInputsBindsAdapterLineageAndExactTimeout(t *testing.
 
 	adapter.TimeoutSeconds++
 	_, err = deriveFrozenAttemptInputs(
-		plan, step, inputs.ArtifactDigest, adapter, inputs.ResourceKey, nil, false,
+		plan, step, inputs.ArtifactDigest, adapter, runtimeTrustFixture(),
+		inputs.ResourceKey, nil, false,
 	)
 	g.Expect(err).To(MatchError(ContainSubstring("timeouts do not match")))
 }
@@ -133,7 +183,7 @@ func TestDeriveFrozenAttemptInputsRequiresVersionedAdapterControlCapabilities(t 
 	plan := types.DeploymentPlan{CanonicalChecksum: "sha256:" + strings.Repeat("f", 64)}
 
 	inputs, err := deriveFrozenAttemptInputs(
-		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter, runtimeTrustFixture(),
 		"sha256:"+strings.Repeat("b", 64), nil, false,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -143,7 +193,7 @@ func TestDeriveFrozenAttemptInputsRequiresVersionedAdapterControlCapabilities(t 
 	adapter.CancelCapabilityVersion = "1.9.0"
 	adapter.RetrySafeCapabilityVersion = adapter.CapabilityVersion
 	inputs, err = deriveFrozenAttemptInputs(
-		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter, runtimeTrustFixture(),
 		"sha256:"+strings.Repeat("b", 64), nil, false,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
@@ -154,7 +204,7 @@ func TestDeriveFrozenAttemptInputsRequiresVersionedAdapterControlCapabilities(t 
 	step.CancellationBehavior = "none"
 	step.RetryClass = "unsafe"
 	inputs, err = deriveFrozenAttemptInputs(
-		plan, step, "sha256:"+strings.Repeat("a", 64), adapter,
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter, runtimeTrustFixture(),
 		"sha256:"+strings.Repeat("b", 64), nil, false,
 	)
 	g.Expect(err).NotTo(HaveOccurred())

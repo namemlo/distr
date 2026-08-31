@@ -76,6 +76,13 @@ func ExecutionV2ExecutorRouter(r chiopenapi.Router) {
 			With(option.Response(http.StatusOK, struct {
 				Event any `json:"event"`
 			}{}))
+		r.Post("/runtime-evidence", recordExecutionV2RuntimeEvidenceHandler()).
+			With(option.Description("Record immutable executor runtime evidence for a fenced attempt")).
+			With(option.Request(struct {
+				attemptPath
+				api.ExecutionV2RuntimeEvidenceRequest
+			}{})).
+			With(option.Response(http.StatusOK, api.ExecutionV2RuntimeEvidenceResponse{}))
 		r.Post("/complete", completeExecutionV2Handler()).
 			With(option.Request(struct {
 				attemptPath
@@ -227,6 +234,46 @@ func recordExecutionV2EventHandler() http.HandlerFunc {
 		RespondJSON(w, struct {
 			Event any `json:"event"`
 		}{Event: event})
+	}
+}
+
+type recordExecutionV2RuntimeEvidenceFunc func(
+	context.Context,
+	types.ExecutionRuntimeEvidenceInput,
+) (*types.ExecutionRuntimeEvidence, error)
+
+const executionV2RuntimeEvidenceMaximumBodyBytes = 32 << 10
+
+func recordExecutionV2RuntimeEvidenceHandler() http.HandlerFunc {
+	return recordExecutionV2RuntimeEvidenceHandlerWith(db.RecordExecutionRuntimeEvidence)
+}
+
+func recordExecutionV2RuntimeEvidenceHandlerWith(
+	record recordExecutionV2RuntimeEvidenceFunc,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		attemptID, ok := executionV2AttemptID(w, r)
+		if !ok {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, executionV2RuntimeEvidenceMaximumBodyBytes)
+		request, err := JsonBody[api.ExecutionV2RuntimeEvidenceRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agent := auth.AgentAuthentication.Require(r.Context())
+		evidence, err := record(r.Context(), request.ToTypes(
+			agent.CurrentOrgID(), agent.CurrentDeploymentTargetID(), attemptID,
+		))
+		if err != nil {
+			respondExecutionV2Error(w, err)
+			return
+		}
+		RespondJSON(w, api.ExecutionV2RuntimeEvidenceResponse{RuntimeEvidence: *evidence})
 	}
 }
 

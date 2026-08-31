@@ -60,3 +60,5 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0071: Review-Material Admission Decisions](0071-review-material-admission-decisions.md)
 - [ADR-0072: Native Baseline Adoption](0072-native-baseline-adoption.md)
 - [ADR-0073: New-Volume Restore and Protected-History Continuity](0073-new-volume-restore-and-protected-history-continuity.md)
+- [ADR-0074: Executor Runtime Trust Contract](0074-executor-runtime-trust-contract.md)
+- [ADR-0078: Independent Runtime Measurement Probes](0078-independent-runtime-measurement-probes.md)
