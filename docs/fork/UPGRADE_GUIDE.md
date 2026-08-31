@@ -16,9 +16,11 @@ compatibility, or clear the fence. Resume the applicable normal timestamp-expand
 finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
 migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
 
-## PR-083 Integrated Upgrade Through Migration 162
+## PR-083 Integrated Upgrade Through Migration 163
 
-PR-083 certifies an ordered upgrade from migration 138 through migration 162; it does not add another migration.
+PR-083 requires an ordered upgrade from migration 138 through migration 163. Migration 163 preserves existing
+blocked plan history and enables only newly validated target deployment plans to seal as executable `READY` plans.
+Its down migration refuses after any executable v2 plan exists.
 Before a release can be signed, retain separate results for clean install, upgrade, safe down/refusal, checkpoint
 restart, v1-only flags-off, mixed v1/v2, and retained-v2-history flags-off paths on the supported PostgreSQL 16.14
 and 18.4 images. The required matrix and current pending status are recorded in the

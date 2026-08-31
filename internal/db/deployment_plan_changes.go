@@ -1188,6 +1188,18 @@ func ensureSuccessfulPlanObserved(
 	if err != nil || len(planned) == 0 {
 		return apierrors.NewConflict("successful plan contains no component release pins")
 	}
+	observed, err := loadNativeSuccessfulPlanObservations(
+		ctx,
+		organizationID,
+		successfulPlanID,
+		planned,
+	)
+	if err != nil {
+		return err
+	}
+	if len(missingSuccessfulObservationCoverage(planned, observed)) == 0 {
+		return nil
+	}
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		SELECT DISTINCT observation.component_instance_id,
 		       observation.release_bundle_id,
@@ -1215,7 +1227,6 @@ func ensureSuccessfulPlanObserved(
 	}
 	defer rows.Close()
 	rowCount := 0
-	observed := make([]successfulComponentObservation, 0)
 	for rows.Next() {
 		rowCount++
 		if rowCount > maxPlanEvidenceRows {
@@ -1253,6 +1264,87 @@ func ensureSuccessfulPlanObserved(
 		)
 	}
 	return nil
+}
+
+func loadNativeSuccessfulPlanObservations(
+	ctx context.Context,
+	organizationID,
+	successfulPlanID uuid.UUID,
+	planned []types.PlannedState,
+) ([]successfulComponentObservation, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, `
+		SELECT active.component_instance_id,
+		       active.artifact_digest,
+		       active.platform,
+		       active.config_checksum
+		FROM ActiveDesiredRevision active
+		JOIN ObservedComponentState observation
+		  ON observation.id = active.verified_observation_id
+		 AND observation.organization_id = active.organization_id
+		 AND observation.deployment_unit_id = active.deployment_unit_id
+		 AND observation.component_instance_id = active.component_instance_id
+		 AND observation.trusted
+		 AND observation.disposition = 'ACCEPTED'
+		 AND observation.health = 'HEALTHY'
+		 AND observation.outcome = 'COMPLETE'
+		 AND observation.artifact_digest = active.artifact_digest
+		 AND observation.config_checksum = active.config_checksum
+		 AND observation.schema_version = active.schema_version
+		 AND observation.capability_checksum = active.capability_checksum
+		 AND observation.platform = active.platform
+		 AND observation.topology_checksum = active.topology_checksum
+		WHERE active.organization_id = @organizationID
+		  AND active.deployment_plan_id = @successfulPlanID
+		ORDER BY active.component_instance_id, active.revision DESC, active.id DESC
+		LIMIT 4097`,
+		pgx.NamedArgs{
+			"organizationID":   organizationID,
+			"successfulPlanID": successfulPlanID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query native successful plan observations: %w", err)
+	}
+	defer rows.Close()
+
+	observed := make([]successfulComponentObservation, 0, len(planned))
+	rowCount := 0
+	for rows.Next() {
+		rowCount++
+		if rowCount > maxPlanEvidenceRows {
+			return nil, apierrors.NewConflict("successful plan observation limit exceeded")
+		}
+		var componentInstanceID uuid.UUID
+		var artifactDigest, platform, configChecksum string
+		if err := rows.Scan(
+			&componentInstanceID,
+			&artifactDigest,
+			&platform,
+			&configChecksum,
+		); err != nil {
+			return nil, fmt.Errorf("scan native successful plan observation: %w", err)
+		}
+		for _, state := range planned {
+			if state.ComponentInstanceID != componentInstanceID ||
+				state.Platform != platform ||
+				state.ConfigChecksum != configChecksum ||
+				!imageDigestMatches(state.Image, artifactDigest) {
+				continue
+			}
+			observed = append(observed, successfulComponentObservation{
+				ComponentInstanceID: componentInstanceID,
+				ReleaseBundleID:     state.ReleaseBundleID,
+				Image:               artifactDigest,
+				Platform:            platform,
+				ConfigChecksum:      configChecksum,
+			})
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("collect native successful plan observations: %w", err)
+	}
+	return observed, nil
 }
 
 type componentObservationKey struct {

@@ -530,13 +530,6 @@ func publishValidatedTargetPlan(
 	if err != nil {
 		return nil, err
 	}
-	status := types.DeploymentPlanStatusBlocked
-	issues := []types.DeploymentPlanIssue{{
-		ID: uuid.New(), OrganizationID: draft.OrganizationID,
-		Severity: types.DeploymentPlanIssueSeverityBlocker,
-		Code:     "target_plan_execution_deferred", Field: "planSchema",
-		Message: "target deployment plan execution remains disabled until PR-075 installs the fenced executor",
-	}}
 	planTargetID := uuid.New()
 	plan := &types.DeploymentPlan{
 		ID:                         uuid.New(),
@@ -557,7 +550,7 @@ func publishValidatedTargetPlan(
 		SupersedesDeploymentPlanID: draft.SupersedesDeploymentPlanID,
 		SupersedeReason:            strings.TrimSpace(draft.SupersedeReason),
 		PreviousStateSourcePlanID:  draft.PreviousStateSourcePlanID,
-		Status:                     status,
+		Status:                     types.DeploymentPlanStatusReady,
 		CanonicalChecksum:          validation.PreviewChecksum,
 		CanonicalPayload:           validation.Draft.PreviewPayload,
 		Targets: []types.DeploymentPlanTarget{{
@@ -566,7 +559,7 @@ func publishValidatedTargetPlan(
 			Platform: target.Platform, CustomerOrganizationID: target.CustomerOrganizationID,
 		}},
 		Steps:                projectTargetPlanSteps(validation.Graph),
-		Issues:               issues,
+		Issues:               nil,
 		ResolvedRequirements: validation.Resolutions,
 		StepEdges:            validation.Graph.Edges,
 		Baselines:            validation.Baselines,
@@ -874,7 +867,7 @@ func sealPublishedTargetPlan(
 		pgx.NamedArgs{
 			"id": planID, "organizationID": organizationID,
 			"planSchema": types.TargetDeploymentPlanSchemaV2,
-			"status":     types.DeploymentPlanStatusBlocked,
+			"status":     types.DeploymentPlanStatusReady,
 		},
 	).Scan(&sealed)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -156,6 +156,26 @@ func TestMigration145HasTenantFencesImmutabilityAndRollbackRefusal(t *testing.T)
 	g.Expect(downText).To(ContainSubstring("refusing migration 145 rollback"))
 }
 
+func TestMigration163EnablesOnlyValidatedReadyTargetPlans(t *testing.T) {
+	g := NewWithT(t)
+	root := filepath.Join("..", "migrations", "sql")
+	up, err := os.ReadFile(filepath.Join(root, "163_enable_validated_target_plan_execution.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	down, err := os.ReadFile(filepath.Join(root, "163_enable_validated_target_plan_execution.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	upText := string(up)
+	downText := string(down)
+
+	g.Expect(upText).To(ContainSubstring("NEW.status <> 'READY'"))
+	g.Expect(upText).To(ContainSubstring("issue.severity = 'blocker'"))
+	g.Expect(upText).To(ContainSubstring("OLD.status = 'READY'"))
+	g.Expect(upText).To(ContainSubstring("NEW.status = 'EXECUTED'"))
+	g.Expect(upText).To(ContainSubstring("persisted_status NOT IN ('READY', 'EXECUTED')"))
+	g.Expect(upText).NotTo(ContainSubstring("target_plan_execution_deferred"))
+	g.Expect(downText).To(ContainSubstring("refusing migration 163 rollback"))
+	g.Expect(downText).To(ContainSubstring("target_plan_execution_deferred"))
+}
+
 func TestDraftPublicationUsesRowLockAndExactOptimisticChecksum(t *testing.T) {
 	g := NewWithT(t)
 	source, err := os.ReadFile("deployment_plan_drafts.go")
@@ -167,6 +187,9 @@ func TestDraftPublicationUsesRowLockAndExactOptimisticChecksum(t *testing.T) {
 	g.Expect(text).To(ContainSubstring("validation.PreviewChecksum != expectedPreviewChecksum"))
 	g.Expect(text).To(ContainSubstring("sealPublishedTargetPlan"))
 	g.Expect(text).To(ContainSubstring("lockAndValidateTargetPlanSupersession"))
+	g.Expect(text).To(ContainSubstring("Status:                     types.DeploymentPlanStatusReady"))
+	g.Expect(text).NotTo(ContainSubstring("target_plan_execution_deferred"))
+	g.Expect(text).To(ContainSubstring(`"status":     types.DeploymentPlanStatusReady`))
 	g.Expect(strings.Count(text, "organization_id = @organizationID")).To(
 		BeNumerically(">=", 8),
 	)

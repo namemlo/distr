@@ -321,6 +321,11 @@ Product Release checksum
 
 `PlanDraft` is a mutable, non-executable builder with optimistic concurrency and no valid approval. Validation and publish atomically create an immutable `TargetDeploymentPlan` and checksum. Every published plan step has a stable key, prerequisites, target lock key, database lock key when applicable, timeout, retry class, cancellation behavior, expected input checksum, and observation requirement. A correction creates a superseding plan from a new draft that points to the prior plan and records the reason.
 
+After the fenced execution and observation stack is installed, a draft with no validation issues publishes sealed as
+`READY`. A plan with any blocker does not publish. Existing plans retained with the historical
+`target_plan_execution_deferred` blocker remain immutable; they are superseded rather than promoted. The only
+post-seal mutation is the audited status-only `READY` to `EXECUTED` transition when tasks are created.
+
 ### 6.5 Deployment Campaign
 
 `CampaignDraft` is a mutable, non-schedulable builder. Validation and publish create an immutable `CampaignRevision` that freezes:

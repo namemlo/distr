@@ -53,6 +53,8 @@ func TestDeploymentPlanChangeRepositoryUsesTenantScopeAndSerializableCAS(t *test
 	g.Expect(strings.Count(text, "organization_id = @organizationID")).To(BeNumerically(">=", 8))
 	g.Expect(text).To(ContainSubstring("supersedes_deployment_plan_id"))
 	g.Expect(text).To(ContainSubstring("successfulPlanID"))
+	g.Expect(text).To(ContainSubstring("FROM ActiveDesiredRevision active"))
+	g.Expect(text).To(ContainSubstring("JOIN ObservedComponentState observation"))
 }
 
 func TestReleaseNoteQueryIsApplicationLineageScopedAndKeepsBounds(t *testing.T) {
