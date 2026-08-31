@@ -1,0 +1,431 @@
+package db
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/protectedhistory"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+// ExportProtectedHistory reads one deterministic logical snapshot without taking write locks.
+func ExportProtectedHistory(
+	ctx context.Context,
+	scope protectedhistory.Scope,
+) (*protectedhistory.Artifact, error) {
+	canonicalScope, err := protectedhistory.CanonicalScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	args, err := protectedHistoryArgs(canonicalScope)
+	if err != nil {
+		return nil, err
+	}
+	var artifact *protectedhistory.Artifact
+	err = RunReadOnlyTxRR(ctx, func(txCtx context.Context) error {
+		version, err := protectedHistorySchemaVersion(txCtx)
+		if err != nil {
+			return err
+		}
+		if err := validateProtectedHistoryScope(txCtx, args); err != nil {
+			return err
+		}
+		records, err := readProtectedHistoryRecords(txCtx, args)
+		if err != nil {
+			return err
+		}
+		artifact, err = protectedhistory.Build(canonicalScope, version, records)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("export protected history: %w", err)
+	}
+	return artifact, nil
+}
+
+func protectedHistoryArgs(scope protectedhistory.Scope) (pgx.NamedArgs, error) {
+	organizationID, err := uuid.Parse(scope.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	parseIDs := func(values []string) ([]uuid.UUID, error) {
+		ids := make([]uuid.UUID, 0, len(values))
+		for _, value := range values {
+			id, err := uuid.Parse(value)
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		return ids, nil
+	}
+	customerOrganizationIDs, err := parseIDs(scope.CustomerOrganizationIDs)
+	if err != nil {
+		return nil, err
+	}
+	deploymentTargetIDs, err := parseIDs(scope.DeploymentTargetIDs)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.NamedArgs{
+		"organizationId":          organizationID,
+		"customerOrganizationIds": customerOrganizationIDs,
+		"deploymentTargetIds":     deploymentTargetIDs,
+	}, nil
+}
+
+func protectedHistorySchemaVersion(ctx context.Context) (uint64, error) {
+	var version int64
+	var dirty bool
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(
+		&version, &dirty,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	if dirty {
+		return 0, fmt.Errorf("schema version %d is dirty", version)
+	}
+	if version < 138 {
+		return 0, fmt.Errorf("schema version %d is unsupported; minimum is 138", version)
+	}
+	return uint64(version), nil
+}
+
+func validateProtectedHistoryScope(ctx context.Context, args pgx.NamedArgs) error {
+	var matchedCustomerOrganizations, requestedCustomerOrganizations int64
+	var matchedDeploymentTargets, requestedDeploymentTargets int64
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+SELECT
+  (SELECT count(*) FROM CustomerOrganization
+   WHERE organization_id = @organizationId
+     AND id = ANY(@customerOrganizationIds::uuid[])),
+  cardinality(@customerOrganizationIds::uuid[]),
+  (SELECT count(*) FROM DeploymentTarget
+   WHERE organization_id = @organizationId
+     AND id = ANY(@deploymentTargetIds::uuid[])),
+  cardinality(@deploymentTargetIds::uuid[])
+`, args).Scan(
+		&matchedCustomerOrganizations,
+		&requestedCustomerOrganizations,
+		&matchedDeploymentTargets,
+		&requestedDeploymentTargets,
+	)
+	if err != nil {
+		return fmt.Errorf("validate protected history scope: %w", err)
+	}
+	if matchedCustomerOrganizations != requestedCustomerOrganizations {
+		return errors.New("one or more customer organizations are absent or belong to another organization")
+	}
+	if matchedDeploymentTargets != requestedDeploymentTargets {
+		return errors.New("one or more deployment targets are absent or belong to another organization")
+	}
+	return nil
+}
+
+func readProtectedHistoryRecords(
+	ctx context.Context,
+	args pgx.NamedArgs,
+) ([]protectedhistory.RawRecord, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, protectedHistoryRecordsSQL, args)
+	if err != nil {
+		return nil, fmt.Errorf("query protected history records: %w", err)
+	}
+	defer rows.Close()
+	records := make([]protectedhistory.RawRecord, 0)
+	for rows.Next() {
+		var record protectedhistory.RawRecord
+		var payload string
+		if err := rows.Scan(&record.Kind, &record.ID, &payload); err != nil {
+			return nil, fmt.Errorf("scan protected history record: %w", err)
+		}
+		record.Payload = json.RawMessage(payload)
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate protected history records: %w", err)
+	}
+	return records, nil
+}
+
+const protectedHistoryRecordsSQL = `
+WITH
+requested_customer_organizations(id) AS (
+  SELECT unnest(@customerOrganizationIds::uuid[])
+),
+requested_deployment_targets(id) AS (
+  SELECT unnest(@deploymentTargetIds::uuid[])
+),
+selected_targets(id) AS (
+  SELECT dt.id
+  FROM DeploymentTarget dt
+  WHERE dt.organization_id = @organizationId
+    AND (
+      dt.id IN (SELECT id FROM requested_deployment_targets)
+      OR dt.customer_organization_id IN (SELECT id FROM requested_customer_organizations)
+    )
+),
+selected_plans(id) AS (
+  SELECT DISTINCT dpt.deployment_plan_id
+  FROM DeploymentPlanTarget dpt
+  WHERE dpt.organization_id = @organizationId
+    AND (
+      dpt.deployment_target_id IN (SELECT id FROM selected_targets)
+      OR dpt.customer_organization_id IN (SELECT id FROM requested_customer_organizations)
+    )
+),
+selected_tasks(id) AS (
+  SELECT task.id
+  FROM Task task
+  WHERE task.organization_id = @organizationId
+    AND (
+      task.deployment_plan_id IN (SELECT id FROM selected_plans)
+      OR task.deployment_target_id IN (SELECT id FROM selected_targets)
+    )
+),
+selected_release_bundles(id) AS (
+  SELECT DISTINCT plan.release_bundle_id
+  FROM DeploymentPlan plan
+  WHERE plan.organization_id = @organizationId
+    AND plan.id IN (SELECT id FROM selected_plans)
+),
+logical_records(kind, id, payload) AS (
+  SELECT 'customerorganization', co.id, jsonb_build_object(
+    'organizationId', co.organization_id,
+    'partnerOrganizationId', co.partner_organization_id
+  )
+  FROM CustomerOrganization co
+  WHERE co.organization_id = @organizationId
+    AND co.id IN (SELECT id FROM requested_customer_organizations)
+
+  UNION ALL SELECT 'deploymenttarget', dt.id, jsonb_build_object(
+    'organizationId', dt.organization_id,
+    'customerOrganizationId', dt.customer_organization_id,
+    'type', dt.type,
+    'platform', dt.platform
+  ) FROM DeploymentTarget dt
+  WHERE dt.organization_id = @organizationId AND dt.id IN (SELECT id FROM selected_targets)
+
+  UNION ALL SELECT 'deploymentplan', plan.id, jsonb_build_object(
+    'organizationId', plan.organization_id,
+    'releaseBundleId', plan.release_bundle_id,
+    'applicationId', plan.application_id,
+    'channelId', plan.channel_id,
+    'environmentId', plan.environment_id,
+    'processSnapshotId', plan.process_snapshot_id,
+    'variableSnapshotId', plan.variable_snapshot_id,
+    'status', plan.status,
+    'canonicalChecksum', plan.canonical_checksum
+  ) FROM DeploymentPlan plan
+  WHERE plan.organization_id = @organizationId AND plan.id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplanissue', issue.id, jsonb_build_object(
+    'deploymentPlanId', issue.deployment_plan_id, 'organizationId', issue.organization_id,
+    'severity', issue.severity, 'code', issue.code, 'field', issue.field,
+    'message', issue.message, 'sortOrder', issue.sort_order
+  ) FROM DeploymentPlanIssue issue
+  WHERE issue.organization_id = @organizationId AND issue.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplanstep', step.id, jsonb_build_object(
+    'deploymentPlanId', step.deployment_plan_id, 'organizationId', step.organization_id,
+    'stepKey', step.step_key, 'name', step.name, 'actionType', step.action_type,
+    'actionName', step.action_name, 'executionLocation', step.execution_location,
+    'condition', step.condition, 'targetTags', step.target_tags, 'failureMode', step.failure_mode,
+    'timeoutSeconds', step.timeout_seconds, 'retryMaxAttempts', step.retry_max_attempts,
+    'retryIntervalSeconds', step.retry_interval_seconds,
+    'requiredPermissions', step.required_permissions, 'sortOrder', step.sort_order,
+    'dependencies', step.dependencies, 'included', step.included,
+    'excludedReason', step.excluded_reason
+  ) FROM DeploymentPlanStep step
+  WHERE step.organization_id = @organizationId AND step.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplantarget', target.id, jsonb_build_object(
+    'deploymentPlanId', target.deployment_plan_id, 'organizationId', target.organization_id,
+    'deploymentTargetId', target.deployment_target_id, 'customerOrganizationId', target.customer_organization_id,
+    'name', target.name, 'type', target.type, 'platform', target.platform, 'sortOrder', target.sort_order
+  ) FROM DeploymentPlanTarget target
+  WHERE target.organization_id = @organizationId AND target.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplantargetcomponent', component.id, jsonb_build_object(
+    'deploymentPlanId', component.deployment_plan_id,
+    'deploymentPlanTargetId', component.deployment_plan_target_id,
+    'organizationId', component.organization_id, 'deploymentTargetId', component.deployment_target_id,
+    'component', component.component, 'version', component.version, 'image', component.image,
+    'platform', component.platform, 'contracts', component.contracts,
+    'configChecksum', component.config_checksum, 'expectedStateVersion', component.expected_state_version,
+    'expectedStateChecksum', component.expected_state_checksum,
+    'expectedReleaseBundleId', component.expected_release_bundle_id, 'sortOrder', component.sort_order
+  ) FROM DeploymentPlanTargetComponent component
+  WHERE component.organization_id = @organizationId AND component.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentplanvariable', variable.id, jsonb_build_object(
+    'deploymentPlanId', variable.deployment_plan_id, 'organizationId', variable.organization_id,
+    'variableSetId', variable.variable_set_id, 'variableId', variable.variable_id,
+    'key', variable.key, 'type', variable.type, 'isRequired', variable.is_required,
+    'status', variable.status, 'source', variable.source,
+    'referenceId', variable.reference_id, 'referenceName', variable.reference_name,
+    'redacted', variable.redacted
+  ) FROM DeploymentPlanVariable variable
+  WHERE variable.organization_id = @organizationId AND variable.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentpreflightrun', run.id, jsonb_build_object(
+    'organizationId', run.organization_id, 'deploymentPlanId', run.deployment_plan_id,
+    'planChecksum', run.plan_checksum, 'actorUserAccountId', run.actor_user_account_id,
+    'status', run.status, 'createdAt', to_char(run.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM DeploymentPreflightRun run
+  WHERE run.organization_id = @organizationId AND run.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'deploymentpreflightcheck', checkrow.id, jsonb_build_object(
+    'organizationId', checkrow.organization_id, 'deploymentPreflightRunId', checkrow.deployment_preflight_run_id,
+    'deploymentPlanId', checkrow.deployment_plan_id, 'deploymentPlanTargetId', checkrow.deployment_plan_target_id,
+    'deploymentTargetId', checkrow.deployment_target_id, 'taskId', checkrow.task_id,
+    'component', checkrow.component, 'checkKey', checkrow.check_key,
+    'status', checkrow.status, 'sortOrder', checkrow.sort_order,
+    'createdAt', to_char(checkrow.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM DeploymentPreflightCheck checkrow
+  WHERE checkrow.organization_id = @organizationId AND checkrow.deployment_plan_id IN (SELECT id FROM selected_plans)
+
+  UNION ALL SELECT 'releasebundle', bundle.id, jsonb_build_object(
+    'organizationId', bundle.organization_id, 'applicationId', bundle.application_id,
+    'channelId', bundle.channel_id, 'releaseNumber', bundle.release_number,
+    'sourceRevision', bundle.source_revision, 'status', bundle.status,
+    'canonicalChecksum', bundle.canonical_checksum, 'sourceRepository', bundle.source_repository,
+    'sourceBranch', bundle.source_branch, 'sourceTag', bundle.source_tag,
+    'ciProvider', bundle.ci_provider, 'ciRunId', bundle.ci_run_id,
+    'processSnapshotId', bundle.process_snapshot_id, 'variableSnapshotId', bundle.variable_snapshot_id,
+    'retentionProtected', bundle.retention_protected
+  ) FROM ReleaseBundle bundle
+  WHERE bundle.organization_id = @organizationId AND bundle.id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'releasebundleauditevent', event.id, jsonb_build_object(
+    'organizationId', event.organization_id, 'releaseBundleId', event.release_bundle_id,
+    'actorUserAccountId', event.actor_user_account_id, 'eventType', event.event_type,
+    'fromStatus', event.from_status, 'toStatus', event.to_status, 'reason', event.reason,
+    'createdAt', to_char(event.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM ReleaseBundleAuditEvent event
+  WHERE event.organization_id = @organizationId AND event.release_bundle_id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'releasebundlecomponent', component.id, jsonb_build_object(
+    'releaseBundleId', component.release_bundle_id, 'key', component.key, 'name', component.name,
+    'componentType', component.component_type, 'version', component.version,
+    'applicationVersionId', component.application_version_id, 'packageRef', component.package_ref,
+    'digest', component.digest, 'checksum', component.checksum,
+    'childReleaseBundleId', component.child_release_bundle_id
+  ) FROM ReleaseBundleComponent component
+  WHERE component.release_bundle_id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'releasebundleidempotencykey', keyrow.id, jsonb_build_object(
+    'organizationId', keyrow.organization_id, 'keyHash', keyrow.key_hash,
+    'requestChecksum', keyrow.request_checksum, 'releaseBundleId', keyrow.release_bundle_id,
+    'createdAt', to_char(keyrow.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM ReleaseBundleIdempotencyKey keyrow
+  WHERE keyrow.organization_id = @organizationId AND keyrow.release_bundle_id IN (SELECT id FROM selected_release_bundles)
+
+  UNION ALL SELECT 'task', task.id, jsonb_build_object(
+    'organizationId', task.organization_id, 'deploymentPlanId', task.deployment_plan_id,
+    'deploymentPlanTargetId', task.deployment_plan_target_id, 'deploymentTargetId', task.deployment_target_id,
+    'applicationId', task.application_id, 'releaseBundleId', task.release_bundle_id,
+    'channelId', task.channel_id, 'environmentId', task.environment_id,
+    'status', task.status, 'queueOrder', task.queue_order, 'taskType', task.task_type,
+    'actorUserAccountId', task.actor_user_account_id
+  ) FROM Task task
+  WHERE task.organization_id = @organizationId AND task.id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'tasklease', lease.id, jsonb_build_object(
+    'organizationId', lease.organization_id, 'taskId', lease.task_id, 'agentId', lease.agent_id,
+    'attempt', lease.attempt, 'executorType', lease.executor_type,
+    'leasedAt', to_char(lease.leased_at, 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+    'releasedAt', to_char(lease.released_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM TaskLease lease
+  WHERE lease.organization_id = @organizationId AND lease.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'taskresourcelock', lockrow.id, jsonb_build_object(
+    'organizationId', lockrow.organization_id, 'taskId', lockrow.task_id,
+    'resourceType', lockrow.resource_type, 'resourceKey', lockrow.resource_key,
+    'concurrencyPolicy', lockrow.concurrency_policy,
+    'acquiredAt', to_char(lockrow.acquired_at, 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+    'releasedAt', to_char(lockrow.released_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM TaskResourceLock lockrow
+  WHERE lockrow.organization_id = @organizationId AND lockrow.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'steprun', run.id, jsonb_build_object(
+    'organizationId', run.organization_id, 'taskId', run.task_id,
+    'deploymentPlanId', run.deployment_plan_id, 'deploymentPlanStepId', run.deployment_plan_step_id,
+    'stepKey', run.step_key, 'name', run.name, 'actionType', run.action_type,
+    'status', run.status, 'sortOrder', run.sort_order, 'skippedReason', run.skipped_reason
+  ) FROM StepRun run
+  WHERE run.organization_id = @organizationId AND run.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'steprunevent', event.id, jsonb_build_object(
+    'organizationId', event.organization_id, 'taskId', event.task_id, 'stepRunId', event.step_run_id,
+    'taskLeaseId', event.task_lease_id, 'agentId', event.agent_id,
+    'sequence', event.sequence, 'eventType', event.event_type,
+    'progressPercent', event.progress_percent, 'payloadHash', event.payload_hash, 'redacted', event.redacted,
+    'occurredAt', to_char(event.occurred_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM StepRunEvent event
+  WHERE event.organization_id = @organizationId AND event.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'steprunoutput', output.id, jsonb_build_object(
+    'eventId', output.event_id, 'organizationId', output.organization_id,
+    'taskId', output.task_id, 'stepRunId', output.step_run_id,
+    'taskLeaseId', output.task_lease_id, 'agentId', output.agent_id,
+    'name', output.name, 'sensitive', output.sensitive, 'redacted', output.redacted
+  ) FROM StepRunOutput output
+  WHERE output.organization_id = @organizationId AND output.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'externalexecution', execution.id, jsonb_build_object(
+    'organizationId', execution.organization_id, 'stepRunId', execution.step_run_id,
+    'taskId', execution.task_id, 'deploymentPlanId', execution.deployment_plan_id,
+    'deploymentPlanTargetId', execution.deployment_plan_target_id,
+    'deploymentTargetId', execution.deployment_target_id, 'applicationId', execution.application_id,
+    'releaseBundleId', execution.release_bundle_id, 'component', execution.component,
+    'planChecksum', execution.plan_checksum, 'idempotencyKey', execution.idempotency_key,
+    'expectedStateVersion', execution.expected_state_version,
+    'expectedStateChecksum', execution.expected_state_checksum,
+    'expectedVersion', execution.expected_version, 'expectedImage', execution.expected_image,
+    'expectedPlatform', execution.expected_platform, 'expectedContracts', execution.expected_contracts,
+    'expectedConfigChecksum', execution.expected_config_checksum, 'status', execution.status,
+    'triggerAttempts', execution.trigger_attempts, 'lastCallbackSequence', execution.last_callback_sequence,
+    'actualVersion', execution.actual_version, 'actualImage', execution.actual_image,
+    'actualPlatform', execution.actual_platform, 'actualContracts', execution.actual_contracts,
+    'actualConfigChecksum', execution.actual_config_checksum, 'actualHealth', execution.actual_health,
+    'observedStateChecksum', execution.observed_state_checksum
+  ) FROM ExternalExecution execution
+  WHERE execution.organization_id = @organizationId AND execution.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'externalexecutionevent', event.id, jsonb_build_object(
+    'organizationId', event.organization_id, 'externalExecutionId', event.external_execution_id,
+    'sequence', event.sequence, 'status', event.status, 'payloadHash', event.payload_hash
+  ) FROM ExternalExecutionEvent event
+  JOIN ExternalExecution execution ON execution.id = event.external_execution_id
+  WHERE event.organization_id = @organizationId AND execution.task_id IN (SELECT id FROM selected_tasks)
+
+  UNION ALL SELECT 'targetcomponentstate', state.id, jsonb_build_object(
+    'organizationId', state.organization_id, 'deploymentTargetId', state.deployment_target_id,
+    'applicationId', state.application_id, 'component', state.component
+  ) FROM TargetComponentState state
+  WHERE state.organization_id = @organizationId AND state.deployment_target_id IN (SELECT id FROM selected_targets)
+
+  UNION ALL SELECT 'targetcomponentobservation', observation.id, jsonb_build_object(
+    'organizationId', observation.organization_id,
+    'targetComponentStateId', observation.target_component_state_id,
+    'deploymentTargetId', observation.deployment_target_id, 'applicationId', observation.application_id,
+    'component', observation.component, 'stateVersion', observation.state_version,
+    'stateChecksum', observation.state_checksum, 'releaseBundleId', observation.release_bundle_id,
+    'version', observation.version, 'image', observation.image, 'platform', observation.platform,
+    'contracts', observation.contracts, 'configChecksum', observation.config_checksum,
+    'health', observation.health, 'externalExecutionId', observation.external_execution_id,
+    'configReference', observation.config_reference,
+    'observedAt', to_char(observation.observed_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
+  ) FROM TargetComponentObservation observation
+  WHERE observation.organization_id = @organizationId
+    AND observation.deployment_target_id IN (SELECT id FROM selected_targets)
+)
+SELECT kind, id::text, payload::text
+FROM logical_records
+ORDER BY kind, id
+`
