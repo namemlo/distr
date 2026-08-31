@@ -235,6 +235,14 @@ export function buildScaleFixture(parameters) {
     deploymentTargetId: sentinelTarget.id,
     status: 'RUNNING',
   };
+  const sentinelRelease = {
+    id: stableUUID('sentinel-release-record', 0),
+    organizationId: sentinelOrganization.id,
+  };
+  const sentinelPlan = {
+    id: stableUUID('sentinel-plan-record', 0),
+    organizationId: sentinelOrganization.id,
+  };
   const waveMembers = Array.from({length: 500}, (_, index) => ({
     id: stableUUID('campaign-member', index),
     planId: stableUUID('plan', index),
@@ -245,6 +253,76 @@ export function buildScaleFixture(parameters) {
   const otherClientTargetIDs = clientOrganizations
     .slice(1)
     .map((organization) => targetsByOrganization.get(organization.id)[0].id);
+  const benchmarkResources = {
+    releaseIds: [stableUUID('benchmark-release', 0), stableUUID('benchmark-release', 1)],
+    planIds: [stableUUID('benchmark-plan', 0), stableUUID('benchmark-plan', 1)],
+    executionId: stableUUID('benchmark-execution', 0),
+    campaignId: stableUUID('campaign', 0),
+  };
+  const allForbiddenResourceIds = [
+    ...otherClientTargetIDs,
+    sentinelTarget.id,
+    sentinelRelease.id,
+    sentinelPlan.id,
+    sentinelCampaign.id,
+    sentinelExecution.id,
+  ];
+  const benchmarkRequests = [
+    {
+      name: 'registry-list',
+      path: '/api/v1/control-plane/releases',
+      response: {envelope: 'items', minimumItems: 100, requiredResourceIds: [benchmarkResources.releaseIds[0]]},
+    },
+    {
+      name: 'registry-detail',
+      path: `/api/v1/control-plane/releases/${benchmarkResources.releaseIds[0]}`,
+      response: {envelope: 'detail', minimumItems: 1, requiredResourceIds: [benchmarkResources.releaseIds[0]]},
+    },
+    {
+      name: 'matrix-list',
+      path: '/api/v1/control-plane/fleet',
+      response: {envelope: 'items', minimumItems: 25, requiredResourceIds: [targets[0].id]},
+    },
+    {
+      name: 'matrix-detail',
+      path: `/api/v1/control-plane/fleet?deploymentTargetId=${targets[0].id}`,
+      response: {envelope: 'items', minimumItems: 1, requiredResourceIds: [targets[0].id]},
+    },
+    {
+      name: 'comparison-list',
+      path: '/api/v1/control-plane/plans',
+      response: {envelope: 'items', minimumItems: 100, requiredResourceIds: [benchmarkResources.planIds[0]]},
+    },
+    {
+      name: 'comparison-detail',
+      path: `/api/v1/control-plane/plans/${benchmarkResources.planIds[0]}/compare/${benchmarkResources.planIds[1]}`,
+      response: {
+        envelope: 'comparison',
+        minimumItems: 1,
+        requiredResourceIds: [...benchmarkResources.planIds],
+      },
+    },
+    {
+      name: 'history-list',
+      path: '/api/v1/control-plane/executions',
+      response: {envelope: 'items', minimumItems: 100, requiredResourceIds: [benchmarkResources.executionId]},
+    },
+    {
+      name: 'history-detail',
+      path: `/api/v1/control-plane/executions/${benchmarkResources.executionId}`,
+      response: {envelope: 'detail', minimumItems: 1, requiredResourceIds: [benchmarkResources.executionId]},
+    },
+    {
+      name: 'campaign-list',
+      path: '/api/v1/control-plane/campaigns',
+      response: {envelope: 'items', minimumItems: 1, requiredResourceIds: [benchmarkResources.campaignId]},
+    },
+    {
+      name: 'campaign-detail',
+      path: `/api/v1/control-plane/campaigns/${benchmarkResources.campaignId}`,
+      response: {envelope: 'detail', minimumItems: 1, requiredResourceIds: [benchmarkResources.campaignId]},
+    },
+  ].map((request) => ({...request, forbiddenResourceIds: allForbiddenResourceIds}));
 
   return {
     schemaVersion,
@@ -256,6 +334,8 @@ export function buildScaleFixture(parameters) {
     isolationSentinel: {
       organization: sentinelOrganization,
       target: sentinelTarget,
+      release: sentinelRelease,
+      plan: sentinelPlan,
       campaign: sentinelCampaign,
       execution: sentinelExecution,
     },
@@ -308,27 +388,12 @@ export function buildScaleFixture(parameters) {
       },
     },
     benchmark: {
-      remoteRequests: [
-        {
-          name: 'fleet-list',
-          path: '/api/v1/control-plane/fleet?limit=100',
-          forbiddenResourceIds: [...otherClientTargetIDs, sentinelTarget.id],
-        },
-        {
-          name: 'campaign-list',
-          path: '/api/v1/control-plane/campaigns?limit=100',
-          forbiddenResourceIds: [sentinelCampaign.id],
-        },
-        {
-          name: 'execution-list',
-          path: '/api/v1/control-plane/executions?limit=100',
-          forbiddenResourceIds: [sentinelExecution.id, sentinelTarget.id],
-        },
-      ],
+      resources: benchmarkResources,
+      remoteRequests: benchmarkRequests,
     },
     loadProof: {
       planning: {componentCount: 100, runs: 5},
-      wave: {stepCount: 500},
+      wave: {stepCount: 500, runs: 2},
       events: {durationSeconds: 600, ratePerSecond: 100, concurrentAgents: 100},
       logs: {totalBytes: 100 * 1024 * 1024, maximumPageBytes: 1024 * 1024},
       thresholds: {

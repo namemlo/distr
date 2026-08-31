@@ -31,12 +31,13 @@ const smokeWorkloadNames = [
   'fleet-detail',
 ];
 const acceptanceBlocker =
-  'AC-50 requires truthful registry, matrix, comparison, history, and campaign list/detail descriptors in remote acceptance mode';
-const acceptanceDiagnosticBlockers = [
-  'AC-50 canonical fixed endpoints and response schemas are not yet enforced',
-  'AC-50 known primary resource IDs, minimum response counts, and complete tenant-isolation checks are not yet enforced',
-  'AC-50 requires a clean known source commit bound to the live server version and immutable image digest',
-];
+  'AC-50 requires truthful registry, matrix, comparison, history, and campaign ' +
+  'list/detail descriptors in remote acceptance mode';
+const proofHeaders = {
+  sourceCommit: 'x-distr-proof-source-commit',
+  buildVersion: 'x-distr-proof-build-version',
+  artifactDigest: 'x-distr-proof-artifact-digest',
+};
 
 function fail(message) {
   throw new Error(message);
@@ -149,12 +150,82 @@ function assertArray(value, label) {
   }
 }
 
-function validateAcceptanceWorkloads(remoteRequests) {
+function expectedAcceptanceRequests(fixture) {
+  const resources = fixture.benchmark?.resources;
+  if (
+    !Array.isArray(resources?.releaseIds) ||
+    resources.releaseIds.length !== 2 ||
+    !Array.isArray(resources?.planIds) ||
+    resources.planIds.length !== 2 ||
+    !resources.executionId ||
+    !resources.campaignId
+  ) {
+    fail('fixture benchmark acceptance resources are incomplete');
+  }
+  return [
+    ['registry-list', '/api/v1/control-plane/releases', 'items', 100, [resources.releaseIds[0]]],
+    [
+      'registry-detail',
+      `/api/v1/control-plane/releases/${resources.releaseIds[0]}`,
+      'detail',
+      1,
+      [resources.releaseIds[0]],
+    ],
+    ['matrix-list', '/api/v1/control-plane/fleet', 'items', 25, [fixture.targets[0].id]],
+    [
+      'matrix-detail',
+      `/api/v1/control-plane/fleet?deploymentTargetId=${fixture.targets[0].id}`,
+      'items',
+      1,
+      [fixture.targets[0].id],
+    ],
+    ['comparison-list', '/api/v1/control-plane/plans', 'items', 100, [resources.planIds[0]]],
+    [
+      'comparison-detail',
+      `/api/v1/control-plane/plans/${resources.planIds[0]}/compare/${resources.planIds[1]}`,
+      'comparison',
+      1,
+      [...resources.planIds],
+    ],
+    ['history-list', '/api/v1/control-plane/executions', 'items', 100, [resources.executionId]],
+    [
+      'history-detail',
+      `/api/v1/control-plane/executions/${resources.executionId}`,
+      'detail',
+      1,
+      [resources.executionId],
+    ],
+    ['campaign-list', '/api/v1/control-plane/campaigns', 'items', 1, [resources.campaignId]],
+    [
+      'campaign-detail',
+      `/api/v1/control-plane/campaigns/${resources.campaignId}`,
+      'detail',
+      1,
+      [resources.campaignId],
+    ],
+  ].map(([name, requestPath, envelope, minimumItems, requiredResourceIds]) => ({
+    name,
+    path: requestPath,
+    response: {envelope, minimumItems, requiredResourceIds},
+  }));
+}
+
+function validateAcceptanceWorkloads(fixture, remoteRequests) {
   if (
     remoteRequests.length !== workloadNames.length ||
     workloadNames.some((name, index) => remoteRequests[index]?.name !== name)
   ) {
     fail('fixture benchmark must define exactly the ten required read-model workloads in contract order');
+  }
+  const expected = expectedAcceptanceRequests(fixture);
+  for (let index = 0; index < expected.length; index++) {
+    const request = remoteRequests[index];
+    if (
+      request.path !== expected[index].path ||
+      JSON.stringify(request.response) !== JSON.stringify(expected[index].response)
+    ) {
+      fail(`fixture benchmark workload ${request.name} must use its canonical endpoint and response contract`);
+    }
   }
 }
 
@@ -194,22 +265,18 @@ export function validateFixture(fixture, options = {}) {
   assertArray(remoteRequests, 'fixture.benchmark.remoteRequests');
   const profile = options.profile ?? 'smoke';
   if (profile === 'acceptance') {
-    validateAcceptanceWorkloads(remoteRequests);
+    validateAcceptanceWorkloads(fixture, remoteRequests);
   }
+  const acceptanceSentinels = [
+    fixture.isolationSentinel?.target?.id,
+    fixture.isolationSentinel?.release?.id,
+    fixture.isolationSentinel?.plan?.id,
+    fixture.isolationSentinel?.campaign?.id,
+    fixture.isolationSentinel?.execution?.id,
+  ];
   const expectedSentinels =
     profile === 'acceptance'
-      ? new Map([
-          ['registry-list', fixture.isolationSentinel?.target?.id],
-          ['registry-detail', fixture.isolationSentinel?.target?.id],
-          ['matrix-list', fixture.isolationSentinel?.target?.id],
-          ['matrix-detail', fixture.isolationSentinel?.target?.id],
-          ['comparison-list', fixture.isolationSentinel?.target?.id],
-          ['comparison-detail', fixture.isolationSentinel?.target?.id],
-          ['campaign-list', fixture.isolationSentinel?.campaign?.id],
-          ['campaign-detail', fixture.isolationSentinel?.campaign?.id],
-          ['history-list', fixture.isolationSentinel?.execution?.id],
-          ['history-detail', fixture.isolationSentinel?.execution?.id],
-        ])
+      ? new Map(workloadNames.map((name) => [name, acceptanceSentinels]))
       : new Map([
           ['fleet-list', fixture.isolationSentinel?.target?.id],
           ['campaign-list', fixture.isolationSentinel?.campaign?.id],
@@ -224,11 +291,12 @@ export function validateFixture(fixture, options = {}) {
       fail(`fixture benchmark request ${request?.name ?? '<unknown>'} must define forbiddenResourceIds`);
     }
     const expectedSentinel = expectedSentinels.get(request.name);
-    if (expectedSentinels.has(request.name) && !expectedSentinel) {
+    const expectedIDs = Array.isArray(expectedSentinel) ? expectedSentinel : [expectedSentinel];
+    if (expectedSentinels.has(request.name) && (!expectedSentinel || expectedIDs.some((id) => !id))) {
       fail(`fixture benchmark request ${request.name} is missing its response-visible sentinel resource`);
     }
-    if (expectedSentinel && !request.forbiddenResourceIds.includes(expectedSentinel)) {
-      fail(`fixture benchmark request ${request.name} must include its response-visible sentinel ID`);
+    if (expectedSentinel && expectedIDs.some((id) => !request.forbiddenResourceIds.includes(id))) {
+      fail(`fixture benchmark request ${request.name} must include every response-visible sentinel ID`);
     }
   }
   return fixture;
@@ -352,19 +420,23 @@ async function runFixtureBenchmark(fixture, options) {
   return {samples, violations, responseCounts, isolationChecks: options.runs * smokeWorkloadNames.length};
 }
 
-function responseRows(payload, workloadName) {
-  if (workloadName.endsWith('-detail')) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-      return [payload];
+function responseRows(payload, request) {
+  const envelope = request.response?.envelope;
+  if (envelope === 'items') {
+    if (payload && !Array.isArray(payload) && Array.isArray(payload.items)) return payload.items;
+    fail(`remote workload ${request.name} must return an object with an items array`);
+  }
+  if (['detail', 'comparison'].includes(envelope)) {
+    if (payload && !Array.isArray(payload) && payload[envelope] && typeof payload[envelope] === 'object') {
+      return [payload[envelope]];
     }
-    fail('remote read-model detail response must be an object');
+    fail(`remote workload ${request.name} must return an object with a ${envelope} object`);
   }
-  if (Array.isArray(payload)) {
-    return payload;
+  if (request.name.endsWith('-detail') && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    return [payload];
   }
-  if (payload && Array.isArray(payload.items)) {
-    return payload.items;
-  }
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.items)) return payload.items;
   fail('remote read-model response must be an array or contain an items array');
 }
 
@@ -375,7 +447,7 @@ async function runRemoteBenchmark(fixture, options) {
     fail('fixture.benchmark.remoteRequests must not be empty');
   }
   if ((options.profile ?? 'smoke') === 'acceptance') {
-    validateAcceptanceWorkloads(requests);
+    validateAcceptanceWorkloads(fixture, requests);
   }
   const token = process.env[options.authEnv];
   const headers = {accept: 'application/json'};
@@ -384,6 +456,15 @@ async function runRemoteBenchmark(fixture, options) {
   }
   const samples = new Map(requests.map((request) => [request.name, []]));
   const responseCounts = responseCountMap(requests.map((request) => request.name));
+  const responseContracts = Object.fromEntries(
+    requests.map((request) => [request.name, {responses: 0, validResponses: 0, issues: []}])
+  );
+  const metadataBindings = {responses: 0, validResponses: 0, issues: []};
+  const expectedMetadata = {
+    sourceCommit: options.sourceCommit ?? currentCommit(),
+    buildVersion: options.buildVersion,
+    artifactDigest: options.imageDigest,
+  };
   let violations = 0;
   for (let run = 0; run < options.runs; run++) {
     for (const request of requests) {
@@ -423,22 +504,48 @@ async function runRemoteBenchmark(fixture, options) {
       if (!response.ok) {
         fail(`remote workload ${request.name} returned HTTP ${response.status}`);
       }
+      if ((options.profile ?? 'smoke') === 'acceptance') {
+        metadataBindings.responses++;
+        const metadataIssues = [];
+        for (const [field, expectedValue] of Object.entries(expectedMetadata)) {
+          if (!expectedValue || response.headers.get(proofHeaders[field]) !== expectedValue) metadataIssues.push(field);
+        }
+        if (metadataIssues.length === 0) metadataBindings.validResponses++;
+        else metadataBindings.issues.push(`${request.name}:${[...new Set(metadataIssues)].join(',')}`);
+      }
       let payload;
       try {
         payload = await response.json();
       } catch {
         fail(`remote workload ${request.name} did not return JSON`);
       }
-      const rows = responseRows(payload, request.name);
+      const rows = responseRows(payload, request);
       if (rows.length > options.pageSize) {
         fail(`remote workload ${request.name} returned more than ${options.pageSize} rows`);
       }
+      const contract = responseContracts[request.name];
+      contract.responses++;
+      const contractIssues = [];
+      const minimumItems = request.response?.minimumItems ?? 0;
+      if (rows.length < minimumItems) contractIssues.push(`minimumItems:${minimumItems}`);
+      for (const requiredID of request.response?.requiredResourceIds ?? []) {
+        if (isolationViolations([payload], [requiredID]) === 0) contractIssues.push(`requiredResourceId:${requiredID}`);
+      }
+      if (contractIssues.length === 0) contract.validResponses++;
+      else contract.issues.push(...contractIssues);
       recordResponse(responseCounts, request.name, rows.length);
       violations += isolationViolations(rows, forbiddenResourceIDs);
       samples.get(request.name).push(performance.now() - started);
     }
   }
-  return {samples, violations, responseCounts, isolationChecks: options.runs * requests.length};
+  return {
+    samples,
+    violations,
+    responseCounts,
+    responseContracts,
+    metadataBindings,
+    isolationChecks: options.runs * requests.length,
+  };
 }
 
 function currentCommit() {
@@ -470,6 +577,8 @@ function workingTreeDirty() {
 
 function reportMetadata(fixture, options) {
   const cpuRows = cpus();
+  const sourceCommit = options.sourceCommit ?? currentCommit();
+  const dirty = options.workingTreeDirty ?? workingTreeDirty();
   return {
     dataset: {
       fixtureSchema: fixture.schemaVersion,
@@ -494,8 +603,8 @@ function reportMetadata(fixture, options) {
     build: {
       version: options.buildVersion ?? 'unknown',
       artifactDigest: options.imageDigest ?? null,
-      commit: currentCommit(),
-      workingTreeDirty: workingTreeDirty(),
+      commit: sourceCommit,
+      workingTreeDirty: dirty,
       harnessSha256: `sha256:${createHash('sha256')
         .update(readFileSync(fileURLToPath(import.meta.url)))
         .digest('hex')}`,
@@ -539,6 +648,46 @@ export async function benchmark(fixture, options) {
   }
   const responseCounts = responseCountObject(outcome.responseCounts);
   const maxResponseItems = Math.max(...Object.values(responseCounts).map((count) => count.maxItems));
+  const metadata = reportMetadata(fixture, options);
+  const blockers = [];
+  if (profile !== 'acceptance') {
+    blockers.push(acceptanceBlocker);
+  } else {
+    if (options.pageSize !== 100) blockers.push('AC-50 acceptance requires page size 100');
+    if (options.runs < 20) blockers.push('AC-50 acceptance requires at least 20 samples per workload');
+    if (options.thresholds.p95Ms > 2000 || options.thresholds.p99Ms > 5000) {
+      blockers.push('AC-50 acceptance thresholds may not exceed p95 2000 ms and p99 5000 ms');
+    }
+    if (!process.env[options.authEnv]) {
+      blockers.push('AC-50 acceptance requires environment-only bearer authentication');
+    }
+    if (
+      metadata.build.commit === 'unknown' ||
+      metadata.build.workingTreeDirty ||
+      metadata.build.version === 'unknown' ||
+      !/^sha256:[0-9a-f]{64}$/.test(metadata.build.artifactDigest ?? '')
+    ) {
+      blockers.push(
+        'AC-50 acceptance requires a clean known source commit, build version, and immutable artifact digest'
+      );
+    }
+    const responseContractFailures = Object.entries(outcome.responseContracts ?? {})
+      .filter(([, contract]) => contract.responses !== options.runs || contract.validResponses !== options.runs)
+      .map(([name]) => name);
+    if (responseContractFailures.length > 0) {
+      blockers.push(`AC-50 response contracts failed for: ${responseContractFailures.join(', ')}`);
+    }
+    const expectedResponseCount = options.runs * workloadNames.length;
+    if (
+      outcome.metadataBindings?.responses !== expectedResponseCount ||
+      outcome.metadataBindings?.validResponses !== expectedResponseCount
+    ) {
+      blockers.push(
+        'AC-50 live responses are not bound to the measured source commit, build version, and artifact digest'
+      );
+    }
+    if (maxResponseItems <= 0) blockers.push('AC-50 acceptance requires non-empty bounded responses');
+  }
   return {
     schemaVersion: reportSchema,
     fixtureSchema: fixture.schemaVersion,
@@ -551,16 +700,18 @@ export async function benchmark(fixture, options) {
     isolationViolations: outcome.violations,
     qualification: {
       profile,
-      acceptanceEligible: false,
-      blockers: profile === 'acceptance' ? [...acceptanceDiagnosticBlockers] : [acceptanceBlocker],
+      acceptanceEligible: profile === 'acceptance' && blockers.length === 0,
+      blockers,
     },
-    ...reportMetadata(fixture, options),
+    ...metadata,
     facts: {
       pageSize: options.pageSize,
       boundedResponses: true,
       workloads: [...outcome.samples.keys()],
       maxResponseItems,
       responseCounts,
+      responseContracts: outcome.responseContracts ?? {},
+      metadataBindings: outcome.metadataBindings ?? {responses: 0, validResponses: 0, issues: []},
       isolation: {
         checks: outcome.isolationChecks,
         violations: outcome.violations,

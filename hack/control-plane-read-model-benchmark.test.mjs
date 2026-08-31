@@ -7,6 +7,7 @@ import path from 'node:path';
 import {test} from 'node:test';
 import {fileURLToPath} from 'node:url';
 
+import {startLoopbackProofService} from './control-plane-loopback-proof-service.mjs';
 import {benchmark, parseBenchmarkArgs, validateFixture} from './control-plane-read-model-benchmark.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,16 +59,7 @@ async function generateFixture() {
 }
 
 function exactRemoteRequests(fixture) {
-  const forbiddenResourceIds = [
-    fixture.isolationSentinel.target.id,
-    fixture.isolationSentinel.campaign.id,
-    fixture.isolationSentinel.execution.id,
-  ];
-  return workloadNames.map((name) => ({
-    name,
-    path: `/benchmark/${name}`,
-    forbiddenResourceIds,
-  }));
+  return structuredClone(fixture.benchmark.remoteRequests);
 }
 
 test('fixture benchmark retains bounded smoke-workload samples and reports AC-50 as non-qualifying', async () => {
@@ -117,70 +109,49 @@ test('fixture benchmark retains bounded smoke-workload samples and reports AC-50
 test('remote benchmark accepts bounded object details without leaking request secrets', async () => {
   const fixture = await generateFixture();
   fixture.benchmark.remoteRequests = exactRemoteRequests(fixture);
-  const requests = [];
-  const server = createServer((request, response) => {
-    const url = new URL(request.url, 'http://localhost');
-    requests.push({
-      name: url.pathname.split('/').at(-1),
-      limit: url.searchParams.get('limit'),
-      authorization: request.headers.authorization,
-    });
-    response.setHeader('content-type', 'application/json');
-    if (url.pathname.endsWith('-list')) {
-      response.end(JSON.stringify({items: [{id: 'primary-1'}, {id: 'primary-2'}]}));
-    } else {
-      response.end(JSON.stringify({detail: {id: 'primary-detail'}}));
-    }
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
   const token = 'read-model-benchmark-secret';
+  const sourceCommit = 'a'.repeat(40);
+  const artifactDigest = `sha256:${'b'.repeat(64)}`;
   process.env.CONTROL_PLANE_READ_MODEL_TEST_TOKEN = token;
+  const service = await startLoopbackProofService({
+    fixture,
+    token,
+    metadata: {sourceCommit, buildVersion: 'remote-test', artifactDigest},
+  });
   try {
-    const baseURL = new URL(`http://127.0.0.1:${address.port}`);
     const report = await benchmark(fixture, {
-      runs: 2,
-      pageSize: 25,
+      runs: 20,
+      pageSize: 100,
       thresholds: {p95Ms: 2000, p99Ms: 5000},
-      baseURL,
+      baseURL: service.baseURL,
       authEnv: 'CONTROL_PLANE_READ_MODEL_TEST_TOKEN',
       timeoutMs: 10000,
       buildVersion: 'remote-test',
-      imageDigest: `sha256:${'b'.repeat(64)}`,
+      imageDigest: artifactDigest,
       profile: 'acceptance',
+      sourceCommit,
+      workingTreeDirty: false,
     });
 
-    assert.equal(requests.length, workloadNames.length * 2);
-    for (const request of requests) {
-      assert.equal(request.authorization, `Bearer ${token}`);
-      assert.equal(request.limit, request.name.endsWith('-list') ? '25' : null);
-    }
     for (const name of workloadNames) {
-      assert.deepEqual(report.facts.responseCounts[name], {
-        responses: 2,
-        items: name.endsWith('-list') ? 4 : 2,
-        maxItems: name.endsWith('-list') ? 2 : 1,
-      });
+      assert.equal(report.facts.responseCounts[name].responses, 20);
+      assert.equal(report.facts.responseContracts[name].validResponses, 20);
     }
-    assert.equal(report.facts.maxResponseItems, 2);
-    assert.equal(report.facts.isolation.checks, workloadNames.length * 2);
+    assert.equal(report.facts.maxResponseItems, 100);
+    assert.equal(report.facts.isolation.checks, workloadNames.length * 20);
     assert.equal(report.facts.isolation.violations, 0);
     assert.deepEqual(report.qualification, {
       profile: 'acceptance',
-      acceptanceEligible: false,
-      blockers: [
-        'AC-50 canonical fixed endpoints and response schemas are not yet enforced',
-        'AC-50 known primary resource IDs, minimum response counts, and complete tenant-isolation checks are not yet enforced',
-        'AC-50 requires a clean known source commit bound to the live server version and immutable image digest',
-      ],
+      acceptanceEligible: true,
+      blockers: [],
     });
+    assert.deepEqual(report.facts.metadataBindings, {responses: 200, validResponses: 200, issues: []});
     const serialized = JSON.stringify(report);
     assert.doesNotMatch(serialized, new RegExp(token));
-    assert.doesNotMatch(serialized, new RegExp(String(address.port)));
     assert.doesNotMatch(serialized, /CONTROL_PLANE_READ_MODEL_TEST_TOKEN/);
   } finally {
     delete process.env.CONTROL_PLANE_READ_MODEL_TEST_TOKEN;
-    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await service.close();
   }
 });
 
@@ -189,7 +160,15 @@ test('acceptance profile keeps zero-row and unbound build evidence diagnostic-on
   fixture.benchmark.remoteRequests = exactRemoteRequests(fixture);
   const server = createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
-    response.end(request.url.includes('-list') ? JSON.stringify({items: []}) : JSON.stringify({detail: {}}));
+    const url = new URL(request.url, 'http://localhost');
+    const descriptor = fixture.benchmark.remoteRequests.find((candidate) => {
+      const expected = new URL(candidate.path, 'http://localhost');
+      if (expected.pathname !== url.pathname) return false;
+      for (const [key, value] of expected.searchParams) if (url.searchParams.get(key) !== value) return false;
+      return true;
+    });
+    const envelope = descriptor?.response.envelope ?? 'items';
+    response.end(JSON.stringify(envelope === 'items' ? {items: []} : {[envelope]: {}}));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -211,12 +190,9 @@ test('acceptance profile keeps zero-row and unbound build evidence diagnostic-on
     assert.equal(report.build.artifactDigest, null);
     assert.equal(report.image.digest, null);
     assert.equal(report.qualification.acceptanceEligible, false);
-    assert.match(report.qualification.blockers.join('\n'), /canonical fixed endpoints and response schemas/);
-    assert.match(report.qualification.blockers.join('\n'), /known primary resource IDs, minimum response counts/);
-    assert.match(
-      report.qualification.blockers.join('\n'),
-      /clean known source commit.*live server version.*image digest/
-    );
+    assert.match(report.qualification.blockers.join('\n'), /response contracts failed/);
+    assert.match(report.qualification.blockers.join('\n'), /clean known source commit, build version/);
+    assert.match(report.qualification.blockers.join('\n'), /not bound to the measured source commit/);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }
@@ -225,13 +201,12 @@ test('acceptance profile keeps zero-row and unbound build evidence diagnostic-on
 test('fixture validation and CLI metadata require the exact workload set and an immutable image digest', async () => {
   const fixture = await generateFixture();
   assert.equal(validateFixture(fixture), fixture);
+  assert.equal(validateFixture(fixture, {profile: 'acceptance'}), fixture);
+  fixture.benchmark.remoteRequests[0].path = '/benchmark/registry-list';
   assert.throws(
     () => validateFixture(fixture, {profile: 'acceptance'}),
-    /exactly the ten required read-model workloads/
+    /canonical endpoint and response contract/
   );
-
-  fixture.benchmark.remoteRequests = exactRemoteRequests(fixture);
-  assert.equal(validateFixture(fixture, {profile: 'acceptance'}), fixture);
 
   const options = parseBenchmarkArgs([
     '--fixture',

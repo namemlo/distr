@@ -1706,8 +1706,9 @@ Use one entry per pull request:
 ### PR-081 - Neutral end-to-end and performance proof
 
 - Status: Implemented and root-verified for deterministic local contract,
-  failure, and time-compressed load proof. Race and live environment gates
-  remain explicitly open.
+  failure, and time-compressed load proof. AC-50/AC-51 now also have an owned,
+  authenticated measured-loopback service/runner; deployed Hub/PostgreSQL,
+  race, staging, and production gates remain explicitly open.
 - Upstream base: `bf877e5a` (PR-080 checkpoint).
 - Feature flags: The reference workflow requires
   `operator_control_plane_v2`; protocol-v2 execution also requires
@@ -1730,6 +1731,12 @@ Use one entry per pull request:
   ten-minute/100-rate simulation passed. Clean mode used
   fixture-contract fallback because Docker was unavailable; no live
   remote/Compose, Hub API end-to-end, staging, or production result is claimed.
+  The measured-loopback follow-up adds canonical ten-descriptor AC-50 contract
+  tests and all four AC-51 endpoints, including 100 concurrent authenticated
+  executor identities, repeated plan/wave checksums, zero-loss accounting, and
+  bounded 1 MiB log streaming. The runner emits compact checksummed AC-50 and
+  AC-51 performance-result/raw-sample artifacts without retaining its bearer
+  token.
 - Upstream contribution notes: Community-neutral fixtures and harnesses with no
   adopter/client names, private paths, provider assumptions, credentials, or
   proprietary artifacts.

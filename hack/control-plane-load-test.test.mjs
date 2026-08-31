@@ -172,24 +172,32 @@ test('loopback remote mode measures authenticated acknowledgements and bounded l
     const url = new URL(request.url, 'http://localhost');
     response.setHeader('content-type', 'application/json');
     if (url.pathname === generated.fixture.loadProof.remote.planningPath) {
-      response.end(JSON.stringify({checksum: 'planning-checksum'}));
+      response.end(JSON.stringify({checksum: `sha256:${'a'.repeat(64)}`}));
       return;
     }
     if (url.pathname === generated.fixture.loadProof.remote.wavePath) {
-      response.end(JSON.stringify({stepCount: 500, stableOrder: true, duplicateAdmissions: 0}));
+      response.end(
+        JSON.stringify({
+          stepCount: 500,
+          stableOrder: true,
+          duplicateAdmissions: 0,
+          orderChecksum: `sha256:${'b'.repeat(64)}`,
+        })
+      );
       return;
     }
     if (url.pathname === generated.fixture.loadProof.remote.eventPath) {
       let body = '';
       for await (const chunk of request) body += chunk;
       const event = JSON.parse(body);
-      response.end(JSON.stringify({accepted: true, eventId: event.eventId}));
+      response.end(JSON.stringify({accepted: true, eventId: event.eventId, agentId: event.agentId}));
       return;
     }
     if (url.pathname === generated.fixture.loadProof.remote.logPath) {
       const page = Number(url.searchParams.get('page') ?? '0');
       response.setHeader('content-type', 'application/octet-stream');
       response.setHeader('x-next-page', page < 99 ? String(page + 1) : '');
+      response.setHeader('x-distr-proof-peak-buffer-bytes', String(logPage.byteLength));
       response.end(logPage);
       return;
     }
@@ -223,8 +231,12 @@ test('loopback remote mode measures authenticated acknowledgements and bounded l
     assert.equal(report.scenarios.events.acceptedEvents, 2);
     assert.equal(report.scenarios.events.acknowledgedEvents, 2);
     assert.equal(report.scenarios.events.lostAcceptedEvents, 0);
+    assert.equal(report.scenarios.events.authenticatedExecutorIds.length, 2);
+    assert.match(report.scenarios.events.authenticatedExecutorIdsChecksum, /^sha256:[a-f0-9]{64}$/);
     assert.equal(report.scenarios.logs.totalBytes, 100 * 1024 * 1024);
     assert.equal(report.scenarios.logs.maximumPageBytes, 1024 * 1024);
+    assert.equal(report.scenarios.logs.peakBufferBytes, 1024 * 1024);
+    assert.equal(report.scenarios.logs.streamingBoundedMemory, true);
     assert.equal(report.scenarios.isolation.crossOrganizationRecords, 0);
     assert.ok(report.scenarios.errors.nonPolicyRate < 0.01);
     assert.ok(authorizations.length > 100);

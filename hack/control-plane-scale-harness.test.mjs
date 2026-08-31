@@ -65,12 +65,14 @@ test('scale fixture is deterministic and contains the reference workload', async
   assert.equal(fixture.operatorReadModels.fleetRows.length, 1001);
   assert.ok(fixture.isolationSentinel.campaign.id);
   assert.ok(fixture.isolationSentinel.execution.id);
+  assert.ok(fixture.isolationSentinel.release.id);
+  assert.ok(fixture.isolationSentinel.plan.id);
   for (const request of fixture.benchmark.remoteRequests) {
     assert.ok(request.forbiddenResourceIds.length > 0);
   }
   assert.deepEqual(fixture.loadProof, {
     planning: {componentCount: 100, runs: 5},
-    wave: {stepCount: 500},
+    wave: {stepCount: 500, runs: 2},
     events: {durationSeconds: 600, ratePerSecond: 100, concurrentAgents: 100},
     logs: {totalBytes: 100 * 1024 * 1024, maximumPageBytes: 1024 * 1024},
     thresholds: {
@@ -134,7 +136,7 @@ test('scale fixture keeps campaign membership and benchmark isolation scoped to 
     assert.equal(targetByID.get(member.targetId)?.organizationId, primaryID);
   }
 
-  const fleetRequest = fixture.benchmark.remoteRequests.find((request) => request.name === 'fleet-list');
+  const fleetRequest = fixture.benchmark.remoteRequests.find((request) => request.name === 'matrix-list');
   assert.ok(fleetRequest);
   for (const organization of fixture.clientOrganizations.slice(1)) {
     const organizationTarget = fixture.targets.find((target) => target.organizationId === organization.id);

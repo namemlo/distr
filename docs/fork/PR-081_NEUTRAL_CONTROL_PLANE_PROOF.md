@@ -114,6 +114,17 @@ log streaming, database behavior, and production-like networking require their
 own recorded measurements; no one subtest substitutes for another section
 20.9 SLO.
 
+The scale fixture now pins ten canonical acceptance descriptors in contract
+order: registry, fleet matrix, plan comparison, execution history, and campaign
+list/detail requests. Each descriptor fixes its route, response envelope,
+minimum populated result, known primary resource identities, and the complete
+foreign-resource sentinel set. Remote AC-50 qualification is no longer
+unconditionally disabled. It becomes eligible only when all twenty warm runs
+per descriptor meet p95/p99 limits with page size 100, every response remains
+bounded and tenant-isolated, every response contract is populated, bearer
+authentication is present, and response headers bind the measured service to a
+clean source commit, build version, and immutable artifact digest.
+
 The load tool currently reports deterministic simulation with time compression,
 in-process networking and fixture storage, simulated authentication, and
 virtual bounded log pages. The failure matrix defaults to
@@ -128,7 +139,21 @@ The load tool also supports an explicit loopback-only `measured-live` mode. It
 uses environment-only bearer authentication, forbids redirects and cross-origin
 paths, paces events in wall-clock time, streams bounded pages, and distinguishes
 a short smoke from the complete ten-minute/100-events-per-second acceptance
-profile. No feature flag is consumed by the load harness itself.
+profile. Events are dispatched as one concurrent authenticated batch per
+second, cycling exactly 100 executor identities. The report retains their
+canonical sorted identity set/checksum, five identical plan checksums, repeated
+wave-order checksums, accepted/lost counts, and the proof service's peak log
+buffer size. No feature flag is consumed by the load harness itself.
+
+`hack/control-plane-loopback-proof-service.mjs` is the deterministic local
+reference service for the ten read descriptors and the four load paths.
+`hack/control-plane-loopback-proof.mjs` owns it on an ephemeral loopback port,
+runs AC-50 and AC-51 together, and emits checksummed
+`distr.control-plane-performance-result/v1` reports plus raw sample bindings.
+The service reuses one bounded 1 MiB log page buffer; it never constructs the
+100 MiB evidence stream in memory or on disk. The source-file digest identifies
+the exact local proof artifact. This is measured local reference evidence, not
+a Hub image, PostgreSQL/index, staging, or production certification.
 
 ## Release evidence
 

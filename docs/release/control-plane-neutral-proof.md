@@ -82,6 +82,7 @@ node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/
 node hack/control-plane-failure-matrix.mjs --fixture examples/control-plane-e2e/fixture.json --mode clean
 node hack/control-plane-scale-fixture.mjs --targets 1000 --placements 649 --agents 100 --components 100 --steps 500 --out work/control-plane-scale.json
 node hack/control-plane-load-test.mjs --fixture work/control-plane-scale.json --duration 10m --rate 100
+node --test hack/control-plane-loopback-proof.test.mjs hack/control-plane-read-model-benchmark.test.mjs hack/control-plane-load-test.test.mjs hack/control-plane-scale-harness.test.mjs
 rg -n -i '<approved-forbidden-term-regex>' examples/control-plane-e2e hack/control-plane-failure-matrix.mjs hack/control-plane-load-test.mjs hack/control-plane-scale-fixture.mjs
 ```
 
@@ -131,21 +132,27 @@ Remove-Item Env:CONTROL_PLANE_BENCHMARK_TOKEN
 Replace the reserved example URL only in an approved test environment. Retain a
 redacted report; never retain the token.
 
-The section 20.9 load tool also has an explicit loopback measured mode. The
-server must implement the fixture's four `loadProof.remote` paths:
+The section 20.9 tools include an owned deterministic loopback service and
+runner. The service implements the ten fixed AC-50 read descriptors and the
+fixture's four `loadProof.remote` paths. The runner takes authentication only
+from the named environment variable, binds every response to the current source
+commit/build/artifact digest, and writes compact raw samples plus acceptance
+performance reports:
 
 ```powershell
-$env:CONTROL_PLANE_LOAD_TOKEN = '<scoped local test token>'
-node hack/control-plane-load-test.mjs --fixture work/control-plane-scale.json --duration 10m --rate 100 --base-url http://127.0.0.1:8080 --auth-env CONTROL_PLANE_LOAD_TOKEN > work/control-plane-load-live-result.json
-Remove-Item Env:CONTROL_PLANE_LOAD_TOKEN
+$env:CONTROL_PLANE_LOOPBACK_PROOF_TOKEN = '<scoped local test token>'
+node hack/control-plane-loopback-proof.mjs --fixture work/control-plane-scale.json --out-dir work/control-plane-loopback-proof --duration 10m --rate 100 --auth-env CONTROL_PLANE_LOOPBACK_PROOF_TOKEN
+Remove-Item Env:CONTROL_PLANE_LOOPBACK_PROOF_TOKEN
 ```
 
-Only `localhost`, `127.0.0.0/8`, or `::1` is accepted. The tool forbids
-redirects and cross-origin/network-path requests, takes authentication only
-from the named environment variable, paces events in wall-clock time, streams
-bounded log pages, and omits the token from errors and reports. A short smoke is
-reported as measured but cannot satisfy the full ten-minute/100-rate acceptance
-profile.
+The result directory contains `AC-50.performance.json`,
+`AC-50.raw-samples.json`, `AC-51.performance.json`,
+`AC-51.raw-samples.json`, and `summary.json`. Only a clean-tree run at the exact
+ten-minute/100-rate profile can report overall `passed`. A short run remains a
+useful measured smoke but is non-acceptance. The service is fixed to
+`127.0.0.1`, forbids redirects/cross-origin paths through the clients, reuses a
+single 1 MiB log buffer for the 100 MiB stream, and omits the token from errors
+and reports.
 
 ## Reference-fixture identity
 
@@ -320,6 +327,13 @@ and isolation regressions; it is not database/API latency evidence. Remote mode
 measures the configured HTTP boundary, but still proves only the requests and
 environment described in its result metadata.
 
+For the acceptance profile, remote qualification additionally requires the ten
+canonical fixture descriptors, twenty samples each, page size 100, non-empty
+bounded response contracts containing the pinned primary IDs, complete
+foreign-resource sentinel checks, environment-only bearer authentication, and
+matching source/build/artifact headers on every response. Meeting the latency
+thresholds alone is insufficient.
+
 ## Result metadata and checksums
 
 Retain the raw, machine-readable reports without rewriting their percentile
@@ -430,6 +444,10 @@ deterministic-simulation`, an in-process network/database, simulated
   `--base-url` switches to `mode: remote`, `measurement: measured-live`, and no
   time compression; that result still covers only the explicit local proof
   server and requested duration/rate.
+- The owned loopback proof runner can make AC-50/AC-51 performance reports
+  acceptance-eligible for the deterministic local reference boundary. It does
+  not execute Hub repositories or PostgreSQL indexes and must not be relabeled
+  as deployed-Hub, staging, production, or multi-host evidence.
 - Reference adapters demonstrate the documented protocol contract; they are not
   production executors or observers.
 - The reference executor has no TLS termination, distributed state, signing-key

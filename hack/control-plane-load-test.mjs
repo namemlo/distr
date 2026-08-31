@@ -52,7 +52,18 @@ export function parseLoadArgs(argv) {
     values.set(option, value);
   }
   for (const option of values.keys()) {
-    if (!new Set(['--fixture', '--duration', '--rate', '--base-url', '--auth-env', '--timeout-ms']).has(option)) {
+    if (
+      !new Set([
+        '--fixture',
+        '--duration',
+        '--rate',
+        '--base-url',
+        '--auth-env',
+        '--timeout-ms',
+        '--build-version',
+        '--artifact-digest',
+      ]).has(option)
+    ) {
       fail(`unknown option ${option}`);
     }
   }
@@ -83,6 +94,14 @@ export function parseLoadArgs(argv) {
   if (baseURL && !process.env[authEnv]) {
     fail(`remote mode requires authorization from environment variable ${authEnv}`);
   }
+  const buildVersion = values.get('--build-version');
+  if (buildVersion !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(buildVersion)) {
+    fail('--build-version must be a non-secret build identifier');
+  }
+  const artifactDigest = values.get('--artifact-digest');
+  if (artifactDigest !== undefined && !/^sha256:[0-9a-f]{64}$/.test(artifactDigest)) {
+    fail('--artifact-digest must be a lowercase SHA-256 digest');
+  }
   return {
     fixture: path.resolve(values.get('--fixture')),
     durationSeconds: parseDuration(values.get('--duration') ?? '10m'),
@@ -90,6 +109,8 @@ export function parseLoadArgs(argv) {
     baseURL,
     authEnv,
     timeoutMs: parsePositiveInteger(values.get('--timeout-ms') ?? '10000', '--timeout-ms', 300_000),
+    buildVersion,
+    artifactDigest,
   };
 }
 
@@ -148,6 +169,7 @@ function validateFixture(fixture) {
     'planning.componentCount': 100,
     'planning.runs': 5,
     'wave.stepCount': 500,
+    'wave.runs': 2,
     'events.durationSeconds': 600,
     'events.ratePerSecond': 100,
     'events.concurrentAgents': 100,
@@ -173,7 +195,16 @@ function stablePlanningChecksum(fixture) {
     .slice(0, 100)
     .map(({id, key, releaseDigest}) => ({id, key, releaseDigest}))
     .toSorted((left, right) => left.id.localeCompare(right.id));
-  return createHash('sha256').update(JSON.stringify(planningInput)).digest('hex');
+  return `sha256:${createHash('sha256').update(JSON.stringify(planningInput)).digest('hex')}`;
+}
+
+function waveOrderChecksum(members) {
+  const order = members.map(({id, order, planId, targetId}) => ({id, order, planId, targetId}));
+  return `sha256:${createHash('sha256').update(JSON.stringify(order)).digest('hex')}`;
+}
+
+function identitySetChecksum(ids) {
+  return `sha256:${createHash('sha256').update(JSON.stringify([...ids].sort())).digest('hex')}`;
 }
 
 function currentCommit() {
@@ -203,7 +234,7 @@ function workingTreeDirty() {
   }
 }
 
-function reportMetadata(fixture, fixtureBytes) {
+function reportMetadata(fixture, fixtureBytes, options) {
   const cpuRows = cpus();
   return {
     hardware: {
@@ -215,8 +246,10 @@ function reportMetadata(fixture, fixtureBytes) {
       totalMemoryBytes: totalmem(),
     },
     build: {
-      commit: currentCommit(),
-      workingTreeDirty: workingTreeDirty(),
+      version: options.buildVersion ?? 'unknown',
+      artifactDigest: options.artifactDigest ?? null,
+      commit: options.sourceCommit ?? currentCommit(),
+      workingTreeDirty: options.workingTreeDirty ?? workingTreeDirty(),
       harnessSha256: createHash('sha256')
         .update(readFileSync(fileURLToPath(import.meta.url)))
         .digest('hex'),
@@ -254,7 +287,12 @@ function simulatedSamples(fixture, options) {
   const memberIDs = fixture.campaign.waves[0].members.map((member) => member.id);
   const uniqueMemberIDs = new Set(memberIDs);
   const stableOrder = fixture.campaign.waves[0].members.every((member, index) => member.order === index + 1);
-  const wave = [rounded(8.5 + memberIDs.length * 0.024)];
+  const wave = Array.from({length: fixture.loadProof.wave.runs}, (_, index) =>
+    rounded(8.5 + memberIDs.length * 0.024 + index * 0.013)
+  );
+  const waveOrderChecksums = Array.from({length: fixture.loadProof.wave.runs}, () =>
+    waveOrderChecksum(fixture.campaign.waves[0].members)
+  );
 
   const requestedEvents = options.durationSeconds * options.rate;
   const eventAcknowledgements = Array.from({length: requestedEvents}, (_, index) => rounded(4 + (index % 97) * 0.017));
@@ -265,6 +303,7 @@ function simulatedSamples(fixture, options) {
   return {
     planningChecksum,
     planningChecksums,
+    waveOrderChecksums,
     stableOrder,
     duplicateAdmissions: memberIDs.length - uniqueMemberIDs.size,
     requestedEvents,
@@ -334,6 +373,10 @@ export function simulateLoadProof(fixture, options, fixtureBytes) {
     mode: 'simulation',
     measurement: 'deterministic-simulation',
     passed,
+    acceptanceEligible: false,
+    qualification: {
+      blockers: ['AC-51 acceptance requires an authenticated measured-live run without time compression'],
+    },
     acceptanceProfile: profile,
     timeCompression: {
       applied: true,
@@ -341,7 +384,7 @@ export function simulateLoadProof(fixture, options, fixtureBytes) {
       wallClockDurationSeconds: rounded(wallClockDurationSeconds),
       ratio: rounded(options.durationSeconds / wallClockDurationSeconds),
     },
-    ...reportMetadata(fixture, fixtureBytes),
+    ...reportMetadata(fixture, fixtureBytes, options),
     environment: {
       database: {mode: 'fixture', sizeBytes: fixtureBytes.length},
       network: 'in-process',
@@ -355,6 +398,7 @@ export function simulateLoadProof(fixture, options, fixtureBytes) {
         components: fixture.loadProof.planning.componentCount,
         runs: fixture.loadProof.planning.runs,
         checksum: outcome.planningChecksum,
+        checksums: outcome.planningChecksums,
         deterministicChecksum: new Set(outcome.planningChecksums).size === 1,
       },
       wave: {
@@ -362,6 +406,8 @@ export function simulateLoadProof(fixture, options, fixtureBytes) {
         steps: fixture.campaign.waves[0].members.length,
         stableOrder: outcome.stableOrder,
         duplicateAdmissions: outcome.duplicateAdmissions,
+        orderChecksums: outcome.waveOrderChecksums,
+        deterministicOrderChecksum: new Set(outcome.waveOrderChecksums).size === 1,
       },
       events: {
         ...eventMetrics,
@@ -373,6 +419,8 @@ export function simulateLoadProof(fixture, options, fixtureBytes) {
         acknowledgedEvents: outcome.requestedEvents,
         lostAcceptedEvents: 0,
         authentication: 'simulated',
+        authenticatedExecutorIds: [],
+        authenticatedExecutorIdsChecksum: identitySetChecksum([]),
       },
       logs: {
         ...logMetrics,
@@ -381,6 +429,8 @@ export function simulateLoadProof(fixture, options, fixtureBytes) {
         maximumPageBytes: fixture.loadProof.logs.maximumPageBytes,
         firstPageMs: logMetrics.p99Ms,
         materialization: 'virtual-bounded-pages',
+        peakBufferBytes: fixture.loadProof.logs.maximumPageBytes,
+        streamingBoundedMemory: true,
       },
       isolation: {
         checks: outcome.rawSamples.isolationChecks.length,
@@ -495,53 +545,65 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
     }
   }
 
-  const waveStarted = performance.now();
-  const {payload: wavePayload} = await requestJSON(fixture.loadProof.remote.wavePath, {
-    method: 'POST',
-    headers: {'content-type': 'application/json'},
-    body: JSON.stringify({members: fixture.campaign.waves[0].members}),
-  });
-  const waveSamples = [performance.now() - waveStarted];
+  const waveSamples = [];
+  const wavePayloads = [];
+  for (let run = 0; run < fixture.loadProof.wave.runs; run++) {
+    const waveStarted = performance.now();
+    const {payload} = await requestJSON(fixture.loadProof.remote.wavePath, {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({run, members: fixture.campaign.waves[0].members}),
+    });
+    waveSamples.push(performance.now() - waveStarted);
+    wavePayloads.push(payload);
+  }
 
   const requestedEvents = options.durationSeconds * options.rate;
   const eventSamples = [];
   const acceptedEventIDs = new Set();
   const acknowledgedEventIDs = new Set();
+  const authenticatedExecutorIDs = new Set();
   const eventWindowStarted = performance.now();
-  const eventRequests = [];
-  for (let index = 0; index < requestedEvents; index++) {
-    const scheduledAt = eventWindowStarted + (index / options.rate) * 1000;
+  let eventIndex = 0;
+  for (let second = 0; second < options.durationSeconds; second++) {
+    const scheduledAt = eventWindowStarted + second * 1000;
     const waitMilliseconds = scheduledAt - performance.now();
     if (waitMilliseconds > 0) {
       await sleep(waitMilliseconds);
     }
-    const eventID = `load-event-${String(index + 1).padStart(8, '0')}`;
-    const eventStarted = performance.now();
-    eventRequests.push(
-      requestJSON(fixture.loadProof.remote.eventPath, {
-        method: 'POST',
-        headers: {'content-type': 'application/json'},
-        body: JSON.stringify({
-          eventId: eventID,
-          agentId: fixture.agents[index % fixture.agents.length].id,
-          sequence: index + 1,
-        }),
-      }).then(({payload}) => {
-        eventSamples.push(performance.now() - eventStarted);
-        if (payload?.accepted === true) acceptedEventIDs.add(eventID);
-        if (payload?.accepted === true && payload.eventId === eventID) acknowledgedEventIDs.add(eventID);
-      })
-    );
+    const batch = [];
+    for (let slot = 0; slot < options.rate; slot++) {
+      const index = eventIndex++;
+      const eventID = `load-event-${String(index + 1).padStart(8, '0')}`;
+      const agentID = fixture.agents[index % fixture.agents.length].id;
+      const eventStarted = performance.now();
+      batch.push(
+        requestJSON(fixture.loadProof.remote.eventPath, {
+          method: 'POST',
+          headers: {'content-type': 'application/json'},
+          body: JSON.stringify({eventId: eventID, agentId: agentID, sequence: index + 1}),
+        }).then(({payload}) => {
+          eventSamples.push(performance.now() - eventStarted);
+          if (payload?.accepted === true) acceptedEventIDs.add(eventID);
+          if (payload?.accepted === true && payload.eventId === eventID) acknowledgedEventIDs.add(eventID);
+          if (payload?.accepted === true && payload.agentId === agentID) authenticatedExecutorIDs.add(agentID);
+        })
+      );
+    }
+    await Promise.all(batch);
   }
-  await Promise.all(eventRequests);
   const remainingEventWindow = eventWindowStarted + options.durationSeconds * 1000 - performance.now();
   if (remainingEventWindow > 0) {
     await sleep(remainingEventWindow);
   }
+  const eventWallClockDurationSeconds = (performance.now() - eventWindowStarted) / 1000;
+  const eventSchedulingOverrunMs = Math.max(0, (eventWallClockDurationSeconds - options.durationSeconds) * 1000);
 
   const logSamples = [];
   let logBytes = 0;
   let maximumPageBytes = 0;
+  let logPeakBufferBytes = 0;
+  let boundedLogBufferProof = true;
   let page = 0;
   const baseLogURL = remoteURL(options.baseURL, fixture.loadProof.remote.logPath);
   while (logBytes < fixture.loadProof.logs.totalBytes) {
@@ -550,6 +612,12 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
     logURL.searchParams.set('page', String(page));
     const response = await request(`${logURL.pathname}${logURL.search}`);
     if (!response.ok) break;
+    const declaredPeakBufferBytes = Number(response.headers.get('x-distr-proof-peak-buffer-bytes'));
+    if (!Number.isSafeInteger(declaredPeakBufferBytes) || declaredPeakBufferBytes <= 0) {
+      boundedLogBufferProof = false;
+    } else {
+      logPeakBufferBytes = Math.max(logPeakBufferBytes, declaredPeakBufferBytes);
+    }
     const pageBytes = await readBoundedBody(response, fixture.loadProof.logs.maximumPageBytes);
     logSamples.push(performance.now() - logStarted);
     if (pageBytes === 0) {
@@ -591,9 +659,14 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
   const acknowledgedEvents = acknowledgedEventIDs.size;
   const acceptedEvents = acceptedEventIDs.size;
   const lostAcceptedEvents = [...acceptedEventIDs].filter((eventID) => !acknowledgedEventIDs.has(eventID)).length;
-  const stableOrder = wavePayload?.stepCount === fixture.loadProof.wave.stepCount && wavePayload?.stableOrder === true;
-  const duplicateAdmissions = Number.isSafeInteger(wavePayload?.duplicateAdmissions)
-    ? wavePayload.duplicateAdmissions
+  const waveOrderChecksums = wavePayloads
+    .map((payload) => payload?.orderChecksum)
+    .filter((checksum) => typeof checksum === 'string');
+  const stableOrder = wavePayloads.every(
+    (payload) => payload?.stepCount === fixture.loadProof.wave.stepCount && payload?.stableOrder === true
+  );
+  const duplicateAdmissions = wavePayloads.every((payload) => payload?.duplicateAdmissions === 0)
+    ? 0
     : fixture.loadProof.wave.stepCount;
   const profile = acceptanceProfile(fixture, options);
   const passed =
@@ -603,28 +676,51 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
     waveMetrics.p99Ms <= fixture.loadProof.thresholds.waveMaximumMs &&
     stableOrder &&
     duplicateAdmissions === 0 &&
+    waveOrderChecksums.length === fixture.loadProof.wave.runs &&
+    new Set(waveOrderChecksums).size === 1 &&
     eventMetrics.p95Ms <= fixture.loadProof.thresholds.eventAcknowledgementP95Ms &&
     acceptedEvents === requestedEvents &&
     acknowledgedEvents === acceptedEvents &&
     lostAcceptedEvents === 0 &&
+    authenticatedExecutorIDs.size === fixture.loadProof.events.concurrentAgents &&
+    eventSchedulingOverrunMs <= fixture.loadProof.thresholds.eventAcknowledgementP95Ms &&
     logBytes === fixture.loadProof.logs.totalBytes &&
     logSamples[0] <= fixture.loadProof.thresholds.logFirstPageMs &&
+    boundedLogBufferProof &&
+    logPeakBufferBytes > 0 &&
+    logPeakBufferBytes < fixture.loadProof.logs.totalBytes &&
     crossOrganizationRecords === 0 &&
     policyErrors === 0 &&
     nonPolicyRate < fixture.loadProof.thresholds.maximumNonPolicyErrorRateExclusive;
+
+  const qualificationBlockers = [];
+  if (!passed) qualificationBlockers.push('AC-51 measured workload did not satisfy every section 20.9 threshold');
+  if (
+    !/^[a-f0-9]{40}$/.test(options.sourceCommit ?? currentCommit()) ||
+    (options.workingTreeDirty ?? workingTreeDirty()) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(options.buildVersion ?? '') ||
+    !/^sha256:[0-9a-f]{64}$/.test(options.artifactDigest ?? '')
+  ) {
+    qualificationBlockers.push(
+      'AC-51 acceptance requires a clean known source commit, build version, and artifact digest'
+    );
+  }
+  const acceptanceEligible = qualificationBlockers.length === 0;
 
   return {
     schemaVersion: reportSchema,
     mode: 'remote',
     measurement: 'measured-live',
     passed,
+    acceptanceEligible,
+    qualification: {blockers: qualificationBlockers},
     acceptanceProfile: profile,
     timeCompression: {
       applied: false,
       requestedDurationSeconds: options.durationSeconds,
       wallClockDurationSeconds: rounded((performance.now() - startedAt) / 1000),
     },
-    ...reportMetadata(fixture, fixtureBytes),
+    ...reportMetadata(fixture, fixtureBytes, options),
     environment: {
       database: {mode: 'remote', sizeBytes: null},
       network: `loopback:${options.baseURL.protocol}`,
@@ -638,6 +734,7 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
         components: fixture.loadProof.planning.componentCount,
         runs: fixture.loadProof.planning.runs,
         checksum: planningChecksums[0] ?? null,
+        checksums: planningChecksums,
         deterministicChecksum,
       },
       wave: {
@@ -645,17 +742,24 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
         steps: fixture.loadProof.wave.stepCount,
         stableOrder,
         duplicateAdmissions,
+        orderChecksums: waveOrderChecksums,
+        deterministicOrderChecksum:
+          waveOrderChecksums.length === fixture.loadProof.wave.runs && new Set(waveOrderChecksums).size === 1,
       },
       events: {
         ...eventMetrics,
         targetRatePerSecond: options.rate,
         concurrentAgents: fixture.loadProof.events.concurrentAgents,
         requestedDurationSeconds: options.durationSeconds,
+        wallClockDurationSeconds: rounded(eventWallClockDurationSeconds),
+        schedulingOverrunMs: rounded(eventSchedulingOverrunMs),
         requestedEvents,
         acceptedEvents,
         acknowledgedEvents,
         lostAcceptedEvents,
         authentication: 'authenticated-live',
+        authenticatedExecutorIds: [...authenticatedExecutorIDs].sort(),
+        authenticatedExecutorIdsChecksum: identitySetChecksum(authenticatedExecutorIDs),
       },
       logs: {
         ...logMetrics,
@@ -664,6 +768,8 @@ async function runRemoteLoadProof(fixture, options, fixtureBytes) {
         maximumPageBytes,
         firstPageMs: rounded(logSamples[0]),
         materialization: 'remote-bounded-pages',
+        peakBufferBytes: logPeakBufferBytes,
+        streamingBoundedMemory: boundedLogBufferProof && logPeakBufferBytes < fixture.loadProof.logs.totalBytes,
       },
       isolation: {
         checks: isolationSamples.length,
