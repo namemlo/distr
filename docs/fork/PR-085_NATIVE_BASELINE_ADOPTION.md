@@ -28,6 +28,9 @@ execution.
   evidence checksum; the artifact uses portable
   logical probe identities; transient observation transport addresses are not
   canonical evidence, and native provider discovery excludes it from promotion.
+- Release application version and checksum are independent from observed schema
+  version and capability checksum. PR-090/migration 170 makes that separation
+  explicit in validation, database guards, and the adoption read model.
 
 ## Surface
 

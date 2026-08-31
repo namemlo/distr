@@ -45,6 +45,7 @@ const baselineAdoptionComponentOutputExpr = `
 	c.id, c.created_at, c.organization_id, c.baseline_adoption_id,
 	c.deployment_plan_id, c.deployment_unit_id, c.component_instance_id,
 	c.component_key, c.component_release_id, c.component_release_checksum,
+	c.application_version,
 	c.source_commit, c.build_id, c.provenance_verification_id,
 	c.provenance_evidence_digest, c.provenance_policy_checksum,
 	c.artifact_digest, c.platform, c.target_config_snapshot_id,
@@ -452,11 +453,10 @@ func baselineAdoptionExpectedComponents(
 		if !exists || !bound || component.ComponentInstanceID != binding.ComponentInstanceID ||
 			component.ComponentReleaseID != pin.ComponentReleaseID ||
 			component.ComponentReleaseChecksum != pin.ReleaseChecksum ||
-			component.CapabilityChecksum != pin.ReleaseChecksum ||
 			component.ArtifactDigest != pin.PlatformDigest ||
 			component.Platform != canonical.TargetPlatform ||
 			component.ConfigChecksum != canonical.TargetConfigSnapshotChecksum ||
-			component.SchemaVersion != strings.TrimSpace(pin.Version) || !pin.ProvenanceVerified ||
+			!pin.ProvenanceVerified ||
 			!slices.Contains(pin.Platforms, canonical.TargetPlatform) {
 			return nil, apierrors.NewConflict(
 				"baseline adoption component material does not match the frozen plan",
@@ -623,7 +623,7 @@ func adoptBaselineComponent(
 	}
 	componentID, activeID := uuid.New(), uuid.New()
 	component, err := insertBaselineAdoptionComponent(
-		ctx, adoption, plan, expected.Input, evidence, componentID, activeID,
+		ctx, adoption, plan, expected, evidence, componentID, activeID,
 	)
 	if err != nil {
 		return nil, err
@@ -747,6 +747,7 @@ func validateRetainedBaselineEvidence(
 		JOIN ComponentReleaseArtifact artifact
 		  ON artifact.release_bundle_id = component_release.id
 		 AND artifact.organization_id = component_release.organization_id
+		 AND artifact.component_version = @applicationVersion
 		 AND artifact.platform = @platform
 		 AND artifact.platform_digest = @artifactDigest
 		JOIN ComponentReleaseEvidenceVerification verification
@@ -821,6 +822,7 @@ func validateRetainedBaselineEvidence(
 		  AND product_component.component_release_bundle_id = @componentReleaseID
 		  AND product_component.component_release_checksum = @componentReleaseChecksum
 		  AND product_component.component_key = @componentKey
+		  AND product_component.component_version = @applicationVersion
 		  AND component_release.canonical_checksum = @componentReleaseChecksum
 		  AND verification.source_commit = @sourceCommit
 		  AND verification.build_id = @buildID
@@ -832,6 +834,7 @@ func validateRetainedBaselineEvidence(
 			"organizationID":           adoption.OrganizationID,
 			"componentReleaseID":       expected.Input.ComponentReleaseID,
 			"componentReleaseChecksum": expected.Input.ComponentReleaseChecksum,
+			"applicationVersion":       strings.TrimSpace(expected.Pin.Version),
 			"componentInstanceID":      expected.Input.ComponentInstanceID,
 			"componentKey":             expected.Input.ComponentKey,
 			"provenanceVerificationID": expected.Input.ProvenanceVerificationID,
@@ -872,16 +875,18 @@ func insertBaselineAdoptionComponent(
 	ctx context.Context,
 	adoption types.BaselineAdoption,
 	plan baselineAdoptionPlan,
-	input types.BaselineAdoptionComponentInput,
+	expected baselineAdoptionExpectedComponent,
 	evidence baselineAdoptionObservationEvidence,
 	componentID,
 	activeID uuid.UUID,
 ) (*types.BaselineAdoptionComponent, error) {
+	input := expected.Input
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		INSERT INTO BaselineAdoptionComponent (
 		  id, organization_id, baseline_adoption_id, deployment_plan_id,
 		  deployment_unit_id, component_instance_id, component_key,
-		  component_release_id, component_release_checksum, source_commit,
+		  component_release_id, component_release_checksum, application_version,
+		  source_commit,
 		  build_id, provenance_verification_id, provenance_evidence_digest,
 		  provenance_policy_checksum, artifact_digest, platform,
 		  target_config_snapshot_id, config_checksum, schema_version,
@@ -894,7 +899,8 @@ func insertBaselineAdoptionComponent(
 		) VALUES (
 		  @id, @organizationID, @baselineAdoptionID, @deploymentPlanID,
 		  @deploymentUnitID, @componentInstanceID, @componentKey,
-		  @componentReleaseID, @componentReleaseChecksum, @sourceCommit,
+		  @componentReleaseID, @componentReleaseChecksum, @applicationVersion,
+		  @sourceCommit,
 		  @buildID, @provenanceVerificationID, @provenanceEvidenceDigest,
 		  @provenancePolicyChecksum, @artifactDigest, @platform,
 		  @targetConfigSnapshotID, @configChecksum, @schemaVersion,
@@ -912,6 +918,7 @@ func insertBaselineAdoptionComponent(
 			"componentInstanceID": input.ComponentInstanceID,
 			"componentKey":        input.ComponentKey, "componentReleaseID": input.ComponentReleaseID,
 			"componentReleaseChecksum": input.ComponentReleaseChecksum,
+			"applicationVersion":       strings.TrimSpace(expected.Pin.Version),
 			"sourceCommit":             input.SourceCommit, "buildID": input.BuildID,
 			"provenanceVerificationID": input.ProvenanceVerificationID,
 			"provenanceEvidenceDigest": input.ProvenanceEvidenceDigest,

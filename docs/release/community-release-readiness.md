@@ -103,7 +103,7 @@ because Docker was unavailable; race, live Compose/remote Hub, staging, and prod
 ## Integrated Control-Plane Release Gate
 
 Migration 162 adds the exact-ID, checkpointed sample-retirement and audit-tombstone schema. It is part of the
-ordered 138-to-167 migration matrix and is not a general retention or bulk-delete facility. Before invoking it,
+ordered 138-to-170 migration matrix and is not a general retention or bulk-delete facility. Before invoking it,
 follow the [sample-domain retirement procedure](../operations/sample-domain-retirement.md), including an immutable
 backup, isolated restore proof, exact allowlist review, checksum-bound approval, and post-apply verification.
 
@@ -112,7 +112,7 @@ release is signed:
 
 | Gate                                                                                                       | Current status                   | Required evidence                                                                                                   |
 | ---------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL 16.14 and 18.4 clean install, upgrade 138-to-167, safe down/refusal, and restart matrix         | Pending environment execution    | Database identity, commands, schema checkpoints, exact results, and migration-report checksum                       |
+| PostgreSQL 16.14 and 18.4 clean install, upgrade 138-to-170, safe down/refusal, and restart matrix         | Pending environment execution    | Database identity, commands, schema checkpoints, exact results, and migration-report checksum                       |
 | Full Go, Angular, Playwright, Hub/agent builds, Docker Compose, failure, scale, and ten-minute load suites | Pending environment execution    | Complete outputs and report checksums; focused tests do not substitute                                              |
 | Dependency, license, vulnerability, secret, and changed-file terminology scans                             | Pending security execution       | Tool versions, inputs, raw outputs, reviewed exceptions, and checksums                                              |
 | Immutable community Hub image                                                                              | Pending artifact publication     | OCI source revision, platform and image digest, SBOM and signed provenance references                               |

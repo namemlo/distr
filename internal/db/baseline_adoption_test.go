@@ -76,6 +76,41 @@ func TestMigration166CreatesImmutableNativeBaselineAdoption(t *testing.T) {
 	g.Expect(guardText).To(ContainSubstring("FOR UPDATE"))
 }
 
+func TestMigration170SeparatesReleaseAndObservedBaselineFacts(t *testing.T) {
+	g := NewWithT(t)
+	root := filepath.Join("..", "migrations", "sql")
+	up, err := os.ReadFile(filepath.Join(root, "170_baseline_adoption_fact_separation.up.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	down, err := os.ReadFile(filepath.Join(root, "170_baseline_adoption_fact_separation.down.sql"))
+	g.Expect(err).NotTo(HaveOccurred())
+	upText, downText := string(up), string(down)
+
+	for _, fact := range []string{
+		"ADD COLUMN application_version TEXT",
+		"pin ->> 'version' AS application_version",
+		"DISABLE TRIGGER BaselineAdoptionComponent_append_only",
+		"ENABLE TRIGGER BaselineAdoptionComponent_append_only",
+		"baseline_adoption_commit_guard_v2",
+		"pin ->> 'version' = component.application_version",
+		"product_component.component_version = component.application_version",
+		"artifact.component_version = component.application_version",
+		"observation.schema_version = component.schema_version",
+		"observation.capability_checksum = component.capability_checksum",
+	} {
+		g.Expect(upText).To(ContainSubstring(fact))
+	}
+	g.Expect(upText).NotTo(ContainSubstring(
+		"component.capability_checksum <> component.component_release_checksum",
+	))
+	g.Expect(upText).NotTo(ContainSubstring(
+		"pin ->> 'version' = component.schema_version",
+	))
+	g.Expect(downText).To(ContainSubstring(
+		"EXECUTE FUNCTION baseline_adoption_commit_guard()",
+	))
+	g.Expect(downText).To(ContainSubstring("DROP COLUMN application_version"))
+}
+
 func TestBaselineAdoptionCanonicalMaterialIsOrderStableAndEvidenceBound(t *testing.T) {
 	g := NewWithT(t)
 	input := baselineAdoptionCanonicalTestInput()
@@ -92,6 +127,28 @@ func TestBaselineAdoptionCanonicalMaterialIsOrderStableAndEvidenceBound(t *testi
 	_, changedChecksum, err := canonicalizeBaselineAdoptionInput(input)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(changedChecksum).NotTo(Equal(firstChecksum))
+}
+
+func TestBaselineAdoptionCanonicalMaterialFreezesIndependentObservedFacts(t *testing.T) {
+	g := NewWithT(t)
+	input := baselineAdoptionCanonicalTestInput()
+	_, originalChecksum, err := canonicalizeBaselineAdoptionInput(input)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	changedSchema := input
+	changedSchema.Components = slices.Clone(input.Components)
+	changedSchema.Components[0].SchemaVersion = "schema-2026-09-01"
+	_, schemaChecksum, err := canonicalizeBaselineAdoptionInput(changedSchema)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(schemaChecksum).NotTo(Equal(originalChecksum))
+
+	changedCapability := input
+	changedCapability.Components = slices.Clone(input.Components)
+	changedCapability.Components[0].CapabilityChecksum = baselineAdoptionDBTestChecksum("e")
+	_, capabilityChecksum, err := canonicalizeBaselineAdoptionInput(changedCapability)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(capabilityChecksum).NotTo(Equal(originalChecksum))
+	g.Expect(capabilityChecksum).NotTo(Equal(schemaChecksum))
 }
 
 func TestBaselineAdoptionReplayRequiresIdenticalImmutableMaterial(t *testing.T) {
@@ -172,6 +229,85 @@ func TestBaselineAdoptionRequiresExactCurrentDesiredObservedLineage(t *testing.T
 	}
 }
 
+func TestBaselineAdoptionRepositoryDoesNotInferObservedFactsFromReleaseFacts(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("baseline_adoption.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	g.Expect(text).NotTo(ContainSubstring(
+		"component.CapabilityChecksum != pin.ReleaseChecksum",
+	))
+	g.Expect(text).NotTo(ContainSubstring(
+		"component.SchemaVersion != strings.TrimSpace(pin.Version)",
+	))
+	g.Expect(text).To(ContainSubstring(
+		`"applicationVersion":       strings.TrimSpace(expected.Pin.Version)`,
+	))
+	g.Expect(text).To(ContainSubstring(
+		"observation.schema_version = @schemaVersion",
+	))
+	g.Expect(text).To(ContainSubstring(
+		"observation.capability_checksum = @capabilityChecksum",
+	))
+	g.Expect(text).To(ContainSubstring(
+		"product_component.component_version = @applicationVersion",
+	))
+}
+
+func TestBaselineAdoptionExpectedComponentsAcceptsIndependentReleaseAndObservedFacts(t *testing.T) {
+	g := NewWithT(t)
+	input := baselineAdoptionCanonicalTestInput()
+	input.Components = input.Components[:1]
+	component := &input.Components[0]
+	component.SchemaVersion = "customer-database-42"
+	component.CapabilityChecksum = baselineAdoptionDBTestChecksum("e")
+
+	canonical := types.TargetDeploymentPlanCanonical{
+		DeploymentScopeID:            uuid.New(),
+		DeploymentUnitID:             uuid.New(),
+		EnvironmentAssignmentID:      uuid.New(),
+		DeploymentTargetID:           uuid.New(),
+		TargetPlatform:               component.Platform,
+		TargetConfigSnapshotChecksum: component.ConfigChecksum,
+		ComponentBindings: []types.ConfigComponentBinding{{
+			ComponentKey: component.ComponentKey, ComponentInstanceID: component.ComponentInstanceID,
+			PhysicalName: "customer-api",
+		}},
+	}
+	topologyChecksum, err := desiredTopologyChecksum(canonical, canonical.ComponentBindings[0])
+	g.Expect(err).NotTo(HaveOccurred())
+	component.TopologyChecksum = topologyChecksum
+	canonical.ComponentReleasePins = []types.ComponentReleasePin{{
+		ComponentKey:       component.ComponentKey,
+		ComponentReleaseID: component.ComponentReleaseID,
+		ReleaseChecksum:    component.ComponentReleaseChecksum,
+		Version:            "1.1.0",
+		Platforms:          []string{component.Platform},
+		PlatformDigest:     component.ArtifactDigest,
+		Artifacts: []types.PinnedReleaseArtifact{{
+			Platform: component.Platform, PlatformDigest: component.ArtifactDigest,
+		}},
+		ProvenanceVerified: true,
+		ProvenanceFacts: []types.ComponentProvenanceFact{{
+			VerificationID: component.ProvenanceVerificationID,
+			Platform:       component.Platform,
+			ArtifactDigest: component.ArtifactDigest,
+			EvidenceDigest: component.ProvenanceEvidenceDigest,
+			PolicyChecksum: component.ProvenancePolicyChecksum,
+		}},
+	}}
+
+	expected, err := baselineAdoptionExpectedComponents(canonical, input)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(expected).To(HaveLen(1))
+	g.Expect(expected[0].Pin.Version).To(Equal("1.1.0"))
+	g.Expect(expected[0].Input.SchemaVersion).To(Equal("customer-database-42"))
+	g.Expect(expected[0].Input.CapabilityChecksum).To(Equal(
+		baselineAdoptionDBTestChecksum("e"),
+	))
+}
+
 func TestActiveDesiredRevisionOutputIncludesAdoptionSourceLineage(t *testing.T) {
 	g := NewWithT(t)
 	source, err := os.ReadFile("desired_observed_state.go")
@@ -217,8 +353,8 @@ func baselineAdoptionCanonicalTestInput() types.CreateBaselineAdoptionInput {
 			ArtifactDigest:                  baselineAdoptionDBTestChecksum(seed),
 			Platform:                        "linux/amd64",
 			ConfigChecksum:                  baselineAdoptionDBTestChecksum("c"),
-			SchemaVersion:                   "1." + seed,
-			CapabilityChecksum:              baselineAdoptionDBTestChecksum(seed),
+			SchemaVersion:                   "schema-" + seed,
+			CapabilityChecksum:              baselineAdoptionDBTestChecksum("d"),
 			TopologyChecksum:                baselineAdoptionDBTestChecksum(seed),
 			ObservationID:                   uuid.New(),
 			ObserverID:                      uuid.New(),

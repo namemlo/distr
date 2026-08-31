@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-Entries through PR-087 are recorded below; each entry's status and evidence
+Entries through PR-091 are recorded below; each entry's status and evidence
 boundary remain authoritative. PR-054A timestamp-expand runtime, migration,
 audited dirty-marker recovery, and operator documentation are implemented
 locally, while final acceptance remains pending. PR-055 through PR-082 build
@@ -17,6 +17,10 @@ boundaries through migration 166; their live PostgreSQL and final release gates
 also remain pending.
 PR-087 adds the executor runtime-trust boundary and migration 167; its live
 PostgreSQL, neutral-adapter, and final release gates remain pending.
+PR-090 separates frozen Component Release application identity from
+independently observed schema and capability identity in migration 170. The
+PR-086, PR-088, and PR-091 contracts are integrated separately before final
+138-to-170 release certification.
 
 ## Tracking Template
 
@@ -1999,3 +2003,31 @@ Use one entry per pull request:
   outside core and contain no provider or database dependency.
 - Compatibility notes: Profile v1 is rejected; profile and intent canonical
   checksums must be regenerated for v2 independent measurement.
+
+### PR-090 - Baseline adoption fact separation
+
+- Status: Implemented with focused local verification; the integrated
+  PostgreSQL 138-to-170 release matrix remains pending.
+- Upstream base: `50c1e187` (serialized baseline-adoption exclusion guard).
+- Feature flags: Uses the existing default-off `operator_control_plane_v2` and
+  `executor_protocol_v2` boundary.
+- User-facing behavior: Baseline adoption reports the frozen application
+  version separately from independently observed schema version and capability
+  checksum.
+- Database changes: Migration 170 backfills append-only
+  `BaselineAdoptionComponent.application_version` from retained deployment-plan
+  pins and replaces the deferred guard with independent release and observation
+  fact validation.
+- API changes: Adds `components[].applicationVersion` to baseline-adoption
+  responses. The v1 request checksum domain remains unchanged.
+- UI changes: None; this is an API/read-model correction.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0077 and PR-090 fork notes; updates adoption API and
+  release-matrix guidance.
+- Tests: Focused API validation, canonical checksum sensitivity, repository
+  contract, migration backfill/guard/down shape, and migration-selector tests.
+- Upstream contribution notes: Generic fact ownership with no client, schema
+  convention, CI provider, registry, runtime address, or credential assumption.
+- Compatibility notes: Existing adoption request/outcome checksums and audit
+  history are not rewritten. Downgrade drops only the derived read-model column
+  and restores the prior guard.

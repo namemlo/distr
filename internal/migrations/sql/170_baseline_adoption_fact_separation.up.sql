@@ -1,0 +1,404 @@
+LOCK TABLE BaselineAdoption, BaselineAdoptionComponent,
+  DeploymentPlan, ActiveDesiredRevision, ObservedComponentState
+  IN SHARE ROW EXCLUSIVE MODE;
+
+ALTER TABLE BaselineAdoptionComponent
+  ADD COLUMN application_version TEXT;
+
+-- Existing rows were admitted only when the schema fact equaled this frozen
+-- release pin. Backfill the new explicit release fact without rewriting any
+-- retained observation, desired-state, or checksum evidence.
+ALTER TABLE BaselineAdoptionComponent
+  DISABLE TRIGGER BaselineAdoptionComponent_append_only;
+
+UPDATE BaselineAdoptionComponent component
+SET application_version = frozen.application_version
+FROM (
+  SELECT plan.id AS deployment_plan_id,
+         plan.organization_id,
+         pin ->> 'componentKey' AS component_key,
+         pin ->> 'version' AS application_version
+  FROM DeploymentPlan plan
+  CROSS JOIN LATERAL jsonb_array_elements(
+    convert_from(plan.canonical_payload, 'UTF8')::JSONB
+      -> 'componentReleasePins'
+  ) pin
+) frozen
+WHERE frozen.deployment_plan_id = component.deployment_plan_id
+  AND frozen.organization_id = component.organization_id
+  AND frozen.component_key = component.component_key;
+
+ALTER TABLE BaselineAdoptionComponent
+  ENABLE TRIGGER BaselineAdoptionComponent_append_only;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM BaselineAdoptionComponent component
+    WHERE component.application_version IS NULL
+       OR octet_length(btrim(component.application_version)) NOT BETWEEN 1 AND 128
+       OR NOT EXISTS (
+         SELECT 1
+         FROM BaselineAdoption adoption
+         JOIN ProductReleaseComponent product_component
+           ON product_component.product_release_bundle_id
+                = adoption.product_release_id
+          AND product_component.organization_id = adoption.organization_id
+          AND product_component.component_release_bundle_id
+                = component.component_release_id
+          AND product_component.component_release_checksum
+                = component.component_release_checksum
+          AND product_component.component_key = component.component_key
+          AND product_component.component_version
+                = component.application_version
+         WHERE adoption.id = component.baseline_adoption_id
+           AND adoption.organization_id = component.organization_id
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'cannot separate baseline adoption facts: frozen application version is missing or inconsistent'
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$$;
+
+ALTER TABLE BaselineAdoptionComponent
+  ALTER COLUMN application_version SET NOT NULL,
+  ADD CONSTRAINT baselineadoptioncomponent_application_version_check
+    CHECK (
+      application_version = btrim(application_version)
+      AND octet_length(application_version) BETWEEN 1 AND 128
+    );
+
+CREATE FUNCTION baseline_adoption_commit_guard_v2()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  adopted_components BIGINT;
+  configured_components BIGINT;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM DeploymentPlan plan
+    JOIN ReleaseBundle product
+      ON product.id = plan.release_bundle_id
+     AND product.organization_id = plan.organization_id
+     AND product.id = NEW.product_release_id
+     AND product.kind = 'product'
+     AND product.status = 'PUBLISHED'
+     AND product.canonical_checksum = NEW.product_release_checksum
+    JOIN TargetConfigSnapshot config
+      ON config.id = plan.target_config_snapshot_id
+     AND config.organization_id = plan.organization_id
+     AND config.id = NEW.target_config_snapshot_id
+     AND config.deployment_unit_id = NEW.deployment_unit_id
+     AND config.environment_id = NEW.environment_id
+     AND config.canonical_checksum = NEW.target_config_checksum
+    JOIN DeploymentPlanTarget target
+      ON target.deployment_plan_id = plan.id
+     AND target.organization_id = plan.organization_id
+     AND target.deployment_target_id = NEW.deployment_target_id
+    WHERE plan.id = NEW.deployment_plan_id
+      AND plan.organization_id = NEW.organization_id
+      AND plan.status = 'EXECUTED'
+      AND plan.plan_schema = 'distr.target-deployment-plan/v2'
+      AND plan.protocol_version = 'v2'
+      AND plan.deployment_unit_id = NEW.deployment_unit_id
+      AND plan.environment_id = NEW.environment_id
+      AND plan.canonical_checksum = NEW.plan_checksum
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'productReleaseId' = NEW.product_release_id::TEXT
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'productReleaseChecksum' = NEW.product_release_checksum
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'deploymentUnitId' = NEW.deployment_unit_id::TEXT
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'environmentId' = NEW.environment_id::TEXT
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'deploymentTargetId' = NEW.deployment_target_id::TEXT
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'targetConfigSnapshotId' = NEW.target_config_snapshot_id::TEXT
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'targetConfigSnapshotChecksum' = NEW.target_config_checksum
+      AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+            ->> 'bootstrap' = 'true'
+      AND NOT (
+        convert_from(plan.canonical_payload, 'UTF8')::JSONB
+          ? 'previousStateSourcePlanId'
+      )
+  ) THEN
+    RAISE EXCEPTION 'baseline adoption must commit with an exact successful plan outcome'
+      USING ERRCODE = '23514';
+  END IF;
+  IF EXISTS (
+       SELECT 1 FROM Task
+       WHERE deployment_plan_id = NEW.deployment_plan_id
+         AND organization_id = NEW.organization_id
+     ) OR EXISTS (
+       SELECT 1 FROM ExternalExecution
+       WHERE deployment_plan_id = NEW.deployment_plan_id
+         AND organization_id = NEW.organization_id
+     ) THEN
+    RAISE EXCEPTION
+      'baseline adoption cannot coexist with deployment tasks or executions'
+      USING ERRCODE = '23514';
+  END IF;
+  SELECT count(*) INTO adopted_components
+  FROM BaselineAdoptionComponent component
+  WHERE component.baseline_adoption_id = NEW.id
+    AND component.organization_id = NEW.organization_id;
+  SELECT jsonb_array_length(
+    convert_from(plan.canonical_payload, 'UTF8')::JSONB
+      -> 'componentReleasePins'
+  ) INTO configured_components
+  FROM DeploymentPlan plan
+  WHERE plan.id = NEW.deployment_plan_id
+    AND plan.organization_id = NEW.organization_id;
+  IF adopted_components = 0 OR adopted_components <> configured_components THEN
+    RAISE EXCEPTION 'baseline adoption component coverage is incomplete'
+      USING ERRCODE = '23514';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM BaselineAdoptionComponent component
+    LEFT JOIN ActiveDesiredRevision active
+      ON active.id = component.active_desired_revision_id
+     AND active.organization_id = component.organization_id
+     AND active.baseline_adoption_component_id = component.id
+     AND active.source_kind = 'BASELINE_ADOPTION'
+     AND active.pending_revision_id IS NULL
+     AND active.execution_id IS NULL
+     AND active.deployment_plan_id = component.deployment_plan_id
+     AND active.deployment_unit_id = component.deployment_unit_id
+     AND active.component_instance_id = component.component_instance_id
+     AND active.component_key = component.component_key
+     AND active.revision = component.desired_revision
+     AND active.artifact_digest = component.artifact_digest
+     AND active.config_checksum = component.config_checksum
+     AND active.schema_version = component.schema_version
+     AND active.capability_checksum = component.capability_checksum
+     AND active.platform = component.platform
+     AND active.topology_checksum = component.topology_checksum
+     AND active.verified_observation_id = component.observation_id
+     AND active.health_evidence_kind = component.health_evidence_kind
+     AND active.health_evidence_use = component.health_evidence_use
+    LEFT JOIN ComponentDesiredStateHead head
+      ON head.organization_id = component.organization_id
+     AND head.deployment_unit_id = NEW.deployment_unit_id
+     AND head.component_instance_id = component.component_instance_id
+     AND head.active_revision_id = active.id
+     AND head.pending_revision_id IS NULL
+     AND NOT head.quarantined
+    LEFT JOIN ObservedComponentState observation
+      ON observation.id = component.observation_id
+     AND observation.organization_id = component.organization_id
+     AND observation.observer_id = component.observer_id
+     AND observation.deployment_unit_id = component.deployment_unit_id
+     AND observation.component_instance_id = component.component_instance_id
+     AND observation.component_key = component.component_key
+     AND observation.evidence_checksum = component.observation_evidence_checksum
+     AND observation.evidence_reference
+       = component.observation_evidence_reference
+     AND observation.evidence_reference ~ '^evidence://sha256/[0-9a-f]{64}$'
+     AND observation.evidence_reference = 'evidence://sha256/' ||
+       substring(observation.evidence_checksum FROM 8)
+     AND observation.artifact_digest = component.artifact_digest
+     AND observation.config_checksum = component.config_checksum
+     AND observation.schema_version = component.schema_version
+     AND observation.capability_checksum = component.capability_checksum
+     AND observation.platform = component.platform
+     AND observation.topology_checksum = component.topology_checksum
+     AND observation.state_checksum = component.observation_state_checksum
+     AND observation.runtime_state_checksum
+       = component.observation_runtime_state_checksum
+     AND observation.health_evidence_kind = component.health_evidence_kind
+     AND observation.health_evidence_use = component.health_evidence_use
+     AND observation.health_policy_checksum = component.health_policy_checksum
+     AND observation.is_current
+     AND observation.trusted
+     AND observation.disposition = 'ACCEPTED'
+     AND observation.health = 'HEALTHY'
+     AND observation.outcome = 'COMPLETE'
+     AND observation.executor_outcome = ''
+     AND observation.captured_at = component.observation_captured_at
+     AND observation.fresh_until = component.observation_fresh_until
+     AND observation.fresh_until >= clock_timestamp()
+    LEFT JOIN ComponentObservationHead observation_head
+      ON observation_head.organization_id = observation.organization_id
+     AND observation_head.observer_id = observation.observer_id
+     AND observation_head.deployment_unit_id = observation.deployment_unit_id
+     AND observation_head.component_instance_id = observation.component_instance_id
+     AND observation_head.observation_id = observation.id
+     AND observation_head.evidence_checksum = observation.evidence_checksum
+     AND observation_head.captured_at = observation.captured_at
+     AND observation.health_evidence_kind IS NOT NULL
+     AND observation.health_evidence_use IS NOT NULL
+     AND observation.health_policy_checksum IS NOT NULL
+    WHERE component.baseline_adoption_id = NEW.id
+      AND component.organization_id = NEW.organization_id
+      AND (
+        active.id IS NULL
+        OR head.active_revision_id IS NULL
+        OR observation.id IS NULL
+        OR observation_head.observation_id IS NULL
+      )
+  ) THEN
+    RAISE EXCEPTION 'baseline adoption desired or observed lineage is incomplete'
+      USING ERRCODE = '23514';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM BaselineAdoptionComponent component
+    WHERE component.baseline_adoption_id = NEW.id
+      AND component.organization_id = NEW.organization_id
+      AND (
+        component.config_checksum <> NEW.target_config_checksum
+        OR NOT EXISTS (
+          SELECT 1
+          FROM DeploymentPlan plan
+          CROSS JOIN LATERAL jsonb_array_elements(
+            convert_from(plan.canonical_payload, 'UTF8')::JSONB
+              -> 'componentReleasePins'
+          ) pin
+          WHERE plan.id = component.deployment_plan_id
+            AND plan.organization_id = component.organization_id
+            AND pin ->> 'componentKey' = component.component_key
+            AND pin ->> 'componentReleaseId'
+              = component.component_release_id::TEXT
+            AND pin ->> 'releaseChecksum'
+              = component.component_release_checksum
+            AND pin ->> 'version' = component.application_version
+            AND pin ->> 'platformDigest' = component.artifact_digest
+            AND pin ->> 'provenanceVerified' = 'true'
+            AND convert_from(plan.canonical_payload, 'UTF8')::JSONB
+                  ->> 'targetPlatform' = component.platform
+            AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(pin -> 'platforms') platform
+              WHERE platform = component.platform
+            )
+            AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(pin -> 'artifacts') artifact
+              WHERE artifact ->> 'platform' = component.platform
+                AND artifact ->> 'platformDigest'
+                  = component.artifact_digest
+            )
+            AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(pin -> 'provenanceFacts') fact
+              WHERE fact ->> 'verificationId'
+                  = component.provenance_verification_id::TEXT
+                AND fact ->> 'platform' = component.platform
+                AND fact ->> 'artifactDigest' = component.artifact_digest
+                AND fact ->> 'evidenceDigest'
+                  = component.provenance_evidence_digest
+                AND fact ->> 'policyChecksum'
+                  = component.provenance_policy_checksum
+            )
+        )
+        OR NOT EXISTS (
+          SELECT 1
+          FROM DeploymentPlan plan
+          CROSS JOIN LATERAL jsonb_array_elements(
+            convert_from(plan.canonical_payload, 'UTF8')::JSONB
+              -> 'componentBindings'
+          ) binding
+          WHERE plan.id = component.deployment_plan_id
+            AND plan.organization_id = component.organization_id
+            AND binding ->> 'componentKey' = component.component_key
+            AND binding ->> 'componentInstanceId'
+              = component.component_instance_id::TEXT
+        )
+        OR NOT EXISTS (
+          SELECT 1
+          FROM ProductReleaseComponent product_component
+          JOIN ReleaseBundle component_release
+            ON component_release.id
+              = product_component.component_release_bundle_id
+           AND component_release.organization_id
+              = product_component.organization_id
+           AND component_release.kind = 'component'
+           AND component_release.status = 'PUBLISHED'
+           AND component_release.canonical_checksum
+              = component.component_release_checksum
+          WHERE product_component.product_release_bundle_id
+              = NEW.product_release_id
+            AND product_component.organization_id = NEW.organization_id
+            AND product_component.component_release_bundle_id
+              = component.component_release_id
+            AND product_component.component_release_checksum
+              = component.component_release_checksum
+            AND product_component.component_key = component.component_key
+            AND product_component.component_version = component.application_version
+        )
+        OR NOT EXISTS (
+          SELECT 1
+          FROM ComponentReleaseEvidenceVerification verification
+          JOIN ComponentReleaseArtifact artifact
+            ON artifact.release_bundle_id = verification.release_bundle_id
+           AND artifact.organization_id = verification.organization_id
+           AND artifact.artifact_key = verification.artifact_key
+           AND artifact.component_version = component.application_version
+           AND artifact.platform = verification.platform
+           AND artifact.platform_digest = verification.artifact_digest
+          WHERE verification.id = component.provenance_verification_id
+            AND verification.organization_id = component.organization_id
+            AND verification.release_bundle_id = component.component_release_id
+            AND verification.platform = component.platform
+            AND verification.artifact_digest = component.artifact_digest
+            AND verification.source_commit = component.source_commit
+            AND verification.build_id = component.build_id
+            AND verification.evidence_digest
+              = component.provenance_evidence_digest
+            AND verification.policy_checksum
+              = component.provenance_policy_checksum
+        )
+        OR NOT EXISTS (
+          SELECT 1
+          FROM TargetConfigSnapshotComponent config_component
+          WHERE config_component.target_config_snapshot_id
+              = component.target_config_snapshot_id
+            AND config_component.organization_id = component.organization_id
+            AND config_component.deployment_unit_id
+              = component.deployment_unit_id
+            AND config_component.component_instance_id
+              = component.component_instance_id
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION 'baseline adoption release, provenance, or config lineage is incomplete'
+      USING ERRCODE = '23514';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM ControlPlaneAuditEvent event
+    WHERE event.organization_id = NEW.organization_id
+      AND event.deployment_plan_id = NEW.deployment_plan_id
+      AND event.event_type = 'baseline_adoption.adopted'
+      AND event.outcome = 'ADOPTED'
+      AND event.deployment_plan_checksum = NEW.plan_checksum
+      AND event.product_release_checksum = NEW.product_release_checksum
+      AND event.target_config_checksum = NEW.target_config_checksum
+      AND event.payload ->> 'baselineAdoptionId' = NEW.id::TEXT
+      AND event.payload ->> 'outcomeChecksum' = NEW.outcome_checksum
+      AND event.payload ->> 'outcome' = 'ADOPTED'
+      AND event.payload ->> 'deploymentPerformed' = 'false'
+      AND event.payload ->> 'taskCount' = '0'
+      AND event.payload ->> 'lockCount' = '0'
+      AND event.payload ->> 'executionCount' = '0'
+  ) THEN
+    RAISE EXCEPTION 'baseline adoption audit event is required'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER BaselineAdoption_commit_guard ON BaselineAdoption;
+
+CREATE CONSTRAINT TRIGGER BaselineAdoption_commit_guard
+AFTER INSERT ON BaselineAdoption
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION baseline_adoption_commit_guard_v2();

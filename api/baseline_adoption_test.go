@@ -45,6 +45,18 @@ func TestCreateBaselineAdoptionRequestRejectsSyntheticOrIncompleteMaterial(t *te
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("reason")))
 }
 
+func TestCreateBaselineAdoptionRequestKeepsObservedFactsIndependentFromReleaseFacts(t *testing.T) {
+	g := NewWithT(t)
+	request := validBaselineAdoptionRequest()
+	request.Components[0].SchemaVersion = "customer-schema-42"
+	request.Components[0].CapabilityChecksum = baselineAdoptionTestChecksum("c")
+
+	g.Expect(request.Components[0].CapabilityChecksum).NotTo(Equal(
+		request.Components[0].ComponentReleaseChecksum,
+	))
+	g.Expect(request.Validate()).To(Succeed())
+}
+
 func validBaselineAdoptionRequest() CreateBaselineAdoptionRequest {
 	return CreateBaselineAdoptionRequest{
 		IdempotencyKey:                 "baseline:2026-08-31",
@@ -66,7 +78,7 @@ func validBaselineAdoptionRequest() CreateBaselineAdoptionRequest {
 			Platform:                        "linux/amd64",
 			ConfigChecksum:                  baselineAdoptionTestChecksum("3"),
 			SchemaVersion:                   "2026.08.31",
-			CapabilityChecksum:              baselineAdoptionTestChecksum("4"),
+			CapabilityChecksum:              baselineAdoptionTestChecksum("c"),
 			TopologyChecksum:                baselineAdoptionTestChecksum("8"),
 			ObservationID:                   uuid.New(),
 			ObserverID:                      uuid.New(),

@@ -16,9 +16,9 @@ compatibility, or clear the fence. Resume the applicable normal timestamp-expand
 finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
 migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
 
-## PR-087 Integrated Upgrade Through Migration 167
+## Integrated Upgrade Through Migration 170
 
-PR-087 requires an ordered upgrade from migration 138 through migration 167. Migration 163 preserves existing
+The current release requires an ordered upgrade from migration 138 through migration 170. Migration 163 preserves existing
 blocked plan history and enables only newly validated target deployment plans to seal as executable `READY` plans.
 Its down migration refuses after any executable v2 plan exists.
 Migration 164 preserves legacy planning evidence while allowing authoritative `ActiveDesiredRevision` and
@@ -31,9 +31,12 @@ desired revision, or retained observation health-policy evidence exists.
 Migration 167 retains historical attempts as explicit `legacy-v2` rows, adds immutable runtime trust bindings for
 new v3 intents, and creates append-only executor runtime evidence. Its down migration refuses while any v3 attempt
 or runtime evidence remains.
+Migration 168 adds fresh dependency-provider evidence. Migration 170 separates the frozen
+Component Release application version/checksum from independently observed schema version/capability checksum,
+backfills only the application version from retained plan pins, and preserves existing adoption and audit checksums.
 Before a release can be signed, retain separate results for clean install, upgrade, safe down/refusal, checkpoint
 restart, v1-only flags-off, mixed v1/v2, and retained-v2-history flags-off paths on the supported PostgreSQL 16.14
-and 18.4 images through migration 167. The required matrix and current pending status are recorded in the
+and 18.4 images through migration 170. The required matrix and current pending status are recorded in the
 [community release readiness package](../release/community-release-readiness.md#integrated-control-plane-release-gate).
 
 Migration 162 adds `SampleRetirementJob`, `SampleRetirementItem`, `SampleRetirementCheckpoint`, and

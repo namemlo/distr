@@ -35,6 +35,13 @@ caller, owns immutable health-evidence kind/use/policy fields. Policy-bearing
 observations require an `evidence://sha256/<digest>` reference exactly bound to
 their evidence checksum.
 
+Application version, observed schema version, capability-set checksum, and
+Component Release checksum are separate facts. The release pin owns the
+application version and release checksum; the authenticated observation owns
+schema version and capability checksum. Migration 170 exposes the frozen
+application version explicitly and removes any equality assumption between
+these identities while preserving existing adoption request checksums.
+
 Success appends an `ADOPTED` outcome and `baseline_adoption.adopted` audit event,
 creates one active desired revision per component, and moves the plan to its
 successful terminal lifecycle state. It sets `deploymentPerformed=false`,
@@ -79,6 +86,10 @@ not relax standard observation requirements for later deployment execution.
 Migration 166 is additive. Its down migration refuses while adoption evidence,
 adoption-sourced active desired revisions, or retained observation health-policy
 evidence exists.
+
+Migration 170 is a compatible projection and guard correction. It backfills the
+application version only from the retained frozen plan pin and does not rewrite
+existing observation, desired-state, adoption, or audit checksum material.
 
 ## Alternatives Considered
 

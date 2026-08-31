@@ -97,6 +97,7 @@ type BaselineAdoptionComponent struct {
 	ComponentKey                    string                             `db:"component_key" json:"componentKey"`
 	ComponentReleaseID              uuid.UUID                          `db:"component_release_id" json:"componentReleaseId"`
 	ComponentReleaseChecksum        string                             `db:"component_release_checksum" json:"componentReleaseChecksum"`
+	ApplicationVersion              string                             `db:"application_version" json:"applicationVersion"`
 	SourceCommit                    string                             `db:"source_commit" json:"sourceCommit"`
 	BuildID                         string                             `db:"build_id" json:"buildId"`
 	ProvenanceVerificationID        uuid.UUID                          `db:"provenance_verification_id" json:"provenanceVerificationId"`

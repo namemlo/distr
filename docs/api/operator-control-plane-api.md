@@ -146,6 +146,12 @@ and observation evidence/state/runtime checksums. Health classification, use,
 and policy checksum are not accepted from the adoption caller: they must already
 exist on the authenticated immutable observation selected by the request.
 
+`schemaVersion` and `capabilityChecksum` are independent observed runtime facts.
+They do not need to equal the Component Release application SemVer or canonical
+checksum. The response exposes that release-owned SemVer separately as
+`components[].applicationVersion`; the deferred guard still requires every
+release-owned and observation-owned fact to match its authoritative source.
+
 An exact replay returns the retained immutable result. Changed material under
 the same key returns `409`. Success returns `ADOPTED` with
 `deploymentPerformed=false`, `taskCount=0`, `lockCount=0`, and

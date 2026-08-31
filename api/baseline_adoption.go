@@ -143,8 +143,8 @@ func validateBaselineAdoptionComponent(
 		return validation.NewValidationFailedError("configChecksum must match expectedTargetConfigChecksum")
 	case component.SchemaVersion == "" || len(component.SchemaVersion) > 256:
 		return validation.NewValidationFailedError("schemaVersion is invalid")
-	case component.CapabilityChecksum != component.ComponentReleaseChecksum:
-		return validation.NewValidationFailedError("capabilityChecksum must match componentReleaseChecksum")
+	case !baselineAdoptionChecksumPattern.MatchString(component.CapabilityChecksum):
+		return validation.NewValidationFailedError("capabilityChecksum is invalid")
 	case !baselineAdoptionChecksumPattern.MatchString(component.TopologyChecksum):
 		return validation.NewValidationFailedError("topologyChecksum is invalid")
 	case component.ObservationID == uuid.Nil:

@@ -637,7 +637,7 @@ const matrix = (reference, sha256, postgresVersion) => ({
   reference,
   sha256,
   postgresVersion,
-  selectors: ['range=138..167', 'v1-flags-off=PASS', 'mixed-v1-v2=PASS', 'v2-history-flags-off=PASS'],
+  selectors: ['range=138..170', 'v1-flags-off=PASS', 'mixed-v1-v2=PASS', 'v2-history-flags-off=PASS'],
 });
 const report = {
   schemaVersion: 'distr.control-plane-release-acceptance/v1',
