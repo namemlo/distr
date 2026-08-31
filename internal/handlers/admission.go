@@ -32,15 +32,26 @@ type admissionHandlerDependencies struct {
 		context.Context,
 		types.CreateEmergencyOverrideRequest,
 	) (*types.EmergencyOverride, error)
+	createReviewDecision func(
+		context.Context,
+		types.CreateReviewAdmissionDecisionRequest,
+	) (*types.ReviewAdmissionDecisionRecord, error)
+	listReviewDecisions func(
+		context.Context,
+		uuid.UUID,
+		uuid.UUID,
+	) ([]types.ReviewAdmissionDecisionRecord, error)
 	authorize types.AdmissionAuthorizer
 	clock     func() time.Time
 }
 
 func defaultAdmissionHandlerDependencies() admissionHandlerDependencies {
 	return admissionHandlerDependencies{
-		admit:          db.AdmitDeploymentPlan,
-		createOverride: db.CreateEmergencyOverride,
-		authorize:      admissionScopedAuthorization,
+		admit:                db.AdmitDeploymentPlan,
+		createOverride:       db.CreateEmergencyOverride,
+		createReviewDecision: db.CreateReviewAdmissionDecision,
+		listReviewDecisions:  db.ListReviewAdmissionDecisions,
+		authorize:            admissionScopedAuthorization,
 		clock: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -125,6 +136,83 @@ func deploymentPlanAdmissionRoutes(r chiopenapi.Router) {
 		deploymentPlanAdmissionRoute
 		api.CreateEmergencyOverrideRequest
 	}{})).With(option.Response(http.StatusOK, api.EmergencyOverride{}))
+
+	r.With(
+		admissionMutationAccessMiddlewareWithFlags(env.ExperimentalFeatureFlags()),
+		middleware.RequireReadWriteOrAdmin,
+		middleware.BlockSuperAdmin,
+	).Post(
+		"/review-decisions",
+		createReviewAdmissionDecisionHandlerWithDependencies(dependencies),
+	).With(option.Description(
+		"Append a checksum-bound GO or NO_GO review admission decision",
+	)).With(option.Request(struct {
+		deploymentPlanAdmissionRoute
+		api.CreateReviewAdmissionDecisionRequest
+	}{})).With(option.Response(http.StatusOK, types.ReviewAdmissionDecisionRecord{}))
+
+	r.With(
+		admissionMutationAccessMiddlewareWithFlags(env.ExperimentalFeatureFlags()),
+	).Get(
+		"/review-decisions",
+		listReviewAdmissionDecisionsHandlerWithDependencies(dependencies),
+	).With(option.Description(
+		"List append-only GO and NO_GO review admission evidence",
+	)).With(option.Request(deploymentPlanAdmissionRoute{})).With(option.Response(
+		http.StatusOK, []types.ReviewAdmissionDecisionRecord{},
+	))
+}
+
+func createReviewAdmissionDecisionHandlerWithDependencies(
+	dependencies admissionHandlerDependencies,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		planID, ok := admissionPathPlanID(w, r)
+		if !ok {
+			return
+		}
+		request, err := approvalJSONBody[api.CreateReviewAdmissionDecisionRequest](w, r)
+		if err != nil {
+			return
+		}
+		if err := request.Validate(dependencies.clock()); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		authInfo := auth.Authentication.Require(r.Context())
+		decision, err := dependencies.createReviewDecision(r.Context(), types.CreateReviewAdmissionDecisionRequest{
+			OrganizationID: *authInfo.CurrentOrgID(), DeploymentPlanID: planID,
+			ActorUserAccountID: authInfo.CurrentUserID(), ExpectedPlanChecksum: request.ExpectedPlanChecksum,
+			ReviewMaterialChecksum: request.ReviewMaterialChecksum,
+			ObservedStateChecksum:  request.ObservedStateChecksum, Decision: request.Decision,
+			Reason: request.Reason, ExpiresAt: request.ExpiresAt,
+			SupersedesDecisionID: request.SupersedesDecisionID, RevokesDecisionID: request.RevokesDecisionID,
+			IdempotencyKey: request.IdempotencyKey, Authorize: dependencies.authorize,
+		})
+		if err != nil {
+			handleAdmissionError(w, r, "create review admission decision", err)
+			return
+		}
+		RespondJSON(w, decision)
+	}
+}
+
+func listReviewAdmissionDecisionsHandlerWithDependencies(
+	dependencies admissionHandlerDependencies,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		planID, ok := admissionPathPlanID(w, r)
+		if !ok {
+			return
+		}
+		authInfo := auth.Authentication.Require(r.Context())
+		decisions, err := dependencies.listReviewDecisions(r.Context(), *authInfo.CurrentOrgID(), planID)
+		if err != nil {
+			handleAdmissionError(w, r, "list review admission decisions", err)
+			return
+		}
+		RespondJSON(w, decisions)
+	}
 }
 
 func admissionMutationAccessMiddlewareWithFlags(

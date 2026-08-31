@@ -16,9 +16,9 @@ compatibility, or clear the fence. Resume the applicable normal timestamp-expand
 finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
 migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
 
-## PR-083 Integrated Upgrade Through Migration 164
+## PR-084 Integrated Upgrade Through Migration 165
 
-PR-083 requires an ordered upgrade from migration 138 through migration 164. Migration 163 preserves existing
+PR-084 requires an ordered upgrade from migration 138 through migration 165. Migration 163 preserves existing
 blocked plan history and enables only newly validated target deployment plans to seal as executable `READY` plans.
 Its down migration refuses after any executable v2 plan exists.
 Migration 164 preserves legacy planning evidence while allowing authoritative `ActiveDesiredRevision` and

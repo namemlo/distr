@@ -1782,3 +1782,27 @@ Use one entry per pull request:
 - Compatibility notes: Existing direct/v1 deployment behavior remains
   supported. Binary rollback, flag disablement, schema downgrade, and database
   restore are separate operations with distinct evidence and refusal rules.
+
+### PR-084 - Review-material admission decisions
+
+- Status: Implemented with focused local verification; full PostgreSQL and
+  final release gates remain pending.
+- Upstream base: Final control-plane integration checkpoint.
+- Feature flags: Uses the existing default-off `operator_control_plane_v2` and
+  `executor_protocol_v2` boundary.
+- User-facing behavior: Authorized operators append persistent `GO` or
+  `NO_GO` decisions bound to the exact plan and current observed state.
+- Database changes: Migration 165 adds append-only, expiring, checksum-bound
+  `ReviewAdmissionDecision` rows with supersession and revocation lineage.
+- API changes: Adds `GET/POST
+  /api/v1/deployment-plans/{id}/review-decisions`.
+- UI changes: None; this is an API-first safety boundary.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0071 and PR-084 fork notes.
+- Tests: Focused checksum, expiry/staleness, `NO_GO`, API validation, route,
+  migration shape, task mutation ordering, migration lint, and diff checks.
+- Upstream contribution notes: Community-neutral review and admission
+  primitives with no adopter, CI provider, registry, or runtime assumptions.
+- Compatibility notes: V1 task creation is unchanged. V2 task creation fails
+  closed before mutation unless the current decision tip is an authorized,
+  unexpired, observed-state-current `GO`.

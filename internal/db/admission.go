@@ -122,7 +122,25 @@ func CreateTasksForAdmittedV2Plan(
 				return getAdmissionPlanSnapshot(ctx, planID, organizationID)
 			},
 			AdmitDeploymentPlan: AdmitDeploymentPlan,
-			CreateTasks:         createTasksForAdmittedV2Plan,
+			CreateTasks: func(
+				ctx context.Context,
+				createRequest types.CreateTasksForDeploymentPlanRequest,
+			) ([]types.Task, error) {
+				createRequest.ReviewAuthorize = func(
+					ctx context.Context,
+					evidence types.ReviewAdmissionExecutionContext,
+				) error {
+					return authorizeAdmission(ctx, request.Authorize, types.AdmissionAuthorizationContext{
+						OrganizationID:     evidence.OrganizationID,
+						ActorUserAccountID: evidence.ActorUserAccountID,
+						DeploymentPlanID:   evidence.DeploymentPlanID,
+						EnvironmentID:      evidence.EnvironmentID,
+						DeploymentUnitID:   evidence.DeploymentUnitID,
+						Action:             "plan.execute", DecisionAt: evidence.DecisionAt,
+					})
+				}
+				return createTasksForAdmittedV2Plan(ctx, createRequest)
+			},
 		},
 	)
 }

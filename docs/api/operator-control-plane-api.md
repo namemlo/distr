@@ -120,12 +120,19 @@ Product Release lifecycle operations are:
 | `POST`      | `/deployment-plans/{id}/approval-requests` | Request checksum-bound approval             |
 | `POST`      | `/deployment-plans/{id}/previous-state`    | Create a new compatible previous-state plan |
 | `POST`      | `/deployment-plans/{id}/tasks`             | Create durable tasks for a ready plan       |
+| `GET/POST`  | `/deployment-plans/{id}/review-decisions`  | Read or append observed-state-bound GO/NO_GO evidence |
 | `GET`       | `/approval-requests`                       | List approval work                          |
 | `GET`       | `/approval-requests/{id}`                  | Get immutable request/decision evidence     |
 | `POST`      | `/approval-requests/{id}/decisions`        | Append an authorized decision               |
 
 Any material release, config, provider, migration, baseline, policy, or campaign
 change invalidates reuse of the old approval.
+
+Protocol-v2 task creation also requires the latest persistent review decision
+to be an unexpired `GO`. The decision binds the plan and the current
+independently observed-state checksum. A later `NO_GO`, supersession,
+revocation, observed-state change, expiry, or failed authorization recheck
+blocks before task or external mutation.
 
 The standard controlled-client policy requires four-eyes approval: the
 execution requester cannot decide the same plan or campaign approval. A

@@ -123,6 +123,7 @@ type CreateTasksForDeploymentPlanRequest struct {
 	ActorUserAccountID    uuid.UUID
 	ConcurrencyPolicy     TaskConcurrencyPolicy
 	AdditionalResources   []TaskLockResourceRequest
+	ReviewAuthorize       ReviewAdmissionExecutionAuthorizer
 }
 
 type TaskLockResourceRequest struct {

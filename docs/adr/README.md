@@ -57,3 +57,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0067: Operator Read Models and Route Compatibility](0067-operator-read-models-and-route-compatibility.md)
 - [ADR-0069: Checksum-Bound Deployment Admission and Emergency Overrides](0069-deployment-admission-emergency-overrides.md)
 - [ADR-0070: Enable Validated Target Deployment Plan Execution](0070-validated-target-plan-execution.md)
+- [ADR-0071: Review-Material Admission Decisions](0071-review-material-admission-decisions.md)

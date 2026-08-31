@@ -40,8 +40,11 @@ func TestAdmissionRoutesArePublishedInOpenAPI(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/deployment-plans/{deploymentPlanId}/admission",
 		"/api/v1/deployment-plans/{deploymentPlanId}/emergency-overrides",
+		"/api/v1/deployment-plans/{deploymentPlanId}/review-decisions",
 	} {
 		g.Expect(document.Paths).To(HaveKey(path))
 		g.Expect(document.Paths[path]).To(HaveKey(strings.ToLower(http.MethodPost)))
 	}
+	g.Expect(document.Paths["/api/v1/deployment-plans/{deploymentPlanId}/review-decisions"]).
+		To(HaveKey(strings.ToLower(http.MethodGet)))
 }

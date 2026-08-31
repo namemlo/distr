@@ -253,6 +253,11 @@ func createTasksForDeploymentPlan(
 			tasks = reusable
 			return nil
 		}
+		if path == deploymentPlanTaskCreationPathAdmittedV2 {
+			if err := requireCurrentReviewAdmissionGo(ctx, request, *plan); err != nil {
+				return err
+			}
+		}
 		preflight, passed, err := evaluateAndPersistDeploymentPreflight(ctx, *plan, request.ActorUserAccountID)
 		if err != nil {
 			return err
