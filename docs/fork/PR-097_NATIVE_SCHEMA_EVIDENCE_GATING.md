@@ -47,7 +47,9 @@ execution lock, or mutate task state.
 - Draft-validation responses add `schemaEvidenceRequirements` and
   `schemaEvidence`; published-plan responses add `schemaEvidence`.
 - Database changes: none. Evidence is frozen in the existing canonical plan
-  payload, so schema target 169 is unchanged.
+  payload. PR-097 itself adds no migration. At its original development
+  checkpoint, schema 169 was current; in the authoritative integrated release
+  line, PR-095 owns migration 170 and schema target 170 is current.
 - UI changes: none.
 - Agent/executor protocol changes: none.
 - Feature flags: uses the existing default-off `operator_control_plane_v2`

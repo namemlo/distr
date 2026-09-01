@@ -2207,8 +2207,10 @@ Use one entry per pull request:
 - User-facing behavior: Database-bound component plans require a current exact
   schema report and either no-migration or contract-bound migration evidence
   before publication, admission, or task creation.
-- Database changes: None; evidence is frozen in existing canonical plan bytes
-  and schema target 169 is unchanged.
+- Database changes: None; evidence is frozen in existing canonical plan bytes.
+  PR-097 itself adds no migration. At its original development checkpoint,
+  schema 169 was current; in the authoritative integrated release line,
+  PR-095 owns migration 170 and schema target 170 is current.
 - API changes: Draft validation adds `schemaEvidenceRequirements` and
   `schemaEvidence`; published plans add `schemaEvidence`.
 - UI changes: None.
