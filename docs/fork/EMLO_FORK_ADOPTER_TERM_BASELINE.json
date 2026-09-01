@@ -1,0 +1,3116 @@
+{
+  "schema": "distr.adopter-term-baseline/v1",
+  "profile": "emlo-fork",
+  "repository": "namemlo/distr",
+  "sourceCommit": "8c572423de3d803863980e8c0fe60f6e4c466a82",
+  "findings": [
+    {
+      "file": "api/execution_v2_test.go",
+      "line": 53,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "e700ae0c319e029201aeb909a9352cf54a11c56be657852578d501629fcefed7"
+    },
+    {
+      "file": "api/execution_v2_test.go",
+      "line": 160,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "86a4b3574a2e3b46aadbafb10ba3f3f17143220ade57abe65268a0f80e4ae60a"
+    },
+    {
+      "file": "api/execution_v2_test.go",
+      "line": 166,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1d2a06953c6d6077a4538e964ef6bcb058cf76e895d642f56ae8d2be3aa1911f"
+    },
+    {
+      "file": "api/execution_v2_test.go",
+      "line": 166,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "1d2a06953c6d6077a4538e964ef6bcb058cf76e895d642f56ae8d2be3aa1911f"
+    },
+    {
+      "file": "deploy/jenkins/Jenkinsfile.hub-image",
+      "line": 56,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "fe146acd17638943db37d074b54748afee8aedde21062b5a6d928363441e9098"
+    },
+    {
+      "file": "deploy/jenkins/Jenkinsfile.hub-image",
+      "line": 101,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "80c18fa7b4cc87c5eed11f53e016235d7ca2215f293c16969db42ed82a1ba129"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 59,
+      "label": "ECR registry term",
+      "sourceSha256": "aad2b2bedcc80c20b39a598f6d50b8d8f9b8124296bea96e638a2c569156eb1d"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 60,
+      "label": "ECR registry term",
+      "sourceSha256": "55f4deef8b7fb1d75dd1147839e5f37aae950e6d230ec96d13295530a740cb61"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 111,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "afa4b2763b56fcb4c72ff1c7e44a443346c021c1223e807e39090ade2dad426c"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 119,
+      "label": "ECR registry term",
+      "sourceSha256": "dba75164a459d598e5d64f8e1f38c7dec5a16da9e722050191a87111ef106bcd"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 125,
+      "label": "ECR registry term",
+      "sourceSha256": "067ad89250496315fc1f746be93e3e4fc0f8724d3afd2a6418ce43957b0db180"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 129,
+      "label": "ECR registry term",
+      "sourceSha256": "e99890d0e44332b660392e0d6a6fd894ea16e10a0cc9a2e54a89b260cda22a77"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 139,
+      "label": "ECR registry term",
+      "sourceSha256": "ffff23a2500920af24ee6923a4399fbae33bb5974c7baf064bf4b523c59af0a3"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 161,
+      "label": "ECR registry term",
+      "sourceSha256": "ffff23a2500920af24ee6923a4399fbae33bb5974c7baf064bf4b523c59af0a3"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 346,
+      "label": "ECR registry term",
+      "sourceSha256": "1245393dfa0bd2364acca5065c43c9281b6e76bf6f04f5378263e575b6375b89"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 354,
+      "label": "ECR registry term",
+      "sourceSha256": "a0d7d2d311d9dc10f05cc67e55549e3d95b573e4c4f7d929a629ebe77a636663"
+    },
+    {
+      "file": "deploy/server-docker-compose/deploy.sh",
+      "line": 4963,
+      "label": "ECR registry term",
+      "sourceSha256": "9e52f6b8e79d71f61cea47c3ab38697cb6ce2f517d79981cfaaed650ddc75aa1"
+    },
+    {
+      "file": "docs/adr/0078-independent-runtime-measurement-probes.md",
+      "line": 9,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "8e0d886b9272f98505d87d52e19ebc3e33b22dc9a4f4654d9c61f83db41bb8ec"
+    },
+    {
+      "file": "docs/adr/0078-independent-runtime-measurement-probes.md",
+      "line": 23,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "65a423aeb1ada3db46b138a039fe14bd5af37b7dd89d249e4437e686c0096838"
+    },
+    {
+      "file": "docs/adr/0078-independent-runtime-measurement-probes.md",
+      "line": 65,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "7ca70df3ad2aff046dea239fb950b8ad6921e8f96135d511df35e5c92b653cc1"
+    },
+    {
+      "file": "docs/adr/0079-durable-independent-observer-service.md",
+      "line": 9,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "eff1e68f75ad6d6b07b5d5c161b3daef646369d629ab81e60353b47d1cbc20d1"
+    },
+    {
+      "file": "docs/adr/0079-durable-independent-observer-service.md",
+      "line": 14,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "36cdef9fb794706fa946ee524303458055b53ca4b4eefd47e0be4be8590bbcad"
+    },
+    {
+      "file": "docs/adr/0079-durable-independent-observer-service.md",
+      "line": 46,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "718f9ebceeac1ec4f04ebaaa3c86ff79d06be1c1b6e281da376cd77025df26c9"
+    },
+    {
+      "file": "docs/adr/0079-durable-independent-observer-service.md",
+      "line": 69,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "223269470d9df2f6f9c6971f84cf9b63b31ab76053e1696b8569bbc638d3369e"
+    },
+    {
+      "file": "docs/adr/0079-durable-independent-observer-service.md",
+      "line": 76,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a581edccb8624a43eb7afea368cd47278f1dba3e969284358ae1e68c3ee08050"
+    },
+    {
+      "file": "docs/adr/0079-durable-independent-observer-service.md",
+      "line": 86,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "accb34c2335f725a5cbd525d2862177853b58c8e4d75effa3493db2d493ebe2e"
+    },
+    {
+      "file": "docs/cli/release.md",
+      "line": 133,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "8fd52de81b39938d77475b0a01e35dfb970faa08d2f4c8362502fd0e03b87c7c"
+    },
+    {
+      "file": "docs/cli/release.md",
+      "line": 134,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "155ac8102b3754393fd7485105ba0198497767c91fa9f96d67558f435b874d65"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 1039,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "b68afee2297537ca687296b068d1f16a866ac5f2423016f395a56d7fd03af935"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 1042,
+      "label": "ECR registry term",
+      "sourceSha256": "14768e987398c0c3d553b42a536a67c443ec3cf456de0524310e0eecec92418e"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 1044,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "0583396770b79fca058302da660a80630126de8603dd018fc7dd88b54d71cd40"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 1923,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ea60eaaaf4b8ed1fc2b347eec177668fa9591c8b85b6bc3f51aed0ed03e28266"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 1940,
+      "label": "ECR registry term",
+      "sourceSha256": "6daefd2e8caf15de853b0a8c605a95eb6126f6665ef005bb619ced4112737c99"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 1940,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "6daefd2e8caf15de853b0a8c605a95eb6126f6665ef005bb619ced4112737c99"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 1970,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "f7d5495c12f2c9cb06331db5b7b018cfafc026135e5e44d6dbd6a67b4c526ce2"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 2007,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "84b13eed5eeb0f571ab389a2099635ae2451f974c21af94a4e58319cdb121464"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 2041,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "faedcba996da71304936883aa5ad84df6b6970e7b97860ef521f8417bd1e989a"
+    },
+    {
+      "file": "docs/fork/FORK_DIFF_INDEX.md",
+      "line": 2049,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3e8d83f67cad579beee35610c0a6db595153169bb775241c1d5408ce4abf130e"
+    },
+    {
+      "file": "docs/fork/PR-084_REVIEW_MATERIAL_ADMISSION.md",
+      "line": 58,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2658bd6a5463c764ffd28b00b9ec58a426a12acc93b55743384c639cb693e74f"
+    },
+    {
+      "file": "docs/fork/PR-091_INDEPENDENT_RUNTIME_MEASUREMENT_PROBES.md",
+      "line": 16,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3e83ff8f08b0b55aaf25c7ecde481fe5f744e3b7be521021946d3576e7e6f665"
+    },
+    {
+      "file": "docs/fork/PR-091_INDEPENDENT_RUNTIME_MEASUREMENT_PROBES.md",
+      "line": 38,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "607e73ecf74d17480c066407b0df42213b2233e0e5429a4d1f130da3edacbb9d"
+    },
+    {
+      "file": "docs/fork/PR-091_INDEPENDENT_RUNTIME_MEASUREMENT_PROBES.md",
+      "line": 38,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "607e73ecf74d17480c066407b0df42213b2233e0e5429a4d1f130da3edacbb9d"
+    },
+    {
+      "file": "docs/fork/PR-091_INDEPENDENT_RUNTIME_MEASUREMENT_PROBES.md",
+      "line": 50,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f494db42f75a953f208b3cc998d11145b38bed2a1d5be783844f8e45589fcc54"
+    },
+    {
+      "file": "docs/fork/PR-092_DURABLE_INDEPENDENT_OBSERVER_SERVICE.md",
+      "line": 5,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a8d86d252a7e32604f15eaad7b618766ecb1147e211b092f42c016f3716bdc34"
+    },
+    {
+      "file": "docs/fork/PR-092_DURABLE_INDEPENDENT_OBSERVER_SERVICE.md",
+      "line": 33,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "ca6306093a2f12b0d51f4a70c3922a0c9348150f5e66079e481271c7efdf39de"
+    },
+    {
+      "file": "docs/fork/PR-092_DURABLE_INDEPENDENT_OBSERVER_SERVICE.md",
+      "line": 58,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dbc5b3ac93395fff975a6f73f175ec6d5ae57fc48a3db88f9c3715e316487d4d"
+    },
+    {
+      "file": "docs/fork/PR-092_DURABLE_INDEPENDENT_OBSERVER_SERVICE.md",
+      "line": 58,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "dbc5b3ac93395fff975a6f73f175ec6d5ae57fc48a3db88f9c3715e316487d4d"
+    },
+    {
+      "file": "docs/fork/PR-092_DURABLE_INDEPENDENT_OBSERVER_SERVICE.md",
+      "line": 64,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "57321df392c79a85e5950e6cd4d03416680867a4db6221ec4f697466cb18a145"
+    },
+    {
+      "file": "docs/fork/PR-092_DURABLE_INDEPENDENT_OBSERVER_SERVICE.md",
+      "line": 65,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "11765ba40766f61a97cc4040be6afdab59f5eee9b211e6d4b188598e0e66c133"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f4b9cb65be096a0c0d1e0ff8ed5e7263052a8be138b29e4173de36b85ef90da8"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 1,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5ce8fd0cce77074d9470feef9a1aabee3dbb54f8a4c6ce3f01344bb6944c6839"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 3,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3a5a06ff5792a242f0625674ccc50330e2fe260eec805674e244386998ec0314"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 4,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "c0e3150ce9e05a6ce5bab71ece4352583c77917167fa834bbf7c7739a6f242f0"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 11,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "51e06077a9aadb0ec08ccf4e92ba0b331227b093b0ce9cdbadf590c605beb518"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 12,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "6942f31c83989c73d23bea3998b73e6dc4030d17f1f2e92280b3f12f128d69a8"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 16,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "06af4b9c9a557149422d87e82b594d1b4371ccc886b049a0ed4659b8e996975c"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 17,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2a10c3af442b7d15c84b5fc33e93e8b06f4fd43ff7b21360c0e08b318c2ac776"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 21,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "8c5b03e71732ce42d7b4cb7dc11f4e8c38b5b337b4cdb1a68e33772e7553913a"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 40,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "629954688e2861a3e1cf7dfce2b8cb039592d12bcce09032a63c5484f0dd8eda"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 49,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1a41d364775247f6fd80330cc2bc450aa39cbc29fb1668d1529d149b8c2df2b8"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 53,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "4db2f1273a7b22e5cabf7af0c129f4ffcc464ca93e72be440c97f56c9f61415f"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 59,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f1ffff2ce049332d519056d74f3e56c2867f10f0c4e9f43567909fbe25ac72ae"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 60,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4e06d554691934b99de3f106583a2bba0450aed16e508d8b0a31a3091ce43a6f"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 64,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f603da8c5dcd1cfe9f7012ac528aa36733f29920563411df2ede434da65022a7"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 77,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "6f023a39b92f65742c98fdc096c6f43fa5d38e14d0ccd894ed58c51b73f0b692"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 78,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "bc8b24559c9d4e11f3fda05b2bb9a385b20d6776f1784cd44997e5b4812e180c"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 87,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "cf100d9190602c627435e23e4fd01f5f1018abf8a389095919e7b746c03b7d85"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 97,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "27b1a7633a3c1ede37a9351685d6f1fadcffe419386b81478a9b75b2f599a482"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 98,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f3b1717d4ef2f2609e6c470a6b471330f590bc2c900c8ac5b64f53b140e484d7"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 99,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b714e6097211f7d72ab242d1b0b75042567bfbaeb290c7a913b51d2e614870dd"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 100,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "94f353153f359f97d625e2ce8abdb1846acdf9ba392d3fc49fa1ecc1b01a8f57"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 112,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "312e6374662b5906f72d9fa102cadeccc2416a251fa7fbbd8254f8c3072d9264"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 113,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e87a2a697e6e6d888ec35ba686e601940c0ba8276d140fa5edc160fc50626be6"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 114,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ade64daf5f7608e86466217a43dbaa2ba1a2a08e851357846ff64abeaf6d2c42"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 119,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "17175228f874ea222f53fe27d2ec1e68ad68015e2d1ec4764f7caeeb0f21bd62"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 125,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3856ad895d023b7428c392aa125451dea7f88944544fd44680679b2089d66188"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 126,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a712c724bc6dec843dc5760902f2eb2fe4768191a6d777894c1f6f3ece8a6ee2"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 143,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "30ef26c61da062067d9bcfb23bdaa1d6e0744e02e4d4b5e0af5a1d0d38eb996c"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 144,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "79c6da2523f0e31be32002bb9e353bb83f4981484a4879d542d28608ff49dc60"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 145,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "887fbbcededb14f8c0671dd0bcc280e82fa8b113d333f0a54c785a346bbe35ed"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 146,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "88cdcda51c6a76540885fbf8f63bb474978aa3d732f7695b0a390f299815c002"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 147,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "21a4c25a41cedcc55bcff16a01be17d8251dcd1c81344eb39e86c33911db96d4"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 148,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2a06fa72cb3f81c26bd957bbe40b45897391f7c416a76c6692f7ef05014f817a"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 149,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "222f03e7774a169ce5bd0875881fc94482ce1d03ebbb2386ac53c3e38ccc004f"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 152,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b64deb8a4c845a0298714af5e0eab164bb893ad7b0a97d96e22ac6cb44cae6f0"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 153,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e6237b81b1dd63eb66324301f03bb658c116855df7762af19181f8c24596e4cd"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 159,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dd7f62ca4a0723581edc0d0de3e429072a7eb4ac98d2035e56bac6ff17647c93"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 160,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3dff9416e420012aaaccf63c37381c6a92eb62e12dab48d78a534c03f1722d03"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 162,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "fad253f57a00d4c14f3e9bc1edba856d99c7a1c933ad3adc9630003ec6fa69a0"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 163,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1f2c2b51ad7bb3583cd15028f4f3d3e6cb2fba22120b3ac8a8d4928d9b252482"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 164,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b18f48486afe02f9d1809928521c4096fd214c98aa712736d7edc6b6d6fd3b3c"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 187,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5d0c032510bfaaa914394b8ab24e3dbb3990236af99d82a0ca7caab1347a2a66"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 188,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "33e9794cc474ec75751c6342dead2d44e610b3cdd360e0b8a0ceff2c80dbc35c"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 193,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "180c3020b743bf1f9f20fdb11d2406d0a5a4bd01b7062778624696da548af1fd"
+    },
+    {
+      "file": "docs/operations/choice-tp-observer-service.md",
+      "line": 200,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "08ab193c54f173ef79eaa18dc7112cf4f501c8075a24f256d08e31b67a648196"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": null,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "164f0b51d3e69f1a8cb512859f46beca05205cb707f4e8f333688a399c49b41b"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 1,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "de5ffc30dc20996ba27402d45ed087e0f04e0deaee57f8d8130038b814f3a985"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 3,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "540ca53afe226f20698a0d2d2212cfc4b680d3622e693e561cda631137151b58"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 4,
+      "label": "ECR registry term",
+      "sourceSha256": "ee2a5916c0d50eb89dc78b042a476612ab11fd6dbc355556859c80cf98577ab5"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 7,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "791ad7f76601ac29ad950eebd50ac2e6870ec3b3ee0d6cca00c2b2b41f3ecabb"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 11,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "00935475a0bcff235b8559a9eba82a482db08521a73d6029b45e7c7b63de96be"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 12,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "4aa24c919240043c263a971e8e3adad6a7d871252f1668201e2c502482fced88"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 14,
+      "label": "ECR registry term",
+      "sourceSha256": "331dbc0a133c43180af6937215305fd2f26bc765f7f37b3a83835c5380c192c9"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 20,
+      "label": "ECR registry term",
+      "sourceSha256": "15bf92b289501023ea3b93f35990d1684ea81528e28fb52b34f5cde122c05925"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 23,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "d8db9928e497130aa3257469e222c021edcd34e63ffc58a2429f3b1ed1f16b8d"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 26,
+      "label": "ECR registry term",
+      "sourceSha256": "43af45ea1c84786b6a986ab62c2a9fa30f743fa58155adbe246a6f7840c5420c"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 29,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "4c7bd0950bf14a73585f1bea8286c693c1f72bf38337c5e44759b76d13d5d7f4"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 30,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "4cbbd5d61301aaea7c8f5210025040cb8f5c33814b90e288d311e9dc46dab9c1"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 58,
+      "label": "ECR registry term",
+      "sourceSha256": "4fed4835c1d4fd8af634241f09ca4328f70d0f7a40e63a31345cdf45774c7668"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 61,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "c280e610815c09c4b1eac7f3b6895f119d2398aafe26d416e03c1a9ad6ec553d"
+    },
+    {
+      "file": "docs/operations/jenkins-hub-image-publication.md",
+      "line": 104,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "5afb179f553aaa062d7c3c887444ba9bfd6edb334b2390c6698fd818e7fb77ce"
+    },
+    {
+      "file": "docs/operations/server-docker-compose-deploy.md",
+      "line": 29,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "20d393fc4dcaa2b0db4c7b134c738e5a64488e35c88f59a549d7177bff9d9628"
+    },
+    {
+      "file": "docs/operations/server-docker-compose-deploy.md",
+      "line": 113,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "53da1ea987ed1062dfdc923ebe68de6bed561974916ef4a4274722a0d3fed6d7"
+    },
+    {
+      "file": "docs/operations/server-docker-compose-deploy.md",
+      "line": 118,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "17d84bd7dbb505476a5168fdf02e3f930e9aa02eb4258a530e58ee02f5bbbee2"
+    },
+    {
+      "file": "docs/operations/server-docker-compose-deploy.md",
+      "line": 158,
+      "label": "ECR registry term",
+      "sourceSha256": "c8b5cfdc15db98afad198c8ab00408a5911afce1d7faa74d28b6bbffc0a8143e"
+    },
+    {
+      "file": "docs/operations/server-docker-compose-deploy.md",
+      "line": 321,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2ceb4eb527f28b81656004b25c87ed6169909fe145096f2c38be5ac55550678e"
+    },
+    {
+      "file": "docs/operations/server-docker-compose-deploy.md",
+      "line": 655,
+      "label": "ECR registry term",
+      "sourceSha256": "268a7d1a1718aec3e84f75555eb5099cfbd06a53a351226e405e4350f55b8261"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": null,
+      "label": "EMLO adopter name",
+      "sourceSha256": "a18a38e30864cd2dca45041a9545bf1377a0666942e65f4f5b051c6edc45da0a"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 1,
+      "label": "EMLO adopter name",
+      "sourceSha256": "67d603fee17412d451f14f598c05a06ebf2a9d99a065396b9ab36e468d74e55a"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 5,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0a6031606a6e44882bf5164b77545317ed9133357870f641b86028f978130fba"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 5,
+      "label": "EMLO adopter name",
+      "sourceSha256": "0a6031606a6e44882bf5164b77545317ed9133357870f641b86028f978130fba"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 7,
+      "label": "ECR registry term",
+      "sourceSha256": "86b229fe70ed8d7e60d1f26449cb2a18d29c6d6678336945e91828a421434225"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 7,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "86b229fe70ed8d7e60d1f26449cb2a18d29c6d6678336945e91828a421434225"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 9,
+      "label": "ECR registry term",
+      "sourceSha256": "d586ed6f0c8bf3afed895f68c50e2aa11363948c555088bc2208ef7daaab2c2b"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 9,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "d586ed6f0c8bf3afed895f68c50e2aa11363948c555088bc2208ef7daaab2c2b"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 13,
+      "label": "EMLO adopter name",
+      "sourceSha256": "c99aea14e746574b8cc4a16197b9564ea47af8fbec2e343b78942433f3f92583"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 18,
+      "label": "ECR registry term",
+      "sourceSha256": "4ea7761ff1847d1857ad6bcae66772f183086075577b393a74dfab9dfc8b2066"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 19,
+      "label": "remittance domain term",
+      "sourceSha256": "009bcee66a4c58b747988e77713ae286148c234402b3152b687fc79b19291058"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 20,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "8078fcb919ff700cd9a2eee3c44035e38774f8c6cc70f7427e25725dd55e751e"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 22,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "e3048fd45634204a1a7d48556cc9f3cce23462383f486ab3a297e146384959bf"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 23,
+      "label": "ECR registry term",
+      "sourceSha256": "2523d87cc5146c83a791dc00dfe5f620927085a4e630885ad8c39f208793b6ea"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 23,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2523d87cc5146c83a791dc00dfe5f620927085a4e630885ad8c39f208793b6ea"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 27,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "07709e635bc263cd6e0963db90f7d7e58dc4163c838aab5abee44befb0b20def"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 28,
+      "label": "EMLO adopter name",
+      "sourceSha256": "4bd90767da952392e899a787d82ce410be58fc17091da587ef30b5791bb3aa83"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 40,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0e9f0c0f7cfb3e61c94f2b0a65514ade9bd24ea981e1996a9e2279170dff771b"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 40,
+      "label": "EMLO adopter name",
+      "sourceSha256": "0e9f0c0f7cfb3e61c94f2b0a65514ade9bd24ea981e1996a9e2279170dff771b"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 41,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e8e445b15fb1905a892fc050b17c900fbf35c2b93688cb03ebacca8db1a14ffa"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 41,
+      "label": "EMLO adopter name",
+      "sourceSha256": "e8e445b15fb1905a892fc050b17c900fbf35c2b93688cb03ebacca8db1a14ffa"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 52,
+      "label": "ECR registry term",
+      "sourceSha256": "b1c6811b3d4bb2e9710e8eb94e08fc4e54502b5d5803c7c21ebffc69664328ae"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 52,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "b1c6811b3d4bb2e9710e8eb94e08fc4e54502b5d5803c7c21ebffc69664328ae"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 82,
+      "label": "EMLO adopter name",
+      "sourceSha256": "f5918e9e7207b9459eb1207733deb3b85b10e79f7b669551f1f0ba19ccdfe105"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 83,
+      "label": "ECR registry term",
+      "sourceSha256": "d33cc1b959ccf40c3b7fad24886fef03448dddfcdf63936a1f0ce713aa083dd8"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 84,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2e85666272254499cc94f8daf9ebd2116725d423799779e99e58aeb44e847b11"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 87,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ba8af7724e7a91031ff0bcb03586576dc84ef1c3e420621e8c37e1e76fc2bbea"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 98,
+      "label": "ECR registry term",
+      "sourceSha256": "b08f96b769c4e1c3b4c2a10641f994fdef0d83c516e8131d5a4b42addbee0190"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 99,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "98991ef1e828aea4f06b35418ae1b3c312ea6c879981710a14858dfb4577ea66"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 349,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "173450ebc9b14f8306d40e41a2468841b2f4be82f81d5b12b9b2181962a731f4"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 349,
+      "label": "ECR registry term",
+      "sourceSha256": "173450ebc9b14f8306d40e41a2468841b2f4be82f81d5b12b9b2181962a731f4"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 349,
+      "label": "EMLO adopter name",
+      "sourceSha256": "173450ebc9b14f8306d40e41a2468841b2f4be82f81d5b12b9b2181962a731f4"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 349,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "173450ebc9b14f8306d40e41a2468841b2f4be82f81d5b12b9b2181962a731f4"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 349,
+      "label": "remittance domain term",
+      "sourceSha256": "173450ebc9b14f8306d40e41a2468841b2f4be82f81d5b12b9b2181962a731f4"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 352,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "f53a405d083680f982c8ff3bb1a19e376afad27988ca1fe3272addb9d53c7915"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 403,
+      "label": "EMLO adopter name",
+      "sourceSha256": "501fd2438e089ba9cb20c8bfbdc7405202b1f943ee47d525445862968c382e34"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 413,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "e0cbd82e2c9dc7c7d3d9b1b184480c877f259c5c52e23b6a59cbafe697423a2e"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 414,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "32b01a2a2d18b0a506b117174bab3a2866192279b8adb39ffd4485a2d8e657db"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 416,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "747c098ef4f9c64b8575f6f6b648cd44a51be9e85527675cc5bb722920001e99"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 420,
+      "label": "ECR registry term",
+      "sourceSha256": "44dea2c1f8cea6be0e68b14415bc3bb7f4ba3b6c9175d28e2cd098028cd8fcd0"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 420,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "44dea2c1f8cea6be0e68b14415bc3bb7f4ba3b6c9175d28e2cd098028cd8fcd0"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 423,
+      "label": "EMLO adopter name",
+      "sourceSha256": "fa9016c5831357d8ac06cde8bf7330b31b3ce517c5a26913c2b874064be04838"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 425,
+      "label": "ECR registry term",
+      "sourceSha256": "cd2f2621a0a9a7fd641145af4460b5effb2b244e2c80c0d94f51a62815659f23"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 425,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "cd2f2621a0a9a7fd641145af4460b5effb2b244e2c80c0d94f51a62815659f23"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 426,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dc72ab2121b5211cc019a908241f71c9f7de2e778d0aa607efaaf112d6576155"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 427,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "495881a0b3aec6645b690ed98b2f39eb7aea6a83dc2bb820af404bbf3f8027ee"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 429,
+      "label": "EMLO adopter name",
+      "sourceSha256": "f48fa0356449c57782357aad36d29283b74087897a84e46d715112573318341e"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 430,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0765dfa44cbe0e44c9d306db589924b176e8d6afdab39b18fa069e2eaaf4c5bb"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 431,
+      "label": "ECR registry term",
+      "sourceSha256": "b3db41e4c0564d03ec4e6558f88ac808b70d8a5c7f9252e4ed8db75b717b7c39"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 435,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "05debb42420a2fdeacda4f83c08940520d90d806b684c9b3bc91d550c947ade6"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 439,
+      "label": "EMLO adopter name",
+      "sourceSha256": "1ab0eb4a1608cfc047ea82120e98f903a150cf59c174a6c556ba54753ac708fa"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 447,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "352d5d2daf50f2bb51cd746fe0df3fe2c97c37ca00e19cd2bbfd5ed7ebab94d0"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 455,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "86e38f8d1c7795f19ac2a64721840c1f17e381f8ed90547aed482a9cb1ba4685"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 479,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "659467a20d4d3df71c119ee7efc7b8db5db487be15f2b14cd0acea15765c1548"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 484,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "64b5cd0944d7d9a8627a399b1c8d90b54c905ad0f6727cf86e93534a10fed1bb"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 485,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "35e40bae74641d6accbbe10b08c2d18340eba25bccc700b17643b10ae83aa326"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 490,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "16234aed4d084b2afa4d15963793a9b2d918bec2052595e9c43d3a63d7e41eae"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 494,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "02c910110a528eaf4a88d6400309d7354b73ffed2f71416d06547a802e02b694"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 496,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ad76a1f2a33244f353007d5eadbede39670bfde70c7f2cab3dcdc60b870ea4b5"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 498,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "cf27dd4ba3957cfee17b60a21ec445454f2f731c5e3a472c83893cf033b22b11"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 512,
+      "label": "ECR registry term",
+      "sourceSha256": "f368c2bb0d98e5bf14afaf2eda17e14de087bef209e133182dd48271929b96b8"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 512,
+      "label": "EMLO adopter name",
+      "sourceSha256": "f368c2bb0d98e5bf14afaf2eda17e14de087bef209e133182dd48271929b96b8"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 514,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d9ee0dc025543f4c2caa4a68dd10fdb7c22394f82b9b8e54bf6e0e048b30f5d1"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 515,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d1c8a49b790a2b3f72114cef49a50ccdcc095a8f632ff2787ec124e679d36036"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 516,
+      "label": "EMLO adopter name",
+      "sourceSha256": "d5a04d30e06f675716f30dac4ab75ee27e8cccc6b28e3c2ec2791846d9cfc100"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-07-18-emlo-control-plane-remaining-execution.md",
+      "line": 519,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a1f2bf702a61e9ff3f5c7ba256303db1a286dec8633890de5d23b8434fa44f0a"
+    },
+    {
+      "file": "examples/choice-tp-observer/Dockerfile",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5eae2790016823c6340bab8ac85901e0f058f3a68f038fd0989af1ccff7c1693"
+    },
+    {
+      "file": "examples/choice-tp-observer/Dockerfile",
+      "line": 8,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2dde31e4854fb6eafefbb527f93e697333d749c5b79731ad1791e22c87856c55"
+    },
+    {
+      "file": "examples/choice-tp-observer/Dockerfile",
+      "line": 9,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2dc38ddc89bbb5c6a7f9f8f31d6e545e1a562c23deb451b2812c0665f6997ffe"
+    },
+    {
+      "file": "examples/choice-tp-observer/Dockerfile",
+      "line": 10,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e53cc1a51a37125dec2307293bc9cc6b3687910c7bd1ee8cbcd963b30cbb840d"
+    },
+    {
+      "file": "examples/choice-tp-observer/Dockerfile",
+      "line": 12,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0b4579dd4e57a9dfaadc62c1e9320d658833b7aef6889ce4df888a28887cb648"
+    },
+    {
+      "file": "examples/choice-tp-observer/Dockerfile",
+      "line": 16,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4a5c96a7b2cc2487a946c2f976b3e9342c6ebcc3fc76df27515184623056da97"
+    },
+    {
+      "file": "examples/choice-tp-observer/Dockerfile",
+      "line": 17,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dbc38868bbbd570ad779d5329ebce94ba74920fc337b27fbb4a4652f8cb6f6c4"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f6cf1e9be95566059d8ea91254b808eb7bee6d3bc5793a151ad6d72889218839"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 1,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "164b2c27d9563d20cbfe89652e6f9f6e982f60e272ade2fc0e8953b46e730147"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 3,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ab68efa9549804fdba1e8096e616671d6a26ece6d1b8db694ba70a9e4f8d0a21"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 14,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "db1965b0b7fb704e6262241b76f53d4b2c0d8a68bd9da416129cca2f8a842704"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 18,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "64b1857350e15fb611fcabcc0b0a04b9450f19257e8738d669c132e5177eb841"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 20,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f9be4dd5032446b54d3fe3dfd2cb5da0f0401796b2d567e7cef9011b06cd1ea1"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 21,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "61bd646ae458f99470e87d66bf6d5c65620e2b6795494165638211d206674f0e"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 31,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "ae69bb97f72987dad20b4e4a0e33e0a5dfbb291bf2d075bdb47bb56afc3eca47"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 38,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "b4f43ceacb3730d88acb91796dfd21d254874e9f1c46eea2b55f7905074a004f"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 42,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "43c97f9d7b645574ddf4d2655d40f0f047b085cb46ff1e66612448248f601c11"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 44,
+      "label": "EMLO adopter name",
+      "sourceSha256": "b183a2e3fe41d46c5d25313f50bf57fa97cc28ea5d4e20db8c3c6a51c41d56ab"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 47,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "6bd5582a4e460812ff9acfe12ea29984fe20fd12f821ab686c4ab1eb93044715"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 49,
+      "label": "EMLO adopter name",
+      "sourceSha256": "88901e650f3fd50e7fa7ba9552e520126ffeb021d646bc2f9e1dd82f979b7701"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 85,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f68f2cdf7ac77cc975ee5af050a2482f55b2bd955a670661512423e0fe70cf71"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 147,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5439aeb7905e434b63f83df7c5cff146f5a7573f69271b728c31cd661322af3b"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 148,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "92450b0738053dea4a0205c1a88b68743860fea30ce8cf441a18cf164a6dbc80"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 155,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a47856ec52f071d2842b67c869ce88e59d1e7f60a47412c6085aa86c2a3e194b"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 156,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9e033f3209c563bf6f5458245e0789a5d022f495829a956b3b99506d7de06765"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 161,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "79a0fa00e2d5c800ee9cbe392794200c8d48414800d903c3fb361ef92010c19d"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 162,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "329abe6384f6c96da4c1c1ec4101a03240a10071fbb6e134a1131936716b6d54"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 170,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5addc5d1a0fd629590a76b26de3a966708055b11b28d787349eabcd0f43c2f7a"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 177,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4e254dd4cfde3131d0fa7e273d9944fba30181e5c093d6f83d460f7d7f403370"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 178,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "105479c7db9eb3cd656610ec7ce1c55e9c24617503ed7e016acce94e43825575"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 179,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a84fb3cfbf7f9960e7717eb5b42efc19584c639320e8bc00395b6d230f0ab1f0"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 180,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3ac332710710a9f33a1356dc3786ed734872ed7ad4a4415a5d6410d23c3d1dff"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 181,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "272e8393cefc60d803c76620e21cd0f0a7eb88adaa003efd8bdc533392fbac42"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 182,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3d55db3d131280561e845f11b7d33ea082fc848b1013b2b132f5fa5d9ae067a4"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 183,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2154cf512424077c89d3dc1c088cb391a5e54cd15e0e3f87eb0bdb78057a7317"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 184,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ac3d4a48cf82cf1737e58925ea21c3585d4bbb16b221cbbde8859e67c2b4dfb5"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 215,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "57321df392c79a85e5950e6cd4d03416680867a4db6221ec4f697466cb18a145"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 216,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "11765ba40766f61a97cc4040be6afdab59f5eee9b211e6d4b188598e0e66c133"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 222,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3fbb19307626ca309517ad6bf123f1741a5bc6a31423304dce267677c5ba82a7"
+    },
+    {
+      "file": "examples/choice-tp-observer/README.md",
+      "line": 222,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "3fbb19307626ca309517ad6bf123f1741a5bc6a31423304dce267677c5ba82a7"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2def39d3337be307582e53ca0e2cd34dc9952c8ec059db54396fbadf78e981f8"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 2,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b1f8bfbe747280e59dfb6750640419b0b11935ed4dd7cbfb7b64aec3950b08df"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 2,
+      "label": "EMLO adopter name",
+      "sourceSha256": "b1f8bfbe747280e59dfb6750640419b0b11935ed4dd7cbfb7b64aec3950b08df"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 3,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9cc6b3fca426dd43c340ef7b6fe9252846c39603d9d4795e9968e651f369eecf"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 6,
+      "label": "EMLO adopter name",
+      "sourceSha256": "eea15c58ef81a02364844330f3496823a63856dfc542bcb12dda1d7b47ffd1ad"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 8,
+      "label": "EMLO adopter name",
+      "sourceSha256": "375a0f3efc1ea1b6136fa41b5102674d68bbc40726c679b713e8110c886b332d"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 11,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2c0379f234ac0abdaa673860fb13b39ed92e45d45efeb895859e8489ea675f91"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 11,
+      "label": "EMLO adopter name",
+      "sourceSha256": "2c0379f234ac0abdaa673860fb13b39ed92e45d45efeb895859e8489ea675f91"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 16,
+      "label": "EMLO adopter name",
+      "sourceSha256": "053f354938487a6a66f83d55e15b66a20c374656da09436b9223d989faa219f0"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 16,
+      "label": "private POSIX home path",
+      "sourceSha256": "053f354938487a6a66f83d55e15b66a20c374656da09436b9223d989faa219f0"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 16,
+      "label": "remittance domain term",
+      "sourceSha256": "053f354938487a6a66f83d55e15b66a20c374656da09436b9223d989faa219f0"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 17,
+      "label": "EMLO adopter name",
+      "sourceSha256": "6209bd1f6b0da4edd760c6b0266916c131fca182cc050b4db77fba366c096d9c"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 17,
+      "label": "private POSIX home path",
+      "sourceSha256": "6209bd1f6b0da4edd760c6b0266916c131fca182cc050b4db77fba366c096d9c"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 17,
+      "label": "remittance domain term",
+      "sourceSha256": "6209bd1f6b0da4edd760c6b0266916c131fca182cc050b4db77fba366c096d9c"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 28,
+      "label": "EMLO adopter name",
+      "sourceSha256": "7f952c554f89c7506ce999a355af41bbfe3325aa793f398691bb6cbd276a9f1f"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 28,
+      "label": "private POSIX home path",
+      "sourceSha256": "7f952c554f89c7506ce999a355af41bbfe3325aa793f398691bb6cbd276a9f1f"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 28,
+      "label": "remittance domain term",
+      "sourceSha256": "7f952c554f89c7506ce999a355af41bbfe3325aa793f398691bb6cbd276a9f1f"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 29,
+      "label": "EMLO adopter name",
+      "sourceSha256": "28992b8ef343e27f07a66579b7f4e3728d3cd20c2dfd2c462cf6d141788db17a"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 29,
+      "label": "private POSIX home path",
+      "sourceSha256": "28992b8ef343e27f07a66579b7f4e3728d3cd20c2dfd2c462cf6d141788db17a"
+    },
+    {
+      "file": "examples/choice-tp-observer/choice-tp-dev.profile.json",
+      "line": 29,
+      "label": "remittance domain term",
+      "sourceSha256": "28992b8ef343e27f07a66579b7f4e3728d3cd20c2dfd2c462cf6d141788db17a"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "db80e298bdf8c64514f3dd964d3ad4aeec2436c9c73e1f71a1bbc96832198b96"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 2,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9fbd0ab16db4ee7c2caf043b6377a0ad18bc443d5145c55e248208fa714ad41a"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 15,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4e1cf1a9d7314a6bd7abba7af1e2f245ac1b0320170799ae2247dd3e7a31a7bb"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 16,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dc13d71e030bab65aca78606d824450f7fe739dbc2da0223096e776a5240b670"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 17,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "cc76b8f78720766b70e74f76cef4a2a22f3bfdab19e63ac702f3eb3e65dda5a2"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 18,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3bfb9045e28ad22c791d6835c59fe0d46cc6df6bd26e13fad9e18896a88cf062"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 19,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2b14c1bacb8a5e0daae0e7fd4f6f67c3499749151697d8f43a8441178e57db64"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 20,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e9c61cf9f435d4f356e85c287f7c6d00201b64f1109aeac244d3c28e17c31963"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 21,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "7ba3cd54cd017825d6f76299b534dee32fa56e5d7b166ae54a5c7d0ef3f97dfb"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 22,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "65956b5e09cf894ac4dd9d070ba3dc7996f2c9b4d5d9df8cba15ac08fa388b53"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 27,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "503f528dfc151c189f1b11229448a8407958ab238bdc3a70562b337b5e50a2be"
+    },
+    {
+      "file": "examples/choice-tp-observer/compose.yaml",
+      "line": 29,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5d0948b0af34b5250782fe9c1f644299bd5432ad6eb88ec5d208c4785d0e5f47"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.c1-t1.example.json",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4d9d818ca1cfd80b4cbcd6a9c59794d41a88e93c0d26cc0ddbb4de91e2a1b280"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.c1-t1.example.json",
+      "line": 2,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ea31504321e177ad8b7f59cb81874564f4bfbcb650424f912f83c27ad75c70f8"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.c1-t1.example.json",
+      "line": 2,
+      "label": "EMLO adopter name",
+      "sourceSha256": "ea31504321e177ad8b7f59cb81874564f4bfbcb650424f912f83c27ad75c70f8"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.c1-t1.example.json",
+      "line": 3,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "03ba9578df106b90e1a68aa6aee7153539e6818afc6c5d9574a1afe8a00eb671"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.c1-t1.example.json",
+      "line": 8,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "86f57d45725ec9d5ca4634ff7e555e5593aba4a77fd882a59d6eed89d61ae332"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.c1-t1.example.json",
+      "line": 9,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "61a412e7a9a4213bc06573493835ce49d915e087ff786f37e44213d7bd3fb994"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.c1-t1.example.json",
+      "line": 9,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "61a412e7a9a4213bc06573493835ce49d915e087ff786f37e44213d7bd3fb994"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.example.json",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "c773eb698ea208c8d0fd1e25c6d26e52e9483c1fd1fd210b4dec7a4d60565cfb"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.example.json",
+      "line": 2,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ea31504321e177ad8b7f59cb81874564f4bfbcb650424f912f83c27ad75c70f8"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.example.json",
+      "line": 2,
+      "label": "EMLO adopter name",
+      "sourceSha256": "ea31504321e177ad8b7f59cb81874564f4bfbcb650424f912f83c27ad75c70f8"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.example.json",
+      "line": 8,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "6fbae49da6f4fde4bfa5c7b2c9d810358e0526f2947086d80d4d83b9f9989845"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.example.json",
+      "line": 9,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "61a412e7a9a4213bc06573493835ce49d915e087ff786f37e44213d7bd3fb994"
+    },
+    {
+      "file": "examples/choice-tp-observer/intent.example.json",
+      "line": 9,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "61a412e7a9a4213bc06573493835ce49d915e087ff786f37e44213d7bd3fb994"
+    },
+    {
+      "file": "examples/choice-tp-observer/known_hosts.example",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3b060c5069d2c05574acd20d431f89eca5b50d26fcfa1d2afcf8c4a41a9b4de5"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9c8e25f098f4878b8357fbf54bd83bc312aff24f593e3ec3c55c7d6bef64b009"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 22,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4925bb54f111c5551fa80f3169474167a01c4adcb1b838519b0d04138d8a3332"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 25,
+      "label": "EMLO adopter name",
+      "sourceSha256": "01431a44a4316cf508bbb02fe2e5772c5376929fcdf04dd2ba75cc0891a8f0d3"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 27,
+      "label": "EMLO adopter name",
+      "sourceSha256": "c99bc8a01ca24db39d045ac024869b1e0e179538547e53d8a682f3336095f02a"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 32,
+      "label": "EMLO adopter name",
+      "sourceSha256": "8bf997cc55ad84b129f9145105f8579da62290a71ddcc223adee180ec64124a8"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 32,
+      "label": "private POSIX home path",
+      "sourceSha256": "8bf997cc55ad84b129f9145105f8579da62290a71ddcc223adee180ec64124a8"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 32,
+      "label": "remittance domain term",
+      "sourceSha256": "8bf997cc55ad84b129f9145105f8579da62290a71ddcc223adee180ec64124a8"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 33,
+      "label": "EMLO adopter name",
+      "sourceSha256": "2255592e6d02b9cffc5a7b732725874efe5d0f0b3787421539627582c4a4518f"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 33,
+      "label": "private POSIX home path",
+      "sourceSha256": "2255592e6d02b9cffc5a7b732725874efe5d0f0b3787421539627582c4a4518f"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 33,
+      "label": "remittance domain term",
+      "sourceSha256": "2255592e6d02b9cffc5a7b732725874efe5d0f0b3787421539627582c4a4518f"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 39,
+      "label": "EMLO adopter name",
+      "sourceSha256": "9c5948563c1ee57a89720f51c0e8b28e89ddf6bd3c6801ac00c4b1f3d0fdbde2"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 39,
+      "label": "private POSIX home path",
+      "sourceSha256": "9c5948563c1ee57a89720f51c0e8b28e89ddf6bd3c6801ac00c4b1f3d0fdbde2"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 39,
+      "label": "remittance domain term",
+      "sourceSha256": "9c5948563c1ee57a89720f51c0e8b28e89ddf6bd3c6801ac00c4b1f3d0fdbde2"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 40,
+      "label": "EMLO adopter name",
+      "sourceSha256": "0234ca83536a588c2a6c219c372c852ab810bfc03079980ec63efd68a5639a42"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 40,
+      "label": "private POSIX home path",
+      "sourceSha256": "0234ca83536a588c2a6c219c372c852ab810bfc03079980ec63efd68a5639a42"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 40,
+      "label": "remittance domain term",
+      "sourceSha256": "0234ca83536a588c2a6c219c372c852ab810bfc03079980ec63efd68a5639a42"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 154,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3fa3bbfa8a6012f0dbf0c1f197f159b30be58c61f6edd474bf352e8a773ab939"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 157,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d9ee918998b33179d2c6662b01fe8fd769c6d415ffe6d28d413d497d72a63aca"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 157,
+      "label": "EMLO adopter name",
+      "sourceSha256": "d9ee918998b33179d2c6662b01fe8fd769c6d415ffe6d28d413d497d72a63aca"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 164,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4f2bf4beae0d8023c2dfc092798c2564d627f13daba36909f8399c16e36c68a5"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 164,
+      "label": "EMLO adopter name",
+      "sourceSha256": "4f2bf4beae0d8023c2dfc092798c2564d627f13daba36909f8399c16e36c68a5"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 173,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9f4eac56631107586023ef18ab518da6cc81cf9b8d8412b26a1ab4fad9ea05fb"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 208,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "6be4bc1c0649d36b15156062257d7acd627812e097ce58162dbcb8725261d8bb"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 208,
+      "label": "EMLO adopter name",
+      "sourceSha256": "6be4bc1c0649d36b15156062257d7acd627812e097ce58162dbcb8725261d8bb"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 218,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "981f9a18e07aa767876b1784596e2529bd399d46b31457dba6e50285cbd60212"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 237,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ce7d9c4fa9c042cf9277f5e4d90ebe1f443f4f07d181f64a8250a31d0f1877d9"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 511,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "647c62f7906884625798bbd18b84101835ea67a99619e7964d299be5698694bc"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 511,
+      "label": "EMLO adopter name",
+      "sourceSha256": "647c62f7906884625798bbd18b84101835ea67a99619e7964d299be5698694bc"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 819,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4e25c5fd87c82373eb79fb994957cace00887597d9bcba608858f9ada595cbd4"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 819,
+      "label": "EMLO adopter name",
+      "sourceSha256": "4e25c5fd87c82373eb79fb994957cace00887597d9bcba608858f9ada595cbd4"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 846,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5645a8768236416d47932554498e8e9b51c86dd0845690bba1e926e81a852632"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 846,
+      "label": "EMLO adopter name",
+      "sourceSha256": "5645a8768236416d47932554498e8e9b51c86dd0845690bba1e926e81a852632"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.mjs",
+      "line": 938,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4e426f7dc86efae7846d0144c6b5883e1d52932ec020dac88cb3190566c0d121"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "7ee6622dd6b5c635eae72a6af01255d032e2a57733a719ebe749b82e34f57080"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 39,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4d39567fd29bed5ba2b08597e6693a1169ffba61014fbf0f8380e586b6781c43"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 39,
+      "label": "EMLO adopter name",
+      "sourceSha256": "4d39567fd29bed5ba2b08597e6693a1169ffba61014fbf0f8380e586b6781c43"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 40,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4925bb54f111c5551fa80f3169474167a01c4adcb1b838519b0d04138d8a3332"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 43,
+      "label": "EMLO adopter name",
+      "sourceSha256": "01431a44a4316cf508bbb02fe2e5772c5376929fcdf04dd2ba75cc0891a8f0d3"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 45,
+      "label": "EMLO adopter name",
+      "sourceSha256": "c99bc8a01ca24db39d045ac024869b1e0e179538547e53d8a682f3336095f02a"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 48,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "845c66d9ce1123b7dffd063535c88fd4691d4c3e45a4d46bcc106a5810e34814"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 48,
+      "label": "EMLO adopter name",
+      "sourceSha256": "845c66d9ce1123b7dffd063535c88fd4691d4c3e45a4d46bcc106a5810e34814"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 53,
+      "label": "EMLO adopter name",
+      "sourceSha256": "4a9b94957c4af9c87049fdaca804034bf5d2d2129ba813aab4ef566bd598ded1"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 53,
+      "label": "private POSIX home path",
+      "sourceSha256": "4a9b94957c4af9c87049fdaca804034bf5d2d2129ba813aab4ef566bd598ded1"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 53,
+      "label": "remittance domain term",
+      "sourceSha256": "4a9b94957c4af9c87049fdaca804034bf5d2d2129ba813aab4ef566bd598ded1"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 54,
+      "label": "EMLO adopter name",
+      "sourceSha256": "eab852e6cd8060428793714b6de367ccb4396eebcb8b358e5b08c4360c25efef"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 54,
+      "label": "private POSIX home path",
+      "sourceSha256": "eab852e6cd8060428793714b6de367ccb4396eebcb8b358e5b08c4360c25efef"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 54,
+      "label": "remittance domain term",
+      "sourceSha256": "eab852e6cd8060428793714b6de367ccb4396eebcb8b358e5b08c4360c25efef"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 65,
+      "label": "EMLO adopter name",
+      "sourceSha256": "a0e9267e09bf47cc79997b75e3686f1d9ebae9b1ed556072efc74020267b5432"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 65,
+      "label": "private POSIX home path",
+      "sourceSha256": "a0e9267e09bf47cc79997b75e3686f1d9ebae9b1ed556072efc74020267b5432"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 65,
+      "label": "remittance domain term",
+      "sourceSha256": "a0e9267e09bf47cc79997b75e3686f1d9ebae9b1ed556072efc74020267b5432"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 66,
+      "label": "EMLO adopter name",
+      "sourceSha256": "9278f8c3b2dbfb6630fb29c833b783fed77381a3038841b1796a91593e05bb40"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 66,
+      "label": "private POSIX home path",
+      "sourceSha256": "9278f8c3b2dbfb6630fb29c833b783fed77381a3038841b1796a91593e05bb40"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 66,
+      "label": "remittance domain term",
+      "sourceSha256": "9278f8c3b2dbfb6630fb29c833b783fed77381a3038841b1796a91593e05bb40"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 99,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a4e5190a384034c8747689a50cc24026e5ebe7cacfc8ab72cf9806cb98d10d74"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 99,
+      "label": "EMLO adopter name",
+      "sourceSha256": "a4e5190a384034c8747689a50cc24026e5ebe7cacfc8ab72cf9806cb98d10d74"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 100,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d0147d35a5e95a574191b6fb5f2b6bfbb13449737a11390b88e0a4b396f1b3f6"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 105,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e31175eda74b68af72c6de1a915e05b18580d9afb96d2ea59d8a8d2188a4db8a"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 106,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2db0dab8e15e4490a88f27417148dcab1a0ffd6d029f7e3d1e63e6c71177d69c"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 106,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2db0dab8e15e4490a88f27417148dcab1a0ffd6d029f7e3d1e63e6c71177d69c"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 138,
+      "label": "EMLO adopter name",
+      "sourceSha256": "e02eb7cf29fe8fa3fbfbe0f28e3e0cad71282c2ad2351404a2a75a060d07eacf"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 138,
+      "label": "remittance domain term",
+      "sourceSha256": "e02eb7cf29fe8fa3fbfbe0f28e3e0cad71282c2ad2351404a2a75a060d07eacf"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 264,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b99ce4a13dbf1e7cf16719fe74ee346929b5e6540bc64c081e1c8ab8a58108eb"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 295,
+      "label": "EMLO adopter name",
+      "sourceSha256": "218fa0abf6c47364cd4b6d477c86e6a0e49e8d5bb2d8ba338173a38e103aea41"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 434,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5425790c03c425c1a47275c9ff332562ef5377aa4d0f3fff0d1cc95b3a55b0f7"
+    },
+    {
+      "file": "examples/choice-tp-observer/observer.test.mjs",
+      "line": 434,
+      "label": "EMLO adopter name",
+      "sourceSha256": "5425790c03c425c1a47275c9ff332562ef5377aa4d0f3fff0d1cc95b3a55b0f7"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "26ea35fc2c8c2cbfc1c1989a02da27253ef85b9521d8819e7cd50ba3c6a4e8a3"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 2,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "8255b108876303479abc7cbb206b3b511d3acd09dc47619cdfc87041a251bb35"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 2,
+      "label": "EMLO adopter name",
+      "sourceSha256": "8255b108876303479abc7cbb206b3b511d3acd09dc47619cdfc87041a251bb35"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 3,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1eaa6d46e5094927ea841cc6f772a5b54f14ea6c286d7a9a679a09404025a1f6"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 4,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "7aa681aa99edad55f8df32ad8a96b760374c5416fe77877470e03b87b8ee3f94"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 5,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "506ed2b8c388102d864d69d0566ff8440ef057ca1e753e68fe5e30a0f2efe503"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 6,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5c6ced642387033e49b83d6d111e130e0a1c34164a0fcaa9df682eba060e0338"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 7,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "c40de3a925d6164a9859cdae71bc92bb8427e5c2bbf266eb7b1d1d484cf504a0"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 9,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "555194aedc0bff543876385ed1d250a6f3f3312ccd412eb9a985ddd469adcda4"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 10,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2bd1a8d23daf47ac019c40cee61dab01edcd12eac3d2364d8164813e120c1fb6"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 11,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "42f00039dd6a65638c983d1b035e095bdba40fdf8850e0af02e88122f7bd288e"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 13,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "88012010df444a787de59215d7218616c3107a04672a080f83d67943743a38f3"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 27,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "8ab7528f72a14e07bf0e7eceb1536ce9543ef40e8eb6636147fe1b1e9d2d127d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 28,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1953f79e70764f64c054d22ba718191ec19e3754ed4e2b5830dba2b48b5bdcf5"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 28,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "1953f79e70764f64c054d22ba718191ec19e3754ed4e2b5830dba2b48b5bdcf5"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.example.json",
+      "line": 32,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9aaf035e39b07103303ec4ae2ecd6fa6b47883e02e789bf1a23257a2e3d6ff3d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "3fb86881e6ae06285c48190809b3e145f07b3f802d992852e7da8ed3ce45562d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 95,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0a153e2f6b562e7c25ba206ffeaa7cee42d0fd77ea2d1727adfd3e14f8443731"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 95,
+      "label": "EMLO adopter name",
+      "sourceSha256": "0a153e2f6b562e7c25ba206ffeaa7cee42d0fd77ea2d1727adfd3e14f8443731"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 167,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "0fd34993eafad2c25e6cb284a2fd6704af107a3b137193700b6c8858971bfbef"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 268,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ee39a1c1a2553f70cf767f0c00fc1261c63d760cf1f077b579fc2b709d3dec83"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 274,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9786eac6fad7bd15d2f4e506dc641c1c28f0610243387739bdf188c66c506b86"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 274,
+      "label": "EMLO adopter name",
+      "sourceSha256": "9786eac6fad7bd15d2f4e506dc641c1c28f0610243387739bdf188c66c506b86"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 276,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "61eb3016f71ed085a1039d1e32b5fbb995ebbc4f77e4996b2b990644ddb3a48d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 332,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "9e82ed5f747d0588753ce8074b340a8fec47b8ed8f68853c92397e03e622a1da"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 395,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0bb8561218071334e04c62400a7f05d7d2f4a9bf55a57b028485a209f720d62d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 395,
+      "label": "EMLO adopter name",
+      "sourceSha256": "0bb8561218071334e04c62400a7f05d7d2f4a9bf55a57b028485a209f720d62d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 429,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "c284e4dd5dfb329cc2102ab02f2d70b681a1725cac2e64d271af3f7fdb044911"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 429,
+      "label": "EMLO adopter name",
+      "sourceSha256": "c284e4dd5dfb329cc2102ab02f2d70b681a1725cac2e64d271af3f7fdb044911"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.mjs",
+      "line": 746,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d313fb67fd3e7b030928fabee706bcc96aeda9e79f35d6407828aad01d1bf4ef"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d9602fc9672cd1253aeeb9af93b0681dff872b579c1b3a7e006deabcd0ab33a0"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 13,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a42facda4d78c40bb6eae9aeaa6088d28c21a7c88caf0a126418d017b571e084"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 52,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "67677b0e209eb3a23f9832a6cdd2930202e7f10c639b02623ce5cd569782437e"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 52,
+      "label": "EMLO adopter name",
+      "sourceSha256": "67677b0e209eb3a23f9832a6cdd2930202e7f10c639b02623ce5cd569782437e"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 54,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9869d2a9057cb2159a61918f33f4285022551e64783f8d99b6294b8ac50d1a5b"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 72,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a4e5190a384034c8747689a50cc24026e5ebe7cacfc8ab72cf9806cb98d10d74"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 72,
+      "label": "EMLO adopter name",
+      "sourceSha256": "a4e5190a384034c8747689a50cc24026e5ebe7cacfc8ab72cf9806cb98d10d74"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 73,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5360945074648362569d6c36d1020dd403442ace50046da6403f8636203a454a"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 78,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dcfefddf4d5b07eedc7bf24e37dc60e43f04a3bb79b640dd394b067d313295ed"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 79,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2db0dab8e15e4490a88f27417148dcab1a0ffd6d029f7e3d1e63e6c71177d69c"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 79,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2db0dab8e15e4490a88f27417148dcab1a0ffd6d029f7e3d1e63e6c71177d69c"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 100,
+      "label": "EMLO adopter name",
+      "sourceSha256": "e02eb7cf29fe8fa3fbfbe0f28e3e0cad71282c2ad2351404a2a75a060d07eacf"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 100,
+      "label": "remittance domain term",
+      "sourceSha256": "e02eb7cf29fe8fa3fbfbe0f28e3e0cad71282c2ad2351404a2a75a060d07eacf"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 115,
+      "label": "EMLO adopter name",
+      "sourceSha256": "8b2b60bd7ffc1935b9702eaa3b23425210cce2d5afa3ebc6ae1a2aff144b230a"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 115,
+      "label": "private POSIX home path",
+      "sourceSha256": "8b2b60bd7ffc1935b9702eaa3b23425210cce2d5afa3ebc6ae1a2aff144b230a"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 115,
+      "label": "remittance domain term",
+      "sourceSha256": "8b2b60bd7ffc1935b9702eaa3b23425210cce2d5afa3ebc6ae1a2aff144b230a"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 116,
+      "label": "EMLO adopter name",
+      "sourceSha256": "6f733a87acd0251932f3c33800c9b2b77a2ea06c0efa383dcb855f8544d7334a"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 116,
+      "label": "private POSIX home path",
+      "sourceSha256": "6f733a87acd0251932f3c33800c9b2b77a2ea06c0efa383dcb855f8544d7334a"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 116,
+      "label": "remittance domain term",
+      "sourceSha256": "6f733a87acd0251932f3c33800c9b2b77a2ea06c0efa383dcb855f8544d7334a"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 119,
+      "label": "EMLO adopter name",
+      "sourceSha256": "c06fe4cadc8a6573680e22a8a4f91ece0d41da7519de93108ff587efda05ff8d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 119,
+      "label": "private POSIX home path",
+      "sourceSha256": "c06fe4cadc8a6573680e22a8a4f91ece0d41da7519de93108ff587efda05ff8d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 119,
+      "label": "remittance domain term",
+      "sourceSha256": "c06fe4cadc8a6573680e22a8a4f91ece0d41da7519de93108ff587efda05ff8d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 120,
+      "label": "EMLO adopter name",
+      "sourceSha256": "b6f7ac3d5b0a8e9fe46fbd3b442be886c52896a807ba6d2f139d67db10122718"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 120,
+      "label": "private POSIX home path",
+      "sourceSha256": "b6f7ac3d5b0a8e9fe46fbd3b442be886c52896a807ba6d2f139d67db10122718"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 120,
+      "label": "remittance domain term",
+      "sourceSha256": "b6f7ac3d5b0a8e9fe46fbd3b442be886c52896a807ba6d2f139d67db10122718"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 137,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "53fdbdd0787bcd6b9c8eb776447376e8512ccadd83c25c1cbfd6524d785bd188"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 159,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e32d05bcb81e2022b37454a80804efab149e7298cb44491c6d0cfa4a7380b1af"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 168,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "66bebf5aed0c436488b21208bd8f0899f5b14da2199d94f0881d21000ac61780"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 168,
+      "label": "EMLO adopter name",
+      "sourceSha256": "66bebf5aed0c436488b21208bd8f0899f5b14da2199d94f0881d21000ac61780"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 180,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "7575aa9058864d7ac2f5bf5b5aa49a6f2c5d5c34409400d19b83199d201b091f"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 190,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ceb10957f63e0384cf2006d115d126029ef8e39985621674a7940a21cce42325"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 191,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "fed18b6785d3025a3eeeef2f9dcfb82f18f4a2ca6e475f8cb25038d02c36e20e"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 191,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "fed18b6785d3025a3eeeef2f9dcfb82f18f4a2ca6e475f8cb25038d02c36e20e"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 253,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2e75104caa98743a1c17ba7ba605c6823d98e24442cbf74e37f6e440485f6823"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 463,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a9792fcac36bde20cb86aa2acb246abc1a38724eddbedf13de213cecae6f251d"
+    },
+    {
+      "file": "examples/choice-tp-observer/service.test.mjs",
+      "line": 463,
+      "label": "EMLO adopter name",
+      "sourceSha256": "a9792fcac36bde20cb86aa2acb246abc1a38724eddbedf13de213cecae6f251d"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e0f995f5cd3864f629bcc6f861937dee54d9bd53b26089509260cda4a6be3d23"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 2,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "7a8e56a90189b151399ce4a10da8cc675b80c42d9f7ffec263b673db6e173e9d"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 3,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a6e901c43f9fea34c9982122f05c069d231b7c1886d98bbdf09782c5050821e8"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 9,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b9463115cf40ab738a2b70318804d6e96a51fa2a5b17775facc44c58e80ff14d"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 10,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "60868b288ff61b07d415ff31b9184a76c095f6c3cb3ae93b7191fc7844481a23"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 12,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2da84856e7b1933d13af901b796c8539b6c9d0016b5556073805c95abde87e7f"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 13,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "c29564b7668e9c69159ed9eeba64639cd52e9d4edc55decd274216737af9b812"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 14,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "c68a1e976dce88f71c85e1984878719fa6d2e34c734acf69fb89ebc3bd3043e1"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 26,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dc6a84c220fa1a05c69ad2194ba5459050651e028b9f702047bd0b9fb20177e5"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.service",
+      "line": 27,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "288b27018fc618e76cfdc27a803dada88d55aac816de49b344f5bdee54eba8f3"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.timer",
+      "line": null,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "189383530fd136e7d5773f34d97e519cf4b8a61b342fe664b0a295f51f27343b"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.timer",
+      "line": 2,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0698c1b2930c7f5076e68664ee84ef067258bc5b1a660e184d1411b2fed26e06"
+    },
+    {
+      "file": "examples/choice-tp-observer/systemd/choice-tp-observer.timer",
+      "line": 10,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4685fe5b9cfe138eb36596b04435236920880693363266746132bfa9dda52cd1"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 423,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "bf3f09edf2074467a20d3113efd9d18587aecf6d7d85aaea8c1bfdfef425d44d"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 460,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "98c2ddb2e0b2ca996e8b7199fb7656ea4ca9fcbea8e3c2846a2ada5989d825bf"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 500,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a0b93e5469a6720261feafa2626d3ffd86d8c02d45672d7a311ef5449f185104"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 523,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "71e07aa322c25722f72073c2a315b9be2a6c6a283e919e0460db9f85e204c8aa"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 545,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e6f16812cbe4e121dc4393434aee9cc51629b709ca2d5257560f5a18c66b4ffe"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 572,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f75ff96b8a53ed1252b7958619597dd5c5c4e55366e0b29dd9081899c50f3fe5"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 596,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "655081b35e2452cf1df3afe719d17449ff8a10d5c8ac2ecac27c36ed9009a007"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 618,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "64ff6d92fea0fea3c7a9b6188210fa5327af1ca54082dbd0d8b466b6ade331d7"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 629,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "40ef1a90c4edb9733089422d9f9a503fa75cced802670c345dffd23b4f12b0d9"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 654,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1a3e3f194db753f092d8b4ac4049500590aaf9f20d6433953b9f7328ef958bab"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 669,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0c2229c4150dabecb03e9d59fb81089518d1e5c6a54049e23b8504c906de66db"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 687,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4cc8070e3576ab9eb6e797d31a1658834c0fe7dd93846b197bfa25d574e74349"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 714,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "fe223a10a1e6ea3d388fd6db7d8cc58877532a8a02241fb4d332e0666147f106"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 719,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "34b5a1100af8d5c18d1148a3b310fa44221dbf716c1e756d0971484cc6058681"
+    },
+    {
+      "file": "frontend/ui/e2e/control-plane.spec.ts",
+      "line": 720,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ef635fbc88bda86c735eabe35974b185bdc6e92bc5c190fbbb3ad3cab1e11317"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 279,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "c19392e4817c3032540495064ca16348a7b57d0e2b6097b8191cfc15f99d837d"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 280,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "389ebdc5f33b85a88855db72af3e6bc51785a8820b53ebadb66ed75979d4343b"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 282,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "6bf49f636c8a009883f169e4b8d8efd1476e76a2d94694fd112e11ef48417d5a"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 285,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5d2966b9858b86e2f70cb93fac08f354bdde110ee6a101e69a62a80b12fe116c"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 527,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "f314b067236ca86660060007192fef305bed6aeda25e7f96392d4f54a236dc37"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 528,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "eafb12da8f83fa030c8abc3fb8c60ac891ceab8d19ca06b2885f3e0fa47b3610"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 529,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ed11d025eb0d73d510567e7caf9dce5ff8cc69b5378d43af50e0a54045baa373"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 557,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ef192d446d325e31b528c242c0f5562f197ebbe09f3a39b98572d9c3fc522575"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 573,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "cd611e9b1603e7bccf0399835ce2c9c2c4de876c38b4fcc50a5fdece89999533"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 601,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4fd0f53f39936a00cc6f832e95c6191a3cb876b9647a1f895192c1c82f116dcb"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 704,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b12e172fef768db5fa0b295583d7a6aaba97312f2ffce51c27b16df03d0ec9c0"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 723,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dbb229cfa15a37918530beb250f15bada01c756bdf41526878b290b2c6cd37a2"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 745,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b12e172fef768db5fa0b295583d7a6aaba97312f2ffce51c27b16df03d0ec9c0"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 765,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b12e172fef768db5fa0b295583d7a6aaba97312f2ffce51c27b16df03d0ec9c0"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 784,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "dbb229cfa15a37918530beb250f15bada01c756bdf41526878b290b2c6cd37a2"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 819,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1e30477cd08c2252b6e9eb769628d4a8c93b1f48c2f610f7d0bf5e58d85c7c90"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 824,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "0c0480caba8f117940ef063e162430224d927a35222118bb479e4cba1305a62e"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 841,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d81fe6c504960cbf848a140c634869ef9f3ddeb76bd7fcb6262b9f41898fce73"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 843,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "eeaec58c5827624c583bfa972ce27af1570ef3bec2a6ecfafea9e575e477ea87"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 848,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "04015b765e5d86e8a7c224b982199e9ae592309676aa46bbc6a0549986694061"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 954,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "993a55828ca37daa4531a351209775de0b4034c2c9eae9d7225e0bcd200d3126"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 955,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "76eab62a5cbda9a6787e5aac3002a0a3ae23cb3f89bb1037271ee304abfef81c"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 962,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4d5b0d4e0cd5b7bc2f79a2ccf363cafe2a5fc3438b9b7aa8e6d16360c2f07290"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 968,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ff5e8d9a6bae93e408d9caa69c7e482c6c92f2991b7168ff3720184f90390484"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 970,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "a368a44b46b07bfe7d786305e2b350b7fb3da4b4deffd98859cc2a41ed291e8f"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 972,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9da5f6f60f314515852c68b13e5cd358f05a4c26542c9814de63c854a4db0be2"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 973,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "78de686a3897c979c243f83de099cbc75fc96a5d4af03f7c4f6224b0431441ca"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 987,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "bb67942f3e3168a0a4413ae859fbea3240d1ac36b266445bbba6014ca13f3228"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 988,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "6c3a9128d0b6f6338d7329e8b699faf93d81a383caf8a3d01841365f556ad86f"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1001,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "52e4402505cd6ac1ae7f20ab8094fed9ab94c87414d36d5e3a4c995b4c86736d"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1018,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "29e6f2e96508d77246b94e43704baa1699d7c44c40580f50d60246615e4034ac"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1050,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9da05551f02dc0c85fe225a9a6efe11535b7bef56c32d23a78a527dd1027b94c"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1051,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ee2d23a8604347c9bf96152dcc674ca086c949a43d21321c88469761a04b5239"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1566,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "ad58430bfaa7f29141817a7127c31b5e0908d0d6b6c1b968ccf12e17655f9432"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1567,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "fc839bfee91af7c0f1f668a4ac4d25fa2b9941a7cf1098e7b7a49fd570485219"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1568,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "634d5a4deee29521124bd39144b0e1c0fc2650ed564950638c6d150b1b865a19"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1579,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "47fff077a920fef4fad3616e4938d8cfe939e208b98b0898a1819170f0e791bf"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1582,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "b6f4b1c804020d94e38030c9ef5beed87f6230f555aa33be5e30315ddaed3854"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1583,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2780790f28d2c738cd07196fda4ab7e84d76c5a7330d1786d290ac4675bd48e8"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1587,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "fbe84a7d5b9d31c3a9622d7b66578fe14dab30c34229b6f1bc9fd2a9b02c3843"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1590,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "c922cf529d0289cec76fa1a3c8295877a55f5c214afcb9d900216cd5d44ac26c"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1623,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "d684b0bc6a92acbef1aa49171bc1a9b4b479cdb683d46fe26edfdff7badb9152"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1709,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "9fdbd9fa19da7c041cf217302c3372a579b8e78ee47014b59c0873cfff7b98b2"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1973,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "2a17354124c99a64de7c1ecd0b9f9bb919dc4276c9b027341a87c530878298fb"
+    },
+    {
+      "file": "frontend/ui/e2e/fixtures/control-plane.ts",
+      "line": 1974,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "806386921cae578cdb12252b76436306bdd5120695107dfc26f2e4cbdc31c8e1"
+    },
+    {
+      "file": "frontend/ui/src/app/control-plane/executions/execution-detail.component.spec.ts",
+      "line": 223,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "7c2e39706c9b2d79177cb875b51dc7976c1b7e6be9f9859e3ce05ececcebd3f8"
+    },
+    {
+      "file": "frontend/ui/src/app/control-plane/executions/execution-detail.component.spec.ts",
+      "line": 235,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1326b4a4da8ddded1367e56320ab744e1dde7f4054aff2f0a0959c990ba80f9b"
+    },
+    {
+      "file": "frontend/ui/src/app/control-plane/executions/execution-detail.component.spec.ts",
+      "line": 249,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1326b4a4da8ddded1367e56320ab744e1dde7f4054aff2f0a0959c990ba80f9b"
+    },
+    {
+      "file": "frontend/ui/src/app/control-plane/executions/execution-detail.component.spec.ts",
+      "line": 280,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "5d09dd22a6adf29d761ea02d57e9c3a9982b9460914ec8f7cb9433825d773492"
+    },
+    {
+      "file": "frontend/ui/src/app/control-plane/executions/execution-detail.component.spec.ts",
+      "line": 281,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "4dc073d648e6f8d7b86dab8128c1a73fac091d42a78badcd441bf643dcf3a291"
+    },
+    {
+      "file": "frontend/ui/src/app/control-plane/releases/releases.component.spec.ts",
+      "line": 882,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "bfb44a22b6a5bfa95f1311aa11b5398165f47d93d5d9b29e982b6788d4ca023a"
+    },
+    {
+      "file": "frontend/ui/src/app/services/deployment-registry.service.spec.ts",
+      "line": 97,
+      "label": "private Windows path",
+      "sourceSha256": "3aeb8c73f94d504cd2ff7f4b854e62c1d36f513671648490cfbdd5a1ba842ac8"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 6,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "c8b35a7b33832be62f30616310281b0414cca78658e0990338b64178e389c293"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 7,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "468019f24f5ae736ca7ccfb3408540a8a63033dd7b36c04e976976ed95b4fc8e"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 42,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "60d59745be2c9aa0bab27a0da25f1d5eaf0b9434e4f458eb38211897f5f8e83d"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 51,
+      "label": "ECR registry term",
+      "sourceSha256": "92cf3b794be5491924feba673b53952c90d7785a7b185dce8611f412fecf7726"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 67,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "0dba6d4e20b29f249f08e6e221cef863bbcb330ba4a4d7a149d2e1e165599c64"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 72,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "c79bc8ea16fcbcb564131fda27f8dd348744b5d2b226e78b80576ce5269c942f"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 74,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "bbf6fb568e795e02b9e546efbab8476479d60c43116ad69ccc34d45581e15172"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 134,
+      "label": "ECR registry term",
+      "sourceSha256": "eea86ba1a1875d83b9c766a3bdbce7c1cad4d0b96be149a574a9d5291b77a042"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 138,
+      "label": "ECR registry term",
+      "sourceSha256": "63d6f456d6214a357d098090f4add3e0ecab6028e0743aa298845e64cab3aa88"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 251,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "010fcd8a2d1d7b849cf8d2135b58586a43f27a18900fba1488128b37c0e2d70c"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 265,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "72df7f4ce5aaf6d68c71c5438261e1eb0c952f787b5fd6f8ff60329ba1740e23"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 616,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "5463e98d9d151055f6a5aff75dc58b13c47a59ff3fa2614d8e8f0d37e63da699"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 642,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "b45373bf3487727c8c93fb777c04f650032c8386ac6d171a6aa2bf9d3942aadf"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 643,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "b1992cd3f823d5b3a2042edd07e299fd857446ec97dc21475a5094b67d6a27b4"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 644,
+      "label": "EMLO adopter name",
+      "sourceSha256": "0a36547648ad8b94627948e9cfaa2d636fa1fe7ca0d0ae4e258315b15c0b18f5"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 644,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "0a36547648ad8b94627948e9cfaa2d636fa1fe7ca0d0ae4e258315b15c0b18f5"
+    },
+    {
+      "file": "hack/test-jenkins-hub-image.sh",
+      "line": 654,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "466d61f22b7949773cae70281065b1fce922520c766c731843f0fda6ca1855f0"
+    },
+    {
+      "file": "hack/test-target-config-object-store-env.sh",
+      "line": 166,
+      "label": "ECR registry term",
+      "sourceSha256": "699ab201b5ca75da3c6a68b721a7d60f2d45249270ec8dad0e694c54a7b90071"
+    },
+    {
+      "file": "internal/db/adapters_test.go",
+      "line": 36,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "91ab5e848259696dd6daa170a807bcfce48723dda6ff93f6f6f03935fd166e1b"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1927,
+      "label": "ECR registry term",
+      "sourceSha256": "4292c368aa51509e4f3e4c3943c2296891fbb8cf98b75fae948f3277557bce13"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1928,
+      "label": "ECR registry term",
+      "sourceSha256": "a4281940143921f18faf3664f1c489a96ca30a4255bd76d8ee44f298f0efbdc9"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1929,
+      "label": "ECR registry term",
+      "sourceSha256": "94e83f1028df355fb891fbeebc44537848734acfa36112ad3feac47e0dd8aea6"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1930,
+      "label": "ECR registry term",
+      "sourceSha256": "306f5ca9aeab4a40114a22bb1e4d2120225d40cde96f99011c85b525bea66fbe"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1932,
+      "label": "ECR registry term",
+      "sourceSha256": "82cec1e9d213ffdc5172e96f7ae2699b1ee7a88dd9983adc652318e74c9d34d1"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1933,
+      "label": "ECR registry term",
+      "sourceSha256": "eec2ac3e1ceb74b668d76a1058456408f6aad365bba5cff8153a4b24e066eb3d"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1934,
+      "label": "ECR registry term",
+      "sourceSha256": "f93f030451e4a8aa6964a71f95391fc485a06b48d5ab9cf623bf8736c22a7336"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1935,
+      "label": "ECR registry term",
+      "sourceSha256": "b74841707bd57904f8aa9046b605a02641b007a73ee82b68542c6e2ecc4f813d"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1937,
+      "label": "ECR registry term",
+      "sourceSha256": "ab3a2b45c2ae18a0b428f456262ecd3b1131f9231856ef9a43182a07f8b46a47"
+    },
+    {
+      "file": "internal/db/execution_v2.go",
+      "line": 1938,
+      "label": "ECR registry term",
+      "sourceSha256": "4974d6be35a789ceb816c6ccb4803b9b43581d47c4aa14af315c547a83b44977"
+    },
+    {
+      "file": "internal/db/execution_v2_runtime_evidence_test.go",
+      "line": 62,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "eeb5403929f741ee59d460f59cc58807235ebfd27a58a6bf54a6ca2317b34cc4"
+    },
+    {
+      "file": "internal/handlers/execution_v2_discovery_test.go",
+      "line": 110,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "86a4b3574a2e3b46aadbafb10ba3f3f17143220ade57abe65268a0f80e4ae60a"
+    },
+    {
+      "file": "internal/handlers/execution_v2_discovery_test.go",
+      "line": 116,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "1d2a06953c6d6077a4538e964ef6bcb058cf76e895d642f56ae8d2be3aa1911f"
+    },
+    {
+      "file": "internal/handlers/execution_v2_discovery_test.go",
+      "line": 116,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "1d2a06953c6d6077a4538e964ef6bcb058cf76e895d642f56ae8d2be3aa1911f"
+    },
+    {
+      "file": "internal/releasebundles/release_contract_v2_test.go",
+      "line": 169,
+      "label": "private Windows path",
+      "sourceSha256": "e1bb20051ad8a5de81b0b39162fb8cee6027b01340bbe2a5a7b1e94f0e2409d8"
+    },
+    {
+      "file": "internal/releasebundles/release_contract_v2_test.go",
+      "line": 432,
+      "label": "private UNC path",
+      "sourceSha256": "297a8e2dfb07fe35bcb8a8941ce5c475b010e46fd15891321e24d1782d0f5fd3"
+    },
+    {
+      "file": "internal/webhookaction/runtime_failure_matrix_test.go",
+      "line": 114,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "a96486b03e085e67e1128d6403fc9a2be228b9d2577148e2d592be554e48a50b"
+    },
+    {
+      "file": "internal/webhookaction/runtime_failure_matrix_test.go",
+      "line": 131,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "0923c1d1158396a81a631632bdc449e39f72703fdf9a0017da940860bce350c5"
+    },
+    {
+      "file": "internal/webhookaction/runtime_failure_matrix_test.go",
+      "line": 146,
+      "label": "Choice TP adopter name",
+      "sourceSha256": "e8c185b174d53e7fa78f73e15a731d4dd7fe06274eff84c0f3c0db5885fe4455"
+    }
+  ]
+}

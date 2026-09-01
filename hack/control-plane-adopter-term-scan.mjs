@@ -1,9 +1,18 @@
 #!/usr/bin/env node
 
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {lstat, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+
+const emloForkProfile = 'emlo-fork';
+const emloForkBaselinePath = 'docs/fork/EMLO_FORK_ADOPTER_TERM_BASELINE.json';
+const emloForkProfileDocPath = 'docs/fork/EMLO_FORK_RELEASE_PROFILE.md';
+const emloForkBaselineSchema = 'distr.adopter-term-baseline/v1';
+const emloForkRepository = 'namemlo/distr';
+const emloForkBaselineKeys = Object.freeze(['schema', 'profile', 'repository', 'sourceCommit', 'findings']);
+const emloForkFindingKeys = Object.freeze(['file', 'line', 'label', 'sourceSha256']);
 
 const policyExceptions = new Map([
   ['docs/roadmaps/DISTR_COMMUNITY_FORK_MASTER_PLAN.md', 'authoritative fork policy and historical boundary'],
@@ -16,6 +25,8 @@ const policyExceptions = new Map([
     'approved community-to-adopter program boundary',
   ],
   ['docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md', 'approved adopter execution tasks'],
+  [emloForkBaselinePath, 'exact named-fork finding baseline'],
+  [emloForkProfileDocPath, 'named-fork profile boundary and operating instructions'],
   ['hack/control-plane-adopter-term-scan.mjs', 'scanner rule definitions'],
   ['hack/control-plane-adopter-term-scan.test.mjs', 'scanner regression fixtures'],
 ]);
@@ -77,6 +88,7 @@ const prohibitedRules = Object.freeze([
     pattern: /(?:^|[\s"'(])\\\\[^\\\s]+\\[^\\\s]+(?:\\[^\s"'<>|]*)?/i,
   },
 ]);
+const prohibitedLabels = new Set(prohibitedRules.map(({label}) => label));
 
 function fail(message) {
   throw new Error(message);
@@ -88,6 +100,10 @@ function compareText(left, right) {
 
 function plural(count, singular, pluralForm = `${singular}s`) {
   return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 export function validateBaseRef(value) {
@@ -111,10 +127,17 @@ export function validateBaseRef(value) {
 }
 
 export function parseArgs(argv) {
-  if (argv.length !== 2 || argv[0] !== '--base') {
-    fail('usage: node hack/control-plane-adopter-term-scan.mjs --base <git-ref>');
+  if (
+    (argv.length !== 2 && argv.length !== 4) ||
+    argv[0] !== '--base' ||
+    (argv.length === 4 && (argv[2] !== '--profile' || argv[3] !== emloForkProfile))
+  ) {
+    fail('usage: node hack/control-plane-adopter-term-scan.mjs --base <git-ref> [--profile emlo-fork]');
   }
-  return {base: validateBaseRef(argv[1])};
+  return {
+    base: validateBaseRef(argv[1]),
+    profile: argv.length === 4 ? emloForkProfile : undefined,
+  };
 }
 
 function runProcess(command, args, cwd) {
@@ -199,24 +222,32 @@ function allLines(text) {
   return text.split(/\r?\n/).map((line, index) => ({line: index + 1, text: line}));
 }
 
-export function scanLines(file, lines) {
+function scanLinesWithIdentity(file, lines) {
   const findings = [];
   for (const source of lines) {
     for (const rule of prohibitedRules) {
       const allowedLines = reviewedContentExceptions.get(file)?.get(rule.label);
       if (rule.pattern.test(source.text) && !allowedLines?.has(source.text.trim())) {
-        findings.push({file, line: source.line, label: rule.label});
+        findings.push({file, line: source.line, label: rule.label, sourceSha256: sha256(source.text)});
       }
     }
   }
   return findings;
 }
 
+export function scanLines(file, lines) {
+  return scanLinesWithIdentity(file, lines).map(({file: findingFile, line, label}) => ({
+    file: findingFile,
+    line,
+    label,
+  }));
+}
+
 function scanPath(file) {
   if (pathPolicyExceptions.has(file)) {
     return [];
   }
-  return scanLines(file, [{line: undefined, text: file}]);
+  return scanLinesWithIdentity(file, [{line: undefined, text: file}]);
 }
 
 async function changedPaths(root, base) {
@@ -243,6 +274,112 @@ async function validateRequiredReleaseArtifacts(root) {
   }
 }
 
+function hasExactKeys(value, expected) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).sort(compareText);
+  const wanted = [...expected].sort(compareText);
+  return keys.length === wanted.length && keys.every((key, index) => key === wanted[index]);
+}
+
+function findingIdentity({file, line, label, sourceSha256}) {
+  return JSON.stringify([file, line ?? null, label, sourceSha256]);
+}
+
+function compareFindings(left, right) {
+  return (
+    compareText(left.file, right.file) ||
+    (left.line ?? 0) - (right.line ?? 0) ||
+    compareText(left.label, right.label) ||
+    compareText(left.sourceSha256, right.sourceSha256)
+  );
+}
+
+function hasExactKeyOrder(value, expected) {
+  return hasExactKeys(value, expected) && Object.keys(value).every((key, index) => key === expected[index]);
+}
+
+async function loadEmloForkBaseline(root, base) {
+  const {resolved} = safeRelativePath(root, emloForkBaselinePath);
+  let facts;
+  try {
+    facts = await lstat(resolved);
+  } catch {
+    fail(`required ${emloForkProfile} profile artifact is missing or is not a regular file: ${emloForkBaselinePath}`);
+  }
+  if (facts.isSymbolicLink() || !facts.isFile()) {
+    fail(`required ${emloForkProfile} profile artifact is missing or is not a regular file: ${emloForkBaselinePath}`);
+  }
+  if (facts.size > 1024 * 1024) {
+    fail(`${emloForkProfile} profile baseline exceeds the 1 MiB safety limit`);
+  }
+
+  let baseline;
+  try {
+    baseline = JSON.parse(await readFile(resolved, 'utf8'));
+  } catch {
+    fail(`${emloForkProfile} profile baseline must be valid JSON`);
+  }
+  if (!hasExactKeyOrder(baseline, emloForkBaselineKeys)) {
+    fail(`${emloForkProfile} profile baseline has an unsupported top-level shape`);
+  }
+  if (
+    baseline.schema !== emloForkBaselineSchema ||
+    baseline.profile !== emloForkProfile ||
+    baseline.repository !== emloForkRepository ||
+    !/^[0-9a-f]{40}$/.test(baseline.sourceCommit) ||
+    !Array.isArray(baseline.findings) ||
+    baseline.findings.length === 0 ||
+    baseline.findings.length > 5000
+  ) {
+    fail(`${emloForkProfile} profile baseline metadata is invalid`);
+  }
+
+  const source = await git(
+    root,
+    ['rev-parse', '--verify', '--quiet', '--end-of-options', `${baseline.sourceCommit}^{commit}`],
+    [0, 1]
+  );
+  if (source.status !== 0) {
+    fail(`${emloForkProfile} profile sourceCommit does not resolve to a commit`);
+  }
+  const sourceIncludesBase = await git(root, ['merge-base', '--is-ancestor', base, baseline.sourceCommit], [0, 1]);
+  if (sourceIncludesBase.status !== 0) {
+    fail(`${emloForkProfile} profile sourceCommit does not include the requested scan base`);
+  }
+  const ancestor = await git(root, ['merge-base', '--is-ancestor', baseline.sourceCommit, 'HEAD'], [0, 1]);
+  if (ancestor.status !== 0) {
+    fail(`${emloForkProfile} profile sourceCommit is not an ancestor of HEAD`);
+  }
+
+  const identities = new Set();
+  let previousFinding;
+  for (const finding of baseline.findings) {
+    if (
+      !hasExactKeyOrder(finding, emloForkFindingKeys) ||
+      typeof finding.file !== 'string' ||
+      (finding.line !== null && (!Number.isSafeInteger(finding.line) || finding.line < 1)) ||
+      !prohibitedLabels.has(finding.label) ||
+      typeof finding.sourceSha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(finding.sourceSha256)
+    ) {
+      fail(`${emloForkProfile} profile baseline contains an invalid exact finding`);
+    }
+    safeRelativePath(root, finding.file);
+    const identity = findingIdentity(finding);
+    if (identities.has(identity)) {
+      fail(`${emloForkProfile} profile baseline contains a duplicate exact finding`);
+    }
+    if (previousFinding !== undefined && compareFindings(previousFinding, finding) >= 0) {
+      fail(`${emloForkProfile} profile baseline findings are not in canonical bytewise order`);
+    }
+    identities.add(identity);
+    previousFinding = finding;
+  }
+  return {findings: baseline.findings, identities};
+}
+
 async function validateRepositoryAndBase(cwd, base) {
   const rootResult = await git(cwd, ['rev-parse', '--show-toplevel']);
   const root = rootResult.stdout.toString('utf8').trim();
@@ -262,8 +399,9 @@ async function validateRepositoryAndBase(cwd, base) {
   return root;
 }
 
-export async function scanRepository(cwd, base) {
+export async function scanRepository(cwd, base, profile) {
   const root = await validateRepositoryAndBase(cwd, base);
+  const baseline = profile === emloForkProfile ? await loadEmloForkBaseline(root, base) : undefined;
   const {paths, trackedPaths} = await changedPaths(root, base);
   const findings = [];
   let scannedFiles = 0;
@@ -312,21 +450,44 @@ export async function scanRepository(cwd, base) {
     } else {
       lines = allLines(bytes.toString('utf8'));
     }
-    findings.push(...scanLines(normalized, lines));
+    findings.push(...scanLinesWithIdentity(normalized, lines));
   }
 
-  findings.sort((left, right) => {
-    return (
-      compareText(left.file, right.file) || (left.line ?? 0) - (right.line ?? 0) || compareText(left.label, right.label)
-    );
-  });
-  return {findings, scannedFiles, exceptionFiles, binaryFiles};
+  findings.sort(compareFindings);
+  if (baseline === undefined) {
+    return {
+      findings,
+      scannedFiles,
+      exceptionFiles,
+      binaryFiles,
+      acceptedFindings: 0,
+      unusedBaselineFindings: 0,
+    };
+  }
+  const rejectedFindings = [];
+  const matchedIdentities = new Set();
+  for (const finding of findings) {
+    const identity = findingIdentity(finding);
+    if (baseline.identities.has(identity)) {
+      matchedIdentities.add(identity);
+    } else {
+      rejectedFindings.push(finding);
+    }
+  }
+  return {
+    findings: rejectedFindings,
+    scannedFiles,
+    exceptionFiles,
+    binaryFiles,
+    acceptedFindings: matchedIdentities.size,
+    unusedBaselineFindings: baseline.findings.length - matchedIdentities.size,
+  };
 }
 
 async function main() {
-  const {base} = parseArgs(process.argv.slice(2));
-  const report = await scanRepository(process.cwd(), base);
-  if (report.findings.length > 0) {
+  const {base, profile} = parseArgs(process.argv.slice(2));
+  const report = await scanRepository(process.cwd(), base, profile);
+  if (report.findings.length > 0 || report.unusedBaselineFindings > 0) {
     for (const finding of report.findings) {
       if (finding.line === undefined) {
         process.stderr.write(`${finding.file}: prohibited ${finding.label} in path\n`);
@@ -334,11 +495,34 @@ async function main() {
         process.stderr.write(`${finding.file}:${finding.line}: prohibited ${finding.label}\n`);
       }
     }
-    process.stderr.write(
-      `Adopter-term scan failed: ${plural(report.findings.length, 'finding')} in ${plural(report.scannedFiles, 'scanned file')}.\n`
-    );
+    if (report.unusedBaselineFindings > 0) {
+      process.stderr.write(
+        `${emloForkProfile} adopter-term baseline failed: ${plural(
+          report.unusedBaselineFindings,
+          'stale, unused, or forged exact finding'
+        )}.\n`
+      );
+    }
+    if (report.findings.length > 0) {
+      process.stderr.write(
+        `Adopter-term scan failed: ${plural(report.findings.length, 'finding')} in ${plural(report.scannedFiles, 'scanned file')}.\n`
+      );
+    } else {
+      process.stderr.write(
+        `Adopter-term scan failed: the named-fork baseline did not exactly match findings in ${plural(
+          report.scannedFiles,
+          'scanned file'
+        )}.\n`
+      );
+    }
     process.exitCode = 1;
     return;
+  }
+  if (profile === emloForkProfile) {
+    process.stdout.write(
+      `${emloForkProfile} adopter-term profile accepted ${plural(report.acceptedFindings, 'exact reviewed finding')}. ` +
+        'This result is valid only for the named custom fork and is not a community or upstream release result.\n'
+    );
   }
   process.stdout.write(
     `Adopter-term scan passed: ${plural(report.scannedFiles, 'file')} scanned, ${plural(report.exceptionFiles, 'policy exception')}, ${plural(report.binaryFiles, 'binary file')} skipped.\n`

@@ -2229,3 +2229,26 @@ Use one entry per pull request:
 - Compatibility notes: Existing v2 plans without requirements or structured
   migration contracts remain compatible. Historical structured-migration
   plans without frozen evidence fail closed for new admission or execution.
+
+### Post-PR-097 - Named public-fork adopter-term release profile
+
+- Status: Implemented with focused local verification; no live environment is
+  contacted or changed.
+- Upstream base: `8c572423`.
+- Feature flags: None; this is release-policy tooling only.
+- User-facing behavior: The default release scan remains strict. A named
+  custom fork can explicitly select a separately documented exact baseline.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Adds the named-fork boundary, operator command, baseline
+  review procedure, and exact declarative finding inventory.
+- Tests: Node fixtures prove default strict rejection, exact-profile
+  acceptance, and rejection of injected, stale, unused, forged, or
+  noncanonically serialized findings.
+- Upstream contribution notes: The profile is excluded from community and
+  upstream release claims; the default scanner remains the upstream path.
+- Compatibility notes: Existing default invocations, prohibited rules,
+  findings, exit status, and output remain unchanged. Named-profile scans use
+  the complete reviewed fork-delta base rather than an incremental push base.

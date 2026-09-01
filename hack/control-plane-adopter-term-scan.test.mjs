@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {access, mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scanner = path.join(repoRoot, 'hack', 'control-plane-adopter-term-scan.mjs');
 const authoritativeException = 'docs/superpowers/plans/2026-07-14-control-plane-operator-adoption.md';
+const emloForkBaseline = 'docs/fork/EMLO_FORK_ADOPTER_TERM_BASELINE.json';
 const requiredArtifacts = [
   'docs/api/community-release-api-index.md',
   'docs/api/operator-control-plane-api.md',
@@ -42,6 +44,30 @@ async function repository() {
   return directory;
 }
 
+function sourceSha256(value) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+async function writeEmloForkBaseline(directory, findings) {
+  const sourceCommit = (await git(directory, 'rev-parse', 'HEAD')).stdout.trim();
+  const baselinePath = path.join(directory, ...emloForkBaseline.split('/'));
+  await mkdir(path.dirname(baselinePath), {recursive: true});
+  await writeFile(
+    baselinePath,
+    `${JSON.stringify(
+      {
+        schema: 'distr.adopter-term-baseline/v1',
+        profile: 'emlo-fork',
+        repository: 'namemlo/distr',
+        sourceCommit,
+        findings,
+      },
+      null,
+      2
+    )}\n`
+  );
+}
+
 function run(cwd, args = ['--base', 'HEAD']) {
   return new Promise((resolve) => {
     const child = execFile(process.execPath, [scanner, ...args], {cwd}, (error, stdout, stderr) => {
@@ -67,6 +93,180 @@ test('reports prohibited terms in tracked and untracked changed lines with stabl
   assert.match(first.stderr, /docs\/new\.md:1: prohibited Choice TP adopter name/);
   assert.ok(first.stderr.indexOf('README.md:2') < first.stderr.indexOf('docs/new.md:1'));
   assert.match(first.stderr, /Adopter-term scan failed: 2 findings in 2 scanned files\./);
+});
+
+test('default community scan still rejects a finding listed by the named-fork profile', async () => {
+  const directory = await repository();
+  const source = 'Choice TP release fixture.\n';
+  await writeFile(path.join(directory, 'fork-release.md'), source);
+  await writeEmloForkBaseline(directory, [
+    {
+      file: 'fork-release.md',
+      line: 1,
+      label: 'Choice TP adopter name',
+      sourceSha256: sourceSha256(source.trimEnd()),
+    },
+  ]);
+
+  const result = await run(directory);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /fork-release\.md:1: prohibited Choice TP adopter name/);
+  assert.doesNotMatch(result.stdout, /emlo-fork adopter-term profile accepted/);
+});
+
+test('named-fork profile accepts only the exact declared baseline finding', async () => {
+  const directory = await repository();
+  const source = 'Choice TP release fixture.\n';
+  await writeFile(path.join(directory, 'fork-release.md'), source);
+  await writeEmloForkBaseline(directory, [
+    {
+      file: 'fork-release.md',
+      line: 1,
+      label: 'Choice TP adopter name',
+      sourceSha256: sourceSha256(source.trimEnd()),
+    },
+  ]);
+
+  const result = await run(directory, ['--base', 'HEAD', '--profile', 'emlo-fork']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /emlo-fork adopter-term profile accepted 1 exact reviewed finding\./);
+  assert.match(result.stdout, /not a community or upstream release result/);
+});
+
+test('named-fork profile rejects an injected finding that is absent from the exact baseline', async () => {
+  const directory = await repository();
+  const acceptedSource = 'Choice TP release fixture.';
+  await writeFile(path.join(directory, 'fork-release.md'), `${acceptedSource}\nUse a new Jenkins release job.\n`);
+  await writeEmloForkBaseline(directory, [
+    {
+      file: 'fork-release.md',
+      line: 1,
+      label: 'Choice TP adopter name',
+      sourceSha256: sourceSha256(acceptedSource),
+    },
+  ]);
+
+  const result = await run(directory, ['--base', 'HEAD', '--profile', 'emlo-fork']);
+
+  assert.notEqual(result.status, 0);
+  assert.doesNotMatch(result.stderr, /fork-release\.md:1/);
+  assert.match(result.stderr, /fork-release\.md:2: prohibited Jenkins implementation term/);
+  assert.match(result.stderr, /Adopter-term scan failed: 1 finding in 1 scanned file\./);
+});
+
+test('named-fork profile rejects a stale or unused baseline finding', async () => {
+  const directory = await repository();
+  const source = 'Choice TP release fixture.';
+  await writeFile(path.join(directory, 'fork-release.md'), `${source}\n`);
+  await writeEmloForkBaseline(directory, [
+    {
+      file: 'fork-release.md',
+      line: 1,
+      label: 'Choice TP adopter name',
+      sourceSha256: sourceSha256(source),
+    },
+    {
+      file: 'unused-release.md',
+      line: 1,
+      label: 'Jenkins implementation term',
+      sourceSha256: sourceSha256('Use a Jenkins release job.'),
+    },
+  ]);
+
+  const result = await run(directory, ['--base', 'HEAD', '--profile', 'emlo-fork']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /1 stale, unused, or forged exact finding/);
+  assert.match(result.stderr, /named-fork baseline did not exactly match findings in 1 scanned file/);
+});
+
+test('named-fork profile rejects a forged source hash', async () => {
+  const directory = await repository();
+  await writeFile(path.join(directory, 'fork-release.md'), 'Choice TP release fixture.\n');
+  await writeEmloForkBaseline(directory, [
+    {
+      file: 'fork-release.md',
+      line: 1,
+      label: 'Choice TP adopter name',
+      sourceSha256: '0'.repeat(64),
+    },
+  ]);
+
+  const result = await run(directory, ['--base', 'HEAD', '--profile', 'emlo-fork']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /fork-release\.md:1: prohibited Choice TP adopter name/);
+  assert.match(result.stderr, /1 stale, unused, or forged exact finding/);
+  assert.match(result.stderr, /Adopter-term scan failed: 1 finding in 1 scanned file/);
+});
+
+test('named-fork profile requires canonical bytewise finding order', async () => {
+  const directory = await repository();
+  const choiceSource = 'Choice TP release fixture.';
+  const jenkinsSource = 'Use a Jenkins release job.';
+  await writeFile(path.join(directory, 'fork-release.md'), `${choiceSource}\n${jenkinsSource}\n`);
+  await writeEmloForkBaseline(directory, [
+    {
+      file: 'fork-release.md',
+      line: 2,
+      label: 'Jenkins implementation term',
+      sourceSha256: sourceSha256(jenkinsSource),
+    },
+    {
+      file: 'fork-release.md',
+      line: 1,
+      label: 'Choice TP adopter name',
+      sourceSha256: sourceSha256(choiceSource),
+    },
+  ]);
+
+  const result = await run(directory, ['--base', 'HEAD', '--profile', 'emlo-fork']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /baseline findings are not in canonical bytewise order/);
+});
+
+test('named-fork profile requires canonical finding key serialization', async () => {
+  const directory = await repository();
+  const source = 'Choice TP release fixture.';
+  await writeFile(path.join(directory, 'fork-release.md'), `${source}\n`);
+  await writeEmloForkBaseline(directory, [
+    {
+      label: 'Choice TP adopter name',
+      file: 'fork-release.md',
+      line: 1,
+      sourceSha256: sourceSha256(source),
+    },
+  ]);
+
+  const result = await run(directory, ['--base', 'HEAD', '--profile', 'emlo-fork']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /baseline contains an invalid exact finding/);
+});
+
+test('named-fork profile requires the source commit to include the scan base', async () => {
+  const directory = await repository();
+  const source = 'Choice TP release fixture.';
+  await writeFile(path.join(directory, 'fork-release.md'), `${source}\n`);
+  await writeEmloForkBaseline(directory, [
+    {
+      file: 'fork-release.md',
+      line: 1,
+      label: 'Choice TP adopter name',
+      sourceSha256: sourceSha256(source),
+    },
+  ]);
+  await writeFile(path.join(directory, 'later-base.md'), 'Neutral later base.\n');
+  await git(directory, 'add', 'later-base.md');
+  await git(directory, 'commit', '--quiet', '-m', 'later scan base');
+
+  const result = await run(directory, ['--base', 'HEAD', '--profile', 'emlo-fork']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /profile sourceCommit does not include the requested scan base/);
 });
 
 test('allows prohibited vocabulary only in exact authoritative policy documents', async () => {
