@@ -756,6 +756,13 @@ const expectedMasterLedger = [
   '| PR-080 through PR-081 | None                 | None              |',
   '| PR-082                | 162                  | 0068              |',
   '| PR-083                | None                 | None              |',
+  '| PR-084 through PR-085 | 165 through 166      | 0071 through 0072 |',
+  '| PR-086 through PR-089 | 167 through 168      | 0073 through 0076 |',
+  '| PR-090                | 169                  | 0077              |',
+  '| PR-091 through PR-092 | None                 | 0078 through 0079 |',
+  '| PR-094                | None                 | 0081              |',
+  '| PR-095                | 170                  | 0082              |',
+  '| PR-096 through PR-097 | None                 | 0083 through 0084 |',
 ];
 const masterLedger = masterRoadmapBlock.filter((line) => line.trimStart().startsWith('|'));
 if (!sameValues(masterLedger, expectedMasterLedger)) {

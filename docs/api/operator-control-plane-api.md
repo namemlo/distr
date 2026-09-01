@@ -282,7 +282,7 @@ mutation. A failed frozen-plan check returns `409` and performs none of those
 mutations.
 
 This contract does not query a live system or client workload database and does
-not mutate a runtime. No database migration is added; schema target 169 remains
+not mutate a runtime. No database migration is added; schema target 170 remains
 current and validated evidence is retained only in canonical plan bytes.
 
 Protocol-v2 task creation also requires the latest persistent review decision
