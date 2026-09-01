@@ -428,23 +428,40 @@ type OperatorCampaignMember struct {
 	PlanChecksum     string     `json:"planChecksum"`
 }
 
+type OperatorCampaignCoordinationSummary struct {
+	AdmissionsBlocked     bool       `json:"admissionsBlocked"`
+	PausePending          bool       `json:"pausePending"`
+	NoNewExposure         bool       `json:"noNewExposure"`
+	InFlightMemberCount   int        `json:"inFlightMemberCount"`
+	ReconciliationNeeded  bool       `json:"reconciliationRequired"`
+	SchedulerFence        int64      `json:"schedulerFenceGeneration"`
+	SchedulerLeaseStatus  string     `json:"schedulerLeaseStatus"`
+	SchedulerLeaseExpires *time.Time `json:"schedulerLeaseExpiresAt,omitempty"`
+	ActiveLockCount       int        `json:"activeLockCount"`
+	UnreleasedLockCount   int        `json:"unreleasedLockCount"`
+	ActiveLeaseCount      int        `json:"activeLeaseCount"`
+	UnreleasedLeaseCount  int        `json:"unreleasedLeaseCount"`
+	ZeroLockClosure       bool       `json:"zeroLockClosure"`
+}
+
 type OperatorCampaignDetail struct {
-	Campaign             OperatorCampaignRow      `json:"campaign"`
-	RunVersion           *int64                   `json:"runVersion,omitempty"`
-	RevisionChecksum     string                   `json:"revisionChecksum"`
-	MembershipChecksum   string                   `json:"membershipChecksum"`
-	PrerequisiteChecksum string                   `json:"prerequisiteChecksum"`
-	ThresholdChecksum    string                   `json:"thresholdChecksum"`
-	ControlChecksum      string                   `json:"controlChecksum"`
-	AdmissionChecksum    string                   `json:"admissionChecksum"`
-	Waves                []OperatorCampaignWave   `json:"waves"`
-	Members              []OperatorCampaignMember `json:"members"`
-	Prerequisites        []OperatorPlanFact       `json:"prerequisites"`
-	Thresholds           []OperatorPlanFact       `json:"thresholds"`
-	Controls             []OperatorPlanFact       `json:"controls"`
-	UncertaintyBlockers  []OperatorPlanFact       `json:"uncertaintyBlockers"`
-	AdmissionBlockers    []OperatorPlanFact       `json:"admissionBlockers"`
-	Evidence             []OperatorEvidenceRef    `json:"evidence"`
+	Campaign             OperatorCampaignRow                 `json:"campaign"`
+	RunVersion           *int64                              `json:"runVersion,omitempty"`
+	RevisionChecksum     string                              `json:"revisionChecksum"`
+	MembershipChecksum   string                              `json:"membershipChecksum"`
+	PrerequisiteChecksum string                              `json:"prerequisiteChecksum"`
+	ThresholdChecksum    string                              `json:"thresholdChecksum"`
+	ControlChecksum      string                              `json:"controlChecksum"`
+	AdmissionChecksum    string                              `json:"admissionChecksum"`
+	Waves                []OperatorCampaignWave              `json:"waves"`
+	Members              []OperatorCampaignMember            `json:"members"`
+	Prerequisites        []OperatorPlanFact                  `json:"prerequisites"`
+	Thresholds           []OperatorPlanFact                  `json:"thresholds"`
+	Controls             []OperatorPlanFact                  `json:"controls"`
+	UncertaintyBlockers  []OperatorPlanFact                  `json:"uncertaintyBlockers"`
+	AdmissionBlockers    []OperatorPlanFact                  `json:"admissionBlockers"`
+	Coordination         OperatorCampaignCoordinationSummary `json:"coordination"`
+	Evidence             []OperatorEvidenceRef               `json:"evidence"`
 }
 
 type OperatorExecutionRow struct {
@@ -487,18 +504,61 @@ type OperatorExecutionAttemptFact struct {
 	Blocking         bool      `json:"blocking"`
 }
 
+type OperatorExecutionLockFact struct {
+	ID                uuid.UUID  `json:"id"`
+	ResourceType      string     `json:"resourceType"`
+	ResourceKey       string     `json:"resourceKey"`
+	ConcurrencyPolicy string     `json:"concurrencyPolicy"`
+	Status            string     `json:"status"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	AcquiredAt        *time.Time `json:"acquiredAt,omitempty"`
+	ReleasedAt        *time.Time `json:"releasedAt,omitempty"`
+	CurrentConflict   bool       `json:"currentConflict"`
+	ReleaseReason     string     `json:"releaseReason,omitempty"`
+}
+
+type OperatorExecutionLeaseFact struct {
+	ID            uuid.UUID  `json:"id"`
+	ExecutorType  string     `json:"executorType"`
+	Attempt       int        `json:"attempt"`
+	Status        string     `json:"status"`
+	LeasedAt      time.Time  `json:"leasedAt"`
+	ExpiresAt     time.Time  `json:"expiresAt"`
+	HeartbeatAt   time.Time  `json:"heartbeatAt"`
+	ReleasedAt    *time.Time `json:"releasedAt,omitempty"`
+	ReleaseReason string     `json:"releaseReason,omitempty"`
+}
+
+type OperatorExecutionCoordinationSummary struct {
+	InFlight             bool       `json:"inFlight"`
+	ActiveLockCount      int        `json:"activeLockCount"`
+	UnreleasedLockCount  int        `json:"unreleasedLockCount"`
+	ActiveLeaseCount     int        `json:"activeLeaseCount"`
+	UnreleasedLeaseCount int        `json:"unreleasedLeaseCount"`
+	FenceStatus          string     `json:"fenceStatus"`
+	FenceGeneration      int64      `json:"fenceGeneration"`
+	FenceLeaseExpiresAt  *time.Time `json:"fenceLeaseExpiresAt,omitempty"`
+	FenceReleasedAt      *time.Time `json:"fenceReleasedAt,omitempty"`
+	TimedOut             bool       `json:"timedOut"`
+	ReconciliationNeeded bool       `json:"reconciliationRequired"`
+	ZeroLockClosure      bool       `json:"zeroLockClosure"`
+}
+
 type OperatorExecutionDetail struct {
-	Execution      OperatorExecutionRow           `json:"execution"`
-	Intent         *OperatorPlanFact              `json:"intent,omitempty"`
-	Adapter        *OperatorPlanFact              `json:"adapter,omitempty"`
-	Cancellation   *OperatorPlanFact              `json:"cancellation,omitempty"`
-	Reconciliation *OperatorPlanFact              `json:"reconciliation,omitempty"`
-	PreviousState  *OperatorPlanFact              `json:"previousState,omitempty"`
-	Tasks          []OperatorPlanFact             `json:"tasks"`
-	Steps          []OperatorPlanFact             `json:"steps"`
-	Attempts       []OperatorExecutionAttemptFact `json:"attempts"`
-	Observations   []OperatorPlanFact             `json:"observations"`
-	Evidence       []OperatorEvidenceRef          `json:"evidence"`
+	Execution      OperatorExecutionRow                 `json:"execution"`
+	Intent         *OperatorPlanFact                    `json:"intent,omitempty"`
+	Adapter        *OperatorPlanFact                    `json:"adapter,omitempty"`
+	Cancellation   *OperatorPlanFact                    `json:"cancellation,omitempty"`
+	Reconciliation *OperatorPlanFact                    `json:"reconciliation,omitempty"`
+	PreviousState  *OperatorPlanFact                    `json:"previousState,omitempty"`
+	Tasks          []OperatorPlanFact                   `json:"tasks"`
+	Steps          []OperatorPlanFact                   `json:"steps"`
+	Attempts       []OperatorExecutionAttemptFact       `json:"attempts"`
+	Locks          []OperatorExecutionLockFact          `json:"locks"`
+	Leases         []OperatorExecutionLeaseFact         `json:"leases"`
+	Coordination   OperatorExecutionCoordinationSummary `json:"coordination"`
+	Observations   []OperatorPlanFact                   `json:"observations"`
+	Evidence       []OperatorEvidenceRef                `json:"evidence"`
 }
 
 type OperatorReconciliationRow struct {

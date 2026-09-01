@@ -114,9 +114,61 @@ func TestOperatorCampaignDetailReturnsCompleteControlEvidence(t *testing.T) {
 		"calendar_checksums",
 		"admission_checksum",
 		"canonical_checksum",
+		"run.pause_requested",
+		"run.lease_expires_at",
+		"CampaignMemberTaskExecution AS lineage",
+		"TaskResourceLock AS lockrow",
+		"TaskLease AS lease",
+		"active_lock_count",
+		"unreleased_lease_count",
 	} {
 		g.Expect(getOperatorCampaignSQL).To(ContainSubstring(fragment))
 	}
+}
+
+func TestBuildOperatorCampaignDetailProjectsNativeCoordinationLifecycle(t *testing.T) {
+	t.Parallel()
+
+	g := NewWithT(t)
+	now := time.Now().UTC()
+	running := "RUNNING"
+	leaseExpiresAt := now.Add(time.Minute)
+	detail := buildOperatorCampaignDetail(operatorCampaignDetailRecord{
+		DraftID: uuid.New(), CreatedAt: now, Name: "pause pending",
+		RunState: &running, AdmissionsBlocked: true, PauseRequested: true,
+		ReconciliationNeeded: true, FencingToken: 17,
+		LeaseExpiresAt: &leaseExpiresAt, DecisionAt: now,
+		ActiveLockCount: 2, UnreleasedLockCount: 3,
+		ActiveLeaseCount: 1, UnreleasedLeaseCount: 2,
+		Members: []operatorCampaignMemberProjection{
+			{ID: uuid.New(), DeploymentPlanID: uuid.New(), DeploymentUnitID: uuid.New(), Status: stringPointer("ADMITTED")},
+			{ID: uuid.New(), DeploymentPlanID: uuid.New(), DeploymentUnitID: uuid.New(), Status: stringPointer("RUNNING")},
+		},
+	})
+
+	g.Expect(detail.Coordination.AdmissionsBlocked).To(BeTrue())
+	g.Expect(detail.Coordination.NoNewExposure).To(BeTrue())
+	g.Expect(detail.Coordination.PausePending).To(BeTrue())
+	g.Expect(detail.Coordination.InFlightMemberCount).To(Equal(2))
+	g.Expect(detail.Coordination.ReconciliationNeeded).To(BeTrue())
+	g.Expect(detail.Coordination.SchedulerFence).To(Equal(int64(17)))
+	g.Expect(detail.Coordination.SchedulerLeaseStatus).To(Equal("ACTIVE"))
+	g.Expect(detail.Coordination.ActiveLockCount).To(Equal(2))
+	g.Expect(detail.Coordination.UnreleasedLeaseCount).To(Equal(2))
+	g.Expect(detail.Coordination.ZeroLockClosure).To(BeFalse())
+
+	completed := "COMPLETED"
+	closed := buildOperatorCampaignDetail(operatorCampaignDetailRecord{
+		DraftID: uuid.New(), CreatedAt: now, Name: "closed",
+		RunState: &completed, LeaseExpiresAt: &now, DecisionAt: now,
+	})
+	g.Expect(closed.Coordination.SchedulerLeaseStatus).To(Equal("EXPIRED"))
+	g.Expect(closed.Coordination.InFlightMemberCount).To(Equal(0))
+	g.Expect(closed.Coordination.ZeroLockClosure).To(BeTrue())
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func TestBuildOperatorCampaignDetailExposesCurrentRunControlIdentifiers(t *testing.T) {

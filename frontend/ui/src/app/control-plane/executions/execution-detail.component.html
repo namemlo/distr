@@ -35,48 +35,103 @@
     }
 
     <article class="rounded-lg border border-gray-200 p-5 dark:border-gray-700" aria-labelledby="coordination-heading">
-      <h2 id="coordination-heading" class="font-semibold text-gray-900 dark:text-white">
-        Deployment coordination and lock proof
-      </h2>
+      <h2 id="coordination-heading" class="font-semibold text-gray-900 dark:text-white">Lock and lease lifecycle</h2>
       <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
-        Fencing and retained protocol facts prove that retries cannot reuse stale ownership or overwrite a newer
-        attempt.
+        This read-only projection comes from retained task locks, task leases, and the execution fence.
       </p>
-      <dl class="mt-3 grid gap-3 text-sm md:grid-cols-3">
+      <dl class="mt-3 grid gap-3 text-sm md:grid-cols-3 xl:grid-cols-6">
         <div>
-          <dt class="text-gray-500">Fence resource</dt>
-          <dd class="break-all font-mono">{{ result.execution.fenceResourceKey || 'Not reported' }}</dd>
+          <dt class="text-gray-500">Lifecycle</dt>
+          <dd>{{ result.coordination.inFlight ? 'In flight' : 'Not in flight' }}</dd>
         </div>
         <div>
-          <dt class="text-gray-500">Fence generation</dt>
-          <dd>{{ result.execution.fenceGeneration ?? 'Not reported' }}</dd>
+          <dt class="text-gray-500">Active locks</dt>
+          <dd>{{ result.coordination.activeLockCount }}</dd>
         </div>
         <div>
-          <dt class="text-gray-500">Current attempt</dt>
-          <dd>{{ result.execution.attemptNumber }}</dd>
+          <dt class="text-gray-500">Active leases</dt>
+          <dd>{{ result.coordination.activeLeaseCount }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Fence</dt>
+          <dd>{{ result.coordination.fenceStatus }} · generation {{ result.coordination.fenceGeneration }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Reconciliation</dt>
+          <dd>{{ result.coordination.reconciliationRequired ? 'Required' : 'Not required' }}</dd>
+        </div>
+        <div>
+          <dt class="text-gray-500">Terminal closure</dt>
+          <dd>{{ result.coordination.zeroLockClosure ? 'Zero-lock closure proven' : 'Open coordination state' }}</dd>
         </div>
       </dl>
-      <div class="mt-4 space-y-2">
-        @for (fact of coordinationFacts(result); track fact.id ?? fact.key) {
-          <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
-            <div class="flex justify-between gap-2">
-              <strong>{{ fact.key }}</strong
-              ><span>{{ factStatusLabel(fact) }}</span>
-            </div>
-            @if (fact.message) {
-              <p class="mt-1 text-xs text-gray-500">{{ fact.message }}</p>
-            }
-            @if (fact.expected || fact.actual) {
-              <p class="mt-1 text-xs">Expected {{ fact.expected || 'n/a' }} · actual {{ fact.actual || 'n/a' }}</p>
+      @if (result.coordination.timedOut || result.coordination.reconciliationRequired) {
+        <p class="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {{ result.coordination.timedOut ? 'The execution timed out. ' : '' }}
+          {{ result.coordination.reconciliationRequired ? 'Reconciliation is required before retry admission.' : '' }}
+        </p>
+      }
+      <div class="mt-4 grid gap-4 xl:grid-cols-2">
+        <section>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Resource locks</h3>
+          <div class="mt-2 space-y-2">
+            @for (lock of result.locks; track lock.id) {
+              <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+                <div class="flex flex-wrap justify-between gap-2">
+                  <strong class="break-all font-mono">{{ lock.resourceType }}:{{ lock.resourceKey }}</strong>
+                  <span>{{ lock.status }}{{ lock.currentConflict ? ' · Current conflict' : '' }}</span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500">Policy {{ lock.concurrencyPolicy }}</p>
+                <p class="mt-1 text-xs">
+                  Created {{ lock.createdAt | date: 'medium' }} · Acquired
+                  {{ lock.acquiredAt ? (lock.acquiredAt | date: 'medium') : 'not yet' }} · Released
+                  {{ lock.releasedAt ? (lock.releasedAt | date: 'medium') : 'not yet' }}
+                </p>
+                @if (lock.releaseReason) {
+                  <p class="mt-1 text-xs text-gray-500">{{ lock.releaseReason }}</p>
+                }
+              </div>
+            } @empty {
+              <p class="rounded bg-gray-50 p-3 text-sm text-gray-500 dark:bg-gray-800">No retained lock facts.</p>
             }
           </div>
-        } @empty {
-          <p class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            Lease acquisition/release facts were not returned by this execution read model. Do not treat fencing alone
-            as complete lock-release evidence.
-          </p>
-        }
+        </section>
+        <section>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Executor leases</h3>
+          <div class="mt-2 space-y-2">
+            @for (lease of result.leases; track lease.id) {
+              <div class="rounded bg-gray-50 p-3 text-sm dark:bg-gray-800">
+                <div class="flex justify-between gap-2">
+                  <strong>{{ lease.executorType }} lease · attempt {{ lease.attempt }}</strong>
+                  <span>{{ lease.status }}</span>
+                </div>
+                <p class="mt-1 text-xs">
+                  Leased {{ lease.leasedAt | date: 'medium' }} · Expires {{ lease.expiresAt | date: 'medium' }} · Last
+                  heartbeat {{ lease.heartbeatAt | date: 'medium' }}
+                </p>
+                <p class="mt-1 text-xs">
+                  Released {{ lease.releasedAt ? (lease.releasedAt | date: 'medium') : 'not yet' }}
+                </p>
+                @if (lease.releaseReason) {
+                  <p class="mt-1 text-xs text-gray-500">{{ lease.releaseReason }}</p>
+                }
+              </div>
+            } @empty {
+              <p class="rounded bg-gray-50 p-3 text-sm text-gray-500 dark:bg-gray-800">No retained lease facts.</p>
+            }
+          </div>
+        </section>
       </div>
+      <p class="mt-4 break-all text-xs text-gray-500">
+        Fence resource {{ result.execution.fenceResourceKey || 'not reported' }} · Lease expires
+        {{
+          result.coordination.fenceLeaseExpiresAt
+            ? (result.coordination.fenceLeaseExpiresAt | date: 'medium')
+            : 'not reported'
+        }}
+        · Released
+        {{ result.coordination.fenceReleasedAt ? (result.coordination.fenceReleasedAt | date: 'medium') : 'not yet' }}
+      </p>
     </article>
 
     <div class="grid gap-4 lg:grid-cols-2">

@@ -218,6 +218,12 @@ SELECT
   run.pause_requested,
   run.reconciliation_required,
   run.fencing_token,
+	run.lease_expires_at,
+	@decision_at::timestamptz AS decision_at,
+	COALESCE(coordination.active_lock_count, 0) AS active_lock_count,
+	COALESCE(coordination.unreleased_lock_count, 0) AS unreleased_lock_count,
+	COALESCE(coordination.active_lease_count, 0) AS active_lease_count,
+	COALESCE(coordination.unreleased_lease_count, 0) AS unreleased_lease_count,
   COALESCE(waves.items, '[]'::jsonb) AS waves,
   COALESCE(members.items, '[]'::jsonb) AS members,
   COALESCE(prerequisites.items, '[]'::jsonb) AS prerequisites,
@@ -370,6 +376,30 @@ LEFT JOIN LATERAL (
   WHERE control_request.organization_id = draft.organization_id
     AND control_request.campaign_run_id = run.id
 ) AS controls ON true
+LEFT JOIN LATERAL (
+  SELECT
+	count(DISTINCT lockrow.id) FILTER (
+	  WHERE lockrow.acquired_at IS NOT NULL AND lockrow.released_at IS NULL
+	)::int AS active_lock_count,
+	count(DISTINCT lockrow.id) FILTER (
+	  WHERE lockrow.released_at IS NULL
+	)::int AS unreleased_lock_count,
+	count(DISTINCT lease.id) FILTER (
+	  WHERE lease.released_at IS NULL AND lease.expires_at > @decision_at
+	)::int AS active_lease_count,
+	count(DISTINCT lease.id) FILTER (
+	  WHERE lease.released_at IS NULL
+	)::int AS unreleased_lease_count
+  FROM CampaignMemberTaskExecution AS lineage
+  LEFT JOIN TaskResourceLock AS lockrow
+	ON lockrow.organization_id = lineage.organization_id
+   AND lockrow.task_id = lineage.task_id
+  LEFT JOIN TaskLease AS lease
+	ON lease.organization_id = lineage.organization_id
+   AND lease.task_id = lineage.task_id
+  WHERE lineage.organization_id = draft.organization_id
+	AND lineage.campaign_run_id = run.id
+) AS coordination ON true
 WHERE draft.organization_id = @organization_id
   AND draft.id = @campaign_id
   AND (
@@ -492,7 +522,15 @@ type operatorCampaignDetailRecord struct {
 	RunVersion           *int64
 	RunState             *string
 	AdmissionsBlocked    bool
+	PauseRequested       bool
 	ReconciliationNeeded bool
+	FencingToken         int64
+	LeaseExpiresAt       *time.Time
+	DecisionAt           time.Time
+	ActiveLockCount      int
+	UnreleasedLockCount  int
+	ActiveLeaseCount     int
+	UnreleasedLeaseCount int
 	Waves                []operatorCampaignWaveProjection
 	Members              []operatorCampaignMemberProjection
 	Prerequisites        []operatorCampaignPrerequisiteProjection
@@ -576,6 +614,7 @@ func GetOperatorCampaign(
 			"deployment_unit_scope_ids": scopes.DeploymentUnitIDs,
 			"component_scope_ids":       scopes.ComponentIDs,
 			"campaign_scope_ids":        scopes.CampaignIDs,
+			"decision_at":               filter.DecisionAt,
 		},
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -678,6 +717,12 @@ func scanOperatorCampaignDetail(row pgx.Row) (operatorCampaignDetailRecord, erro
 		&pauseRequested,
 		&reconciliationRequired,
 		&fencingToken,
+		&record.LeaseExpiresAt,
+		&record.DecisionAt,
+		&record.ActiveLockCount,
+		&record.UnreleasedLockCount,
+		&record.ActiveLeaseCount,
+		&record.UnreleasedLeaseCount,
 		&record.WavesJSON,
 		&record.MembersJSON,
 		&record.PrerequisitesJSON,
@@ -688,7 +733,11 @@ func scanOperatorCampaignDetail(row pgx.Row) (operatorCampaignDetailRecord, erro
 		return record, err
 	}
 	record.AdmissionsBlocked = admissionsBlocked != nil && *admissionsBlocked
+	record.PauseRequested = pauseRequested != nil && *pauseRequested
 	record.ReconciliationNeeded = reconciliationRequired != nil && *reconciliationRequired
+	if fencingToken != nil {
+		record.FencingToken = *fencingToken
+	}
 	for raw, destination := range map[string]any{
 		string(record.WavesJSON):         &record.Waves,
 		string(record.MembersJSON):       &record.Members,
@@ -704,6 +753,13 @@ func scanOperatorCampaignDetail(row pgx.Row) (operatorCampaignDetailRecord, erro
 }
 
 func buildOperatorCampaignDetail(record operatorCampaignDetailRecord) *types.OperatorCampaignDetail {
+	schedulerLeaseStatus := "NONE"
+	if record.LeaseExpiresAt != nil {
+		schedulerLeaseStatus = "ACTIVE"
+		if !record.LeaseExpiresAt.After(record.DecisionAt) {
+			schedulerLeaseStatus = "EXPIRED"
+		}
+	}
 	detail := &types.OperatorCampaignDetail{
 		Campaign: types.OperatorCampaignRow{
 			ID: record.DraftID, CreatedAt: record.CreatedAt, DraftID: record.DraftID,
@@ -725,7 +781,20 @@ func buildOperatorCampaignDetail(record operatorCampaignDetailRecord) *types.Ope
 		Controls:             []types.OperatorPlanFact{},
 		UncertaintyBlockers:  []types.OperatorPlanFact{},
 		AdmissionBlockers:    []types.OperatorPlanFact{},
-		Evidence:             []types.OperatorEvidenceRef{},
+		Coordination: types.OperatorCampaignCoordinationSummary{
+			AdmissionsBlocked:     record.AdmissionsBlocked,
+			PausePending:          record.PauseRequested,
+			NoNewExposure:         record.AdmissionsBlocked,
+			ReconciliationNeeded:  record.ReconciliationNeeded,
+			SchedulerFence:        record.FencingToken,
+			SchedulerLeaseStatus:  schedulerLeaseStatus,
+			SchedulerLeaseExpires: record.LeaseExpiresAt,
+			ActiveLockCount:       record.ActiveLockCount,
+			UnreleasedLockCount:   record.UnreleasedLockCount,
+			ActiveLeaseCount:      record.ActiveLeaseCount,
+			UnreleasedLeaseCount:  record.UnreleasedLeaseCount,
+		},
+		Evidence: []types.OperatorEvidenceRef{},
 	}
 	waveIndexes := make(map[int]int, len(record.Waves))
 	for _, wave := range record.Waves {
@@ -760,6 +829,9 @@ func buildOperatorCampaignDetail(record operatorCampaignDetailRecord) *types.Ope
 		case "FAILED":
 			detail.Campaign.FailedCount++
 		}
+		if status == "ADMITTED" || status == "RUNNING" {
+			detail.Coordination.InFlightMemberCount++
+		}
 		if index, ok := waveIndexes[member.WaveOrder]; ok {
 			detail.Waves[index].MemberCount++
 			switch status {
@@ -777,6 +849,10 @@ func buildOperatorCampaignDetail(record operatorCampaignDetailRecord) *types.Ope
 			})
 		}
 	}
+	detail.Coordination.ZeroLockClosure = campaignStateIsTerminal(detail.Campaign.Status) &&
+		detail.Coordination.UnreleasedLockCount == 0 &&
+		detail.Coordination.UnreleasedLeaseCount == 0 &&
+		detail.Coordination.SchedulerLeaseStatus != "ACTIVE"
 	detail.Campaign.WaveCount = len(detail.Waves)
 	appendCampaignPrerequisites(detail, record.Prerequisites)
 	appendCampaignThresholds(detail, record.Thresholds)
@@ -796,6 +872,10 @@ func buildOperatorCampaignDetail(record operatorCampaignDetailRecord) *types.Ope
 	detail.Campaign.BlockedCount = len(detail.AdmissionBlockers) + len(detail.UncertaintyBlockers)
 	appendCampaignEvidence(detail, record)
 	return detail
+}
+
+func campaignStateIsTerminal(status string) bool {
+	return status == "FAILED" || status == "COMPLETED" || status == "CANCELED"
 }
 
 func appendCampaignPrerequisites(

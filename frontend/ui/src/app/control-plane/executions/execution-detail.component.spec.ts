@@ -93,6 +93,42 @@ describe('ExecutionDetailComponent', () => {
         blocking: false,
       },
     ],
+    locks: [
+      {
+        id: 'lock-1',
+        resourceType: 'deployment_target',
+        resourceKey: 'target-1',
+        concurrencyPolicy: 'QUEUE',
+        status: 'ACQUIRED',
+        createdAt: '2026-07-28T01:00:00Z',
+        acquiredAt: '2026-07-28T01:00:01Z',
+        currentConflict: false,
+      },
+    ],
+    leases: [
+      {
+        id: 'lease-1',
+        executorType: 'AGENT',
+        attempt: 2,
+        status: 'ACTIVE',
+        leasedAt: '2026-07-28T01:00:01Z',
+        expiresAt: '2026-07-28T01:05:00Z',
+        heartbeatAt: '2026-07-28T01:01:00Z',
+      },
+    ],
+    coordination: {
+      inFlight: true,
+      activeLockCount: 1,
+      unreleasedLockCount: 1,
+      activeLeaseCount: 1,
+      unreleasedLeaseCount: 1,
+      fenceStatus: 'ACTIVE',
+      fenceGeneration: 42,
+      fenceLeaseExpiresAt: '2026-07-28T01:05:00Z',
+      timedOut: false,
+      reconciliationRequired: false,
+      zeroLockClosure: false,
+    },
     observations: [
       {
         id: 'observation-1',
@@ -259,6 +295,66 @@ describe('ExecutionDetailComponent', () => {
     expect(text).toContain('sha256:cancellation-proof');
     expect(text).toContain('sha256:reconciliation-proof');
     expect(text).toContain('sha256:observation-proof');
+  });
+
+  it('renders acquired and released coordination facts, expiry, conflict, and terminal closure', () => {
+    service.getExecution.mockReturnValue(
+      of({
+        detail: {
+          ...detail,
+          execution: {...detail.execution, status: 'TIMED_OUT'},
+          locks: [
+            {...detail.locks[0], status: 'CONFLICTED', currentConflict: true},
+            {
+              ...detail.locks[0],
+              id: 'lock-2',
+              status: 'RELEASED',
+              releasedAt: '2026-07-28T01:02:00Z',
+              releaseReason: 'derived from terminal execution attempt: TIMED_OUT',
+            },
+          ],
+          leases: [
+            {...detail.leases[0], status: 'EXPIRED'},
+            {
+              ...detail.leases[0],
+              id: 'lease-2',
+              status: 'RELEASED',
+              releasedAt: '2026-07-28T01:02:00Z',
+              releaseReason: 'derived from lease expiry or reclaim',
+            },
+          ],
+          coordination: {
+            ...detail.coordination,
+            inFlight: false,
+            activeLockCount: 0,
+            activeLeaseCount: 0,
+            fenceStatus: 'RELEASED',
+            timedOut: true,
+            reconciliationRequired: true,
+            zeroLockClosure: true,
+            fenceReleasedAt: '2026-07-28T01:02:00Z',
+          },
+        },
+      })
+    );
+
+    const {fixture} = createComponent();
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('Current conflict');
+    expect(text).toContain('RELEASED');
+    expect(text).toContain('EXPIRED');
+    expect(text).toContain('The execution timed out');
+    expect(text).toContain('Reconciliation is required');
+    expect(text).toContain('Zero-lock closure proven');
+    expect(text).toContain('derived from terminal execution attempt: TIMED_OUT');
+  });
+
+  it('renders explicit empty lock and lease states', () => {
+    service.getExecution.mockReturnValue(of({detail: {...detail, locks: [], leases: []}}));
+
+    const {fixture} = createComponent();
+    expect(fixture.nativeElement.textContent).toContain('No retained lock facts');
+    expect(fixture.nativeElement.textContent).toContain('No retained lease facts');
   });
 
   it('keeps the detail usable and marks evidence partial when evidence fails', () => {

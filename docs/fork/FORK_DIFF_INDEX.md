@@ -2075,3 +2075,27 @@ Use one entry per pull request:
 - Compatibility notes: Empty additive fields are omitted, preserving the
   prior canonical shape when no structured migrations exist. Runtime-only
   symbolic migrations remain compatible.
+
+### PR-094 - Lock and lease lifecycle read model
+
+- Status: Implemented with focused local verification; no live environment is
+  contacted or claimed.
+- Upstream base: `e926167c`.
+- Feature flags: Uses the existing default-off `operator_control_plane_v2`
+  boundary.
+- User-facing behavior: Execution detail shows retained lock acquisition,
+  current conflict, lease expiry/release, fence state, reconciliation, and
+  zero-lock closure. Campaign detail shows pause-pending, no-new-exposure,
+  in-flight members, scheduler lease/fence state, and task coordination counts.
+- Database changes: None; projections use native retained records.
+- API changes: Additive execution and campaign coordination fields on existing
+  detail responses.
+- UI changes: Dedicated lock/lease lifecycle and campaign runtime coordination
+  cards replace heuristic message matching.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0081, PR-094 fork notes, and operator API guidance.
+- Tests: Focused SQL/integration and Angular component coverage.
+- Upstream contribution notes: Community-neutral read models with no adopter,
+  CI, registry, cloud, or service-specific assumptions.
+- Compatibility notes: Existing consumers may ignore the additive fields. No
+  lifecycle source of truth or write path changes.

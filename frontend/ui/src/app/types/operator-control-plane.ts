@@ -431,6 +431,22 @@ export interface OperatorCampaignMember {
   planChecksum: string;
 }
 
+export interface OperatorCampaignCoordinationSummary {
+  admissionsBlocked: boolean;
+  pausePending: boolean;
+  noNewExposure: boolean;
+  inFlightMemberCount: number;
+  reconciliationRequired: boolean;
+  schedulerFenceGeneration: number;
+  schedulerLeaseStatus: string;
+  schedulerLeaseExpiresAt?: string;
+  activeLockCount: number;
+  unreleasedLockCount: number;
+  activeLeaseCount: number;
+  unreleasedLeaseCount: number;
+  zeroLockClosure: boolean;
+}
+
 export interface OperatorCampaignDetail {
   campaign: OperatorCampaignRow;
   runVersion?: number;
@@ -447,6 +463,7 @@ export interface OperatorCampaignDetail {
   controls: OperatorPlanFact[];
   uncertaintyBlockers: OperatorPlanFact[];
   admissionBlockers: OperatorPlanFact[];
+  coordination: OperatorCampaignCoordinationSummary;
   evidence: OperatorEvidenceRef[];
 }
 
@@ -613,6 +630,46 @@ export interface OperatorExecutionAttemptFact {
   blocking: boolean;
 }
 
+export interface OperatorExecutionLockFact {
+  id: string;
+  resourceType: string;
+  resourceKey: string;
+  concurrencyPolicy: string;
+  status: 'WAITING' | 'CONFLICTED' | 'ACQUIRED' | 'RELEASED' | string;
+  createdAt: string;
+  acquiredAt?: string;
+  releasedAt?: string;
+  currentConflict: boolean;
+  releaseReason?: string;
+}
+
+export interface OperatorExecutionLeaseFact {
+  id: string;
+  executorType: string;
+  attempt: number;
+  status: 'ACTIVE' | 'EXPIRED' | 'RELEASED' | string;
+  leasedAt: string;
+  expiresAt: string;
+  heartbeatAt: string;
+  releasedAt?: string;
+  releaseReason?: string;
+}
+
+export interface OperatorExecutionCoordinationSummary {
+  inFlight: boolean;
+  activeLockCount: number;
+  unreleasedLockCount: number;
+  activeLeaseCount: number;
+  unreleasedLeaseCount: number;
+  fenceStatus: string;
+  fenceGeneration: number;
+  fenceLeaseExpiresAt?: string;
+  fenceReleasedAt?: string;
+  timedOut: boolean;
+  reconciliationRequired: boolean;
+  zeroLockClosure: boolean;
+}
+
 export interface OperatorExecutionDetail {
   execution: OperatorExecutionRow;
   intent?: OperatorPlanFact;
@@ -623,6 +680,9 @@ export interface OperatorExecutionDetail {
   tasks: OperatorPlanFact[];
   steps: OperatorPlanFact[];
   attempts: OperatorExecutionAttemptFact[];
+  locks: OperatorExecutionLockFact[];
+  leases: OperatorExecutionLeaseFact[];
+  coordination: OperatorExecutionCoordinationSummary;
   observations: OperatorPlanFact[];
   evidence: OperatorEvidenceRef[];
 }

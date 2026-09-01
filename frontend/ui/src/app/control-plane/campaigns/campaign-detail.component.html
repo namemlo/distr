@@ -48,6 +48,77 @@
     }
 
     <section
+      aria-labelledby="campaign-coordination-heading"
+      class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 id="campaign-coordination-heading" class="text-lg font-semibold text-gray-900 dark:text-white">
+            Runtime coordination
+          </h2>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Native campaign admission, member, scheduler lease, task lock, and task lease state.
+          </p>
+        </div>
+        <span
+          class="rounded-full px-3 py-1 text-sm font-medium"
+          [class.bg-green-100]="model.coordination.zeroLockClosure"
+          [class.text-green-800]="model.coordination.zeroLockClosure"
+          [class.bg-yellow-100]="!model.coordination.zeroLockClosure"
+          [class.text-yellow-800]="!model.coordination.zeroLockClosure">
+          {{ model.coordination.zeroLockClosure ? 'Zero-lock closure proven' : 'Coordination state open' }}
+        </span>
+      </div>
+      <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">Admission</dt>
+          <dd class="mt-1 font-medium">
+            {{ model.coordination.admissionsBlocked ? 'Blocked' : 'Open' }} ·
+            {{ model.coordination.noNewExposure ? 'No new exposure' : 'New exposure allowed' }}
+          </dd>
+        </div>
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">Pause lifecycle</dt>
+          <dd class="mt-1 font-medium">
+            {{ model.coordination.pausePending ? 'Pause pending at safe point' : 'No pause pending' }}
+          </dd>
+        </div>
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">In-flight members</dt>
+          <dd class="mt-1 font-medium">{{ model.coordination.inFlightMemberCount }}</dd>
+        </div>
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">Reconciliation</dt>
+          <dd class="mt-1 font-medium">
+            {{ model.coordination.reconciliationRequired ? 'Required' : 'Not required' }}
+          </dd>
+        </div>
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">Scheduler fence</dt>
+          <dd class="mt-1 font-medium">Generation {{ model.coordination.schedulerFenceGeneration }}</dd>
+        </div>
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">Scheduler lease</dt>
+          <dd class="mt-1 font-medium">{{ model.coordination.schedulerLeaseStatus }}</dd>
+          @if (model.coordination.schedulerLeaseExpiresAt) {
+            <dd class="mt-1 break-all text-xs">Expires {{ model.coordination.schedulerLeaseExpiresAt }}</dd>
+          }
+        </div>
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">Task locks</dt>
+          <dd class="mt-1 font-medium">
+            {{ model.coordination.activeLockCount }} active · {{ model.coordination.unreleasedLockCount }} unreleased
+          </dd>
+        </div>
+        <div class="rounded bg-gray-50 p-3 dark:bg-gray-800">
+          <dt class="text-gray-500 dark:text-gray-400">Task leases</dt>
+          <dd class="mt-1 font-medium">
+            {{ model.coordination.activeLeaseCount }} active · {{ model.coordination.unreleasedLeaseCount }} unreleased
+          </dd>
+        </div>
+      </dl>
+    </section>
+
+    <section
       aria-labelledby="campaign-checksums-heading"
       class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
       <h2 id="campaign-checksums-heading" class="text-lg font-semibold text-gray-900 dark:text-white">

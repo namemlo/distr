@@ -226,6 +226,7 @@ attempt AS (
   SELECT
     candidate.*,
     task.protocol_version,
+	task.status AS task_status,
     task.deployment_plan_id,
     task.environment_id,
     step.name AS step_name,
@@ -235,6 +236,8 @@ attempt AS (
     plan.previous_state_source_plan_id,
     fence.generation AS fence_generation,
     fence.resource_key AS fence_resource_key,
+	fence.lease_expires_at AS fence_lease_expires_at,
+	fence.released_at AS fence_released_at,
     COALESCE(external.idempotency_key, '') AS idempotency_key
   FROM ExecutionAttempt AS candidate
   JOIN Task AS task
@@ -351,6 +354,30 @@ detail AS (
       'blocking', false, 'order', attempt.sort_order
     )),
     'attempts', attempts.items,
+	'locks', locks.items,
+	'leases', leases.items,
+	'coordination', jsonb_build_object(
+	  'inFlight', attempt.status IN ('PENDING', 'CLAIMED', 'RUNNING'),
+	  'activeLockCount', locks.active_count,
+	  'unreleasedLockCount', locks.unreleased_count,
+	  'activeLeaseCount', leases.active_count,
+	  'unreleasedLeaseCount', leases.unreleased_count,
+	  'fenceStatus', CASE
+		WHEN attempt.fence_released_at IS NOT NULL THEN 'RELEASED'
+		WHEN attempt.fence_lease_expires_at <= @decisionAt THEN 'EXPIRED'
+		ELSE 'ACTIVE'
+	  END,
+	  'fenceGeneration', attempt.fence_generation,
+	  'fenceLeaseExpiresAt', attempt.fence_lease_expires_at,
+	  'fenceReleasedAt', attempt.fence_released_at,
+	  'timedOut', attempt.status = 'TIMED_OUT',
+	  'reconciliationRequired', attempt.status IN ('UNKNOWN', 'TIMED_OUT')
+		AND COALESCE(reconciliation.outcome, 'UNKNOWN') = 'UNKNOWN',
+	  'zeroLockClosure', attempt.status IN ('SUCCEEDED', 'FAILED', 'CANCELED', 'TIMED_OUT', 'FENCED', 'UNKNOWN')
+		AND locks.unreleased_count = 0
+		AND leases.unreleased_count = 0
+		AND attempt.fence_released_at IS NOT NULL
+	),
     'observations', observations.items,
     'evidence', evidence.items
   ) AS payload
@@ -425,6 +452,93 @@ detail AS (
       AND retry.execution_id = attempt.execution_id
       AND retry.step_key = attempt.step_key
   ) AS attempts ON TRUE
+	LEFT JOIN LATERAL (
+	  SELECT
+		COALESCE(jsonb_agg(jsonb_build_object(
+		  'id', lockrow.id,
+		  'resourceType', lockrow.resource_type,
+		  'resourceKey', lockrow.resource_key,
+		  'concurrencyPolicy', lockrow.concurrency_policy,
+		  'status', CASE
+			WHEN lockrow.released_at IS NOT NULL THEN 'RELEASED'
+			WHEN lockrow.acquired_at IS NOT NULL THEN 'ACQUIRED'
+			WHEN EXISTS (
+			  SELECT 1
+			  FROM TaskResourceLock AS competing
+			  JOIN Task AS competing_task
+				ON competing_task.id = competing.task_id
+			   AND competing_task.organization_id = competing.organization_id
+			  WHERE competing.organization_id = lockrow.organization_id
+				AND competing.resource_type = lockrow.resource_type
+				AND competing.resource_key = lockrow.resource_key
+				AND competing.task_id <> lockrow.task_id
+				AND competing.acquired_at IS NOT NULL
+				AND competing.released_at IS NULL
+				AND competing_task.status = 'RUNNING'
+			) THEN 'CONFLICTED'
+			ELSE 'WAITING'
+		  END,
+		  'createdAt', lockrow.created_at,
+		  'acquiredAt', lockrow.acquired_at,
+		  'releasedAt', lockrow.released_at,
+		  'currentConflict', lockrow.released_at IS NULL AND EXISTS (
+			SELECT 1
+			FROM TaskResourceLock AS competing
+			JOIN Task AS competing_task
+			  ON competing_task.id = competing.task_id
+			 AND competing_task.organization_id = competing.organization_id
+			WHERE competing.organization_id = lockrow.organization_id
+			  AND competing.resource_type = lockrow.resource_type
+			  AND competing.resource_key = lockrow.resource_key
+			  AND competing.task_id <> lockrow.task_id
+			  AND competing.acquired_at IS NOT NULL
+			  AND competing.released_at IS NULL
+			  AND competing_task.status = 'RUNNING'
+		  ),
+		  'releaseReason', CASE
+			WHEN lockrow.released_at IS NULL THEN ''
+			WHEN attempt.status IN ('SUCCEEDED', 'FAILED', 'CANCELED', 'TIMED_OUT', 'FENCED', 'UNKNOWN')
+			  THEN 'derived from terminal execution attempt: ' || attempt.status
+			WHEN attempt.task_status IN ('SUCCEEDED', 'FAILED', 'CANCELED')
+			  THEN 'derived from terminal task: ' || attempt.task_status
+			ELSE 'retained release; no terminal reason is recorded'
+		  END
+		) ORDER BY lockrow.created_at, lockrow.id), '[]'::jsonb) AS items,
+		count(*) FILTER (WHERE lockrow.acquired_at IS NOT NULL AND lockrow.released_at IS NULL)::int AS active_count,
+		count(*) FILTER (WHERE lockrow.released_at IS NULL)::int AS unreleased_count
+	  FROM TaskResourceLock AS lockrow
+	  WHERE lockrow.organization_id = attempt.organization_id
+		AND lockrow.task_id = attempt.task_id
+	) AS locks ON TRUE
+	LEFT JOIN LATERAL (
+	  SELECT
+		COALESCE(jsonb_agg(jsonb_build_object(
+		  'id', lease.id,
+		  'executorType', lease.executor_type,
+		  'attempt', lease.attempt,
+		  'status', CASE
+			WHEN lease.released_at IS NOT NULL THEN 'RELEASED'
+			WHEN lease.expires_at <= @decisionAt THEN 'EXPIRED'
+			ELSE 'ACTIVE'
+		  END,
+		  'leasedAt', lease.leased_at,
+		  'expiresAt', lease.expires_at,
+		  'heartbeatAt', lease.heartbeat_at,
+		  'releasedAt', lease.released_at,
+		  'releaseReason', CASE
+			WHEN lease.released_at IS NULL THEN ''
+			WHEN lease.expires_at <= lease.released_at THEN 'derived from lease expiry or reclaim'
+			WHEN attempt.task_status IN ('SUCCEEDED', 'FAILED', 'CANCELED')
+			  THEN 'derived from terminal task: ' || attempt.task_status
+			ELSE 'retained release; no terminal reason is recorded'
+		  END
+		) ORDER BY lease.attempt, lease.leased_at, lease.id), '[]'::jsonb) AS items,
+		count(*) FILTER (WHERE lease.released_at IS NULL AND lease.expires_at > @decisionAt)::int AS active_count,
+		count(*) FILTER (WHERE lease.released_at IS NULL)::int AS unreleased_count
+	  FROM TaskLease AS lease
+	  WHERE lease.organization_id = attempt.organization_id
+		AND lease.task_id = attempt.task_id
+	) AS leases ON TRUE
   LEFT JOIN LATERAL (
     SELECT COALESCE(jsonb_agg(jsonb_build_object(
       'id', observed.id, 'key', desired.component_key, 'kind', 'independent-observation',
@@ -593,6 +707,12 @@ func (OperatorExecutionRepository) GetOperatorExecution(
 	}
 	if detail.Attempts == nil {
 		detail.Attempts = []types.OperatorExecutionAttemptFact{}
+	}
+	if detail.Locks == nil {
+		detail.Locks = []types.OperatorExecutionLockFact{}
+	}
+	if detail.Leases == nil {
+		detail.Leases = []types.OperatorExecutionLeaseFact{}
 	}
 	if detail.Observations == nil {
 		detail.Observations = []types.OperatorPlanFact{}

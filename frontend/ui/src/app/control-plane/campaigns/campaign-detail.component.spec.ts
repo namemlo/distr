@@ -96,6 +96,49 @@ describe('CampaignDetailComponent', () => {
     expect(button('Exclude member').disabled).toBe(true);
   });
 
+  it('renders pause-pending, no-new-exposure, in-flight, scheduler lease, and lock closure state', async () => {
+    await createComponent();
+
+    for (const value of [
+      'Runtime coordination',
+      'Blocked · No new exposure',
+      'Pause pending at safe point',
+      'In-flight members',
+      'Generation 12',
+      'ACTIVE',
+      '2 active · 3 unreleased',
+      '1 active · 2 unreleased',
+      'Coordination state open',
+    ]) {
+      expect(text()).toContain(value);
+    }
+
+    service.getCampaign.mockReturnValue(
+      of({
+        detail: detail({
+          campaign: campaign({status: 'COMPLETED'}),
+          coordination: {
+            ...detail().coordination,
+            admissionsBlocked: false,
+            pausePending: false,
+            noNewExposure: false,
+            inFlightMemberCount: 0,
+            schedulerLeaseStatus: 'EXPIRED',
+            activeLockCount: 0,
+            unreleasedLockCount: 0,
+            activeLeaseCount: 0,
+            unreleasedLeaseCount: 0,
+            zeroLockClosure: true,
+          },
+        }),
+      })
+    );
+    fixture.destroy();
+    await createComponent();
+    expect(text()).toContain('Zero-lock closure proven');
+    expect(text()).toContain('No pause pending');
+  });
+
   it('distinguishes forbidden and not-found detail states', async () => {
     service.getCampaign.mockReturnValue(
       throwError(() => new HttpErrorResponse({status: 403, statusText: 'Forbidden'}))
@@ -352,6 +395,21 @@ function detail(overrides: Partial<OperatorCampaignDetail> = {}): OperatorCampai
     ],
     uncertaintyBlockers: [],
     admissionBlockers: [],
+    coordination: {
+      admissionsBlocked: true,
+      pausePending: true,
+      noNewExposure: true,
+      inFlightMemberCount: 1,
+      reconciliationRequired: false,
+      schedulerFenceGeneration: 12,
+      schedulerLeaseStatus: 'ACTIVE',
+      schedulerLeaseExpiresAt: '2026-07-28T01:05:00Z',
+      activeLockCount: 2,
+      unreleasedLockCount: 3,
+      activeLeaseCount: 1,
+      unreleasedLeaseCount: 2,
+      zeroLockClosure: false,
+    },
     evidence: [
       {
         id: 'evidence-1',

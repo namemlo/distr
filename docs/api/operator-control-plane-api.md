@@ -74,6 +74,20 @@ The read-only operator surface is rooted at:
 Read models do not become execution inputs and do not copy write authority from
 the canonical domain records.
 
+Execution detail includes additive `locks`, `leases`, and `coordination`
+projections. Lock facts expose created/acquired/released times, policy, current
+conflict, and a derived release reason. Lease facts expose executor, attempt,
+heartbeat, expiry, release, state, and a derived release reason. Coordination
+exposes active and unreleased counts, fence generation/expiry/release,
+timeout/reconciliation state, and terminal `zeroLockClosure`. Current conflict
+is a point-in-time fact, not a fabricated historical event.
+
+Campaign detail includes additive `coordination` state: persisted admission
+blocking, `pausePending`, `noNewExposure`, `inFlightMemberCount` for `ADMITTED`
+plus `RUNNING`, reconciliation, scheduler fence/lease state, task lock/lease
+counts, and terminal `zeroLockClosure`. These fields are derived from native
+campaign-run, member-run, lineage, lock, and lease records.
+
 ## Workflow route families
 
 ### Registry and setup
@@ -246,7 +260,10 @@ campaign-run ID returned by `POST /deployment-campaign-runs`; it is not a
 campaign draft or immutable campaign-revision ID.
 
 Control requests are authorized, idempotent, and audited. Pause does not
-misreport in-flight work as cancelled.
+misreport in-flight work as cancelled. The campaign read model keeps
+`pausePending` visible until the native safe-point transition clears the
+persisted request, and maps persisted admission blocking directly to
+`noNewExposure`.
 
 ### Execution controls
 

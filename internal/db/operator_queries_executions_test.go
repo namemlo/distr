@@ -126,6 +126,13 @@ func TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution
 		"'planChecksum', retry.plan_checksum",
 		"'artifactDigest', retry.artifact_digest",
 		"'configChecksum', retry.config_checksum",
+		"FROM TaskResourceLock AS lockrow",
+		"FROM TaskLease AS lease",
+		"'currentConflict'",
+		"'releaseReason'",
+		"'fenceLeaseExpiresAt'",
+		"'fenceReleasedAt'",
+		"'zeroLockClosure'",
 	} {
 		g.Expect(operatorExecutionDetailSQL).To(ContainSubstring(required))
 	}
@@ -264,11 +271,26 @@ func TestOperatorExecutionDetailReadsPersistedFenceIntentIdempotencyAndRetries(t
 		  (@secondAttemptID, @secondCreatedAt, @organizationID, @targetID, @taskID, @stepRunID,
 		   @externalID, 2, 'deploy', 'RUNNING', @planChecksum, @artifactDigest,
 		   @configChecksum, 'adapter.compose@2', @issuedAt, @expiresAt, NULL, true, true, '');
-		INSERT INTO ExecutionFence (
-		  execution_attempt_id, organization_id, resource_key, generation, released_at
+		INSERT INTO TaskResourceLock (
+		  organization_id, task_id, resource_type, resource_key, concurrency_policy,
+		  acquired_at, released_at
+		) VALUES (
+		  @organizationID, @taskID, 'deployment_target', @targetID::text, 'QUEUE',
+		  @firstCreatedAt, NULL
+		);
+		INSERT INTO TaskLease (
+		  organization_id, task_id, agent_id, executor_type, lease_token_hash,
+		  leased_at, expires_at, heartbeat_at, attempt, released_at
 		) VALUES
-		  (@firstAttemptID, @organizationID, 'target:' || @targetID::text, 41, @secondCreatedAt),
-		  (@secondAttemptID, @organizationID, 'target:' || @targetID::text, 42, NULL);
+		  (@organizationID, @taskID, @targetID, 'AGENT', repeat('a', 64),
+		   @firstCreatedAt, @firstCompletedAt, @firstCreatedAt, 1, @secondCreatedAt),
+		  (@organizationID, @taskID, @targetID, 'AGENT', repeat('b', 64),
+		   @secondCreatedAt, @deadline, @secondCreatedAt, 2, NULL);
+		INSERT INTO ExecutionFence (
+		  execution_attempt_id, organization_id, resource_key, generation, lease_expires_at, released_at
+		) VALUES
+		  (@firstAttemptID, @organizationID, 'target:' || @targetID::text, 41, @firstCompletedAt, @secondCreatedAt),
+		  (@secondAttemptID, @organizationID, 'target:' || @targetID::text, 42, @deadline, NULL);
 		INSERT INTO ExecutionIntent (
 		  id, organization_id, execution_attempt_id, payload, checksum, key_id, signature
 		) VALUES (
@@ -308,4 +330,56 @@ func TestOperatorExecutionDetailReadsPersistedFenceIntentIdempotencyAndRetries(t
 	g.Expect(detail.Attempts[0].FenceGeneration).To(Equal(int64(41)))
 	g.Expect(detail.Attempts[1].FenceGeneration).To(Equal(int64(42)))
 	g.Expect(detail.Attempts[1].IdempotencyKey).To(Equal("external:worker:deploy"))
+	g.Expect(detail.Locks).To(HaveLen(1))
+	g.Expect(detail.Locks[0].Status).To(Equal("ACQUIRED"))
+	g.Expect(detail.Locks[0].CurrentConflict).To(BeFalse())
+	g.Expect(detail.Leases).To(HaveLen(2))
+	g.Expect(detail.Leases[0].Status).To(Equal("RELEASED"))
+	g.Expect(detail.Leases[1].Status).To(Equal("ACTIVE"))
+	g.Expect(detail.Coordination.InFlight).To(BeTrue())
+	g.Expect(detail.Coordination.ActiveLockCount).To(Equal(1))
+	g.Expect(detail.Coordination.ActiveLeaseCount).To(Equal(1))
+	g.Expect(detail.Coordination.FenceStatus).To(Equal("ACTIVE"))
+	g.Expect(detail.Coordination.ZeroLockClosure).To(BeFalse())
+
+	closedAt := now.Add(30 * time.Second)
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		UPDATE ExecutionAttempt
+		SET status = 'SUCCEEDED', completed_at = @closedAt, cancellable = false
+		WHERE id = @attemptID AND organization_id = @organizationID;
+		UPDATE Task
+		SET status = 'SUCCEEDED', completed_at = @closedAt
+		WHERE id = @taskID AND organization_id = @organizationID;
+		UPDATE TaskResourceLock
+		SET released_at = @closedAt
+		WHERE task_id = @taskID AND organization_id = @organizationID;
+		UPDATE TaskLease
+		SET released_at = @closedAt
+		WHERE task_id = @taskID AND organization_id = @organizationID AND released_at IS NULL;
+		UPDATE ExecutionFence
+		SET released_at = @closedAt
+		WHERE execution_attempt_id = @attemptID AND organization_id = @organizationID`, pgx.NamedArgs{
+		"closedAt": closedAt, "attemptID": secondAttemptID,
+		"taskID": taskID, "organizationID": organizationID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	closed, err := (OperatorExecutionRepository{}).GetOperatorExecution(
+		ctx,
+		types.OperatorScopeFilter{
+			OrganizationID: organizationID, DecisionAt: closedAt, OrganizationWide: true,
+			CustomerIDs: []uuid.UUID{}, EnvironmentIDs: []uuid.UUID{},
+			DeploymentUnitIDs: []uuid.UUID{}, ComponentIDs: []uuid.UUID{},
+			CampaignIDs: []uuid.UUID{},
+		},
+		secondAttemptID,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(closed.Locks[0].Status).To(Equal("RELEASED"))
+	g.Expect(closed.Locks[0].ReleaseReason).To(Equal("derived from terminal execution attempt: SUCCEEDED"))
+	g.Expect(closed.Leases[1].Status).To(Equal("RELEASED"))
+	g.Expect(closed.Coordination.FenceStatus).To(Equal("RELEASED"))
+	g.Expect(closed.Coordination.UnreleasedLockCount).To(Equal(0))
+	g.Expect(closed.Coordination.UnreleasedLeaseCount).To(Equal(0))
+	g.Expect(closed.Coordination.ZeroLockClosure).To(BeTrue())
 }

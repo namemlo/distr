@@ -65,3 +65,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0076: Native Structured Migration Contract Wiring](0076-native-structured-migration-contract-wiring.md)
 - [ADR-0077: Baseline Adoption Fact Separation](0077-baseline-adoption-fact-separation.md)
 - [ADR-0078: Independent Runtime Measurement Probes](0078-independent-runtime-measurement-probes.md)
+- [ADR-0081: Lock and Lease Lifecycle Read Model](0081-lock-lease-lifecycle-read-model.md)
