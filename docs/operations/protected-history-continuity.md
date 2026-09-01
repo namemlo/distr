@@ -26,12 +26,63 @@ timestamp-audit families. The later registered projections are deliberate:
 
 - schema 166 provides the expanded control-plane projection;
 - schema 167 adds `ExecutionRuntimeEvidence`;
-- schema 168 adds `DeploymentPlanResolvedRequirement`; and
-- schema 169 adds `BaselineAdoptionComponent`.
+- schema 168 adds `DeploymentPlanResolvedRequirement`;
+- schema 169 adds `BaselineAdoptionComponent`; and
+- schema 170 adds contained prior `ProtectedHistoryArtifact` rows and their
+  correlated `ControlPlaneAuditEvent` rows.
 
-An export from schema 170 or any other unregistered future schema is refused so
+An export from schema 171 or any other unregistered future schema is refused so
 new protected tables cannot be silently omitted. Never compare exact artifacts
 from different schema versions.
+
+## Retain a Hub-created artifact
+
+For a release or recovery handoff, prefer a Hub-created retained artifact in
+addition to any CLI sidecar. Enable the existing `operator_control_plane_v2`
+flag and configure the dedicated object store:
+
+```shell
+PROTECTED_HISTORY_OBJECT_STORE_ENABLED=true
+PROTECTED_HISTORY_S3_REGION=<region>
+PROTECTED_HISTORY_S3_BUCKET=<bucket>
+# Optional for S3-compatible providers:
+PROTECTED_HISTORY_S3_ENDPOINT=https://object-store.example.com
+PROTECTED_HISTORY_S3_ACCESS_KEY_ID=<access-key>
+PROTECTED_HISTORY_S3_SECRET_ACCESS_KEY=<secret-key>
+PROTECTED_HISTORY_S3_USE_PATH_STYLE=false
+```
+
+Omit the endpoint and static credentials to use the standard AWS endpoint and
+credential chain. These settings are independent from `REGISTRY_S3_*` and
+`TARGET_CONFIG_S3_*`; the Hub never falls back to either configuration.
+
+Create the retained artifact with only exact scope, a distinct current
+organization-member reviewer, and an idempotency key:
+
+```http
+POST /api/v1/protected-history-artifacts
+Content-Type: application/json
+
+{
+  "customerOrganizationIds": ["<customer-uuid>"],
+  "deploymentTargetIds": ["<target-uuid>"],
+  "reviewerUserAccountId": "<reviewer-user-uuid>",
+  "idempotencyKey": "release-2026-09-01-before-upgrade"
+}
+```
+
+The Hub derives the organization and issuer from authentication, exports the
+current scope, writes a checksum-addressed create-only S3 object, reads it back,
+and atomically retains metadata plus `protected_history.retained` audit
+evidence. It never accepts caller artifact bytes, references, or checksums.
+Repeating identical material returns the original retained row after readback;
+changing scope, issuer, reviewer, key binding, or stored bytes conflicts.
+
+Use `GET /api/v1/protected-history-artifacts/{id}` for retained metadata and
+`GET /api/v1/protected-history-artifacts/{id}/verification` for exact object
+readback. Both are read-only. Keep the returned retention checksum, audit event
+ID/sequence, audit-binding checksum, and object identity in the release
+handoff. Migration 170 cannot be rolled back after any retained row exists.
 
 ## Exact comparison
 

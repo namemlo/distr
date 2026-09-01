@@ -92,6 +92,11 @@ type TargetConfigObjectStoreConfig struct {
 	S3      S3Config
 }
 
+type ProtectedHistoryObjectStoreConfig struct {
+	Enabled bool
+	S3      S3Config
+}
+
 var (
 	targetConfigRegionPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	targetConfigBucketPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
@@ -99,6 +104,17 @@ var (
 )
 
 func (config TargetConfigObjectStoreConfig) Configured() bool {
+	if !config.Enabled ||
+		!validTargetConfigRegion(config.S3.Region) ||
+		!validTargetConfigEndpoint(config.S3.Endpoint) ||
+		!validTargetConfigBucket(config.S3.Bucket) ||
+		!validTargetConfigCredentials(config.S3.AccessKeyID, config.S3.SecretAccessKey) {
+		return false
+	}
+	return true
+}
+
+func (config ProtectedHistoryObjectStoreConfig) Configured() bool {
 	if !config.Enabled ||
 		!validTargetConfigRegion(config.S3.Region) ||
 		!validTargetConfigEndpoint(config.S3.Endpoint) ||

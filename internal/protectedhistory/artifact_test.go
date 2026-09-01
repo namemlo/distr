@@ -73,6 +73,22 @@ func TestBuildRejectsDuplicateAndUnknownLogicalRecords(t *testing.T) {
 	}
 }
 
+func TestSchema170KindsDoNotChangeOlderArtifactValidation(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"protectedhistoryartifact", "controlplaneauditevent"} {
+		if _, err := Build(testScope(), 169, []RawRecord{{
+			Kind: kind, ID: testTaskID, Payload: json.RawMessage(`{}`),
+		}}); err == nil || !strings.Contains(err.Error(), "requires source schema 170") {
+			t.Fatalf("schema 169 accepted migration-170 kind %s: %v", kind, err)
+		}
+		if _, err := Build(testScope(), 170, []RawRecord{{
+			Kind: kind, ID: testTaskID, Payload: json.RawMessage(`{}`),
+		}}); err != nil {
+			t.Fatalf("schema 170 rejected migration-170 kind %s: %v", kind, err)
+		}
+	}
+}
+
 func TestBuildRejectsAmbiguousOrMalformedPayloads(t *testing.T) {
 	t.Parallel()
 	for _, payload := range []string{

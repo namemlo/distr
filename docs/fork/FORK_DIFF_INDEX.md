@@ -4,9 +4,9 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-Entries through PR-092 and the separately integrated PR-094, PR-096, and PR-097 slices
-are recorded below. Each entry's status and evidence boundary remain
-authoritative. PR-054A timestamp-expand runtime, migration,
+Entries through PR-092 and the separately integrated PR-094, PR-095, PR-096,
+and PR-097 slices are recorded below. Each entry's status and evidence boundary
+remain authoritative. PR-054A timestamp-expand runtime, migration,
 audited dirty-marker recovery, and operator documentation are implemented
 locally, while final acceptance remains pending. PR-055 through PR-082 build
 the default-off integrated control plane through migration 162. PR-083 adds
@@ -20,8 +20,9 @@ PR-087 adds the executor runtime-trust boundary and migration 167; its live
 PostgreSQL, neutral-adapter, and final release gates remain pending.
 PR-090 separates frozen Component Release application identity from
 independently observed schema and capability identity in migration 169. The
-PR-086, PR-088, PR-091, PR-092, and PR-097 contracts are integrated separately
-before final 138-to-169 release certification.
+PR-086, PR-088, PR-091, PR-092, PR-095, and PR-097 contracts are integrated
+separately before final 138-to-170 release certification. PR-095 adds migration
+170 and immutable, audit-bound protected-history artifact retention.
 
 ## Tracking Template
 
@@ -2134,6 +2135,37 @@ Use one entry per pull request:
   CI, registry, cloud, or service-specific assumptions.
 - Compatibility notes: Existing consumers may ignore the additive fields. No
   lifecycle source of truth or write path changes.
+
+### PR-095 - Protected-history artifact retention
+
+- Status: Implemented with focused local verification; live PostgreSQL and
+  final integrated release gates remain pending.
+- Upstream base: `94660073`.
+- Feature flags: Uses the existing default-off `operator_control_plane_v2`
+  boundary; no new feature flag is introduced.
+- User-facing behavior: Authenticated operators can ask the Hub to export an
+  exact customer/target scope, store it at an immutable checksum address, bind
+  a distinct reviewer, and retrieve or verify retained metadata.
+- Database changes: Migration 170 adds append-only
+  `ProtectedHistoryArtifact`, exact request/retention/audit checksum checks, a
+  deferred two-way control-plane audit binding, canonical organization-bound
+  scope validation, idempotency uniqueness, and downgrade refusal after data.
+- API changes: Adds POST metadata creation plus GET metadata and GET object
+  verification under `/api/v1/protected-history-artifacts`. Create rejects
+  caller-supplied artifact material and derives organization/issuer from auth.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0082, PR-095 notes, operator API/runbook guidance,
+  dedicated S3 configuration, and schema-170 upgrade/release targets.
+- Tests: Domain/S3, strict handler, OpenAPI, environment/service wiring,
+  protected projection, database idempotency/isolation/audit/no-write reads,
+  migration append-only/down-refusal, and release-matrix coverage.
+- Upstream contribution notes: Community-neutral authenticated retention with
+  generic S3 semantics and no adopter, client-schema, registry, CI, or cloud
+  coupling.
+- Compatibility notes: Schemas 138-169 preserve their existing projections.
+  Schema 170 adds retained artifact/audit records; schema 171 remains refused.
+  Binary rollback may disable routes, but schema down refuses after retention.
 
 ### PR-096 - Complete Product Release manifest read model
 

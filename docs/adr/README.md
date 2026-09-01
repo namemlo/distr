@@ -67,5 +67,6 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0078: Independent Runtime Measurement Probes](0078-independent-runtime-measurement-probes.md)
 - [ADR-0079: Durable Independent Observer Service](0079-durable-independent-observer-service.md)
 - [ADR-0081: Lock and Lease Lifecycle Read Model](0081-lock-lease-lifecycle-read-model.md)
+- [ADR-0082: Protected-History Artifact Retention](0082-protected-history-artifact-retention.md)
 - [ADR-0083: Complete Product Release Manifest Read Model](0083-product-release-manifest-read-model.md)
 - [ADR-0084: Native Schema Evidence Gating](0084-native-schema-evidence-gating.md)

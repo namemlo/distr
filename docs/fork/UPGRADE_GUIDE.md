@@ -16,9 +16,9 @@ compatibility, or clear the fence. Resume the applicable normal timestamp-expand
 finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
 migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
 
-## Integrated Upgrade Through Migration 169
+## Integrated Upgrade Through Migration 170
 
-The current release requires an ordered upgrade from migration 138 through migration 169. Migration 163 preserves existing
+The current release requires an ordered upgrade from migration 138 through migration 170. Migration 163 preserves existing
 blocked plan history and enables only newly validated target deployment plans to seal as executable `READY` plans.
 Its down migration refuses after any executable v2 plan exists.
 Migration 164 preserves legacy planning evidence while allowing authoritative `ActiveDesiredRevision` and
@@ -34,9 +34,14 @@ or runtime evidence remains.
 Migration 168 adds fresh dependency-provider evidence. Migration 169 separates the frozen
 Component Release application version/checksum from independently observed schema version/capability checksum,
 backfills only the application version from retained plan pins, and preserves existing adoption and audit checksums.
+Migration 170 adds immutable protected-history artifact metadata, exact
+idempotency and reviewer identity, a deferred correlated audit binding, and an
+explicit schema-170 projection. Its down migration succeeds only before any
+protected-history artifact is retained; afterward it refuses rather than
+delete evidence.
 Before a release can be signed, retain separate results for clean install, upgrade, safe down/refusal, checkpoint
 restart, v1-only flags-off, mixed v1/v2, and retained-v2-history flags-off paths on the supported PostgreSQL 16.14
-and 18.4 images through migration 169. The required matrix and current pending status are recorded in the
+and 18.4 images through migration 170. The required matrix and current pending status are recorded in the
 [community release readiness package](../release/community-release-readiness.md#integrated-control-plane-release-gate).
 
 Migration 162 adds `SampleRetirementJob`, `SampleRetirementItem`, `SampleRetirementCheckpoint`, and

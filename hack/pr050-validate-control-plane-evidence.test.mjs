@@ -25,7 +25,7 @@ function migrationReport(databaseOverrides = {}) {
   const requiredScenarios = [
     'migration-file-integrity',
     'postgres-runtime-version',
-    'migration-138-to-169-upgrade',
+    'migration-138-to-170-upgrade',
     'clean-install',
     'single-step-down-and-refusal-contracts',
     'checkpoint-idempotency-and-cursor-resume',
@@ -41,7 +41,7 @@ function migrationReport(databaseOverrides = {}) {
     startedAt: '2026-07-29T00:00:00.0000000+00:00',
     completedAt: '2026-07-29T00:01:00.0000000+00:00',
     source: {commit, workingTreeDirty: false},
-    range: {from: 138, to: 169},
+    range: {from: 138, to: 170},
     database: {
       scheme: 'postgres',
       host: '127.0.0.1',
@@ -54,7 +54,7 @@ function migrationReport(databaseOverrides = {}) {
       observedServerVersion: '16.14',
       ...databaseOverrides,
     },
-    migrationFiles: Array.from({length: 32}, (_, index) => ({
+    migrationFiles: Array.from({length: 33}, (_, index) => ({
       version: 138 + index,
       upFile: `${138 + index}_migration.up.sql`,
       upSha256: sha('b'.repeat(64)),
@@ -68,7 +68,7 @@ function migrationReport(databaseOverrides = {}) {
         status: 'PASS',
         checks:
           id === 'migration-file-integrity'
-            ? [{description: 'exact migration pairs 138 through 169', count: 32, checksum: sha('inventory')}]
+            ? [{description: 'exact migration pairs 138 through 170', count: 33, checksum: sha('inventory')}]
             : [
                 {
                   description: `${id} executed`,
@@ -83,8 +83,8 @@ function migrationReport(databaseOverrides = {}) {
       };
     }),
     coverage: {
-      schemaUpgrade: {from: 138, to: 169},
-      schemaDown: {mode: 'single-step', from: 169, to: 168},
+      schemaUpgrade: {from: 138, to: 170},
+      schemaDown: {mode: 'single-step', from: 170, to: 169},
       checkpoint: 'idempotency-and-cursor-resume-tests',
       notExecuted: ['process-interruption-and-restart', 'binary-rollback'],
     },
@@ -184,7 +184,7 @@ function postdeployReport() {
   return report;
 }
 
-test('migration evidence requires an intact 138-169 executable matrix from a clean source and disposable database', () => {
+test('migration evidence requires an intact 138-170 executable matrix from a clean source and disposable database', () => {
   assert.doesNotThrow(() => validateMigrationEvidence(migrationReport(), commit, '16.14'));
 
   for (const mutate of [

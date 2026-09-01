@@ -57,6 +57,7 @@ type ControlPlaneAuditEventInput struct {
 	AuditExportAttemptID                *uuid.UUID
 	SampleRetirementOwnershipEvidenceID *uuid.UUID
 	SampleRetirementRecoveryEvidenceID  *uuid.UUID
+	ProtectedHistoryArtifactID          *uuid.UUID
 	ReleaseChecksum                     string
 	ComponentReleaseChecksum            string
 	ProductReleaseChecksum              string
@@ -127,6 +128,7 @@ type ControlPlaneAuditEvent struct {
 	AuditExportAttemptID                *uuid.UUID      `db:"audit_export_attempt_id" json:"auditExportAttemptId,omitempty"`
 	SampleRetirementOwnershipEvidenceID *uuid.UUID      `db:"sample_retirement_ownership_evidence_id" json:"sampleRetirementOwnershipEvidenceId,omitempty"`
 	SampleRetirementRecoveryEvidenceID  *uuid.UUID      `db:"sample_retirement_recovery_evidence_id" json:"sampleRetirementRecoveryEvidenceId,omitempty"`
+	ProtectedHistoryArtifactID          *uuid.UUID      `db:"protected_history_artifact_id" json:"protectedHistoryArtifactId,omitempty"`
 	ReleaseChecksum                     string          `db:"release_checksum" json:"releaseChecksum,omitempty"`
 	ComponentReleaseChecksum            string          `db:"component_release_checksum" json:"componentReleaseChecksum,omitempty"`
 	ProductReleaseChecksum              string          `db:"product_release_checksum" json:"productReleaseChecksum,omitempty"`
@@ -196,6 +198,7 @@ const (
 	AuditCorrelationAuditExportAttempt                AuditCorrelationKind = "audit_export_attempt"
 	AuditCorrelationSampleRetirementOwnershipEvidence AuditCorrelationKind = "sample_retirement_ownership_evidence"
 	AuditCorrelationSampleRetirementRecoveryEvidence  AuditCorrelationKind = "sample_retirement_recovery_evidence"
+	AuditCorrelationProtectedHistoryArtifact          AuditCorrelationKind = "protected_history_artifact"
 )
 
 type AuditCorrelation struct {
@@ -255,6 +258,7 @@ func (input ControlPlaneAuditEventInput) Correlations() []AuditCorrelation {
 			AuditCorrelationSampleRetirementRecoveryEvidence,
 			input.SampleRetirementRecoveryEvidenceID,
 		},
+		{AuditCorrelationProtectedHistoryArtifact, input.ProtectedHistoryArtifactID},
 	}
 	result := make([]AuditCorrelation, 0, len(values))
 	for _, value := range values {
@@ -292,6 +296,7 @@ func (event ControlPlaneAuditEvent) Correlations() []AuditCorrelation {
 		AuditExportAttemptID:                event.AuditExportAttemptID,
 		SampleRetirementOwnershipEvidenceID: event.SampleRetirementOwnershipEvidenceID,
 		SampleRetirementRecoveryEvidenceID:  event.SampleRetirementRecoveryEvidenceID,
+		ProtectedHistoryArtifactID:          event.ProtectedHistoryArtifactID,
 	}).Correlations()
 }
 

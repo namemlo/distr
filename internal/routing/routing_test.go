@@ -441,6 +441,44 @@ func TestTargetConfigSnapshotRoutesArePublishedWithoutMutators(t *testing.T) {
 	g.Expect(verify).To(HaveKey("post"))
 }
 
+func TestProtectedHistoryArtifactRoutesArePublishedWithImmutableReadback(t *testing.T) {
+	g := NewWithT(t)
+	tracer := obsertracing.NoopTracer{}
+	router := NewRouter(
+		zap.NewNop(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		obsertracing.Tracers{Default: tracer, Agent: tracer},
+		nil,
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/docs/openapi.json", nil),
+	)
+	g.Expect(recorder.Code).To(Equal(http.StatusOK))
+
+	var document struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	g.Expect(json.Unmarshal(recorder.Body.Bytes(), &document)).To(Succeed())
+	collection := document.Paths["/api/v1/protected-history-artifacts"]
+	item := document.Paths["/api/v1/protected-history-artifacts/{protectedHistoryArtifactId}"]
+	verificationPath := "/api/v1/protected-history-artifacts/" +
+		"{protectedHistoryArtifactId}/verification"
+	verification := document.Paths[verificationPath]
+	g.Expect(collection).To(HaveKey("post"))
+	g.Expect(collection).NotTo(Or(HaveKey("put"), HaveKey("patch"), HaveKey("delete")))
+	g.Expect(item).To(HaveKey("get"))
+	g.Expect(item).NotTo(Or(HaveKey("put"), HaveKey("patch"), HaveKey("delete")))
+	g.Expect(verification).To(HaveKey("get"))
+	g.Expect(verification).NotTo(Or(HaveKey("post"), HaveKey("put"), HaveKey("patch"), HaveKey("delete")))
+}
+
 type deploymentRegistryOpenAPIOperation struct {
 	Description string `json:"description"`
 	Parameters  []struct {

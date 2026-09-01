@@ -51,6 +51,7 @@ func ControlPlaneAuditEventToAPI(event types.ControlPlaneAuditEvent) api.Control
 		StepRunID:                        event.StepRunID,
 		AuditExportSinkID:                event.AuditExportSinkID,
 		AuditExportAttemptID:             event.AuditExportAttemptID,
+		ProtectedHistoryArtifactID:       event.ProtectedHistoryArtifactID,
 		ReleaseChecksum:                  event.ReleaseChecksum,
 		ComponentReleaseChecksum:         event.ComponentReleaseChecksum,
 		ProductReleaseChecksum:           event.ProductReleaseChecksum,

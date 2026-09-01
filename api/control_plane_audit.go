@@ -91,6 +91,7 @@ type ControlPlaneAuditEvent struct {
 	StepRunID                        *uuid.UUID      `json:"stepRunId,omitempty"`
 	AuditExportSinkID                *uuid.UUID      `json:"auditExportSinkId,omitempty"`
 	AuditExportAttemptID             *uuid.UUID      `json:"auditExportAttemptId,omitempty"`
+	ProtectedHistoryArtifactID       *uuid.UUID      `json:"protectedHistoryArtifactId,omitempty"`
 	ReleaseChecksum                  string          `json:"releaseChecksum,omitempty"`
 	ComponentReleaseChecksum         string          `json:"componentReleaseChecksum,omitempty"`
 	ProductReleaseChecksum           string          `json:"productReleaseChecksum,omitempty"`

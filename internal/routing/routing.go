@@ -17,6 +17,7 @@ import (
 	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/oidc"
 	"github.com/distr-sh/distr/internal/prometheus"
+	"github.com/distr-sh/distr/internal/protectedhistory"
 	"github.com/distr-sh/distr/internal/targetconfig"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -74,6 +75,34 @@ func NewRouter(
 	targetConfigObjectVerifier targetconfig.ObjectVerifier,
 	executionV2Dependencies ...executionruntime.Dependencies,
 ) http.Handler {
+	return NewRouterWithProtectedHistoryStore(
+		logger,
+		db,
+		mailer,
+		oidcer,
+		prometheusCollector,
+		metricsRecorder,
+		tracingTracers,
+		s3Client,
+		targetConfigObjectVerifier,
+		protectedhistory.NewUnavailableObjectStore(),
+		executionV2Dependencies...,
+	)
+}
+
+func NewRouterWithProtectedHistoryStore(
+	logger *zap.Logger,
+	db *pgxpool.Pool,
+	mailer *mailx.Mailer,
+	oidcer *oidc.OIDCer,
+	prometheusCollector *prometheus.DistrCollector,
+	metricsRecorder obsermetrics.Recorder,
+	tracingTracers obsertracing.Tracers,
+	s3Client *s3.Client,
+	targetConfigObjectVerifier targetconfig.ObjectVerifier,
+	protectedHistoryObjectStore protectedhistory.ObjectStore,
+	executionV2Dependencies ...executionruntime.Dependencies,
+) http.Handler {
 	var executionDependencies executionruntime.Dependencies
 	if len(executionV2Dependencies) > 0 {
 		executionDependencies = executionV2Dependencies[0]
@@ -119,6 +148,7 @@ func NewRouter(
 			tracingTracers,
 			s3Client,
 			targetConfigObjectVerifier,
+			protectedHistoryObjectStore,
 			executionDependencies,
 		),
 	)
@@ -142,6 +172,7 @@ func ApiRouter(
 	tracingTracers obsertracing.Tracers,
 	s3Client *s3.Client,
 	targetConfigObjectVerifier targetconfig.ObjectVerifier,
+	protectedHistoryObjectStore protectedhistory.ObjectStore,
 	executionDependencies executionruntime.Dependencies,
 ) func(r chiopenapi.Router) {
 	requestSize1MiB := chimiddleware.RequestSize(1024 * 1024)
@@ -286,6 +317,12 @@ func ApiRouter(
 					r.Route("/organization", handlers.OrganizationRouter)
 					r.Route("/organizations", handlers.OrganizationsRouter)
 					r.Route("/product-releases", handlers.ProductReleasesRouter)
+					r.Route(
+						"/protected-history-artifacts",
+						handlers.ProtectedHistoryArtifactsRouterWithStore(
+							protectedHistoryObjectStore,
+						),
+					)
 					r.Route("/release-bundles", handlers.ReleaseBundlesRouter)
 					r.Route("/retention-policies", handlers.RetentionPoliciesRouter)
 					r.Route("/drift-cases", handlers.DriftCasesRouter)

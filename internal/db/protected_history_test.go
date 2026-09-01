@@ -39,9 +39,9 @@ func TestProtectedHistorySchema138ProjectionCoversAllHistoryFamiliesAndFields(t 
 	}
 }
 
-func TestProtectedHistoryProjectionRegistersSchema166Through169(t *testing.T) {
+func TestProtectedHistoryProjectionRegistersSchema166Through170(t *testing.T) {
 	t.Parallel()
-	for _, version := range []uint64{138, 165, 166, 167, 168, 169} {
+	for _, version := range []uint64{138, 165, 166, 167, 168, 169, 170} {
 		query, err := protectedHistoryRecordsSQLForSchema(version)
 		if err != nil || strings.TrimSpace(query) == "" {
 			t.Fatalf("schema %d projection is not registered: %v", version, err)
@@ -51,6 +51,7 @@ func TestProtectedHistoryProjectionRegistersSchema166Through169(t *testing.T) {
 	query167, _ := protectedHistoryRecordsSQLForSchema(167)
 	query168, _ := protectedHistoryRecordsSQLForSchema(168)
 	query169, _ := protectedHistoryRecordsSQLForSchema(169)
+	query170, _ := protectedHistoryRecordsSQLForSchema(170)
 	if strings.Contains(strings.ToLower(query166), "'executionruntimeevidence'") {
 		t.Fatal("schema 166 projection references migration-167 evidence")
 	}
@@ -74,8 +75,16 @@ func TestProtectedHistoryProjectionRegistersSchema166Through169(t *testing.T) {
 	if !strings.Contains(strings.ToLower(query169), "baselineadoptioncomponent") {
 		t.Fatal("schema 169 projection omits separated baseline facts")
 	}
-	if _, err := protectedHistoryRecordsSQLForSchema(170); err == nil {
-		t.Fatal("unknown schema 170 did not fail closed")
+	for _, kind := range []string{"protectedhistoryartifact", "controlplaneauditevent"} {
+		if strings.Contains(strings.ToLower(query169), "'"+kind+"'") {
+			t.Fatalf("schema 169 projection references migration-170 record %s", kind)
+		}
+		if !strings.Contains(strings.ToLower(query170), "'"+kind+"'") {
+			t.Fatalf("schema 170 projection omits retained history record %s", kind)
+		}
+	}
+	if _, err := protectedHistoryRecordsSQLForSchema(171); err == nil {
+		t.Fatal("unknown schema 171 did not fail closed")
 	}
 }
 

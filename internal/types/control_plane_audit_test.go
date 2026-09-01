@@ -53,10 +53,11 @@ func TestControlPlaneAuditInputExposesCompleteTypedCorrelation(t *testing.T) {
 		StepRunID:                        id(),
 		AuditExportSinkID:                id(),
 		AuditExportAttemptID:             id(),
+		ProtectedHistoryArtifactID:       id(),
 	}
 
 	correlations := input.Correlations()
-	g.Expect(correlations).To(HaveLen(39))
+	g.Expect(correlations).To(HaveLen(40))
 	g.Expect(correlations).To(ContainElements(
 		AuditCorrelation{Kind: AuditCorrelationComponentRelease, ID: *input.ComponentReleaseID},
 		AuditCorrelation{Kind: AuditCorrelationProductRelease, ID: *input.ProductReleaseID},
@@ -75,6 +76,7 @@ func TestControlPlaneAuditInputExposesCompleteTypedCorrelation(t *testing.T) {
 		AuditCorrelation{Kind: AuditCorrelationCampaignPrerequisiteEvaluation, ID: *input.CampaignPrerequisiteEvaluationID},
 		AuditCorrelation{Kind: AuditCorrelationCampaignThresholdEvaluation, ID: *input.CampaignThresholdEvaluationID},
 		AuditCorrelation{Kind: AuditCorrelationExecutionAttempt, ID: *input.ExecutionAttemptID},
+		AuditCorrelation{Kind: AuditCorrelationProtectedHistoryArtifact, ID: *input.ProtectedHistoryArtifactID},
 	))
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/distr-sh/distr/internal/env"
+	"github.com/distr-sh/distr/internal/protectedhistory"
 	"github.com/distr-sh/distr/internal/targetconfig"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 )
@@ -42,6 +43,23 @@ func newTargetConfigObjectVerifierWithConfig(
 		return targetconfig.NewUnavailableObjectVerifier()
 	}
 	return targetconfig.NewS3ObjectVerifierForBucket(
+		newS3ClientWithConfig(ctx, config.S3),
+		config.S3.Bucket,
+	)
+}
+
+func newProtectedHistoryObjectStore(ctx context.Context) protectedhistory.ObjectStore {
+	return newProtectedHistoryObjectStoreWithConfig(ctx, env.ProtectedHistoryObjectStore())
+}
+
+func newProtectedHistoryObjectStoreWithConfig(
+	ctx context.Context,
+	config env.ProtectedHistoryObjectStoreConfig,
+) protectedhistory.ObjectStore {
+	if !config.Configured() {
+		return protectedhistory.NewUnavailableObjectStore()
+	}
+	return protectedhistory.NewS3ObjectStore(
 		newS3ClientWithConfig(ctx, config.S3),
 		config.S3.Bucket,
 	)

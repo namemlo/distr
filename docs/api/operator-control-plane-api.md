@@ -476,8 +476,23 @@ observation.
 | `POST`     | `/api/v1/control-plane-audit/evidence-bundles` | Deterministic checksum-bound bundle             |
 | `GET/POST` | `/api/v1/control-plane-audit/export-sinks`     | Inspect/register allowlisted sink configuration |
 | `GET`      | `/api/v1/control-plane-audit/export-status`    | Check checkpoint, lag, attempts, failures       |
+| `POST`     | `/api/v1/protected-history-artifacts`          | Export, store, verify, and retain exact history |
+| `GET`      | `/api/v1/protected-history-artifacts/{id}`     | Read immutable retained metadata                |
+| `GET`      | `/api/v1/protected-history-artifacts/{id}/verification` | Verify exact stored object without SQL mutation |
 
 Failed export does not delete primary events or advance the checkpoint.
+
+Protected-history create accepts only `customerOrganizationIds`,
+`deploymentTargetIds`, a distinct `reviewerUserAccountId`, and an
+`idempotencyKey`. Organization and issuer come from authentication. The Hub
+validates exact organization scope and current issuer/reviewer membership,
+exports the database itself, uses a checksum-addressed create-only object, and
+requires exact readback before atomically retaining metadata and the correlated
+`protected_history.retained` event. Exact idempotent replay returns the same
+row; changed request material or object bytes returns `409 Conflict`. The
+dedicated `PROTECTED_HISTORY_OBJECT_STORE_ENABLED` and
+`PROTECTED_HISTORY_S3_*` configuration never falls back to registry or
+target-config storage.
 
 ### Sample retirement
 

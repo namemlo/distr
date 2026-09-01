@@ -51,6 +51,7 @@ var (
 	registryEnabled                         bool
 	registryS3Config                        S3Config
 	targetConfigObjectStoreConfig           TargetConfigObjectStoreConfig
+	protectedHistoryObjectStoreConfig       ProtectedHistoryObjectStoreConfig
 	registryScratchDir                      *string
 	artifactTagsDefaultLimitPerOrg          int
 	registryUpstreamSyncCron                *string
@@ -178,6 +179,7 @@ func Initialize() {
 		registryScratchDir = envutil.GetEnvOrNil("REGISTRY_SCRATCH_DIR")
 	}
 	targetConfigObjectStoreConfig = loadTargetConfigObjectStoreConfig()
+	protectedHistoryObjectStoreConfig = loadProtectedHistoryObjectStoreConfig()
 	artifactTagsDefaultLimitPerOrg = envutil.GetEnvParsedOrDefault(
 		"ARTIFACT_TAGS_DEFAULT_LIMIT_PER_ORG", envparse.NonNegativeNumber, 0,
 	)
@@ -415,6 +417,10 @@ func TargetConfigObjectStore() TargetConfigObjectStoreConfig {
 	return targetConfigObjectStoreConfig
 }
 
+func ProtectedHistoryObjectStore() ProtectedHistoryObjectStoreConfig {
+	return protectedHistoryObjectStoreConfig
+}
+
 func loadTargetConfigObjectStoreConfig() TargetConfigObjectStoreConfig {
 	config := TargetConfigObjectStoreConfig{
 		Enabled: envutil.GetEnvParsedOrDefault(
@@ -443,6 +449,40 @@ func loadTargetConfigObjectStoreConfig() TargetConfigObjectStoreConfig {
 	)
 	config.S3.ResponseChecksumValidationWhenRequired = envutil.GetEnvParsedOrDefault(
 		"TARGET_CONFIG_S3_RESPONSE_CHECKSUM_VALIDATION",
+		strconv.ParseBool,
+		false,
+	)
+	return config
+}
+
+func loadProtectedHistoryObjectStoreConfig() ProtectedHistoryObjectStoreConfig {
+	config := ProtectedHistoryObjectStoreConfig{
+		Enabled: envutil.GetEnvParsedOrDefault(
+			"PROTECTED_HISTORY_OBJECT_STORE_ENABLED",
+			strconv.ParseBool,
+			false,
+		),
+	}
+	if !config.Enabled {
+		return config
+	}
+	config.S3.Region = envutil.GetEnv("PROTECTED_HISTORY_S3_REGION")
+	config.S3.Endpoint = targetConfigOptionalEnv("PROTECTED_HISTORY_S3_ENDPOINT")
+	config.S3.Bucket = envutil.GetEnv("PROTECTED_HISTORY_S3_BUCKET")
+	config.S3.AccessKeyID = targetConfigOptionalEnv("PROTECTED_HISTORY_S3_ACCESS_KEY_ID")
+	config.S3.SecretAccessKey = targetConfigOptionalEnv("PROTECTED_HISTORY_S3_SECRET_ACCESS_KEY")
+	config.S3.UsePathStyle = envutil.GetEnvParsedOrDefault(
+		"PROTECTED_HISTORY_S3_USE_PATH_STYLE",
+		strconv.ParseBool,
+		false,
+	)
+	config.S3.RequestChecksumCalculationWhenRequired = envutil.GetEnvParsedOrDefault(
+		"PROTECTED_HISTORY_S3_REQUEST_CHECKSUM_CALCULATION",
+		strconv.ParseBool,
+		false,
+	)
+	config.S3.ResponseChecksumValidationWhenRequired = envutil.GetEnvParsedOrDefault(
+		"PROTECTED_HISTORY_S3_RESPONSE_CHECKSUM_VALIDATION",
 		strconv.ParseBool,
 		false,
 	)

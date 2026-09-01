@@ -23,6 +23,7 @@ import (
 	obsertracing "github.com/distr-sh/distr/internal/observability/tracing"
 	"github.com/distr-sh/distr/internal/oidc"
 	distrprometheus "github.com/distr-sh/distr/internal/prometheus"
+	"github.com/distr-sh/distr/internal/protectedhistory"
 	"github.com/distr-sh/distr/internal/registry"
 	"github.com/distr-sh/distr/internal/routing"
 	"github.com/distr-sh/distr/internal/server"
@@ -54,6 +55,7 @@ type Registry struct {
 	observabilityTracingEnabled bool
 	s3Client                    *s3.Client
 	targetConfigObjectVerifier  targetconfig.ObjectVerifier
+	protectedHistoryObjectStore protectedhistory.ObjectStore
 	executionRuntime            executionruntime.Dependencies
 	auditExportSinkFactories    auditexport.ProductionSinkFactories
 	auditExportSecretResolver   auditexport.SecretReferenceResolver
@@ -133,6 +135,7 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		reg.s3Client = newS3Client(ctx)
 	}
 	reg.targetConfigObjectVerifier = newTargetConfigObjectVerifier(ctx)
+	reg.protectedHistoryObjectStore = newProtectedHistoryObjectStore(ctx)
 
 	if scheduler, err := reg.createJobsScheduler(); err != nil {
 		return nil, err
@@ -190,7 +193,7 @@ func (reg *Registry) createArtifactsRegistry(ctx context.Context) (http.Handler,
 }
 
 func (r *Registry) GetRouter() http.Handler {
-	return routing.NewRouter(
+	return routing.NewRouterWithProtectedHistoryStore(
 		r.GetLogger(),
 		r.GetDbPool(),
 		r.GetMailer(),
@@ -200,6 +203,7 @@ func (r *Registry) GetRouter() http.Handler {
 		r.GetObservabilityTracers(),
 		r.GetS3Client(),
 		r.targetConfigObjectVerifier,
+		r.protectedHistoryObjectStore,
 		r.executionRuntime,
 	)
 }
@@ -292,4 +296,8 @@ func (r *Registry) GetS3Client() *s3.Client {
 
 func (r *Registry) GetTargetConfigObjectVerifier() targetconfig.ObjectVerifier {
 	return r.targetConfigObjectVerifier
+}
+
+func (r *Registry) GetProtectedHistoryObjectStore() protectedhistory.ObjectStore {
+	return r.protectedHistoryObjectStore
 }

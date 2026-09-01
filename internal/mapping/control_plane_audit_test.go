@@ -38,19 +38,23 @@ func TestControlPlaneAuditEventToAPIPreservesExpandedTypedCorrelation(t *testing
 	policyID := uuid.New()
 	driftCaseID := uuid.New()
 	executionAttemptID := uuid.New()
+	protectedHistoryArtifactID := uuid.New()
 	event := ControlPlaneAuditEventToAPI(types.ControlPlaneAuditEvent{
-		ComponentReleaseID:        &componentReleaseID,
-		ProductReleaseID:          &productReleaseID,
-		DeploymentPolicyID:        &policyID,
-		DriftCaseID:               &driftCaseID,
-		ExecutionAttemptID:        &executionAttemptID,
-		ArtifactDigest:            "sha256:" + strings.Repeat("a", 64),
-		ManifestDigest:            "sha256:" + strings.Repeat("b", 64),
-		AuditExportConfigChecksum: "sha256:" + strings.Repeat("c", 64),
+		ComponentReleaseID:         &componentReleaseID,
+		ProductReleaseID:           &productReleaseID,
+		DeploymentPolicyID:         &policyID,
+		DriftCaseID:                &driftCaseID,
+		ExecutionAttemptID:         &executionAttemptID,
+		ProtectedHistoryArtifactID: &protectedHistoryArtifactID,
+		ArtifactDigest:             "sha256:" + strings.Repeat("a", 64),
+		ManifestDigest:             "sha256:" + strings.Repeat("b", 64),
+		AuditExportConfigChecksum:  "sha256:" + strings.Repeat("c", 64),
 	})
 	if event.ComponentReleaseID == nil || event.ProductReleaseID == nil ||
 		event.DeploymentPolicyID == nil || event.DriftCaseID == nil ||
-		event.ExecutionAttemptID == nil || *event.ExecutionAttemptID != executionAttemptID {
+		event.ExecutionAttemptID == nil || *event.ExecutionAttemptID != executionAttemptID ||
+		event.ProtectedHistoryArtifactID == nil ||
+		*event.ProtectedHistoryArtifactID != protectedHistoryArtifactID {
 		t.Fatalf("mapping lost typed correlation: %#v", event)
 	}
 	if event.ArtifactDigest == "" || event.ManifestDigest == "" || event.AuditExportConfigChecksum == "" {

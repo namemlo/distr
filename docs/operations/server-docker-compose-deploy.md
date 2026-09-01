@@ -663,11 +663,12 @@ PostgreSQL or RustFS volumes.
 
 First retain a protected-history baseline for the exact client scopes and SHA-256
 sidecars for the prior publication handoff, PostgreSQL dump, RustFS archive, and
-baseline. The protected-history exporter supports schemas 138 through 169 only:
+baseline. The protected-history exporter supports schemas 138 through 170 only:
 138-165 use the complete schema-138 whole-row table set, while 166, 167, 168,
-and 169 are explicitly registered, adding `ExecutionRuntimeEvidence`,
-`DeploymentPlanResolvedRequirement`, and `BaselineAdoptionComponent` at their
-respective migrations. A later unregistered schema is refused. Create a secure
+169, and 170 are explicitly registered, adding `ExecutionRuntimeEvidence`,
+`DeploymentPlanResolvedRequirement`, `BaselineAdoptionComponent`, and contained
+retained protected-history artifact/audit rows at their respective migrations.
+Schema 171 or any later unregistered schema is refused. Create a secure
 empty parent for the plan, then run:
 
 ```bash

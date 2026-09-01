@@ -94,8 +94,8 @@ func protectedHistorySchemaVersion(ctx context.Context) (uint64, error) {
 	if version < 138 {
 		return 0, fmt.Errorf("schema version %d is unsupported; minimum is 138", version)
 	}
-	if version > 169 {
-		return 0, fmt.Errorf("schema version %d is unsupported; maximum registered projection is 169", version)
+	if version > 170 {
+		return 0, fmt.Errorf("schema version %d is unsupported; maximum registered projection is 170", version)
 	}
 	return uint64(version), nil
 }
@@ -186,6 +186,15 @@ func protectedHistoryRecordsSQLForSchema(schemaVersion uint64) (string, error) {
 			protectedHistorySchema167RecordsSQL+
 				protectedHistorySchema168RecordsSQL+
 				protectedHistorySchema169RecordsSQL,
+		), nil
+	case schemaVersion == 170:
+		return strings.ReplaceAll(
+			protectedHistoryRecordsSQL,
+			protectedHistoryVersionRecordsMarker,
+			protectedHistorySchema167RecordsSQL+
+				protectedHistorySchema168RecordsSQL+
+				protectedHistorySchema169RecordsSQL+
+				protectedHistorySchema170RecordsSQL,
 		), nil
 	default:
 		return "", fmt.Errorf("schema version %d has no protected-history projection", schemaVersion)
@@ -843,4 +852,25 @@ const protectedHistorySchema169RecordsSQL = `
   FROM BaselineAdoptionComponent component
   WHERE component.organization_id = @organizationId
     AND component.deployment_plan_id IN (SELECT id FROM selected_plans)
+`
+
+const protectedHistorySchema170RecordsSQL = `
+  UNION ALL SELECT 'protectedhistoryartifact', artifact.id, to_jsonb(artifact)
+  FROM ProtectedHistoryArtifact artifact
+  WHERE artifact.organization_id = @organizationId
+    AND artifact.customer_organization_ids <@ @customerOrganizationIds::uuid[]
+    AND artifact.deployment_target_ids <@ ARRAY(
+      SELECT id FROM selected_targets ORDER BY id
+    )
+
+  UNION ALL SELECT 'controlplaneauditevent', event.id, to_jsonb(event)
+  FROM ControlPlaneAuditEvent event
+  JOIN ProtectedHistoryArtifact artifact
+    ON artifact.id = event.protected_history_artifact_id
+   AND artifact.organization_id = event.organization_id
+  WHERE artifact.organization_id = @organizationId
+    AND artifact.customer_organization_ids <@ @customerOrganizationIds::uuid[]
+    AND artifact.deployment_target_ids <@ ARRAY(
+      SELECT id FROM selected_targets ORDER BY id
+    )
 `

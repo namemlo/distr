@@ -62,6 +62,7 @@ var (
 		"externalexecutiontimestampexpandstate":       {},
 		"externalexecutiontimestampmanifest":          {},
 		"processsnapshot":                             {},
+		"protectedhistoryartifact":                    {},
 		"releasebundle":                               {},
 		"releasebundleauditevent":                     {},
 		"releasebundlecomponent":                      {},
@@ -78,6 +79,7 @@ var (
 		"task":                                        {},
 		"tasklease":                                   {},
 		"taskresourcelock":                            {},
+		"controlplaneauditevent":                      {},
 		"variablesnapshot":                            {},
 		"variablesnapshotvalue":                       {},
 	}
@@ -166,6 +168,9 @@ func Build(scope Scope, sourceSchemaVersion uint64, rawRecords []RawRecord) (*Ar
 		if err != nil {
 			return nil, fmt.Errorf("record %d: %w", index, err)
 		}
+		if err := validateRecordKindForSchema(sourceSchemaVersion, record.Kind); err != nil {
+			return nil, fmt.Errorf("record %d: %w", index, err)
+		}
 		records = append(records, record)
 	}
 	slices.SortFunc(records, compareRecordKey)
@@ -250,6 +255,9 @@ func Validate(artifact Artifact) error {
 		if err != nil {
 			return fmt.Errorf("validate record %d: %w", index, err)
 		}
+		if err := validateRecordKindForSchema(artifact.SourceSchemaVersion, record.Kind); err != nil {
+			return fmt.Errorf("validate record %d: %w", index, err)
+		}
 		if canonicalRecord.Hash != record.Hash {
 			return fmt.Errorf("record %s/%s hash mismatch", record.Kind, record.ID)
 		}
@@ -273,6 +281,14 @@ func Validate(artifact Artifact) error {
 	}
 	if artifact.ArtifactID != computeArtifactID(artifact) {
 		return errors.New("artifact id mismatch")
+	}
+	return nil
+}
+
+func validateRecordKindForSchema(sourceSchemaVersion uint64, kind string) error {
+	if sourceSchemaVersion < 170 &&
+		(kind == "protectedhistoryartifact" || kind == "controlplaneauditevent") {
+		return fmt.Errorf("record kind %q requires source schema 170 or later", kind)
 	}
 	return nil
 }
