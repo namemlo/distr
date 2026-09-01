@@ -4,6 +4,7 @@ import {lstat, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {sha256, validateProfile} from './observer.mjs';
+import {validateLegacyEvidence, validateServiceConfig} from './service.mjs';
 
 const imagePattern = /^[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}$/;
 const revisionPattern = /^[0-9a-f]{40}$/;
@@ -78,18 +79,28 @@ export async function runPreflight({root, envFile = path.join(root, '.env')}) {
   for (const relativePath of ['config/history', 'intents', 'evidence', 'state']) {
     await requirePath(root, relativePath, 'directory');
   }
-  const service = JSON.parse(await readFile(path.join(root, 'config/service.json'), 'utf8'));
-  const serviceChecksum = sha256(
-    Object.fromEntries(Object.entries(service).filter(([key]) => key !== 'canonicalChecksum'))
-  );
-  if (service.canonicalChecksum !== serviceChecksum || service.profileFile !== '/etc/choice-tp-observer/profile.json') {
-    throw new Error('service config checksum or mounted profile path is invalid');
+  const service = validateServiceConfig(JSON.parse(await readFile(path.join(root, 'config/service.json'), 'utf8')));
+  if (service.profileFile !== '/etc/choice-tp-observer/profile.json') {
+    throw new Error('service config mounted profile path is invalid');
   }
   const profile = validateProfile(JSON.parse(await readFile(path.join(root, 'config/profile.json'), 'utf8')));
+  const legacyEvidenceBytes = await readFile(path.join(root, 'config/choice-tp-c0-t0-baseline-runtime-evidence.json'));
+  const legacyBaselineEvidenceChecksum = sha256(legacyEvidenceBytes);
+  if (legacyBaselineEvidenceChecksum !== service.legacyBaseline.evidenceFileChecksum) {
+    throw new Error('legacy C0/T0 evidence file checksum does not match its immutable pin');
+  }
+  let legacyEvidence;
+  try {
+    legacyEvidence = JSON.parse(legacyEvidenceBytes.toString('utf8'));
+  } catch {
+    throw new Error('legacy C0/T0 evidence must contain valid JSON');
+  }
+  validateLegacyEvidence(legacyEvidence, service);
   return {
     image: environment.CHOICE_TP_OBSERVER_IMAGE,
     serviceConfigChecksum: service.canonicalChecksum,
     profileChecksum: profile.canonicalChecksum,
+    legacyBaselineEvidenceChecksum,
   };
 }
 

@@ -1,0 +1,134 @@
+{
+  "schema": "emlo.choice-tp-baseline-runtime-evidence/v1",
+  "capturedReadOnly": true,
+  "target": "choice-tp-dev",
+  "platform": "linux/amd64",
+  "components": [
+    {
+      "componentKey": "customer-api",
+      "stateLabel": "C0",
+      "imageTag": "821392278328.dkr.ecr.ap-southeast-1.amazonaws.com/emlo-remittance-customer:choice-tp.dev-13911325-5161-496f-bb8f-436273e517f5-bullseye",
+      "repositoryDigest": "sha256:6e953caf3153a76bdd15c2ee4a3826ebe36c671ff960a1d427398474cf42006c",
+      "localImageId": "sha256:dcf99672ca5c8a744a44af189ba2526f04fb3d4b564e3bfa82f8232e875d707e",
+      "composePath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/docker-compose.yaml",
+      "composeConfigHash": "90f89634560bace28443e1c2d5ff78b09b52c7eceeb19896aff16d810fccf538",
+      "composeFileChecksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
+      "appSettingsChecksum": "sha256:9fc5daa5be6f84f375b2b1566cd635981d4cf5343fbf80410b2f6d507005b75c",
+      "latestChangelogBuild": "choice-tp-afb3634ab",
+      "currentDeployCommit": "427fafd134ee124b52f7f1912335762c6d39f2ab",
+      "sourceCommit": "afb3634ab18cf9a31129e2efab68ef383310ed68",
+      "sourceIdentityStatus": "VERIFIED",
+      "jenkinsProof": {
+        "evidenceType": "authenticated-jenkins-console-readback",
+        "buildNumber": 481,
+        "consoleUrl": "https://devops.emlotech.com/job/emlo-remittance/job/Customer%20Api/job/customization%252Femlo-remittance%252Fdev/481/console",
+        "sourceCommit": "afb3634ab18cf9a31129e2efab68ef383310ed68",
+        "imageTag": "choice-tp.dev-13911325-5161-496f-bb8f-436273e517f5-bullseye",
+        "repositoryDigest": "sha256:6e953caf3153a76bdd15c2ee4a3826ebe36c671ff960a1d427398474cf42006c"
+      },
+      "configurationLineage": {
+        "serviceConfig": {
+          "status": "VERIFIED",
+          "repository": "emlo-env-settings",
+          "repositoryCommit": "b096b4ab58cca2e08df7afe004397781db621096",
+          "path": "choice-tp_dev/1/rmt-customer-api/appsettings.Production.json",
+          "checksum": "sha256:9fc5daa5be6f84f375b2b1566cd635981d4cf5343fbf80410b2f6d507005b75c"
+        },
+        "compose": {
+          "status": "CAPTURED_SERVER_SNAPSHOT",
+          "checksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
+          "immutableRuntimeManifest": null
+        }
+      },
+      "runtimeEvidence": {
+        "classification": "LEGACY_LIVENESS_ONLY",
+        "allowedUse": "BASELINE_OR_ROLLBACK_ONLY",
+        "standardReadinessClaimed": false,
+        "healthyPromotionClaimed": false,
+        "probes": [
+          {
+            "path": "/customer-api/alive",
+            "statusCode": 404
+          },
+          {
+            "path": "/customer-api/healthz",
+            "statusCode": 404
+          },
+          {
+            "path": "/customer-api/swagger/v1/swagger.json",
+            "statusCode": 200,
+            "responseBytes": 300750,
+            "responseChecksum": "sha256:e7b2a63f7a70fd40f26d032663c8c885ae88af50f60d574a90035f89331ad3dd"
+          }
+        ]
+      },
+      "restartCount": 0
+    },
+    {
+      "componentKey": "transaction-api",
+      "stateLabel": "T0",
+      "imageTag": "821392278328.dkr.ecr.ap-southeast-1.amazonaws.com/emlo-remittance-transaction:choice-tp.dev-20730ea3-6e5c-4494-afd8-508ca12aa247-bullseye",
+      "repositoryDigest": "sha256:5ac3a4528ceb716ca3abb3cc4e152ce31a7ce8107d679d9e534c8a9b14f02d98",
+      "localImageId": "sha256:e77fe1d2b9a1d08f417678aa6bd85824f9c7e0277c28afc34a6f049b51713b39",
+      "composePath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/docker-compose.yaml",
+      "composeConfigHash": "769741b46aca8c4d15897a4e9c8533975880a586733055baaba7257b6617c472",
+      "composeFileChecksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
+      "appSettingsChecksum": "sha256:1177424488b2bebd163b84a56af66a3b325f9e13845e8be800b664a5de5a806e",
+      "latestChangelogBuild": "choice-tp-1dc8d622e",
+      "currentDeployCommit": "8ef1b8e8dfc85d2829e8f553290c4c5975291a6f",
+      "sourceCommit": "1dc8d622eb9dbb86486a659ddd486b5a2c608fce",
+      "sourceIdentityStatus": "VERIFIED",
+      "jenkinsProof": {
+        "evidenceType": "authenticated-jenkins-console-readback",
+        "buildNumber": 904,
+        "consoleUrl": "https://devops.emlotech.com/job/emlo-remittance/job/Transaction%20Api/job/customization%252Femlo-remittance%252Fdev/904/console",
+        "sourceCommit": "1dc8d622eb9dbb86486a659ddd486b5a2c608fce",
+        "imageTag": "choice-tp.dev-20730ea3-6e5c-4494-afd8-508ca12aa247-bullseye",
+        "repositoryDigest": "sha256:5ac3a4528ceb716ca3abb3cc4e152ce31a7ce8107d679d9e534c8a9b14f02d98"
+      },
+      "configurationLineage": {
+        "serviceConfig": {
+          "status": "VERIFIED",
+          "repository": "emlo-env-settings",
+          "repositoryCommit": "7c8a9b1457c0da015512ea1442a7f3d012fffae2",
+          "path": "choice-tp_dev/1/rmt-transaction-api/appsettings.Production.json",
+          "checksum": "sha256:1177424488b2bebd163b84a56af66a3b325f9e13845e8be800b664a5de5a806e"
+        },
+        "compose": {
+          "status": "CAPTURED_SERVER_SNAPSHOT",
+          "checksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
+          "immutableRuntimeManifest": null
+        }
+      },
+      "runtimeEvidence": {
+        "classification": "LEGACY_LIVENESS_ONLY",
+        "allowedUse": "BASELINE_OR_ROLLBACK_ONLY",
+        "standardReadinessClaimed": false,
+        "healthyPromotionClaimed": false,
+        "probes": [
+          {
+            "path": "/transaction-api/alive",
+            "statusCode": 404
+          },
+          {
+            "path": "/transaction-api/healthz",
+            "statusCode": 404
+          },
+          {
+            "path": "/transaction-api/swagger/v1/swagger.json",
+            "statusCode": 200,
+            "responseBytes": 443117,
+            "responseChecksum": "sha256:2d14eaef39be537e691bb8e132d631bdb5cf1344f1b03b51178d663ff0163dcb"
+          }
+        ]
+      },
+      "restartCount": 0
+    }
+  ],
+  "blockers": {
+    "independentObservations": "Live native independent observation IDs and checksums have not yet been created; the retained probes are LEGACY_LIVENESS_ONLY and BASELINE_OR_ROLLBACK_ONLY.",
+    "immutableComposeSnapshot": "The compose checksum is a captured server snapshot and has not yet been published through an immutable emlo.choice-tp-runtime-manifest/v1 object.",
+    "schemaCompatibility": "A fresh reviewed emlo.choice-tp-schema-compatibility/v1 report has not yet been supplied.",
+    "finalAdoption": "The immutable Component Releases, Product Release, Target Config Snapshot, successful baseline plan/outcome, and final adoption record have not yet been created."
+  }
+}

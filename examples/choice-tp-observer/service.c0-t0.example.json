@@ -30,7 +30,7 @@
   "legacyBaseline": {
     "checkpoint": "C0/T0",
     "evidenceFile": "/etc/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json",
-    "evidenceFileChecksum": "sha256:cbebf0295b9eda637afc207f03a28a3c67a99c2d701c5ca99697176ff5343429",
+    "evidenceFileChecksum": "sha256:791955e37fd9911e472aa03512197a4e013784049e7651eaa772bad74e5a3815",
     "components": {
       "customer-api": {
         "stateLabel": "C0",
@@ -62,5 +62,5 @@
     "initialDelayMs": 1000,
     "maxDelayMs": 10000
   },
-  "canonicalChecksum": "sha256:d8296373745211ec4082d3b9ccb67643956d6e0cdf8d05a0785169dde61de910"
+  "canonicalChecksum": "sha256:8f5cdcc4d059c4690cc17e1ea5a1291090fb52bda70c9b814728695485fb7d7a"
 }

@@ -36,10 +36,11 @@ evidence key. Their fingerprints must be mutually distinct and must not match an
 credential fingerprint. Observer and executor credential-set IDs must also differ. No credential is accepted from
 environment variables.
 
-The reviewed C0/T0 evidence file is pinned as
-`sha256:cbebf0295b9eda637afc207f03a28a3c67a99c2d701c5ca99697176ff5343429`, with exact component artifact and
-configuration digests. Startup requires its legacy classification and rollback-only use. C1/T1 intents cannot
-reuse the C0/T0 artifact digests.
+The reviewed C0/T0 evidence file is tracked at
+`examples/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json` and pinned as
+`sha256:791955e37fd9911e472aa03512197a4e013784049e7651eaa772bad74e5a3815` over its exact LF-normalized bytes, with
+exact component artifact and configuration digests. Startup and offline preflight require its legacy classification
+and rollback-only use. C1/T1 intents cannot reuse the C0/T0 artifact digests.
 
 ## Packaging and operations
 

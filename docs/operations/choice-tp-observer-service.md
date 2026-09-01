@@ -84,11 +84,12 @@ openssl genpkey -algorithm Ed25519 \
 chmod 0400 /etc/choice-tp-observer/secrets/evidence-ed25519.pem
 ```
 
-The retained legacy file must be the reviewed
-`choice-tp-c0-t0-baseline-runtime-evidence.json` with exact file checksum:
+The retained legacy file must be the reviewed tracked artifact at
+`examples/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json`. Its exact LF-normalized file-byte
+checksum is:
 
 ```text
-sha256:cbebf0295b9eda637afc207f03a28a3c67a99c2d701c5ca99697176ff5343429
+sha256:791955e37fd9911e472aa03512197a4e013784049e7651eaa772bad74e5a3815
 ```
 
 The config separately pins Customer C0 and Transaction T0 artifact/configuration digests. Startup verifies the file
@@ -171,9 +172,17 @@ sudo install -o root -g root -m 0644 examples/choice-tp-observer/compose.yaml "$
 sudo install -o root -g root -m 0644 examples/choice-tp-observer/.env.example "$DEPLOY_ROOT/.env"
 ```
 
-Install the prepared `service.json`, selected `profile.json`, `known_hosts`, baseline artifact, and the three
-observer secrets into those directories. Put the immutable digest in `.env`; put no credential there. Then run the
-offline preflight from the approved source checkout and deploy:
+Install the prepared `service.json`, selected `profile.json`, `known_hosts`, and the three observer secrets into
+those directories. Install the reviewed baseline bytes without reserializing or changing line endings:
+
+```shell
+sudo install -o root -g 10001 -m 0440 \
+  examples/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json \
+  "$DEPLOY_ROOT/config/choice-tp-c0-t0-baseline-runtime-evidence.json"
+```
+
+Put the immutable digest in `.env`; put no credential there. Then run the offline preflight from the approved source
+checkout and deploy:
 
 ```shell
 node examples/choice-tp-observer/preflight.mjs --root "$DEPLOY_ROOT"

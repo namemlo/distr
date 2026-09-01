@@ -125,8 +125,9 @@ The service has two sealed runtime modes selected only by the checksummed servic
 Use the matching `intent.c1-t1.example.json` or `intent.c0-t0.example.json`. An intent cannot select or override the
 adapter, helper, path, checkpoint, or health classification.
 
-The `legacyBaseline` section pins the read-only C0/T0 artifact byte-for-byte as
-`sha256:cbebf0295b9eda637afc207f03a28a3c67a99c2d701c5ca99697176ff5343429`, plus the exact C0/T0 OCI and
+The `legacyBaseline` section pins the tracked
+[`choice-tp-c0-t0-baseline-runtime-evidence.json`](choice-tp-c0-t0-baseline-runtime-evidence.json) artifact
+byte-for-byte as `sha256:791955e37fd9911e472aa03512197a4e013784049e7651eaa772bad74e5a3815`, plus the exact C0/T0 OCI and
 configuration digests. Startup requires the mounted artifact to match those pins and to remain classified
 `LEGACY_LIVENESS_ONLY` / `BASELINE_OR_ROLLBACK_ONLY`. It is never relabeled as standard readiness and is never
 submitted as C1/T1 evidence.
