@@ -322,6 +322,34 @@
               <dt>Evidence</dt>
               <dd class="break-all font-mono">{{ fact.checksum || 'Unavailable' }}</dd>
             </dl>
+            @if (
+              fact.artifactDigest ||
+              fact.configChecksum ||
+              fact.platform ||
+              fact.schemaVersion ||
+              fact.capabilityChecksum ||
+              fact.health
+            ) {
+              <div class="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
+                <div class="text-xs font-semibold uppercase tracking-wide text-gray-700 dark:text-gray-200">
+                  Observed runtime identity
+                </div>
+                <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
+                  <dt>Artifact</dt>
+                  <dd class="break-all font-mono">{{ fact.artifactDigest || 'Unavailable' }}</dd>
+                  <dt>Config</dt>
+                  <dd class="break-all font-mono">{{ fact.configChecksum || 'Unavailable' }}</dd>
+                  <dt>Platform</dt>
+                  <dd class="break-all font-mono">{{ fact.platform || 'Unavailable' }}</dd>
+                  <dt>Schema</dt>
+                  <dd class="break-all font-mono">{{ fact.schemaVersion || 'Unavailable' }}</dd>
+                  <dt>Capabilities</dt>
+                  <dd class="break-all font-mono">{{ fact.capabilityChecksum || 'Unavailable' }}</dd>
+                  <dt>Health</dt>
+                  <dd>{{ fact.health || 'UNKNOWN' }}</dd>
+                </dl>
+              </div>
+            }
           </div>
         } @empty {
           <div class="text-sm text-gray-500">No observations recorded.</div>

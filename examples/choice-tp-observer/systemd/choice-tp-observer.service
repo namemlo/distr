@@ -1,0 +1,36 @@
+[Unit]
+Description=Choice TP independent runtime observer
+Documentation=file:/opt/choice-tp-observer/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=choice-tp-observer
+Group=choice-tp-observer
+UMask=0077
+WorkingDirectory=/opt/choice-tp-observer
+ExecStartPre=/usr/bin/node /opt/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --check
+ExecStart=/usr/bin/node /opt/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --once
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/choice-tp-observer /opt/choice-tp-observer
+ReadWritePaths=/var/lib/choice-tp-observer/evidence /var/lib/choice-tp-observer/state
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

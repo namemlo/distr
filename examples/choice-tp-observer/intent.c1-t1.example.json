@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "emlo.choice-tp-observation-intent/v1",
+  "intentId": "choice-tp-dev-c1-t1-observation-1",
+  "targetProfileChecksum": "sha256:fcf7f62ed8d0207582cbc28e99fa83437b430e627a5c69fe73cb1862577f3a2e",
+  "organizationId": "10000000-0000-4000-8000-000000000001",
+  "observerId": "10000000-0000-4000-8000-000000000002",
+  "deploymentUnitId": "10000000-0000-4000-8000-000000000003",
+  "observerCredentialSetId": "choice-tp-independent-observer-v2",
+  "executorCredentialSetId": "choice-tp-jenkins-executor-v1",
+  "notBefore": "2030-01-01T00:00:00.000Z",
+  "expiresAt": "2030-01-01T00:10:00.000Z",
+  "components": [
+    {
+      "componentKey": "customer-api",
+      "componentInstanceId": "10000000-0000-4000-8000-000000000004",
+      "sourceSequence": 10,
+      "expected": {
+        "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "composeChecksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
+        "configChecksum": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "schemaVersion": "1.1.0",
+        "capabilityChecksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "platform": "linux/amd64",
+        "topologyChecksum": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    {
+      "componentKey": "transaction-api",
+      "componentInstanceId": "10000000-0000-4000-8000-000000000005",
+      "sourceSequence": 11,
+      "expected": {
+        "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "composeChecksum": "sha256:15de3cb3bca419370f0d64d8381938fbb2367f02e266780526b31bc624b67f63",
+        "configChecksum": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "schemaVersion": "2.1.0",
+        "capabilityChecksum": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "platform": "linux/amd64",
+        "topologyChecksum": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    }
+  ],
+  "canonicalChecksum": "sha256:3d09d8e445eb3d48bf86d36660658a261cae46ff7c40ba9e05428be5eab22464"
+}

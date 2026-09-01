@@ -1,0 +1,13 @@
+[Unit]
+Description=Schedule Choice TP independent runtime observation
+
+[Timer]
+OnBootSec=1m
+OnUnitActiveSec=1m
+AccuracySec=1s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=choice-tp-observer.service
+
+[Install]
+WantedBy=timers.target

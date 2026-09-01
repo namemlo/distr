@@ -73,6 +73,17 @@ func TestOperatorFleetSQLKeepsSharedUnitSingleAndProjectsOperationalStates(t *te
 	g.Expect(normalized).To(ContainSubstring("componentreleaseartifact"))
 	g.Expect(normalized).To(ContainSubstring("latest_pending as"))
 	g.Expect(normalized).To(ContainSubstring("latest_attempt as"))
+	for _, identityField := range []string{
+		"'observedevidencechecksum', fleet.observed_evidence_checksum",
+		"'observedartifactdigest', fleet.observed_artifact_digest",
+		"'observedconfigchecksum', fleet.observed_config_checksum",
+		"'observedschemaversion', fleet.observed_schema_version",
+		"'observedcapabilitychecksum', fleet.observed_capability_checksum",
+		"'observedplatform', fleet.observed_platform",
+		"'observedhealth', fleet.observed_health",
+	} {
+		g.Expect(normalized).To(ContainSubstring(identityField))
+	}
 }
 
 func TestListOperatorFleetRowsUsesOneBoundedQueryAndDecodesEmptyAndPartialRows(t *testing.T) {
@@ -84,19 +95,26 @@ func TestListOperatorFleetRowsUsesOneBoundedQueryAndDecodesEmptyAndPartialRows(t
 	componentID := uuid.New()
 	createdAt := time.Date(2026, time.July, 22, 5, 20, 0, 0, time.UTC)
 	row := types.FleetRow{
-		ID:                 componentID,
-		CreatedAt:          createdAt,
-		EnvironmentID:      environmentID,
-		Environment:        "Production",
-		DeploymentTargetID: targetID,
-		Target:             "target-a",
-		DeploymentUnitID:   unitID,
-		Unit:               "shared-runtime",
-		ComponentID:        &componentID,
-		Component:          "api",
-		ObservedState:      "partial",
-		Drift:              "unknown",
-		Enrollment:         "enabled",
+		ID:                         componentID,
+		CreatedAt:                  createdAt,
+		EnvironmentID:              environmentID,
+		Environment:                "Production",
+		DeploymentTargetID:         targetID,
+		Target:                     "target-a",
+		DeploymentUnitID:           unitID,
+		Unit:                       "shared-runtime",
+		ComponentID:                &componentID,
+		Component:                  "api",
+		ObservedState:              "partial",
+		ObservedEvidenceChecksum:   "sha256:evidence",
+		ObservedArtifactDigest:     "sha256:artifact",
+		ObservedConfigChecksum:     "sha256:config",
+		ObservedSchemaVersion:      "2026-07-28",
+		ObservedCapabilityChecksum: "sha256:capabilities",
+		ObservedPlatform:           "linux/amd64",
+		ObservedHealth:             "HEALTHY",
+		Drift:                      "unknown",
+		Enrollment:                 "enabled",
 	}
 	payload, err := json.Marshal(operatorFleetPayload{
 		Total: 1,
@@ -152,6 +170,42 @@ func TestListOperatorFleetRowsUsesOneBoundedQueryAndDecodesEmptyAndPartialRows(t
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(result.Items).To(BeEmpty())
 	g.Expect(result.Total).To(BeZero())
+}
+
+func TestListOperatorFleetRowsProjectsNativeObservationIdentity(t *testing.T) {
+	ctx, _ := deploymentRegistryIsolatedPool(t, 160)
+	g := NewWithT(t)
+	deps := createDeploymentRegistryDependencies(t, ctx)
+	decisionAt := time.Date(2026, time.July, 22, 5, 45, 0, 0, time.UTC)
+	placement := createDeploymentRegistryPlacement(
+		t, ctx, deps, "fleet-observation-identity", decisionAt.Add(-time.Hour),
+	)
+	recordOperatorFleetObservation(
+		t, ctx, placement, decisionAt, "COMPLETE", decisionAt.Add(time.Hour), "d",
+	)
+
+	result, err := ListOperatorFleetRows(ctx, OperatorFleetQuery{
+		OrganizationID:         deps.organizationID,
+		DecisionAt:             decisionAt,
+		OrganizationWide:       true,
+		CustomerScopeIDs:       []uuid.UUID{},
+		EnvironmentScopeIDs:    []uuid.UUID{},
+		DeploymentUnitScopeIDs: []uuid.UUID{},
+		ComponentScopeIDs:      []uuid.UUID{},
+		Limit:                  10,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Items).To(HaveLen(1))
+
+	checksum := "sha256:" + strings.Repeat("d", 64)
+	row := result.Items[0]
+	g.Expect(row.ObservedEvidenceChecksum).To(Equal(checksum))
+	g.Expect(row.ObservedArtifactDigest).To(Equal(checksum))
+	g.Expect(row.ObservedConfigChecksum).To(Equal(checksum))
+	g.Expect(row.ObservedSchemaVersion).To(Equal("1"))
+	g.Expect(row.ObservedCapabilityChecksum).To(Equal(checksum))
+	g.Expect(row.ObservedPlatform).To(Equal("linux/amd64"))
+	g.Expect(row.ObservedHealth).To(Equal("HEALTHY"))
 }
 
 func TestListOperatorFleetRowsIsolatesTenantKeepsSharedUnitSingleAndPaginatesTies(t *testing.T) {

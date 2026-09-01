@@ -121,6 +121,13 @@ export interface OperatorFleetRow {
   pendingReleaseId?: string;
   pendingRelease: string;
   observedState: string;
+  observedEvidenceChecksum: string;
+  observedArtifactDigest: string;
+  observedConfigChecksum: string;
+  observedSchemaVersion: string;
+  observedCapabilityChecksum: string;
+  observedPlatform: string;
+  observedHealth: string;
   drift: string;
   lastExecutionId?: string;
   lastExecution: string;
@@ -296,6 +303,12 @@ export interface OperatorPlanFact {
   checksum?: string;
   message?: string;
   keyId?: string;
+  artifactDigest?: string;
+  configChecksum?: string;
+  platform?: string;
+  schemaVersion?: string;
+  capabilityChecksum?: string;
+  health?: string;
   blocking: boolean;
   order: number;
 }

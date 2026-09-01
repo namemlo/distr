@@ -133,6 +133,12 @@ func TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution
 		"'fenceLeaseExpiresAt'",
 		"'fenceReleasedAt'",
 		"'zeroLockClosure'",
+		"'artifactDigest', observed.artifact_digest",
+		"'configChecksum', observed.config_checksum",
+		"'platform', observed.platform",
+		"'schemaVersion', observed.schema_version",
+		"'capabilityChecksum', observed.capability_checksum",
+		"'health', observed.health",
 	} {
 		g.Expect(operatorExecutionDetailSQL).To(ContainSubstring(required))
 	}

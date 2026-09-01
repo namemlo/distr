@@ -74,6 +74,19 @@ The read-only operator surface is rooted at:
 Read models do not become execution inputs and do not copy write authority from
 the canonical domain records.
 
+Fleet items additively expose `observedArtifactDigest`,
+`observedConfigChecksum`, `observedPlatform`, `observedSchemaVersion`,
+`observedCapabilityChecksum`, and `observedHealth` from the current trusted,
+accepted observation. `observedEvidenceChecksum` is present when exactly one
+current observation supplies the Fleet row. When current observations conflict,
+the row retains its conflict state and leaves the singular identity fields empty
+rather than selecting an arbitrary runtime identity.
+
+Execution detail `observations[]` facts additively expose `artifactDigest`,
+`configChecksum`, `platform`, `schemaVersion`, `capabilityChecksum`, and
+`health` from the exact verified or terminal `ObservedComponentState` row. The
+fact's existing `checksum` remains that observation's evidence checksum.
+
 Execution detail includes additive `locks`, `leases`, and `coordination`
 projections. Lock facts expose created/acquired/released times, policy, current
 conflict, and a derived release reason. Lease facts expose executor, attempt,

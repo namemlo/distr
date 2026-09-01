@@ -76,6 +76,38 @@
                   <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     Drift: {{ row.drift || 'UNKNOWN' }} · Enrollment: {{ row.enrollment || 'UNKNOWN' }}
                   </div>
+                  @if (
+                    row.observedArtifactDigest ||
+                    row.observedConfigChecksum ||
+                    row.observedPlatform ||
+                    row.observedSchemaVersion ||
+                    row.observedCapabilityChecksum ||
+                    row.observedHealth
+                  ) {
+                    <div
+                      class="mt-3 min-w-72 rounded border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900">
+                      <div class="text-xs font-semibold uppercase tracking-wide text-gray-700 dark:text-gray-200">
+                        Observed runtime identity
+                      </div>
+                      <dl
+                        class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
+                        <dt>Artifact</dt>
+                        <dd class="break-all font-mono">{{ row.observedArtifactDigest || 'Unavailable' }}</dd>
+                        <dt>Config</dt>
+                        <dd class="break-all font-mono">{{ row.observedConfigChecksum || 'Unavailable' }}</dd>
+                        <dt>Platform</dt>
+                        <dd class="break-all font-mono">{{ row.observedPlatform || 'Unavailable' }}</dd>
+                        <dt>Schema</dt>
+                        <dd class="break-all font-mono">{{ row.observedSchemaVersion || 'Unavailable' }}</dd>
+                        <dt>Capabilities</dt>
+                        <dd class="break-all font-mono">{{ row.observedCapabilityChecksum || 'Unavailable' }}</dd>
+                        <dt>Health</dt>
+                        <dd>{{ row.observedHealth || 'UNKNOWN' }}</dd>
+                        <dt>Evidence</dt>
+                        <dd class="break-all font-mono">{{ row.observedEvidenceChecksum || 'Unavailable' }}</dd>
+                      </dl>
+                    </div>
+                  }
                 </td>
                 <td class="px-4 py-3">
                   <span

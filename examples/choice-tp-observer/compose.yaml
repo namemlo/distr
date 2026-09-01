@@ -1,0 +1,34 @@
+services:
+  choice-tp-observer:
+    image: '${CHOICE_TP_OBSERVER_IMAGE:?set an immutable image reference including @sha256 digest}'
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: '10001:10001'
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001
+    volumes:
+      - ./config/service.json:/etc/choice-tp-observer/service.json:ro
+      - ./config/choice-tp-dev.profile.json:/etc/choice-tp-observer/choice-tp-dev.profile.json:ro
+      - ./config/known_hosts:/etc/choice-tp-observer/known_hosts:ro
+      - ./config/choice-tp-c0-t0-baseline-runtime-evidence.json:/etc/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json:ro
+      - ./secrets:/etc/choice-tp-observer/secrets:ro
+      - ./intents:/var/lib/choice-tp-observer/intents:ro
+      - ./evidence:/var/lib/choice-tp-observer/evidence:rw
+      - ./state:/var/lib/choice-tp-observer/state:rw
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - /opt/choice-tp-observer/service.mjs
+        - --config
+        - /etc/choice-tp-observer/service.json
+        - --check
+      interval: 1m
+      timeout: 15s
+      retries: 3
+      start_period: 20s

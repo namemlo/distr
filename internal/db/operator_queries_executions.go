@@ -550,6 +550,12 @@ detail AS (
       'expected', desired.artifact_digest, 'actual', observed.artifact_digest,
       'checksum', observed.evidence_checksum,
       'message', observed.evidence_reference,
+      'artifactDigest', observed.artifact_digest,
+      'configChecksum', observed.config_checksum,
+      'platform', observed.platform,
+      'schemaVersion', observed.schema_version,
+      'capabilityChecksum', observed.capability_checksum,
+      'health', observed.health,
       'blocking', observed.outcome IN ('PARTIAL', 'UNKNOWN') OR observed.fresh_until < @decisionAt,
       'order', desired.revision
     ) ORDER BY desired.created_at, desired.id), '[]'::jsonb) AS items

@@ -129,27 +129,34 @@ type AuditFilter struct {
 }
 
 type FleetRow struct {
-	ID                     uuid.UUID  `db:"id" json:"id"`
-	CreatedAt              time.Time  `db:"created_at" json:"createdAt"`
-	CustomerOrganizationID *uuid.UUID `db:"customer_organization_id" json:"customerOrganizationId,omitempty"`
-	Customer               string     `db:"customer" json:"customer"`
-	EnvironmentID          uuid.UUID  `db:"environment_id" json:"environmentId"`
-	Environment            string     `db:"environment" json:"environment"`
-	DeploymentTargetID     uuid.UUID  `db:"deployment_target_id" json:"deploymentTargetId"`
-	Target                 string     `db:"target" json:"target"`
-	DeploymentUnitID       uuid.UUID  `db:"deployment_unit_id" json:"deploymentUnitId"`
-	Unit                   string     `db:"unit" json:"unit"`
-	ComponentID            *uuid.UUID `db:"component_id" json:"componentId,omitempty"`
-	Component              string     `db:"component" json:"component"`
-	ActiveReleaseID        *uuid.UUID `db:"active_release_id" json:"activeReleaseId,omitempty"`
-	ActiveRelease          string     `db:"active_release" json:"activeRelease"`
-	PendingReleaseID       *uuid.UUID `db:"pending_release_id" json:"pendingReleaseId,omitempty"`
-	PendingRelease         string     `db:"pending_release" json:"pendingRelease"`
-	ObservedState          string     `db:"observed_state" json:"observedState"`
-	Drift                  string     `db:"drift" json:"drift"`
-	LastExecutionID        *uuid.UUID `db:"last_execution_id" json:"lastExecutionId,omitempty"`
-	LastExecution          string     `db:"last_execution" json:"lastExecution"`
-	Enrollment             string     `db:"enrollment" json:"enrollment"`
+	ID                         uuid.UUID  `db:"id" json:"id"`
+	CreatedAt                  time.Time  `db:"created_at" json:"createdAt"`
+	CustomerOrganizationID     *uuid.UUID `db:"customer_organization_id" json:"customerOrganizationId,omitempty"`
+	Customer                   string     `db:"customer" json:"customer"`
+	EnvironmentID              uuid.UUID  `db:"environment_id" json:"environmentId"`
+	Environment                string     `db:"environment" json:"environment"`
+	DeploymentTargetID         uuid.UUID  `db:"deployment_target_id" json:"deploymentTargetId"`
+	Target                     string     `db:"target" json:"target"`
+	DeploymentUnitID           uuid.UUID  `db:"deployment_unit_id" json:"deploymentUnitId"`
+	Unit                       string     `db:"unit" json:"unit"`
+	ComponentID                *uuid.UUID `db:"component_id" json:"componentId,omitempty"`
+	Component                  string     `db:"component" json:"component"`
+	ActiveReleaseID            *uuid.UUID `db:"active_release_id" json:"activeReleaseId,omitempty"`
+	ActiveRelease              string     `db:"active_release" json:"activeRelease"`
+	PendingReleaseID           *uuid.UUID `db:"pending_release_id" json:"pendingReleaseId,omitempty"`
+	PendingRelease             string     `db:"pending_release" json:"pendingRelease"`
+	ObservedState              string     `db:"observed_state" json:"observedState"`
+	ObservedEvidenceChecksum   string     `db:"observed_evidence_checksum" json:"observedEvidenceChecksum"`
+	ObservedArtifactDigest     string     `db:"observed_artifact_digest" json:"observedArtifactDigest"`
+	ObservedConfigChecksum     string     `db:"observed_config_checksum" json:"observedConfigChecksum"`
+	ObservedSchemaVersion      string     `db:"observed_schema_version" json:"observedSchemaVersion"`
+	ObservedCapabilityChecksum string     `db:"observed_capability_checksum" json:"observedCapabilityChecksum"`
+	ObservedPlatform           string     `db:"observed_platform" json:"observedPlatform"`
+	ObservedHealth             string     `db:"observed_health" json:"observedHealth"`
+	Drift                      string     `db:"drift" json:"drift"`
+	LastExecutionID            *uuid.UUID `db:"last_execution_id" json:"lastExecutionId,omitempty"`
+	LastExecution              string     `db:"last_execution" json:"lastExecution"`
+	Enrollment                 string     `db:"enrollment" json:"enrollment"`
 }
 
 type OperatorReleaseRow struct {
@@ -335,17 +342,23 @@ type OperatorPlanRow struct {
 }
 
 type OperatorPlanFact struct {
-	ID       *uuid.UUID `json:"id,omitempty"`
-	Key      string     `json:"key"`
-	Kind     string     `json:"kind,omitempty"`
-	Status   string     `json:"status,omitempty"`
-	Expected string     `json:"expected,omitempty"`
-	Actual   string     `json:"actual,omitempty"`
-	Checksum string     `json:"checksum,omitempty"`
-	Message  string     `json:"message,omitempty"`
-	KeyID    string     `json:"keyId,omitempty"`
-	Blocking bool       `json:"blocking"`
-	Order    int        `json:"order"`
+	ID                 *uuid.UUID `json:"id,omitempty"`
+	Key                string     `json:"key"`
+	Kind               string     `json:"kind,omitempty"`
+	Status             string     `json:"status,omitempty"`
+	Expected           string     `json:"expected,omitempty"`
+	Actual             string     `json:"actual,omitempty"`
+	Checksum           string     `json:"checksum,omitempty"`
+	Message            string     `json:"message,omitempty"`
+	KeyID              string     `json:"keyId,omitempty"`
+	ArtifactDigest     string     `json:"artifactDigest,omitempty"`
+	ConfigChecksum     string     `json:"configChecksum,omitempty"`
+	Platform           string     `json:"platform,omitempty"`
+	SchemaVersion      string     `json:"schemaVersion,omitempty"`
+	CapabilityChecksum string     `json:"capabilityChecksum,omitempty"`
+	Health             string     `json:"health,omitempty"`
+	Blocking           bool       `json:"blocking"`
+	Order              int        `json:"order"`
 }
 
 type OperatorPlanDetail struct {

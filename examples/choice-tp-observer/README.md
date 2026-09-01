@@ -6,6 +6,10 @@ This example is an adopter-side, read-only observer for the Choice TP DEV `custo
 documented independent-observation payload to Distr. Schema, capability, and topology facts are measured through
 a separately configured read-only runtime probe; they are never copied from the plan intent.
 
+The directory contains both the original one-shot command and a durable polling service. The service consumes
+immutable intent files from a read-only inbox, persists signed evidence before submission, and replays those exact
+bytes after restart. It never remeasures an intent once its signed evidence exists.
+
 The observer never deploys, pulls, starts, stops, restarts, removes, copies, or executes inside a container. It
 does not query a client database and does not contact or change Suria, MC, Jenkins, or another service.
 
@@ -22,7 +26,9 @@ The immutable intent carries both `observerCredentialSetId` and `executorCredent
 to run when they are equal. Secret values and private keys are read from operator-supplied files and are never
 stored in this repository, evidence, stdout, SSH output, or the Distr request body.
 
-Distr stores only the observer-token fingerprint. The callback is exactly:
+Distr stores only the observer-token fingerprint. The durable service additionally pins that fingerprint in its
+checksummed configuration and rejects an observer SSH key, token, or evidence key whose fingerprint matches any
+configured Jenkins/executor credential fingerprint. The callback is exactly:
 
 ```http
 Authorization: Observer <opaque observer token>
@@ -101,7 +107,62 @@ timeouts, and unsupported command paths. It computes a canonical SHA-256 checksu
 retains only that checksum plus the adapter identity in signed evidence, and discards the raw response. Probe output,
 stderr, authorization material, config contents, and command output are never included in errors or submissions.
 
-## Run
+## Durable service
+
+[`service.mjs`](service.mjs) validates all configuration, credentials, profile, pinned host key, and the retained
+legacy baseline before it starts polling. [`service.example.json`](service.example.json) binds the exact
+organization, observer registration, Deployment Unit, Customer/Transaction Component Instances, observer and
+executor credential-set IDs, credential fingerprints, and all state paths. Replace the synthetic UUIDs and
+credential fingerprints, then recalculate `canonicalChecksum` over every field except `canonicalChecksum`.
+
+The service recognizes one current checkpoint: Customer `C1` plus Transaction `T1`. Every service intent must bind
+both exact candidate component digests and may not reuse the pinned Customer `C0` or Transaction `T0` artifact
+digest. [`intent.c1-t1.example.json`](intent.c1-t1.example.json) documents this separate current-runtime intent.
+The existing [`intent.example.json`](intent.example.json) is retained only as historical C0/T0 one-shot shape
+documentation and is intentionally rejected by the C1/T1 service.
+
+The `legacyBaseline` section pins the read-only C0/T0 artifact byte-for-byte as
+`sha256:cbebf0295b9eda637afc207f03a28a3c67a99c2d701c5ca99697176ff5343429`, plus the exact C0/T0 OCI and
+configuration digests. Startup requires the mounted artifact to match those pins and to remain classified
+`LEGACY_LIVENESS_ONLY` / `BASELINE_OR_ROLLBACK_ONLY`. It is never relabeled as standard readiness and is never
+submitted as C1/T1 evidence.
+
+Current measurements use the independently probed artifact, configuration, schema, capability, platform, topology,
+and `/alive`-then-`/healthz` result. Their observation request is explicitly classified
+`STANDARD_READINESS` / `STANDARD_PROMOTION_ELIGIBLE` with a checksum of the fixed logical health policy. The
+evidence reference is `evidence://sha256/<evidence checksum>`.
+
+The polling and retry bounds are explicit:
+
+- at most `maxIntentsPerPoll` intent files are considered per poll;
+- only transient transport, HTTP `408`, `429`, and `5xx` submission failures are retried;
+- exponential delay stops at `maxAttemptsPerPoll` and `maxDelayMs`;
+- an intent stops permanently at `maxTotalAttemptsPerIntent`;
+- exact replay is safe because Distr treats identical observer/component sequence material as idempotent;
+- a durable lock prevents overlapping service instances and is reclaimed only after its configured stale period.
+
+Validate a prepared installation without SSH or Distr calls:
+
+```shell
+node examples/choice-tp-observer/service.mjs \
+  --config /etc/choice-tp-observer/service.json \
+  --check
+```
+
+Run one scheduled poll or the continuous container process:
+
+```shell
+node examples/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --once
+node examples/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json
+```
+
+Use [`compose.yaml`](compose.yaml) with an image reference containing an immutable `@sha256:` digest, or install the
+provided systemd oneshot/timer units. Neither packaging surface accepts credentials through environment variables,
+and neither mounts a Jenkins workspace, Docker socket, executor key, or executor token. See
+[`docs/operations/choice-tp-observer-service.md`](../../docs/operations/choice-tp-observer-service.md) for install,
+operation, recovery, and rollback.
+
+## One-shot run
 
 Generate an Ed25519 evidence key in an approved secret directory, not in the repository:
 
@@ -136,17 +197,26 @@ incomplete-measurement failures are not submitted.
 The output is a bounded canonical record containing only fixed identities, checksums, comparison booleans, HTTP
 status codes, canonical runtime-probe evidence checksums, and timestamps. It is written with mode `0600`, signed
 with Ed25519, and linked to each Distr request
-using its canonical `evidenceChecksum` and a `urn:sha256:` evidence reference. Raw SSH output, HTTP bodies,
+using its canonical `evidenceChecksum` and an `evidence://sha256/` evidence reference. Raw SSH output, HTTP bodies,
 authorization headers, tokens, keys, environment variables, and config contents are discarded.
 
 Distr's current observation API has no signature field. The signed envelope remains the independently retained
 artifact; the documented API receives only `api.ObservationRequest` fields and the canonical evidence link.
 
+Accepted observation values are visible through the existing Fleet and execution detail surfaces as native
+artifact digest, config checksum, platform, schema version, capability checksum, and health fields. Fleet shows a
+single evidence checksum only when one current accepted observation supplies it and withholds a singular identity
+when observations conflict.
+
 ## Tests
 
 ```shell
-node --test examples/choice-tp-observer/observer.test.mjs
+node --test \
+  examples/choice-tp-observer/observer.test.mjs \
+  examples/choice-tp-observer/service.test.mjs
 ```
 
-The tests use an in-memory SSH adapter and HTTP callback. They do not contact Choice TP, Distr, Jenkins, Docker, a
-database, or any other live system.
+The tests use temporary files plus in-memory SSH and HTTP adapters. They cover restart replay after partial
+submission, completed-intent suppression, retry exhaustion, host/credential/scope pins, C0/T0 versus C1/T1
+separation, standard-readiness health policy, and the original observer parsing/signing rules. They do not contact
+Choice TP, Distr, Jenkins, Docker, a database, or any other live system.

@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-Entries through PR-091 and the separately integrated PR-094 and PR-096 slices
+Entries through PR-092 and the separately integrated PR-094 and PR-096 slices
 are recorded below. Each entry's status and evidence boundary remain
 authoritative. PR-054A timestamp-expand runtime, migration,
 audited dirty-marker recovery, and operator documentation are implemented
@@ -20,7 +20,7 @@ PR-087 adds the executor runtime-trust boundary and migration 167; its live
 PostgreSQL, neutral-adapter, and final release gates remain pending.
 PR-090 separates frozen Component Release application identity from
 independently observed schema and capability identity in migration 169. The
-PR-086, PR-088, and PR-091 contracts are integrated separately before final
+PR-086, PR-088, PR-091, and PR-092 contracts are integrated separately before final
 138-to-169 release certification.
 
 ## Tracking Template
@@ -1996,6 +1996,40 @@ Use one entry per pull request:
   adopter, registry, CI, cloud, or service-name assumptions.
 - Compatibility notes: Existing evidence-version-1 plans remain readable and
   unchanged. Legacy observations cannot authorize new dependency bindings.
+
+### PR-092 - Durable independent observer service
+
+- Status: Implemented with focused local verification; no live environment is
+  contacted or claimed.
+- Upstream base: `d5643fad`.
+- Feature flags: Uses the existing observer boundary; no new process flag.
+- User-facing behavior: Choice TP C1/T1 observation can run as a restart-safe
+  polling container or systemd timer. Persisted signed evidence is exactly
+  replayed after interruption, including partial submission.
+- Database changes: None.
+- API changes: No route change. Existing observation requests now include the
+  standard-readiness health kind/use/policy fields and canonical digest-addressed
+  evidence reference. Existing Fleet rows and execution observation facts add
+  native artifact/config/platform/schema/capability/health identity fields;
+  Fleet also exposes the unambiguous observation evidence checksum.
+- UI changes: Fleet and execution detail render the exact native observation
+  identity instead of reducing component evidence to a checkpoint/status label.
+  Conflicting Fleet observations suppress a singular identity.
+- Agent protocol changes: None; the service remains an adopter-side observer.
+- Documentation: Adds ADR-0079, PR-092 fork notes, hardened Compose/systemd
+  packaging, example service/current-intent configuration, and an install,
+  recovery, and rollback runbook. The operator API guide documents the additive
+  Fleet and execution observation identity fields.
+- Tests: Focused temporary-file and in-memory Node tests cover exact restart
+  replay, partial submission, retry exhaustion, completed-intent suppression,
+  scope/credential/known-host/legacy pins, and C0/T0 versus C1/T1 separation.
+  Focused Go SQL/read-model tests and Angular component tests cover exact native
+  observation identity projection and rendering.
+- Upstream contribution notes: Durable replay and bounded scheduler mechanics
+  are generic, while the checked-in target config remains clearly adopter-side.
+- Compatibility notes: The one-shot CLI remains available. C0/T0 retains its
+  digest-pinned legacy liveness/rollback-only classification and cannot be used
+  as C1/T1 standard-readiness evidence.
 
 ### PR-091 - Independent runtime measurement probes
 

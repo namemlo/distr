@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "emlo.choice-tp-observer-service/v1",
+  "profileFile": "/etc/choice-tp-observer/choice-tp-dev.profile.json",
+  "inboxDirectory": "/var/lib/choice-tp-observer/intents",
+  "evidenceDirectory": "/var/lib/choice-tp-observer/evidence",
+  "stateFile": "/var/lib/choice-tp-observer/state/service-state.json",
+  "lockFile": "/var/lib/choice-tp-observer/state/service.lock",
+  "credentials": {
+    "sshKeyFile": "/etc/choice-tp-observer/secrets/observer-ssh-key",
+    "knownHostsFile": "/etc/choice-tp-observer/known_hosts",
+    "observerTokenFile": "/etc/choice-tp-observer/secrets/distr-observer-token",
+    "observerTokenFingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "evidencePrivateKeyFile": "/etc/choice-tp-observer/secrets/evidence-ed25519.pem",
+    "executorCredentialFingerprints": [
+      "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    ]
+  },
+  "scope": {
+    "organizationId": "10000000-0000-4000-8000-000000000001",
+    "observerId": "10000000-0000-4000-8000-000000000002",
+    "deploymentUnitId": "10000000-0000-4000-8000-000000000003",
+    "componentInstanceIds": {
+      "customer-api": "10000000-0000-4000-8000-000000000004",
+      "transaction-api": "10000000-0000-4000-8000-000000000005"
+    },
+    "observerCredentialSetId": "choice-tp-independent-observer-v2",
+    "executorCredentialSetId": "choice-tp-jenkins-executor-v1"
+  },
+  "legacyBaseline": {
+    "checkpoint": "C0/T0",
+    "evidenceFile": "/etc/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json",
+    "evidenceFileChecksum": "sha256:cbebf0295b9eda637afc207f03a28a3c67a99c2d701c5ca99697176ff5343429",
+    "components": {
+      "customer-api": {
+        "stateLabel": "C0",
+        "artifactDigest": "sha256:6e953caf3153a76bdd15c2ee4a3826ebe36c671ff960a1d427398474cf42006c",
+        "configChecksum": "sha256:9fc5daa5be6f84f375b2b1566cd635981d4cf5343fbf80410b2f6d507005b75c"
+      },
+      "transaction-api": {
+        "stateLabel": "T0",
+        "artifactDigest": "sha256:5ac3a4528ceb716ca3abb3cc4e152ce31a7ce8107d679d9e534c8a9b14f02d98",
+        "configChecksum": "sha256:1177424488b2bebd163b84a56af66a3b325f9e13845e8be800b664a5de5a806e"
+      }
+    }
+  },
+  "currentRuntime": {
+    "checkpoint": "C1/T1",
+    "componentStateLabels": {
+      "customer-api": "C1",
+      "transaction-api": "T1"
+    }
+  },
+  "polling": {
+    "intervalMs": 30000,
+    "maxIntentsPerPoll": 8,
+    "lockStaleMs": 900000
+  },
+  "retry": {
+    "maxAttemptsPerPoll": 3,
+    "maxTotalAttemptsPerIntent": 8,
+    "initialDelayMs": 1000,
+    "maxDelayMs": 10000
+  },
+  "canonicalChecksum": "sha256:566a9f85c3b34ea94f8c9aa5439308560bc569743390c9b6c72d0efd29281278"
+}

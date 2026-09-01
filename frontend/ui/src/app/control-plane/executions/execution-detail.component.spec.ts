@@ -138,6 +138,12 @@ describe('ExecutionDetailComponent', () => {
         actual: 'unknown',
         checksum: 'sha256:observation-proof',
         message: 'No current callback',
+        artifactDigest: 'sha256:customer-c1',
+        configChecksum: 'sha256:customer-config-c1',
+        platform: 'linux/amd64',
+        schemaVersion: '2026-07-28',
+        capabilityChecksum: 'sha256:customer-capabilities-c1',
+        health: 'HEALTHY',
         blocking: false,
         order: 1,
       },
@@ -189,6 +195,13 @@ describe('ExecutionDetailComponent', () => {
     expect(text).toContain('Attempt 2 started');
     expect(text).toContain('Stale observation');
     expect(text).toContain('Unknown status: WAITING_FOR_ORACLE');
+    expect(text).toContain('Observed runtime identity');
+    expect(text).toContain('sha256:customer-c1');
+    expect(text).toContain('sha256:customer-config-c1');
+    expect(text).toContain('linux/amd64');
+    expect(text).toContain('2026-07-28');
+    expect(text).toContain('sha256:customer-capabilities-c1');
+    expect(text).toContain('HEALTHY');
     expect(
       fixture.nativeElement.querySelector('a[href="/deployments/executions?deploymentPlanId=plan-1"]')
     ).not.toBeNull();

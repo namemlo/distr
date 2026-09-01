@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
 import {generateKeyPairSync, verify} from 'node:crypto';
 import {mkdtemp, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import {promisify} from 'node:util';
 import {
   buildObservationRequests,
   buildReadOnlyCommands,
@@ -12,9 +15,25 @@ import {
   runObserver,
   sha256,
   signEvidence,
+  submitObservations,
   validateIntent,
   validateProfile,
 } from './observer.mjs';
+
+const execFileAsync = promisify(execFile);
+
+test('observer and service modules stay import-safe with relative command arguments', async () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  for (const moduleName of ['observer.mjs', 'service.mjs']) {
+    const moduleURL = pathToFileURL(path.join(directory, moduleName)).href;
+    await execFileAsync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `await import(${JSON.stringify(moduleURL)})`,
+      'relative.json',
+    ]);
+  }
+});
 
 const profileWithoutChecksum = {
   schemaVersion: 'emlo.choice-tp-observer-profile/v2',
@@ -260,8 +279,7 @@ test('observer verifies exact runtime evidence, signs it, writes mode-safe outpu
     assert.ok(result.signedEvidence.components.every(({health}) => health === 'HEALTHY'));
     assert.ok(
       result.signedEvidence.components.every(
-        ({comparisons}) =>
-          comparisons.schemaVersion && comparisons.capabilityChecksum && comparisons.topologyChecksum
+        ({comparisons}) => comparisons.schemaVersion && comparisons.capabilityChecksum && comparisons.topologyChecksum
       )
     );
     assert.ok(
@@ -288,6 +306,9 @@ test('observer verifies exact runtime evidence, signs it, writes mode-safe outpu
         'evidenceChecksum',
         'evidenceReference',
         'health',
+        'healthEvidenceKind',
+        'healthEvidenceUse',
+        'healthPolicyChecksum',
         'observerId',
         'organizationId',
         'outcome',
@@ -296,6 +317,10 @@ test('observer verifies exact runtime evidence, signs it, writes mode-safe outpu
         'sourceSequence',
         'topologyChecksum',
       ]);
+      assert.equal(body.healthEvidenceKind, 'STANDARD_READINESS');
+      assert.equal(body.healthEvidenceUse, 'STANDARD_PROMOTION_ELIGIBLE');
+      assert.match(body.healthPolicyChecksum, /^sha256:[0-9a-f]{64}$/);
+      assert.equal(body.evidenceReference, `evidence://sha256/${body.evidenceChecksum.slice('sha256:'.length)}`);
     }
     const persisted = JSON.parse(await readFile(outputPath, 'utf8'));
     const core = Object.fromEntries(
@@ -354,11 +379,12 @@ test('observer submits independently probed runtime values instead of copying pl
       return new Response('{}', {status: 202});
     },
   });
-  assert.ok(result.signedEvidence.components.every(({health, outcome}) => health === 'UNHEALTHY' && outcome === 'FAILED'));
+  assert.ok(
+    result.signedEvidence.components.every(({health, outcome}) => health === 'UNHEALTHY' && outcome === 'FAILED')
+  );
   assert.ok(
     result.signedEvidence.components.every(
-      ({comparisons}) =>
-        !comparisons.schemaVersion && !comparisons.capabilityChecksum && !comparisons.topologyChecksum
+      ({comparisons}) => !comparisons.schemaVersion && !comparisons.capabilityChecksum && !comparisons.topologyChecksum
     )
   );
   assert.ok(bodies.every(({schemaVersion}) => schemaVersion === '0.9.0'));
@@ -417,4 +443,16 @@ test('signed evidence and API requests are bounded and never include credentials
   );
   assert.doesNotMatch(JSON.stringify(evidence), /private|token|authorization/i);
   assert.deepEqual(buildObservationRequests(createIntent(), {...evidence, components: []}), []);
+});
+
+test('observation submission stops reading an oversized streamed response', async () => {
+  await assert.rejects(
+    submitObservations({
+      profile,
+      token: 'observer-token-that-is-distinct-and-long-enough',
+      requests: [{componentKey: 'customer-api'}],
+      fetchImpl: async () => new Response('x'.repeat(32 * 1024 + 1), {status: 202}),
+    }),
+    /exceeds the bounded size/
+  );
 });

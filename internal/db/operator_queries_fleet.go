@@ -78,12 +78,14 @@ current_observations AS (
     bool_or(observation.outcome = 'UNKNOWN') AS unknown,
     bool_or(observation.health = 'UNHEALTHY') AS unhealthy,
     bool_and(observation.health = 'HEALTHY') AS healthy,
+    min(observation.evidence_checksum) AS evidence_checksum,
     min(observation.artifact_digest) AS artifact_digest,
     min(observation.config_checksum) AS config_checksum,
     min(observation.schema_version) AS schema_version,
     min(observation.capability_checksum) AS capability_checksum,
     min(observation.platform) AS platform,
-    min(observation.topology_checksum) AS topology_checksum
+    min(observation.topology_checksum) AS topology_checksum,
+    min(observation.health) AS health
   FROM ObservedComponentState observation
   WHERE observation.organization_id = @organizationID
     AND observation.is_current
@@ -215,12 +217,14 @@ authorized_registry AS (
     observation.unknown AS observation_unknown,
     observation.unhealthy AS observation_unhealthy,
     observation.healthy AS observation_healthy,
+    observation.evidence_checksum AS observed_evidence_checksum,
     observation.artifact_digest AS observed_artifact_digest,
     observation.config_checksum AS observed_config_checksum,
     observation.schema_version AS observed_schema_version,
     observation.capability_checksum AS observed_capability_checksum,
     observation.platform AS observed_platform,
     observation.topology_checksum AS observed_topology_checksum,
+    observation.health AS observed_health,
     drift.status AS drift_case_status,
     last_pending.execution_id AS last_execution_id,
     COALESCE(last_attempt.status::text, last_pending.status::text, '') AS last_execution,
@@ -367,6 +371,34 @@ projected_fleet AS (
       ELSE 'unknown'
     END AS observed_state,
     CASE
+      WHEN registry.observation_count = 1 THEN COALESCE(registry.observed_evidence_checksum, '')
+      ELSE ''
+    END AS observed_evidence_checksum,
+    CASE
+      WHEN registry.state_count = 1 THEN COALESCE(registry.observed_artifact_digest, '')
+      ELSE ''
+    END AS observed_artifact_digest,
+    CASE
+      WHEN registry.state_count = 1 THEN COALESCE(registry.observed_config_checksum, '')
+      ELSE ''
+    END AS observed_config_checksum,
+    CASE
+      WHEN registry.state_count = 1 THEN COALESCE(registry.observed_schema_version, '')
+      ELSE ''
+    END AS observed_schema_version,
+    CASE
+      WHEN registry.state_count = 1 THEN COALESCE(registry.observed_capability_checksum, '')
+      ELSE ''
+    END AS observed_capability_checksum,
+    CASE
+      WHEN registry.state_count = 1 THEN COALESCE(registry.observed_platform, '')
+      ELSE ''
+    END AS observed_platform,
+    CASE
+      WHEN registry.state_count = 1 THEN COALESCE(registry.observed_health, '')
+      ELSE ''
+    END AS observed_health,
+    CASE
       WHEN registry.drift_case_status IS NOT NULL THEN 'drifted'
       WHEN registry.active_revision_id IS NULL
         OR registry.observation_count IS NULL THEN 'unknown'
@@ -404,7 +436,10 @@ filtered_fleet AS (
         ' ', fleet.customer, fleet.environment, fleet.target,
         fleet.unit, fleet.component, fleet.active_release,
         fleet.pending_release, fleet.observed_state, fleet.drift,
-        fleet.last_execution, fleet.enrollment
+        fleet.observed_evidence_checksum, fleet.observed_artifact_digest,
+        fleet.observed_config_checksum, fleet.observed_schema_version,
+        fleet.observed_capability_checksum, fleet.observed_platform,
+        fleet.observed_health, fleet.last_execution, fleet.enrollment
       )) LIKE '%' || @search || '%'
     )
 ),
@@ -440,6 +475,13 @@ SELECT jsonb_build_object(
         'pendingReleaseId', fleet.pending_release_id,
         'pendingRelease', fleet.pending_release,
         'observedState', fleet.observed_state,
+        'observedEvidenceChecksum', fleet.observed_evidence_checksum,
+        'observedArtifactDigest', fleet.observed_artifact_digest,
+        'observedConfigChecksum', fleet.observed_config_checksum,
+        'observedSchemaVersion', fleet.observed_schema_version,
+        'observedCapabilityChecksum', fleet.observed_capability_checksum,
+        'observedPlatform', fleet.observed_platform,
+        'observedHealth', fleet.observed_health,
         'drift', fleet.drift,
         'lastExecutionId', fleet.last_execution_id,
         'lastExecution', fleet.last_execution,

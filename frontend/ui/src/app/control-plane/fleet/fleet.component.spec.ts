@@ -110,6 +110,41 @@ describe('FleetComponent', () => {
     expect(created.fixture.nativeElement.textContent).toContain('No fleet placements match the current scope');
   });
 
+  it('renders each component native observation identity without collapsing checkpoint state', async () => {
+    service.listFleet.mockReturnValue(
+      of({
+        items: [
+          fleetRow({
+            id: 'customer-c1',
+            component: 'Customer API',
+            observedArtifactDigest: 'sha256:customer-c1',
+            observedConfigChecksum: 'sha256:customer-config-c1',
+          }),
+          fleetRow({
+            id: 'transaction-t0',
+            component: 'Transaction API',
+            observedArtifactDigest: 'sha256:transaction-t0',
+            observedConfigChecksum: 'sha256:transaction-config-t0',
+          }),
+        ],
+      })
+    );
+
+    const {fixture} = await createComponent();
+    const text = fixture.nativeElement.textContent;
+
+    expect(text).toContain('Observed runtime identity');
+    expect(text).toContain('sha256:customer-c1');
+    expect(text).toContain('sha256:customer-config-c1');
+    expect(text).toContain('sha256:transaction-t0');
+    expect(text).toContain('sha256:transaction-config-t0');
+    expect(text).toContain('linux/amd64');
+    expect(text).toContain('2026-07-28');
+    expect(text).toContain('sha256:capabilities-c1');
+    expect(text).toContain('HEALTHY');
+    expect(text).toContain('sha256:evidence-c1');
+  });
+
   for (const errorCase of [
     {status: 403, message: 'You are not authorized to view the operator fleet.'},
     {status: 404, message: 'The operator control plane is disabled for this organization.'},
@@ -159,6 +194,13 @@ function fleetRow(overrides: Partial<OperatorFleetRow> = {}): OperatorFleetRow {
     pendingReleaseId: 'release-2',
     pendingRelease: '2026.7.2',
     observedState: 'RUNNING',
+    observedEvidenceChecksum: 'sha256:evidence-c1',
+    observedArtifactDigest: 'sha256:artifact-c1',
+    observedConfigChecksum: 'sha256:config-c1',
+    observedSchemaVersion: '2026-07-28',
+    observedCapabilityChecksum: 'sha256:capabilities-c1',
+    observedPlatform: 'linux/amd64',
+    observedHealth: 'HEALTHY',
     drift: 'NONE',
     lastExecutionId: 'execution-1',
     lastExecution: 'SUCCEEDED',

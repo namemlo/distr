@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import {execFile} from 'node:child_process';
-import {createHash, createPublicKey, sign, timingSafeEqual} from 'node:crypto';
+import {createHash, createPublicKey, sign, timingSafeEqual, verify} from 'node:crypto';
 import {chmod, readFile, writeFile} from 'node:fs/promises';
 import {platform as hostPlatform} from 'node:os';
+import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
 
@@ -100,11 +101,7 @@ function validateRuntimeProbe(probe, label) {
   if (probe?.adapter === 'http-json/v1') {
     requireExactKeys(probe, ['adapter', 'path', 'timeoutMs'], label);
     requireString(probe.path, `${label} path`, 512);
-    if (
-      !/^\/[A-Za-z0-9._~:/@%+=,-]+$/.test(probe.path) ||
-      probe.path.includes('..') ||
-      probe.path.includes('//')
-    ) {
+    if (!/^\/[A-Za-z0-9._~:/@%+=,-]+$/.test(probe.path) || probe.path.includes('..') || probe.path.includes('//')) {
       throw new Error(`${label} path is not a safe local metadata path`);
     }
   } else if (probe?.adapter === 'command-json/v1') {
@@ -509,6 +506,16 @@ function isHealthyStatus(status) {
   return status >= 200 && status < 300;
 }
 
+export function healthPolicyForComponent(componentKey, component) {
+  return {
+    schemaVersion: 'emlo.choice-tp-health-policy/v1',
+    componentKey,
+    preferredPath: component.alivePath,
+    fallbackPath: component.healthzPath,
+    acceptedStatusClass: '2xx',
+  };
+}
+
 export function parseRuntimeProbe(output, adapter) {
   if (
     typeof output !== 'string' ||
@@ -523,11 +530,7 @@ export function parseRuntimeProbe(output, adapter) {
   } catch {
     throw new Error('runtime probe returned invalid JSON');
   }
-  requireExactKeys(
-    measurement,
-    ['schemaVersion', 'capabilityChecksum', 'topologyChecksum'],
-    'runtime probe'
-  );
+  requireExactKeys(measurement, ['schemaVersion', 'capabilityChecksum', 'topologyChecksum'], 'runtime probe');
   if (!runtimeSchemaVersionPattern.test(measurement.schemaVersion ?? '')) {
     throw new Error('runtime probe schemaVersion is invalid');
   }
@@ -572,14 +575,14 @@ export async function observeComponent({profile, intentComponent, runSSH, captur
     composeChecksum: checksums.composeChecksum === intentComponent.expected.composeChecksum,
     configChecksum: checksums.configChecksum === intentComponent.expected.configChecksum,
     schemaVersion: measuredRuntime.schemaVersion === intentComponent.expected.schemaVersion,
-    capabilityChecksum:
-      measuredRuntime.capabilityChecksum === intentComponent.expected.capabilityChecksum,
+    capabilityChecksum: measuredRuntime.capabilityChecksum === intentComponent.expected.capabilityChecksum,
     platform: image.platform === intentComponent.expected.platform,
     topologyChecksum: measuredRuntime.topologyChecksum === intentComponent.expected.topologyChecksum,
     running: container.state === 'running',
     health: isHealthyStatus(healthStatus),
   };
   const complete = Object.values(comparisons).every(Boolean);
+  const healthPolicy = healthPolicyForComponent(intentComponent.componentKey, profileComponent);
   return {
     componentKey: intentComponent.componentKey,
     componentInstanceId: intentComponent.componentInstanceId,
@@ -597,6 +600,7 @@ export async function observeComponent({profile, intentComponent, runSSH, captur
     outcome: complete ? 'COMPLETE' : 'FAILED',
     comparisons,
     runtimeProbe: measuredRuntime.evidence,
+    healthPolicyChecksum: sha256(healthPolicy),
     healthProbe: {preferredPath: profileComponent.alivePath, aliveStatus, healthzStatus, selectedPath: healthPath},
   };
 }
@@ -630,7 +634,7 @@ export function buildObservationRequests(intent, signedEvidence) {
     sourceSequence: component.sourceSequence,
     capturedAt: component.capturedAt,
     evidenceChecksum: signedEvidence.evidenceChecksum,
-    evidenceReference: `urn:sha256:${signedEvidence.evidenceChecksum.slice(7)}#${component.componentKey}`,
+    evidenceReference: `evidence://sha256/${signedEvidence.evidenceChecksum.slice(7)}`,
     artifactDigest: component.artifactDigest,
     configChecksum: component.configChecksum,
     schemaVersion: component.schemaVersion,
@@ -639,7 +643,52 @@ export function buildObservationRequests(intent, signedEvidence) {
     topologyChecksum: component.topologyChecksum,
     health: component.health,
     outcome: component.outcome,
+    healthEvidenceKind: 'STANDARD_READINESS',
+    healthEvidenceUse: 'STANDARD_PROMOTION_ELIGIBLE',
+    healthPolicyChecksum: component.healthPolicyChecksum,
   }));
+}
+
+export class ObservationSubmissionError extends Error {
+  constructor(message, {retryable, status = null, componentKey = null} = {}) {
+    super(message);
+    this.name = 'ObservationSubmissionError';
+    this.retryable = Boolean(retryable);
+    this.status = status;
+    this.componentKey = componentKey;
+  }
+}
+
+async function consumeBoundedResponseBody(response) {
+  const declaredLength = response.headers?.get?.('content-length');
+  if (declaredLength !== null && declaredLength !== undefined) {
+    if (!/^\d+$/.test(declaredLength) || Number(declaredLength) > maximumCommandBytes) {
+      await response.body?.cancel?.();
+      throw new Error('response body exceeds the bounded size');
+    }
+  }
+  if (!response.body?.getReader) {
+    const body = await response.arrayBuffer();
+    if (body.byteLength > maximumCommandBytes) {
+      throw new Error('response body exceeds the bounded size');
+    }
+    return;
+  }
+  const reader = response.body.getReader();
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) return;
+      totalBytes += value.byteLength;
+      if (totalBytes > maximumCommandBytes) {
+        await reader.cancel();
+        throw new Error('response body exceeds the bounded size');
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export async function submitObservations({profile, token, requests, fetchImpl = fetch}) {
@@ -650,30 +699,49 @@ export async function submitObservations({profile, token, requests, fetchImpl = 
   const endpoint = `${profile.distrBaseUrl}/api/observer/v1/observations`;
   const results = [];
   for (const request of requests) {
-    const response = await fetchImpl(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Observer ${token}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(request),
-      redirect: 'error',
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = await response.arrayBuffer();
-    if (body.byteLength > maximumCommandBytes) {
-      throw new Error(`Distr observation response for ${request.componentKey} exceeds the bounded size`);
+    let response;
+    try {
+      response = await fetchImpl(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Observer ${token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(request),
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new ObservationSubmissionError(`Distr observation submission for ${request.componentKey} failed`, {
+        retryable: true,
+        componentKey: request.componentKey,
+      });
+    }
+    try {
+      await consumeBoundedResponseBody(response);
+    } catch {
+      throw new ObservationSubmissionError(
+        `Distr observation response for ${request.componentKey} exceeds the bounded size`,
+        {retryable: false, status: response.status, componentKey: request.componentKey}
+      );
     }
     if (response.status !== 202) {
-      throw new Error(`Distr observation submission for ${request.componentKey} returned HTTP ${response.status}`);
+      throw new ObservationSubmissionError(
+        `Distr observation submission for ${request.componentKey} returned HTTP ${response.status}`,
+        {
+          retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+          status: response.status,
+          componentKey: request.componentKey,
+        }
+      );
     }
     results.push({componentKey: request.componentKey, status: response.status});
   }
   return results;
 }
 
-async function readBoundedJSON(path, maximumBytes, label) {
+export async function readBoundedJSON(path, maximumBytes, label) {
   const bytes = await readFile(path);
   if (bytes.length === 0 || bytes.length > maximumBytes) {
     throw new Error(`${label} size is invalid`);
@@ -719,6 +787,27 @@ export async function runObserver({
   now = new Date(),
   fetchImpl = fetch,
 }) {
+  const signedEvidence = await collectObservationEvidence({
+    profile,
+    intent,
+    runSSH,
+    privateKeyPEM,
+    now,
+  });
+  const encoded = `${JSON.stringify(signedEvidence, null, 2)}\n`;
+  if (Buffer.byteLength(encoded) > maximumEvidenceBytes) {
+    throw new Error('signed observation evidence exceeds the bounded size');
+  }
+  if (outputPath) {
+    await writeFile(outputPath, encoded, {encoding: 'utf8', mode: 0o600, flag: 'wx'});
+    await chmod(outputPath, 0o600);
+  }
+  const requests = buildObservationRequests(intent, signedEvidence);
+  const submissions = await submitObservations({profile, token, requests, fetchImpl});
+  return {evidenceChecksum: signedEvidence.evidenceChecksum, submissions, signedEvidence};
+}
+
+export async function collectObservationEvidence({profile, intent, runSSH, privateKeyPEM, now = new Date()}) {
   validateProfile(profile);
   validateIntent(intent, profile, now);
   const capturedAt = now.toISOString();
@@ -735,18 +824,88 @@ export async function runObserver({
     observerCredentialSetId: intent.observerCredentialSetId,
     components,
   };
-  const signedEvidence = signEvidence(evidenceCore, privateKeyPEM);
-  const encoded = `${JSON.stringify(signedEvidence, null, 2)}\n`;
-  if (Buffer.byteLength(encoded) > maximumEvidenceBytes) {
-    throw new Error('signed observation evidence exceeds the bounded size');
+  return signEvidence(evidenceCore, privateKeyPEM);
+}
+
+export function verifySignedEvidence({signedEvidence, intent, profile, privateKeyPEM}) {
+  requireExactKeys(
+    signedEvidence,
+    [
+      'schemaVersion',
+      'intentId',
+      'intentChecksum',
+      'targetProfileChecksum',
+      'capturedAt',
+      'observerCredentialSetId',
+      'components',
+      'evidenceChecksum',
+      'signature',
+    ],
+    'signed observation evidence'
+  );
+  if (signedEvidence.schemaVersion !== 'emlo.choice-tp-observation-evidence/v2') {
+    throw new Error('signed observation evidence schema is unsupported');
   }
-  if (outputPath) {
-    await writeFile(outputPath, encoded, {encoding: 'utf8', mode: 0o600, flag: 'wx'});
-    await chmod(outputPath, 0o600);
+  const capturedAt = new Date(signedEvidence.capturedAt);
+  if (!Number.isFinite(capturedAt.getTime())) {
+    throw new Error('signed observation evidence capturedAt is invalid');
   }
-  const requests = buildObservationRequests(intent, signedEvidence);
-  const submissions = await submitObservations({profile, token, requests, fetchImpl});
-  return {evidenceChecksum: signedEvidence.evidenceChecksum, submissions, signedEvidence};
+  validateIntent(intent, validateProfile(profile), capturedAt);
+  if (
+    signedEvidence.intentId !== intent.intentId ||
+    !constantTimeTextEqual(signedEvidence.intentChecksum, intent.canonicalChecksum) ||
+    !constantTimeTextEqual(signedEvidence.targetProfileChecksum, profile.canonicalChecksum) ||
+    signedEvidence.observerCredentialSetId !== intent.observerCredentialSetId
+  ) {
+    throw new Error('signed observation evidence scope does not match the immutable intent');
+  }
+  if (!Array.isArray(signedEvidence.components) || signedEvidence.components.length !== intent.components.length) {
+    throw new Error('signed observation evidence component scope is invalid');
+  }
+  for (const intentComponent of intent.components) {
+    const component = signedEvidence.components.find(
+      (candidate) => candidate.componentKey === intentComponent.componentKey
+    );
+    if (
+      !component ||
+      component.componentInstanceId !== intentComponent.componentInstanceId ||
+      component.sourceSequence !== intentComponent.sourceSequence ||
+      component.capturedAt !== signedEvidence.capturedAt
+    ) {
+      throw new Error('signed observation evidence component identity is invalid');
+    }
+    requireDigest(component.healthPolicyChecksum, `${component.componentKey} healthPolicyChecksum`);
+  }
+  requireDigest(signedEvidence.evidenceChecksum, 'signed observation evidence checksum');
+  requireExactKeys(
+    signedEvidence.signature,
+    ['algorithm', 'keyFingerprint', 'value'],
+    'signed observation evidence signature'
+  );
+  if (signedEvidence.signature.algorithm !== 'Ed25519') {
+    throw new Error('signed observation evidence algorithm is unsupported');
+  }
+  requireDigest(signedEvidence.signature.keyFingerprint, 'signed observation evidence key fingerprint');
+  const evidenceCore = withoutField(withoutField(signedEvidence, 'evidenceChecksum'), 'signature');
+  const canonical = canonicalJSONString(evidenceCore);
+  if (!constantTimeTextEqual(sha256(canonical), signedEvidence.evidenceChecksum)) {
+    throw new Error('signed observation evidence checksum does not match');
+  }
+  const publicKey = createPublicKey(privateKeyPEM);
+  const publicDER = publicKey.export({type: 'spki', format: 'der'});
+  if (!constantTimeTextEqual(sha256(publicDER), signedEvidence.signature.keyFingerprint)) {
+    throw new Error('signed observation evidence key fingerprint does not match');
+  }
+  let signature;
+  try {
+    signature = Buffer.from(signedEvidence.signature.value, 'base64');
+  } catch {
+    throw new Error('signed observation evidence signature is invalid');
+  }
+  if (signature.length !== 64 || !verify(null, Buffer.from(canonical), publicKey, signature)) {
+    throw new Error('signed observation evidence signature does not verify');
+  }
+  return signedEvidence;
 }
 
 async function main() {
@@ -773,9 +932,7 @@ async function main() {
   );
 }
 
-const isMain =
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === fileURLToPath(new URL(`file:///${process.argv[1].replaceAll('\\', '/')}`));
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isMain) {
   main().catch((error) => {
     process.stderr.write(`choice-tp observer failed: ${error.message}\n`);

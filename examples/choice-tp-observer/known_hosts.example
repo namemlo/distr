@@ -1,0 +1,3 @@
+# Replace this illustrative key with the Ed25519 host key verified through an
+# approved channel. Do not accept a first-seen key or use ssh-keyscan as trust.
+217.15.166.6 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIREPLACE_WITH_VERIFIED_CHOICE_TP_HOST_KEY
