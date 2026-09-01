@@ -1,8 +1,9 @@
 # EMLO Fork Adopter-Term Release Profile
 
 This profile is only for the public `namemlo/distr` custom fork. It records the
-intentional adopter vocabulary already present in the Choice TP pilot,
-Jenkins/ECR publication integration, and remittance-oriented fork evidence.
+intentional adopter vocabulary already present in the Choice TP pilot and its
+durable observer example, Jenkins/ECR publication integration, and
+remittance-oriented fork evidence.
 It is not an upstream or Distr Community release result.
 
 The default command remains the strict community scan and accepts no profile
@@ -32,8 +33,8 @@ directory, label-only, or blanket-ignore field. A new occurrence, changed
 line, moved line, new category, or new adopter-bearing path therefore remains
 a rejected finding until a reviewer updates that exact identity.
 
-The initial baseline is bound to source commit
-`8c572423de3d803863980e8c0fe60f6e4c466a82` and the reviewed delta from
+The current baseline is bound to the corrected combined source commit
+`a6497c77b78f19f597cc61fa7c00b72876863dcf` and the reviewed delta from
 `fork/main` at `50c0bec4b2ad4e8bb206e749dab39edb0e5ce469`. Source text is stored only as a
 SHA-256 value so the policy does not reproduce private-path fixtures or other
 sensitive-looking test values.
