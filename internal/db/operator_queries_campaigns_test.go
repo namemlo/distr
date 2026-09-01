@@ -132,9 +132,11 @@ func TestBuildOperatorCampaignDetailProjectsNativeCoordinationLifecycle(t *testi
 	g := NewWithT(t)
 	now := time.Now().UTC()
 	running := "RUNNING"
+	runningRevisionID, runningRunID := uuid.New(), uuid.New()
 	leaseExpiresAt := now.Add(time.Minute)
 	detail := buildOperatorCampaignDetail(operatorCampaignDetailRecord{
 		DraftID: uuid.New(), CreatedAt: now, Name: "pause pending",
+		RevisionID: &runningRevisionID, RunID: &runningRunID,
 		RunState: &running, AdmissionsBlocked: true, PauseRequested: true,
 		ReconciliationNeeded: true, FencingToken: 17,
 		LeaseExpiresAt: &leaseExpiresAt, DecisionAt: now,
@@ -158,8 +160,10 @@ func TestBuildOperatorCampaignDetailProjectsNativeCoordinationLifecycle(t *testi
 	g.Expect(detail.Coordination.ZeroLockClosure).To(BeFalse())
 
 	completed := "COMPLETED"
+	closedRevisionID, closedRunID := uuid.New(), uuid.New()
 	closed := buildOperatorCampaignDetail(operatorCampaignDetailRecord{
 		DraftID: uuid.New(), CreatedAt: now, Name: "closed",
+		RevisionID: &closedRevisionID, RunID: &closedRunID,
 		RunState: &completed, LeaseExpiresAt: &now, DecisionAt: now,
 	})
 	g.Expect(closed.Coordination.SchedulerLeaseStatus).To(Equal("EXPIRED"))
