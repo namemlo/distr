@@ -81,6 +81,7 @@ type DeploymentPlan struct {
 	Changes                    []types.DeploymentPlanChangeEntry `json:"changes,omitempty"`
 	Risks                      []types.DeploymentPlanRiskEntry   `json:"risks,omitempty"`
 	Bootstrap                  bool                              `json:"bootstrap"`
+	SchemaEvidence             []types.SchemaEvidenceBundle      `json:"schemaEvidence,omitempty"`
 }
 
 type CreatePreviousStateDeploymentPlanRequest struct {

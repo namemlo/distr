@@ -222,6 +222,69 @@ identity. The graph contains `migration:<id>:backup:*`, `precondition`, `apply`,
 and `validate` steps as applicable; publication retains the same contract in
 the immutable plan migration evidence.
 
+#### Schema report and migration evidence
+
+Every planned Component Release that is bound to a component instance with a
+database boundary, or that carries a structured migration contract, requires
+two immutable Target Config Snapshot objects of kind `adapter_input`:
+
+| Document | Schema | Media type |
+| -------- | ------ | ---------- |
+| Schema report | `distr.schema-report/v1` | `application/vnd.distr.schema-report.v1+json` |
+| Migration evidence | `distr.migration-evidence/v1` | `application/vnd.distr.migration-evidence.v1+json` |
+
+The schema report binds the exact organization, deployment scope/unit,
+environment assignment/environment, deployment target, Target Config
+Snapshot, Component Release ID/checksum/version, database resource key, current
+schema version/checksum, issue time, expiry time, and internal checksum.
+Migration evidence repeats that scope and component identity, references the
+schema-report checksum, records `expectedCurrent`, and selects exactly one
+decision:
+
+- `COMPATIBLE_NO_MIGRATION_REQUIRED` permits no migration bindings; or
+- `MIGRATION_BOUND` binds every applicable contract in dependency order with
+  its checksum and exact source/result schema version/checksum.
+
+Both decisions include `mixedVersionEvidence`. Validation requires the exact
+Cartesian product of prior and target application versions with the current
+schema and every intermediate/result schema state. Every entry must be
+compatible; missing, negative, duplicate, or extra facts are blockers.
+
+The outer Target Config object reference, optional version ID, media type,
+size, and lowercase SHA-256 checksum are verified before a bounded 256-KiB
+strict JSON read. Unknown fields and trailing JSON are rejected. Each internal
+checksum is the lowercase SHA-256 of Distr's normalized, whitespace-free JSON
+form with its own `checksum` field omitted; migration evidence references the
+exact internal schema-report checksum.
+
+Draft validation responses add `schemaEvidenceRequirements` and
+`schemaEvidence`. Published-plan responses add `schemaEvidence`, including the
+frozen object bindings, report, decision, contract bindings, and compatibility
+facts. The same bundles are part of the canonical plan checksum.
+
+Validation can return `schema_evidence_missing`,
+`schema_evidence_ambiguous`, `schema_evidence_wrong_kind`,
+`schema_evidence_unavailable`, `schema_evidence_object_mismatch`,
+`schema_evidence_scope_mismatch`, `schema_evidence_component_mismatch`,
+`schema_evidence_schema_mismatch`, `schema_evidence_checksum_mismatch`,
+`schema_evidence_not_yet_valid`, `schema_evidence_expired`,
+`schema_evidence_expected_current_stale`,
+`schema_evidence_decision_mismatch`,
+`schema_evidence_migration_binding_incomplete`, or
+`schema_evidence_mixed_version_incomplete`. Publication cannot proceed while
+any blocker exists.
+
+Admission revalidates the frozen canonical checksum, scope, freshness,
+expected-current state, contract chain, and mixed-version matrix before
+authorization or admission-evidence mutation. Protocol-v2 task creation repeats
+the check before task lookup, advisory locks, preflight persistence, or task
+mutation. A failed frozen-plan check returns `409` and performs none of those
+mutations.
+
+This contract does not query a live system or client workload database and does
+not mutate a runtime. No database migration is added; schema target 169 remains
+current and validated evidence is retained only in canonical plan bytes.
+
 Protocol-v2 task creation also requires the latest persistent review decision
 to be an unexpired `GO`. The decision binds the plan and the current
 independently observed-state checksum. A later `NO_GO`, supersession,

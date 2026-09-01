@@ -30,15 +30,17 @@ func DeploymentPlanDraftValidationToAPI(
 	validation types.PlanDraftValidation,
 ) api.DeploymentPlanDraftValidation {
 	return api.DeploymentPlanDraftValidation{
-		Draft:              DeploymentPlanDraftToAPI(validation.Draft),
-		Resolutions:        validation.Resolutions,
-		Graph:              validation.Graph,
-		Baselines:          validation.Baselines,
-		Changes:            validation.Changes,
-		Risks:              validation.Risks,
-		MigrationContracts: validation.MigrationContracts,
-		Bootstrap:          validation.Bootstrap,
-		Issues:             validation.Issues,
-		PreviewChecksum:    validation.PreviewChecksum,
+		Draft:                      DeploymentPlanDraftToAPI(validation.Draft),
+		Resolutions:                validation.Resolutions,
+		Graph:                      validation.Graph,
+		Baselines:                  validation.Baselines,
+		Changes:                    validation.Changes,
+		Risks:                      validation.Risks,
+		MigrationContracts:         validation.MigrationContracts,
+		SchemaEvidenceRequirements: validation.SchemaEvidenceRequirements,
+		SchemaEvidence:             validation.SchemaEvidence,
+		Bootstrap:                  validation.Bootstrap,
+		Issues:                     validation.Issues,
+		PreviewChecksum:            validation.PreviewChecksum,
 	}
 }

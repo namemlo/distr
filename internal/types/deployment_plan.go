@@ -75,6 +75,7 @@ type DeploymentPlan struct {
 	Risks                      []DeploymentPlanRiskEntry       `db:"-" json:"risks,omitempty"`
 	Bootstrap                  bool                            `db:"bootstrap" json:"bootstrap"`
 	Migrations                 []DeploymentPlanMigration       `db:"-" json:"migrations,omitempty"`
+	SchemaEvidence             []SchemaEvidenceBundle          `db:"-" json:"schemaEvidence,omitempty"`
 }
 
 type BaselineProjection string

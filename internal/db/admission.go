@@ -170,6 +170,9 @@ func admitDeploymentPlan(
 		if err != nil {
 			return err
 		}
+		if err := requireCurrentDeploymentPlanSchemaEvidence(snapshot.Plan, decisionAt); err != nil {
+			return err
+		}
 		if err := authorizeAdmission(
 			txCtx,
 			request.Authorize,

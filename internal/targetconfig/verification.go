@@ -14,6 +14,14 @@ type ObjectVerifier interface {
 	Verify(context.Context, types.TargetConfigSnapshotObject) (types.VerifiedTargetConfigObject, error)
 }
 
+type ObjectReader interface {
+	Read(
+		context.Context,
+		types.TargetConfigSnapshotObject,
+		int64,
+	) (types.VerifiedTargetConfigObject, []byte, error)
+}
+
 var ErrObjectVerificationUnavailable = errors.New("target config object verification is unavailable")
 
 type unavailableObjectVerifier struct{}

@@ -72,6 +72,31 @@ func CanonicalizeTargetDeploymentPlan(
 	if err != nil {
 		return nil, "", fmt.Errorf("order canonical target-plan migrations: %w", err)
 	}
+	canonical.SchemaEvidenceRequirements = slices.Clone(canonical.SchemaEvidenceRequirements)
+	slices.SortFunc(
+		canonical.SchemaEvidenceRequirements,
+		func(left, right types.SchemaEvidenceRequirement) int {
+			if cmp := strings.Compare(left.ComponentKey, right.ComponentKey); cmp != 0 {
+				return cmp
+			}
+			return strings.Compare(left.DatabaseResourceKey, right.DatabaseResourceKey)
+		},
+	)
+	canonical.SchemaEvidence = slices.Clone(canonical.SchemaEvidence)
+	for index := range canonical.SchemaEvidence {
+		facts := slices.Clone(canonical.SchemaEvidence[index].MigrationEvidence.MixedVersionEvidence)
+		slices.SortFunc(facts, compareMixedVersionSchemaEvidence)
+		canonical.SchemaEvidence[index].MigrationEvidence.MixedVersionEvidence = facts
+	}
+	slices.SortFunc(canonical.SchemaEvidence, func(left, right types.SchemaEvidenceBundle) int {
+		if cmp := strings.Compare(left.Requirement.ComponentKey, right.Requirement.ComponentKey); cmp != 0 {
+			return cmp
+		}
+		if cmp := strings.Compare(left.Requirement.DatabaseResourceKey, right.Requirement.DatabaseResourceKey); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(left.SchemaReportObject.ObjectKey, right.SchemaReportObject.ObjectKey)
+	})
 	canonical.StepAdapters = slices.Clone(canonical.StepAdapters)
 	slices.SortFunc(canonical.StepAdapters, func(a, b types.ResolvedPlanStepAdapter) int {
 		return strings.Compare(a.StepKey, b.StepKey)
@@ -88,6 +113,27 @@ func CanonicalizeTargetDeploymentPlan(
 	}
 	sum := sha256.Sum256(payload)
 	return payload, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func compareMixedVersionSchemaEvidence(
+	left, right types.MixedVersionSchemaEvidence,
+) int {
+	if cmp := strings.Compare(left.ApplicationVersion, right.ApplicationVersion); cmp != 0 {
+		return cmp
+	}
+	if cmp := strings.Compare(left.SchemaVersion, right.SchemaVersion); cmp != 0 {
+		return cmp
+	}
+	if cmp := strings.Compare(left.SchemaChecksum, right.SchemaChecksum); cmp != 0 {
+		return cmp
+	}
+	if left.Compatible == right.Compatible {
+		return 0
+	}
+	if left.Compatible {
+		return 1
+	}
+	return -1
 }
 
 func BuildTargetPlanGraph(

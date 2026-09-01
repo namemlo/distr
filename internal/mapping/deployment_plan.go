@@ -44,6 +44,7 @@ func DeploymentPlanToAPI(plan types.DeploymentPlan) api.DeploymentPlan {
 		Changes:                    plan.Changes,
 		Risks:                      plan.Risks,
 		Bootstrap:                  plan.Bootstrap,
+		SchemaEvidence:             plan.SchemaEvidence,
 	}
 }
 

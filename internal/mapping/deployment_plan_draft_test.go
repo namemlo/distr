@@ -23,6 +23,14 @@ func TestDeploymentPlanDraftValidationToAPI(t *testing.T) {
 		PreviewChecksum:    "sha256:preview",
 		Issues:             []types.ValidationIssue{{Code: "blocked"}},
 		MigrationContracts: []types.MigrationContract{{ID: "ledger.042"}},
+		SchemaEvidenceRequirements: []types.SchemaEvidenceRequirement{{
+			ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+		}},
+		SchemaEvidence: []types.SchemaEvidenceBundle{{
+			Requirement: types.SchemaEvidenceRequirement{
+				ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+			},
+		}},
 	}
 
 	result := DeploymentPlanDraftValidationToAPI(input)
@@ -32,4 +40,6 @@ func TestDeploymentPlanDraftValidationToAPI(t *testing.T) {
 	g.Expect(result.PreviewChecksum).To(Equal(input.PreviewChecksum))
 	g.Expect(result.Issues).To(Equal(input.Issues))
 	g.Expect(result.MigrationContracts).To(Equal(input.MigrationContracts))
+	g.Expect(result.SchemaEvidenceRequirements).To(Equal(input.SchemaEvidenceRequirements))
+	g.Expect(result.SchemaEvidence).To(Equal(input.SchemaEvidence))
 }

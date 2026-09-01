@@ -2,6 +2,7 @@ package planning
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,6 +50,48 @@ func TestCanonicalTargetPlanFreezesAdaptersDeterministically(t *testing.T) {
 	_, driftedChecksum, err := CanonicalizeTargetDeploymentPlan(right)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(driftedChecksum).NotTo(Equal(leftChecksum))
+}
+
+func TestCanonicalTargetPlanFreezesSchemaEvidenceDeterministically(t *testing.T) {
+	g := NewWithT(t)
+	firstRequirement := types.SchemaEvidenceRequirement{
+		ComponentKey: "customer-api", DatabaseResourceKey: "postgres:customer",
+	}
+	secondRequirement := types.SchemaEvidenceRequirement{
+		ComponentKey: "transaction-api", DatabaseResourceKey: "postgres:transaction",
+	}
+	first := types.SchemaEvidenceBundle{
+		Requirement:        firstRequirement,
+		SchemaReportObject: types.SchemaEvidenceObject{ObjectKey: "customer-report"},
+		MigrationEvidence: types.MigrationEvidence{MixedVersionEvidence: []types.MixedVersionSchemaEvidence{
+			{ApplicationVersion: "2.0.0", SchemaVersion: "42", SchemaChecksum: "sha256:b"},
+			{ApplicationVersion: "1.0.0", SchemaVersion: "41", SchemaChecksum: "sha256:a"},
+		}},
+	}
+	second := types.SchemaEvidenceBundle{
+		Requirement:        secondRequirement,
+		SchemaReportObject: types.SchemaEvidenceObject{ObjectKey: "transaction-report"},
+	}
+	left := types.TargetDeploymentPlanCanonical{
+		SchemaEvidenceRequirements: []types.SchemaEvidenceRequirement{firstRequirement, secondRequirement},
+		SchemaEvidence:             []types.SchemaEvidenceBundle{first, second},
+	}
+	right := types.TargetDeploymentPlanCanonical{
+		SchemaEvidenceRequirements: []types.SchemaEvidenceRequirement{secondRequirement, firstRequirement},
+		SchemaEvidence:             []types.SchemaEvidenceBundle{second, first},
+	}
+	right.SchemaEvidence[1].MigrationEvidence.MixedVersionEvidence = slices.Clone(
+		right.SchemaEvidence[1].MigrationEvidence.MixedVersionEvidence,
+	)
+	slices.Reverse(right.SchemaEvidence[1].MigrationEvidence.MixedVersionEvidence)
+
+	leftPayload, leftChecksum, err := CanonicalizeTargetDeploymentPlan(left)
+	g.Expect(err).NotTo(HaveOccurred())
+	rightPayload, rightChecksum, err := CanonicalizeTargetDeploymentPlan(right)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(rightPayload).To(Equal(leftPayload))
+	g.Expect(rightChecksum).To(Equal(leftChecksum))
 }
 
 func TestBuildTargetPlanGraphExpandsStructuredMigrationSafetyGates(t *testing.T) {

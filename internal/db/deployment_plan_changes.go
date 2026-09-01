@@ -16,6 +16,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/planning"
+	"github.com/distr-sh/distr/internal/schemaevidence"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -1272,6 +1273,8 @@ func addPreviousStateEvidence(
 		validation.Changes,
 		validation.Risks,
 		validation.MigrationContracts,
+		validation.SchemaEvidenceRequirements,
+		validation.SchemaEvidence,
 		validation.Bootstrap,
 	)
 	payload, checksum, err := planning.CanonicalizeTargetDeploymentPlan(canonical)
@@ -1348,6 +1351,12 @@ func applyPreviousStateReversePlan(
 	}
 	validation.Draft = *draft
 	validation.StepAdapters, validation.Issues = planning.ResolvePlanStepAdapters(ctx, *draft)
+	if len(validation.Issues) > 0 {
+		return &DeploymentPlanDraftValidationError{Issues: validation.Issues}
+	}
+	validation.SchemaEvidenceRequirements,
+		validation.SchemaEvidence,
+		validation.Issues = schemaevidence.ValidatePlan(*input, validation.Baselines, contracts)
 	if len(validation.Issues) > 0 {
 		return &DeploymentPlanDraftValidationError{Issues: validation.Issues}
 	}

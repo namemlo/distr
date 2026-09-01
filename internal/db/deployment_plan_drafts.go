@@ -16,6 +16,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/migrationplanning"
 	"github.com/distr-sh/distr/internal/planning"
+	"github.com/distr-sh/distr/internal/schemaevidence"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -395,6 +396,15 @@ func validateDeploymentPlanDraft(
 	result.Risks = risks
 	result.MigrationContracts = migrations
 	result.Bootstrap = bootstrap
+	result.SchemaEvidenceRequirements, result.SchemaEvidence, issues = schemaevidence.ValidatePlan(
+		*input,
+		baselines,
+		migrations,
+	)
+	if len(issues) > 0 {
+		result.Issues = appendUniquePlanIssues(result.Issues, issues)
+		return result, nil
+	}
 	canonical := buildTargetPlanCanonical(
 		*draft,
 		*input,
@@ -405,6 +415,8 @@ func validateDeploymentPlanDraft(
 		changes,
 		risks,
 		migrations,
+		result.SchemaEvidenceRequirements,
+		result.SchemaEvidence,
 		bootstrap,
 	)
 	payload, checksum, err := planning.CanonicalizeTargetDeploymentPlan(canonical)
@@ -601,6 +613,9 @@ func publishValidatedTargetPlan(
 		Migrations:           planMigrations,
 		Bootstrap:            validation.Bootstrap,
 		StepAdapters:         projectResolvedPlanStepAdapters(validation.StepAdapters),
+	}
+	if err := requireCurrentDeploymentPlanSchemaEvidence(*plan, input.EffectiveAt); err != nil {
+		return nil, err
 	}
 	if err := lockAndValidateTargetPlanSupersession(ctx, *plan, target.ID); err != nil {
 		return nil, err
@@ -1348,6 +1363,9 @@ func loadTargetConfigBinding(
 	if err != nil {
 		return nil, err
 	}
+	binding.SchemaReports,
+		binding.MigrationEvidence,
+		binding.SchemaEvidenceIssues = loadTargetPlanSchemaEvidence(ctx, verifier, objects)
 	rows, err = internalctx.GetDb(ctx).Query(ctx, `
 		SELECT definition.key,
 		       component.component_instance_id,
@@ -1980,6 +1998,8 @@ func buildTargetPlanCanonical(
 	changes []types.DeploymentPlanChangeEntry,
 	risks []types.DeploymentPlanRiskEntry,
 	migrations []types.MigrationContract,
+	schemaEvidenceRequirements []types.SchemaEvidenceRequirement,
+	schemaEvidence []types.SchemaEvidenceBundle,
 	bootstrap bool,
 ) types.TargetDeploymentPlanCanonical {
 	return types.TargetDeploymentPlanCanonical{
@@ -2005,6 +2025,8 @@ func buildTargetPlanCanonical(
 		Changes:                    slices.Clone(changes),
 		Risks:                      slices.Clone(risks),
 		MigrationContracts:         slices.Clone(migrations),
+		SchemaEvidenceRequirements: slices.Clone(schemaEvidenceRequirements),
+		SchemaEvidence:             slices.Clone(schemaEvidence),
 		Bootstrap:                  bootstrap,
 		SupersedesDeploymentPlanID: draft.SupersedesDeploymentPlanID,
 		SupersedeReason:            strings.TrimSpace(draft.SupersedeReason),

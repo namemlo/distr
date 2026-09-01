@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
@@ -113,4 +115,19 @@ func TestCreatePreviousStateDeploymentPlanRequestValidate(t *testing.T) {
 		SuccessfulDeploymentPlanID: uuid.New(),
 		Reason:                     "line one\nline two",
 	}.Validate()).To(MatchError(ContainSubstring("reason is invalid")))
+}
+
+func TestDeploymentPlanJSONIncludesSchemaEvidence(t *testing.T) {
+	g := NewWithT(t)
+	response := DeploymentPlan{SchemaEvidence: []types.SchemaEvidenceBundle{{
+		Requirement: types.SchemaEvidenceRequirement{
+			ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+		},
+	}}}
+
+	payload, err := json.Marshal(response)
+	g.Expect(err).NotTo(HaveOccurred())
+	var document map[string]json.RawMessage
+	g.Expect(json.Unmarshal(payload, &document)).To(Succeed())
+	g.Expect(document).To(HaveKey("schemaEvidence"))
 }

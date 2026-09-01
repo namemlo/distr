@@ -279,6 +279,30 @@ func TestS3ObjectVerifierPinsVersionAndComputesDigestWithoutReturningBody(t *tes
 	g.Expect(observed.Checksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
 }
 
+func TestS3ObjectVerifierReadsEvidenceWithinExplicitBound(t *testing.T) {
+	g := NewWithT(t)
+	body := []byte(`{"schema":"distr.schema-report/v1"}`)
+	client := &targetConfigS3GetObjectClient{output: &s3.GetObjectOutput{
+		Body: io.NopCloser(bytes.NewReader(body)), ContentLength: aws.Int64(int64(len(body))),
+		ContentType: aws.String("application/vnd.distr.schema-report.v1+json"),
+		VersionId:   aws.String("version-7"),
+	}}
+	object := types.TargetConfigSnapshotObject{
+		Reference: targetConfigTestObjectReference, VersionID: "version-7",
+	}
+
+	observed, payload, err := NewS3ObjectVerifier(client).Read(
+		t.Context(),
+		object,
+		int64(len(body)),
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(payload).To(Equal(body))
+	g.Expect(observed.SizeBytes).To(Equal(int64(len(body))))
+	g.Expect(observed.Checksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
+}
+
 func TestS3ObjectVerifierRejectsUnsafeProviderMetadata(t *testing.T) {
 	tests := []struct {
 		name        string

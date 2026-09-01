@@ -25,6 +25,14 @@ type TargetConfigObjectVerifier interface {
 	) (types.TargetPlanConfigObservation, error)
 }
 
+type TargetConfigEvidenceReader interface {
+	ReadTargetConfigObject(
+		context.Context,
+		types.TargetPlanConfigObject,
+		int64,
+	) (types.TargetPlanConfigObservation, []byte, error)
+}
+
 type unavailableTargetConfigObjectVerifier struct{}
 
 type targetPlanConfigObjectVerifier struct {
@@ -72,13 +80,30 @@ func (verifier targetPlanConfigObjectVerifier) VerifyTargetConfigObject(
 		}
 		return types.TargetPlanConfigObservation{}, err
 	}
-	return types.TargetPlanConfigObservation{
-		Reference: observed.Reference,
-		VersionID: observed.VersionID,
-		MediaType: observed.MediaType,
-		SizeBytes: observed.SizeBytes,
-		Checksum:  observed.Checksum,
-	}, nil
+	return types.TargetPlanConfigObservation(observed), nil
+}
+
+func (verifier targetPlanConfigObjectVerifier) ReadTargetConfigObject(
+	ctx context.Context,
+	expected types.TargetPlanConfigObject,
+	maxBytes int64,
+) (types.TargetPlanConfigObservation, []byte, error) {
+	reader, ok := verifier.delegate.(targetconfig.ObjectReader)
+	if !ok {
+		return types.TargetPlanConfigObservation{}, nil, ErrTargetConfigObjectVerificationUnavailable
+	}
+	observed, body, err := reader.Read(ctx, types.TargetConfigSnapshotObject{
+		Key: expected.Key, Kind: expected.Kind, Reference: expected.Reference,
+		VersionID: expected.VersionID, MediaType: expected.MediaType,
+		SizeBytes: expected.SizeBytes, Checksum: expected.Checksum,
+	}, maxBytes)
+	if err != nil {
+		if errors.Is(err, targetconfig.ErrObjectVerificationUnavailable) {
+			return types.TargetPlanConfigObservation{}, nil, ErrTargetConfigObjectVerificationUnavailable
+		}
+		return types.TargetPlanConfigObservation{}, nil, err
+	}
+	return types.TargetPlanConfigObservation(observed), body, nil
 }
 
 func verifyTargetPlanConfigObject(

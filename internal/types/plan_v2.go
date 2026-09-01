@@ -39,17 +39,19 @@ type PlanDraft struct {
 }
 
 type PlanDraftValidation struct {
-	Draft              PlanDraft                   `json:"draft"`
-	Resolutions        []RequirementResolution     `json:"resolutions"`
-	StepAdapters       []ResolvedPlanStepAdapter   `json:"stepAdapters"`
-	Graph              TargetPlanGraph             `json:"graph"`
-	Baselines          []DeploymentPlanBaseline    `json:"baselines"`
-	Changes            []DeploymentPlanChangeEntry `json:"changes"`
-	Risks              []DeploymentPlanRiskEntry   `json:"risks"`
-	MigrationContracts []MigrationContract         `json:"migrationContracts,omitempty"`
-	Bootstrap          bool                        `json:"bootstrap"`
-	Issues             []ValidationIssue           `json:"issues"`
-	PreviewChecksum    string                      `json:"previewChecksum"`
+	Draft                      PlanDraft                   `json:"draft"`
+	Resolutions                []RequirementResolution     `json:"resolutions"`
+	StepAdapters               []ResolvedPlanStepAdapter   `json:"stepAdapters"`
+	Graph                      TargetPlanGraph             `json:"graph"`
+	Baselines                  []DeploymentPlanBaseline    `json:"baselines"`
+	Changes                    []DeploymentPlanChangeEntry `json:"changes"`
+	Risks                      []DeploymentPlanRiskEntry   `json:"risks"`
+	MigrationContracts         []MigrationContract         `json:"migrationContracts,omitempty"`
+	SchemaEvidenceRequirements []SchemaEvidenceRequirement `json:"schemaEvidenceRequirements,omitempty"`
+	SchemaEvidence             []SchemaEvidenceBundle      `json:"schemaEvidence,omitempty"`
+	Bootstrap                  bool                        `json:"bootstrap"`
+	Issues                     []ValidationIssue           `json:"issues"`
+	PreviewChecksum            string                      `json:"previewChecksum"`
 }
 
 type PlanResolutionInput struct {
@@ -80,16 +82,19 @@ type PlanResolutionInput struct {
 }
 
 type TargetConfigBinding struct {
-	ID                      uuid.UUID                `json:"id"`
-	OrganizationID          uuid.UUID                `json:"organizationId"`
-	DeploymentUnitID        uuid.UUID                `json:"deploymentUnitId"`
-	EnvironmentAssignmentID uuid.UUID                `json:"environmentAssignmentId"`
-	EnvironmentID           uuid.UUID                `json:"environmentId"`
-	CanonicalChecksum       string                   `json:"canonicalChecksum"`
-	TargetPlatform          string                   `json:"targetPlatform"`
-	VerificationFacts       []ConfigVerificationFact `json:"verificationFacts"`
-	ComponentBindings       []ConfigComponentBinding `json:"componentBindings"`
-	FeatureFlags            map[string]bool          `json:"featureFlags"`
+	ID                      uuid.UUID                 `json:"id"`
+	OrganizationID          uuid.UUID                 `json:"organizationId"`
+	DeploymentUnitID        uuid.UUID                 `json:"deploymentUnitId"`
+	EnvironmentAssignmentID uuid.UUID                 `json:"environmentAssignmentId"`
+	EnvironmentID           uuid.UUID                 `json:"environmentId"`
+	CanonicalChecksum       string                    `json:"canonicalChecksum"`
+	TargetPlatform          string                    `json:"targetPlatform"`
+	VerificationFacts       []ConfigVerificationFact  `json:"verificationFacts"`
+	ComponentBindings       []ConfigComponentBinding  `json:"componentBindings"`
+	FeatureFlags            map[string]bool           `json:"featureFlags"`
+	SchemaReports           []SchemaReportRecord      `json:"-"`
+	MigrationEvidence       []MigrationEvidenceRecord `json:"-"`
+	SchemaEvidenceIssues    []ValidationIssue         `json:"-"`
 }
 
 type ConfigVerificationFact struct {
@@ -306,6 +311,8 @@ type TargetDeploymentPlanCanonical struct {
 	Changes                      []DeploymentPlanChangeEntry `json:"changes"`
 	Risks                        []DeploymentPlanRiskEntry   `json:"risks"`
 	MigrationContracts           []MigrationContract         `json:"migrationContracts,omitempty"`
+	SchemaEvidenceRequirements   []SchemaEvidenceRequirement `json:"schemaEvidenceRequirements,omitempty"`
+	SchemaEvidence               []SchemaEvidenceBundle      `json:"schemaEvidence,omitempty"`
 	Bootstrap                    bool                        `json:"bootstrap"`
 	ProtocolVersion              string                      `json:"protocolVersion"`
 	SupersedesDeploymentPlanID   *uuid.UUID                  `json:"supersedesDeploymentPlanId,omitempty"`

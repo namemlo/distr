@@ -102,14 +102,16 @@ type DeploymentPlanDraft struct {
 }
 
 type DeploymentPlanDraftValidation struct {
-	Draft              DeploymentPlanDraft               `json:"draft"`
-	Resolutions        []types.RequirementResolution     `json:"resolutions"`
-	Graph              types.TargetPlanGraph             `json:"graph"`
-	Baselines          []types.DeploymentPlanBaseline    `json:"baselines"`
-	Changes            []types.DeploymentPlanChangeEntry `json:"changes"`
-	Risks              []types.DeploymentPlanRiskEntry   `json:"risks"`
-	MigrationContracts []types.MigrationContract         `json:"migrationContracts,omitempty"`
-	Bootstrap          bool                              `json:"bootstrap"`
-	Issues             []types.ValidationIssue           `json:"issues"`
-	PreviewChecksum    string                            `json:"previewChecksum,omitempty"`
+	Draft                      DeploymentPlanDraft               `json:"draft"`
+	Resolutions                []types.RequirementResolution     `json:"resolutions"`
+	Graph                      types.TargetPlanGraph             `json:"graph"`
+	Baselines                  []types.DeploymentPlanBaseline    `json:"baselines"`
+	Changes                    []types.DeploymentPlanChangeEntry `json:"changes"`
+	Risks                      []types.DeploymentPlanRiskEntry   `json:"risks"`
+	MigrationContracts         []types.MigrationContract         `json:"migrationContracts,omitempty"`
+	SchemaEvidenceRequirements []types.SchemaEvidenceRequirement `json:"schemaEvidenceRequirements,omitempty"`
+	SchemaEvidence             []types.SchemaEvidenceBundle      `json:"schemaEvidence,omitempty"`
+	Bootstrap                  bool                              `json:"bootstrap"`
+	Issues                     []types.ValidationIssue           `json:"issues"`
+	PreviewChecksum            string                            `json:"previewChecksum,omitempty"`
 }

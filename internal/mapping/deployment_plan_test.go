@@ -56,6 +56,11 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 			ComponentKey: "loyalty-api",
 			Code:         "bootstrap_approval_required",
 		}},
+		SchemaEvidence: []types.SchemaEvidenceBundle{{
+			Requirement: types.SchemaEvidenceRequirement{
+				ComponentKey: "loyalty-api", DatabaseResourceKey: "postgres:loyalty",
+			},
+		}},
 		Targets: []types.DeploymentPlanTarget{
 			{
 				ID:                 planTargetID,
@@ -152,4 +157,5 @@ func TestDeploymentPlanToAPI(t *testing.T) {
 	g.Expect(response.Baselines).To(HaveLen(1))
 	g.Expect(response.Changes[0].Kind).To(Equal(types.DeploymentPlanChangeBootstrap))
 	g.Expect(response.Risks[0].Code).To(Equal("bootstrap_approval_required"))
+	g.Expect(response.SchemaEvidence).To(Equal(plan.SchemaEvidence))
 }

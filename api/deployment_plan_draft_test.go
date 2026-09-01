@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -59,6 +60,27 @@ func TestUpdateAndPublishDraftRequireOptimisticPreconditions(t *testing.T) {
 	g.Expect(publish.Validate()).To(Succeed())
 	publish.ExpectedPreviewChecksum = "sha256:bad"
 	g.Expect(publish.Validate()).To(MatchError(ContainSubstring("expectedPreviewChecksum")))
+}
+
+func TestDeploymentPlanDraftValidationJSONIncludesSchemaEvidence(t *testing.T) {
+	g := NewWithT(t)
+	response := DeploymentPlanDraftValidation{
+		SchemaEvidenceRequirements: []types.SchemaEvidenceRequirement{{
+			ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+		}},
+		SchemaEvidence: []types.SchemaEvidenceBundle{{
+			Requirement: types.SchemaEvidenceRequirement{
+				ComponentKey: "ledger", DatabaseResourceKey: "postgres:ledger",
+			},
+		}},
+	}
+
+	payload, err := json.Marshal(response)
+	g.Expect(err).NotTo(HaveOccurred())
+	var document map[string]json.RawMessage
+	g.Expect(json.Unmarshal(payload, &document)).To(Succeed())
+	g.Expect(document).To(HaveKey("schemaEvidenceRequirements"))
+	g.Expect(document).To(HaveKey("schemaEvidence"))
 }
 
 func ptrDraftUUID(value uuid.UUID) *uuid.UUID {

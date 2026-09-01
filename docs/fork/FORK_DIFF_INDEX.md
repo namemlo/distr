@@ -4,7 +4,7 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-Entries through PR-092 and the separately integrated PR-094 and PR-096 slices
+Entries through PR-092 and the separately integrated PR-094, PR-096, and PR-097 slices
 are recorded below. Each entry's status and evidence boundary remain
 authoritative. PR-054A timestamp-expand runtime, migration,
 audited dirty-marker recovery, and operator documentation are implemented
@@ -20,8 +20,8 @@ PR-087 adds the executor runtime-trust boundary and migration 167; its live
 PostgreSQL, neutral-adapter, and final release gates remain pending.
 PR-090 separates frozen Component Release application identity from
 independently observed schema and capability identity in migration 169. The
-PR-086, PR-088, PR-091, and PR-092 contracts are integrated separately before final
-138-to-169 release certification.
+PR-086, PR-088, PR-091, PR-092, and PR-097 contracts are integrated separately
+before final 138-to-169 release certification.
 
 ## Tracking Template
 
@@ -2164,3 +2164,31 @@ Use one entry per pull request:
 - Compatibility notes: Persisted Product Release/plan canonical bytes and
   routes are unchanged. API fields are additive. Incomplete or inconsistent
   Product Release reads now fail closed instead of returning partial success.
+
+### PR-097 - Native schema evidence gating
+
+- Status: Implemented with focused local verification; no live environment or
+  client database is contacted or claimed.
+- Upstream base: `94660073`.
+- Feature flags: Uses the existing default-off `operator_control_plane_v2`
+  planning/execution boundary; no new flag is added.
+- User-facing behavior: Database-bound component plans require a current exact
+  schema report and either no-migration or contract-bound migration evidence
+  before publication, admission, or task creation.
+- Database changes: None; evidence is frozen in existing canonical plan bytes
+  and schema target 169 is unchanged.
+- API changes: Draft validation adds `schemaEvidenceRequirements` and
+  `schemaEvidence`; published plans add `schemaEvidence`.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0084, PR-097 fork notes, and operator API evidence,
+  decision, issue, and mutation-boundary guidance.
+- Tests: Focused parsing, checksum, scope, freshness, baseline, contract-chain,
+  mixed-version, object-read, canonicalization, mapping, revalidation, and
+  mutation-order coverage; repository Go and migration checks are run locally.
+- Upstream contribution notes: Community-neutral typed evidence with no
+  adopter, database engine, CI provider, registry, runtime address, service
+  name, or credential assumption.
+- Compatibility notes: Existing v2 plans without requirements or structured
+  migration contracts remain compatible. Historical structured-migration
+  plans without frozen evidence fail closed for new admission or execution.

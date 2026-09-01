@@ -319,6 +319,9 @@ func hydrateDeploymentPlan(ctx context.Context, plan *types.DeploymentPlan) erro
 		return err
 	}
 	if plan.PlanSchema == types.TargetDeploymentPlanSchemaV2 {
+		if err := hydrateDeploymentPlanSchemaEvidence(plan); err != nil {
+			return err
+		}
 		plan.ResolvedRequirements, err = getDeploymentPlanResolvedRequirements(
 			ctx,
 			plan.ID,

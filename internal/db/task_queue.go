@@ -211,6 +211,15 @@ func createTasksForDeploymentPlan(
 		if err != nil {
 			return err
 		}
+		if path == deploymentPlanTaskCreationPathAdmittedV2 {
+			evaluatedAt, timeErr := admissionDatabaseTime(ctx)
+			if timeErr != nil {
+				return timeErr
+			}
+			if err := requireCurrentDeploymentPlanSchemaEvidence(*plan, evaluatedAt); err != nil {
+				return err
+			}
+		}
 		existing, err := getTasksByDeploymentPlanID(
 			ctx,
 			request.DeploymentPlanID,

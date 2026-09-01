@@ -40,15 +40,36 @@ func (verifier S3ObjectVerifier) Verify(
 	ctx context.Context,
 	object types.TargetConfigSnapshotObject,
 ) (types.VerifiedTargetConfigObject, error) {
+	observed, _, err := verifier.read(ctx, object, maxTargetConfigObjectSize, false)
+	return observed, err
+}
+
+func (verifier S3ObjectVerifier) Read(
+	ctx context.Context,
+	object types.TargetConfigSnapshotObject,
+	maxBytes int64,
+) (types.VerifiedTargetConfigObject, []byte, error) {
+	if maxBytes < 1 || maxBytes > maxTargetConfigObjectSize {
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object read limit is invalid")
+	}
+	return verifier.read(ctx, object, maxBytes, true)
+}
+
+func (verifier S3ObjectVerifier) read(
+	ctx context.Context,
+	object types.TargetConfigSnapshotObject,
+	maxBytes int64,
+	retainBody bool,
+) (types.VerifiedTargetConfigObject, []byte, error) {
 	if verifier.client == nil {
-		return types.VerifiedTargetConfigObject{}, errors.New("S3 object verifier is not configured")
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("S3 object verifier is not configured")
 	}
 	parsed, err := url.Parse(object.Reference)
 	if err != nil || parsed.Scheme != "s3" || parsed.Host == "" {
-		return types.VerifiedTargetConfigObject{}, errors.New("object reference is invalid")
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object reference is invalid")
 	}
 	if verifier.expectedBucket != "" && parsed.Host != verifier.expectedBucket {
-		return types.VerifiedTargetConfigObject{}, errors.New("object reference is outside configured bucket")
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object reference is outside configured bucket")
 	}
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(parsed.Host),
@@ -59,29 +80,39 @@ func (verifier S3ObjectVerifier) Verify(
 	}
 	output, err := verifier.client.GetObject(ctx, input)
 	if err != nil {
-		return types.VerifiedTargetConfigObject{}, errors.New("object provider verification failed")
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object provider verification failed")
 	}
 	if output == nil || output.Body == nil {
-		return types.VerifiedTargetConfigObject{}, errors.New("object provider returned no body")
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object provider returned no body")
 	}
 	defer output.Body.Close()
 	providerVersionID := aws.ToString(output.VersionId)
 	providerMediaType := aws.ToString(output.ContentType)
 	if !validObservedVersionID(providerVersionID) || !validObservedMediaType(providerMediaType) {
-		return types.VerifiedTargetConfigObject{}, errors.New("object provider returned invalid metadata")
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object provider returned invalid metadata")
 	}
 
-	limit := int64(maxTargetConfigObjectSize) + 1
+	limit := maxBytes + 1
 	hash := sha256.New()
-	size, err := io.Copy(hash, io.LimitReader(output.Body, limit))
-	if err != nil {
-		return types.VerifiedTargetConfigObject{}, errors.New("object provider body could not be verified")
+	var body []byte
+	var size int64
+	if retainBody {
+		body, err = io.ReadAll(io.LimitReader(output.Body, limit))
+		size = int64(len(body))
+		if err == nil {
+			_, err = hash.Write(body)
+		}
+	} else {
+		size, err = io.Copy(hash, io.LimitReader(output.Body, limit))
 	}
-	if size > maxTargetConfigObjectSize {
-		return types.VerifiedTargetConfigObject{}, errors.New("object exceeds verification limit")
+	if err != nil {
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object provider body could not be verified")
+	}
+	if size > maxBytes {
+		return types.VerifiedTargetConfigObject{}, nil, errors.New("object exceeds verification limit")
 	}
 	if output.ContentLength != nil && *output.ContentLength != size {
-		return types.VerifiedTargetConfigObject{}, fmt.Errorf("object provider size metadata mismatch")
+		return types.VerifiedTargetConfigObject{}, nil, fmt.Errorf("object provider size metadata mismatch")
 	}
 	observedVersionID := ""
 	if object.VersionID != "" {
@@ -93,5 +124,5 @@ func (verifier S3ObjectVerifier) Verify(
 		MediaType: providerMediaType,
 		SizeBytes: size,
 		Checksum:  "sha256:" + hex.EncodeToString(hash.Sum(nil)),
-	}, nil
+	}, body, nil
 }
