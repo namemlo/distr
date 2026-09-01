@@ -1,0 +1,80 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/migrationplanning",
+      "-run",
+      "^(?:TestValidateMigrationContractAcceptsBoundedRetrySafeContract|TestValidateMigrationContractRejectsUnsafeBackupAndRetryContract|TestValidateMigrationContractRejectsForwardOnlyReverseShortcut|TestValidateMigrationContractRequiresResultingSchemaChecksum|TestValidatePreviousReleaseCompatibilityBlocksForwardOnlySchema|TestValidatePreviousReleaseCompatibilityRequiresExactKnownState|TestValidateMigrationContractBoundsDependencyIDsAndCount)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/migrationplanning/validation_test.go",
+    "selectedTests": [
+      "TestValidateMigrationContractAcceptsBoundedRetrySafeContract",
+      "TestValidateMigrationContractRejectsUnsafeBackupAndRetryContract",
+      "TestValidateMigrationContractRejectsForwardOnlyReverseShortcut",
+      "TestValidateMigrationContractRequiresResultingSchemaChecksum",
+      "TestValidatePreviousReleaseCompatibilityBlocksForwardOnlySchema",
+      "TestValidatePreviousReleaseCompatibilityRequiresExactKnownState",
+      "TestValidateMigrationContractBoundsDependencyIDsAndCount"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 14,
+    "passed": 14,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestValidateMigrationContractAcceptsBoundedRetrySafeContract",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateMigrationContractBoundsDependencyIDsAndCount",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateMigrationContractRejectsForwardOnlyReverseShortcut",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateMigrationContractRejectsUnsafeBackupAndRetryContract",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateMigrationContractRequiresResultingSchemaChecksum",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidatePreviousReleaseCompatibilityBlocksForwardOnlySchema",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidatePreviousReleaseCompatibilityRequiresExactKnownState",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:16:52.925Z",
+  "completedAt": "2026-09-01T02:16:57.537Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/migrationplanning/expansion_test.go",
+      "sha256": "sha256:3dad5176a4129f1eefa56de67517e016f732b38657c8a58d7a4474a9849025d3"
+    },
+    {
+      "path": "internal/migrationplanning/recovery_test.go",
+      "sha256": "sha256:373ff4ed9205e2800090009af7e06b2e3f06e5ea6ba202fa700aa44780aa794f"
+    },
+    {
+      "path": "internal/migrationplanning/validation_test.go",
+      "sha256": "sha256:8c9bdf5922990bfa12a02593b267d6f32690fabd1c9532e1648a1506acd253dc"
+    }
+  ]
+}

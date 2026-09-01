@@ -1,0 +1,100 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/scheduling",
+      "-run",
+      "^(?:TestEvaluateCalendarOrdinaryAllowAndDeny|TestRemainingCalendarWaitSecondsUsesNextTrustedOpenMinute|TestEvaluateCalendarEvidenceUsesImmutableVersionRuleIdentity|TestEvaluateCalendarOvernightWindowUsesPreviousWeekday|TestEvaluateCalendarDSTGapRecordsActualLocalEvidence|TestEvaluateCalendarRepeatedHourIsDeterministicWithoutIdentityCollision|TestEvaluateCalendarRejectsRuleBindingDrift|TestEvaluateCalendarRuleVersionUpdateChangesDecisionIdentity|TestCanonicalizeCalendarVersionIsOrderStableAndContentBound|TestEvaluateFreezeOverlapUsesHighestPriorityAndStableTieBreak|TestCanonicalizeFreezeRevisionNormalizesExactInstants)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/scheduling/calendar_test.go",
+    "selectedTests": [
+      "TestEvaluateCalendarOrdinaryAllowAndDeny",
+      "TestRemainingCalendarWaitSecondsUsesNextTrustedOpenMinute",
+      "TestEvaluateCalendarEvidenceUsesImmutableVersionRuleIdentity",
+      "TestEvaluateCalendarOvernightWindowUsesPreviousWeekday",
+      "TestEvaluateCalendarDSTGapRecordsActualLocalEvidence",
+      "TestEvaluateCalendarRepeatedHourIsDeterministicWithoutIdentityCollision",
+      "TestEvaluateCalendarRejectsRuleBindingDrift",
+      "TestEvaluateCalendarRuleVersionUpdateChangesDecisionIdentity",
+      "TestCanonicalizeCalendarVersionIsOrderStableAndContentBound",
+      "TestEvaluateFreezeOverlapUsesHighestPriorityAndStableTieBreak",
+      "TestCanonicalizeFreezeRevisionNormalizesExactInstants"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 11,
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestCanonicalizeCalendarVersionIsOrderStableAndContentBound",
+        "status": "pass"
+      },
+      {
+        "name": "TestCanonicalizeFreezeRevisionNormalizesExactInstants",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateCalendarDSTGapRecordsActualLocalEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateCalendarEvidenceUsesImmutableVersionRuleIdentity",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateCalendarOrdinaryAllowAndDeny",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateCalendarOvernightWindowUsesPreviousWeekday",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateCalendarRejectsRuleBindingDrift",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateCalendarRepeatedHourIsDeterministicWithoutIdentityCollision",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateCalendarRuleVersionUpdateChangesDecisionIdentity",
+        "status": "pass"
+      },
+      {
+        "name": "TestEvaluateFreezeOverlapUsesHighestPriorityAndStableTieBreak",
+        "status": "pass"
+      },
+      {
+        "name": "TestRemainingCalendarWaitSecondsUsesNextTrustedOpenMinute",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:17:55.037Z",
+  "completedAt": "2026-09-01T02:17:58.167Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/scheduling/admission_test.go",
+      "sha256": "sha256:5820e67195214130707d6586618b66f4d9108680df44afaf3ab96590adbfa081"
+    },
+    {
+      "path": "internal/scheduling/admitted_task_creation_test.go",
+      "sha256": "sha256:2d94f069e8baf5c430fd4ad2faa3e40548930d11aa420a31ef598154e2393dc7"
+    },
+    {
+      "path": "internal/scheduling/calendar_test.go",
+      "sha256": "sha256:c7666db8f2999a961b5e28cd57fe1e8b256835470837745a117fb08fee56540f"
+    }
+  ]
+}

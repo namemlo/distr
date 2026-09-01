@@ -1,0 +1,103 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/releasebundles",
+      "-run",
+      "^(?:TestVerifySignedProvenanceAcceptsTrustedFrozenPolicy|TestVerifySignedProvenanceFailsClosedForUntrustedWrongAndExpiredEvidence|TestSigstoreProvenanceVerifierRejectsMalformedAndOversizedWithoutNetwork|TestSigstoreProvenanceVerifierRejectsMalformedEvidenceWithValidFrozenRoot|TestVerifySignedProvenanceRejectsDuplicateSignedStatementMembers|TestCanonicalJSONRejectsTrailingOrNonObjectExternalParameters|TestVerifyComponentReleasePublicationRequiresEveryPlatformAndReturnsBoundedFacts|TestProvenancePreflightRequiresExactArtifactDigestAndPolicy|TestVerifySignedProvenanceBindsExactReleaseSourceAndBuildFacts|TestValidateProvenanceStatementRejectsMissingReleaseBindings)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/releasebundles/provenance_test.go",
+    "selectedTests": [
+      "TestVerifySignedProvenanceAcceptsTrustedFrozenPolicy",
+      "TestVerifySignedProvenanceFailsClosedForUntrustedWrongAndExpiredEvidence",
+      "TestSigstoreProvenanceVerifierRejectsMalformedAndOversizedWithoutNetwork",
+      "TestSigstoreProvenanceVerifierRejectsMalformedEvidenceWithValidFrozenRoot",
+      "TestVerifySignedProvenanceRejectsDuplicateSignedStatementMembers",
+      "TestCanonicalJSONRejectsTrailingOrNonObjectExternalParameters",
+      "TestVerifyComponentReleasePublicationRequiresEveryPlatformAndReturnsBoundedFacts",
+      "TestProvenancePreflightRequiresExactArtifactDigestAndPolicy",
+      "TestVerifySignedProvenanceBindsExactReleaseSourceAndBuildFacts",
+      "TestValidateProvenanceStatementRejectsMissingReleaseBindings"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 25,
+    "passed": 25,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestCanonicalJSONRejectsTrailingOrNonObjectExternalParameters",
+        "status": "pass"
+      },
+      {
+        "name": "TestProvenancePreflightRequiresExactArtifactDigestAndPolicy",
+        "status": "pass"
+      },
+      {
+        "name": "TestSigstoreProvenanceVerifierRejectsMalformedAndOversizedWithoutNetwork",
+        "status": "pass"
+      },
+      {
+        "name": "TestSigstoreProvenanceVerifierRejectsMalformedEvidenceWithValidFrozenRoot",
+        "status": "pass"
+      },
+      {
+        "name": "TestValidateProvenanceStatementRejectsMissingReleaseBindings",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifyComponentReleasePublicationRequiresEveryPlatformAndReturnsBoundedFacts",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifySignedProvenanceAcceptsTrustedFrozenPolicy",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifySignedProvenanceBindsExactReleaseSourceAndBuildFacts",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifySignedProvenanceFailsClosedForUntrustedWrongAndExpiredEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestVerifySignedProvenanceRejectsDuplicateSignedStatementMembers",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:18:14.392Z",
+  "completedAt": "2026-09-01T02:18:21.378Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/releasebundles/canonical_test.go",
+      "sha256": "sha256:80e8de1510bc6d58a9ea0025c96e9298ab3e00adfb55ec46ff086577ae5e5470"
+    },
+    {
+      "path": "internal/releasebundles/provenance_test.go",
+      "sha256": "sha256:23e5f18bbfc46779e4b1225a2539c59705be49e2af206bbb5fd099c92f96df52"
+    },
+    {
+      "path": "internal/releasebundles/release_contract_test.go",
+      "sha256": "sha256:df30097ea6256b330df179b371188dd6992731fd59d2433421d2f79b4dc154b6"
+    },
+    {
+      "path": "internal/releasebundles/release_contract_v2_test.go",
+      "sha256": "sha256:1a1afd5ab0bfa11a1982eac6231b68ace41f76179088920d066f8e084ebd248e"
+    },
+    {
+      "path": "internal/releasebundles/validation_test.go",
+      "sha256": "sha256:0fd4698d570771f3fe92c09ccba1810727d10bf461db674557733ad9ccb5817f"
+    }
+  ]
+}

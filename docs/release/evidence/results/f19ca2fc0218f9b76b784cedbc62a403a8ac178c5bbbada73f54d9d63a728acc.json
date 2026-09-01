@@ -1,0 +1,73 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/planning",
+      "-run",
+      "^(?:TestSelectVerifiedBaselinePinsNewestHealthyObservationForActiveDesiredRevision|TestSelectVerifiedBaselineReturnsBootstrapWithoutCandidate|TestSelectVerifiedBaselineAuthorizesOnlyExactV2PlanFacts|TestSelectVerifiedBaselineObservationChecksumPinsPlatform)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/planning/baseline_test.go",
+    "selectedTests": [
+      "TestSelectVerifiedBaselinePinsNewestHealthyObservationForActiveDesiredRevision",
+      "TestSelectVerifiedBaselineReturnsBootstrapWithoutCandidate",
+      "TestSelectVerifiedBaselineAuthorizesOnlyExactV2PlanFacts",
+      "TestSelectVerifiedBaselineObservationChecksumPinsPlatform"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 4,
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestSelectVerifiedBaselineAuthorizesOnlyExactV2PlanFacts",
+        "status": "pass"
+      },
+      {
+        "name": "TestSelectVerifiedBaselineObservationChecksumPinsPlatform",
+        "status": "pass"
+      },
+      {
+        "name": "TestSelectVerifiedBaselinePinsNewestHealthyObservationForActiveDesiredRevision",
+        "status": "pass"
+      },
+      {
+        "name": "TestSelectVerifiedBaselineReturnsBootstrapWithoutCandidate",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:18:10.429Z",
+  "completedAt": "2026-09-01T02:18:14.202Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/planning/baseline_test.go",
+      "sha256": "sha256:7770c7e16ae45803bdf0982e9d6df7935066ad14e46c888fde3741de64eebbfa"
+    },
+    {
+      "path": "internal/planning/changeset_test.go",
+      "sha256": "sha256:569c48f9431e2568a97c7971c850cb0367d4ee3af225c10f504ab4b456d1967e"
+    },
+    {
+      "path": "internal/planning/graph_test.go",
+      "sha256": "sha256:c7f044f64663866f7ef4e87d46d394cd3e150cc861481d5558d29cf924973b47"
+    },
+    {
+      "path": "internal/planning/resolver_test.go",
+      "sha256": "sha256:a6b095d73a9642826336bf5da6de786cb58a83fab21e1c485b090e382154058e"
+    },
+    {
+      "path": "internal/planning/risk_test.go",
+      "sha256": "sha256:92fd89cc994d4cc10f7916ce18e988d2cbdaa33f5eeec92e8ec00e6bce624af9"
+    }
+  ]
+}

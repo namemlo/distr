@@ -1,0 +1,76 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/governance",
+      "-run",
+      "^(?:TestApprovalDecisionDeniesRequesterSelfApproval|TestApprovalDecisionDeniesActorOutsideRequiredGroup|TestApprovalEvaluationRequiresIndependentSubscriberQuorums|TestApprovalWithoutRequirementsFailsClosed|TestApprovalDecisionRejectsConflictingOptimisticRevision|TestApprovalInvalidationDetectsExpiryAndMaterialChanges|TestUnapprovedCampaignMemberIsBlocked)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/governance/approval_test.go",
+    "selectedTests": [
+      "TestApprovalDecisionDeniesRequesterSelfApproval",
+      "TestApprovalDecisionDeniesActorOutsideRequiredGroup",
+      "TestApprovalEvaluationRequiresIndependentSubscriberQuorums",
+      "TestApprovalWithoutRequirementsFailsClosed",
+      "TestApprovalDecisionRejectsConflictingOptimisticRevision",
+      "TestApprovalInvalidationDetectsExpiryAndMaterialChanges",
+      "TestUnapprovedCampaignMemberIsBlocked"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 7,
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestApprovalDecisionDeniesActorOutsideRequiredGroup",
+        "status": "pass"
+      },
+      {
+        "name": "TestApprovalDecisionDeniesRequesterSelfApproval",
+        "status": "pass"
+      },
+      {
+        "name": "TestApprovalDecisionRejectsConflictingOptimisticRevision",
+        "status": "pass"
+      },
+      {
+        "name": "TestApprovalEvaluationRequiresIndependentSubscriberQuorums",
+        "status": "pass"
+      },
+      {
+        "name": "TestApprovalInvalidationDetectsExpiryAndMaterialChanges",
+        "status": "pass"
+      },
+      {
+        "name": "TestApprovalWithoutRequirementsFailsClosed",
+        "status": "pass"
+      },
+      {
+        "name": "TestUnapprovedCampaignMemberIsBlocked",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:17:48.076Z",
+  "completedAt": "2026-09-01T02:17:51.075Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/governance/approval_test.go",
+      "sha256": "sha256:ed85785674b28c8edace7a102779ff270c1fde68272c7e3e14fd73210a157b97"
+    },
+    {
+      "path": "internal/governance/policy_test.go",
+      "sha256": "sha256:d4635a7a4db5da065092bad657cc49dbe184533d6af8d40f162d0eca7b547928"
+    }
+  ]
+}

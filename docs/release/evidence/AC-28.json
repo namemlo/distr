@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-28",
+  "owner": "PR-067",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "automatedTest": {
+    "path": "internal/governance/policy_test.go",
+    "sha256": "sha256:d4635a7a4db5da065092bad657cc49dbe184533d6af8d40f162d0eca7b547928"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-067_VERSIONED_DEPLOYMENT_POLICIES.md",
+    "sha256": "sha256:f45f3c75c2d35bc5534c7575fd2b3bfd6b61d14e206e08dc0e2e4ab078928e7b"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/5413eef825ae940af83f5f286973352794139066d07c9c4ee54f27fc8c8292b4.json",
+    "sha256": "sha256:b157b9047f4fab112a118b0f4c6f6b49bf576b5388256790832c1e0d5282d9da"
+  }
+}

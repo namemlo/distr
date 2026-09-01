@@ -1,0 +1,76 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/observation",
+      "-run",
+      "^(?:TestObservationAdmissionAcceptsTrustedFreshInScopeEnvelope|TestObservationAdmissionRejectsObserverMismatchAndUntrustedCredential|TestObservationAdmissionRejectsStaleEvidenceByCapturedTime|TestObservationAdmissionMakesReplayIdempotentAndRetainsOutOfOrderEvidence|TestObservationAdmissionRetainsConflictingReplayForReconciliation|TestObservationReplayRequiresExactMaterialAndComponentScope|TestRuntimeStateChecksumMatchesCampaignExpectationAndIgnoresEvidenceMetadata)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/observation/ingest_test.go",
+    "selectedTests": [
+      "TestObservationAdmissionAcceptsTrustedFreshInScopeEnvelope",
+      "TestObservationAdmissionRejectsObserverMismatchAndUntrustedCredential",
+      "TestObservationAdmissionRejectsStaleEvidenceByCapturedTime",
+      "TestObservationAdmissionMakesReplayIdempotentAndRetainsOutOfOrderEvidence",
+      "TestObservationAdmissionRetainsConflictingReplayForReconciliation",
+      "TestObservationReplayRequiresExactMaterialAndComponentScope",
+      "TestRuntimeStateChecksumMatchesCampaignExpectationAndIgnoresEvidenceMetadata"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 7,
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestObservationAdmissionAcceptsTrustedFreshInScopeEnvelope",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationAdmissionMakesReplayIdempotentAndRetainsOutOfOrderEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationAdmissionRejectsObserverMismatchAndUntrustedCredential",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationAdmissionRejectsStaleEvidenceByCapturedTime",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationAdmissionRetainsConflictingReplayForReconciliation",
+        "status": "pass"
+      },
+      {
+        "name": "TestObservationReplayRequiresExactMaterialAndComponentScope",
+        "status": "pass"
+      },
+      {
+        "name": "TestRuntimeStateChecksumMatchesCampaignExpectationAndIgnoresEvidenceMetadata",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:17:58.332Z",
+  "completedAt": "2026-09-01T02:18:01.339Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/observation/gate_test.go",
+      "sha256": "sha256:42499501695d8332fc7674e07cf09539f65e69071cfa0d765a8589f74f566b55"
+    },
+    {
+      "path": "internal/observation/ingest_test.go",
+      "sha256": "sha256:fa45dbc1a2121dfc580374a6ed1bd959f5a02ff565ad0d90d71d2f4277d65955"
+    }
+  ]
+}

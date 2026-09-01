@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-31",
+  "owner": "PR-069",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "automatedTest": {
+    "path": "internal/scheduling/calendar_test.go",
+    "sha256": "sha256:c7666db8f2999a961b5e28cd57fe1e8b256835470837745a117fb08fee56540f"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-069_MAINTENANCE_CALENDARS_FREEZES.md",
+    "sha256": "sha256:604392087c9d46fc5c0a018532ee09b16dbcca2d91beb96e0f2609d3588404b9"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/bfccaa17715d9e990232179988ae1ea1cf29a7f34cc26933882430dee0755532.json",
+    "sha256": "sha256:0ace32919d4461d7d7a644fc29e623ced8ee46ad8f4332d8ce7d4a3168aad84c"
+  }
+}

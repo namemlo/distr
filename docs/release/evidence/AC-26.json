@@ -1,0 +1,19 @@
+{
+  "schema": "distr.control-plane-acceptance-evidence/v1",
+  "acceptanceId": "AC-26",
+  "owner": "PR-064",
+  "proofClass": "community-focused-test",
+  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "automatedTest": {
+    "path": "internal/planning/baseline_test.go",
+    "sha256": "sha256:7770c7e16ae45803bdf0982e9d6df7935066ad14e46c888fde3741de64eebbfa"
+  },
+  "manualEvidence": {
+    "path": "docs/fork/PR-064_EXACT_PLAN_CHANGESET.md",
+    "sha256": "sha256:1b3b2964f7d01dc17ae571af95d44dd7b6dc1f01086b2f868887ecad8bcc25be"
+  },
+  "testResult": {
+    "path": "docs/release/evidence/results/f19ca2fc0218f9b76b784cedbc62a403a8ac178c5bbbada73f54d9d63a728acc.json",
+    "sha256": "sha256:fefc508bb38cecd2b26515f542379ded1ccaf00c6fe2b9f1f00e9ef852876eb3"
+  }
+}
