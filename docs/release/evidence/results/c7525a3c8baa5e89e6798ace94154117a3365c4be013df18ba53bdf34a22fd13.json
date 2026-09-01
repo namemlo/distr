@@ -1,0 +1,105 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "07d3625d2e5f38f0eba6037b30144f05fadc8830",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/targetconfig",
+      "-run",
+      "^(?:TestTargetConfigValidateDraftRejectsUnsafeInputs|TestTargetConfigVersionIDValidationIsConsistentAtCreationAndVerification|TestTargetConfigValidateDraftBoundsDiagnostics|TestTargetConfigValidateDraftAcceptsOpaqueManagedSecretReference|TestTargetConfigVerifyObjectsReturnsBoundedTamperFacts|TestTargetConfigVerifyObjectsReturnsBoundedUnavailableFact|TestS3ObjectVerifierPinsVersionAndComputesDigestWithoutReturningBody|TestS3ObjectVerifierRejectsUnsafeProviderMetadata|TestS3ObjectVerifierAcceptsProviderMetadataAtExactLimits|TestTargetConfigVerifyObjectsDropsUnsafeObservedMetadata|TestTargetConfigVerifyObjectsPreservesObservedZeroSizePresence|TestS3ObjectVerifierRejectsObjectsOutsideConfiguredBucket)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/targetconfig/validation_test.go",
+    "selectedTests": [
+      "TestTargetConfigValidateDraftRejectsUnsafeInputs",
+      "TestTargetConfigVersionIDValidationIsConsistentAtCreationAndVerification",
+      "TestTargetConfigValidateDraftBoundsDiagnostics",
+      "TestTargetConfigValidateDraftAcceptsOpaqueManagedSecretReference",
+      "TestTargetConfigVerifyObjectsReturnsBoundedTamperFacts",
+      "TestTargetConfigVerifyObjectsReturnsBoundedUnavailableFact",
+      "TestS3ObjectVerifierPinsVersionAndComputesDigestWithoutReturningBody",
+      "TestS3ObjectVerifierRejectsUnsafeProviderMetadata",
+      "TestS3ObjectVerifierAcceptsProviderMetadataAtExactLimits",
+      "TestTargetConfigVerifyObjectsDropsUnsafeObservedMetadata",
+      "TestTargetConfigVerifyObjectsPreservesObservedZeroSizePresence",
+      "TestS3ObjectVerifierRejectsObjectsOutsideConfiguredBucket"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 46,
+    "passed": 46,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestS3ObjectVerifierAcceptsProviderMetadataAtExactLimits",
+        "status": "pass"
+      },
+      {
+        "name": "TestS3ObjectVerifierPinsVersionAndComputesDigestWithoutReturningBody",
+        "status": "pass"
+      },
+      {
+        "name": "TestS3ObjectVerifierRejectsObjectsOutsideConfiguredBucket",
+        "status": "pass"
+      },
+      {
+        "name": "TestS3ObjectVerifierRejectsUnsafeProviderMetadata",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigValidateDraftAcceptsOpaqueManagedSecretReference",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigValidateDraftBoundsDiagnostics",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigValidateDraftRejectsUnsafeInputs",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigVerifyObjectsDropsUnsafeObservedMetadata",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigVerifyObjectsPreservesObservedZeroSizePresence",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigVerifyObjectsReturnsBoundedTamperFacts",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigVerifyObjectsReturnsBoundedUnavailableFact",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigVersionIDValidationIsConsistentAtCreationAndVerification",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:00:53.674Z",
+  "completedAt": "2026-09-01T02:01:01.041Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/targetconfig/canonical_test.go",
+      "sha256": "sha256:a49f375bbcd499f94f7f91af9f155a06d868575b3da7d53ee528ef23acffc8c4"
+    },
+    {
+      "path": "internal/targetconfig/v1_extraction_test.go",
+      "sha256": "sha256:b24609bbac43df0cffe5ff134c32acc2796afb7828ac5ee10cd59947132d1066"
+    },
+    {
+      "path": "internal/targetconfig/validation_test.go",
+      "sha256": "sha256:c705c0f560a1c3ccca7c9309fbdada1d65f1c5da55e0dfd8f3b627101c891671"
+    }
+  ]
+}

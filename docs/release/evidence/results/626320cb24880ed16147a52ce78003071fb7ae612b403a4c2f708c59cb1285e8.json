@@ -1,0 +1,100 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "07d3625d2e5f38f0eba6037b30144f05fadc8830",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/targetconfig",
+      "-run",
+      "^(?:TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory|TestExtractV1TargetConfigNeverOmitsUnsupportedV1VariableMaterial|TestExtractV1TargetConfigBindsExactProviderObjectEvidenceAndVerifies|TestExtractV1TargetConfigBlocksUnavailableOrMismatchedObjectEvidence|TestExtractV1TargetConfigRequiresScopedImmutableSecretEvidence|TestExtractV1TargetConfigSecretRotationChangesSnapshotChecksum|TestExtractV1TargetConfigResolvesLogicalComponentIdentityAndActiveAliases|TestExtractV1TargetConfigBlocksChangedHistoricalBytesOrChecksums|TestExtractV1TargetConfigBlocksUnsupportedOrAmbiguousTopology|TestExtractV1TargetConfigBlocksMutableOrAmbiguousConfigObjects|TestExtractV1TargetConfigBlocksPlaintextSecretsAndUnsafeReferences)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/targetconfig/v1_extraction_test.go",
+    "selectedTests": [
+      "TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory",
+      "TestExtractV1TargetConfigNeverOmitsUnsupportedV1VariableMaterial",
+      "TestExtractV1TargetConfigBindsExactProviderObjectEvidenceAndVerifies",
+      "TestExtractV1TargetConfigBlocksUnavailableOrMismatchedObjectEvidence",
+      "TestExtractV1TargetConfigRequiresScopedImmutableSecretEvidence",
+      "TestExtractV1TargetConfigSecretRotationChangesSnapshotChecksum",
+      "TestExtractV1TargetConfigResolvesLogicalComponentIdentityAndActiveAliases",
+      "TestExtractV1TargetConfigBlocksChangedHistoricalBytesOrChecksums",
+      "TestExtractV1TargetConfigBlocksUnsupportedOrAmbiguousTopology",
+      "TestExtractV1TargetConfigBlocksMutableOrAmbiguousConfigObjects",
+      "TestExtractV1TargetConfigBlocksPlaintextSecretsAndUnsafeReferences"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 52,
+    "passed": 52,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestExtractV1TargetConfigBindsExactProviderObjectEvidenceAndVerifies",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigBlocksChangedHistoricalBytesOrChecksums",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigBlocksMutableOrAmbiguousConfigObjects",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigBlocksPlaintextSecretsAndUnsafeReferences",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigBlocksUnavailableOrMismatchedObjectEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigBlocksUnsupportedOrAmbiguousTopology",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigDerivesDeterministicSnapshotWithoutMutatingHistory",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigNeverOmitsUnsupportedV1VariableMaterial",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigRequiresScopedImmutableSecretEvidence",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigResolvesLogicalComponentIdentityAndActiveAliases",
+        "status": "pass"
+      },
+      {
+        "name": "TestExtractV1TargetConfigSecretRotationChangesSnapshotChecksum",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:00:46.135Z",
+  "completedAt": "2026-09-01T02:00:53.513Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/targetconfig/canonical_test.go",
+      "sha256": "sha256:a49f375bbcd499f94f7f91af9f155a06d868575b3da7d53ee528ef23acffc8c4"
+    },
+    {
+      "path": "internal/targetconfig/v1_extraction_test.go",
+      "sha256": "sha256:b24609bbac43df0cffe5ff134c32acc2796afb7828ac5ee10cd59947132d1066"
+    },
+    {
+      "path": "internal/targetconfig/validation_test.go",
+      "sha256": "sha256:c705c0f560a1c3ccca7c9309fbdada1d65f1c5da55e0dfd8f3b627101c891671"
+    }
+  ]
+}

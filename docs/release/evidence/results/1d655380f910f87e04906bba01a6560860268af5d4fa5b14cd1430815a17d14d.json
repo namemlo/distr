@@ -1,0 +1,65 @@
+{
+  "schema": "distr.control-plane-test-result/v1",
+  "sourceCommit": "07d3625d2e5f38f0eba6037b30144f05fadc8830",
+  "command": {
+    "runner": "go-test",
+    "argv": [
+      "go",
+      "test",
+      "./internal/targetconfig",
+      "-run",
+      "^(?:TestTargetConfigCanonicalizeIsStableAcrossInputOrder|TestTargetConfigCanonicalizeChangesChecksumForMaterialChange|TestTargetConfigCanonicalizeTreatsNilAndEmptyCollectionsEqually|TestTargetConfigCanonicalizeRejectsDuplicateStableKeys)$",
+      "-count=1",
+      "-json"
+    ],
+    "selectedTestSource": "internal/targetconfig/canonical_test.go",
+    "selectedTests": [
+      "TestTargetConfigCanonicalizeIsStableAcrossInputOrder",
+      "TestTargetConfigCanonicalizeChangesChecksumForMaterialChange",
+      "TestTargetConfigCanonicalizeTreatsNilAndEmptyCollectionsEqually",
+      "TestTargetConfigCanonicalizeRejectsDuplicateStableKeys"
+    ]
+  },
+  "exitCode": 0,
+  "tests": {
+    "expected": 4,
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0,
+    "topLevel": [
+      {
+        "name": "TestTargetConfigCanonicalizeChangesChecksumForMaterialChange",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigCanonicalizeIsStableAcrossInputOrder",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigCanonicalizeRejectsDuplicateStableKeys",
+        "status": "pass"
+      },
+      {
+        "name": "TestTargetConfigCanonicalizeTreatsNilAndEmptyCollectionsEqually",
+        "status": "pass"
+      }
+    ]
+  },
+  "status": "passed",
+  "startedAt": "2026-09-01T02:00:36.953Z",
+  "completedAt": "2026-09-01T02:00:45.937Z",
+  "compiledPackageSources": [
+    {
+      "path": "internal/targetconfig/canonical_test.go",
+      "sha256": "sha256:a49f375bbcd499f94f7f91af9f155a06d868575b3da7d53ee528ef23acffc8c4"
+    },
+    {
+      "path": "internal/targetconfig/v1_extraction_test.go",
+      "sha256": "sha256:b24609bbac43df0cffe5ff134c32acc2796afb7828ac5ee10cd59947132d1066"
+    },
+    {
+      "path": "internal/targetconfig/validation_test.go",
+      "sha256": "sha256:c705c0f560a1c3ccca7c9309fbdada1d65f1c5da55e0dfd8f3b627101c891671"
+    }
+  ]
+}
