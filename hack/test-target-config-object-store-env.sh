@@ -162,7 +162,8 @@ test_image_and_runtime_checks_enforce_target_config_storage() (
   set_valid_target_config_env
 
   AWS_REGION=ap-southeast-1
-  DISTR_IMAGE=821392278328.dkr.ecr.ap-southeast-1.amazonaws.com/distr
+  # 000000000000 is an intentionally invalid, test-only AWS account placeholder.
+  DISTR_IMAGE=000000000000.dkr.ecr.ap-southeast-1.amazonaws.com/distr
   DISTR_IMAGE_TAG=immutable-tag
   export AWS_REGION DISTR_IMAGE DISTR_IMAGE_TAG
 
