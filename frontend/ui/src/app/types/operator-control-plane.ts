@@ -320,6 +320,7 @@ export interface OperatorPlanDetail {
   baselines: OperatorPlanFact[];
   config: OperatorPlanFact[];
   requirements: OperatorPlanFact[];
+  requirementResolutions: OperatorRequirementResolution[];
   migrations: OperatorPlanFact[];
   changes: OperatorPlanFact[];
   risks: OperatorPlanFact[];
@@ -1217,6 +1218,7 @@ export interface OperatorCreateProductReleaseRequest {
   product: string;
   version: string;
   dependencyPolicyVersion: string;
+  dependencyPolicyChecksum: string;
   releaseNotes: string;
   requiredPlatforms: string[];
   components: Array<{componentReleaseId: string; componentReleaseChecksum: string}>;
@@ -1235,6 +1237,7 @@ export interface OperatorProductRelease {
   publishedByUserAccountId?: string;
   publishedAt?: string;
   manifest: OperatorProductReleaseManifest;
+  graph: OperatorProductReleaseGraph;
 }
 
 export interface OperatorProductReleaseManifest {
@@ -1242,6 +1245,7 @@ export interface OperatorProductReleaseManifest {
   product: string;
   version: string;
   dependencyPolicyVersion: string;
+  dependencyPolicyChecksum: string;
   releaseNotes: string;
   requiredPlatforms: string[];
   components: OperatorProductReleaseComponent[];
@@ -1253,6 +1257,101 @@ export interface OperatorProductReleaseComponent {
   componentReleaseChecksum: string;
   componentKey: string;
   version: string;
+  platforms: string[];
+  artifacts: OperatorProductReleaseArtifact[];
+  provides: OperatorCapabilityDeclaration[];
+  requires: OperatorCapabilityRequirement[];
+  migrations: OperatorMigrationDeclaration[];
+  migrationContracts: OperatorMigrationContract[];
+}
+
+export interface OperatorProductReleaseArtifact {
+  key: string;
+  type: string;
+  mediaType: string;
+  digest: string;
+  platforms: Array<{platform: string; digest: string}>;
+}
+
+export interface OperatorCapabilityDeclaration {
+  name: string;
+  version: string;
+}
+
+export interface OperatorMigrationDeclaration {
+  key: string;
+  type: string;
+  order: number;
+  compatibility: string;
+  failurePolicy: string;
+  description: string;
+}
+
+export interface OperatorMigrationProbe {
+  name: string;
+  reference: string;
+  expectedChecksum: string;
+}
+
+export interface OperatorMigrationContract {
+  id: string;
+  checksum: string;
+  componentKey: string;
+  databaseResourceKey: string;
+  expectedSourceVersion: string;
+  expectedSourceChecksum: string;
+  resultingVersion: string;
+  resultingSchemaChecksum: string;
+  phase: string;
+  dependsOn?: string[];
+  lockType: string;
+  lockTimeoutSeconds: number;
+  operationalImpact: string;
+  backupRequired: boolean;
+  backupVerifier?: string;
+  preconditionProbes: OperatorMigrationProbe[];
+  postconditionProbes: OperatorMigrationProbe[];
+  retryClass: string;
+  idempotencyKey?: string;
+  reversibility: string;
+  previousApplicationCompatibility: string;
+  recoveryProcedureReference: string;
+  requiresForwardFix: boolean;
+  adapterType?: string;
+  artifactDigest?: string;
+  evidenceRetentionDays: number;
+}
+
+export interface OperatorProductReleaseGraph {
+  nodes: OperatorProductReleaseGraphNode[];
+  edges: OperatorProductReleaseGraphEdge[];
+  topologicalOrder: string[];
+  checksum: string;
+}
+
+export interface OperatorProductReleaseGraphNode {
+  key: string;
+  kind: string;
+  componentReleaseId?: string;
+  componentKey?: string;
+  version?: string;
+  capability?: string;
+  versionRange?: string;
+  resolutionStage?: string;
+  allowedModes?: string[];
+  unresolved?: boolean;
+}
+
+export interface OperatorProductReleaseGraphEdge {
+  key: string;
+  from: string;
+  to: string;
+  capability: string;
+  versionRange: string;
+  providerVersion?: string;
+  resolutionStage: string;
+  allowedModes?: string[];
+  ordering?: string;
 }
 
 export interface OperatorProductReleaseValidation {

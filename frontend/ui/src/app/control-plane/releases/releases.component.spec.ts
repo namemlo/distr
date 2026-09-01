@@ -7,6 +7,7 @@ import {OverlayService} from '../../services/overlay.service';
 import {
   OperatorEvidencePage,
   OperatorPage,
+  OperatorPlanDetailResponse,
   OperatorReleaseCompareResponse,
   OperatorReleaseDetailResponse,
   OperatorReleaseRow,
@@ -18,6 +19,7 @@ describe('ReleasesComponent', () => {
     listReleases: ReturnType<typeof vi.fn>;
     getRelease: ReturnType<typeof vi.fn>;
     getProductRelease: ReturnType<typeof vi.fn>;
+    getPlan: ReturnType<typeof vi.fn>;
     compareReleases: ReturnType<typeof vi.fn>;
     getReleaseEvidence: ReturnType<typeof vi.fn>;
     createComponentRelease: ReturnType<typeof vi.fn>;
@@ -36,6 +38,7 @@ describe('ReleasesComponent', () => {
       listReleases: vi.fn(),
       getRelease: vi.fn(),
       getProductRelease: vi.fn().mockReturnValue(of(productRelease())),
+      getPlan: vi.fn().mockReturnValue(of(planDetailResponse())),
       compareReleases: vi.fn(),
       getReleaseEvidence: vi.fn(),
       createComponentRelease: vi.fn(),
@@ -173,6 +176,65 @@ describe('ReleasesComponent', () => {
     );
   });
 
+  it('renders the complete native product manifest and its selected target resolution', async () => {
+    service.getRelease.mockReturnValue(of(releaseDetailResponse({id: 'product-release-1', kind: 'PRODUCT'})));
+    service.getProductRelease.mockReturnValue(of(productRelease()));
+    service.getPlan.mockReturnValue(of(planDetailResponse()));
+    service.getReleaseEvidence.mockReturnValue(of(evidencePage()));
+    params$.next(convertToParamMap({releaseId: 'product-release-1'}));
+
+    const {fixture} = await createCurrentComponent();
+    const manifest = fixture.nativeElement.querySelector('[aria-labelledby="published-manifest-heading"]');
+
+    expect(service.getPlan).toHaveBeenCalledWith('plan-1');
+    expect(manifest.textContent).toContain('policy-1');
+    expect(manifest.textContent).toContain('sha256:policy');
+    expect(manifest.textContent).toContain('component-customer');
+    expect(manifest.textContent).toContain('sha256:customer-release');
+    expect(manifest.textContent).toContain('linux/amd64');
+    expect(manifest.textContent).toContain('sha256:customer-amd64');
+    expect(manifest.textContent).toContain('customer.api');
+    expect(manifest.textContent).toContain('=1.2.3');
+    expect(manifest.textContent).toContain('migration-customer-001');
+    expect(manifest.textContent).toContain('sha256:migration-contract');
+    expect(manifest.textContent).toContain('component:customer-api');
+    expect(manifest.textContent).toContain('component:transaction-api');
+    expect(manifest.textContent).toContain('Selected target resolution');
+    expect(manifest.textContent).toContain('included');
+    expect(manifest.textContent).toContain('provider-customer-release');
+    expect(manifest.textContent).toContain('provider-unit-1');
+    expect(manifest.textContent).toContain('customer-instance-1');
+    expect(manifest.textContent).toContain('sha256:expected-state');
+    expect(manifest.textContent).toContain('observed-state-1');
+    expect(manifest.textContent).toContain('desired-revision-1');
+    expect(manifest.textContent).toContain('sha256:provenance-binding');
+    expect(manifest.textContent).toContain('Evidence v2');
+    expect(manifest.textContent).toContain('trusted yes');
+    expect(manifest.textContent).toContain('current yes');
+    expect(manifest.textContent).toContain('sha256:resolution-binding');
+    expect(manifest.textContent).toContain('No compatibility or rollback group is stored by distr.product-release/v1');
+  });
+
+  it('fails closed when target resolution or the native manifest cannot be verified', async () => {
+    const response = releaseDetailResponse({id: 'product-release-1', kind: 'PRODUCT'});
+    delete response.detail.changeContext.deploymentPlanId;
+    service.getRelease.mockReturnValue(of(response));
+    service.getProductRelease.mockReturnValue(throwError(() => ({status: 409, message: 'unsafe native error'})));
+    service.getReleaseEvidence.mockReturnValue(of(evidencePage()));
+    params$.next(convertToParamMap({releaseId: 'product-release-1'}));
+
+    const {fixture} = await createCurrentComponent();
+
+    expect(service.getPlan).not.toHaveBeenCalled();
+    expect(fixture.nativeElement.textContent).toContain(
+      'The immutable Product Release manifest could not be verified.'
+    );
+    expect(fixture.nativeElement.textContent).toContain(
+      'Selected resolution is unavailable without a frozen deployment-plan context.'
+    );
+    expect(fixture.nativeElement.textContent).not.toContain('unsafe native error');
+  });
+
   it('compares the routed release with another release and renders checksum facts', async () => {
     service.getRelease.mockReturnValue(of(releaseDetailResponse()));
     service.getReleaseEvidence.mockReturnValue(of(evidencePage()));
@@ -260,6 +322,16 @@ describe('ReleasesComponent', () => {
 
     (component as any).productReleaseRequest.setValue(JSON.stringify(request));
     await (component as any).createProductRelease();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Immutable product manifest');
+    expect(fixture.nativeElement.textContent).toContain('policy-1');
+    expect(fixture.nativeElement.textContent).toContain('sha256:policy');
+    expect(fixture.nativeElement.textContent).toContain('sha256:graph');
+    expect(fixture.nativeElement.textContent).toContain('Frozen graph order');
+    expect(fixture.nativeElement.textContent).toContain('component:customer-api');
+    expect(fixture.nativeElement.textContent).toContain('component:transaction-api');
+
     await (component as any).validateProductRelease();
     await (component as any).publishProductRelease();
     fixture.detectChanges();
@@ -276,7 +348,10 @@ describe('ReleasesComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Published product release');
     expect(fixture.nativeElement.textContent).toContain('Immutable product manifest');
     expect(fixture.nativeElement.textContent).toContain('policy-1');
+    expect(fixture.nativeElement.textContent).toContain('sha256:policy');
     expect(fixture.nativeElement.textContent).toContain('sha256:graph');
+    expect(fixture.nativeElement.textContent).toContain('component:customer-api');
+    expect(fixture.nativeElement.textContent).toContain('component:transaction-api');
   });
 
   it('does not publish when typed confirmation is cancelled', async () => {
@@ -374,6 +449,7 @@ describe('ReleasesComponent', () => {
       listReleases: vi.fn().mockReturnValue(of({items: []})),
       getRelease: vi.fn(),
       getProductRelease: vi.fn().mockReturnValue(of(productRelease())),
+      getPlan: vi.fn().mockReturnValue(of(planDetailResponse())),
       compareReleases: vi.fn(),
       getReleaseEvidence: vi.fn(),
       createComponentRelease: vi.fn(),
@@ -644,6 +720,7 @@ function productReleaseRequest() {
     product: 'payments',
     version: '2026.7.1',
     dependencyPolicyVersion: 'policy-1',
+    dependencyPolicyChecksum: 'sha256:policy',
     releaseNotes: 'Payments product release',
     requiredPlatforms: ['linux/amd64'],
     components: [
@@ -657,6 +734,30 @@ function productReleaseRequest() {
 }
 
 function productRelease() {
+  const migrationContract = {
+    id: 'migration-customer-001',
+    checksum: 'sha256:migration-contract',
+    componentKey: 'customer-api',
+    databaseResourceKey: 'customer-db',
+    expectedSourceVersion: '41',
+    expectedSourceChecksum: 'sha256:schema-41',
+    resultingVersion: '42',
+    resultingSchemaChecksum: 'sha256:schema-42',
+    phase: 'expand',
+    dependsOn: [],
+    lockType: 'exclusive',
+    lockTimeoutSeconds: 30,
+    operationalImpact: 'none',
+    backupRequired: false,
+    preconditionProbes: [],
+    postconditionProbes: [],
+    retryClass: 'safe',
+    reversibility: 'reversible',
+    previousApplicationCompatibility: 'compatible',
+    recoveryProcedureReference: 'runbook://customer-001',
+    requiresForwardFix: false,
+    evidenceRetentionDays: 30,
+  };
   return {
     id: 'product-release-1',
     createdAt: '2026-07-28T01:00:00Z',
@@ -666,6 +767,184 @@ function productRelease() {
     status: 'DRAFT',
     canonicalChecksum: 'sha256:product-release',
     graphChecksum: 'sha256:graph',
-    manifest: productReleaseRequest(),
+    manifest: {
+      ...productReleaseRequest(),
+      components: [
+        {
+          componentReleaseId: 'component-customer',
+          componentReleaseChecksum: 'sha256:customer-release',
+          componentKey: 'customer-api',
+          version: '1.2.3',
+          platforms: ['linux/amd64'],
+          artifacts: [
+            {
+              key: 'customer-api',
+              type: 'oci-image',
+              mediaType: 'application/vnd.oci.image.manifest.v1+json',
+              digest: 'sha256:customer-manifest',
+              platforms: [{platform: 'linux/amd64', digest: 'sha256:customer-amd64'}],
+            },
+          ],
+          provides: [{name: 'customer.api', version: '1.2.3'}],
+          requires: [],
+          migrations: [
+            {
+              key: 'migration-customer-001',
+              type: 'database',
+              order: 1,
+              compatibility: 'backward',
+              failurePolicy: 'stop',
+              description: 'Customer schema contract',
+            },
+          ],
+          migrationContracts: [migrationContract],
+        },
+        {
+          componentReleaseId: 'component-transaction',
+          componentReleaseChecksum: 'sha256:transaction-release',
+          componentKey: 'transaction-api',
+          version: '2.0.0',
+          platforms: ['linux/amd64'],
+          artifacts: [
+            {
+              key: 'transaction-api',
+              type: 'oci-image',
+              mediaType: 'application/vnd.oci.image.manifest.v1+json',
+              digest: 'sha256:transaction-manifest',
+              platforms: [{platform: 'linux/amd64', digest: 'sha256:transaction-amd64'}],
+            },
+          ],
+          provides: [],
+          requires: [
+            {
+              name: 'customer.api',
+              range: '=1.2.3',
+              resolutionStage: 'target',
+              allowedModes: ['included', 'pinned_existing'],
+            },
+          ],
+          migrations: [],
+          migrationContracts: [],
+        },
+      ],
+      requirements: [],
+    },
+    graph: {
+      nodes: [
+        {
+          key: 'component:customer-api',
+          kind: 'component',
+          componentReleaseId: 'component-customer',
+          componentKey: 'customer-api',
+          version: '1.2.3',
+        },
+        {
+          key: 'component:transaction-api',
+          kind: 'component',
+          componentReleaseId: 'component-transaction',
+          componentKey: 'transaction-api',
+          version: '2.0.0',
+        },
+      ],
+      edges: [
+        {
+          key: 'customer-before-transaction',
+          from: 'component:customer-api',
+          to: 'component:transaction-api',
+          capability: 'customer.api',
+          versionRange: '=1.2.3',
+          providerVersion: '1.2.3',
+          resolutionStage: 'target',
+          allowedModes: ['included', 'pinned_existing'],
+          ordering: 'provider_deploy_and_health_before_consumer',
+        },
+      ],
+      topologicalOrder: ['component:customer-api', 'component:transaction-api'],
+      checksum: 'sha256:graph',
+    },
+  };
+}
+
+function planDetailResponse(): OperatorPlanDetailResponse {
+  return {
+    detail: {
+      plan: {
+        id: 'plan-1',
+        createdAt: '2026-07-28T03:00:00Z',
+        status: 'READY',
+        planSchema: 'distr.target-deployment-plan/v2',
+        protocolVersion: 'v2',
+        productReleaseId: 'product-release-1',
+        productReleaseVersion: '2026.7.1',
+        environmentId: 'environment-1',
+        environment: 'Development',
+        deploymentUnitId: 'unit-1',
+        deploymentUnit: 'Choice TP DEV',
+        targetConfigSnapshotId: 'config-1',
+        canonicalChecksum: 'sha256:plan',
+        targetCount: 1,
+        stepCount: 2,
+        issueCount: 0,
+        blockingIssueCount: 0,
+        approvalBlockerCount: 0,
+        preflightBlockerCount: 0,
+        bootstrap: false,
+      },
+      productReleaseChecksum: 'sha256:product-release',
+      targetConfigChecksum: 'sha256:config',
+      effectivePolicyChecksum: 'sha256:effective-policy',
+      subscriberSetChecksum: 'sha256:subscribers',
+      graphChecksum: 'sha256:plan-graph',
+      changeChecksum: 'sha256:changes',
+      baselineChecksum: 'sha256:baseline',
+      providerResolutionChecksum: 'sha256:resolutions',
+      migrationChecksum: 'sha256:migrations',
+      riskChecksum: 'sha256:risks',
+      approvalChecksum: 'sha256:approvals',
+      windowChecksum: 'sha256:windows',
+      adapterChecksum: 'sha256:adapters',
+      intentChecksum: 'sha256:intent',
+      requirementResolutions: [
+        {
+          requirementKey: 'target:transaction-api:customer.api',
+          consumerKey: 'transaction-api',
+          capability: 'customer.api',
+          versionRange: '=1.2.3',
+          mode: 'included',
+          providerReleaseId: 'provider-customer-release',
+          providerVersion: '1.2.3',
+          providerPlatform: 'linux/amd64',
+          providerReleaseChecksum: 'sha256:customer-release',
+          provenanceBindingChecksum: 'sha256:provenance-binding',
+          providerDeploymentUnitId: 'provider-unit-1',
+          componentInstanceId: 'customer-instance-1',
+          expectedStateVersion: 7,
+          expectedStateChecksum: 'sha256:expected-state',
+          observedComponentStateId: 'observed-state-1',
+          activeDesiredRevisionId: 'desired-revision-1',
+          providerEvidenceVersion: 2,
+          observationFreshUntil: '2026-07-28T04:00:00Z',
+          observationTrusted: true,
+          observationCurrent: true,
+          bindingChecksum: 'sha256:resolution-binding',
+          sortOrder: 1,
+        },
+      ],
+      targets: [],
+      baselines: [],
+      config: [],
+      requirements: [],
+      migrations: [],
+      changes: [],
+      risks: [],
+      approvals: [],
+      windows: [],
+      adapters: [],
+      steps: [],
+      edges: [],
+      issues: [],
+      intentBlockers: [],
+      evidence: [],
+    },
   };
 }

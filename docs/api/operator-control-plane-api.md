@@ -127,6 +127,58 @@ checksum-bound full contract. Product validation rejects incomplete contracts,
 checksum drift, duplicate IDs, missing dependencies, and cycles. Runtime-only
 declarations remain compatible without a database contract.
 
+#### Complete Product Release response
+
+Create, get, and publish return the same complete Product Release read model.
+The response contains these top-level fields:
+
+| Field                                                                  | Ownership                                                                      |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `id`, `createdAt`, `updatedAt`, `applicationId`, `channelId`, `status` | Product Release lifecycle identity                                             |
+| `canonicalChecksum`                                                    | Immutable Product Release canonical identity                                   |
+| `graphChecksum`                                                        | Frozen capability-graph checksum; must equal `graph.checksum`                  |
+| `publishedByUserAccountId`, `publishedAt`                              | Optional publication facts                                                     |
+| `manifest`                                                             | Target-neutral `distr.product-release/v1` manifest                             |
+| `graph`                                                                | Verified frozen graph, including order and unresolved target-stage constraints |
+
+`manifest` always contains `schema`, `product`, `version`,
+`dependencyPolicyVersion`, `dependencyPolicyChecksum`, `releaseNotes`,
+`requiredPlatforms`, `components`, and product-level `requirements`.
+
+Every `manifest.components[]` entry contains:
+
+| Field                                            | Meaning                                                                                                          |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `componentReleaseId`, `componentReleaseChecksum` | Exact immutable Component Release pin                                                                            |
+| `componentKey`, `version`, `platforms`           | Frozen component identity and supported platforms                                                                |
+| `artifacts[]`                                    | `key`, `type`, `mediaType`, immutable manifest `digest`, and exact `platforms[].platform` / `platforms[].digest` |
+| `provides[]`                                     | Capability `name` and exact `version`                                                                            |
+| `requires[]`                                     | Capability `name`, semver `range`, `resolutionStage`, and `allowedModes`                                         |
+| `migrations[]`                                   | Declaration `key`, `type`, `order`, `compatibility`, `failurePolicy`, and `description`                          |
+| `migrationContracts[]`                           | Complete structured migration safety contract                                                                    |
+
+Each structured migration contract contains `id`, `checksum`, `componentKey`,
+`databaseResourceKey`, `expectedSourceVersion`, `expectedSourceChecksum`,
+`resultingVersion`, `resultingSchemaChecksum`, `phase`, optional `dependsOn`,
+`lockType`, `lockTimeoutSeconds`, `operationalImpact`, `backupRequired`, optional
+`backupVerifier`, `preconditionProbes`, `postconditionProbes`, `retryClass`,
+optional `idempotencyKey`, `reversibility`,
+`previousApplicationCompatibility`, `recoveryProcedureReference`,
+`requiresForwardFix`, optional `adapterType`, optional `artifactDigest`, and
+`evidenceRetentionDays`. Every probe contains `name`, `reference`, and
+`expectedChecksum`.
+
+The `graph` contains `nodes`, `edges`, `topologicalOrder`, and `checksum`.
+Component nodes bind their Component Release identity. Requirement nodes carry
+the capability, version range, resolution stage, allowed modes, and unresolved
+state. Edges carry `key`, `from`, `to`, capability/range, optional frozen
+provider version, resolution stage, allowed modes, and ordering semantics.
+
+Product Release responses fail closed with `409` when a required dependency-
+policy checksum, Component Release contract snapshot, graph checksum, graph
+integrity proof, or frozen identity match is unavailable. Clients must not
+treat a partial cached manifest as deployable.
+
 ### Plans and approvals
 
 | Method      | Route                                       | Purpose                                                                  |
@@ -228,6 +280,31 @@ server-selected planning instant. `approved_external` also includes
 approval is the provider deployment plan's exact, unexpired approved request;
 the probe is a separate native observation evidence binding. Missing, stale,
 superseded, or checksum-invalid evidence blocks publication.
+
+The operator plan-detail route also exposes the authoritative typed
+`detail.requirementResolutions[]` collection. Each row retains:
+
+- requirement and consumer keys, capability, version range, selected `mode`,
+  and deterministic `sortOrder`;
+- provider Component Release, deployment-unit, and component-instance
+  identities, version, platform, release/provenance checksums, and subscriber
+  set checksum;
+- expected state version/checksum plus observation, active-desired revision,
+  and observed-component-state identities;
+- provider evidence version, freshness, trusted/current decisions, and optional
+  provider approval and contract-probe identities/checksums; and
+- the canonical `bindingChecksum` and v1-compatibility decision.
+
+The Product Release owns allowed constraints and provider-first graph order.
+The immutable Target Deployment Plan alone owns the selected target mode and
+provider evidence. A release UI must correlate the plan's Product Release ID
+and checksum before rendering `included`, `pinned_existing`, or any other
+selected mode.
+
+`distr.product-release/v1` has no compatibility-group or rollback-group field.
+Those execution/recovery bindings belong to the frozen process, Target
+Deployment Plan, and review material and must not be inferred from component
+order or duplicated into the Product Release read model.
 
 The standard controlled-client policy requires four-eyes approval. At
 admission and again before task creation, Distr revalidates current active

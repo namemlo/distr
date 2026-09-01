@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -530,7 +531,8 @@ func buildOperatorPlanDetail(
 		SubscriberSetChecksum:   plan.SubscriberSetChecksum,
 		Targets:                 []types.OperatorPlanFact{}, Baselines: []types.OperatorPlanFact{},
 		Config: []types.OperatorPlanFact{}, Requirements: []types.OperatorPlanFact{},
-		Migrations: []types.OperatorPlanFact{}, Changes: []types.OperatorPlanFact{},
+		RequirementResolutions: slices.Clone(plan.ResolvedRequirements),
+		Migrations:             []types.OperatorPlanFact{}, Changes: []types.OperatorPlanFact{},
 		Risks: []types.OperatorPlanFact{}, Approvals: []types.OperatorPlanFact{},
 		Windows: []types.OperatorPlanFact{}, Adapters: []types.OperatorPlanFact{},
 		Steps: []types.OperatorPlanFact{}, Edges: []types.OperatorPlanFact{},

@@ -1,9 +1,10 @@
 package mapping
 
 import (
-	"slices"
+	"strings"
 
 	"github.com/distr-sh/distr/api"
+	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 )
@@ -29,7 +30,7 @@ func ProductReleaseManifestFromCreateRequest(
 		DependencyPolicyVersion:  request.DependencyPolicyVersion,
 		DependencyPolicyChecksum: request.DependencyPolicyChecksum,
 		ReleaseNotes:             request.ReleaseNotes,
-		RequiredPlatforms:        slices.Clone(request.RequiredPlatforms),
+		RequiredPlatforms:        cloneNonNilProductReleaseSlice(request.RequiredPlatforms),
 		Components:               components,
 		Requirements:             cloneProductReleaseRequirements(request.Requirements),
 	}
@@ -38,16 +39,82 @@ func ProductReleaseManifestFromCreateRequest(
 func ProductReleaseToAPI(
 	bundle types.ReleaseBundle,
 	manifest types.ProductReleaseManifest,
-) api.ProductRelease {
+	graph types.ProductReleaseGraph,
+) (api.ProductRelease, error) {
+	if strings.TrimSpace(manifest.DependencyPolicyChecksum) == "" {
+		return api.ProductRelease{}, apierrors.NewConflict(
+			"Product Release dependency-policy checksum is unavailable",
+		)
+	}
+	if strings.TrimSpace(graph.Checksum) == "" {
+		return api.ProductRelease{}, apierrors.NewConflict("Product Release graph checksum is unavailable")
+	}
+	if strings.TrimSpace(manifest.GraphChecksum) == "" {
+		return api.ProductRelease{}, apierrors.NewConflict(
+			"Product Release frozen graph checksum is unavailable",
+		)
+	}
+	if manifest.GraphChecksum != graph.Checksum {
+		return api.ProductRelease{}, apierrors.NewConflict(
+			"Product Release graph checksum does not match the frozen graph",
+		)
+	}
+	if len(manifest.Components) == 0 {
+		return api.ProductRelease{}, apierrors.NewConflict("Product Release components are unavailable")
+	}
 	components := make([]api.ProductReleaseComponent, 0, len(manifest.Components))
 	for _, component := range manifest.Components {
+		if component.Contract == nil {
+			return api.ProductRelease{}, apierrors.NewConflict(
+				"Product Release component contract snapshot is unavailable",
+			)
+		}
+		if component.ComponentKey != component.Contract.ComponentKey ||
+			component.Version != component.Contract.Version {
+			return api.ProductRelease{}, apierrors.NewConflict(
+				"Product Release component identity does not match the frozen contract",
+			)
+		}
+		if component.ComponentReleaseID == uuid.Nil ||
+			strings.TrimSpace(component.ComponentReleaseChecksum) == "" ||
+			len(component.Platforms) == 0 ||
+			len(component.Contract.Artifacts) == 0 {
+			return api.ProductRelease{}, apierrors.NewConflict(
+				"Product Release component manifest is incomplete",
+			)
+		}
+		for _, artifact := range component.Contract.Artifacts {
+			if strings.TrimSpace(artifact.Key) == "" ||
+				strings.TrimSpace(artifact.MediaType) == "" ||
+				strings.TrimSpace(artifact.Digest) == "" ||
+				len(artifact.Platforms) == 0 {
+				return api.ProductRelease{}, apierrors.NewConflict(
+					"Product Release component artifact identity is incomplete",
+				)
+			}
+			for _, platform := range artifact.Platforms {
+				if strings.TrimSpace(platform.Platform) == "" || strings.TrimSpace(platform.Digest) == "" {
+					return api.ProductRelease{}, apierrors.NewConflict(
+						"Product Release component platform identity is incomplete",
+					)
+				}
+			}
+		}
 		components = append(components, api.ProductReleaseComponent{
 			ComponentReleaseID:       component.ComponentReleaseID,
 			ComponentReleaseChecksum: component.ComponentReleaseChecksum,
 			ComponentKey:             component.ComponentKey,
 			Version:                  component.Version,
-			MigrationContracts:       slices.Clone(component.MigrationContracts),
+			Platforms:                cloneNonNilProductReleaseSlice(component.Platforms),
+			Artifacts:                cloneProductReleaseArtifacts(component.Contract.Artifacts),
+			Provides:                 cloneNonNilProductReleaseSlice(component.Provides),
+			Requires:                 cloneProductReleaseRequirements(component.Requires),
+			Migrations:               cloneNonNilProductReleaseSlice(component.Migrations),
+			MigrationContracts:       cloneProductReleaseMigrationContracts(component.MigrationContracts),
 		})
+	}
+	if len(graph.TopologicalOrder) == 0 {
+		return api.ProductRelease{}, apierrors.NewConflict("Product Release graph order is unavailable")
 	}
 	return api.ProductRelease{
 		ID:                       bundle.ID,
@@ -57,9 +124,10 @@ func ProductReleaseToAPI(
 		ChannelID:                bundle.ChannelID,
 		Status:                   bundle.Status,
 		CanonicalChecksum:        bundle.CanonicalChecksum,
-		GraphChecksum:            manifest.GraphChecksum,
+		GraphChecksum:            graph.Checksum,
 		PublishedByUserAccountID: bundle.PublishedByUserAccountID,
 		PublishedAt:              bundle.PublishedAt,
+		Graph:                    cloneProductReleaseGraph(graph),
 		Manifest: api.ProductReleaseManifest{
 			Schema:                   manifest.Schema,
 			Product:                  manifest.Product,
@@ -67,11 +135,11 @@ func ProductReleaseToAPI(
 			DependencyPolicyVersion:  manifest.DependencyPolicyVersion,
 			DependencyPolicyChecksum: manifest.DependencyPolicyChecksum,
 			ReleaseNotes:             manifest.ReleaseNotes,
-			RequiredPlatforms:        slices.Clone(manifest.RequiredPlatforms),
+			RequiredPlatforms:        cloneNonNilProductReleaseSlice(manifest.RequiredPlatforms),
 			Components:               components,
 			Requirements:             cloneProductReleaseRequirements(manifest.Requirements),
 		},
-	}
+	}, nil
 }
 
 func ProductReleaseValidationToAPI(
@@ -83,7 +151,8 @@ func ProductReleaseValidationToAPI(
 	}
 	for _, issue := range issues {
 		response.Issues = append(response.Issues, api.ProductReleaseValidationIssue{
-			Field: issue.Field, Rule: issue.Rule, Message: issue.Message, Path: slices.Clone(issue.Path),
+			Field: issue.Field, Rule: issue.Rule, Message: issue.Message,
+			Path: cloneNonNilProductReleaseSlice(issue.Path),
 		})
 	}
 	return response
@@ -92,9 +161,51 @@ func ProductReleaseValidationToAPI(
 func cloneProductReleaseRequirements(
 	input []types.CapabilityRequirement,
 ) []types.CapabilityRequirement {
-	result := slices.Clone(input)
+	result := cloneNonNilProductReleaseSlice(input)
 	for index := range result {
-		result[index].AllowedModes = slices.Clone(input[index].AllowedModes)
+		result[index].AllowedModes = cloneNonNilProductReleaseSlice(input[index].AllowedModes)
 	}
+	return result
+}
+
+func cloneProductReleaseArtifacts(
+	input []types.ComponentReleaseArtifact,
+) []types.ComponentReleaseArtifact {
+	result := cloneNonNilProductReleaseSlice(input)
+	for index := range result {
+		result[index].Platforms = cloneNonNilProductReleaseSlice(input[index].Platforms)
+	}
+	return result
+}
+
+func cloneProductReleaseMigrationContracts(
+	input []types.MigrationContract,
+) []types.MigrationContract {
+	result := cloneNonNilProductReleaseSlice(input)
+	for index := range result {
+		result[index].DependsOn = cloneNonNilProductReleaseSlice(input[index].DependsOn)
+		result[index].PreconditionProbes = cloneNonNilProductReleaseSlice(input[index].PreconditionProbes)
+		result[index].PostconditionProbes = cloneNonNilProductReleaseSlice(input[index].PostconditionProbes)
+	}
+	return result
+}
+
+func cloneProductReleaseGraph(input types.ProductReleaseGraph) types.ProductReleaseGraph {
+	result := input
+	result.Nodes = cloneNonNilProductReleaseSlice(input.Nodes)
+	for index := range result.Nodes {
+		result.Nodes[index].AllowedModes = cloneNonNilProductReleaseSlice(input.Nodes[index].AllowedModes)
+	}
+	result.Edges = cloneNonNilProductReleaseSlice(input.Edges)
+	for index := range result.Edges {
+		result.Edges[index].AllowedModes = cloneNonNilProductReleaseSlice(input.Edges[index].AllowedModes)
+	}
+	result.TopologicalOrder = cloneNonNilProductReleaseSlice(input.TopologicalOrder)
+	return result
+}
+
+func cloneNonNilProductReleaseSlice[T any](input []T) []T {
+	result := make([]T, len(input))
+	copy(result, input)
 	return result
 }

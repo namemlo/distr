@@ -4,8 +4,9 @@ This file tracks generic fork additions and upstream-facing changes introduced a
 
 ## Current Status
 
-Entries through PR-091 are recorded below; each entry's status and evidence
-boundary remain authoritative. PR-054A timestamp-expand runtime, migration,
+Entries through PR-091 and the separately integrated PR-094 and PR-096 slices
+are recorded below. Each entry's status and evidence boundary remain
+authoritative. PR-054A timestamp-expand runtime, migration,
 audited dirty-marker recovery, and operator documentation are implemented
 locally, while final acceptance remains pending. PR-055 through PR-082 build
 the default-off integrated control plane through migration 162. PR-083 adds
@@ -2099,3 +2100,33 @@ Use one entry per pull request:
   CI, registry, cloud, or service-specific assumptions.
 - Compatibility notes: Existing consumers may ignore the additive fields. No
   lifecycle source of truth or write path changes.
+
+### PR-096 - Complete Product Release manifest read model
+
+- Status: Implemented with focused local verification; live deployment proof
+  remains a separate integration activity.
+- Upstream base: `31a3e545`.
+- Feature flags: Uses the existing default-off `operator_control_plane_v2`
+  read/UI boundary; no new flag is added.
+- User-facing behavior: Product Release detail shows the complete frozen
+  manifest and graph, and selected target resolution only from a matching
+  immutable plan.
+- Database changes: None.
+- API changes: Product Release create/get/publish responses add the verified
+  graph and complete component contract snapshots. Operator plan detail adds
+  typed `requirementResolutions`.
+- UI changes: Draft and published views show policy checksum and graph order;
+  published detail also shows artifacts, capabilities, migrations, graph edges,
+  selected provider mode/identity/state evidence, and explicit rollback-group
+  ownership.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0083, PR-096 fork notes, and complete operator API
+  field/ownership guidance.
+- Tests: Focused Go mapping/handler/database coverage plus Angular draft/detail,
+  resolution-context, and fail-closed rendering coverage.
+- Upstream contribution notes: Community-neutral release and plan read models
+  with no adopter, CI provider, registry, runtime address, service name,
+  credential, or client-database assumption.
+- Compatibility notes: Persisted Product Release/plan canonical bytes and
+  routes are unchanged. API fields are additive. Incomplete or inconsistent
+  Product Release reads now fail closed instead of returning partial success.

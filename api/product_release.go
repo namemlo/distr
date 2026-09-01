@@ -151,6 +151,7 @@ type ProductRelease struct {
 	PublishedByUserAccountID *uuid.UUID                `json:"publishedByUserAccountId,omitempty"`
 	PublishedAt              *time.Time                `json:"publishedAt,omitempty"`
 	Manifest                 ProductReleaseManifest    `json:"manifest"`
+	Graph                    types.ProductReleaseGraph `json:"graph"`
 }
 
 type ProductReleaseManifest struct {
@@ -166,11 +167,16 @@ type ProductReleaseManifest struct {
 }
 
 type ProductReleaseComponent struct {
-	ComponentReleaseID       uuid.UUID                 `json:"componentReleaseId"`
-	ComponentReleaseChecksum string                    `json:"componentReleaseChecksum"`
-	ComponentKey             string                    `json:"componentKey"`
-	Version                  string                    `json:"version"`
-	MigrationContracts       []types.MigrationContract `json:"migrationContracts,omitempty"`
+	ComponentReleaseID       uuid.UUID                        `json:"componentReleaseId"`
+	ComponentReleaseChecksum string                           `json:"componentReleaseChecksum"`
+	ComponentKey             string                           `json:"componentKey"`
+	Version                  string                           `json:"version"`
+	Platforms                []string                         `json:"platforms"`
+	Artifacts                []types.ComponentReleaseArtifact `json:"artifacts"`
+	Provides                 []types.CapabilityDeclaration    `json:"provides"`
+	Requires                 []types.CapabilityRequirement    `json:"requires"`
+	Migrations               []types.MigrationDeclaration     `json:"migrations"`
+	MigrationContracts       []types.MigrationContract        `json:"migrationContracts"`
 }
 
 type ProductReleaseValidationResponse struct {

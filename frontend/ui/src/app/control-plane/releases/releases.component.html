@@ -118,9 +118,6 @@
                 release.status
               }}</span>
             </div>
-            <div class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
-              {{ release.canonicalChecksum || 'Checksum assigned after validation' }}
-            </div>
             <section
               class="mt-4 rounded border border-gray-200 p-3 text-sm dark:border-gray-700"
               aria-label="Immutable product manifest">
@@ -135,12 +132,22 @@
                   <dd class="font-mono text-xs">{{ release.manifest.schema }}</dd>
                 </div>
                 <div>
-                  <dt class="text-gray-500">Dependency policy</dt>
-                  <dd>{{ release.manifest.dependencyPolicyVersion }}</dd>
+                  <dt class="text-gray-500">Dependency policy version</dt>
+                  <dd class="font-mono text-xs">{{ release.manifest.dependencyPolicyVersion }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Dependency policy checksum</dt>
+                  <dd class="break-all font-mono text-xs">{{ release.manifest.dependencyPolicyChecksum }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Canonical checksum</dt>
+                  <dd class="break-all font-mono text-xs">
+                    {{ release.canonicalChecksum || 'Checksum assigned after validation' }}
+                  </dd>
                 </div>
                 <div>
                   <dt class="text-gray-500">Graph checksum</dt>
-                  <dd class="break-all font-mono text-xs">{{ release.graphChecksum }}</dd>
+                  <dd class="break-all font-mono text-xs">{{ release.graph.checksum }}</dd>
                 </div>
                 <div>
                   <dt class="text-gray-500">Required platforms</dt>
@@ -171,6 +178,14 @@
                   <li>No cross-component requirements declared.</li>
                 }
               </ul>
+              <h4 class="mt-3 font-medium">Frozen graph order</h4>
+              <ol class="mt-1 list-decimal space-y-1 pl-5 text-xs">
+                @for (node of release.graph.topologicalOrder; track node) {
+                  <li class="font-mono">{{ node }}</li>
+                } @empty {
+                  <li class="text-red-700 dark:text-red-300">No frozen graph order is available.</li>
+                }
+              </ol>
             </section>
             @if (productValidation(); as validation) {
               <p class="mt-3 text-sm text-gray-700 dark:text-gray-300">
@@ -391,6 +406,21 @@
       </dl>
     </section>
 
+    @if (manifestError()) {
+      <div
+        role="alert"
+        class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {{ manifestError() }}
+      </div>
+    }
+    @if (resolutionError() && !productRelease()) {
+      <div
+        role="alert"
+        class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {{ resolutionError() }}
+      </div>
+    }
+
     @if (productRelease(); as product) {
       <section
         class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
@@ -408,8 +438,12 @@
             <dd class="font-mono text-xs">{{ product.manifest.schema }}</dd>
           </div>
           <div>
-            <dt class="text-gray-500">Dependency policy</dt>
-            <dd>{{ product.manifest.dependencyPolicyVersion }}</dd>
+            <dt class="text-gray-500">Dependency policy version</dt>
+            <dd class="font-mono text-xs">{{ product.manifest.dependencyPolicyVersion }}</dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Dependency policy checksum</dt>
+            <dd class="break-all font-mono text-xs">{{ product.manifest.dependencyPolicyChecksum }}</dd>
           </div>
           <div>
             <dt class="text-gray-500">Canonical checksum</dt>
@@ -417,7 +451,7 @@
           </div>
           <div>
             <dt class="text-gray-500">Graph checksum</dt>
-            <dd class="break-all font-mono text-xs">{{ product.graphChecksum }}</dd>
+            <dd class="break-all font-mono text-xs">{{ product.graph.checksum }}</dd>
           </div>
           <div>
             <dt class="text-gray-500">Required platforms</dt>
@@ -427,32 +461,243 @@
         <p class="mt-3 text-sm">
           <span class="text-gray-500">Release notes:</span> {{ product.manifest.releaseNotes || 'No release notes' }}
         </p>
-        <div class="mt-4 grid gap-4 lg:grid-cols-2">
-          <div>
-            <h3 class="font-medium">Immutable component pins</h3>
-            <ul class="mt-2 space-y-2 text-xs">
-              @for (component of product.manifest.components; track component.componentReleaseId) {
-                <li class="rounded bg-gray-50 p-2 dark:bg-gray-900">
-                  <span class="font-mono">{{ component.componentKey || component.componentReleaseId }}</span>
-                  {{ component.version || '' }}
-                  <div class="break-all font-mono">{{ component.componentReleaseChecksum }}</div>
-                </li>
-              }
-            </ul>
+
+        <section class="mt-5" aria-labelledby="manifest-components-heading">
+          <h3 id="manifest-components-heading" class="font-medium">Immutable component identities</h3>
+          <div class="mt-3 space-y-4">
+            @for (component of product.manifest.components; track component.componentReleaseId) {
+              <article class="rounded-lg border border-gray-200 p-4 text-sm dark:border-gray-700">
+                <div class="flex flex-wrap items-baseline justify-between gap-2">
+                  <h4 class="font-semibold text-gray-900 dark:text-white">
+                    {{ component.componentKey }} {{ component.version }}
+                  </h4>
+                  <span class="font-mono text-xs">{{ component.platforms.join(', ') }}</span>
+                </div>
+                <dl class="mt-3 grid gap-2 md:grid-cols-2">
+                  <div>
+                    <dt class="text-gray-500">Component Release ID</dt>
+                    <dd class="break-all font-mono text-xs">{{ component.componentReleaseId }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-gray-500">Component checksum</dt>
+                    <dd class="break-all font-mono text-xs">{{ component.componentReleaseChecksum }}</dd>
+                  </div>
+                </dl>
+
+                <h5 class="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Artifact identities</h5>
+                <ul class="mt-2 space-y-2 text-xs">
+                  @for (artifact of component.artifacts; track artifact.key + ':' + artifact.digest) {
+                    <li class="rounded bg-gray-50 p-3 dark:bg-gray-900">
+                      <div>
+                        <strong>{{ artifact.key }}</strong> · {{ artifact.type }}
+                      </div>
+                      <div class="break-all font-mono">{{ artifact.mediaType }}</div>
+                      <div class="break-all font-mono">{{ artifact.digest }}</div>
+                      @for (platform of artifact.platforms; track platform.platform) {
+                        <div class="mt-1 break-all font-mono">{{ platform.platform }} · {{ platform.digest }}</div>
+                      } @empty {
+                        <div class="mt-1 text-red-700 dark:text-red-300">No exact platform digest is recorded.</div>
+                      }
+                    </li>
+                  } @empty {
+                    <li class="text-red-700 dark:text-red-300">No immutable artifact identity is recorded.</li>
+                  }
+                </ul>
+
+                <div class="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div>
+                    <h5 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Provides</h5>
+                    <ul class="mt-2 space-y-1 text-xs">
+                      @for (provider of component.provides; track provider.name + ':' + provider.version) {
+                        <li>
+                          <strong>{{ provider.name }}</strong> {{ provider.version }}
+                        </li>
+                      } @empty {
+                        <li>No capabilities declared.</li>
+                      }
+                    </ul>
+                  </div>
+                  <div>
+                    <h5 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Requires</h5>
+                    <ul class="mt-2 space-y-2 text-xs">
+                      @for (requirement of component.requires; track requirement.name + ':' + requirement.range) {
+                        <li>
+                          <strong>{{ requirement.name }}</strong> {{ requirement.range }} ·
+                          {{ requirement.resolutionStage }} · {{ requirement.allowedModes.join(', ') }}
+                        </li>
+                      } @empty {
+                        <li>No component requirements declared.</li>
+                      }
+                    </ul>
+                  </div>
+                </div>
+
+                <h5 class="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Migration contract bindings
+                </h5>
+                <ul class="mt-2 space-y-2 text-xs">
+                  @for (contract of component.migrationContracts; track contract.id + ':' + contract.checksum) {
+                    <li class="rounded bg-gray-50 p-3 dark:bg-gray-900">
+                      <div>
+                        <strong>{{ contract.id }}</strong> · {{ contract.phase }} · {{ contract.reversibility }}
+                      </div>
+                      <div class="break-all font-mono">{{ contract.checksum }}</div>
+                      <div>
+                        {{ contract.databaseResourceKey }} · {{ contract.expectedSourceVersion }} →
+                        {{ contract.resultingVersion }}
+                      </div>
+                      <div>
+                        Depends on {{ contract.dependsOn?.join(', ') || 'nothing' }} · forward fix
+                        {{ contract.requiresForwardFix ? 'required' : 'not required' }}
+                      </div>
+                    </li>
+                  } @empty {
+                    <li>No structured migration contract is bound.</li>
+                  }
+                </ul>
+                @if (component.migrations.length > 0) {
+                  <p class="mt-2 text-xs text-gray-500">
+                    Declarations:
+                    @for (migration of component.migrations; track migration.key) {
+                      <span class="mr-2"
+                        >{{ migration.order }}. {{ migration.key }} ({{ migration.compatibility }})</span
+                      >
+                    }
+                  </p>
+                }
+              </article>
+            } @empty {
+              <p class="text-sm text-red-700 dark:text-red-300">No immutable component identities are available.</p>
+            }
           </div>
-          <div>
-            <h3 class="font-medium">Dependency constraints</h3>
+        </section>
+
+        <div class="mt-5 grid gap-5 xl:grid-cols-2">
+          <section aria-labelledby="manifest-requirements-heading">
+            <h3 id="manifest-requirements-heading" class="font-medium">Product requirements</h3>
             <ul class="mt-2 space-y-2 text-xs">
               @for (requirement of product.manifest.requirements; track requirement.name + ':' + requirement.range) {
-                <li class="rounded bg-gray-50 p-2 dark:bg-gray-900">
+                <li class="rounded bg-gray-50 p-3 dark:bg-gray-900">
                   <strong>{{ requirement.name }}</strong> {{ requirement.range }}
                   <div>Stage {{ requirement.resolutionStage }} · modes {{ requirement.allowedModes.join(', ') }}</div>
                 </li>
               } @empty {
-                <li>No cross-component requirements declared.</li>
+                <li>No product-level requirements declared.</li>
               }
             </ul>
-          </div>
+          </section>
+
+          <section aria-labelledby="manifest-graph-heading">
+            <h3 id="manifest-graph-heading" class="font-medium">Release graph and order</h3>
+            <p class="mt-2 break-all font-mono text-xs">{{ product.graph.checksum }}</p>
+            <ol class="mt-2 list-decimal space-y-1 pl-5 text-xs">
+              @for (node of product.graph.topologicalOrder; track node) {
+                <li class="font-mono">{{ node }}</li>
+              } @empty {
+                <li class="text-red-700 dark:text-red-300">No frozen graph order is available.</li>
+              }
+            </ol>
+            <ul class="mt-3 space-y-2 text-xs">
+              @for (edge of product.graph.edges; track edge.key) {
+                <li class="rounded bg-gray-50 p-3 dark:bg-gray-900">
+                  <div class="font-mono">{{ edge.from }} → {{ edge.to }}</div>
+                  <div>
+                    {{ edge.capability }} {{ edge.versionRange }} · provider
+                    {{ edge.providerVersion || 'target-resolved' }}
+                  </div>
+                  <div>{{ edge.resolutionStage }} · {{ edge.allowedModes?.join(', ') || 'no modes' }}</div>
+                </li>
+              } @empty {
+                <li>No capability edges declared.</li>
+              }
+            </ul>
+          </section>
+        </div>
+
+        <section class="mt-5" aria-labelledby="selected-resolution-heading">
+          <h3 id="selected-resolution-heading" class="font-medium">Selected target resolution</h3>
+          @if (!hasTargetRequirements(product)) {
+            <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+              This Product Release has no target-specific capability requirement to resolve.
+            </p>
+          } @else if (resolutionPlan(); as plan) {
+            <p class="mt-1 text-xs text-gray-500">
+              Frozen plan {{ plan.plan.id }} · {{ plan.providerResolutionChecksum }}
+            </p>
+            <ul class="mt-3 space-y-2 text-xs">
+              @for (resolution of orderedRequirementResolutions(); track resolution.requirementKey) {
+                <li class="rounded border border-gray-200 p-3 dark:border-gray-700">
+                  <div>
+                    <strong>{{ resolution.consumerKey }}</strong> requires {{ resolution.capability }}
+                    {{ resolution.versionRange }}
+                  </div>
+                  <div>
+                    Selected mode: <strong>{{ resolution.mode }}</strong>
+                  </div>
+                  <div>
+                    Provider {{ resolution.providerReleaseId || 'external' }} · {{ resolution.providerVersion }} ·
+                    {{ resolution.providerPlatform }}
+                  </div>
+                  <dl class="mt-2 grid gap-x-3 gap-y-1 md:grid-cols-[auto_1fr]">
+                    <dt class="text-gray-500">Provider release checksum</dt>
+                    <dd class="break-all font-mono">
+                      {{ resolution.providerReleaseChecksum || 'Not applicable' }}
+                    </dd>
+                    <dt class="text-gray-500">Provider deployment unit</dt>
+                    <dd class="break-all font-mono">{{ resolution.providerDeploymentUnitId || 'Not applicable' }}</dd>
+                    <dt class="text-gray-500">Component instance</dt>
+                    <dd class="break-all font-mono">{{ resolution.componentInstanceId || 'Not applicable' }}</dd>
+                    <dt class="text-gray-500">Expected state</dt>
+                    <dd>
+                      v{{ resolution.expectedStateVersion }} ·
+                      <span class="break-all font-mono">{{ resolution.expectedStateChecksum }}</span>
+                    </dd>
+                    <dt class="text-gray-500">Observed state</dt>
+                    <dd class="break-all font-mono">
+                      {{ resolution.observedComponentStateId || resolution.observationId || 'Not applicable' }}
+                    </dd>
+                    <dt class="text-gray-500">Active desired revision</dt>
+                    <dd class="break-all font-mono">{{ resolution.activeDesiredRevisionId || 'Not applicable' }}</dd>
+                    <dt class="text-gray-500">Provenance binding</dt>
+                    <dd class="break-all font-mono">{{ resolution.provenanceBindingChecksum || 'Not applicable' }}</dd>
+                    <dt class="text-gray-500">Binding checksum</dt>
+                    <dd class="break-all font-mono">{{ resolution.bindingChecksum }}</dd>
+                  </dl>
+                  @if (resolution.providerEvidenceVersion) {
+                    <div class="mt-2">
+                      Evidence v{{ resolution.providerEvidenceVersion }} · trusted
+                      {{ resolution.observationTrusted ? 'yes' : 'no' }} · current
+                      {{ resolution.observationCurrent ? 'yes' : 'no' }} · fresh until
+                      {{ resolution.observationFreshUntil || 'not recorded' }}
+                    </div>
+                  }
+                  @if (resolution.providerApprovalRequestId || resolution.contractProbeObservationId) {
+                    <div class="mt-2 break-all font-mono">
+                      Approval {{ resolution.providerApprovalRequestId || 'not required' }} ·
+                      {{ resolution.providerApprovalChecksum || 'no approval checksum' }}
+                    </div>
+                    <div class="break-all font-mono">
+                      Contract probe {{ resolution.contractProbeObservationId || 'not required' }} ·
+                      {{ resolution.contractProbeEvidenceChecksum || 'no probe checksum' }}
+                    </div>
+                  }
+                </li>
+              } @empty {
+                <li class="text-red-700 dark:text-red-300">
+                  No selected requirement resolution is recorded in the frozen plan.
+                </li>
+              }
+            </ul>
+          } @else {
+            <p class="mt-2 text-sm text-red-700 dark:text-red-300">{{ resolutionError() }}</p>
+          }
+        </section>
+
+        <div
+          class="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+          <strong>Compatibility and rollback grouping:</strong>
+          No compatibility or rollback group is stored by <code>distr.product-release/v1</code>. Distr does not infer
+          one from component order; the frozen process/plan review material must provide that binding before execution.
         </div>
       </section>
     }

@@ -9,12 +9,14 @@ import {
   OperatorControlPlaneError,
   OperatorCreateProductReleaseRequest,
   OperatorEvidenceRef,
+  OperatorPlanDetail,
   OperatorProductRelease,
   OperatorProductReleaseValidation,
   OperatorReleaseCompare,
   OperatorReleaseDetail,
   OperatorReleaseFilters,
   OperatorReleaseRow,
+  OperatorRequirementResolution,
 } from '../../types/operator-control-plane';
 import {
   CreateUpdateReleaseBundleRequest,
@@ -73,6 +75,7 @@ export class ReleasesComponent {
   protected readonly componentRelease = signal<ReleaseBundle | undefined>(undefined);
   protected readonly componentValidation = signal<ReleaseBundleValidationResponse | undefined>(undefined);
   protected readonly productRelease = signal<OperatorProductRelease | undefined>(undefined);
+  protected readonly resolutionPlan = signal<OperatorPlanDetail | undefined>(undefined);
   protected readonly productValidation = signal<OperatorProductReleaseValidation | undefined>(undefined);
   protected readonly loading = signal(true);
   protected readonly loadingMore = signal(false);
@@ -83,6 +86,8 @@ export class ReleasesComponent {
   protected readonly compareError = signal('');
   protected readonly mutationError = signal('');
   protected readonly mutationStatus = signal('');
+  protected readonly manifestError = signal('');
+  protected readonly resolutionError = signal('');
 
   constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
@@ -152,10 +157,46 @@ export class ReleasesComponent {
       if (version !== this.requestVersion) return;
       this.detail.set(response.detail);
       if (response.detail.release.kind.toUpperCase() === 'PRODUCT') {
+        this.manifestError.set('');
         try {
-          this.productRelease.set(await firstValueFrom(this.controlPlane.getProductRelease(releaseId)));
+          const productRelease = await firstValueFrom(this.controlPlane.getProductRelease(releaseId));
+          if (!this.completeProductRelease(productRelease)) {
+            throw new Error('incomplete Product Release read model');
+          }
+          this.productRelease.set(productRelease);
         } catch {
           this.productRelease.set(undefined);
+          this.manifestError.set('The immutable Product Release manifest could not be verified.');
+        }
+        if (version !== this.requestVersion) return;
+        const deploymentPlanId = response.detail.changeContext.deploymentPlanId;
+        if (deploymentPlanId) {
+          this.resolutionError.set('');
+          try {
+            const plan = await firstValueFrom(this.controlPlane.getPlan(deploymentPlanId));
+            if (version !== this.requestVersion) return;
+            const product = this.productRelease();
+            if (
+              plan.detail.plan.productReleaseId !== releaseId ||
+              !product ||
+              plan.detail.productReleaseChecksum !== product.canonicalChecksum ||
+              !plan.detail.providerResolutionChecksum
+            ) {
+              this.resolutionPlan.set(undefined);
+              this.resolutionError.set(
+                'Selected target resolution does not match the immutable Product Release context.'
+              );
+            } else {
+              this.resolutionPlan.set(plan.detail);
+            }
+          } catch {
+            if (version !== this.requestVersion) return;
+            this.resolutionPlan.set(undefined);
+            this.resolutionError.set('Selected target resolution could not be verified from the frozen plan.');
+          }
+        } else {
+          this.resolutionPlan.set(undefined);
+          this.resolutionError.set('Selected resolution is unavailable without a frozen deployment-plan context.');
         }
       }
       this.evidence.set(this.dedupeEvidence(response.detail.evidence));
@@ -340,6 +381,19 @@ export class ReleasesComponent {
     return Object.entries(platformDigests).sort(([left], [right]) => left.localeCompare(right));
   }
 
+  protected orderedRequirementResolutions(): OperatorRequirementResolution[] {
+    return [...(this.resolutionPlan()?.requirementResolutions ?? [])].sort(
+      (left, right) => left.sortOrder - right.sortOrder || left.requirementKey.localeCompare(right.requirementKey)
+    );
+  }
+
+  protected hasTargetRequirements(release: OperatorProductRelease): boolean {
+    return (
+      release.manifest.requirements.length > 0 ||
+      release.manifest.components.some((component) => component.requires.length > 0)
+    );
+  }
+
   protected releaseHref(releaseId: string): string {
     const deploymentUnitId = this.filterForm.controls.deploymentUnitId.value.trim();
     return deploymentUnitId
@@ -365,12 +419,16 @@ export class ReleasesComponent {
     this.releases.set([]);
     this.nextCursor.set(undefined);
     this.detail.set(undefined);
+    this.productRelease.set(undefined);
+    this.resolutionPlan.set(undefined);
     this.evidence.set([]);
     this.comparison.set(undefined);
     this.compareReleaseId.reset('');
     this.error.set('');
     this.compareError.set('');
     this.evidenceIncomplete.set(false);
+    this.manifestError.set('');
+    this.resolutionError.set('');
   }
 
   private dedupeEvidence(items: OperatorEvidenceRef[]): OperatorEvidenceRef[] {
@@ -380,6 +438,38 @@ export class ReleasesComponent {
       seen.add(item.id);
       return true;
     });
+  }
+
+  private completeProductRelease(release: OperatorProductRelease): boolean {
+    return (
+      !!release.canonicalChecksum &&
+      !!release.manifest.dependencyPolicyChecksum &&
+      !!release.graph.checksum &&
+      release.graph.checksum === release.graphChecksum &&
+      release.graph.topologicalOrder.length > 0 &&
+      release.manifest.components.length > 0 &&
+      release.manifest.components.every(
+        (component) =>
+          !!component.componentReleaseId &&
+          !!component.componentReleaseChecksum &&
+          !!component.componentKey &&
+          !!component.version &&
+          Array.isArray(component.platforms) &&
+          Array.isArray(component.provides) &&
+          Array.isArray(component.requires) &&
+          Array.isArray(component.migrations) &&
+          Array.isArray(component.migrationContracts) &&
+          component.artifacts.length > 0 &&
+          component.artifacts.every(
+            (artifact) =>
+              !!artifact.key &&
+              !!artifact.mediaType &&
+              !!artifact.digest &&
+              artifact.platforms.length > 0 &&
+              artifact.platforms.every((platform) => !!platform.platform && !!platform.digest)
+          )
+      )
+    );
   }
 
   private parseRequest<T>(control: FormControl<string>, errorMessage: string): T | undefined {

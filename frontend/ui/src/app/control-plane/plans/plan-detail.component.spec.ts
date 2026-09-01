@@ -88,6 +88,7 @@ describe('PlanDetailComponent', () => {
     baselines: [fact('baseline', 'sha256:baseline-fact')],
     config: [fact('config', 'sha256:config-fact')],
     requirements: [fact('provider', 'sha256:provider-fact')],
+    requirementResolutions: [],
     migrations: [fact('migration', 'sha256:migration-fact')],
     changes: [fact('change', 'sha256:change-fact')],
     risks: [fact('risk', 'sha256:risk-fact')],

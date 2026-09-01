@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/mapping"
 	"github.com/distr-sh/distr/internal/middleware"
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 	"github.com/oaswrap/spec/adapter/chiopenapi"
@@ -118,7 +120,12 @@ func createProductReleaseHandler() http.HandlerFunc {
 			handleProductReleaseError(w, r, log, "load created", err)
 			return
 		}
-		RespondJSON(w, mapping.ProductReleaseToAPI(*bundle, *storedManifest))
+		response, err := productReleaseResponse(ctx, *bundle, *storedManifest, *authentication.CurrentOrgID())
+		if err != nil {
+			handleProductReleaseError(w, r, log, "map created", err)
+			return
+		}
+		RespondJSON(w, response)
 	}
 }
 
@@ -158,7 +165,12 @@ func getProductReleaseHandler() http.HandlerFunc {
 			handleProductReleaseError(w, r, log, "get", err)
 			return
 		}
-		RespondJSON(w, mapping.ProductReleaseToAPI(*bundle, *manifest))
+		response, err := productReleaseResponse(ctx, *bundle, *manifest, *authentication.CurrentOrgID())
+		if err != nil {
+			handleProductReleaseError(w, r, log, "map", err)
+			return
+		}
+		RespondJSON(w, response)
 	}
 }
 
@@ -209,8 +221,26 @@ func publishProductReleaseHandler() http.HandlerFunc {
 			handleProductReleaseError(w, r, log, "load published", err)
 			return
 		}
-		RespondJSON(w, mapping.ProductReleaseToAPI(*bundle, *manifest))
+		response, err := productReleaseResponse(ctx, *bundle, *manifest, *authentication.CurrentOrgID())
+		if err != nil {
+			handleProductReleaseError(w, r, log, "map published", err)
+			return
+		}
+		RespondJSON(w, response)
 	}
+}
+
+func productReleaseResponse(
+	ctx context.Context,
+	bundle types.ReleaseBundle,
+	manifest types.ProductReleaseManifest,
+	organizationID uuid.UUID,
+) (api.ProductRelease, error) {
+	graph, err := db.GetProductReleaseGraph(ctx, bundle.ID, organizationID)
+	if err != nil {
+		return api.ProductRelease{}, err
+	}
+	return mapping.ProductReleaseToAPI(bundle, manifest, *graph)
 }
 
 func getProductReleaseGraphHandler() http.HandlerFunc {

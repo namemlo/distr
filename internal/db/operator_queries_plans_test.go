@@ -117,3 +117,27 @@ func TestRequirementProviderEvidenceMessageExposesFrozenApprovalAndProbe(t *test
 	g.Expect(message).To(ContainSubstring(approvalID.String()))
 	g.Expect(message).To(ContainSubstring(probeID.String()))
 }
+
+func TestOperatorPlanDetailRetainsTypedRequirementResolutions(t *testing.T) {
+	g := NewWithT(t)
+	providerReleaseID := uuid.New()
+	resolution := types.RequirementResolution{
+		ID: uuid.New(), RequirementKey: "target:transaction-api:customer.api",
+		ConsumerKey: "transaction-api", Capability: "customer.api", VersionRange: "=1.2.3",
+		Mode:              types.RequirementResolutionModePinnedExisting,
+		ProviderReleaseID: &providerReleaseID, ProviderVersion: "1.2.3",
+		ProviderPlatform: "linux/amd64", ProviderReleaseChecksum: "sha256:" + strings.Repeat("a", 64),
+		ExpectedStateVersion: 7, ExpectedStateChecksum: "sha256:" + strings.Repeat("b", 64),
+		BindingChecksum: "sha256:" + strings.Repeat("c", 64), SortOrder: 1,
+	}
+
+	detail := buildOperatorPlanDetail(
+		types.OperatorPlanRow{},
+		types.DeploymentPlan{ResolvedRequirements: []types.RequirementResolution{resolution}},
+		nil, "sha256:release", "sha256:config", nil, nil, nil, nil,
+	)
+
+	g.Expect(detail.RequirementResolutions).To(Equal([]types.RequirementResolution{resolution}))
+	g.Expect(detail.Requirements).To(HaveLen(1))
+	g.Expect(detail.Requirements[0].Kind).To(Equal("pinned_existing"))
+}
