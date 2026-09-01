@@ -2237,7 +2237,7 @@ Use one entry per pull request:
 
 - Status: Implemented with focused local verification; no live environment is
   contacted or changed.
-- Upstream base: `a6497c77`.
+- Upstream base: `57bebade`.
 - Feature flags: None; this is release-policy tooling only.
 - User-facing behavior: The default release scan remains strict. A named
   custom fork can explicitly select a separately documented exact baseline.
@@ -2247,7 +2247,7 @@ Use one entry per pull request:
 - Agent protocol changes: None.
 - Documentation: Adds the named-fork boundary, operator command, baseline
   review procedure, and exact declarative finding inventory, including the
-  hardened adopter-observer example at the corrected combined release head.
+  hardened adopter-observer example at the final combined release head.
 - Tests: Node fixtures prove default strict rejection, exact-profile
   acceptance, and rejection of injected, stale, unused, forged, or
   noncanonically serialized findings.
