@@ -82,9 +82,9 @@ func TestResolveFrozenRuntimeTrustRequiresOneAuthoritativeBaseline(t *testing.T)
 	baseline := types.DeploymentPlanBaseline{
 		ComponentInstanceID: componentInstanceID, ComponentKey: step.ComponentKey,
 		DesiredRevision: 9, DesiredChecksum: "sha256:" + strings.Repeat("a", 64),
-		Image: "sha256:" + strings.Repeat("b", 64),
+		Image:          "sha256:" + strings.Repeat("b", 64),
 		ConfigChecksum: "sha256:" + strings.Repeat("c", 64),
-		Platform: "linux/amd64", Projection: types.BaselineProjectionVerifiedV2,
+		Platform:       "linux/amd64", Projection: types.BaselineProjectionVerifiedV2,
 		AuthorizesV2Execution: true,
 	}
 	canonical := types.TargetDeploymentPlanCanonical{
