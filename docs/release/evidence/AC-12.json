@@ -3,7 +3,7 @@
   "acceptanceId": "AC-12",
   "owner": "PR-058",
   "proofClass": "community-focused-test",
-  "sourceCommit": "07d3625d2e5f38f0eba6037b30144f05fadc8830",
+  "sourceCommit": "c956f8c0a9853dbb02f432feb80cf29f34e33f1e",
   "automatedTest": {
     "path": "internal/targetconfig/canonical_test.go",
     "sha256": "sha256:a49f375bbcd499f94f7f91af9f155a06d868575b3da7d53ee528ef23acffc8c4"
@@ -14,6 +14,6 @@
   },
   "testResult": {
     "path": "docs/release/evidence/results/1d655380f910f87e04906bba01a6560860268af5d4fa5b14cd1430815a17d14d.json",
-    "sha256": "sha256:f8a143358bed24cfcc08eb98f2f310a76a2c9627eb28ad2cb3472af94b452718"
+    "sha256": "sha256:6ca5cbd534a923a26bb575d681d5f188f82ca220359a0807da62920382b0a481"
   }
 }

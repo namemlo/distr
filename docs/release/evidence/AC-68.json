@@ -3,7 +3,7 @@
   "acceptanceId": "AC-68",
   "owner": "PR-059",
   "proofClass": "community-focused-test",
-  "sourceCommit": "07d3625d2e5f38f0eba6037b30144f05fadc8830",
+  "sourceCommit": "c956f8c0a9853dbb02f432feb80cf29f34e33f1e",
   "automatedTest": {
     "path": "internal/targetconfig/v1_extraction_test.go",
     "sha256": "sha256:b24609bbac43df0cffe5ff134c32acc2796afb7828ac5ee10cd59947132d1066"
@@ -14,6 +14,6 @@
   },
   "testResult": {
     "path": "docs/release/evidence/results/626320cb24880ed16147a52ce78003071fb7ae612b403a4c2f708c59cb1285e8.json",
-    "sha256": "sha256:0eace88c075e5f062efbd613d28ec628bf947efab393899a1ec6d70a6ff9851a"
+    "sha256": "sha256:5e268c624ebe8099c4aecf9c5de3873d06439546bf6201be3b9e7e3dc3aed8da"
   }
 }

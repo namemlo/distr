@@ -1,6 +1,6 @@
 {
   "schema": "distr.control-plane-test-result/v1",
-  "sourceCommit": "7791e443a4b555f2a8525a3987ba6aacd50fd9a5",
+  "sourceCommit": "7cab5bed90920d770007dd149412e4b660e8485e",
   "command": {
     "runner": "go-test",
     "argv": [
@@ -76,8 +76,8 @@
     ]
   },
   "status": "passed",
-  "startedAt": "2026-09-01T02:18:14.392Z",
-  "completedAt": "2026-09-01T02:18:21.378Z",
+  "startedAt": "2026-09-01T02:33:15.474Z",
+  "completedAt": "2026-09-01T02:33:22.767Z",
   "compiledPackageSources": [
     {
       "path": "internal/releasebundles/canonical_test.go",
