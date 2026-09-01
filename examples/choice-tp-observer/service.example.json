@@ -11,6 +11,7 @@
     "observerTokenFile": "/run/secrets/distr_observer_token",
     "observerTokenFingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "evidencePrivateKeyFile": "/run/secrets/evidence_ed25519_key",
+    "evidencePublicKeyFingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
     "executorCredentialFingerprints": [
       "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "sha256:3333333333333333333333333333333333333333333333333333333333333333"
@@ -62,5 +63,5 @@
     "initialDelayMs": 1000,
     "maxDelayMs": 10000
   },
-  "canonicalChecksum": "sha256:5e8a07dbaa60a077af7f2da3dc7b3dfcc36d86911a5dd621a7d7df7160428164"
+  "canonicalChecksum": "sha256:92d3d823fa1bf06b4b2560cdf0fab4576e019beefc914fe530a4e1c5ef9d145f"
 }

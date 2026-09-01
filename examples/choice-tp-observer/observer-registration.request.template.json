@@ -1,0 +1,18 @@
+{
+  "deploymentUnitId": "10000000-0000-4000-8000-000000000003",
+  "observerKey": "choice-tp-dev-independent-observer-v1",
+  "adapterImplementation": "emlo.choice-tp.read-only-ssh",
+  "adapterVersion": "2.0.0",
+  "credential": "${DISTR_OBSERVER_TOKEN}",
+  "maxFreshnessSeconds": 300,
+  "maxClockSkewSeconds": 30,
+  "measurements": [
+    "artifactDigest",
+    "configChecksum",
+    "schemaVersion",
+    "capabilityChecksum",
+    "platform",
+    "topologyChecksum",
+    "health"
+  ]
+}

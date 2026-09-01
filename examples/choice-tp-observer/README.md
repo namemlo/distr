@@ -20,15 +20,18 @@ Run the observer under a credential set that is separate from Jenkins and the de
 - a dedicated SSH private key restricted on the Choice TP host to the read-only command surface below;
 - a dedicated `known_hosts` file with the pinned Choice TP host key;
 - a dedicated Distr observer token registered through `POST /api/v1/observer-registrations`;
-- a dedicated Ed25519 evidence-signing private key.
+- a dedicated Ed25519 evidence-signing private key; and
+- an append-only public-key manifest whose SPKI fingerprint is pinned in the service configuration.
 
 The immutable intent carries both `observerCredentialSetId` and `executorCredentialSetId`. The observer refuses
 to run when they are equal. Secret values and private keys are read from operator-supplied files and are never
 stored in this repository, evidence, stdout, SSH output, or the Distr request body.
 
-Distr stores only the observer-token fingerprint. The durable service additionally pins that fingerprint in its
-checksummed configuration and rejects an observer SSH key, token, or evidence key whose fingerprint matches any
-configured Jenkins/executor credential fingerprint. The callback is exactly:
+Distr stores only the observer-token fingerprint. The current observation API does not accept an evidence signature
+or public key, so the public-key manifest and registration handoff are retained independently with the signed
+evidence. The durable service pins both the token fingerprint and evidence SPKI fingerprint in its checksummed
+configuration and rejects an observer SSH key, token, or evidence key whose fingerprint matches any configured
+Jenkins/executor credential fingerprint. The callback is exactly:
 
 ```http
 Authorization: Observer <opaque observer token>
@@ -125,6 +128,13 @@ The service has two sealed runtime modes selected only by the checksummed servic
 Use the matching `intent.c1-t1.example.json` or `intent.c0-t0.example.json`. An intent cannot select or override the
 adapter, helper, path, checkpoint, or health classification.
 
+[`provision.mjs`](provision.mjs) is the source-controlled operator workflow for credential fingerprints, Ed25519
+public-key export, safe rendering of the exact Distr registration body from
+[`observer-registration.request.template.json`](observer-registration.request.template.json), and fail-closed key
+rotation preparation. It never creates a credential, contacts Distr, changes a runtime, or writes over an existing
+artifact. Registration request files contain the opaque token and remain mode `0600`; retained handoff and rotation
+records contain only fingerprints and checksums.
+
 The `legacyBaseline` section pins the tracked
 [`choice-tp-c0-t0-baseline-runtime-evidence.json`](choice-tp-c0-t0-baseline-runtime-evidence.json) artifact
 byte-for-byte as `sha256:791955e37fd9911e472aa03512197a4e013784049e7651eaa772bad74e5a3815`, plus the exact C0/T0 OCI and
@@ -181,6 +191,21 @@ Generate an Ed25519 evidence key in an approved secret directory, not in the rep
 openssl genpkey -algorithm Ed25519 -out choice-tp-observer-evidence.pem
 ```
 
+Export its public identity before first use. The fingerprint is SHA-256 over canonical SPKI DER, exactly matching
+`signature.keyFingerprint` in every evidence envelope:
+
+```shell
+node examples/choice-tp-observer/provision.mjs export-evidence-key \
+  --private-key-file /secure/choice-tp-observer-evidence.pem \
+  --public-key-file /secure/evidence-keys/choice-tp-observer-evidence-2026-09.pem \
+  --manifest-file /secure/evidence-keys/choice-tp-observer-evidence-2026-09.key.json \
+  --key-id choice-tp-observer-evidence-2026-09 \
+  --activated-at 2026-09-01T00:00:00.000Z
+```
+
+Retain the PEM and manifest without replacement for at least as long as any evidence signed by that key. Put the
+manifest fingerprint in `credentials.evidencePublicKeyFingerprint` before calculating the service-config checksum.
+
 Then run from the repository root. The evidence path must not already exist; this prevents accidental history
 replacement.
 
@@ -225,13 +250,15 @@ when observations conflict.
 node --test \
   examples/choice-tp-observer/observer.test.mjs \
   examples/choice-tp-observer/service.test.mjs \
-  examples/choice-tp-observer/packaging.test.mjs
+  examples/choice-tp-observer/packaging.test.mjs \
+  examples/choice-tp-observer/provision.test.mjs
 
 python -m unittest examples/choice-tp-observer/restricted-ssh/test_restricted_ssh.py
 ```
 
 The tests use temporary files plus in-memory SSH and HTTP adapters. They cover restart replay after partial
 submission, terminal-inbox filtering, retry exhaustion, host/credential/scope pins, sealed C0/T0 versus C1/T1
-classification, health/readiness, terminal-only state migration, packaging, restricted SSH, and the original
-observer parsing/signing rules. They do not contact
+classification, health/readiness, terminal-only state migration, public-key export and fingerprint parity, exact
+registration rendering, fail-closed rotation preparation, packaging, restricted SSH, and the original observer
+parsing/signing rules. They do not contact
 Choice TP, Distr, Jenkins, Docker, a database, or any other live system.

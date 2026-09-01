@@ -77,6 +77,19 @@ export function sha256(value) {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
+export function evidencePublicKeyIdentity(keyMaterial) {
+  const publicKey = createPublicKey(keyMaterial);
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    throw new Error('evidence signing key must be Ed25519');
+  }
+  const publicDER = publicKey.export({type: 'spki', format: 'der'});
+  return {
+    algorithm: 'Ed25519',
+    keyFingerprint: sha256(publicDER),
+    publicKeyPEM: publicKey.export({type: 'spki', format: 'pem'}).toString(),
+  };
+}
+
 function withoutField(value, field) {
   return Object.fromEntries(Object.entries(value).filter(([key]) => key !== field));
 }
@@ -665,14 +678,13 @@ export function signEvidence(evidenceCore, privateKeyPEM) {
     throw new Error('canonical observation evidence exceeds the bounded size');
   }
   const privateKey = Buffer.isBuffer(privateKeyPEM) ? privateKeyPEM : Buffer.from(privateKeyPEM);
-  const publicKey = createPublicKey(privateKey);
-  const publicDER = publicKey.export({type: 'spki', format: 'der'});
+  const publicIdentity = evidencePublicKeyIdentity(privateKey);
   return {
     ...evidenceCore,
     evidenceChecksum: sha256(canonical),
     signature: {
       algorithm: 'Ed25519',
-      keyFingerprint: sha256(publicDER),
+      keyFingerprint: publicIdentity.keyFingerprint,
       value: sign(null, Buffer.from(canonical), privateKey).toString('base64'),
     },
   };
@@ -701,6 +713,41 @@ export function buildObservationRequests(intent, signedEvidence) {
     healthEvidenceUse: component.healthEvidenceUse,
     healthPolicyChecksum: component.healthPolicyChecksum,
   }));
+}
+
+export function verifyEvidenceEnvelopeSignature(signedEvidence, publicKeyMaterial) {
+  requireDigest(signedEvidence.evidenceChecksum, 'signed observation evidence checksum');
+  requireExactKeys(
+    signedEvidence.signature,
+    ['algorithm', 'keyFingerprint', 'value'],
+    'signed observation evidence signature'
+  );
+  if (signedEvidence.signature.algorithm !== 'Ed25519') {
+    throw new Error('signed observation evidence algorithm is unsupported');
+  }
+  requireDigest(signedEvidence.signature.keyFingerprint, 'signed observation evidence key fingerprint');
+  const evidenceCore = withoutField(withoutField(signedEvidence, 'evidenceChecksum'), 'signature');
+  const canonical = canonicalJSONString(evidenceCore);
+  if (!constantTimeTextEqual(sha256(canonical), signedEvidence.evidenceChecksum)) {
+    throw new Error('signed observation evidence checksum does not match');
+  }
+  const publicIdentity = evidencePublicKeyIdentity(publicKeyMaterial);
+  if (!constantTimeTextEqual(publicIdentity.keyFingerprint, signedEvidence.signature.keyFingerprint)) {
+    throw new Error('signed observation evidence key fingerprint does not match');
+  }
+  let signature;
+  try {
+    signature = Buffer.from(signedEvidence.signature.value, 'base64');
+  } catch {
+    throw new Error('signed observation evidence signature is invalid');
+  }
+  if (
+    signature.length !== 64 ||
+    !verify(null, Buffer.from(canonical), createPublicKey(publicIdentity.publicKeyPEM), signature)
+  ) {
+    throw new Error('signed observation evidence signature does not verify');
+  }
+  return signedEvidence;
 }
 
 export class ObservationSubmissionError extends Error {
@@ -950,36 +997,7 @@ export function verifySignedEvidence({signedEvidence, intent, profile, privateKe
       throw new Error('signed observation evidence health classification does not match the service profile');
     }
   }
-  requireDigest(signedEvidence.evidenceChecksum, 'signed observation evidence checksum');
-  requireExactKeys(
-    signedEvidence.signature,
-    ['algorithm', 'keyFingerprint', 'value'],
-    'signed observation evidence signature'
-  );
-  if (signedEvidence.signature.algorithm !== 'Ed25519') {
-    throw new Error('signed observation evidence algorithm is unsupported');
-  }
-  requireDigest(signedEvidence.signature.keyFingerprint, 'signed observation evidence key fingerprint');
-  const evidenceCore = withoutField(withoutField(signedEvidence, 'evidenceChecksum'), 'signature');
-  const canonical = canonicalJSONString(evidenceCore);
-  if (!constantTimeTextEqual(sha256(canonical), signedEvidence.evidenceChecksum)) {
-    throw new Error('signed observation evidence checksum does not match');
-  }
-  const publicKey = createPublicKey(privateKeyPEM);
-  const publicDER = publicKey.export({type: 'spki', format: 'der'});
-  if (!constantTimeTextEqual(sha256(publicDER), signedEvidence.signature.keyFingerprint)) {
-    throw new Error('signed observation evidence key fingerprint does not match');
-  }
-  let signature;
-  try {
-    signature = Buffer.from(signedEvidence.signature.value, 'base64');
-  } catch {
-    throw new Error('signed observation evidence signature is invalid');
-  }
-  if (signature.length !== 64 || !verify(null, Buffer.from(canonical), publicKey, signature)) {
-    throw new Error('signed observation evidence signature does not verify');
-  }
-  return signedEvidence;
+  return verifyEvidenceEnvelopeSignature(signedEvidence, privateKeyPEM);
 }
 
 async function main() {

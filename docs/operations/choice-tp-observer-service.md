@@ -11,7 +11,7 @@ Provision a dedicated operating-system or container identity and four observer-o
 1. an SSH private key restricted on the Choice TP host to the documented read-only command allowlist;
 2. a `known_hosts` file containing the exact Choice TP host key verified through an approved independent channel;
 3. an opaque Distr observer token from a registration scoped to the exact Deployment Unit and measurement set; and
-4. a separately generated Ed25519 evidence-signing private key.
+4. a separately generated Ed25519 evidence-signing private key plus its append-only public-key manifest.
 
 Do not copy these from a Jenkins credential, executor secret, deployment workspace, or operator account. Record the
 SHA-256 fingerprints of the Jenkins/executor secrets in `executorCredentialFingerprints`; the service hashes its
@@ -29,6 +29,10 @@ platform
 topologyChecksum
 health
 ```
+
+The Distr registration API authenticates observations with the opaque token. It does not currently ingest the
+Ed25519 evidence signature or public key. Retain the public-key manifest and the redacted registration handoff beside
+the signed evidence so an independent reviewer can verify evidence after the private key is rotated or destroyed.
 
 On the Choice TP host, install the dedicated public key and sealed C0/T0 runtime-state files with the reviewed
 restricted-command package. This mutates only the observer SSH authorization and root-owned non-database metadata;
@@ -66,11 +70,18 @@ not mix the files or edit an intent to change the adapter.
 Both profiles pin the Choice TP DEV Envoy routing host to `api-gateway.dev.spi.emlotech.com`; a different Host value
 is invalid and must not be substituted at runtime.
 
-Calculate the normalized token fingerprint without printing the token:
+Calculate credential fingerprints without printing credential values. `normalized-token` matches Distr's stored
+observer-token fingerprint, `file-bytes` is used for SSH/executor separation, and `evidence-public-key` is SHA-256
+over the canonical Ed25519 SPKI DER:
 
 ```shell
-node -e "const fs=require('fs'),c=require('crypto');const t=fs.readFileSync(process.argv[1],'utf8').trim();process.stdout.write('sha256:'+c.createHash('sha256').update(t).digest('hex')+'\n')" \
-  /etc/choice-tp-observer/secrets/distr-observer-token
+node examples/choice-tp-observer/provision.mjs fingerprint \
+  --kind normalized-token \
+  --input-file /etc/choice-tp-observer/secrets/distr-observer-token
+
+node examples/choice-tp-observer/provision.mjs fingerprint \
+  --kind file-bytes \
+  --input-file /etc/choice-tp-observer/secrets/observer-ssh-key
 ```
 
 Calculate file-byte fingerprints for the observer and executor key files with `sha256sum`. Record only the
@@ -83,6 +94,45 @@ openssl genpkey -algorithm Ed25519 \
   -out /etc/choice-tp-observer/secrets/evidence-ed25519.pem
 chmod 0400 /etc/choice-tp-observer/secrets/evidence-ed25519.pem
 ```
+
+Export the public key and immutable manifest. Use an operator-reviewed UTC activation time and a stable key ID; the
+command refuses to overwrite either output:
+
+```shell
+install -d -o root -g root -m 0755 /etc/choice-tp-observer/evidence-keys
+node examples/choice-tp-observer/provision.mjs export-evidence-key \
+  --private-key-file /etc/choice-tp-observer/secrets/evidence-ed25519.pem \
+  --public-key-file /etc/choice-tp-observer/evidence-keys/choice-tp-observer-evidence-2026-09.pem \
+  --manifest-file /etc/choice-tp-observer/evidence-keys/choice-tp-observer-evidence-2026-09.key.json \
+  --key-id choice-tp-observer-evidence-2026-09 \
+  --activated-at 2026-09-01T00:00:00.000Z
+```
+
+Copy the printed fingerprint into `credentials.evidencePublicKeyFingerprint`. Startup derives the public key from
+the mounted private key and fails closed if that fingerprint differs.
+
+## Distr observer registration
+
+Copy `examples/choice-tp-observer/observer-registration.request.template.json` and replace only the synthetic
+Deployment Unit and reviewed adapter identity fields. Leave `credential` exactly `${DISTR_OBSERVER_TOKEN}`. Render
+the secret-bearing API request and a separate non-secret handoff record without placing the token on the command
+line:
+
+```shell
+node examples/choice-tp-observer/provision.mjs render-registration \
+  --template /secure/observer-registration.request.template.json \
+  --token-file /etc/choice-tp-observer/secrets/distr-observer-token \
+  --evidence-key-manifest /etc/choice-tp-observer/evidence-keys/choice-tp-observer-evidence-2026-09.key.json \
+  --request-output /secure/observer-registration.request.json \
+  --record-output /secure/observer-registration.handoff.json \
+  --created-at 2026-09-01T00:05:00.000Z
+```
+
+Submit `observer-registration.request.json` once through an authenticated read-write/admin Distr API client to
+`POST /api/v1/observer-registrations`. Do not use the observer token as a user bearer token. Retain the HTTP response,
+handoff record, public-key manifest, and their checksums. Put the returned registration `id` in `scope.observerId`,
+put the handoff's token and public-key fingerprints in the service configuration, recalculate
+`canonicalChecksum`, and securely remove the rendered request after the reviewed response has been retained.
 
 The retained legacy file must be the reviewed tracked artifact at
 `examples/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json`. Its exact LF-normalized file-byte
@@ -166,7 +216,8 @@ is root-managed and read-only; only evidence and state are writable by the runti
 ```shell
 export DEPLOY_ROOT=/srv/choice-tp-observer
 sudo install -d -o root -g root -m 0755 "$DEPLOY_ROOT"
-sudo install -d -o root -g 10001 -m 0750 "$DEPLOY_ROOT/config" "$DEPLOY_ROOT/config/history" "$DEPLOY_ROOT/intents"
+sudo install -d -o root -g 10001 -m 0750 \
+  "$DEPLOY_ROOT/config" "$DEPLOY_ROOT/config/history" "$DEPLOY_ROOT/config/evidence-keys" "$DEPLOY_ROOT/intents"
 sudo install -d -o 10001 -g 10001 -m 0700 "$DEPLOY_ROOT/secrets" "$DEPLOY_ROOT/evidence" "$DEPLOY_ROOT/state"
 sudo install -o root -g root -m 0644 examples/choice-tp-observer/compose.yaml "$DEPLOY_ROOT/compose.yaml"
 sudo install -o root -g root -m 0644 examples/choice-tp-observer/.env.example "$DEPLOY_ROOT/.env"
@@ -283,6 +334,41 @@ docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml"
 Migration refuses pending/unknown intent state or any profile/checkpoint/scope/pin change. It creates an exclusive
 `state-before-*.json` backup and `migration-*.json` checksum receipt in `state`. Preserve both. A C0/T0-to-C1/T1
 transition is a new sealed runtime contract and must use separate reviewed state rather than migration.
+
+## Evidence signing-key rotation and retention
+
+Rotation is a stopped-service configuration change, never an in-place key overwrite. It is allowed only when every
+retained intent state is `COMPLETE` or `EXHAUSTED`; otherwise the old private key is still required for exact replay.
+
+1. Stop the observer and preserve the current config, state, evidence directory, public-key history, image digest,
+   and health record.
+2. Generate a new Ed25519 private key in a new file. Export it with `export-evidence-key`, setting
+   `--previous-key-fingerprint` to the active fingerprint and an activation time later than the current manifest.
+3. Run the rotation preflight against the stopped state. It verifies every retained evidence signature against the
+   matching historical public key, checks state-to-evidence references, proves the key chain, and refuses pending or
+   unknown state:
+
+```shell
+node examples/choice-tp-observer/provision.mjs prepare-key-rotation \
+  --service-config "$DEPLOY_ROOT/config/service.json" \
+  --state-file "$DEPLOY_ROOT/state/service-state.json" \
+  --key-history-directory "$DEPLOY_ROOT/config/evidence-keys" \
+  --next-key-manifest /secure/next-evidence-key.key.json \
+  --evidence-directory "$DEPLOY_ROOT/evidence" \
+  --receipt-output "$DEPLOY_ROOT/state/evidence-key-rotation-2026-10.json" \
+  --prepared-at 2026-10-01T00:00:00.000Z
+```
+
+4. Retain the receipt, old config, all historical public-key manifests/PEMs, and signed evidence in append-only
+   storage. Copy the next public manifest/PEM into `config/evidence-keys` without replacing an existing file.
+5. Install the new private key, update only `credentials.evidencePublicKeyFingerprint`, recalculate the service
+   checksum, run `--check`, and use the terminal-only state migration procedure above.
+6. Restart and issue only new higher-sequence intents. Never rewrite old evidence under the new key.
+
+Keep each old public key and manifest for at least the longest retention of any evidence it verifies. The old private
+key may be destroyed only after the rotation receipt proves there is no replayable state and the approved secret
+retention policy permits destruction. A missing historical public key is a verification failure, not permission to
+discard evidence.
 
 ## Rollback
 

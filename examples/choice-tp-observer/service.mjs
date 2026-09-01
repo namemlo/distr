@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import {createPrivateKey, randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 import {chmod, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -8,6 +8,7 @@ import {
   buildObservationRequests,
   collectObservationEvidence,
   createSSHRunner,
+  evidencePublicKeyIdentity,
   ObservationSubmissionError,
   readBoundedJSON,
   sha256,
@@ -137,6 +138,7 @@ export function validateServiceConfig(config) {
       'observerTokenFile',
       'observerTokenFingerprint',
       'evidencePrivateKeyFile',
+      'evidencePublicKeyFingerprint',
       'executorCredentialFingerprints',
     ],
     'observer service credentials'
@@ -153,6 +155,7 @@ export function validateServiceConfig(config) {
     throw new Error('SSH, observer-token, and evidence-signing credential files must be distinct');
   }
   requireDigest(config.credentials.observerTokenFingerprint, 'credentials.observerTokenFingerprint');
+  requireDigest(config.credentials.evidencePublicKeyFingerprint, 'credentials.evidencePublicKeyFingerprint');
   if (
     !Array.isArray(config.credentials.executorCredentialFingerprints) ||
     config.credentials.executorCredentialFingerprints.length === 0 ||
@@ -383,11 +386,11 @@ export async function validateCredentialFiles(config) {
   if (!/^-----BEGIN (?:OPENSSH |EC |RSA )?PRIVATE KEY-----/.test(sshKey.toString('utf8'))) {
     throw new Error('observer SSH key is not a supported private-key file');
   }
-  const parsedEvidenceKey = createPrivateKey(evidenceKey);
-  if (parsedEvidenceKey.asymmetricKeyType !== 'ed25519') {
-    throw new Error('evidence signing key must be Ed25519');
+  const evidencePublicKey = evidencePublicKeyIdentity(evidenceKey);
+  if (evidencePublicKey.keyFingerprint !== config.credentials.evidencePublicKeyFingerprint) {
+    throw new Error('evidence signing public-key fingerprint does not match');
   }
-  const observerFingerprints = [sha256(sshKey), sha256(token), sha256(evidenceKey)];
+  const observerFingerprints = [sha256(sshKey), sha256(token), sha256(evidenceKey), evidencePublicKey.keyFingerprint];
   if (new Set(observerFingerprints).size !== observerFingerprints.length) {
     throw new Error('observer SSH, token, and evidence-signing credentials must be independently generated');
   }
@@ -395,7 +398,7 @@ export async function validateCredentialFiles(config) {
   if (observerFingerprints.some((fingerprint) => forbidden.has(fingerprint))) {
     throw new Error('observer credential matches a pinned Jenkins/executor credential fingerprint');
   }
-  return {token, privateKeyPEM: evidenceKey};
+  return {token, privateKeyPEM: evidenceKey, evidencePublicKey};
 }
 
 function validateIntentScope(intent, config) {

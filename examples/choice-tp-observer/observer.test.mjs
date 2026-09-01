@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
 
 test('observer and service modules stay import-safe with relative command arguments', async () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
-  for (const moduleName of ['observer.mjs', 'service.mjs']) {
+  for (const moduleName of ['observer.mjs', 'service.mjs', 'provision.mjs']) {
     const moduleURL = pathToFileURL(path.join(directory, moduleName)).href;
     await execFileAsync(process.execPath, [
       '--input-type=module',

@@ -4,7 +4,7 @@ import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {canonicalJSONString, sha256} from './observer.mjs';
+import {canonicalJSONString, evidencePublicKeyIdentity, sha256} from './observer.mjs';
 import {
   initializeService,
   loadServiceState,
@@ -190,6 +190,7 @@ async function createFixture(t, configMutator) {
       observerTokenFile,
       observerTokenFingerprint: sha256(token),
       evidencePrivateKeyFile,
+      evidencePublicKeyFingerprint: evidencePublicKeyIdentity(evidenceKey).keyFingerprint,
       executorCredentialFingerprints: [sha256('jenkins-ssh-key'), sha256('jenkins-api-token')],
     },
     scope: {
@@ -264,6 +265,18 @@ test('service configuration pins scope, known_hosts, C0/T0 evidence, and indepen
   await assert.rejects(
     initializeService(reusedConfigPath),
     /observer credential matches a pinned Jenkins\/executor credential fingerprint/
+  );
+
+  const reboundEvidenceKey = structuredClone(fixture.config);
+  reboundEvidenceKey.credentials.evidencePublicKeyFingerprint = `sha256:${'f'.repeat(64)}`;
+  reboundEvidenceKey.canonicalChecksum = sha256(
+    Object.fromEntries(Object.entries(reboundEvidenceKey).filter(([key]) => key !== 'canonicalChecksum'))
+  );
+  const reboundEvidenceKeyPath = path.join(fixture.directory, 'rebound-evidence-key.json');
+  await writeFile(reboundEvidenceKeyPath, `${JSON.stringify(reboundEvidenceKey, null, 2)}\n`, {mode: 0o600});
+  await assert.rejects(
+    initializeService(reboundEvidenceKeyPath),
+    /evidence signing public-key fingerprint does not match/
   );
 });
 

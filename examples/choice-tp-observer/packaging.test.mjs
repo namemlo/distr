@@ -95,7 +95,7 @@ test('preflight validates the sealed deployment layout without reading live syst
   ]);
   const result = await runPreflight({root});
   assert.equal(result.profileChecksum, 'sha256:dc02d13606d0594268aba1bc3841218ec03daf9a8a4324894bb50e91406ca3d8');
-  assert.equal(result.serviceConfigChecksum, 'sha256:5e8a07dbaa60a077af7f2da3dc7b3dfcc36d86911a5dd621a7d7df7160428164');
+  assert.equal(result.serviceConfigChecksum, 'sha256:92d3d823fa1bf06b4b2560cdf0fab4576e019beefc914fe530a4e1c5ef9d145f');
   assert.equal(result.legacyBaselineEvidenceChecksum, legacyBaselineChecksum);
 
   await appendFile(path.join(root, 'config/choice-tp-c0-t0-baseline-runtime-evidence.json'), ' ');

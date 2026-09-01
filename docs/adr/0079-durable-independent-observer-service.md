@@ -43,6 +43,7 @@ overlap and has an explicit stale threshold.
 The service configuration pins:
 
 - a scoped observer token fingerprint;
+- the Ed25519 evidence public-key fingerprint derived from canonical SPKI DER;
 - distinct SSH, token, and evidence-signing files;
 - known Jenkins/executor credential fingerprints that no observer credential may match;
 - different observer and executor credential-set IDs;
@@ -59,6 +60,12 @@ The service writes a durable heartbeat separately from intent history. Liveness 
 readiness additionally requires the latest poll to be successful. Config-only upgrades may migrate terminal
 `COMPLETE`/`EXHAUSTED` history after proving the target, profile, checkpoint, scope, and legacy pins are unchanged;
 the migration retains an exclusive backup and checksum receipt and refuses pending history.
+
+Evidence-key rotation is also terminal-state-only. A source-controlled operator tool exports an append-only public
+PEM and checksummed key manifest, renders the exact secret-bearing observer-registration request plus a separate
+redacted handoff, and prepares a rotation receipt only after verifying every retained evidence signature against the
+matching historical public key. Historical public keys remain available for at least the lifetime of their evidence;
+the service never rewrites old evidence under a new key.
 
 The existing Fleet and execution read models expose the persisted artifact digest, config checksum, platform,
 schema version, capability checksum, and health directly from `ObservedComponentState`. Fleet exposes a singular
@@ -84,6 +91,10 @@ The service is intentionally bound to the reviewed Choice TP C1/T1 checkpoint. O
 target, or component set requires a separately reviewed checksummed configuration rather than runtime overrides.
 Exhausted intents remain retained and require operator reconciliation or a fresh higher-sequence intent; evidence
 and service state must not be deleted to manufacture a retry.
+
+The Hub observation endpoint continues to authenticate with the scoped observer token and receives no signature or
+public-key field. Independent evidence verification therefore relies on the retained evidence envelope, registration
+handoff, public-key manifest, and rotation receipts rather than an undocumented Hub trust-store extension.
 
 ## Alternatives Considered
 
