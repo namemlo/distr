@@ -28,7 +28,7 @@ COMPONENTS = {
     },
 }
 GATEWAY = "http://127.0.0.1:12000"
-HOST_HEADER = "Host: api-gateway.dev.choice-tp.emlotech.com"
+HOST_HEADER = "Host: api-gateway.dev.spi.emlotech.com"
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 

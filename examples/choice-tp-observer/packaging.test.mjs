@@ -75,6 +75,6 @@ test('preflight validates the sealed deployment layout without reading live syst
     writeFile(path.join(root, 'secrets/evidence_ed25519_key'), 'test-only\n', {mode: 0o600}),
   ]);
   const result = await runPreflight({root});
-  assert.equal(result.profileChecksum, 'sha256:fcf7f62ed8d0207582cbc28e99fa83437b430e627a5c69fe73cb1862577f3a2e');
+  assert.equal(result.profileChecksum, 'sha256:dc02d13606d0594268aba1bc3841218ec03daf9a8a4324894bb50e91406ca3d8');
   assert.equal(result.serviceConfigChecksum, 'sha256:220ed05fde463da68f7e43e7b3d52534991ff1e7b95d5807819d7e7df25b2582');
 });

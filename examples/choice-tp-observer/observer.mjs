@@ -177,7 +177,7 @@ export function validateProfile(profile) {
   if (profile.gateway.url !== 'http://127.0.0.1:12000') {
     throw new Error('target profile gateway URL is not fixed');
   }
-  if (profile.gateway.hostHeader !== 'api-gateway.dev.choice-tp.emlotech.com') {
+  if (profile.gateway.hostHeader !== 'api-gateway.dev.spi.emlotech.com') {
     throw new Error('target profile gateway host header is not fixed');
   }
   requireExactKeys(profile.components, Object.keys(fixedComponents), 'target profile components');

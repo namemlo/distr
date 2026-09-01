@@ -45,7 +45,7 @@ const profileWithoutChecksum = {
   distrBaseUrl: 'https://distr.emlotech.com',
   gateway: {
     url: 'http://127.0.0.1:12000',
-    hostHeader: 'api-gateway.dev.choice-tp.emlotech.com',
+    hostHeader: 'api-gateway.dev.spi.emlotech.com',
   },
   components: {
     'customer-api': {

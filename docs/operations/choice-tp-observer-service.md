@@ -63,6 +63,8 @@ C0/T0: service.c0-t0.example.json  + choice-tp-dev-c0-t0.profile.json
 
 C1/T1 is standard promotion-eligible readiness. C0/T0 is legacy liveness for baseline/rollback evidence only. Do
 not mix the files or edit an intent to change the adapter.
+Both profiles pin the Choice TP DEV Envoy routing host to `api-gateway.dev.spi.emlotech.com`; a different Host value
+is invalid and must not be substituted at runtime.
 
 Calculate the normalized token fingerprint without printing the token:
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": "emlo.choice-tp-observation-intent/v1",
   "intentId": "choice-tp-dev-c1-t1-observation-1",
-  "targetProfileChecksum": "sha256:fcf7f62ed8d0207582cbc28e99fa83437b430e627a5c69fe73cb1862577f3a2e",
+  "targetProfileChecksum": "sha256:dc02d13606d0594268aba1bc3841218ec03daf9a8a4324894bb50e91406ca3d8",
   "organizationId": "10000000-0000-4000-8000-000000000001",
   "observerId": "10000000-0000-4000-8000-000000000002",
   "deploymentUnitId": "10000000-0000-4000-8000-000000000003",
@@ -39,5 +39,5 @@
       }
     }
   ],
-  "canonicalChecksum": "sha256:64a4b7c0e73e9f18831362130a2fc8bef8364adf3a7690321012b14ea31c1aed"
+  "canonicalChecksum": "sha256:68035cb18cdcc2720e27cbe2d8cc9361550ea74c3bc5297b50e47a1f40a3fedd"
 }

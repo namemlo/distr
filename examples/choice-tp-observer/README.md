@@ -44,7 +44,7 @@ No Jenkins callback or private browser endpoint is used.
 - `emlo-admin@217.15.166.6:22`;
 - the two exact container names;
 - the two exact service Compose and config paths;
-- the local Choice TP gateway and host header;
+- the local Choice TP gateway and exact Envoy host header `api-gateway.dev.spi.emlotech.com`;
 - `/alive` as the preferred probe and `/healthz` only as its fallback;
 - `https://distr.emlotech.com` as the only submission host.
 

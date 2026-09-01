@@ -8,7 +8,7 @@
   "distrBaseUrl": "https://distr.emlotech.com",
   "gateway": {
     "url": "http://127.0.0.1:12000",
-    "hostHeader": "api-gateway.dev.choice-tp.emlotech.com"
+    "hostHeader": "api-gateway.dev.spi.emlotech.com"
   },
   "components": {
     "customer-api": {
@@ -36,5 +36,5 @@
       }
     }
   },
-  "canonicalChecksum": "sha256:fcf7f62ed8d0207582cbc28e99fa83437b430e627a5c69fe73cb1862577f3a2e"
+  "canonicalChecksum": "sha256:dc02d13606d0594268aba1bc3841218ec03daf9a8a4324894bb50e91406ca3d8"
 }

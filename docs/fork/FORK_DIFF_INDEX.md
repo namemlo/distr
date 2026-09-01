@@ -2021,7 +2021,8 @@ Use one entry per pull request:
 - Agent protocol changes: None; the service remains an adopter-side observer.
 - Documentation: Adds ADR-0079, PR-092 fork notes, digest/source-pinned
   Compose/systemd packaging, sealed C0/T0 and C1/T1 profiles, restricted SSH
-  installation, preflight, recovery, upgrade, and rollback guidance. The operator API guide documents the additive
+  installation, the verified Choice TP DEV Envoy Host pin, preflight, recovery,
+  upgrade, and rollback guidance. The operator API guide documents the additive
   Fleet and execution observation identity fields.
 - Tests: Focused temporary-file and in-memory Node/Python tests cover exact restart
   replay, partial submission, retry exhaustion, completed-intent suppression and

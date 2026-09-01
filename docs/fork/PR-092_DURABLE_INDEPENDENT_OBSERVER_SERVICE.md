@@ -48,6 +48,8 @@ reuse the C0/T0 artifact digests.
   a dedicated network, observer-only read mounts, and writable evidence/state mounts.
 - Compose requires a production image reference containing an immutable digest.
 - A local preflight validates the deployment layout, canonical config/profile checksums, and immutable image input.
+- Both sealed profiles and the restricted SSH allowlist pin the verified Choice TP DEV Envoy Host
+  `api-gateway.dev.spi.emlotech.com`; neither intents nor runtime input can rebind it.
 - systemd oneshot/timer units use a strict filesystem/device/kernel sandbox and an unprivileged observer account.
 - The install/recovery/rollback runbook preserves evidence and state, prohibits sequence reuse, and never authorizes
   a client runtime or database mutation.
