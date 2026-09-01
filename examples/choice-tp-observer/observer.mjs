@@ -31,16 +31,32 @@ const fixedComponents = Object.freeze({
     container: 'customer-api',
     composePath: '/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/docker-compose.yaml',
     configPath: '/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/appsettings.Production.json',
-    alivePath: '/customer-api/alive',
-    healthzPath: '/customer-api/healthz',
   }),
   'transaction-api': Object.freeze({
     container: 'transaction-api',
     composePath: '/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/docker-compose.yaml',
     configPath: '/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/appsettings.Production.json',
-    alivePath: '/transaction-api/alive',
-    healthzPath: '/transaction-api/healthz',
   }),
+});
+const fixedHealthPaths = Object.freeze({
+  'customer-api': Object.freeze([
+    Object.freeze({alivePath: '/customer-api/alive', healthzPath: '/customer-api/healthz'}),
+    Object.freeze({
+      alivePath: '/customer-api/swagger/v1/swagger.json',
+      healthzPath: '/customer-api/swagger/v1/swagger.json',
+    }),
+  ]),
+  'transaction-api': Object.freeze([
+    Object.freeze({alivePath: '/transaction-api/alive', healthzPath: '/transaction-api/healthz'}),
+    Object.freeze({
+      alivePath: '/transaction-api/swagger/v1/swagger.json',
+      healthzPath: '/transaction-api/swagger/v1/swagger.json',
+    }),
+  ]),
+});
+const standardHealthEvidence = Object.freeze({
+  healthEvidenceKind: 'STANDARD_READINESS',
+  healthEvidenceUse: 'STANDARD_PROMOTION_ELIGIBLE',
 });
 
 export function canonicalJSONString(value) {
@@ -167,11 +183,26 @@ export function validateProfile(profile) {
   requireExactKeys(profile.components, Object.keys(fixedComponents), 'target profile components');
   for (const [componentKey, expected] of Object.entries(fixedComponents)) {
     const actual = profile.components[componentKey];
-    requireExactKeys(actual, [...Object.keys(expected), 'runtimeProbe'], `${componentKey} target profile`);
+    requireExactKeys(
+      actual,
+      [...Object.keys(expected), 'alivePath', 'healthzPath', 'runtimeProbe'],
+      `${componentKey} target profile`
+    );
     for (const [key, value] of Object.entries(expected)) {
       if (actual[key] !== value) {
         throw new Error(`${componentKey} ${key} is not the fixed Choice TP DEV value`);
       }
+      if (!safeRemoteValuePattern.test(actual[key])) {
+        throw new Error(`${componentKey} ${key} is unsafe for a read-only SSH command`);
+      }
+    }
+    const healthPathsMatch = fixedHealthPaths[componentKey].some(
+      ({alivePath, healthzPath}) => actual.alivePath === alivePath && actual.healthzPath === healthzPath
+    );
+    if (!healthPathsMatch) {
+      throw new Error(`${componentKey} health paths are not a sealed Choice TP DEV pair`);
+    }
+    for (const key of ['alivePath', 'healthzPath']) {
       if (!safeRemoteValuePattern.test(actual[key])) {
         throw new Error(`${componentKey} ${key} is unsafe for a read-only SSH command`);
       }
@@ -506,13 +537,32 @@ function isHealthyStatus(status) {
   return status >= 200 && status < 300;
 }
 
-export function healthPolicyForComponent(componentKey, component) {
+function normalizeHealthEvidence(healthEvidence = standardHealthEvidence) {
+  requireExactKeys(
+    healthEvidence,
+    ['healthEvidenceKind', 'healthEvidenceUse'],
+    'health evidence classification'
+  );
+  const valid =
+    (healthEvidence.healthEvidenceKind === 'STANDARD_READINESS' &&
+      healthEvidence.healthEvidenceUse === 'STANDARD_PROMOTION_ELIGIBLE') ||
+    (healthEvidence.healthEvidenceKind === 'LEGACY_LIVENESS_ONLY' &&
+      healthEvidence.healthEvidenceUse === 'BASELINE_OR_ROLLBACK_ONLY');
+  if (!valid) {
+    throw new Error('health evidence classification is unsupported');
+  }
+  return healthEvidence;
+}
+
+export function healthPolicyForComponent(componentKey, component, healthEvidence = standardHealthEvidence) {
+  const classification = normalizeHealthEvidence(healthEvidence);
   return {
     schemaVersion: 'emlo.choice-tp-health-policy/v1',
     componentKey,
     preferredPath: component.alivePath,
     fallbackPath: component.healthzPath,
     acceptedStatusClass: '2xx',
+    ...classification,
   };
 }
 
@@ -545,7 +595,13 @@ export function parseRuntimeProbe(output, adapter) {
   };
 }
 
-export async function observeComponent({profile, intentComponent, runSSH, capturedAt}) {
+export async function observeComponent({
+  profile,
+  intentComponent,
+  runSSH,
+  capturedAt,
+  healthEvidence = standardHealthEvidence,
+}) {
   const profileComponent = profile.components[intentComponent.componentKey];
   const commands = buildReadOnlyCommands(profile, intentComponent.componentKey);
   const container = parseContainerInspect(await runSSH('container-inspect', commands.containerInspect));
@@ -582,7 +638,8 @@ export async function observeComponent({profile, intentComponent, runSSH, captur
     health: isHealthyStatus(healthStatus),
   };
   const complete = Object.values(comparisons).every(Boolean);
-  const healthPolicy = healthPolicyForComponent(intentComponent.componentKey, profileComponent);
+  const classification = normalizeHealthEvidence(healthEvidence);
+  const healthPolicy = healthPolicyForComponent(intentComponent.componentKey, profileComponent, classification);
   return {
     componentKey: intentComponent.componentKey,
     componentInstanceId: intentComponent.componentInstanceId,
@@ -600,6 +657,7 @@ export async function observeComponent({profile, intentComponent, runSSH, captur
     outcome: complete ? 'COMPLETE' : 'FAILED',
     comparisons,
     runtimeProbe: measuredRuntime.evidence,
+    ...classification,
     healthPolicyChecksum: sha256(healthPolicy),
     healthProbe: {preferredPath: profileComponent.alivePath, aliveStatus, healthzStatus, selectedPath: healthPath},
   };
@@ -643,8 +701,8 @@ export function buildObservationRequests(intent, signedEvidence) {
     topologyChecksum: component.topologyChecksum,
     health: component.health,
     outcome: component.outcome,
-    healthEvidenceKind: 'STANDARD_READINESS',
-    healthEvidenceUse: 'STANDARD_PROMOTION_ELIGIBLE',
+    healthEvidenceKind: component.healthEvidenceKind,
+    healthEvidenceUse: component.healthEvidenceUse,
     healthPolicyChecksum: component.healthPolicyChecksum,
   }));
 }
@@ -784,6 +842,7 @@ export async function runObserver({
   token,
   privateKeyPEM,
   outputPath,
+  healthEvidence = standardHealthEvidence,
   now = new Date(),
   fetchImpl = fetch,
 }) {
@@ -792,6 +851,7 @@ export async function runObserver({
     intent,
     runSSH,
     privateKeyPEM,
+    healthEvidence,
     now,
   });
   const encoded = `${JSON.stringify(signedEvidence, null, 2)}\n`;
@@ -807,13 +867,22 @@ export async function runObserver({
   return {evidenceChecksum: signedEvidence.evidenceChecksum, submissions, signedEvidence};
 }
 
-export async function collectObservationEvidence({profile, intent, runSSH, privateKeyPEM, now = new Date()}) {
+export async function collectObservationEvidence({
+  profile,
+  intent,
+  runSSH,
+  privateKeyPEM,
+  healthEvidence = standardHealthEvidence,
+  now = new Date(),
+}) {
   validateProfile(profile);
   validateIntent(intent, profile, now);
   const capturedAt = now.toISOString();
   const components = [];
   for (const intentComponent of intent.components) {
-    components.push(await observeComponent({profile, intentComponent, runSSH, capturedAt}));
+    components.push(
+      await observeComponent({profile, intentComponent, runSSH, capturedAt, healthEvidence})
+    );
   }
   const evidenceCore = {
     schemaVersion: 'emlo.choice-tp-observation-evidence/v2',
@@ -827,7 +896,13 @@ export async function collectObservationEvidence({profile, intent, runSSH, priva
   return signEvidence(evidenceCore, privateKeyPEM);
 }
 
-export function verifySignedEvidence({signedEvidence, intent, profile, privateKeyPEM}) {
+export function verifySignedEvidence({
+  signedEvidence,
+  intent,
+  profile,
+  privateKeyPEM,
+  healthEvidence = null,
+}) {
   requireExactKeys(
     signedEvidence,
     [
@@ -875,6 +950,17 @@ export function verifySignedEvidence({signedEvidence, intent, profile, privateKe
       throw new Error('signed observation evidence component identity is invalid');
     }
     requireDigest(component.healthPolicyChecksum, `${component.componentKey} healthPolicyChecksum`);
+    normalizeHealthEvidence({
+      healthEvidenceKind: component.healthEvidenceKind,
+      healthEvidenceUse: component.healthEvidenceUse,
+    });
+    if (
+      healthEvidence &&
+      (component.healthEvidenceKind !== healthEvidence.healthEvidenceKind ||
+        component.healthEvidenceUse !== healthEvidence.healthEvidenceUse)
+    ) {
+      throw new Error('signed observation evidence health classification does not match the service profile');
+    }
   }
   requireDigest(signedEvidence.evidenceChecksum, 'signed observation evidence checksum');
   requireExactKeys(

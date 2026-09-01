@@ -30,6 +30,18 @@ topologyChecksum
 health
 ```
 
+On the Choice TP host, install the dedicated public key and sealed C0/T0 runtime-state files with the reviewed
+restricted-command package. This mutates only the observer SSH authorization and root-owned non-database metadata;
+it does not install a deployment command or query a client database:
+
+```shell
+sudo examples/choice-tp-observer/restricted-ssh/install.sh \
+  /secure/choice-tp-observer.pub \
+  examples/choice-tp-observer/restricted-ssh/runtime-state/customer-api.c0.example.json \
+  examples/choice-tp-observer/restricted-ssh/runtime-state/transaction-api.c0.example.json \
+  emlo-admin
+```
+
 The observer token is used only as `Authorization: Observer <token>` against
 `POST /api/observer/v1/observations`. Store only the returned observer ID and a local SHA-256 token fingerprint in
 configuration. Never put the token, SSH key, signing key, or authorization header in an intent, log, evidence file,
@@ -41,6 +53,16 @@ Copy `examples/choice-tp-observer/service.example.json` and replace all syntheti
 fingerprints. The `componentInstanceIds` must be the exact Customer and Transaction instances inside the scoped
 Deployment Unit. Keep the committed target profile unchanged unless a separately reviewed profile/checksum change
 is intended.
+
+Choose one sealed pair and rename the selected profile to `config/profile.json`:
+
+```text
+C1/T1: service.example.json        + choice-tp-dev.profile.json
+C0/T0: service.c0-t0.example.json  + choice-tp-dev-c0-t0.profile.json
+```
+
+C1/T1 is standard promotion-eligible readiness. C0/T0 is legacy liveness for baseline/rollback evidence only. Do
+not mix the files or edit an intent to change the adapter.
 
 Calculate the normalized token fingerprint without printing the token:
 
@@ -102,28 +124,73 @@ mv /var/lib/choice-tp-observer/intents/.new-intent.json.tmp \
 
 Do not change an intent after handoff. A changed observation must use a new intent and higher component sequences.
 
-## Container installation
+## Container publication and installation
 
-Build with `NODE_IMAGE` set to an approved Node base image including its immutable digest, publish the resulting
-observer image through the approved artifact pipeline, then resolve its immutable repository digest. Production
-Compose requires `CHOICE_TP_OBSERVER_IMAGE` to contain that `@sha256:` digest:
+Build and push once from the approved source commit. The Dockerfile rejects an unpinned base or non-40-hex source
+revision, and Buildx attaches SBOM and provenance attestations:
 
 ```shell
-export CHOICE_TP_OBSERVER_IMAGE='registry.example/choice-tp-observer@sha256:<verified-digest>'
-docker compose -f examples/choice-tp-observer/compose.yaml config
-docker compose -f examples/choice-tp-observer/compose.yaml up -d
+export SOURCE_REVISION="$(git rev-parse HEAD)"
+export NODE_IMAGE='node:24.8.0-alpine3.22@sha256:3e843c608bb5232f39ecb2b25e41214b958b0795914707374c8acc28487dea17'
+export IMAGE_REPOSITORY='<account>.dkr.ecr.ap-southeast-1.amazonaws.com/choice-tp-observer'
+export IMAGE_TAG="observer-$(printf '%s' "$SOURCE_REVISION" | cut -c1-12)"
+
+docker buildx build --platform linux/amd64 --pull \
+  --provenance=mode=max --sbom=true \
+  --build-arg NODE_IMAGE="$NODE_IMAGE" \
+  --build-arg SOURCE_REVISION="$SOURCE_REVISION" \
+  --tag "$IMAGE_REPOSITORY:$IMAGE_TAG" --push \
+  examples/choice-tp-observer
+
+export IMAGE_DIGEST="$(aws ecr describe-images --region ap-southeast-1 \
+  --repository-name choice-tp-observer --image-ids imageTag="$IMAGE_TAG" \
+  --query 'imageDetails[0].imageDigest' --output text)"
+export CHOICE_TP_OBSERVER_IMAGE="$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+docker buildx imagetools inspect "$CHOICE_TP_OBSERVER_IMAGE"
+docker pull "$CHOICE_TP_OBSERVER_IMAGE"
+test "$(docker image inspect "$CHOICE_TP_OBSERVER_IMAGE" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_REVISION"
+
+mkdir -p release-evidence
+syft "$CHOICE_TP_OBSERVER_IMAGE" -o spdx-json="release-evidence/$IMAGE_TAG.spdx.json"
+cosign download attestation "$CHOICE_TP_OBSERVER_IMAGE" >"release-evidence/$IMAGE_TAG.intoto.jsonl"
+sha256sum release-evidence/* >"release-evidence/$IMAGE_TAG.sha256"
 ```
 
-Create host `config`, `secrets`, `intents`, `evidence`, and `state` directories first. The container runs as
-UID/GID `10001`, with a read-only root filesystem, all capabilities dropped, `no-new-privileges`, no Docker socket,
-read-only config/secret/intent mounts, and writable evidence/state mounts only. No Jenkins or executor volume is
-allowed.
-
-Verify:
+Prepare the stable host layout. Files under `secrets` are owned by runtime UID/GID `10001` and mode `0400`; config
+is root-managed and read-only; only evidence and state are writable by the runtime:
 
 ```shell
-docker compose -f examples/choice-tp-observer/compose.yaml ps
-docker compose -f examples/choice-tp-observer/compose.yaml logs --since 10m choice-tp-observer
+export DEPLOY_ROOT=/srv/choice-tp-observer
+sudo install -d -o root -g root -m 0755 "$DEPLOY_ROOT"
+sudo install -d -o root -g 10001 -m 0750 "$DEPLOY_ROOT/config" "$DEPLOY_ROOT/config/history" "$DEPLOY_ROOT/intents"
+sudo install -d -o 10001 -g 10001 -m 0700 "$DEPLOY_ROOT/secrets" "$DEPLOY_ROOT/evidence" "$DEPLOY_ROOT/state"
+sudo install -o root -g root -m 0644 examples/choice-tp-observer/compose.yaml "$DEPLOY_ROOT/compose.yaml"
+sudo install -o root -g root -m 0644 examples/choice-tp-observer/.env.example "$DEPLOY_ROOT/.env"
+```
+
+Install the prepared `service.json`, selected `profile.json`, `known_hosts`, baseline artifact, and the three
+observer secrets into those directories. Put the immutable digest in `.env`; put no credential there. Then run the
+offline preflight from the approved source checkout and deploy:
+
+```shell
+node examples/choice-tp-observer/preflight.mjs --root "$DEPLOY_ROOT"
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" config --quiet
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" pull
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" up -d --remove-orphans
+```
+
+Verify liveness, readiness, image identity, and bounded logs:
+
+```shell
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" ps
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" exec -T choice-tp-observer \
+  node /opt/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --health
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" exec -T choice-tp-observer \
+  node /opt/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --ready
+docker inspect choice-tp-observer-choice-tp-observer-1 \
+  --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" logs --since 10m choice-tp-observer
 ```
 
 Each poll emits only intent IDs, status, evidence checksums, HTTP status, and bounded error classes. It never emits
@@ -182,6 +249,30 @@ validation, oversized response, and other non-transient errors are not retried w
 decrement/reuse a source sequence, or edit the signed artifact. Diagnose the bounded failure, then issue a fresh
 intent with higher sequences if a new measurement is required.
 
+## Upgrade and state migration
+
+For an image-only upgrade with an unchanged checksummed config, update only the digest in `.env`, rerun preflight,
+pull, and `up -d`. For a config-only change that keeps the exact target, profile, checkpoint, scope, and legacy pins,
+stop the service, preserve the old config, install the new checksummed config, and migrate terminal history before
+restart:
+
+```shell
+export OLD_CONFIG_CHECKSUM='<old-sha256-without-prefix>'
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" stop choice-tp-observer
+sudo install -o root -g 10001 -m 0440 "$DEPLOY_ROOT/config/service.json" \
+  "$DEPLOY_ROOT/config/history/service-$OLD_CONFIG_CHECKSUM.json"
+# Install the new service.json, then run preflight.
+node examples/choice-tp-observer/preflight.mjs --root "$DEPLOY_ROOT"
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" run --rm --no-deps \
+  choice-tp-observer --config /etc/choice-tp-observer/service.json \
+  --migrate-state-from "/etc/choice-tp-observer/history/service-$OLD_CONFIG_CHECKSUM.json"
+docker compose --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.yaml" up -d
+```
+
+Migration refuses pending/unknown intent state or any profile/checkpoint/scope/pin change. It creates an exclusive
+`state-before-*.json` backup and `migration-*.json` checksum receipt in `state`. Preserve both. A C0/T0-to-C1/T1
+transition is a new sealed runtime contract and must use separate reviewed state rather than migration.
+
 ## Rollback
 
 Rollback affects only this observer service. It does not authorize a Choice TP deployment, container restart,
@@ -190,8 +281,9 @@ database operation, Jenkins action, or Distr history edit.
 1. Stop the Compose service or disable and stop the systemd timer.
 2. Copy the current config, image digest/unit version, state file, and evidence directory to immutable operator
    storage. Do not remove the original evidence.
-3. Restore the previous digest-pinned observer image or previous `/opt/choice-tp-observer` files together with its
-   matching checksummed config and state snapshot.
+3. Restore the previous digest-pinned observer image and matching checksummed config/profile. If state was migrated,
+   restore the exact `state-before-*.json` backup as `service-state.json`; retain the migration receipt and newer
+   evidence separately.
 4. Run `--check` before enabling the previous version.
 5. Re-enable the service and confirm the next poll either skips completed intents or replays an existing exact
    signed artifact.

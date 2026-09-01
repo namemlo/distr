@@ -1,25 +1,42 @@
 services:
   choice-tp-observer:
     image: '${CHOICE_TP_OBSERVER_IMAGE:?set an immutable image reference including @sha256 digest}'
+    platform: linux/amd64
+    pull_policy: always
     init: true
     restart: unless-stopped
     read_only: true
     user: '10001:10001'
+    cpus: '0.50'
+    mem_limit: 256m
+    mem_reservation: 64m
+    pids_limit: 128
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001
     volumes:
       - ./config/service.json:/etc/choice-tp-observer/service.json:ro
-      - ./config/choice-tp-dev.profile.json:/etc/choice-tp-observer/choice-tp-dev.profile.json:ro
+      - ./config/profile.json:/etc/choice-tp-observer/profile.json:ro
       - ./config/known_hosts:/etc/choice-tp-observer/known_hosts:ro
       - ./config/choice-tp-c0-t0-baseline-runtime-evidence.json:/etc/choice-tp-observer/choice-tp-c0-t0-baseline-runtime-evidence.json:ro
-      - ./secrets:/etc/choice-tp-observer/secrets:ro
+      - ./config/history:/etc/choice-tp-observer/history:ro
       - ./intents:/var/lib/choice-tp-observer/intents:ro
       - ./evidence:/var/lib/choice-tp-observer/evidence:rw
       - ./state:/var/lib/choice-tp-observer/state:rw
+    secrets:
+      - observer_ssh_key
+      - distr_observer_token
+      - evidence_ed25519_key
+    networks:
+      - observer-egress
     healthcheck:
       test:
         - CMD
@@ -27,8 +44,21 @@ services:
         - /opt/choice-tp-observer/service.mjs
         - --config
         - /etc/choice-tp-observer/service.json
-        - --check
-      interval: 1m
-      timeout: 15s
+        - --health
+      interval: 30s
+      timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 40s
+    stop_grace_period: 20s
+
+secrets:
+  observer_ssh_key:
+    file: ./secrets/observer_ssh_key
+  distr_observer_token:
+    file: ./secrets/distr_observer_token
+  evidence_ed25519_key:
+    file: ./secrets/evidence_ed25519_key
+
+networks:
+  observer-egress:
+    driver: bridge

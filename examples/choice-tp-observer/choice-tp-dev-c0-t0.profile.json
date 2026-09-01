@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "emlo.choice-tp-observer-profile/v2",
+  "profileId": "choice-tp-dev",
+  "host": "217.15.166.6",
+  "port": 22,
+  "user": "emlo-admin",
+  "platform": "linux/amd64",
+  "distrBaseUrl": "https://distr.emlotech.com",
+  "gateway": {
+    "url": "http://127.0.0.1:12000",
+    "hostHeader": "api-gateway.dev.choice-tp.emlotech.com"
+  },
+  "components": {
+    "customer-api": {
+      "container": "customer-api",
+      "composePath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/docker-compose.yaml",
+      "configPath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-customer/appsettings.Production.json",
+      "alivePath": "/customer-api/swagger/v1/swagger.json",
+      "healthzPath": "/customer-api/swagger/v1/swagger.json",
+      "runtimeProbe": {
+        "adapter": "command-json/v1",
+        "executable": "/usr/local/libexec/choice-tp-observer-runtime-state",
+        "arguments": ["--component", "customer-api"],
+        "timeoutMs": 5000
+      }
+    },
+    "transaction-api": {
+      "container": "transaction-api",
+      "composePath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/docker-compose.yaml",
+      "configPath": "/home/emlo-admin/apps/remittance/dev/emlo-remittance-transaction/appsettings.Production.json",
+      "alivePath": "/transaction-api/swagger/v1/swagger.json",
+      "healthzPath": "/transaction-api/swagger/v1/swagger.json",
+      "runtimeProbe": {
+        "adapter": "command-json/v1",
+        "executable": "/usr/local/libexec/choice-tp-observer-runtime-state",
+        "arguments": ["--component", "transaction-api"],
+        "timeoutMs": 5000
+      }
+    }
+  },
+  "canonicalChecksum": "sha256:6b1157a0ff7c3d601b225c82a1faaec54e1e2528043dbd6a5941ffa4a1896c30"
+}

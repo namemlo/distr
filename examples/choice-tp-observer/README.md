@@ -115,11 +115,15 @@ organization, observer registration, Deployment Unit, Customer/Transaction Compo
 executor credential-set IDs, credential fingerprints, and all state paths. Replace the synthetic UUIDs and
 credential fingerprints, then recalculate `canonicalChecksum` over every field except `canonicalChecksum`.
 
-The service recognizes one current checkpoint: Customer `C1` plus Transaction `T1`. Every service intent must bind
-both exact candidate component digests and may not reuse the pinned Customer `C0` or Transaction `T0` artifact
-digest. [`intent.c1-t1.example.json`](intent.c1-t1.example.json) documents this separate current-runtime intent.
-The existing [`intent.example.json`](intent.example.json) is retained only as historical C0/T0 one-shot shape
-documentation and is intentionally rejected by the C1/T1 service.
+The service has two sealed runtime modes selected only by the checksummed service config and read-only profile mount:
+
+- `service.example.json` plus `choice-tp-dev.profile.json` observes C1/T1 through bounded HTTP metadata and emits
+  standard-readiness, promotion-eligible evidence.
+- `service.c0-t0.example.json` plus `choice-tp-dev-c0-t0.profile.json` observes the exact C0/T0 pins through the
+  restricted runtime-state helper and Swagger liveness only. Its evidence remains baseline/rollback-only.
+
+Use the matching `intent.c1-t1.example.json` or `intent.c0-t0.example.json`. An intent cannot select or override the
+adapter, helper, path, checkpoint, or health classification.
 
 The `legacyBaseline` section pins the read-only C0/T0 artifact byte-for-byte as
 `sha256:cbebf0295b9eda637afc207f03a28a3c67a99c2d701c5ca99697176ff5343429`, plus the exact C0/T0 OCI and
@@ -131,6 +135,9 @@ Current measurements use the independently probed artifact, configuration, schem
 and `/alive`-then-`/healthz` result. Their observation request is explicitly classified
 `STANDARD_READINESS` / `STANDARD_PROMOTION_ELIGIBLE` with a checksum of the fixed logical health policy. The
 evidence reference is `evidence://sha256/<evidence checksum>`.
+
+C0/T0 measurements use the exact sealed helper and legacy Swagger paths. Even when healthy, they retain
+`LEGACY_LIVENESS_ONLY` / `BASELINE_OR_ROLLBACK_ONLY` and cannot authorize promotion.
 
 The polling and retry bounds are explicit:
 
@@ -154,9 +161,12 @@ Run one scheduled poll or the continuous container process:
 ```shell
 node examples/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --once
 node examples/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json
+node examples/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --health
+node examples/choice-tp-observer/service.mjs --config /etc/choice-tp-observer/service.json --ready
 ```
 
-Use [`compose.yaml`](compose.yaml) with an image reference containing an immutable `@sha256:` digest, or install the
+Run [`preflight.mjs`](preflight.mjs) before Compose. Use [`compose.yaml`](compose.yaml) with an image reference
+containing an immutable `@sha256:` digest, or install the
 provided systemd oneshot/timer units. Neither packaging surface accepts credentials through environment variables,
 and neither mounts a Jenkins workspace, Docker socket, executor key, or executor token. See
 [`docs/operations/choice-tp-observer-service.md`](../../docs/operations/choice-tp-observer-service.md) for install,
@@ -213,10 +223,14 @@ when observations conflict.
 ```shell
 node --test \
   examples/choice-tp-observer/observer.test.mjs \
-  examples/choice-tp-observer/service.test.mjs
+  examples/choice-tp-observer/service.test.mjs \
+  examples/choice-tp-observer/packaging.test.mjs
+
+python -m unittest examples/choice-tp-observer/restricted-ssh/test_restricted_ssh.py
 ```
 
 The tests use temporary files plus in-memory SSH and HTTP adapters. They cover restart replay after partial
-submission, completed-intent suppression, retry exhaustion, host/credential/scope pins, C0/T0 versus C1/T1
-separation, standard-readiness health policy, and the original observer parsing/signing rules. They do not contact
+submission, terminal-inbox filtering, retry exhaustion, host/credential/scope pins, sealed C0/T0 versus C1/T1
+classification, health/readiness, terminal-only state migration, packaging, restricted SSH, and the original
+observer parsing/signing rules. They do not contact
 Choice TP, Distr, Jenkins, Docker, a database, or any other live system.

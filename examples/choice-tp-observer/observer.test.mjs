@@ -103,7 +103,7 @@ function createIntent(now = new Date('2030-01-01T00:05:00.000Z')) {
     observerId: '10000000-0000-4000-8000-000000000002',
     deploymentUnitId: '10000000-0000-4000-8000-000000000003',
     observerCredentialSetId: 'choice-tp-independent-observer-v1',
-    executorCredentialSetId: 'choice-tp-jenkins-executor-v1',
+    executorCredentialSetId: 'choice-tp-dev-jenkins-v1',
     notBefore: new Date(now.getTime() - 60_000).toISOString(),
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     components: ['customer-api', 'transaction-api'].map((componentKey, index) => ({

@@ -5,8 +5,8 @@
   "organizationId": "10000000-0000-4000-8000-000000000001",
   "observerId": "10000000-0000-4000-8000-000000000002",
   "deploymentUnitId": "10000000-0000-4000-8000-000000000003",
-  "observerCredentialSetId": "choice-tp-independent-observer-v2",
-  "executorCredentialSetId": "choice-tp-jenkins-executor-v1",
+  "observerCredentialSetId": "choice-tp-independent-observer-v1",
+  "executorCredentialSetId": "choice-tp-dev-jenkins-v1",
   "notBefore": "2030-01-01T00:00:00.000Z",
   "expiresAt": "2030-01-01T00:10:00.000Z",
   "components": [
@@ -39,5 +39,5 @@
       }
     }
   ],
-  "canonicalChecksum": "sha256:3d09d8e445eb3d48bf86d36660658a261cae46ff7c40ba9e05428be5eab22464"
+  "canonicalChecksum": "sha256:64a4b7c0e73e9f18831362130a2fc8bef8364adf3a7690321012b14ea31c1aed"
 }

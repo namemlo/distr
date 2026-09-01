@@ -26,7 +26,8 @@ For each intent, the service:
 
 1. validates a checksummed configuration, exact organization/observer/Deployment Unit/Component Instance scope,
    target profile, token fingerprint, pinned `known_hosts`, credential separation, and C0/T0 evidence pin;
-2. measures both current Customer C1 and Transaction T1 through the existing read-only observer command surface;
+2. measures either the sealed Customer C1/Transaction T1 standard-readiness profile or the exact C0/T0 legacy
+   liveness profile through the existing read-only observer command surface;
 3. signs one evidence envelope with a separate Ed25519 key and exclusively persists it before submission;
 4. submits both component requests with standard-readiness health policy lineage; and
 5. records completion through atomically replaced local state.
@@ -48,10 +49,16 @@ The service configuration pins:
 - the exact legacy C0/T0 artifact checksum and component artifact/config digests; and
 - the separate current C1/T1 state labels and component scope.
 
-C0/T0 must retain `LEGACY_LIVENESS_ONLY` / `BASELINE_OR_ROLLBACK_ONLY`. Current observations use
+C0/T0 uses only the exact profile-pinned runtime-state helper and legacy Swagger liveness paths, and must retain
+`LEGACY_LIVENESS_ONLY` / `BASELINE_OR_ROLLBACK_ONLY`. C1/T1 uses only bounded HTTP runtime metadata and
 `STANDARD_READINESS` / `STANDARD_PROMOTION_ELIGIBLE`, an `evidence://sha256/<digest>` reference, and a checksum of
-the fixed logical `/alive`-then-`/healthz` policy. C1/T1 intents are rejected if either candidate artifact digest
-reuses its corresponding C0/T0 digest.
+the fixed logical `/alive`-then-`/healthz` policy. The intent cannot select the mode. C1/T1 intents are rejected if
+either candidate artifact digest reuses its corresponding C0/T0 digest.
+
+The service writes a durable heartbeat separately from intent history. Liveness verifies a fresh heartbeat;
+readiness additionally requires the latest poll to be successful. Config-only upgrades may migrate terminal
+`COMPLETE`/`EXHAUSTED` history after proving the target, profile, checkpoint, scope, and legacy pins are unchanged;
+the migration retains an exclusive backup and checksum receipt and refuses pending history.
 
 The existing Fleet and execution read models expose the persisted artifact digest, config checksum, platform,
 schema version, capability checksum, and health directly from `ObservedComponentState`. Fleet exposes a singular
@@ -93,7 +100,8 @@ and service state must not be deleted to manufacture a retry.
 ## Validation
 
 Focused Node tests use temporary files and in-memory SSH/HTTP adapters. They cover persisted replay after partial
-submission, completed-intent suppression, retry/attempt exhaustion, exact scope and credential separation, pinned
-known-hosts and C0/T0 evidence validation, C0/T0/C1/T1 digest separation, standard-readiness request lineage, and
-the existing bounded measurement/signature behavior. Focused read-model and Angular tests cover the native
+submission, terminal-file inbox starvation, retry/attempt exhaustion, exact scope and credential separation,
+pinned known-hosts and C0/T0 evidence validation, sealed C0/T0 and C1/T1 mode classification, health/readiness,
+terminal-only state migration, and the existing bounded measurement/signature behavior. Focused read-model and
+Angular tests cover the native
 observation identity projection and rendering. No live system or database is contacted.

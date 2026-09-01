@@ -45,10 +45,10 @@
     }
   },
   "currentRuntime": {
-    "checkpoint": "C1/T1",
+    "checkpoint": "C0/T0",
     "componentStateLabels": {
-      "customer-api": "C1",
-      "transaction-api": "T1"
+      "customer-api": "C0",
+      "transaction-api": "T0"
     }
   },
   "polling": {
@@ -62,5 +62,5 @@
     "initialDelayMs": 1000,
     "maxDelayMs": 10000
   },
-  "canonicalChecksum": "sha256:220ed05fde463da68f7e43e7b3d52534991ff1e7b95d5807819d7e7df25b2582"
+  "canonicalChecksum": "sha256:d8296373745211ec4082d3b9ccb67643956d6e0cdf8d05a0785169dde61de910"
 }

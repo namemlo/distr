@@ -5,12 +5,25 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {canonicalJSONString, sha256} from './observer.mjs';
-import {initializeService, loadServiceState, pollOnce, validateKnownHosts, validateServiceConfig} from './service.mjs';
+import {
+  initializeService,
+  loadServiceState,
+  migrateServiceState,
+  pollOnce,
+  readServiceHealth,
+  runService,
+  validateKnownHosts,
+  validateServiceConfig,
+} from './service.mjs';
 
 const now = new Date('2030-01-01T00:05:00.000Z');
 const profilePath = path.resolve(
   path.dirname(new URL(import.meta.url).pathname.replace(/^\/(.:)/, '$1')),
   'choice-tp-dev.profile.json'
+);
+const c0ProfilePath = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname.replace(/^\/(.:)/, '$1')),
+  'choice-tp-dev-c0-t0.profile.json'
 );
 const expectedByComponent = {
   'customer-api': {
@@ -75,8 +88,8 @@ function createIntent(profile, overrides = {}) {
     organizationId: '10000000-0000-4000-8000-000000000001',
     observerId: '10000000-0000-4000-8000-000000000002',
     deploymentUnitId: '10000000-0000-4000-8000-000000000003',
-    observerCredentialSetId: 'choice-tp-independent-observer-v2',
-    executorCredentialSetId: 'choice-tp-jenkins-executor-v1',
+    observerCredentialSetId: 'choice-tp-independent-observer-v1',
+    executorCredentialSetId: 'choice-tp-dev-jenkins-v1',
     notBefore: new Date(now.getTime() - 60_000).toISOString(),
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     components: ['customer-api', 'transaction-api'].map((componentKey, index) => ({
@@ -90,7 +103,7 @@ function createIntent(profile, overrides = {}) {
   return withChecksum(intent);
 }
 
-function createMockSSH() {
+function createMockSSH(observedByComponent = expectedByComponent) {
   const calls = [];
   const runSSH = async (kind, command) => {
     calls.push({kind, command});
@@ -101,7 +114,7 @@ function createMockSSH() {
       command.includes(`sha256:${'f'.repeat(64)}`)
         ? 'transaction-api'
         : 'customer-api';
-    const expected = expectedByComponent[componentKey];
+    const expected = observedByComponent[componentKey];
     if (kind === 'container-inspect') {
       const imageID = componentKey === 'customer-api' ? `sha256:${'e'.repeat(64)}` : `sha256:${'f'.repeat(64)}`;
       return `${imageID}\trepository/${componentKey}:candidate\trunning`;
@@ -187,8 +200,8 @@ async function createFixture(t, configMutator) {
         'customer-api': '10000000-0000-4000-8000-000000000004',
         'transaction-api': '10000000-0000-4000-8000-000000000005',
       },
-      observerCredentialSetId: 'choice-tp-independent-observer-v2',
-      executorCredentialSetId: 'choice-tp-jenkins-executor-v1',
+      observerCredentialSetId: 'choice-tp-independent-observer-v1',
+      executorCredentialSetId: 'choice-tp-dev-jenkins-v1',
     },
     legacyBaseline: {
       checkpoint: 'C0/T0',
@@ -214,7 +227,7 @@ async function createFixture(t, configMutator) {
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {mode: 0o600});
   const context = await initializeService(configPath);
   await mkdir(inboxDirectory, {recursive: true});
-  const profile = JSON.parse(await readFile(profilePath, 'utf8'));
+  const profile = JSON.parse(await readFile(config.profileFile, 'utf8'));
   return {directory, config, configPath, context, profile, token, inboxDirectory, evidenceDirectory};
 }
 
@@ -287,8 +300,7 @@ test('polling persists signed C1/T1 evidence and skips completed intents after r
     sleep: async () => {},
     fetchImpl: async () => assert.fail('completed intent must not submit again'),
   });
-  assert.equal(second[0].status, 'COMPLETE');
-  assert.equal(second[0].skipped, true);
+  assert.deepEqual(second, []);
 });
 
 test('restart replays the exact persisted evidence after a partial submission', async (t) => {
@@ -357,8 +369,7 @@ test('retry and per-intent attempt bounds stop repeated failing submissions', as
   assert.equal(submissions, 6);
   assert.equal(afterBound, submissions);
   assert.deepEqual(delays, [100, 200, 100, 200]);
-  assert.equal(third[0].status, 'EXHAUSTED');
-  assert.equal(third[0].skipped, true);
+  assert.deepEqual(third, []);
   const state = await loadServiceState(fixture.config);
   assert.equal(state.intents[intent.canonicalChecksum].status, 'EXHAUSTED');
 });
@@ -435,8 +446,7 @@ test('malformed intent files are also stopped by the total attempt bound', async
   const first = await pollOnce(fixture.context, {now: () => now, sleep: async () => {}});
   const second = await pollOnce(fixture.context, {now: () => now, sleep: async () => {}});
   assert.equal(first[0].status, 'FAILED');
-  assert.equal(second[0].status, 'EXHAUSTED');
-  assert.equal(second[0].skipped, true);
+  assert.deepEqual(second, []);
   const state = await loadServiceState(fixture.config);
   assert.equal(Object.values(state.intents)[0].status, 'EXHAUSTED');
 });
@@ -480,4 +490,216 @@ test('terminal intent history is pruned before the bounded state reaches capacit
   assert.equal(Object.keys(state.intents).length, 512);
   assert.equal(state.intents[`sha256:${'0'.repeat(64)}`], undefined);
   assert.equal(state.intents[intent.canonicalChecksum].status, 'COMPLETE');
+});
+
+test('terminal inbox entries cannot starve pending work before maxIntentsPerPoll is applied', async (t) => {
+  const fixture = await createFixture(t, (config) => {
+    config.polling.maxIntentsPerPoll = 1;
+  });
+  const makeIntent = (intentId, sequence) =>
+    createIntent(fixture.profile, {
+      intentId,
+      components: ['customer-api', 'transaction-api'].map((componentKey, index) => ({
+        componentKey,
+        componentInstanceId: `10000000-0000-4000-8000-00000000000${index + 4}`,
+        sourceSequence: sequence + index,
+        expected: {...expectedByComponent[componentKey], platform: 'linux/amd64'},
+      })),
+    });
+  const terminalIntents = [
+    makeIntent('a-terminal-1', 20),
+    makeIntent('a-terminal-2', 30),
+    makeIntent('a-terminal-3', 40),
+  ];
+  for (const intent of terminalIntents) await writeIntent(fixture, intent);
+  const pendingIntent = makeIntent('z-pending', 50);
+  await writeIntent(fixture, pendingIntent);
+  const terminalState = Object.fromEntries(
+    terminalIntents.map((intent, index) => [
+      intent.canonicalChecksum,
+      {
+        intentId: intent.intentId,
+        status: 'COMPLETE',
+        attempts: 1,
+        updatedAt: new Date(now.getTime() + index).toISOString(),
+        failureCode: null,
+        evidenceFile: null,
+        evidenceChecksum: null,
+      },
+    ])
+  );
+  await writeFile(
+    fixture.config.stateFile,
+    `${JSON.stringify({
+      schemaVersion: 'emlo.choice-tp-observer-service-state/v1',
+      serviceConfigChecksum: fixture.config.canonicalChecksum,
+      intents: terminalState,
+    })}\n`,
+    {mode: 0o600}
+  );
+  const {runSSH} = createMockSSH();
+  const result = await pollOnce(fixture.context, {
+    now: () => now,
+    runSSH,
+    sleep: async () => {},
+    fetchImpl: async () => new Response('{}', {status: 202}),
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].intentId, pendingIntent.intentId);
+  assert.equal(result[0].status, 'COMPLETE');
+});
+
+test('sealed C0/T0 command profile remains legacy liveness and rollback-only evidence', async (t) => {
+  const fixture = await createFixture(t, (config) => {
+    config.profileFile = c0ProfilePath;
+    config.currentRuntime = {
+      checkpoint: 'C0/T0',
+      componentStateLabels: {'customer-api': 'C0', 'transaction-api': 'T0'},
+    };
+  });
+  const observedByComponent = Object.fromEntries(
+    Object.entries(expectedByComponent).map(([componentKey, expected]) => [
+      componentKey,
+      {
+        ...expected,
+        artifactDigest: legacyByComponent[componentKey].artifactDigest,
+        configChecksum: legacyByComponent[componentKey].configChecksum,
+      },
+    ])
+  );
+  const intent = createIntent(fixture.profile, {
+    intentId: 'choice-tp-dev-c0-t0-observation-1',
+    components: ['customer-api', 'transaction-api'].map((componentKey, index) => ({
+      componentKey,
+      componentInstanceId: `10000000-0000-4000-8000-00000000000${index + 4}`,
+      sourceSequence: 60 + index,
+      expected: {...observedByComponent[componentKey], platform: 'linux/amd64'},
+    })),
+  });
+  await writeIntent(fixture, intent);
+  const {runSSH, calls} = createMockSSH(observedByComponent);
+  const requests = [];
+  const result = await pollOnce(fixture.context, {
+    now: () => now,
+    runSSH,
+    sleep: async () => {},
+    fetchImpl: async (_url, request) => {
+      requests.push(JSON.parse(request.body));
+      return new Response('{}', {status: 202});
+    },
+  });
+  assert.equal(result[0].status, 'COMPLETE');
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(({healthEvidenceKind}) => healthEvidenceKind === 'LEGACY_LIVENESS_ONLY'));
+  assert.ok(requests.every(({healthEvidenceUse}) => healthEvidenceUse === 'BASELINE_OR_ROLLBACK_ONLY'));
+  assert.ok(calls.filter(({kind}) => kind === 'runtime-probe').every(({command}) => command.includes("'/usr/bin/timeout'")));
+  assert.ok(calls.filter(({kind}) => kind === 'alive').every(({command}) => command.includes('/swagger/v1/swagger.json')));
+});
+
+test('durable health distinguishes live state from readiness', async (t) => {
+  const fixture = await createFixture(t);
+  await runService({
+    context: fixture.context,
+    once: true,
+    dependencies: {now: () => now, sleep: async () => {}},
+  });
+  const ready = await readServiceHealth(fixture.config, now, {requireReady: true});
+  assert.equal(ready.status, 'READY');
+  assert.equal(ready.ready, true);
+
+  await writeFile(path.join(fixture.inboxDirectory, 'malformed-for-health.json'), '{"invalid":true}\n', {mode: 0o600});
+  await runService({
+    context: fixture.context,
+    once: true,
+    dependencies: {now: () => new Date(now.getTime() + 1000), sleep: async () => {}},
+  });
+  const degraded = await readServiceHealth(fixture.config, new Date(now.getTime() + 1000));
+  assert.equal(degraded.status, 'DEGRADED');
+  assert.equal(degraded.ready, false);
+  await assert.rejects(
+    readServiceHealth(fixture.config, new Date(now.getTime() + 1000), {requireReady: true}),
+    /live but not ready/
+  );
+  await assert.rejects(
+    readServiceHealth(fixture.config, new Date(now.getTime() + fixture.config.polling.lockStaleMs + 2000)),
+    /heartbeat is stale/
+  );
+});
+
+test('state migration preserves only terminal history with immutable backup and receipt', async (t) => {
+  const previous = await createFixture(t);
+  const terminalState = {
+    schemaVersion: 'emlo.choice-tp-observer-service-state/v1',
+    serviceConfigChecksum: previous.config.canonicalChecksum,
+    intents: {
+      [`sha256:${'9'.repeat(64)}`]: {
+        intentId: 'completed-before-upgrade',
+        status: 'COMPLETE',
+        attempts: 1,
+        updatedAt: now.toISOString(),
+        failureCode: null,
+        evidenceFile: null,
+        evidenceChecksum: null,
+      },
+    },
+  };
+  const previousStateBytes = `${JSON.stringify(terminalState)}\n`;
+  await writeFile(previous.config.stateFile, previousStateBytes, {mode: 0o600});
+  const current = await createFixture(t, (config) => {
+    config.polling.intervalMs = 2000;
+  });
+  const migrated = await migrateServiceState({
+    currentContext: current.context,
+    previousConfigPath: previous.configPath,
+    now,
+  });
+  const currentState = await loadServiceState(current.config);
+  assert.equal(currentState.serviceConfigChecksum, current.config.canonicalChecksum);
+  assert.equal(currentState.intents[`sha256:${'9'.repeat(64)}`].status, 'COMPLETE');
+  assert.equal(await readFile(migrated.backupPath, 'utf8'), previousStateBytes);
+  assert.equal(migrated.receipt.previousStateChecksum, sha256(previousStateBytes));
+  assert.equal(migrated.receipt.retainedIntentCount, 1);
+  assert.equal(JSON.parse(await readFile(migrated.receiptPath, 'utf8')).currentConfigChecksum, current.config.canonicalChecksum);
+});
+
+test('state migration refuses pending history or a changed checkpoint contract', async (t) => {
+  const previous = await createFixture(t);
+  await writeFile(
+    previous.config.stateFile,
+    `${JSON.stringify({
+      schemaVersion: 'emlo.choice-tp-observer-service-state/v1',
+      serviceConfigChecksum: previous.config.canonicalChecksum,
+      intents: {
+        [`sha256:${'8'.repeat(64)}`]: {
+          intentId: 'pending-before-upgrade',
+          status: 'PENDING',
+          attempts: 1,
+          updatedAt: now.toISOString(),
+          failureCode: 'SUBMISSION_RETRYABLE',
+          evidenceFile: 'retained.evidence.json',
+          evidenceChecksum: `sha256:${'7'.repeat(64)}`,
+        },
+      },
+    })}\n`,
+    {mode: 0o600}
+  );
+  const current = await createFixture(t, (config) => {
+    config.retry.maxTotalAttemptsPerIntent = 5;
+  });
+  await assert.rejects(
+    migrateServiceState({currentContext: current.context, previousConfigPath: previous.configPath, now}),
+    /refuses pending or unknown intent state/
+  );
+
+  const c0Current = await createFixture(t, (config) => {
+    config.profileFile = c0ProfilePath;
+    config.currentRuntime = {
+      checkpoint: 'C0/T0',
+      componentStateLabels: {'customer-api': 'C0', 'transaction-api': 'T0'},
+    };
+  });
+  await assert.rejects(
+    migrateServiceState({currentContext: c0Current.context, previousConfigPath: previous.configPath, now}),
+    /cannot change target, checkpoint, profile, scope, or legacy pins/
+  );
 });

@@ -2002,11 +2002,13 @@ Use one entry per pull request:
 
 - Status: Implemented with focused local verification; no live environment is
   contacted or claimed.
-- Upstream base: `d5643fad`.
+- Upstream base: `8f8c353b`.
 - Feature flags: Uses the existing observer boundary; no new process flag.
-- User-facing behavior: Choice TP C1/T1 observation can run as a restart-safe
-  polling container or systemd timer. Persisted signed evidence is exactly
-  replayed after interruption, including partial submission.
+- User-facing behavior: Choice TP C1/T1 standard readiness and C0/T0 legacy
+  liveness can run as a restart-safe polling container or systemd timer.
+  Persisted signed evidence is exactly replayed after interruption, including
+  partial submission; durable health/readiness and terminal-only state migration
+  support bounded upgrades.
 - Database changes: None.
 - API changes: No route change. Existing observation requests now include the
   standard-readiness health kind/use/policy fields and canonical digest-addressed
@@ -2017,13 +2019,14 @@ Use one entry per pull request:
   identity instead of reducing component evidence to a checkpoint/status label.
   Conflicting Fleet observations suppress a singular identity.
 - Agent protocol changes: None; the service remains an adopter-side observer.
-- Documentation: Adds ADR-0079, PR-092 fork notes, hardened Compose/systemd
-  packaging, example service/current-intent configuration, and an install,
-  recovery, and rollback runbook. The operator API guide documents the additive
+- Documentation: Adds ADR-0079, PR-092 fork notes, digest/source-pinned
+  Compose/systemd packaging, sealed C0/T0 and C1/T1 profiles, restricted SSH
+  installation, preflight, recovery, upgrade, and rollback guidance. The operator API guide documents the additive
   Fleet and execution observation identity fields.
-- Tests: Focused temporary-file and in-memory Node tests cover exact restart
-  replay, partial submission, retry exhaustion, completed-intent suppression,
-  scope/credential/known-host/legacy pins, and C0/T0 versus C1/T1 separation.
+- Tests: Focused temporary-file and in-memory Node/Python tests cover exact restart
+  replay, partial submission, retry exhaustion, completed-intent suppression and
+  inbox starvation, scope/credential/known-host/legacy pins, sealed C0/T0 versus
+  C1/T1 behavior, health/readiness, state migration, restricted SSH, and packaging.
   Focused Go SQL/read-model tests and Angular component tests cover exact native
   observation identity projection and rendering.
 - Upstream contribution notes: Durable replay and bounded scheduler mechanics

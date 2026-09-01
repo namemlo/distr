@@ -21,8 +21,10 @@ same signed runtime evidence is safely completed instead of being silently repla
 - Only transport errors and HTTP `408`, `429`, or `5xx` are retried. Authentication, scope, validation, and
   oversized-response errors fail without retry.
 - A stale-bounded local lock prevents overlapping service instances.
-- Current C1/T1 observations include independently measured artifact/config/schema/capability/platform/topology,
-  exact health, `STANDARD_READINESS` / `STANDARD_PROMOTION_ELIGIBLE`, and a checksum-bound evidence reference.
+- C1/T1 uses sealed HTTP runtime metadata and standard promotion-eligible readiness. C0/T0 uses only the sealed
+  runtime-state helper and legacy Swagger liveness and remains baseline/rollback-only. Intents cannot choose a mode.
+- Durable liveness/readiness state, terminal-only config-upgrade migration, immutable migration backup/receipt, and
+  terminal-inbox filtering keep operations bounded across restarts and upgrades.
 - Existing Fleet and execution read models expose the persisted observation artifact digest, config checksum,
   platform, schema version, capability checksum, and health. Fleet also exposes the evidence checksum when exactly
   one current accepted observation supplies it; conflicting observations do not invent a singular identity.
@@ -41,9 +43,11 @@ reuse the C0/T0 artifact digests.
 
 ## Packaging and operations
 
-- A minimal Node/OpenSSH container runs as UID/GID 10001 with a read-only root filesystem, no capabilities, no
-  privilege gain, observer-only read mounts, and writable evidence/state mounts.
+- A digest-pinned Node/OpenSSH container records the exact source revision and runs as UID/GID 10001 with a
+  read-only root filesystem, resource/PID/log bounds, no capabilities, no privilege gain, explicit Compose secrets,
+  a dedicated network, observer-only read mounts, and writable evidence/state mounts.
 - Compose requires a production image reference containing an immutable digest.
+- A local preflight validates the deployment layout, canonical config/profile checksums, and immutable image input.
 - systemd oneshot/timer units use a strict filesystem/device/kernel sandbox and an unprivileged observer account.
 - The install/recovery/rollback runbook preserves evidence and state, prohibits sequence reuse, and never authorizes
   a client runtime or database mutation.
@@ -62,7 +66,10 @@ No live Choice TP, Distr, Jenkins, Docker, registry, or database system is conta
 ```shell
 node --test \
   examples/choice-tp-observer/observer.test.mjs \
-  examples/choice-tp-observer/service.test.mjs
+  examples/choice-tp-observer/service.test.mjs \
+  examples/choice-tp-observer/packaging.test.mjs
+
+python -m unittest examples/choice-tp-observer/restricted-ssh/test_restricted_ssh.py
 
 go test ./internal/db -run \
   'TestOperatorFleetSQLKeepsSharedUnitSingleAndProjectsOperationalStates|TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution|TestOperatorExecutionListSQLIncludesControlObservationAndPreviousStateEvidence|TestListOperatorFleetRowsUsesOneBoundedQueryAndDecodesEmptyAndPartialRows' \
