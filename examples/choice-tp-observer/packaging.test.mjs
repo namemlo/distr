@@ -50,7 +50,10 @@ test('environment and release identity validators reject mutable inputs', async 
   assert.throws(() => validateSourceRevision('main'), /40-hex Git commit/);
   assert.throws(() => validateImmutableImageReference('registry.example/observer:latest'), /repository@sha256/);
   assert.throws(
-    () => parseEnvironment(`COMPOSE_PROJECT_NAME=choice-tp-observer\nCHOICE_TP_OBSERVER_IMAGE=${environment.CHOICE_TP_OBSERVER_IMAGE}\nTOKEN=secret\n`),
+    () =>
+      parseEnvironment(
+        `COMPOSE_PROJECT_NAME=choice-tp-observer\nCHOICE_TP_OBSERVER_IMAGE=${environment.CHOICE_TP_OBSERVER_IMAGE}\nTOKEN=secret\n`
+      ),
     /unsupported or duplicate key/
   );
 });

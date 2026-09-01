@@ -229,13 +229,8 @@ export function validateServiceConfig(config) {
   }
   requireExactKeys(config.currentRuntime.componentStateLabels, fixedComponents, 'current runtime labels');
   for (const componentKey of fixedComponents) {
-    if (
-      config.currentRuntime.componentStateLabels[componentKey] !==
-      runtimeMode.componentStateLabels[componentKey]
-    ) {
-      throw new Error(
-        `${componentKey} current state label must be ${runtimeMode.componentStateLabels[componentKey]}`
-      );
+    if (config.currentRuntime.componentStateLabels[componentKey] !== runtimeMode.componentStateLabels[componentKey]) {
+      throw new Error(`${componentKey} current state label must be ${runtimeMode.componentStateLabels[componentKey]}`);
     }
   }
 
@@ -419,10 +414,7 @@ function validateIntentScope(intent, config) {
     if (!component || component.componentInstanceId !== config.scope.componentInstanceIds[componentKey]) {
       throw new Error(`${componentKey} observation intent is outside the configured component scope`);
     }
-    if (
-      config.currentRuntime.checkpoint === 'C1/T1' &&
-      component.expected.artifactDigest === legacy.artifactDigest
-    ) {
+    if (config.currentRuntime.checkpoint === 'C1/T1' && component.expected.artifactDigest === legacy.artifactDigest) {
       throw new Error(
         `${componentKey} ${runtimeModes['C1/T1'].componentStateLabels[componentKey]} runtime must not reuse the ${legacy.stateLabel} artifact digest`
       );
@@ -490,11 +482,7 @@ async function writeServiceHealth(config, value) {
 }
 
 export async function readServiceHealth(config, now = new Date(), {requireReady = false} = {}) {
-  const health = await readBoundedJSON(
-    healthFilePath(config),
-    maximumHealthBytes,
-    'observer service health'
-  );
+  const health = await readBoundedJSON(healthFilePath(config), maximumHealthBytes, 'observer service health');
   requireExactKeys(
     health,
     [
@@ -799,9 +787,7 @@ async function listIntentFiles(config, state) {
     let terminal = false;
     try {
       const intent = await readBoundedJSON(intentPath, maximumConfigBytes, 'observation intent');
-      const stateKey = digestPattern.test(intent.canonicalChecksum ?? '')
-        ? intent.canonicalChecksum
-        : sha256(intent);
+      const stateKey = digestPattern.test(intent.canonicalChecksum ?? '') ? intent.canonicalChecksum : sha256(intent);
       terminal = ['COMPLETE', 'EXHAUSTED'].includes(state.intents[stateKey]?.status);
     } catch {
       // Preserve malformed files for processIntent so their bounded failure is visible.
@@ -1034,9 +1020,7 @@ async function main() {
   }
   if (args.migrateStateFrom) {
     const result = await migrateServiceState({currentContext: context, previousConfigPath: args.migrateStateFrom});
-    process.stdout.write(
-      `${JSON.stringify({status: 'migrated', receipt: path.basename(result.receiptPath)})}\n`
-    );
+    process.stdout.write(`${JSON.stringify({status: 'migrated', receipt: path.basename(result.receiptPath)})}\n`);
     return;
   }
   const controller = new AbortController();

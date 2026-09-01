@@ -538,11 +538,7 @@ function isHealthyStatus(status) {
 }
 
 function normalizeHealthEvidence(healthEvidence = standardHealthEvidence) {
-  requireExactKeys(
-    healthEvidence,
-    ['healthEvidenceKind', 'healthEvidenceUse'],
-    'health evidence classification'
-  );
+  requireExactKeys(healthEvidence, ['healthEvidenceKind', 'healthEvidenceUse'], 'health evidence classification');
   const valid =
     (healthEvidence.healthEvidenceKind === 'STANDARD_READINESS' &&
       healthEvidence.healthEvidenceUse === 'STANDARD_PROMOTION_ELIGIBLE') ||
@@ -880,9 +876,7 @@ export async function collectObservationEvidence({
   const capturedAt = now.toISOString();
   const components = [];
   for (const intentComponent of intent.components) {
-    components.push(
-      await observeComponent({profile, intentComponent, runSSH, capturedAt, healthEvidence})
-    );
+    components.push(await observeComponent({profile, intentComponent, runSSH, capturedAt, healthEvidence}));
   }
   const evidenceCore = {
     schemaVersion: 'emlo.choice-tp-observation-evidence/v2',
@@ -896,13 +890,7 @@ export async function collectObservationEvidence({
   return signEvidence(evidenceCore, privateKeyPEM);
 }
 
-export function verifySignedEvidence({
-  signedEvidence,
-  intent,
-  profile,
-  privateKeyPEM,
-  healthEvidence = null,
-}) {
+export function verifySignedEvidence({signedEvidence, intent, profile, privateKeyPEM, healthEvidence = null}) {
   requireExactKeys(
     signedEvidence,
     [

@@ -79,7 +79,9 @@ export async function runPreflight({root, envFile = path.join(root, '.env')}) {
     await requirePath(root, relativePath, 'directory');
   }
   const service = JSON.parse(await readFile(path.join(root, 'config/service.json'), 'utf8'));
-  const serviceChecksum = sha256(Object.fromEntries(Object.entries(service).filter(([key]) => key !== 'canonicalChecksum')));
+  const serviceChecksum = sha256(
+    Object.fromEntries(Object.entries(service).filter(([key]) => key !== 'canonicalChecksum'))
+  );
   if (service.canonicalChecksum !== serviceChecksum || service.profileFile !== '/etc/choice-tp-observer/profile.json') {
     throw new Error('service config checksum or mounted profile path is invalid');
   }

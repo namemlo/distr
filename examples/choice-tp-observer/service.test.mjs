@@ -592,8 +592,12 @@ test('sealed C0/T0 command profile remains legacy liveness and rollback-only evi
   assert.equal(requests.length, 2);
   assert.ok(requests.every(({healthEvidenceKind}) => healthEvidenceKind === 'LEGACY_LIVENESS_ONLY'));
   assert.ok(requests.every(({healthEvidenceUse}) => healthEvidenceUse === 'BASELINE_OR_ROLLBACK_ONLY'));
-  assert.ok(calls.filter(({kind}) => kind === 'runtime-probe').every(({command}) => command.includes("'/usr/bin/timeout'")));
-  assert.ok(calls.filter(({kind}) => kind === 'alive').every(({command}) => command.includes('/swagger/v1/swagger.json')));
+  assert.ok(
+    calls.filter(({kind}) => kind === 'runtime-probe').every(({command}) => command.includes("'/usr/bin/timeout'"))
+  );
+  assert.ok(
+    calls.filter(({kind}) => kind === 'alive').every(({command}) => command.includes('/swagger/v1/swagger.json'))
+  );
 });
 
 test('durable health distinguishes live state from readiness', async (t) => {
@@ -659,7 +663,10 @@ test('state migration preserves only terminal history with immutable backup and 
   assert.equal(await readFile(migrated.backupPath, 'utf8'), previousStateBytes);
   assert.equal(migrated.receipt.previousStateChecksum, sha256(previousStateBytes));
   assert.equal(migrated.receipt.retainedIntentCount, 1);
-  assert.equal(JSON.parse(await readFile(migrated.receiptPath, 'utf8')).currentConfigChecksum, current.config.canonicalChecksum);
+  assert.equal(
+    JSON.parse(await readFile(migrated.receiptPath, 'utf8')).currentConfigChecksum,
+    current.config.canonicalChecksum
+  );
 });
 
 test('state migration refuses pending history or a changed checkpoint contract', async (t) => {
