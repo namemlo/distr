@@ -2308,3 +2308,32 @@ Use one entry per pull request:
 - Compatibility notes: Validation accepts only the original and PostgreSQL 18
   dump/restore-generated exact definitions and counts the matching constraint
   identity once. Broader or weakened predicates remain rejected.
+
+### Post-PR-098 - Deployment-plan source-history consistency gate
+
+- Status: Implemented locally with focused repository verification; no live
+  source host, CI system, runtime target, or workload database was contacted.
+- Upstream base: `ee3f33f7`.
+- Feature flags: Uses the existing default-off `operator_control_plane_v2`
+  planning boundary; no new flag is added.
+- User-facing behavior: Target-plan validation excludes sibling releases from
+  accumulated component changelogs and blocks publication when baseline or
+  candidate source history is missing, conflicting, reordered, or ambiguous.
+- Database changes: None.
+- API changes: The existing draft-validation `issues[]` response may add
+  `source_history_unverified` or `source_history_divergent`; no route or schema
+  is added.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Adds ADR-0085 and neutral operator/API guidance for the
+  fail-closed validation contract and its non-cryptographic boundary.
+- Tests: Focused database/planning/release package tests cover equal commits,
+  component-scoped and skipped-release paths, sibling exclusion, missing
+  proof, repository mismatch, commit reordering, duplicates, and query bounds.
+- Upstream contribution notes: Community-neutral planning validation with no
+  adopter, source provider, CI provider, registry, runtime address, service
+  name, credential, or workload-database assumption.
+- Compatibility notes: Existing routes, database schema, canonical plan bytes,
+  published plans, and bootstrap behavior remain unchanged. The gate validates
+  immutable Distr manifest consistency; independent Git-parent proof requires
+  a future authenticated source-host or CI ancestry attestation.

@@ -70,3 +70,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0082: Protected-History Artifact Retention](0082-protected-history-artifact-retention.md)
 - [ADR-0083: Complete Product Release Manifest Read Model](0083-product-release-manifest-read-model.md)
 - [ADR-0084: Native Schema Evidence Gating](0084-native-schema-evidence-gating.md)
+- [ADR-0085: Deployment Plan Source-History Validation](0085-deployment-plan-source-history-validation.md)

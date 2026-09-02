@@ -14,6 +14,8 @@ remains authoritative for route shapes.
 - Lifecycle eligibility: release/environment explanation endpoint.
 - Deployment processes: process CRUD and immutable revision endpoints.
 - Deployment plans: preview, checksum, export, and task creation surfaces.
+- Target-plan source-history validation: fail-closed baseline/candidate
+  repository and component-path consistency checks before plan publication.
 
 The provenance verifier does not add a route family or fetch network trust material. Existing release-bundle
 responses carry additive kind/schema and immutable checksum/digest facts. Only a bounded accepted verification
@@ -21,6 +23,13 @@ receipt, including the exact verified source repository/commit and builder/invoc
 evidence reference alone is not treated as verified. Preflight compares those persisted values to the release
 contract. The existing publish route accepts an optional `provenance` object containing the frozen policy and
 embedded bundles; it remains optional for v1 and is required for Component Release v2.
+
+The deployment-plan source-history gate uses immutable Component Release
+contract and release-projection facts. It returns `source_history_unverified`
+for missing proof and `source_history_divergent` for conflicting repository or
+commit-path facts. This excludes sibling releases from accumulated changelogs,
+but it is not independent proof of Git parent edges. That stronger claim needs
+an authenticated source-host or CI ancestry attestation.
 
 Key-backed Cosign verification is additive through provenance policy `distr.provenance-policy/v2` and
 `verificationMode: "keyful"`. Its frozen trust material uses

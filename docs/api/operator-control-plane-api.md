@@ -215,6 +215,32 @@ treat a partial cached manifest as deployable.
 Any material release, config, provider, migration, baseline, policy, or campaign
 change invalidates reuse of the old approval.
 
+#### Source-history validation
+
+For a non-bootstrap target plan, draft validation compares the authoritative
+baseline and selected Component Release source facts before publishing an
+accumulated changelog. Repository identity, immutable contract commit, and the
+`ReleaseBundle.source_revision` projection must agree. Releases on the
+candidate contract's ordered component change path are included in path order;
+published sibling releases outside that path are excluded.
+
+Validation returns a blocking issue in the existing `issues[]` response:
+
+| Code | Meaning |
+| ---- | ------- |
+| `source_history_unverified` | Required baseline, candidate, or declared component-path proof is missing or invalid. |
+| `source_history_divergent` | Repository identity, commit order/projection, or release-to-commit mapping conflicts. |
+
+Publication recomputes the preview and refuses either issue before persisting
+an immutable plan. An equal baseline/candidate source commit is valid and adds
+no source-notes delta. Component-scoped changelogs may end before the candidate
+repository head when later commits do not touch that component.
+
+This validation is a consistency check over immutable Distr release facts. It
+does not independently prove Git parent edges. A cryptographic ancestry claim
+requires an authenticated source-host or CI attestation that binds the exact
+repository, baseline commit, candidate commit, and ancestry result.
+
 Target-plan validation additively returns `migrationContracts`, ordered in dependency
 order. Each entry freezes exact source/result schema checksums, backup and probe
 requirements, lock/retry/recovery facts, artifact digest, and component/database
