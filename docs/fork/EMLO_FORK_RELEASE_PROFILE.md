@@ -34,7 +34,7 @@ line, moved line, new category, or new adopter-bearing path therefore remains
 a rejected finding until a reviewer updates that exact identity.
 
 The current baseline is bound to the final combined source commit
-`5f0d4d2b94ccd77bf90922ac22dedb1c774d6f6e` and the reviewed delta from
+`c2415e5d4194a40f8c284526fdf0a9e130edf78a` and the reviewed delta from
 `fork/main` at `50c0bec4b2ad4e8bb206e749dab39edb0e5ce469`. Source text is stored only as a
 SHA-256 value so the policy does not reproduce private-path fixtures or other
 sensitive-looking test values.

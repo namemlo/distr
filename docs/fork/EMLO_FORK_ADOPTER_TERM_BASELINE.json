@@ -2,7 +2,7 @@
   "schema": "distr.adopter-term-baseline/v1",
   "profile": "emlo-fork",
   "repository": "namemlo/distr",
-  "sourceCommit": "5f0d4d2b94ccd77bf90922ac22dedb1c774d6f6e",
+  "sourceCommit": "c2415e5d4194a40f8c284526fdf0a9e130edf78a",
   "findings": [
     {
       "file": "api/execution_v2_test.go",
