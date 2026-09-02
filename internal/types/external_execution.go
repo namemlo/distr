@@ -86,6 +86,20 @@ type ExternalExecution struct {
 	ObservedStateChecksum    string                    `db:"observed_state_checksum" json:"observedStateChecksum,omitempty"` //nolint:lll
 }
 
+const ExternalExecutionPreMutationHoldSchemaV1 = "distr.external-execution-pre-mutation-hold/v1"
+
+type ExternalExecutionPreMutationHold struct {
+	Schema             string    `json:"schema"`
+	ControlID          uuid.UUID `json:"controlId"`
+	OrganizationID     uuid.UUID `json:"organizationId"`
+	DeploymentPlanID   uuid.UUID `json:"deploymentPlanId"`
+	DeploymentTargetID uuid.UUID `json:"deploymentTargetId"`
+	PlanChecksum       string    `json:"planChecksum"`
+	Component          string    `json:"component"`
+	Reason             string    `json:"reason"`
+	ControlChecksum    string    `json:"-"`
+}
+
 type ExternalExecutionExpectedState struct {
 	Version         string
 	Image           string
@@ -129,6 +143,7 @@ type MarkExternalExecutionTriggeredRequest struct {
 	OrganizationID      uuid.UUID
 	ExternalExecutionID uuid.UUID
 	TriggerAttempts     int
+	PreMutationHold     *ExternalExecutionPreMutationHold
 }
 
 type RecordExternalExecutionCallbackRequest struct {

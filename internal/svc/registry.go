@@ -15,6 +15,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/executionruntime"
+	"github.com/distr-sh/distr/internal/externalexecution"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/hubexecutor"
 	"github.com/distr-sh/distr/internal/jobs"
@@ -29,6 +30,7 @@ import (
 	"github.com/distr-sh/distr/internal/server"
 	"github.com/distr-sh/distr/internal/targetconfig"
 	"github.com/distr-sh/distr/internal/tracers"
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-mailx/mailx"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -86,6 +88,14 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		zap.Bool("release", buildconfig.IsRelease()))
 
 	experimentalFeatures := featureflags.NewRegistry(env.ExperimentalFeatureFlags())
+	var preMutationHold *types.ExternalExecutionPreMutationHold
+	if raw := env.ExternalExecutionPreMutationHoldJSON(); len(raw) > 0 {
+		var err error
+		preMutationHold, err = externalexecution.ParsePreMutationHold(raw)
+		if err != nil {
+			return nil, fmt.Errorf("external execution pre-mutation hold configuration: %w", err)
+		}
+	}
 	executionRuntime, err := newExecutionRuntimeDependencies(
 		env.ExecutionV2SigningKeysJSON(), env.ExecutionV2ObserverPublicKeysJSON(), experimentalFeatures,
 	)
@@ -129,7 +139,9 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 	} else {
 		reg.dbPool = db
 	}
-	reg.hubExecutor = hubexecutor.New(reg.logger, reg.dbPool, hubexecutor.Options{})
+	reg.hubExecutor = hubexecutor.New(reg.logger, reg.dbPool, hubexecutor.Options{
+		PreMutationHold: preMutationHold,
+	})
 
 	if env.RegistryEnabled() {
 		reg.s3Client = newS3Client(ctx)

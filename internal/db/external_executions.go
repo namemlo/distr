@@ -220,7 +220,17 @@ func MarkExternalExecutionTriggered(
 	if request.TriggerAttempts < 1 {
 		return nil, apierrors.NewBadRequest("triggerAttempts must be greater than 0")
 	}
+	if request.PreMutationHold != nil {
+		if err := externalexecution.ValidatePreMutationHold(*request.PreMutationHold); err != nil {
+			return nil, apierrors.NewBadRequest(err.Error())
+		}
+		checksum, err := externalexecution.PreMutationHoldChecksum(*request.PreMutationHold)
+		if err != nil || checksum != request.PreMutationHold.ControlChecksum {
+			return nil, apierrors.NewBadRequest("pre-mutation hold controlChecksum does not match its binding")
+		}
+	}
 	var updated *types.ExternalExecution
+	holdConsumed := false
 	err := RunTx(ctx, func(ctx context.Context) error {
 		execution, err := getExternalExecutionForUpdate(ctx, request.ExternalExecutionID, request.OrganizationID)
 		if err != nil {
@@ -228,6 +238,20 @@ func MarkExternalExecutionTriggered(
 		}
 		if execution.Status != types.ExternalExecutionStatusQueued {
 			return apierrors.NewConflict("external execution dispatch is already claimed")
+		}
+		if request.PreMutationHold != nil {
+			holdConsumed, err = consumeExternalExecutionPreMutationHold(ctx, *execution, *request.PreMutationHold)
+			if err != nil {
+				return err
+			}
+			if holdConsumed {
+				updated, err = failExternalExecutionLocked(
+					ctx,
+					*execution,
+					preMutationHoldFailureMessage(*request.PreMutationHold),
+				)
+				return err
+			}
 		}
 		database := internalctx.GetDb(ctx)
 		rows, err := database.Query(ctx,
@@ -255,7 +279,90 @@ func MarkExternalExecutionTriggered(
 		updated, err = collectExternalExecution(rows)
 		return err
 	})
+	if err == nil && holdConsumed {
+		return updated, apierrors.NewConflict(updated.ErrorSummary)
+	}
 	return updated, err
+}
+
+func consumeExternalExecutionPreMutationHold(
+	ctx context.Context,
+	execution types.ExternalExecution,
+	control types.ExternalExecutionPreMutationHold,
+) (bool, error) {
+	if !externalexecution.MatchesPreMutationHold(control, execution) {
+		return false, nil
+	}
+	database := internalctx.GetDb(ctx)
+	if _, err := database.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended(@controlChecksum, 171))`,
+		pgx.NamedArgs{"controlChecksum": control.ControlChecksum},
+	); err != nil {
+		return false, fmt.Errorf("could not lock external execution pre-mutation hold: %w", err)
+	}
+	var consumed bool
+	if err := database.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM ControlPlaneAuditEvent event
+			WHERE event.organization_id = @organizationId
+			  AND event.deployment_plan_id = @deploymentPlanId
+			  AND event.deployment_target_id = @deploymentTargetId
+			  AND event.deployment_plan_checksum = @planChecksum
+			  AND event.event_type = 'external_execution.pre_mutation_hold.consumed'
+			  AND event.payload ->> 'controlChecksum' = @controlChecksum
+		)`, pgx.NamedArgs{
+		"organizationId": control.OrganizationID, "deploymentPlanId": control.DeploymentPlanID,
+		"deploymentTargetId": control.DeploymentTargetID, "planChecksum": control.PlanChecksum,
+		"controlChecksum": control.ControlChecksum,
+	}).Scan(&consumed); err != nil {
+		return false, fmt.Errorf("could not inspect external execution pre-mutation hold: %w", err)
+	}
+	if consumed {
+		return false, nil
+	}
+	payload, err := json.Marshal(struct {
+		Schema              string    `json:"schema"`
+		ControlID           uuid.UUID `json:"controlId"`
+		ControlChecksum     string    `json:"controlChecksum"`
+		Component           string    `json:"component"`
+		Reason              string    `json:"reason"`
+		ExternalExecutionID uuid.UUID `json:"externalExecutionId"`
+		AdapterInvoked      bool      `json:"adapterInvoked"`
+	}{
+		Schema: control.Schema, ControlID: control.ControlID, ControlChecksum: control.ControlChecksum,
+		Component: control.Component, Reason: control.Reason, ExternalExecutionID: execution.ID,
+		AdapterInvoked: false,
+	})
+	if err != nil {
+		return false, fmt.Errorf("could not encode external execution pre-mutation hold audit: %w", err)
+	}
+	base := types.ControlPlaneAuditEventInput{
+		OrganizationID: control.OrganizationID, DeploymentPlanID: &control.DeploymentPlanID,
+		DeploymentTargetID: &control.DeploymentTargetID, TaskID: &execution.TaskID,
+		StepRunID: &execution.StepRunID, DeploymentPlanChecksum: control.PlanChecksum, Payload: payload,
+	}
+	armed := base
+	armed.EventType = "external_execution.pre_mutation_hold.armed"
+	armed.Outcome = "ARMED"
+	if _, err := AppendControlPlaneAuditEventInCurrentBoundary(ctx, armed); err != nil {
+		return false, fmt.Errorf("could not audit armed external execution pre-mutation hold: %w", err)
+	}
+	consumedEvent := base
+	consumedEvent.EventType = "external_execution.pre_mutation_hold.consumed"
+	consumedEvent.Outcome = "BLOCKED"
+	if _, err := AppendControlPlaneAuditEventInCurrentBoundary(ctx, consumedEvent); err != nil {
+		return false, fmt.Errorf("could not audit consumed external execution pre-mutation hold: %w", err)
+	}
+	return true, nil
+}
+
+func preMutationHoldFailureMessage(control types.ExternalExecutionPreMutationHold) string {
+	return fmt.Sprintf(
+		"pre-mutation hold %s (%s) consumed before external executor dispatch; adapter was not invoked",
+		control.ControlID,
+		control.ControlChecksum,
+	)
 }
 
 func RecordExternalExecutionCallback(
@@ -450,51 +557,59 @@ func FailExternalExecution(
 			updated = execution
 			return nil
 		}
-		eventRequest := types.RecordExternalExecutionCallbackRequest{
-			OrganizationID: request.OrganizationID, ExternalExecutionID: request.ExternalExecutionID,
-			Sequence: execution.LastCallbackSequence + 1, Status: types.ExternalExecutionStatusFailed,
-			Message: request.Message,
-		}
-		if err := externalexecution.ValidateCallbackSequence(eventRequest.Sequence, eventRequest.Status); err != nil {
-			return apierrors.NewConflict(err.Error())
-		}
-		payloadHash, err := externalexecution.CallbackPayloadHash(eventRequest)
-		if err != nil {
-			return err
-		}
-		if err := insertExternalExecutionEvent(ctx, eventRequest, nil, payloadHash); err != nil {
-			return err
-		}
-		database := internalctx.GetDb(ctx)
-		rows, err := database.Query(ctx,
-			`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
-			UPDATE ExternalExecution AS ee
-			SET status = @status,
-				completed_at = COALESCE(
-					ee.completed_at, write_clock.instant AT TIME ZONE 'UTC'),
-				completed_at_instant = CASE WHEN ee.completed_at IS NULL
-					THEN write_clock.instant ELSE ee.completed_at_instant END,
-				last_callback_sequence = @sequence,
-				last_message = @message,
-				error_summary = @message,
-				updated_at = write_clock.instant AT TIME ZONE 'UTC',
-				updated_at_instant = write_clock.instant
-			FROM write_clock
-			WHERE ee.id = @id AND ee.organization_id = @organizationId
-			RETURNING `+externalExecutionOutputExpr,
-			pgx.NamedArgs{
-				"id": request.ExternalExecutionID, "organizationId": request.OrganizationID,
-				"status": types.ExternalExecutionStatusFailed, "sequence": eventRequest.Sequence,
-				"message": request.Message,
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("could not fail ExternalExecution: %w", err)
-		}
-		updated, err = collectExternalExecution(rows)
+		updated, err = failExternalExecutionLocked(ctx, *execution, request.Message)
 		return err
 	})
 	return updated, err
+}
+
+func failExternalExecutionLocked(
+	ctx context.Context,
+	execution types.ExternalExecution,
+	message string,
+) (*types.ExternalExecution, error) {
+	eventRequest := types.RecordExternalExecutionCallbackRequest{
+		OrganizationID: execution.OrganizationID, ExternalExecutionID: execution.ID,
+		Sequence: execution.LastCallbackSequence + 1, Status: types.ExternalExecutionStatusFailed,
+		Message: message,
+	}
+	if err := externalexecution.ValidateCallbackSequence(eventRequest.Sequence, eventRequest.Status); err != nil {
+		return nil, apierrors.NewConflict(err.Error())
+	}
+	payloadHash, err := externalexecution.CallbackPayloadHash(eventRequest)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertExternalExecutionEvent(ctx, eventRequest, nil, payloadHash); err != nil {
+		return nil, err
+	}
+	database := internalctx.GetDb(ctx)
+	rows, err := database.Query(ctx,
+		`WITH write_clock AS (SELECT CURRENT_TIMESTAMP AS instant)
+		UPDATE ExternalExecution AS ee
+		SET status = @status,
+			completed_at = COALESCE(
+				ee.completed_at, write_clock.instant AT TIME ZONE 'UTC'),
+			completed_at_instant = CASE WHEN ee.completed_at IS NULL
+				THEN write_clock.instant ELSE ee.completed_at_instant END,
+			last_callback_sequence = @sequence,
+			last_message = @message,
+			error_summary = @message,
+			updated_at = write_clock.instant AT TIME ZONE 'UTC',
+			updated_at_instant = write_clock.instant
+		FROM write_clock
+		WHERE ee.id = @id AND ee.organization_id = @organizationId
+		RETURNING `+externalExecutionOutputExpr,
+		pgx.NamedArgs{
+			"id": execution.ID, "organizationId": execution.OrganizationID,
+			"status": types.ExternalExecutionStatusFailed, "sequence": eventRequest.Sequence,
+			"message": message,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not fail ExternalExecution: %w", err)
+	}
+	return collectExternalExecution(rows)
 }
 
 func GetExternalExecutionEvents(

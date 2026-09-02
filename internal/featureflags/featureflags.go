@@ -9,28 +9,29 @@ import (
 type Key string
 
 const (
-	KeyEnvironments             Key = "environments"
-	KeyLifecycles               Key = "lifecycles"
-	KeyChannels                 Key = "channels"
-	KeyReleaseBundles           Key = "release_bundles"
-	KeyDeploymentProcesses      Key = "deployment_processes"
-	KeyScopedVariablesV2        Key = "scoped_variables_v2"
-	KeyDeploymentPlans          Key = "deployment_plans"
-	KeyTaskQueue                Key = "task_queue"
-	KeyAgentCapabilities        Key = "agent_capabilities"
-	KeyAgentTaskLeases          Key = "agent_task_leases"
-	KeyStepEvents               Key = "step_events"
-	KeyStepTemplates            Key = "step_templates"
-	KeyRunbooks                 Key = "runbooks"
-	KeyDeploymentTimeline       Key = "deployment_timeline"
-	KeyRetentionPolicies        Key = "retention_policies"
-	KeyObservabilityMetrics     Key = "observability_metrics"
-	KeyObservabilityTracing     Key = "observability_tracing"
-	KeyObservabilityDashboards  Key = "observability_dashboards"
-	KeyObservabilityCorrelation Key = "observability_correlation"
-	KeyConfigAsCode             Key = "config_as_code"
-	KeyOperatorControlPlaneV2   Key = "operator_control_plane_v2"
-	KeyExecutorProtocolV2       Key = "executor_protocol_v2"
+	KeyEnvironments                     Key = "environments"
+	KeyLifecycles                       Key = "lifecycles"
+	KeyChannels                         Key = "channels"
+	KeyReleaseBundles                   Key = "release_bundles"
+	KeyDeploymentProcesses              Key = "deployment_processes"
+	KeyScopedVariablesV2                Key = "scoped_variables_v2"
+	KeyDeploymentPlans                  Key = "deployment_plans"
+	KeyTaskQueue                        Key = "task_queue"
+	KeyAgentCapabilities                Key = "agent_capabilities"
+	KeyAgentTaskLeases                  Key = "agent_task_leases"
+	KeyStepEvents                       Key = "step_events"
+	KeyStepTemplates                    Key = "step_templates"
+	KeyRunbooks                         Key = "runbooks"
+	KeyDeploymentTimeline               Key = "deployment_timeline"
+	KeyRetentionPolicies                Key = "retention_policies"
+	KeyObservabilityMetrics             Key = "observability_metrics"
+	KeyObservabilityTracing             Key = "observability_tracing"
+	KeyObservabilityDashboards          Key = "observability_dashboards"
+	KeyObservabilityCorrelation         Key = "observability_correlation"
+	KeyConfigAsCode                     Key = "config_as_code"
+	KeyOperatorControlPlaneV2           Key = "operator_control_plane_v2"
+	KeyExecutorProtocolV2               Key = "executor_protocol_v2"
+	KeyExternalExecutionPreMutationHold Key = "external_execution_pre_mutation_hold"
 )
 
 type Flag struct {
@@ -180,6 +181,12 @@ var definitions = []definition{
 		Description: "Gates new fenced executor protocol v2 admission and requires Operator Control Plane v2.",
 		Milestone:   "Operator Control Plane",
 	},
+	{
+		Key:         KeyExternalExecutionPreMutationHold,
+		Label:       "External Execution Pre-Mutation Hold",
+		Description: "Enables a checksum-bound, one-use pilot hold before an external executor can be invoked.",
+		Milestone:   "Operator Control Plane",
+	},
 }
 
 func AllKeys() []Key {
@@ -225,7 +232,8 @@ func NewRegistry(enabled []Key) Registry {
 }
 
 func (r Registry) IsEnabled(key Key) bool {
-	if key == KeyExecutorProtocolV2 && !slices.Contains(r.enabled, KeyOperatorControlPlaneV2) {
+	if (key == KeyExecutorProtocolV2 || key == KeyExternalExecutionPreMutationHold) &&
+		!slices.Contains(r.enabled, KeyOperatorControlPlaneV2) {
 		return false
 	}
 	return slices.Contains(r.enabled, key)

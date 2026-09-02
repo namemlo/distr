@@ -2338,6 +2338,31 @@ Use one entry per pull request:
   immutable Distr manifest consistency; independent Git-parent proof requires
   a future authenticated source-host or CI ancestry attestation.
 
+### Post-PR-099 - External-execution pre-mutation hold
+
+- Status: Implemented behind a default-off pilot flag.
+- Upstream base: `ee3f33f7` release-hardening integration checkpoint.
+- Feature flag: Uses
+  `operator_control_plane_v2,external_execution_pre_mutation_hold`; the hold flag
+  is ineffective without the operator-control-plane prerequisite.
+- User-facing behavior: The first exact plan/checksum/target/component match fails
+  visibly before the external adapter is invoked. The audit-backed control then
+  disables itself so a retry proceeds.
+- Database changes: None. Existing append-only `ControlPlaneAuditEvent` records
+  armed and consumed state transactionally.
+- API changes: None. Existing task, external-execution, audit, and evidence reads
+  expose the failure and audit events.
+- UI changes: None. Existing task/external-execution failure views show the
+  conflict message and zero trigger attempts.
+- Agent protocol changes: None. The boundary is Hub callback-mode webhook
+  orchestration before transport invocation.
+- Documentation: ADR 0086 and the Post-PR-099 operator guide.
+- Tests: Canonical binding/parser coverage, prerequisite flag coverage, Hub worker
+  no-webhook coverage, and PostgreSQL repository coverage for atomic failure,
+  audit events, zero dispatch attempts, and automatic one-use disablement.
+- Compatibility notes: Disabled or absent configuration preserves existing
+  behavior. Removing the flag is the kill switch; retained evidence is unchanged.
+
 ### Post-PR-101 - Protocol-v2 campaign failed-work-only retry
 
 - Generic user story: As an operator retrying a partially failed campaign

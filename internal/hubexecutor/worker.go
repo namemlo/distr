@@ -35,6 +35,7 @@ type Options struct {
 	RuntimeOptions       webhookaction.RuntimeOptions
 	ExternalPollInterval time.Duration
 	CallbackBaseURL      string
+	PreMutationHold      *types.ExternalExecutionPreMutationHold
 }
 
 type taskStore interface {
@@ -272,6 +273,7 @@ func (w *Worker) executeStep(
 			actionCtx,
 			types.MarkExternalExecutionTriggeredRequest{
 				OrganizationID: lease.OrganizationID, ExternalExecutionID: external.ID, TriggerAttempts: 1,
+				PreMutationHold: w.options.PreMutationHold,
 			},
 		)
 		if triggerErr == nil {

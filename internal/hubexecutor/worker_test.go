@@ -470,6 +470,49 @@ func TestWorkerDoesNotDispatchExecutionClaimedByAnotherWorker(t *testing.T) {
 	}
 }
 
+func TestWorkerSurfacesPreMutationHoldWithoutInvokingWebhook(t *testing.T) {
+	var webhookCalls atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		webhookCalls.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DISTR_WEBHOOK_ALLOWED_HOSTS", endpoint.Hostname())
+	t.Setenv("DISTR_WEBHOOK_ALLOWED_PRIVATE_HOSTS", endpoint.Hostname())
+	lease := hubWebhookLease(server.URL)
+	lease.Steps[0].InputBindings["completionMode"] = "callback"
+	delete(lease.Steps[0].InputBindings, "outputs")
+	lease.Steps[0].InputBindings["component"] = "loyalty-api"
+	execution := callbackExecution(lease, types.ExternalExecutionStatusQueued)
+	store := &recordingStore{externalExecution: execution, preMutationHold: true}
+	worker := newWorker(zaptest.NewLogger(t), store, Options{
+		HeartbeatInterval: time.Hour, CallbackBaseURL: "https://distr.example.com",
+		RuntimeOptions: webhookaction.RuntimeOptions{HTTPClient: server.Client()},
+		PreMutationHold: &types.ExternalExecutionPreMutationHold{
+			ControlID: uuid.New(), OrganizationID: lease.OrganizationID,
+		},
+	})
+
+	err = worker.executeLease(context.Background(), lease)
+
+	if err == nil || !strings.Contains(err.Error(), "pre-mutation hold") {
+		t.Fatalf("expected visible pre-mutation hold conflict, got %v", err)
+	}
+	if webhookCalls.Load() != 0 {
+		t.Fatalf("pre-mutation hold invoked webhook %d times", webhookCalls.Load())
+	}
+	if store.lastTriggerRequest.PreMutationHold == nil {
+		t.Fatal("worker did not bind configured pre-mutation hold to the dispatch claim")
+	}
+	if store.events[len(store.events)-1].Type != types.StepRunEventTypeFailed {
+		t.Fatalf("pre-mutation hold was not visible as a failed step: %#v", store.events)
+	}
+}
+
 func TestWorkerHonorsSuccessfulCallbackWhenTriggerResponseIsLost(t *testing.T) {
 	t.Setenv("DISTR_WEBHOOK_ALLOWED_HOSTS", "hooks.example.com")
 	lease := hubWebhookLease("https://hooks.example.com/deploy")
@@ -645,17 +688,19 @@ func TestWorkerPollerShutsDownCleanly(t *testing.T) {
 }
 
 type recordingStore struct {
-	events            []types.RecordHubStepRunEventRequest
-	leaseCalls        atomic.Int32
-	prepareCalls      atomic.Int32
-	triggerCalls      atomic.Int32
-	externalReads     atomic.Int32
-	externalExecution *types.ExternalExecution
-	completeOnTrigger bool
-	claimConflict     bool
-	succeedOnFail     bool
-	builtinAuthority  *builtinVerificationAuthority
-	builtinLoadError  error
+	events             []types.RecordHubStepRunEventRequest
+	leaseCalls         atomic.Int32
+	prepareCalls       atomic.Int32
+	triggerCalls       atomic.Int32
+	externalReads      atomic.Int32
+	externalExecution  *types.ExternalExecution
+	completeOnTrigger  bool
+	claimConflict      bool
+	succeedOnFail      bool
+	preMutationHold    bool
+	lastTriggerRequest types.MarkExternalExecutionTriggeredRequest
+	builtinAuthority   *builtinVerificationAuthority
+	builtinLoadError   error
 }
 
 func (s *recordingStore) LoadBuiltinVerificationAuthority(
@@ -679,9 +724,16 @@ func (s *recordingStore) PrepareExternalExecution(
 
 func (s *recordingStore) MarkExternalExecutionTriggered(
 	_ context.Context,
-	_ types.MarkExternalExecutionTriggeredRequest,
+	request types.MarkExternalExecutionTriggeredRequest,
 ) (*types.ExternalExecution, error) {
 	s.triggerCalls.Add(1)
+	s.lastTriggerRequest = request
+	if s.preMutationHold {
+		s.externalExecution.Status = types.ExternalExecutionStatusFailed
+		s.externalExecution.ErrorSummary = "pre-mutation hold consumed; external adapter was not invoked"
+		copy := *s.externalExecution
+		return &copy, apierrors.NewConflict(s.externalExecution.ErrorSummary)
+	}
 	if s.claimConflict {
 		s.externalExecution.Status = types.ExternalExecutionStatusRunning
 		return nil, apierrors.NewConflict("external execution dispatch is already claimed")

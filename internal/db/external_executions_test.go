@@ -13,6 +13,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/externalexecution"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -164,6 +165,77 @@ func TestFailExternalExecutionAdvancesDurableEventSequence(t *testing.T) {
 	g.Expect(events).To(HaveLen(1))
 	g.Expect(events[0].Sequence).To(Equal(int64(1)))
 	g.Expect(events[0].Status).To(Equal(types.ExternalExecutionStatusFailed))
+}
+
+func TestPreMutationHoldFailsExactlyOneMatchingDispatchBeforeAdapterMutation(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createExternalExecutionPlan(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID: deps.orgID, DeploymentPlanID: deps.plan.ID, ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(tasks).To(HaveLen(1))
+	lease, err := db.LeaseHubTask(ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	execution, err := db.PrepareExternalExecution(ctx, types.PrepareExternalExecutionRequest{
+		OrganizationID: deps.orgID, StepRunID: lease.Steps[0].StepRunID,
+		Component: "api-image", CallbackTimeoutSeconds: 600,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	control := types.ExternalExecutionPreMutationHold{
+		Schema: types.ExternalExecutionPreMutationHoldSchemaV1, ControlID: uuid.New(),
+		OrganizationID: deps.orgID, DeploymentPlanID: deps.plan.ID,
+		DeploymentTargetID: execution.DeploymentTargetID, PlanChecksum: deps.plan.CanonicalChecksum,
+		Component: "api-image", Reason: "prove dependency block before adapter mutation",
+	}
+	control.ControlChecksum, err = externalexecution.PreMutationHoldChecksum(control)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
+		PreMutationHold: &control,
+	})
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	g.Expect(err.Error()).To(ContainSubstring("adapter was not invoked"))
+	failed, err := db.GetExternalExecution(ctx, execution.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(failed.Status).To(Equal(types.ExternalExecutionStatusFailed))
+	g.Expect(failed.TriggerAttempts).To(Equal(0))
+	events, err := db.GetExternalExecutionEvents(ctx, execution.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(events).To(HaveLen(1))
+	g.Expect(events[0].Message).To(ContainSubstring(control.ControlID.String()))
+
+	auditEvents, err := db.GetControlPlaneAuditEvents(ctx, deps.orgID, 0, 100)
+	g.Expect(err).NotTo(HaveOccurred())
+	eventTypes := make([]string, 0, len(auditEvents))
+	for _, event := range auditEvents {
+		eventTypes = append(eventTypes, event.EventType)
+	}
+	g.Expect(eventTypes).To(ContainElements(
+		"external_execution.pre_mutation_hold.armed",
+		"external_execution.pre_mutation_hold.consumed",
+	))
+
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+		DELETE FROM ExternalExecutionEvent
+		WHERE external_execution_id = @externalExecutionId;
+		UPDATE ExternalExecution
+		SET status = 'QUEUED', completed_at = NULL, completed_at_instant = NULL,
+			last_callback_sequence = 0, last_message = '', error_summary = '',
+			updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+			updated_at_instant = CURRENT_TIMESTAMP
+		WHERE id = @externalExecutionId`, pgx.NamedArgs{"externalExecutionId": execution.ID})
+	g.Expect(err).NotTo(HaveOccurred())
+	retry, err := db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
+		PreMutationHold: &control,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(retry.Status).To(Equal(types.ExternalExecutionStatusRunning))
+	g.Expect(retry.TriggerAttempts).To(Equal(1))
 }
 
 func TestExternalExecutionRejectsLateSuccessAndPersistsTimeout(t *testing.T) {

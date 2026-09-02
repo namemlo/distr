@@ -59,6 +59,7 @@ This order keeps each layer observable on its own before adding links between la
 | --------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `operator_control_plane_v2` | Its key is configured.                                       | New v2 operation also requires action authority plus active organization and selected-environment enrollment.                         |
 | `executor_protocol_v2`      | Both its key and `operator_control_plane_v2` are configured. | Fenced executor admission additionally requires the same PR-066 tenant enrollment; configuring either process flag grants no access. |
+| `external_execution_pre_mutation_hold` | Its key and `operator_control_plane_v2` are configured. | One exact JSON-bound callback execution can fail before adapter invocation; no binding means no hold. |
 
 PR-066 adds append-only organization and environment enrollment revisions under `/api/v1/authorization`.
 The process flag remains the emergency kill switch; both tenant enrollment levels must be effective for the
@@ -73,7 +74,11 @@ DISTR_EXPERIMENTAL_FEATURE_FLAGS=operator_control_plane_v2,executor_protocol_v2
 
 Do not use `all` in a shared or production environment during this program because it includes both registered
 control-plane flags. Removing the umbrella key and restarting the Hub makes executor protocol v2 ineffective
-without removing its configured key.
+without removing its configured key. It also makes the pre-mutation hold ineffective.
+
+The pre-mutation hold is an isolated acceptance-test control, not a production policy. Its exact non-secret
+binding is supplied by `DISTR_EXTERNAL_EXECUTION_PRE_MUTATION_HOLD_JSON`; see
+`docs/fork/POST_PR_099_EXTERNAL_EXECUTION_PRE_MUTATION_HOLD.md`. Do not use `all` to activate it accidentally.
 
 ## Boundaries
 

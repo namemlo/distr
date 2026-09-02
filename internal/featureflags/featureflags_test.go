@@ -109,6 +109,17 @@ func TestRegistryFlagsRequireControlPlaneForExecutorProtocol(t *testing.T) {
 	)
 }
 
+func TestRegistryRequiresControlPlaneForPreMutationHold(t *testing.T) {
+	g := NewWithT(t)
+
+	g.Expect(NewRegistry([]Key{KeyExternalExecutionPreMutationHold}).
+		IsEnabled(KeyExternalExecutionPreMutationHold)).To(BeFalse())
+	g.Expect(NewRegistry([]Key{
+		KeyOperatorControlPlaneV2,
+		KeyExternalExecutionPreMutationHold,
+	}).IsEnabled(KeyExternalExecutionPreMutationHold)).To(BeTrue())
+}
+
 func TestRegistryMarksEnabledFlags(t *testing.T) {
 	g := NewWithT(t)
 

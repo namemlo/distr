@@ -104,6 +104,7 @@ var (
 	experimentalFeatureFlags                []featureflags.Key
 	executionV2SigningKeysJSON              []byte
 	executionV2ObserverPublicKeysJSON       []byte
+	externalExecutionPreMutationHoldJSON    []byte
 )
 
 func Initialize() {
@@ -293,10 +294,19 @@ func Initialize() {
 		featureflags.ParseEnabledKeys,
 		nil,
 	)
+	externalExecutionPreMutationHoldJSON = nil
 	if featureflags.NewRegistry(experimentalFeatureFlags).IsEnabled(featureflags.KeyExecutorProtocolV2) {
 		executionV2SigningKeysJSON = []byte(envutil.RequireEnv("DISTR_EXECUTION_V2_SIGNING_KEYS_JSON"))
 		executionV2ObserverPublicKeysJSON = []byte(
 			envutil.RequireEnv("DISTR_EXECUTION_V2_OBSERVER_PUBLIC_KEYS_JSON"),
+		)
+	}
+	if featureflags.NewRegistry(experimentalFeatureFlags).
+		IsEnabled(featureflags.KeyExternalExecutionPreMutationHold) {
+		externalExecutionPreMutationHoldJSON = envutil.GetEnvParsedOrDefault(
+			"DISTR_EXTERNAL_EXECUTION_PRE_MUTATION_HOLD_JSON",
+			envparse.ByteSlice,
+			nil,
 		)
 	}
 }
@@ -719,4 +729,8 @@ func ExecutionV2SigningKeysJSON() []byte {
 
 func ExecutionV2ObserverPublicKeysJSON() []byte {
 	return slices.Clone(executionV2ObserverPublicKeysJSON)
+}
+
+func ExternalExecutionPreMutationHoldJSON() []byte {
+	return slices.Clone(externalExecutionPreMutationHoldJSON)
 }
