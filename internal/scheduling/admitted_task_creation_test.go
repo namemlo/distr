@@ -121,6 +121,39 @@ func TestCreateTasksForAdmittedV2PlanCreatesTasksOnlyAfterAdmit(t *testing.T) {
 	g.Expect(taskCalls).To(Equal(1))
 }
 
+func TestCreateTasksForAdmittedV2PlanPreservesCampaignRetryMemberScope(t *testing.T) {
+	g := NewWithT(t)
+	request := admittedTaskCreationTestRequest()
+	request.CampaignRetryMemberRunID = uuid.New()
+	request.Campaign = &types.AdmissionCampaignEvidence{
+		ID: uuid.New(), Revision: 3, Checksum: "sha256:" + strings.Repeat("b", 64),
+	}
+	dependencies := admittedTaskCreationTestDependencies()
+	dependencies.CreateTasks = func(
+		_ context.Context,
+		createRequest types.CreateTasksForDeploymentPlanRequest,
+	) ([]types.Task, error) {
+		g.Expect(createRequest.CampaignRetryMemberRunID).
+			To(Equal(request.CampaignRetryMemberRunID))
+		return []types.Task{{ID: uuid.New()}}, nil
+	}
+
+	_, err := CreateTasksForAdmittedV2Plan(context.Background(), request, dependencies)
+
+	g.Expect(err).NotTo(HaveOccurred())
+}
+
+func TestCreateTasksForAdmittedV2PlanRejectsUnboundCampaignRetryScope(t *testing.T) {
+	request := admittedTaskCreationTestRequest()
+	request.CampaignRetryMemberRunID = uuid.New()
+
+	_, err := CreateTasksForAdmittedV2Plan(
+		context.Background(), request, admittedTaskCreationTestDependencies(),
+	)
+
+	NewWithT(t).Expect(err).To(MatchError(ContainSubstring("campaign evidence")))
+}
+
 func admittedTaskCreationTestRequest() types.CreateTasksForAdmittedV2PlanRequest {
 	return types.CreateTasksForAdmittedV2PlanRequest{
 		OrganizationID:          uuid.New(),

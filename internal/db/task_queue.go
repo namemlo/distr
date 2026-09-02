@@ -85,6 +85,63 @@ type taskResourceLockSource struct {
 	ResourceKey  string                     `db:"resource_key"`
 }
 
+type campaignRetryStepState struct {
+	DeploymentPlanTargetID uuid.UUID           `db:"deployment_plan_target_id"`
+	StepKey                string              `db:"step_key"`
+	Status                 types.StepRunStatus `db:"status"`
+}
+
+const campaignRetrySatisfiedStepReason = "satisfied by prior campaign attempt"
+
+const loadCampaignRetryTargetIDsSQL = `
+WITH ranked_task AS (
+  SELECT task.deployment_plan_target_id, task.status,
+         row_number() OVER (
+           PARTITION BY task.deployment_plan_target_id
+           ORDER BY task.queue_order DESC, task.id DESC
+         ) AS position
+  FROM CampaignMemberTaskExecution AS lineage
+  JOIN Task AS task
+    ON task.id = lineage.task_id
+   AND task.organization_id = lineage.organization_id
+   AND task.deployment_plan_id = lineage.deployment_plan_id
+  WHERE lineage.organization_id = @organization_id
+    AND lineage.campaign_member_run_id = @member_run_id
+    AND lineage.deployment_plan_id = @deployment_plan_id
+    AND task.execution_occurrence_id <> @execution_occurrence_id
+)
+SELECT deployment_plan_target_id
+FROM ranked_task
+WHERE position = 1
+  AND status IN ('FAILED', 'CANCELED')
+ORDER BY deployment_plan_target_id`
+
+const loadCampaignRetryStepStatesSQL = `
+WITH ranked_step AS (
+  SELECT task.deployment_plan_target_id, step_run.step_key, step_run.status,
+         row_number() OVER (
+           PARTITION BY task.deployment_plan_target_id, step_run.step_key
+           ORDER BY task.queue_order DESC, task.id DESC
+         ) AS position
+  FROM CampaignMemberTaskExecution AS lineage
+  JOIN Task AS task
+    ON task.id = lineage.task_id
+   AND task.organization_id = lineage.organization_id
+   AND task.deployment_plan_id = lineage.deployment_plan_id
+  JOIN StepRun AS step_run
+    ON step_run.task_id = task.id
+   AND step_run.organization_id = task.organization_id
+   AND step_run.deployment_plan_id = task.deployment_plan_id
+  WHERE lineage.organization_id = @organization_id
+    AND lineage.campaign_member_run_id = @member_run_id
+    AND lineage.deployment_plan_id = @deployment_plan_id
+    AND task.execution_occurrence_id <> @execution_occurrence_id
+)
+SELECT deployment_plan_target_id, step_key, status
+FROM ranked_step
+WHERE position = 1
+ORDER BY deployment_plan_target_id, step_key`
+
 type deploymentPlanTaskCreationPath uint8
 
 const (
@@ -112,6 +169,18 @@ func reuseExistingAdmittedV2DeploymentPlanTasks(
 	plan types.DeploymentPlan,
 	existing []types.Task,
 ) ([]types.Task, bool, error) {
+	targetIDs := make([]uuid.UUID, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		targetIDs = append(targetIDs, target.ID)
+	}
+	return reuseExistingAdmittedV2DeploymentPlanTasksForTargets(plan, existing, targetIDs)
+}
+
+func reuseExistingAdmittedV2DeploymentPlanTasksForTargets(
+	plan types.DeploymentPlan,
+	existing []types.Task,
+	targetIDs []uuid.UUID,
+) ([]types.Task, bool, error) {
 	if err := validateAdmittedV2DeploymentPlanTaskCreation(plan); err != nil {
 		return nil, false, err
 	}
@@ -119,7 +188,7 @@ func reuseExistingAdmittedV2DeploymentPlanTasks(
 		return nil, false, nil
 	}
 	if plan.Status != types.DeploymentPlanStatusExecuted ||
-		!deploymentPlanTasksExactlyMatch(plan, existing) {
+		!deploymentPlanTasksExactlyMatchTargets(plan, existing, targetIDs) {
 		return nil, false, apierrors.NewConflict(
 			"existing target task set does not exactly match the admitted deployment occurrence",
 		)
@@ -128,18 +197,41 @@ func reuseExistingAdmittedV2DeploymentPlanTasks(
 }
 
 func deploymentPlanTasksExactlyMatch(plan types.DeploymentPlan, tasks []types.Task) bool {
-	if len(plan.Targets) == 0 || len(tasks) != len(plan.Targets) {
+	targetIDs := make([]uuid.UUID, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		targetIDs = append(targetIDs, target.ID)
+	}
+	return deploymentPlanTasksExactlyMatchTargets(plan, tasks, targetIDs)
+}
+
+func deploymentPlanTasksExactlyMatchTargets(
+	plan types.DeploymentPlan,
+	tasks []types.Task,
+	targetIDs []uuid.UUID,
+) bool {
+	if len(targetIDs) == 0 || len(tasks) != len(targetIDs) {
 		return false
 	}
-	targets := make(map[uuid.UUID]types.DeploymentPlanTarget, len(plan.Targets))
+	planTargets := make(map[uuid.UUID]types.DeploymentPlanTarget, len(plan.Targets))
 	for _, target := range plan.Targets {
 		if target.ID == uuid.Nil || target.DeploymentTargetID == uuid.Nil {
 			return false
 		}
-		if _, exists := targets[target.ID]; exists {
+		if _, exists := planTargets[target.ID]; exists {
 			return false
 		}
-		targets[target.ID] = target
+		planTargets[target.ID] = target
+	}
+	targets := make(map[uuid.UUID]types.DeploymentPlanTarget, len(targetIDs))
+	for _, targetID := range targetIDs {
+		target, exists := planTargets[targetID]
+		if !exists {
+			return false
+		}
+		if _, duplicate := targets[targetID]; duplicate {
+			return false
+		}
+		targets[targetID] = target
 	}
 	seen := make(map[uuid.UUID]struct{}, len(tasks))
 	executionOccurrenceID := tasks[0].ExecutionOccurrenceID
@@ -168,7 +260,7 @@ func deploymentPlanTasksExactlyMatch(plan types.DeploymentPlan, tasks []types.Ta
 			return false
 		}
 	}
-	return len(seen) == len(targets)
+	return len(seen) == len(targetIDs)
 }
 
 func CreateTasksForDeploymentPlan(
@@ -220,6 +312,10 @@ func createTasksForDeploymentPlan(
 				return err
 			}
 		}
+		targetIDs, err := taskCreationTargetIDs(ctx, *plan, request, path)
+		if err != nil {
+			return err
+		}
 		existing, err := getTasksByDeploymentPlanID(
 			ctx,
 			request.DeploymentPlanID,
@@ -229,7 +325,9 @@ func createTasksForDeploymentPlan(
 		if err != nil {
 			return err
 		}
-		if reusable, reused, err := reuseExistingTasksForCreationPath(*plan, existing, path); err != nil {
+		if reusable, reused, err := reuseExistingTasksForCreationPath(
+			*plan, existing, path, targetIDs,
+		); err != nil {
 			return err
 		} else if reused {
 			tasks = reusable
@@ -239,6 +337,7 @@ func createTasksForDeploymentPlan(
 			ctx,
 			request.DeploymentPlanID,
 			request.OrganizationID,
+			targetIDs,
 			lockResources,
 		)
 		if err != nil {
@@ -252,6 +351,10 @@ func createTasksForDeploymentPlan(
 			if err != nil {
 				return err
 			}
+			targetIDs, err = taskCreationTargetIDs(ctx, *plan, request, path)
+			if err != nil {
+				return err
+			}
 		}
 		existing, err = getTasksByDeploymentPlanID(
 			ctx,
@@ -262,7 +365,9 @@ func createTasksForDeploymentPlan(
 		if err != nil {
 			return err
 		}
-		if reusable, reused, err := reuseExistingTasksForCreationPath(*plan, existing, path); err != nil {
+		if reusable, reused, err := reuseExistingTasksForCreationPath(
+			*plan, existing, path, targetIDs,
+		); err != nil {
 			return err
 		} else if reused {
 			tasks = reusable
@@ -296,6 +401,7 @@ func createTasksForDeploymentPlan(
 			request.OrganizationID,
 			request.ExecutionOccurrenceID,
 			uuidOrNil(request.ActorUserAccountID),
+			targetIDs,
 		)
 		if err != nil {
 			return err
@@ -308,7 +414,14 @@ func createTasksForDeploymentPlan(
 		if err := applyTaskConcurrencyPolicies(ctx, created); err != nil {
 			return err
 		}
-		if err := insertStepRunsForTasks(ctx, created); err != nil {
+		if request.CampaignRetryMemberRunID != uuid.Nil {
+			if err := insertCampaignRetryStepRunsForTasks(
+				ctx, created, plan.Steps, request.CampaignRetryMemberRunID,
+				request.ExecutionOccurrenceID,
+			); err != nil {
+				return err
+			}
+		} else if err := insertStepRunsForTasks(ctx, created); err != nil {
 			return err
 		}
 		if err := attachDeploymentPreflightTasks(
@@ -366,11 +479,51 @@ func reuseExistingTasksForCreationPath(
 	plan types.DeploymentPlan,
 	existing []types.Task,
 	path deploymentPlanTaskCreationPath,
+	targetIDs []uuid.UUID,
 ) ([]types.Task, bool, error) {
 	if path == deploymentPlanTaskCreationPathAdmittedV2 {
-		return reuseExistingAdmittedV2DeploymentPlanTasks(plan, existing)
+		return reuseExistingAdmittedV2DeploymentPlanTasksForTargets(
+			plan, existing, targetIDs,
+		)
 	}
 	return reuseExistingDeploymentPlanTasks(plan, existing)
+}
+
+func taskCreationTargetIDs(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+	request types.CreateTasksForDeploymentPlanRequest,
+	path deploymentPlanTaskCreationPath,
+) ([]uuid.UUID, error) {
+	if request.CampaignRetryMemberRunID == uuid.Nil {
+		targetIDs := make([]uuid.UUID, 0, len(plan.Targets))
+		for _, target := range plan.Targets {
+			targetIDs = append(targetIDs, target.ID)
+		}
+		return targetIDs, nil
+	}
+	if path != deploymentPlanTaskCreationPathAdmittedV2 {
+		return nil, apierrors.NewBadRequest("campaign retry requires admitted protocol v2 task creation")
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, loadCampaignRetryTargetIDsSQL, pgx.NamedArgs{
+		"organization_id":         request.OrganizationID,
+		"member_run_id":           request.CampaignRetryMemberRunID,
+		"deployment_plan_id":      request.DeploymentPlanID,
+		"execution_occurrence_id": request.ExecutionOccurrenceID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load campaign retry targets: %w", err)
+	}
+	targetIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("collect campaign retry targets: %w", err)
+	}
+	if len(targetIDs) == 0 {
+		return nil, apierrors.NewConflict(
+			"campaign retry has no failed or canceled target work",
+		)
+	}
+	return targetIDs, nil
 }
 
 func validateDeploymentPlanTaskCreation(plan types.DeploymentPlan) error {
@@ -611,6 +764,7 @@ func insertTasksForDeploymentPlan(
 	ctx context.Context,
 	planID, orgID, executionOccurrenceID uuid.UUID,
 	actorUserAccountID any,
+	deploymentPlanTargetIDs []uuid.UUID,
 ) ([]types.Task, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
@@ -649,16 +803,18 @@ func insertTasksForDeploymentPlan(
 			AND dpt.organization_id = dp.organization_id
 		WHERE dp.id = @deploymentPlanId
 			AND dp.organization_id = @organizationId
+			AND dpt.id = ANY(@deploymentPlanTargetIds)
 		ORDER BY dpt.sort_order, dpt.deployment_target_id
 		ON CONFLICT (deployment_plan_id, deployment_plan_target_id, execution_occurrence_id) DO NOTHING
 		RETURNING `+taskOutputExpr,
 		pgx.NamedArgs{
-			"deploymentPlanId":      planID,
-			"organizationId":        orgID,
-			"executionOccurrenceId": executionOccurrenceID,
-			"taskType":              types.TaskTypeDeployment,
-			"actorUserAccountId":    actorUserAccountID,
-			"status":                types.TaskStatusQueued,
+			"deploymentPlanId":        planID,
+			"organizationId":          orgID,
+			"executionOccurrenceId":   executionOccurrenceID,
+			"taskType":                types.TaskTypeDeployment,
+			"actorUserAccountId":      actorUserAccountID,
+			"deploymentPlanTargetIds": deploymentPlanTargetIDs,
+			"status":                  types.TaskStatusQueued,
 		},
 	)
 	if err != nil {
@@ -675,6 +831,7 @@ func getDeploymentPlanTaskResourceLockGroups(
 	ctx context.Context,
 	planID uuid.UUID,
 	orgID uuid.UUID,
+	deploymentPlanTargetIDs []uuid.UUID,
 	additionalResources []types.TaskLockResourceRequest,
 ) ([]taskResourceLockGroup, error) {
 	db := internalctx.GetDb(ctx)
@@ -683,18 +840,21 @@ func getDeploymentPlanTaskResourceLockGroups(
 		FROM DeploymentPlanTarget dpt
 		WHERE dpt.deployment_plan_id = @deploymentPlanId
 			AND dpt.organization_id = @organizationId
+			AND dpt.id = ANY(@deploymentPlanTargetIds)
 		UNION ALL
 		SELECT CAST(@targetComponentType AS text) AS resource_type,
 			dptc.deployment_target_id::text || ':' || dptc.component AS resource_key
 		FROM DeploymentPlanTargetComponent dptc
 		WHERE dptc.deployment_plan_id = @deploymentPlanId
 			AND dptc.organization_id = @organizationId
+			AND dptc.deployment_plan_target_id = ANY(@deploymentPlanTargetIds)
 		ORDER BY resource_type, resource_key`,
 		pgx.NamedArgs{
-			"deploymentPlanId":     planID,
-			"organizationId":       orgID,
-			"deploymentTargetType": types.TaskLockResourceDeploymentTarget,
-			"targetComponentType":  types.TaskLockResourceTargetComponent,
+			"deploymentPlanId":        planID,
+			"organizationId":          orgID,
+			"deploymentPlanTargetIds": deploymentPlanTargetIDs,
+			"deploymentTargetType":    types.TaskLockResourceDeploymentTarget,
+			"targetComponentType":     types.TaskLockResourceTargetComponent,
 		},
 	)
 	if err != nil {
@@ -901,6 +1061,121 @@ func insertStepRunsForTasks(ctx context.Context, tasks []types.Task) error {
 		return mapTaskWriteError("insert step runs", err)
 	}
 	return nil
+}
+
+func insertCampaignRetryStepRunsForTasks(
+	ctx context.Context,
+	tasks []types.Task,
+	steps []types.DeploymentPlanStep,
+	memberRunID, executionOccurrenceID uuid.UUID,
+) error {
+	if len(tasks) == 0 {
+		return apierrors.NewConflict("campaign retry produced no task work")
+	}
+	rows, err := internalctx.GetDb(ctx).Query(ctx, loadCampaignRetryStepStatesSQL, pgx.NamedArgs{
+		"organization_id":         tasks[0].OrganizationID,
+		"member_run_id":           memberRunID,
+		"deployment_plan_id":      tasks[0].DeploymentPlanID,
+		"execution_occurrence_id": executionOccurrenceID,
+	})
+	if err != nil {
+		return fmt.Errorf("load campaign retry step states: %w", err)
+	}
+	states, err := pgx.CollectRows(rows, pgx.RowToStructByName[campaignRetryStepState])
+	if err != nil {
+		return fmt.Errorf("collect campaign retry step states: %w", err)
+	}
+	previous := make(map[uuid.UUID]map[string]types.StepRunStatus, len(tasks))
+	for _, state := range states {
+		if previous[state.DeploymentPlanTargetID] == nil {
+			previous[state.DeploymentPlanTargetID] = map[string]types.StepRunStatus{}
+		}
+		previous[state.DeploymentPlanTargetID][state.StepKey] = state.Status
+	}
+	type retryStepRunSeed struct {
+		organizationID       uuid.UUID
+		taskID               uuid.UUID
+		deploymentPlanID     uuid.UUID
+		deploymentPlanStepID uuid.UUID
+		stepKey              string
+		name                 string
+		actionType           string
+		status               types.StepRunStatus
+		sortOrder            int
+		skippedReason        string
+		completedAt          any
+	}
+	seeds := make([]retryStepRunSeed, 0, len(tasks)*len(steps))
+	completedAt, err := admissionDatabaseTime(ctx)
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		priorByStep := previous[task.DeploymentPlanTargetID]
+		for _, step := range steps {
+			priorStatus, found := priorByStep[step.StepKey]
+			if !found {
+				return apierrors.NewConflict(
+					"campaign retry source does not contain the frozen plan step set",
+				)
+			}
+			status, skippedReason, err := campaignRetryStepSeed(step, priorStatus)
+			if err != nil {
+				return err
+			}
+			var stepCompletedAt any
+			if status == types.StepRunStatusSkipped {
+				stepCompletedAt = completedAt
+			}
+			seeds = append(seeds, retryStepRunSeed{
+				organizationID: task.OrganizationID, taskID: task.ID,
+				deploymentPlanID: task.DeploymentPlanID, deploymentPlanStepID: step.ID,
+				stepKey: step.StepKey, name: step.Name, actionType: step.ActionType,
+				status: status, sortOrder: step.SortOrder, skippedReason: skippedReason,
+				completedAt: stepCompletedAt,
+			})
+		}
+	}
+	_, err = internalctx.GetDb(ctx).CopyFrom(
+		ctx,
+		pgx.Identifier{"steprun"},
+		[]string{
+			"organization_id", "task_id", "deployment_plan_id",
+			"deployment_plan_step_id", "step_key", "name", "action_type",
+			"status", "sort_order", "skipped_reason", "completed_at",
+		},
+		pgx.CopyFromSlice(len(seeds), func(index int) ([]any, error) {
+			seed := seeds[index]
+			return []any{
+				seed.organizationID, seed.taskID, seed.deploymentPlanID,
+				seed.deploymentPlanStepID, seed.stepKey, seed.name, seed.actionType,
+				seed.status, seed.sortOrder, seed.skippedReason, seed.completedAt,
+			}, nil
+		}),
+	)
+	if err != nil {
+		return mapTaskWriteError("insert campaign retry step runs", err)
+	}
+	return nil
+}
+
+func campaignRetryStepSeed(
+	step types.DeploymentPlanStep,
+	previousStatus types.StepRunStatus,
+) (types.StepRunStatus, string, error) {
+	if !step.Included {
+		return types.StepRunStatusSkipped, step.ExcludedReason, nil
+	}
+	switch previousStatus {
+	case types.StepRunStatusSucceeded, types.StepRunStatusSkipped:
+		return types.StepRunStatusSkipped, campaignRetrySatisfiedStepReason, nil
+	case types.StepRunStatusPending, types.StepRunStatusRunning, types.StepRunStatusFailed:
+		return types.StepRunStatusPending, "", nil
+	default:
+		return "", "", apierrors.NewConflict(
+			"campaign retry source contains an invalid step state",
+		)
+	}
 }
 
 func getTasksByDeploymentPlanID(

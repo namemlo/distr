@@ -145,6 +145,7 @@ func TestCampaignRetryTaskCreationUsesRequestOccurrenceAndImmutableLineage(t *te
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(request.ExecutionOccurrenceID).To(Equal(requestID))
+	g.Expect(request.CampaignRetryMemberRunID).To(Equal(candidate.MemberRunID))
 	g.Expect(request.SchedulerIdempotencyKey).To(Equal(
 		"retry:" + admission.RunID.String() + ":" + requestID.String(),
 	))

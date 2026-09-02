@@ -92,13 +92,18 @@ func campaignRetryTaskCreationRequest(
 			"campaign retry task materialization requires a request occurrence",
 		)
 	}
-	return campaignTaskCreationRequestForOccurrence(
+	request, err := campaignTaskCreationRequestForOccurrence(
 		candidate,
 		admission,
 		requestID,
 		fmt.Sprintf("retry:%s:%s", admission.RunID, requestID),
 		authorizer,
 	)
+	if err != nil {
+		return types.CreateTasksForAdmittedV2PlanRequest{}, err
+	}
+	request.CampaignRetryMemberRunID = candidate.MemberRunID
+	return request, nil
 }
 
 func campaignTaskCreationRequestForOccurrence(

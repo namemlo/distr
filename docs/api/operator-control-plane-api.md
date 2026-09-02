@@ -453,6 +453,13 @@ misreport in-flight work as cancelled. The campaign read model keeps
 persisted request, and maps persisted admission blocking directly to
 `noNewExposure`.
 
+Protocol-v2 member retry creates a new immutable execution occurrence only for
+targets whose latest member task failed or was cancelled. Within those tasks,
+steps that already succeeded (or were skipped) remain satisfied and are not
+executed again; failed, interrupted, and not-yet-run steps are the only pending
+work in the retry occurrence. A retry with no failed or cancelled target work
+fails closed.
+
 ### Execution controls
 
 Operator v2 controls require both process flags:

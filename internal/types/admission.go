@@ -216,15 +216,16 @@ type CreateEmergencyOverrideRequest struct {
 }
 
 type CreateTasksForAdmittedV2PlanRequest struct {
-	OrganizationID          uuid.UUID
-	DeploymentPlanID        uuid.UUID
-	ExecutionOccurrenceID   uuid.UUID
-	ActorUserAccountID      uuid.UUID
-	SchedulerIdempotencyKey string
-	ConcurrencyPolicy       TaskConcurrencyPolicy
-	AdditionalResources     []TaskLockResourceRequest
-	Campaign                *AdmissionCampaignEvidence
-	Authorize               AdmissionAuthorizer
+	OrganizationID           uuid.UUID
+	DeploymentPlanID         uuid.UUID
+	ExecutionOccurrenceID    uuid.UUID
+	CampaignRetryMemberRunID uuid.UUID
+	ActorUserAccountID       uuid.UUID
+	SchedulerIdempotencyKey  string
+	ConcurrencyPolicy        TaskConcurrencyPolicy
+	AdditionalResources      []TaskLockResourceRequest
+	Campaign                 *AdmissionCampaignEvidence
+	Authorize                AdmissionAuthorizer
 }
 
 type AdmissionPlanSnapshot struct {

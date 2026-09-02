@@ -120,6 +120,7 @@ type CreateTasksForDeploymentPlanRequest struct {
 	OrganizationID            uuid.UUID
 	DeploymentPlanID          uuid.UUID
 	ExecutionOccurrenceID     uuid.UUID
+	CampaignRetryMemberRunID  uuid.UUID
 	ActorUserAccountID        uuid.UUID
 	AdmissionEvaluationID     uuid.UUID
 	AdmissionDecisionChecksum string

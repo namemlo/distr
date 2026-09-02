@@ -41,6 +41,11 @@ func CreateTasksForAdmittedV2Plan(
 	if !admissionIdempotencyKeyValid(request.SchedulerIdempotencyKey) {
 		return nil, apierrors.NewBadRequest("schedulerIdempotencyKey is invalid")
 	}
+	if request.CampaignRetryMemberRunID != uuid.Nil && request.Campaign == nil {
+		return nil, apierrors.NewBadRequest(
+			"campaign retry member requires immutable campaign evidence",
+		)
+	}
 	if dependencies.LoadPlanSnapshot == nil ||
 		dependencies.AdmitDeploymentPlan == nil ||
 		dependencies.CreateTasks == nil {
@@ -89,6 +94,7 @@ func CreateTasksForAdmittedV2Plan(
 			OrganizationID:            request.OrganizationID,
 			DeploymentPlanID:          request.DeploymentPlanID,
 			ExecutionOccurrenceID:     request.ExecutionOccurrenceID,
+			CampaignRetryMemberRunID:  request.CampaignRetryMemberRunID,
 			ActorUserAccountID:        request.ActorUserAccountID,
 			AdmissionEvaluationID:     evaluation.ID,
 			AdmissionDecisionChecksum: evaluation.DecisionChecksum,

@@ -2338,6 +2338,38 @@ Use one entry per pull request:
   immutable Distr manifest consistency; independent Git-parent proof requires
   a future authenticated source-host or CI ancestry attestation.
 
+### Post-PR-101 - Protocol-v2 campaign failed-work-only retry
+
+- Generic user story: As an operator retrying a partially failed campaign
+  member, I want only incomplete work to run again so successful deployment
+  steps are not repeated.
+- Status: Implemented with focused regression coverage; no live environment,
+  backend repository, or client database is contacted or changed.
+- Upstream base: `ee3f33f7` integrated release checkpoint.
+- Feature flags: Uses the existing `operator_control_plane_v2` campaign and
+  execution boundary; no new flag is added.
+- User-facing behavior: Retrying a failed or cancelled campaign member creates
+  tasks only for targets whose latest member task is failed or cancelled.
+  Already-successful steps inside a retried target are retained as satisfied
+  skipped steps, so a later component failure cannot redeploy an earlier
+  successful component.
+- Database changes: None. Existing append-only task, step-run, campaign
+  lineage, control, and audit tables retain every attempt.
+- API changes: None. The existing protocol-v2 member retry route now applies
+  failed-work-only materialization semantics.
+- UI changes: None.
+- Agent protocol changes: None. Executors receive only pending failed,
+  interrupted, or not-yet-run steps in the new occurrence.
+- Documentation: Clarifies protocol-v2 campaign retry selection and fail-closed
+  behavior in the operator API guide.
+- Tests: Adds retry-scope propagation, selective target replay, latest-attempt
+  query, and Choice TP-style Customer-success/Transaction-failure step seeding
+  regressions.
+- Upstream contribution notes: Community-neutral retry correction with no
+  adopter, service, registry, CI, runtime address, or credential assumption.
+- Compatibility notes: V1 retry is unchanged. V2 retains new immutable task and
+  step-run occurrences while preventing successful work from being recreated.
+
 ### Post-PR-102 - Operator baseline, admission, rollback, and retention controls
 
 - Status: Implemented with focused Angular component and HTTP contract tests.

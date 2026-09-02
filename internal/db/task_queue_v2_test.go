@@ -155,6 +155,69 @@ func TestExistingLegacyTasksRemainIdempotentAfterExecution(t *testing.T) {
 	g.Expect(tasks).To(Equal(existing))
 }
 
+func TestCampaignRetryReusesOnlyItsFailedTargetSubset(t *testing.T) {
+	g := NewWithT(t)
+	plan, tasks := targetPlanV2TaskReplayFixture()
+
+	reused, found, err := reuseExistingAdmittedV2DeploymentPlanTasksForTargets(
+		plan,
+		tasks[1:],
+		[]uuid.UUID{plan.Targets[1].ID},
+	)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(found).To(BeTrue())
+	g.Expect(reused).To(Equal(tasks[1:]))
+}
+
+func TestCampaignRetrySeedsOnlyFailedChoiceTPTransactionWork(t *testing.T) {
+	g := NewWithT(t)
+	steps := []struct {
+		step     types.DeploymentPlanStep
+		previous types.StepRunStatus
+	}{
+		{step: types.DeploymentPlanStep{StepKey: "component:customer.api:deploy", Included: true}, previous: types.StepRunStatusSucceeded},
+		{step: types.DeploymentPlanStep{StepKey: "component:customer.api:health", Included: true}, previous: types.StepRunStatusSucceeded},
+		{step: types.DeploymentPlanStep{StepKey: "component:transaction.api:deploy", Included: true}, previous: types.StepRunStatusFailed},
+		{step: types.DeploymentPlanStep{StepKey: "component:transaction.api:health", Included: true}, previous: types.StepRunStatusPending},
+	}
+	pending := make([]string, 0, len(steps))
+	for _, input := range steps {
+		status, reason, err := campaignRetryStepSeed(input.step, input.previous)
+		g.Expect(err).NotTo(HaveOccurred())
+		if status == types.StepRunStatusPending {
+			pending = append(pending, input.step.StepKey)
+		} else {
+			g.Expect(status).To(Equal(types.StepRunStatusSkipped))
+			g.Expect(reason).To(Equal(campaignRetrySatisfiedStepReason))
+		}
+	}
+
+	g.Expect(pending).To(ConsistOf(
+		"component:transaction.api:deploy",
+		"component:transaction.api:health",
+	))
+	g.Expect(pending).NotTo(ContainElement("component:customer.api:deploy"))
+}
+
+func TestCampaignRetryQueriesUseLatestPriorOccurrenceAndTerminalFailureOnly(t *testing.T) {
+	g := NewWithT(t)
+	for _, fragment := range []string{
+		"CampaignMemberTaskExecution", "campaign_member_run_id = @member_run_id",
+		"task.execution_occurrence_id <> @execution_occurrence_id",
+		"ORDER BY task.queue_order DESC", "status IN ('FAILED', 'CANCELED')",
+	} {
+		g.Expect(loadCampaignRetryTargetIDsSQL).To(ContainSubstring(fragment))
+	}
+	for _, fragment := range []string{
+		"PARTITION BY task.deployment_plan_target_id, step_run.step_key",
+		"ORDER BY task.queue_order DESC",
+		"task.execution_occurrence_id <> @execution_occurrence_id",
+	} {
+		g.Expect(loadCampaignRetryStepStatesSQL).To(ContainSubstring(fragment))
+	}
+}
+
 func targetPlanV2TaskReplayFixture() (types.DeploymentPlan, []types.Task) {
 	executionOccurrenceID := uuid.New()
 	plan := types.DeploymentPlan{
