@@ -2256,3 +2256,31 @@ Use one entry per pull request:
 - Compatibility notes: Existing default invocations, prohibited rules,
   findings, exit status, and output remain unchanged. Named-profile scans use
   the complete reviewed fork-delta base rather than an incremental push base.
+
+### Post-PR-097 - Protected-history whole-row JSON serialization fix
+
+- Status: Implemented with focused regression coverage after live read-only
+  promotion preflight exposed the defect; live promotion remains a separate
+  gated operation.
+- Upstream base: `297ee311` integrated release checkpoint.
+- Feature flags: None; this corrects the existing protected-history exporter.
+- User-facing behavior: Schema-138 through schema-170 exports explicitly
+  serialize intended whole rows as JSON objects. This prevents PostgreSQL from
+  resolving row aliases as same-named scalar columns, including nullable
+  `VariableSnapshotValue.value`, `DeploymentPlanTargetComponent.component`,
+  and schema-166 through schema-170 `ApprovalDecision.decision`.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Records this community-neutral compatibility bug fix; no ADR
+  is required because the intended protected-history contract is unchanged.
+- Tests: Adds static whole-row qualification checks and an isolated PostgreSQL
+  regression that selects the schema-138 projection with a redacted variable
+  snapshot value and requires object-shaped JSON artifacts without secret
+  plaintext.
+- Upstream contribution notes: Generic SQL alias correction with no adopter,
+  registry, CI, runtime address, service name, or credential assumption.
+- Compatibility notes: Artifact serialization now satisfies the protected-
+  history object-payload contract across every registered schema projection.
+  Existing database state is not rewritten.

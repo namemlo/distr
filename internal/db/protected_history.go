@@ -290,65 +290,65 @@ selected_applications(id) AS (
   WHERE plan.id IN (SELECT id FROM selected_plans)
 ),
 logical_records(kind, id, payload) AS (
-  SELECT 'application', application.id, to_jsonb(application)
+  SELECT 'application', application.id, to_jsonb(application.*)
   FROM Application application
   WHERE application.organization_id = @organizationId
     AND application.id IN (SELECT id FROM selected_applications)
 
-  UNION ALL SELECT 'applicationversion', version.id, to_jsonb(version)
+  UNION ALL SELECT 'applicationversion', version.id, to_jsonb(version.*)
   FROM ApplicationVersion version
   WHERE version.id IN (SELECT id FROM selected_application_versions)
 
-  UNION ALL SELECT 'customerorganization', co.id, to_jsonb(co)
+  UNION ALL SELECT 'customerorganization', co.id, to_jsonb(co.*)
   FROM CustomerOrganization co
   WHERE co.organization_id = @organizationId
     AND co.id IN (SELECT id FROM requested_customer_organizations)
 
-  UNION ALL SELECT 'deploymenttarget', target.id, to_jsonb(target)
+  UNION ALL SELECT 'deploymenttarget', target.id, to_jsonb(target.*)
   FROM DeploymentTarget target
   WHERE target.organization_id = @organizationId
     AND target.id IN (SELECT id FROM selected_targets)
 
-  UNION ALL SELECT 'deploymenttargetlogrecord', log.id, to_jsonb(log)
+  UNION ALL SELECT 'deploymenttargetlogrecord', log.id, to_jsonb(log.*)
   FROM DeploymentTargetLogRecord log
   WHERE log.deployment_target_id IN (SELECT id FROM selected_targets)
 
-  UNION ALL SELECT 'deployment', deployment.id, to_jsonb(deployment)
+  UNION ALL SELECT 'deployment', deployment.id, to_jsonb(deployment.*)
   FROM Deployment deployment
   WHERE deployment.id IN (SELECT id FROM selected_deployments)
 
-  UNION ALL SELECT 'deploymentrevision', revision.id, to_jsonb(revision)
+  UNION ALL SELECT 'deploymentrevision', revision.id, to_jsonb(revision.*)
   FROM DeploymentRevision revision
   WHERE revision.id IN (SELECT id FROM selected_revisions)
 
-  UNION ALL SELECT 'deploymentrevisionstatus', status.id, to_jsonb(status)
+  UNION ALL SELECT 'deploymentrevisionstatus', status.id, to_jsonb(status.*)
   FROM DeploymentRevisionStatus status
   WHERE status.deployment_revision_id IN (SELECT id FROM selected_revisions)
 
-  UNION ALL SELECT 'deploymentlogrecord', log.id, to_jsonb(log)
+  UNION ALL SELECT 'deploymentlogrecord', log.id, to_jsonb(log.*)
   FROM DeploymentLogRecord log
   WHERE log.deployment_id IN (SELECT id FROM selected_deployments)
 
-  UNION ALL SELECT 'releasebundle', bundle.id, to_jsonb(bundle)
+  UNION ALL SELECT 'releasebundle', bundle.id, to_jsonb(bundle.*)
   FROM ReleaseBundle bundle
   WHERE bundle.organization_id = @organizationId
     AND bundle.id IN (SELECT id FROM selected_release_bundles)
 
-  UNION ALL SELECT 'releasebundlecomponent', component.id, to_jsonb(component)
+  UNION ALL SELECT 'releasebundlecomponent', component.id, to_jsonb(component.*)
   FROM ReleaseBundleComponent component
   WHERE component.release_bundle_id IN (SELECT id FROM selected_release_bundles)
 
-  UNION ALL SELECT 'releasebundleauditevent', event.id, to_jsonb(event)
+  UNION ALL SELECT 'releasebundleauditevent', event.id, to_jsonb(event.*)
   FROM ReleaseBundleAuditEvent event
   WHERE event.organization_id = @organizationId
     AND event.release_bundle_id IN (SELECT id FROM selected_release_bundles)
 
-  UNION ALL SELECT 'releasebundleidempotencykey', keyrow.id, to_jsonb(keyrow)
+  UNION ALL SELECT 'releasebundleidempotencykey', keyrow.id, to_jsonb(keyrow.*)
   FROM ReleaseBundleIdempotencyKey keyrow
   WHERE keyrow.organization_id = @organizationId
     AND keyrow.release_bundle_id IN (SELECT id FROM selected_release_bundles)
 
-  UNION ALL SELECT 'processsnapshot', snapshot.id, to_jsonb(snapshot)
+  UNION ALL SELECT 'processsnapshot', snapshot.id, to_jsonb(snapshot.*)
   FROM ProcessSnapshot snapshot
   WHERE snapshot.organization_id = @organizationId
     AND snapshot.id IN (
@@ -356,7 +356,7 @@ logical_records(kind, id, payload) AS (
       WHERE plan.id IN (SELECT id FROM selected_plans) AND plan.process_snapshot_id IS NOT NULL
     )
 
-  UNION ALL SELECT 'variablesnapshot', snapshot.id, to_jsonb(snapshot)
+  UNION ALL SELECT 'variablesnapshot', snapshot.id, to_jsonb(snapshot.*)
   FROM VariableSnapshot snapshot
   WHERE snapshot.organization_id = @organizationId
     AND snapshot.id IN (
@@ -364,118 +364,119 @@ logical_records(kind, id, payload) AS (
       WHERE plan.id IN (SELECT id FROM selected_plans) AND plan.variable_snapshot_id IS NOT NULL
     )
 
-  UNION ALL SELECT 'variablesnapshotvalue', value.id, to_jsonb(value)
-  FROM VariableSnapshotValue value
-  WHERE value.variable_snapshot_id IN (
+  UNION ALL SELECT 'variablesnapshotvalue', snapshot_value.id, to_jsonb(snapshot_value.*)
+  FROM VariableSnapshotValue snapshot_value
+  WHERE snapshot_value.variable_snapshot_id IN (
     SELECT plan.variable_snapshot_id FROM DeploymentPlan plan
     WHERE plan.id IN (SELECT id FROM selected_plans) AND plan.variable_snapshot_id IS NOT NULL
   )
 
-  UNION ALL SELECT 'deploymentplan', plan.id, to_jsonb(plan)
+  UNION ALL SELECT 'deploymentplan', plan.id, to_jsonb(plan.*)
   FROM DeploymentPlan plan
   WHERE plan.organization_id = @organizationId AND plan.id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'deploymentplanissue', issue.id, to_jsonb(issue)
+  UNION ALL SELECT 'deploymentplanissue', issue.id, to_jsonb(issue.*)
   FROM DeploymentPlanIssue issue
   WHERE issue.organization_id = @organizationId AND issue.deployment_plan_id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'deploymentplanstep', step.id, to_jsonb(step)
+  UNION ALL SELECT 'deploymentplanstep', step.id, to_jsonb(step.*)
   FROM DeploymentPlanStep step
   WHERE step.organization_id = @organizationId AND step.deployment_plan_id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'deploymentplantarget', target.id, to_jsonb(target)
+  UNION ALL SELECT 'deploymentplantarget', target.id, to_jsonb(target.*)
   FROM DeploymentPlanTarget target
   WHERE target.organization_id = @organizationId AND target.deployment_plan_id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'deploymentplantargetcomponent', component.id, to_jsonb(component)
-  FROM DeploymentPlanTargetComponent component
-  WHERE component.organization_id = @organizationId AND component.deployment_plan_id IN (SELECT id FROM selected_plans)
+  UNION ALL SELECT 'deploymentplantargetcomponent', plan_component.id, to_jsonb(plan_component.*)
+  FROM DeploymentPlanTargetComponent plan_component
+  WHERE plan_component.organization_id = @organizationId
+    AND plan_component.deployment_plan_id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'deploymentplanvariable', variable.id, to_jsonb(variable)
+  UNION ALL SELECT 'deploymentplanvariable', variable.id, to_jsonb(variable.*)
   FROM DeploymentPlanVariable variable
   WHERE variable.organization_id = @organizationId AND variable.deployment_plan_id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'deploymentpreflightrun', run.id, to_jsonb(run)
+  UNION ALL SELECT 'deploymentpreflightrun', run.id, to_jsonb(run.*)
   FROM DeploymentPreflightRun run
   WHERE run.organization_id = @organizationId AND run.deployment_plan_id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'deploymentpreflightcheck', checkrow.id, to_jsonb(checkrow)
+  UNION ALL SELECT 'deploymentpreflightcheck', checkrow.id, to_jsonb(checkrow.*)
   FROM DeploymentPreflightCheck checkrow
   WHERE checkrow.organization_id = @organizationId AND checkrow.deployment_plan_id IN (SELECT id FROM selected_plans)
 
-  UNION ALL SELECT 'task', task.id, to_jsonb(task)
+  UNION ALL SELECT 'task', task.id, to_jsonb(task.*)
   FROM Task task
   WHERE task.organization_id = @organizationId AND task.id IN (SELECT id FROM selected_tasks)
 
-  UNION ALL SELECT 'tasklease', lease.id, to_jsonb(lease)
+  UNION ALL SELECT 'tasklease', lease.id, to_jsonb(lease.*)
   FROM TaskLease lease
   WHERE lease.organization_id = @organizationId AND lease.task_id IN (SELECT id FROM selected_tasks)
 
-  UNION ALL SELECT 'taskresourcelock', lockrow.id, to_jsonb(lockrow)
+  UNION ALL SELECT 'taskresourcelock', lockrow.id, to_jsonb(lockrow.*)
   FROM TaskResourceLock lockrow
   WHERE lockrow.organization_id = @organizationId AND lockrow.task_id IN (SELECT id FROM selected_tasks)
 
-  UNION ALL SELECT 'steprun', run.id, to_jsonb(run)
+  UNION ALL SELECT 'steprun', run.id, to_jsonb(run.*)
   FROM StepRun run
   WHERE run.organization_id = @organizationId AND run.task_id IN (SELECT id FROM selected_tasks)
 
-  UNION ALL SELECT 'steprunevent', event.id, to_jsonb(event)
+  UNION ALL SELECT 'steprunevent', event.id, to_jsonb(event.*)
   FROM StepRunEvent event
   WHERE event.organization_id = @organizationId AND event.task_id IN (SELECT id FROM selected_tasks)
 
-  UNION ALL SELECT 'steprunlogchunk', chunk.id, to_jsonb(chunk)
+  UNION ALL SELECT 'steprunlogchunk', chunk.id, to_jsonb(chunk.*)
   FROM StepRunLogChunk chunk
   WHERE chunk.organization_id = @organizationId AND chunk.task_id IN (SELECT id FROM selected_tasks)
 
-  UNION ALL SELECT 'steprunoutput', output.id, to_jsonb(output)
+  UNION ALL SELECT 'steprunoutput', output.id, to_jsonb(output.*)
   FROM StepRunOutput output
   WHERE output.organization_id = @organizationId AND output.task_id IN (SELECT id FROM selected_tasks)
 
-  UNION ALL SELECT 'targetcomponentstate', state.id, to_jsonb(state)
+  UNION ALL SELECT 'targetcomponentstate', state.id, to_jsonb(state.*)
   FROM TargetComponentState state
   WHERE state.organization_id = @organizationId
     AND state.deployment_target_id IN (SELECT id FROM selected_targets)
 
-  UNION ALL SELECT 'targetcomponentobservation', observation.id, to_jsonb(observation)
+  UNION ALL SELECT 'targetcomponentobservation', observation.id, to_jsonb(observation.*)
   FROM TargetComponentObservation observation
   WHERE observation.organization_id = @organizationId
     AND observation.deployment_target_id IN (SELECT id FROM selected_targets)
 
-  UNION ALL SELECT 'externalexecution', execution.id, to_jsonb(execution)
+  UNION ALL SELECT 'externalexecution', execution.id, to_jsonb(execution.*)
   FROM ExternalExecution execution
   WHERE execution.organization_id = @organizationId
     AND execution.id IN (SELECT id FROM selected_executions)
 
-  UNION ALL SELECT 'externalexecutionevent', event.id, to_jsonb(event)
+  UNION ALL SELECT 'externalexecutionevent', event.id, to_jsonb(event.*)
   FROM ExternalExecutionEvent event
   WHERE event.organization_id = @organizationId
     AND event.id IN (SELECT id FROM selected_execution_events)
 
-  UNION ALL SELECT 'externalexecutiontimestampmanifest', manifest.id, to_jsonb(manifest)
+  UNION ALL SELECT 'externalexecutiontimestampmanifest', manifest.id, to_jsonb(manifest.*)
   FROM ExternalExecutionTimestampManifest manifest
   WHERE manifest.id IN (SELECT id FROM selected_timestamp_manifests)
 
   UNION ALL SELECT 'externalexecutiontimestampcellprovenance',
     md5(provenance.manifest_id::text || ':' || provenance.source_table || ':' ||
       provenance.source_row_id::text || ':' || provenance.source_column)::uuid,
-    to_jsonb(provenance)
+    to_jsonb(provenance.*)
   FROM ExternalExecutionTimestampCellProvenance provenance
   WHERE provenance.manifest_id IN (SELECT id FROM selected_timestamp_manifests)
 
   UNION ALL SELECT 'externalexecutiontimestampdeletiontombstone',
     md5(tombstone.source_table || ':' || tombstone.source_row_id::text || ':' ||
       tombstone.source_column)::uuid,
-    to_jsonb(tombstone)
+    to_jsonb(tombstone.*)
   FROM ExternalExecutionTimestampDeletionTombstone tombstone
   WHERE tombstone.source_row_id IN (
     SELECT id FROM selected_executions UNION SELECT id FROM selected_execution_events
   )
 
   UNION ALL SELECT 'externalexecutiontimestampexpandstate',
-    '00000000-0000-5000-8000-000000000138'::uuid, to_jsonb(state)
+    '00000000-0000-5000-8000-000000000138'::uuid, to_jsonb(state.*)
   FROM ExternalExecutionTimestampExpandState state
 
-  UNION ALL SELECT 'externalexecutiontimestampcontractgate', gate.id, to_jsonb(gate)
+  UNION ALL SELECT 'externalexecutiontimestampcontractgate', gate.id, to_jsonb(gate.*)
   FROM ExternalExecutionTimestampContractGate gate
   WHERE gate.manifest_id IN (SELECT id FROM selected_timestamp_manifests)
 )
@@ -777,7 +778,7 @@ logical_records(kind, id, payload) AS (
   WHERE observation.organization_id = @organizationId
     AND observation.deployment_target_id IN (SELECT id FROM selected_targets)
 
-  UNION ALL SELECT 'executionattempt', attempt.id, to_jsonb(attempt)
+  UNION ALL SELECT 'executionattempt', attempt.id, to_jsonb(attempt.*)
   FROM ExecutionAttempt attempt
   WHERE attempt.organization_id = @organizationId
     AND attempt.id IN (SELECT id FROM selected_execution_attempts)
@@ -790,17 +791,17 @@ logical_records(kind, id, payload) AS (
   WHERE intent.organization_id = @organizationId
     AND intent.execution_attempt_id IN (SELECT id FROM selected_execution_attempts)
 
-  UNION ALL SELECT 'sampleretirementjob', job.id, to_jsonb(job)
+  UNION ALL SELECT 'sampleretirementjob', job.id, to_jsonb(job.*)
   FROM SampleRetirementJob job
   WHERE job.organization_id = @organizationId
     AND job.id IN (SELECT id FROM selected_sample_retirement_jobs)
 
-  UNION ALL SELECT 'sampleretirementitem', item.id, to_jsonb(item)
+  UNION ALL SELECT 'sampleretirementitem', item.id, to_jsonb(item.*)
   FROM SampleRetirementItem item
   WHERE item.organization_id = @organizationId
     AND item.retirement_job_id IN (SELECT id FROM selected_sample_retirement_jobs)
 
-  UNION ALL SELECT 'sampleretirementownershipevidence', evidence.id, to_jsonb(evidence)
+  UNION ALL SELECT 'sampleretirementownershipevidence', evidence.id, to_jsonb(evidence.*)
   FROM SampleRetirementOwnershipEvidence evidence
   WHERE evidence.organization_id = @organizationId
     AND evidence.id IN (
@@ -808,13 +809,13 @@ logical_records(kind, id, payload) AS (
       WHERE item.retirement_job_id IN (SELECT id FROM selected_sample_retirement_jobs)
     )
 
-  UNION ALL SELECT 'approvalrequest', request.id, to_jsonb(request)
+  UNION ALL SELECT 'approvalrequest', request.id, to_jsonb(request.*)
   FROM ApprovalRequest request
   WHERE request.organization_id = @organizationId
     AND request.subject_type = 'sample_retirement'
     AND request.subject_id IN (SELECT id FROM selected_sample_retirement_jobs)
 
-  UNION ALL SELECT 'approvaldecision', decision.id, to_jsonb(decision)
+  UNION ALL SELECT 'approvaldecision', decision.id, to_jsonb(decision.*)
   FROM ApprovalDecision decision
   WHERE decision.organization_id = @organizationId
     AND decision.approval_request_id IN (
@@ -834,28 +835,28 @@ ORDER BY kind, id
 const protectedHistoryVersionRecordsMarker = "/*PROTECTED_HISTORY_VERSION_RECORDS*/"
 
 const protectedHistorySchema167RecordsSQL = `
-  UNION ALL SELECT 'executionruntimeevidence', evidence.id, to_jsonb(evidence)
+  UNION ALL SELECT 'executionruntimeevidence', evidence.id, to_jsonb(evidence.*)
   FROM ExecutionRuntimeEvidence evidence
   WHERE evidence.organization_id = @organizationId
     AND evidence.execution_attempt_id IN (SELECT id FROM selected_execution_attempts)
 `
 
 const protectedHistorySchema168RecordsSQL = `
-  UNION ALL SELECT 'deploymentplanresolvedrequirement', requirement.id, to_jsonb(requirement)
+  UNION ALL SELECT 'deploymentplanresolvedrequirement', requirement.id, to_jsonb(requirement.*)
   FROM DeploymentPlanResolvedRequirement requirement
   WHERE requirement.organization_id = @organizationId
     AND requirement.deployment_plan_id IN (SELECT id FROM selected_plans)
 `
 
 const protectedHistorySchema169RecordsSQL = `
-  UNION ALL SELECT 'baselineadoptioncomponent', component.id, to_jsonb(component)
+  UNION ALL SELECT 'baselineadoptioncomponent', component.id, to_jsonb(component.*)
   FROM BaselineAdoptionComponent component
   WHERE component.organization_id = @organizationId
     AND component.deployment_plan_id IN (SELECT id FROM selected_plans)
 `
 
 const protectedHistorySchema170RecordsSQL = `
-  UNION ALL SELECT 'protectedhistoryartifact', artifact.id, to_jsonb(artifact)
+  UNION ALL SELECT 'protectedhistoryartifact', artifact.id, to_jsonb(artifact.*)
   FROM ProtectedHistoryArtifact artifact
   WHERE artifact.organization_id = @organizationId
     AND artifact.customer_organization_ids <@ @customerOrganizationIds::uuid[]
@@ -863,7 +864,7 @@ const protectedHistorySchema170RecordsSQL = `
       SELECT id FROM selected_targets ORDER BY id
     )
 
-  UNION ALL SELECT 'controlplaneauditevent', event.id, to_jsonb(event)
+  UNION ALL SELECT 'controlplaneauditevent', event.id, to_jsonb(event.*)
   FROM ControlPlaneAuditEvent event
   JOIN ProtectedHistoryArtifact artifact
     ON artifact.id = event.protected_history_artifact_id

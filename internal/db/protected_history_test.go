@@ -1,6 +1,7 @@
 package db
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,15 @@ func TestProtectedHistorySchema138ProjectionCoversAllHistoryFamiliesAndFields(t 
 	}
 	if strings.Contains(lowerSQL, "deploymenttargetstatus") {
 		t.Fatal("schema-138 projection references DeploymentTargetStatus dropped by migration 95")
+	}
+	if !strings.Contains(lowerSQL, "to_jsonb(snapshot_value.*)") ||
+		!strings.Contains(lowerSQL, "from variablesnapshotvalue snapshot_value") ||
+		strings.Contains(lowerSQL, "to_jsonb(value)") {
+		t.Fatal("schema-138 projection can resolve the VariableSnapshotValue row alias as its nullable value column")
+	}
+	if !strings.Contains(lowerSQL, "to_jsonb(plan_component.*)") ||
+		!strings.Contains(lowerSQL, "from deploymentplantargetcomponent plan_component") {
+		t.Fatal("schema-138 projection can resolve the DeploymentPlanTargetComponent row alias as its component column")
 	}
 }
 
@@ -101,5 +111,30 @@ func TestExpandedProjectionIncludesDatabaseBackedRetirementAuthorization(t *test
 	}
 	if strings.Contains(lowerSQL, "intent.payload") {
 		t.Fatal("expanded projection exposes signed execution intent payload")
+	}
+}
+
+func TestProtectedHistoryWholeRowJSONConversionsAreExplicitlyQualified(t *testing.T) {
+	t.Parallel()
+	queries := strings.Join([]string{
+		protectedHistoryLegacyRecordsSQL,
+		protectedHistoryRecordsSQL,
+		protectedHistorySchema167RecordsSQL,
+		protectedHistorySchema168RecordsSQL,
+		protectedHistorySchema169RecordsSQL,
+		protectedHistorySchema170RecordsSQL,
+	}, "\n")
+	bareWholeRow := regexp.MustCompile(`(?i)to_jsonb\([a-z_][a-z0-9_]*\)`)
+	if match := bareWholeRow.FindString(queries); match != "" {
+		t.Fatalf("protected-history projection has ambiguous whole-row conversion %q", match)
+	}
+	for _, qualified := range []string{
+		"to_jsonb(snapshot_value.*)",
+		"to_jsonb(plan_component.*)",
+		"to_jsonb(decision.*)",
+	} {
+		if !strings.Contains(strings.ToLower(queries), qualified) {
+			t.Fatalf("protected-history projection omits qualified conversion %s", qualified)
+		}
 	}
 }

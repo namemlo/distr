@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/protectedhistory"
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/gomega"
@@ -176,6 +178,71 @@ SELECT count(*) FROM ControlPlaneAuditEvent WHERE protected_history_artifact_id 
 	foreignOrganizationID := createReleaseBundleTestOrganization(t, ctx)
 	_, err = db.GetProtectedHistoryArtifact(ctx, foreignOrganizationID, retained.ID)
 	g.Expect(errors.Is(err, apierrors.ErrNotFound)).To(BeTrue())
+}
+
+func TestExportProtectedHistorySchema138SerializesRedactedVariableSnapshotRows(t *testing.T) {
+	ctx := releaseBundleDBTestContext(t)
+	g := NewWithT(t)
+	deps := createReleaseBundleEligibilityDependencies(t, ctx)
+	_, revision := createReleaseBundleProcessRevision(
+		t, ctx, deps.orgID, deps.applicationID, "Protected history export",
+	)
+	createDeploymentPlanVariableSet(t, ctx, deps.orgID, deps.applicationID)
+	customerID := createProtectedHistoryCustomer(t, ctx, deps.orgID)
+	targetID := createReleaseBundleDockerTargetForOrganization(t, ctx, deps.orgID, "protected-history-target")
+	_, err := internalctx.GetDb(ctx).Exec(ctx, `
+UPDATE DeploymentTarget
+SET customer_organization_id = @customerOrganizationId
+WHERE id = @targetId AND organization_id = @organizationId
+`, pgx.NamedArgs{
+		"customerOrganizationId": customerID,
+		"targetId":               targetID,
+		"organizationId":         deps.orgID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	bundle := releaseBundleFixture(deps.orgID, deps.applicationID, deps.channelID, deps.versionID)
+	bundle.DeploymentProcessRevisionID = &revision.ID
+	g.Expect(db.CreateReleaseBundle(ctx, &bundle)).To(Succeed())
+	published, result, err := db.PublishReleaseBundle(
+		ctx, bundle.ID, deps.orgID, createReleaseBundleTestUser(t, ctx, deps.orgID),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.Valid).To(BeTrue())
+	_, err = db.CreateDeploymentPlan(ctx, types.CreateDeploymentPlanRequest{
+		OrganizationID:  deps.orgID,
+		ReleaseBundleID: published.ID,
+		EnvironmentID:   deps.devEnvironmentID,
+		TargetIDs:       []uuid.UUID{targetID},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `UPDATE schema_migrations SET version = 138, dirty = false`)
+	g.Expect(err).NotTo(HaveOccurred())
+	artifact, err := db.ExportProtectedHistory(ctx, protectedhistory.Scope{
+		OrganizationID:          deps.orgID.String(),
+		CustomerOrganizationIDs: []string{customerID.String()},
+		DeploymentTargetIDs:     []string{targetID.String()},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	variableSnapshotRecords := 0
+	planComponentRecords := 0
+	for _, record := range artifact.Records {
+		var payload map[string]any
+		g.Expect(json.Unmarshal(record.Payload, &payload)).To(Succeed())
+		switch record.Kind {
+		case "variablesnapshotvalue":
+			variableSnapshotRecords++
+			g.Expect(payload).To(HaveKey("variable_snapshot_id"))
+			g.Expect(string(record.Payload)).NotTo(ContainSubstring("secret-value"))
+		case "deploymentplantargetcomponent":
+			planComponentRecords++
+			g.Expect(payload).To(HaveKey("deployment_plan_id"))
+		}
+	}
+	g.Expect(variableSnapshotRecords).To(Equal(2))
+	g.Expect(planComponentRecords).To(BeNumerically(">", 0))
 }
 
 func createProtectedHistoryCustomer(
