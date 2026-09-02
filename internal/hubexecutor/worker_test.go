@@ -2,16 +2,21 @@ package hubexecutor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/externalexecution"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/distr-sh/distr/internal/webhookaction"
 	"github.com/google/uuid"
@@ -488,16 +493,59 @@ func TestWorkerSurfacesPreMutationHoldWithoutInvokingWebhook(t *testing.T) {
 	delete(lease.Steps[0].InputBindings, "outputs")
 	lease.Steps[0].InputBindings["component"] = "loyalty-api"
 	execution := callbackExecution(lease, types.ExternalExecutionStatusQueued)
-	store := &recordingStore{externalExecution: execution, preMutationHold: true}
+	execution.DeploymentPlanID = uuid.New()
+	holdWaiting := make(chan struct{}, 1)
+	store := &recordingStore{
+		externalExecution: execution, preMutationHold: true, holdWaiting: holdWaiting,
+	}
+	control := &types.ExternalExecutionPreMutationHold{
+		Schema: types.ExternalExecutionPreMutationHoldSchemaV1, ControlID: uuid.New(),
+		OrganizationID: lease.OrganizationID, DeploymentPlanID: execution.DeploymentPlanID,
+		DeploymentTargetID: execution.DeploymentTargetID, PlanChecksum: execution.PlanChecksum,
+		Component: execution.Component, Reason: "observe dependency conflict before mutation",
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	control.ControlChecksum, err = externalexecution.PreMutationHoldChecksum(*control)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseFile := filepath.Join(t.TempDir(), "release.json")
 	worker := newWorker(zaptest.NewLogger(t), store, Options{
 		HeartbeatInterval: time.Hour, CallbackBaseURL: "https://distr.example.com",
-		RuntimeOptions: webhookaction.RuntimeOptions{HTTPClient: server.Client()},
-		PreMutationHold: &types.ExternalExecutionPreMutationHold{
-			ControlID: uuid.New(), OrganizationID: lease.OrganizationID,
-		},
+		RuntimeOptions:  webhookaction.RuntimeOptions{HTTPClient: server.Client()},
+		PreMutationHold: control, PreMutationHoldReleaseFile: releaseFile,
+		PreMutationHoldPollInterval: time.Millisecond,
 	})
 
-	err = worker.executeLease(context.Background(), lease)
+	done := make(chan error, 1)
+	go func() { done <- worker.executeLease(context.Background(), lease) }()
+	select {
+	case <-holdWaiting:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not expose WAITING state")
+	}
+	if webhookCalls.Load() != 0 {
+		t.Fatalf("pre-mutation hold invoked webhook while waiting %d times", webhookCalls.Load())
+	}
+	release := types.ExternalExecutionPreMutationHoldRelease{
+		Schema: types.ExternalExecutionPreMutationHoldReleaseSchemaV1,
+		Action: string(types.ExternalExecutionPreMutationHoldReleaseFail), ControlID: control.ControlID,
+		ControlChecksum: control.ControlChecksum, OrganizationID: control.OrganizationID,
+		DeploymentPlanID: control.DeploymentPlanID, DeploymentTargetID: control.DeploymentTargetID,
+		PlanChecksum: control.PlanChecksum, Component: control.Component,
+	}
+	value, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(releaseFile, value, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not resolve exact RELEASE_FAIL action")
+	}
 
 	if err == nil || !strings.Contains(err.Error(), "pre-mutation hold") {
 		t.Fatalf("expected visible pre-mutation hold conflict, got %v", err)
@@ -507,6 +555,9 @@ func TestWorkerSurfacesPreMutationHoldWithoutInvokingWebhook(t *testing.T) {
 	}
 	if store.lastTriggerRequest.PreMutationHold == nil {
 		t.Fatal("worker did not bind configured pre-mutation hold to the dispatch claim")
+	}
+	if store.lastHoldResolution.Resolution != types.ExternalExecutionPreMutationHoldReleaseFail {
+		t.Fatalf("worker resolved hold as %q", store.lastHoldResolution.Resolution)
 	}
 	if store.events[len(store.events)-1].Type != types.StepRunEventTypeFailed {
 		t.Fatalf("pre-mutation hold was not visible as a failed step: %#v", store.events)
@@ -698,7 +749,9 @@ type recordingStore struct {
 	claimConflict      bool
 	succeedOnFail      bool
 	preMutationHold    bool
+	holdWaiting        chan struct{}
 	lastTriggerRequest types.MarkExternalExecutionTriggeredRequest
+	lastHoldResolution types.ResolveExternalExecutionPreMutationHoldRequest
 	builtinAuthority   *builtinVerificationAuthority
 	builtinLoadError   error
 }
@@ -729,10 +782,10 @@ func (s *recordingStore) MarkExternalExecutionTriggered(
 	s.triggerCalls.Add(1)
 	s.lastTriggerRequest = request
 	if s.preMutationHold {
-		s.externalExecution.Status = types.ExternalExecutionStatusFailed
-		s.externalExecution.ErrorSummary = "pre-mutation hold consumed; external adapter was not invoked"
+		s.externalExecution.Status = types.ExternalExecutionStatusQueued
+		s.externalExecution.LastMessage = "pre-mutation hold is WAITING; external adapter has not been invoked"
 		copy := *s.externalExecution
-		return &copy, apierrors.NewConflict(s.externalExecution.ErrorSummary)
+		return &copy, fmt.Errorf("%w: %s", externalexecution.ErrPreMutationHoldWaiting, copy.LastMessage)
 	}
 	if s.claimConflict {
 		s.externalExecution.Status = types.ExternalExecutionStatusRunning
@@ -744,6 +797,17 @@ func (s *recordingStore) MarkExternalExecutionTriggered(
 		return nil, apierrors.NewConflict("external execution is already terminal")
 	}
 	s.externalExecution.Status = types.ExternalExecutionStatusRunning
+	copy := *s.externalExecution
+	return &copy, nil
+}
+
+func (s *recordingStore) ResolveExternalExecutionPreMutationHold(
+	_ context.Context,
+	request types.ResolveExternalExecutionPreMutationHoldRequest,
+) (*types.ExternalExecution, error) {
+	s.lastHoldResolution = request
+	s.externalExecution.Status = types.ExternalExecutionStatusFailed
+	s.externalExecution.ErrorSummary = "pre-mutation hold resolved before adapter dispatch"
 	copy := *s.externalExecution
 	return &copy, nil
 }
@@ -818,6 +882,12 @@ func (s *recordingStore) Record(
 	request types.RecordHubStepRunEventRequest,
 ) (*types.StepRunEvent, error) {
 	s.events = append(s.events, request)
+	if s.holdWaiting != nil && strings.Contains(request.Message, "WAITING") {
+		select {
+		case s.holdWaiting <- struct{}{}:
+		default:
+		}
+	}
 	return &types.StepRunEvent{ID: uuid.New(), Type: request.Type, Sequence: request.Sequence}, nil
 }
 

@@ -107,6 +107,8 @@ var (
 	externalExecutionPreMutationHoldJSON    []byte
 )
 
+var externalExecutionPreMutationHoldReleaseFile string
+
 func Initialize() {
 	if currentEnv, ok := os.LookupEnv("DISTR_ENV"); ok {
 		fmt.Fprintf(os.Stderr, "environment=%v\n", currentEnv)
@@ -295,6 +297,7 @@ func Initialize() {
 		nil,
 	)
 	externalExecutionPreMutationHoldJSON = nil
+	externalExecutionPreMutationHoldReleaseFile = ""
 	if featureflags.NewRegistry(experimentalFeatureFlags).IsEnabled(featureflags.KeyExecutorProtocolV2) {
 		executionV2SigningKeysJSON = []byte(envutil.RequireEnv("DISTR_EXECUTION_V2_SIGNING_KEYS_JSON"))
 		executionV2ObserverPublicKeysJSON = []byte(
@@ -308,6 +311,11 @@ func Initialize() {
 			envparse.ByteSlice,
 			nil,
 		)
+		if len(externalExecutionPreMutationHoldJSON) > 0 {
+			externalExecutionPreMutationHoldReleaseFile = envutil.RequireEnv(
+				"DISTR_EXTERNAL_EXECUTION_PRE_MUTATION_HOLD_RELEASE_FILE",
+			)
+		}
 	}
 }
 
@@ -733,4 +741,8 @@ func ExecutionV2ObserverPublicKeysJSON() []byte {
 
 func ExternalExecutionPreMutationHoldJSON() []byte {
 	return slices.Clone(externalExecutionPreMutationHoldJSON)
+}
+
+func ExternalExecutionPreMutationHoldReleaseFile() string {
+	return externalExecutionPreMutationHoldReleaseFile
 }

@@ -13,6 +13,7 @@ import (
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
 	"github.com/distr-sh/distr/internal/env"
+	"github.com/distr-sh/distr/internal/externalexecution"
 	"github.com/distr-sh/distr/internal/stepredaction"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/distr-sh/distr/internal/webhookaction"
@@ -29,13 +30,15 @@ const (
 )
 
 type Options struct {
-	PollInterval         time.Duration
-	HeartbeatInterval    time.Duration
-	MaxConcurrency       int
-	RuntimeOptions       webhookaction.RuntimeOptions
-	ExternalPollInterval time.Duration
-	CallbackBaseURL      string
-	PreMutationHold      *types.ExternalExecutionPreMutationHold
+	PollInterval                time.Duration
+	HeartbeatInterval           time.Duration
+	MaxConcurrency              int
+	RuntimeOptions              webhookaction.RuntimeOptions
+	ExternalPollInterval        time.Duration
+	CallbackBaseURL             string
+	PreMutationHold             *types.ExternalExecutionPreMutationHold
+	PreMutationHoldReleaseFile  string
+	PreMutationHoldPollInterval time.Duration
 }
 
 type taskStore interface {
@@ -46,6 +49,10 @@ type taskStore interface {
 	MarkExternalExecutionTriggered(
 		context.Context,
 		types.MarkExternalExecutionTriggeredRequest,
+	) (*types.ExternalExecution, error)
+	ResolveExternalExecutionPreMutationHold(
+		context.Context,
+		types.ResolveExternalExecutionPreMutationHoldRequest,
 	) (*types.ExternalExecution, error)
 	GetExternalExecution(context.Context, uuid.UUID, uuid.UUID) (*types.ExternalExecution, error)
 	TimeoutExternalExecution(context.Context, types.TimeoutExternalExecutionRequest) (*types.ExternalExecution, error)
@@ -279,6 +286,36 @@ func (w *Worker) executeStep(
 		if triggerErr == nil {
 			external = triggered
 			webhookInvoked = true
+		} else if errors.Is(triggerErr, externalexecution.ErrPreMutationHoldWaiting) {
+			external = triggered
+			webhookInvoked = false
+			sequence++
+			runErr = w.record(
+				actionCtx, lease, step, sequence, types.StepRunEventTypeProgress,
+				external.LastMessage, nil,
+			)
+			if runErr == nil {
+				resolution, waitErr := externalexecution.WaitForPreMutationHoldRelease(
+					actionCtx,
+					*w.options.PreMutationHold,
+					w.options.PreMutationHoldReleaseFile,
+					w.options.PreMutationHoldPollInterval,
+				)
+				if waitErr != nil {
+					runErr = waitErr
+				} else {
+					external, runErr = w.store.ResolveExternalExecutionPreMutationHold(
+						actionCtx,
+						types.ResolveExternalExecutionPreMutationHoldRequest{
+							OrganizationID: lease.OrganizationID, ExternalExecutionID: external.ID,
+							Control: *w.options.PreMutationHold, Resolution: resolution,
+						},
+					)
+					if runErr == nil {
+						runErr = externalExecutionError(*external)
+					}
+				}
+			}
 		} else {
 			current, readErr := w.store.GetExternalExecution(actionCtx, external.ID, lease.OrganizationID)
 			if readErr == nil && current.Status != types.ExternalExecutionStatusQueued {
@@ -605,6 +642,13 @@ func (s databaseStore) GetExternalExecution(
 	id, orgID uuid.UUID,
 ) (*types.ExternalExecution, error) {
 	return db.GetExternalExecution(s.context(ctx), id, orgID)
+}
+
+func (s databaseStore) ResolveExternalExecutionPreMutationHold(
+	ctx context.Context,
+	request types.ResolveExternalExecutionPreMutationHoldRequest,
+) (*types.ExternalExecution, error) {
+	return db.ResolveExternalExecutionPreMutationHold(s.context(ctx), request)
 }
 
 func (s databaseStore) TimeoutExternalExecution(

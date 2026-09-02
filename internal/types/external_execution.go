@@ -86,7 +86,10 @@ type ExternalExecution struct {
 	ObservedStateChecksum    string                    `db:"observed_state_checksum" json:"observedStateChecksum,omitempty"` //nolint:lll
 }
 
-const ExternalExecutionPreMutationHoldSchemaV1 = "distr.external-execution-pre-mutation-hold/v1"
+const (
+	ExternalExecutionPreMutationHoldSchemaV1        = "distr.external-execution-pre-mutation-hold/v1"
+	ExternalExecutionPreMutationHoldReleaseSchemaV1 = "distr.external-execution-pre-mutation-hold-release/v1"
+)
 
 type ExternalExecutionPreMutationHold struct {
 	Schema             string    `json:"schema"`
@@ -97,8 +100,28 @@ type ExternalExecutionPreMutationHold struct {
 	PlanChecksum       string    `json:"planChecksum"`
 	Component          string    `json:"component"`
 	Reason             string    `json:"reason"`
+	ExpiresAt          time.Time `json:"expiresAt"`
 	ControlChecksum    string    `json:"-"`
 }
+
+type ExternalExecutionPreMutationHoldRelease struct {
+	Schema             string    `json:"schema"`
+	Action             string    `json:"action"`
+	ControlID          uuid.UUID `json:"controlId"`
+	ControlChecksum    string    `json:"controlChecksum"`
+	OrganizationID     uuid.UUID `json:"organizationId"`
+	DeploymentPlanID   uuid.UUID `json:"deploymentPlanId"`
+	DeploymentTargetID uuid.UUID `json:"deploymentTargetId"`
+	PlanChecksum       string    `json:"planChecksum"`
+	Component          string    `json:"component"`
+}
+
+type ExternalExecutionPreMutationHoldResolution string
+
+const (
+	ExternalExecutionPreMutationHoldReleaseFail ExternalExecutionPreMutationHoldResolution = "RELEASE_FAIL"
+	ExternalExecutionPreMutationHoldTimedOut    ExternalExecutionPreMutationHoldResolution = "TIMED_OUT"
+)
 
 type ExternalExecutionExpectedState struct {
 	Version         string
@@ -144,6 +167,13 @@ type MarkExternalExecutionTriggeredRequest struct {
 	ExternalExecutionID uuid.UUID
 	TriggerAttempts     int
 	PreMutationHold     *ExternalExecutionPreMutationHold
+}
+
+type ResolveExternalExecutionPreMutationHoldRequest struct {
+	OrganizationID      uuid.UUID
+	ExternalExecutionID uuid.UUID
+	Control             ExternalExecutionPreMutationHold
+	Resolution          ExternalExecutionPreMutationHoldResolution
 }
 
 type RecordExternalExecutionCallbackRequest struct {

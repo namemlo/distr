@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -95,6 +96,9 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("external execution pre-mutation hold configuration: %w", err)
 		}
+		if !filepath.IsAbs(env.ExternalExecutionPreMutationHoldReleaseFile()) {
+			return nil, fmt.Errorf("external execution pre-mutation hold release file must be absolute")
+		}
 	}
 	executionRuntime, err := newExecutionRuntimeDependencies(
 		env.ExecutionV2SigningKeysJSON(), env.ExecutionV2ObserverPublicKeysJSON(), experimentalFeatures,
@@ -140,7 +144,8 @@ func newRegistry(ctx context.Context, reg *Registry) (*Registry, error) {
 		reg.dbPool = db
 	}
 	reg.hubExecutor = hubexecutor.New(reg.logger, reg.dbPool, hubexecutor.Options{
-		PreMutationHold: preMutationHold,
+		PreMutationHold:            preMutationHold,
+		PreMutationHoldReleaseFile: env.ExternalExecutionPreMutationHoldReleaseFile(),
 	})
 
 	if env.RegistryEnabled() {

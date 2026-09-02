@@ -2345,21 +2345,23 @@ Use one entry per pull request:
 - Feature flag: Uses
   `operator_control_plane_v2,external_execution_pre_mutation_hold`; the hold flag
   is ineffective without the operator-control-plane prerequisite.
-- User-facing behavior: The first exact plan/checksum/target/component match fails
-  visibly before the external adapter is invoked. The audit-backed control then
-  disables itself so a retry proceeds.
+- User-facing behavior: The first exact plan/checksum/target/component match is
+  visibly ARMED then WAITING while its target/component lock remains active. An
+  exact protected `RELEASE_FAIL` action or bounded timeout fails it before adapter
+  invocation; the audit-backed control then disables itself so a retry proceeds.
 - Database changes: None. Existing append-only `ControlPlaneAuditEvent` records
-  armed and consumed state transactionally.
+  armed, waiting, resolution, and consumed state transactionally.
 - API changes: None. Existing task, external-execution, audit, and evidence reads
   expose the failure and audit events.
-- UI changes: None. Existing task/external-execution failure views show the
-  conflict message and zero trigger attempts.
+- UI changes: None. Existing task/external-execution reads show the WAITING
+  message, then the terminal resolution with zero trigger attempts.
 - Agent protocol changes: None. The boundary is Hub callback-mode webhook
   orchestration before transport invocation.
 - Documentation: ADR 0086 and the Post-PR-099 operator guide.
-- Tests: Canonical binding/parser coverage, prerequisite flag coverage, Hub worker
-  no-webhook coverage, and PostgreSQL repository coverage for atomic failure,
-  audit events, zero dispatch attempts, and automatic one-use disablement.
+- Tests: Canonical binding/release parser coverage, bounded timeout coverage,
+  prerequisite flag coverage, Hub worker wait/no-webhook coverage, and PostgreSQL
+  repository coverage for WAITING visibility, conflicting target/component work,
+  atomic resolution, audit events, and zero dispatch attempts.
 - Compatibility notes: Disabled or absent configuration preserves existing
   behavior. Removing the flag is the kill switch; retained evidence is unchanged.
 

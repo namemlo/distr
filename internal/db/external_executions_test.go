@@ -167,7 +167,7 @@ func TestFailExternalExecutionAdvancesDurableEventSequence(t *testing.T) {
 	g.Expect(events[0].Status).To(Equal(types.ExternalExecutionStatusFailed))
 }
 
-func TestPreMutationHoldFailsExactlyOneMatchingDispatchBeforeAdapterMutation(t *testing.T) {
+func TestPreMutationHoldWaitsRejectsConflictingTaskThenFailsBeforeAdapterMutation(t *testing.T) {
 	ctx := taskQueueDBTestContext(t)
 	g := NewWithT(t)
 	deps := createExternalExecutionPlan(t, ctx)
@@ -189,20 +189,42 @@ func TestPreMutationHoldFailsExactlyOneMatchingDispatchBeforeAdapterMutation(t *
 		OrganizationID: deps.orgID, DeploymentPlanID: deps.plan.ID,
 		DeploymentTargetID: execution.DeploymentTargetID, PlanChecksum: deps.plan.CanonicalChecksum,
 		Component: "api-image", Reason: "prove dependency block before adapter mutation",
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
 	}
 	control.ControlChecksum, err = externalexecution.PreMutationHoldChecksum(control)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	_, err = db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
+	waiting, err := db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
 		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
 		PreMutationHold: &control,
 	})
+	g.Expect(errors.Is(err, externalexecution.ErrPreMutationHoldWaiting)).To(BeTrue())
+	g.Expect(waiting.Status).To(Equal(types.ExternalExecutionStatusQueued))
+	g.Expect(waiting.TriggerAttempts).To(Equal(0))
+	g.Expect(waiting.LastMessage).To(ContainSubstring("WAITING"))
+	g.Expect(waiting.LastMessage).To(ContainSubstring("adapter has not been invoked"))
+
+	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t, ctx, deps, "Conflicting external execution", execution.DeploymentTargetID,
+	)
+	_, err = db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID: deps.orgID, DeploymentPlanID: secondPlan.ID, ActorUserAccountID: deps.actorID,
+		ConcurrencyPolicy: types.TaskConcurrencyPolicyRejectNew,
+	})
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
-	g.Expect(err.Error()).To(ContainSubstring("adapter was not invoked"))
-	failed, err := db.GetExternalExecution(ctx, execution.ID, deps.orgID)
+
+	failed, err := db.ResolveExternalExecutionPreMutationHold(
+		ctx,
+		types.ResolveExternalExecutionPreMutationHoldRequest{
+			OrganizationID: deps.orgID, ExternalExecutionID: execution.ID,
+			Control: control, Resolution: types.ExternalExecutionPreMutationHoldReleaseFail,
+		},
+	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(failed.Status).To(Equal(types.ExternalExecutionStatusFailed))
 	g.Expect(failed.TriggerAttempts).To(Equal(0))
+	g.Expect(failed.ErrorSummary).To(ContainSubstring("RELEASE_FAIL"))
+	g.Expect(failed.ErrorSummary).To(ContainSubstring("adapter was not invoked"))
 	events, err := db.GetExternalExecutionEvents(ctx, execution.ID, deps.orgID)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(events).To(HaveLen(1))
@@ -216,26 +238,21 @@ func TestPreMutationHoldFailsExactlyOneMatchingDispatchBeforeAdapterMutation(t *
 	}
 	g.Expect(eventTypes).To(ContainElements(
 		"external_execution.pre_mutation_hold.armed",
+		"external_execution.pre_mutation_hold.waiting",
+		"external_execution.pre_mutation_hold.release_fail",
 		"external_execution.pre_mutation_hold.consumed",
 	))
 
-	_, err = internalctx.GetDb(ctx).Exec(ctx, `
-		DELETE FROM ExternalExecutionEvent
-		WHERE external_execution_id = @externalExecutionId;
-		UPDATE ExternalExecution
-		SET status = 'QUEUED', completed_at = NULL, completed_at_instant = NULL,
-			last_callback_sequence = 0, last_message = '', error_summary = '',
-			updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
-			updated_at_instant = CURRENT_TIMESTAMP
-		WHERE id = @externalExecutionId`, pgx.NamedArgs{"externalExecutionId": execution.ID})
-	g.Expect(err).NotTo(HaveOccurred())
-	retry, err := db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
-		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
-		PreMutationHold: &control,
+	_, err = db.TransitionTaskState(ctx, types.TransitionTaskStateRequest{
+		OrganizationID: deps.orgID, TaskID: tasks[0].ID, Status: types.TaskStatusFailed,
 	})
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(retry.Status).To(Equal(types.ExternalExecutionStatusRunning))
-	g.Expect(retry.TriggerAttempts).To(Equal(1))
+	created, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID: deps.orgID, DeploymentPlanID: secondPlan.ID, ActorUserAccountID: deps.actorID,
+		ConcurrencyPolicy: types.TaskConcurrencyPolicyRejectNew,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(created).To(HaveLen(1))
 }
 
 func TestExternalExecutionRejectsLateSuccessAndPersistsTimeout(t *testing.T) {
