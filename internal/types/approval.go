@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/google/uuid"
 )
 
@@ -126,16 +127,18 @@ type ApprovalRequirement struct {
 }
 
 type ApprovalDecision struct {
-	ID                    uuid.UUID             `db:"id" json:"id"`
-	CreatedAt             time.Time             `db:"created_at" json:"createdAt"`
-	OrganizationID        uuid.UUID             `db:"organization_id" json:"organizationId"`
-	ApprovalRequestID     uuid.UUID             `db:"approval_request_id" json:"approvalRequestId"`
-	ApprovalRequirementID uuid.UUID             `db:"approval_requirement_id" json:"approvalRequirementId"`
-	ActorUserAccountID    uuid.UUID             `db:"actor_useraccount_id" json:"actorUserAccountId"`
-	Decision              ApprovalDecisionValue `db:"decision" json:"decision"`
-	Comment               string                `db:"comment" json:"comment"`
-	RequestRevision       int64                 `db:"request_revision" json:"requestRevision"`
-	IdempotencyKey        string                `db:"idempotency_key" json:"idempotencyKey"`
+	ID                           uuid.UUID             `db:"id" json:"id"`
+	CreatedAt                    time.Time             `db:"created_at" json:"createdAt"`
+	OrganizationID               uuid.UUID             `db:"organization_id" json:"organizationId"`
+	ApprovalRequestID            uuid.UUID             `db:"approval_request_id" json:"approvalRequestId"`
+	ApprovalRequirementID        uuid.UUID             `db:"approval_requirement_id" json:"approvalRequirementId"`
+	ActorUserAccountID           uuid.UUID             `db:"actor_useraccount_id" json:"actorUserAccountId"`
+	Decision                     ApprovalDecisionValue `db:"decision" json:"decision"`
+	Comment                      string                `db:"comment" json:"comment"`
+	RequestRevision              int64                 `db:"request_revision" json:"requestRevision"`
+	IdempotencyKey               string                `db:"idempotency_key" json:"idempotencyKey"`
+	GovernanceExceptionKey       string                `db:"governance_exception_key" json:"governanceExceptionKey,omitempty"`
+	GovernanceExceptionReference string                `db:"governance_exception_reference" json:"governanceExceptionReference,omitempty"`
 }
 
 type ApprovalRequestInput struct {
@@ -164,6 +167,8 @@ type ApprovalDecisionInput struct {
 	ExpectedRequestRevision int64
 	IdempotencyKey          string
 	Authorize               ApprovalAuthorizer
+	SingleReviewerPilot     pilotexception.Config
+	GovernanceException     *pilotexception.Evidence
 }
 
 type ApprovalAuthorizationContext struct {
@@ -174,6 +179,7 @@ type ApprovalAuthorizationContext struct {
 	SampleRetirementJobID uuid.UUID
 	EnvironmentID         uuid.UUID
 	DeploymentUnitID      *uuid.UUID
+	DeploymentTargetIDs   []uuid.UUID
 	ApprovalRequestID     uuid.UUID
 	ApprovalRequirementID uuid.UUID
 }

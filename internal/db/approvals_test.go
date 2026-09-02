@@ -293,14 +293,16 @@ func TestApprovalRepositoryUsesLocksIdempotencyAndKeysetPagination(t *testing.T)
 
 func TestApprovalDecisionIdempotencyMatchesOnlyExactRetry(t *testing.T) {
 	decision := types.ApprovalDecision{
-		OrganizationID:        uuid.New(),
-		ApprovalRequestID:     uuid.New(),
-		ApprovalRequirementID: uuid.New(),
-		ActorUserAccountID:    uuid.New(),
-		Decision:              types.ApprovalDecisionApprove,
-		Comment:               "Reviewed immutable evidence.",
-		RequestRevision:       3,
-		IdempotencyKey:        "approval-3",
+		OrganizationID:               uuid.New(),
+		ApprovalRequestID:            uuid.New(),
+		ApprovalRequirementID:        uuid.New(),
+		ActorUserAccountID:           uuid.New(),
+		Decision:                     types.ApprovalDecisionApprove,
+		Comment:                      "Reviewed immutable evidence.",
+		RequestRevision:              3,
+		IdempotencyKey:               "approval-3",
+		GovernanceExceptionKey:       "scoped-single-reviewer-pilot",
+		GovernanceExceptionReference: "approved-change-123",
 	}
 	input := types.ApprovalDecisionInput{
 		OrganizationID:          decision.OrganizationID,

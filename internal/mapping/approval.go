@@ -57,15 +57,17 @@ func ApprovalRequirementToAPI(
 
 func ApprovalDecisionToAPI(decision types.ApprovalDecision) api.ApprovalDecision {
 	return api.ApprovalDecision{
-		ID:                    decision.ID,
-		CreatedAt:             decision.CreatedAt,
-		ApprovalRequestID:     decision.ApprovalRequestID,
-		ApprovalRequirementID: decision.ApprovalRequirementID,
-		ActorUserAccountID:    decision.ActorUserAccountID,
-		Decision:              decision.Decision,
-		Comment:               decision.Comment,
-		RequestRevision:       decision.RequestRevision,
-		IdempotencyKey:        decision.IdempotencyKey,
+		ID:                           decision.ID,
+		CreatedAt:                    decision.CreatedAt,
+		ApprovalRequestID:            decision.ApprovalRequestID,
+		ApprovalRequirementID:        decision.ApprovalRequirementID,
+		ActorUserAccountID:           decision.ActorUserAccountID,
+		Decision:                     decision.Decision,
+		Comment:                      decision.Comment,
+		RequestRevision:              decision.RequestRevision,
+		IdempotencyKey:               decision.IdempotencyKey,
+		GovernanceExceptionKey:       decision.GovernanceExceptionKey,
+		GovernanceExceptionReference: decision.GovernanceExceptionReference,
 	}
 }
 

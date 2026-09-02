@@ -5,9 +5,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
+
+func TestBuildRetentionLabelsApprovedSingleReviewerPilot(t *testing.T) {
+	t.Parallel()
+	g := NewWithT(t)
+	artifact := mustBuild(t, nil)
+	payload, err := Marshal(*artifact)
+	g.Expect(err).NotTo(HaveOccurred())
+	checksum := ContentChecksum(payload)
+	actorID := uuid.MustParse("66666666-6666-4666-8666-666666666666")
+
+	retained, err := BuildRetention(RetentionInput{
+		ID: uuid.New(), Artifact: *artifact,
+		ObjectReference: immutableProtectedHistoryReference(checksum),
+		MediaType:       ArtifactMediaTypeV1, ByteLength: int64(len(payload)),
+		ContentChecksum:     checksum,
+		CapturedAt:          time.Date(2026, time.September, 3, 7, 8, 9, 0, time.UTC),
+		IssuerUserAccountID: actorID, ReviewerUserAccountID: actorID,
+		GovernanceException: &pilotexception.Evidence{
+			Key:               pilotexception.Key,
+			ApprovalReference: "owner-approval:adopter-dev-20260903",
+		},
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(retained.GovernanceExceptionKey).To(Equal(pilotexception.Key))
+	g.Expect(retained.GovernanceExceptionReference).To(Equal(
+		"owner-approval:adopter-dev-20260903",
+	))
+	g.Expect(retained.RetentionChecksum).To(MatchRegexp(`^sha256:[0-9a-f]{64}$`))
+}
 
 func TestBuildRetentionSealsArtifactObjectReviewAndCaptureIdentity(t *testing.T) {
 	t.Parallel()

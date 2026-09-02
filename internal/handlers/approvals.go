@@ -326,6 +326,7 @@ func recordApprovalDecisionHandlerWithDependencies(
 				Comment:                 request.Comment,
 				ExpectedRequestRevision: request.ExpectedRequestRevision,
 				IdempotencyKey:          request.IdempotencyKey,
+				SingleReviewerPilot:     env.ScopedSingleReviewerPilotConfig(),
 				Authorize: func(
 					ctx context.Context,
 					evidence types.ApprovalAuthorizationContext,

@@ -13,6 +13,7 @@ import (
 	"github.com/distr-sh/distr/internal/envparse"
 	"github.com/distr-sh/distr/internal/envutil"
 	"github.com/distr-sh/distr/internal/featureflags"
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/distr-sh/distr/internal/util"
 	"github.com/joho/godotenv"
 )
@@ -105,6 +106,7 @@ var (
 	executionV2SigningKeysJSON              []byte
 	executionV2ObserverPublicKeysJSON       []byte
 	externalExecutionPreMutationHoldJSON    []byte
+	scopedSingleReviewerPilotConfig         pilotexception.Config
 )
 
 var externalExecutionPreMutationHoldReleaseFile string
@@ -298,6 +300,15 @@ func Initialize() {
 	)
 	externalExecutionPreMutationHoldJSON = nil
 	externalExecutionPreMutationHoldReleaseFile = ""
+	scopedSingleReviewerPilotConfig = util.Require(pilotexception.Parse(
+		featureflags.NewRegistry(experimentalFeatureFlags).IsEnabled(
+			featureflags.KeyScopedSingleReviewerPilot,
+		),
+		envutil.GetEnv("DISTR_SINGLE_REVIEWER_PILOT_ORGANIZATION_ID"),
+		envutil.GetEnv("DISTR_SINGLE_REVIEWER_PILOT_ENVIRONMENT_ID"),
+		envutil.GetEnv("DISTR_SINGLE_REVIEWER_PILOT_DEPLOYMENT_TARGET_ID"),
+		envutil.GetEnv("DISTR_SINGLE_REVIEWER_PILOT_APPROVAL_REFERENCE"),
+	))
 	if featureflags.NewRegistry(experimentalFeatureFlags).IsEnabled(featureflags.KeyExecutorProtocolV2) {
 		executionV2SigningKeysJSON = []byte(envutil.RequireEnv("DISTR_EXECUTION_V2_SIGNING_KEYS_JSON"))
 		executionV2ObserverPublicKeysJSON = []byte(
@@ -729,6 +740,10 @@ func ObservabilityGrafanaBaseURL() string {
 
 func ExperimentalFeatureFlags() []featureflags.Key {
 	return slices.Clone(experimentalFeatureFlags)
+}
+
+func ScopedSingleReviewerPilotConfig() pilotexception.Config {
+	return scopedSingleReviewerPilotConfig
 }
 
 func ExecutionV2SigningKeysJSON() []byte {

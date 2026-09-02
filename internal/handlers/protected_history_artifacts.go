@@ -13,6 +13,7 @@ import (
 	"github.com/distr-sh/distr/internal/auth"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/env"
 	"github.com/distr-sh/distr/internal/featureflags"
 	"github.com/distr-sh/distr/internal/middleware"
 	"github.com/distr-sh/distr/internal/protectedhistory"
@@ -128,11 +129,20 @@ func createProtectedHistoryArtifactHandler(
 		}
 		authentication := auth.Authentication.Require(r.Context())
 		organizationID := *authentication.CurrentOrgID()
+		scope := request.Scope(organizationID)
+		governanceException := env.ScopedSingleReviewerPilotConfig().ProtectedHistoryEvidence(
+			organizationID,
+			scope.CustomerOrganizationIDs,
+			scope.DeploymentTargetIDs,
+			authentication.CurrentUserID(),
+			request.ReviewerUserAccountID,
+		)
 		retained, err := service.Retain(r.Context(), protectedhistory.CreateRetentionRequest{
 			OrganizationID:        organizationID,
-			Scope:                 request.Scope(organizationID),
+			Scope:                 scope,
 			IssuerUserAccountID:   authentication.CurrentUserID(),
 			ReviewerUserAccountID: request.ReviewerUserAccountID,
+			GovernanceException:   governanceException,
 			IdempotencyKey:        request.IdempotencyKey,
 		})
 		respondProtectedHistoryArtifactResult(w, r, err, func() {

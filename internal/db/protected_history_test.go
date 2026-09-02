@@ -4,6 +4,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/distr-sh/distr/internal/pilotexception"
+	"github.com/distr-sh/distr/internal/protectedhistory"
+	"github.com/google/uuid"
 )
 
 func TestProtectedHistorySchema138ProjectionCoversAllHistoryFamiliesAndFields(t *testing.T) {
@@ -49,9 +53,9 @@ func TestProtectedHistorySchema138ProjectionCoversAllHistoryFamiliesAndFields(t 
 	}
 }
 
-func TestProtectedHistoryProjectionRegistersSchema166Through170(t *testing.T) {
+func TestProtectedHistoryProjectionRegistersSchema166Through171(t *testing.T) {
 	t.Parallel()
-	for _, version := range []uint64{138, 165, 166, 167, 168, 169, 170} {
+	for _, version := range []uint64{138, 165, 166, 167, 168, 169, 170, 171} {
 		query, err := protectedHistoryRecordsSQLForSchema(version)
 		if err != nil || strings.TrimSpace(query) == "" {
 			t.Fatalf("schema %d projection is not registered: %v", version, err)
@@ -62,6 +66,7 @@ func TestProtectedHistoryProjectionRegistersSchema166Through170(t *testing.T) {
 	query168, _ := protectedHistoryRecordsSQLForSchema(168)
 	query169, _ := protectedHistoryRecordsSQLForSchema(169)
 	query170, _ := protectedHistoryRecordsSQLForSchema(170)
+	query171, _ := protectedHistoryRecordsSQLForSchema(171)
 	if strings.Contains(strings.ToLower(query166), "'executionruntimeevidence'") {
 		t.Fatal("schema 166 projection references migration-167 evidence")
 	}
@@ -92,9 +97,12 @@ func TestProtectedHistoryProjectionRegistersSchema166Through170(t *testing.T) {
 		if !strings.Contains(strings.ToLower(query170), "'"+kind+"'") {
 			t.Fatalf("schema 170 projection omits retained history record %s", kind)
 		}
+		if !strings.Contains(strings.ToLower(query171), "'"+kind+"'") {
+			t.Fatalf("schema 171 projection omits retained history record %s", kind)
+		}
 	}
-	if _, err := protectedHistoryRecordsSQLForSchema(171); err == nil {
-		t.Fatal("unknown schema 171 did not fail closed")
+	if _, err := protectedHistoryRecordsSQLForSchema(172); err == nil {
+		t.Fatal("unknown schema 172 did not fail closed")
 	}
 }
 
@@ -136,5 +144,45 @@ func TestProtectedHistoryWholeRowJSONConversionsAreExplicitlyQualified(t *testin
 		if !strings.Contains(strings.ToLower(queries), qualified) {
 			t.Fatalf("protected-history projection omits qualified conversion %s", qualified)
 		}
+	}
+}
+
+func TestProtectedHistoryReplayUsesStoredPilotEvidence(t *testing.T) {
+	t.Parallel()
+	organizationID := uuid.New()
+	actorID := uuid.New()
+	existing := protectedhistory.RetainedArtifact{
+		GovernanceExceptionKey:       pilotexception.Key,
+		GovernanceExceptionReference: "approved-change-123",
+	}
+	evidence, err := protectedHistoryReplayGovernanceException(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := protectedhistory.CreateRetentionRequest{
+		OrganizationID: organizationID,
+		Scope: protectedhistory.Scope{
+			OrganizationID:      organizationID.String(),
+			DeploymentTargetIDs: []string{uuid.New().String()},
+		},
+		IssuerUserAccountID:   actorID,
+		ReviewerUserAccountID: actorID,
+		GovernanceException:   evidence,
+		IdempotencyKey:        "retention-123",
+	}
+	replayChecksum, err := protectedhistory.RetentionRequestChecksum(request)
+	if err != nil {
+		t.Fatalf("stored pilot evidence did not restore replay checksum material: %v", err)
+	}
+	request.GovernanceException = &pilotexception.Evidence{
+		Key:               pilotexception.Key,
+		ApprovalReference: "approved-change-123",
+	}
+	originalChecksum, err := protectedhistory.RetentionRequestChecksum(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayChecksum != originalChecksum {
+		t.Fatal("stored pilot evidence changed idempotent replay checksum")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/google/uuid"
 )
 
@@ -36,6 +37,7 @@ type RetentionInput struct {
 	CapturedAt            time.Time
 	IssuerUserAccountID   uuid.UUID
 	ReviewerUserAccountID uuid.UUID
+	GovernanceException   *pilotexception.Evidence
 }
 
 type CreateRetentionRequest struct {
@@ -43,32 +45,35 @@ type CreateRetentionRequest struct {
 	Scope                 Scope
 	IssuerUserAccountID   uuid.UUID
 	ReviewerUserAccountID uuid.UUID
+	GovernanceException   *pilotexception.Evidence
 	IdempotencyKey        string
 }
 
 type RetainedArtifact struct {
-	ID                    uuid.UUID `db:"id" json:"id"`
-	OrganizationID        uuid.UUID `db:"organization_id" json:"organizationId"`
-	Schema                string    `db:"schema" json:"schema"`
-	SourceSchemaVersion   uint64    `db:"source_schema_version" json:"sourceSchemaVersion"`
-	Scope                 Scope     `json:"scope"`
-	ArtifactID            string    `db:"artifact_id" json:"artifactId"`
-	RecordsRoot           string    `db:"records_root" json:"recordsRoot"`
-	RecordCount           uint64    `db:"record_count" json:"recordCount"`
-	ObjectReference       string    `db:"object_reference" json:"objectReference"`
-	MediaType             string    `db:"media_type" json:"mediaType"`
-	ByteLength            int64     `db:"byte_length" json:"byteLength"`
-	ContentChecksum       string    `db:"content_checksum" json:"contentChecksum"`
-	CapturedAt            time.Time `db:"captured_at" json:"capturedAt"`
-	IssuerUserAccountID   uuid.UUID `db:"issuer_user_account_id" json:"issuerUserAccountId"`
-	ReviewerUserAccountID uuid.UUID `db:"reviewer_user_account_id" json:"reviewerUserAccountId"`
-	RetentionChecksum     string    `db:"retention_checksum" json:"retentionChecksum"`
-	AuditEventID          uuid.UUID `db:"audit_event_id" json:"auditEventId,omitempty"`
-	AuditEventSequence    int64     `db:"audit_event_sequence" json:"auditEventSequence,omitempty"`
-	AuditBindingChecksum  string    `db:"audit_binding_checksum" json:"auditBindingChecksum,omitempty"`
-	IdempotencyKey        string    `db:"idempotency_key" json:"idempotencyKey"`
-	RequestChecksum       string    `db:"request_checksum" json:"requestChecksum"`
-	CreatedAt             time.Time `db:"created_at" json:"createdAt,omitempty"`
+	ID                           uuid.UUID `db:"id" json:"id"`
+	OrganizationID               uuid.UUID `db:"organization_id" json:"organizationId"`
+	Schema                       string    `db:"schema" json:"schema"`
+	SourceSchemaVersion          uint64    `db:"source_schema_version" json:"sourceSchemaVersion"`
+	Scope                        Scope     `json:"scope"`
+	ArtifactID                   string    `db:"artifact_id" json:"artifactId"`
+	RecordsRoot                  string    `db:"records_root" json:"recordsRoot"`
+	RecordCount                  uint64    `db:"record_count" json:"recordCount"`
+	ObjectReference              string    `db:"object_reference" json:"objectReference"`
+	MediaType                    string    `db:"media_type" json:"mediaType"`
+	ByteLength                   int64     `db:"byte_length" json:"byteLength"`
+	ContentChecksum              string    `db:"content_checksum" json:"contentChecksum"`
+	CapturedAt                   time.Time `db:"captured_at" json:"capturedAt"`
+	IssuerUserAccountID          uuid.UUID `db:"issuer_user_account_id" json:"issuerUserAccountId"`
+	ReviewerUserAccountID        uuid.UUID `db:"reviewer_user_account_id" json:"reviewerUserAccountId"`
+	GovernanceExceptionKey       string    `db:"governance_exception_key" json:"governanceExceptionKey,omitempty"`
+	GovernanceExceptionReference string    `db:"governance_exception_reference" json:"governanceExceptionReference,omitempty"`
+	RetentionChecksum            string    `db:"retention_checksum" json:"retentionChecksum"`
+	AuditEventID                 uuid.UUID `db:"audit_event_id" json:"auditEventId,omitempty"`
+	AuditEventSequence           int64     `db:"audit_event_sequence" json:"auditEventSequence,omitempty"`
+	AuditBindingChecksum         string    `db:"audit_binding_checksum" json:"auditBindingChecksum,omitempty"`
+	IdempotencyKey               string    `db:"idempotency_key" json:"idempotencyKey"`
+	RequestChecksum              string    `db:"request_checksum" json:"requestChecksum"`
+	CreatedAt                    time.Time `db:"created_at" json:"createdAt,omitempty"`
 }
 
 func BuildRetention(input RetentionInput) (*RetainedArtifact, error) {
@@ -102,6 +107,10 @@ func BuildRetention(input RetentionInput) (*RetainedArtifact, error) {
 		IssuerUserAccountID:   input.IssuerUserAccountID,
 		ReviewerUserAccountID: input.ReviewerUserAccountID,
 	}
+	if input.GovernanceException != nil {
+		retained.GovernanceExceptionKey = input.GovernanceException.Key
+		retained.GovernanceExceptionReference = input.GovernanceException.ApprovalReference
+	}
 	retained.RetentionChecksum = computeRetentionChecksum(*retained)
 	if err := ValidateRetention(*retained); err != nil {
 		return nil, err
@@ -133,7 +142,7 @@ func ValidateRetention(retained RetainedArtifact) error {
 		return errors.New("retained artifact organization is required")
 	case retained.Schema != RetentionSchemaV1:
 		return fmt.Errorf("unsupported retained artifact schema %q", retained.Schema)
-	case retained.SourceSchemaVersion < 138 || retained.SourceSchemaVersion > 170:
+	case retained.SourceSchemaVersion < 138 || retained.SourceSchemaVersion > 171:
 		return fmt.Errorf("source schema version %d is unsupported", retained.SourceSchemaVersion)
 	}
 	canonicalScope, err := CanonicalScope(retained.Scope)
@@ -163,8 +172,12 @@ func ValidateRetention(retained RetainedArtifact) error {
 		return errors.New("issuer user account is required")
 	case retained.ReviewerUserAccountID == uuid.Nil:
 		return errors.New("reviewer user account is required")
-	case retained.IssuerUserAccountID == retained.ReviewerUserAccountID:
+	case retained.IssuerUserAccountID == retained.ReviewerUserAccountID &&
+		!retentionHasValidSingleReviewerException(retained):
 		return errors.New("issuer and reviewer user accounts must be distinct")
+	case retained.IssuerUserAccountID != retained.ReviewerUserAccountID &&
+		(retained.GovernanceExceptionKey != "" || retained.GovernanceExceptionReference != ""):
+		return errors.New("governance exception is only valid for a single reviewer")
 	case !checksumPattern.MatchString(retained.RetentionChecksum):
 		return errors.New("retention checksum must use lowercase sha256 format")
 	case retained.RetentionChecksum != computeRetentionChecksum(retained):
@@ -215,6 +228,13 @@ func RetentionRequestChecksum(request CreateRetentionRequest) (string, error) {
 	writeStringSet(&buffer, canonicalScope.DeploymentTargetIDs)
 	writeField(&buffer, request.IssuerUserAccountID.String())
 	writeField(&buffer, request.ReviewerUserAccountID.String())
+	if request.GovernanceException != nil {
+		if !request.GovernanceException.Valid() {
+			return "", errors.New("protected-history governance exception is invalid")
+		}
+		writeField(&buffer, request.GovernanceException.Key)
+		writeField(&buffer, request.GovernanceException.ApprovalReference)
+	}
 	writeField(&buffer, strings.TrimSpace(request.IdempotencyKey))
 	return checksum(buffer.Bytes()), nil
 }
@@ -256,7 +276,18 @@ func computeRetentionChecksum(retained RetainedArtifact) string {
 	writeField(&buffer, retained.CapturedAt.Format(time.RFC3339Nano))
 	writeField(&buffer, retained.IssuerUserAccountID.String())
 	writeField(&buffer, retained.ReviewerUserAccountID.String())
+	if retained.GovernanceExceptionKey != "" || retained.GovernanceExceptionReference != "" {
+		writeField(&buffer, retained.GovernanceExceptionKey)
+		writeField(&buffer, retained.GovernanceExceptionReference)
+	}
 	return checksum(buffer.Bytes())
+}
+
+func retentionHasValidSingleReviewerException(retained RetainedArtifact) bool {
+	return (pilotexception.Evidence{
+		Key:               retained.GovernanceExceptionKey,
+		ApprovalReference: retained.GovernanceExceptionReference,
+	}).Valid()
 }
 
 func computeAuditBindingChecksum(retained RetainedArtifact) string {

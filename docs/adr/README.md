@@ -71,3 +71,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0083: Complete Product Release Manifest Read Model](0083-product-release-manifest-read-model.md)
 - [ADR-0084: Native Schema Evidence Gating](0084-native-schema-evidence-gating.md)
 - [ADR-0085: Deployment Plan Source-History Validation](0085-deployment-plan-source-history-validation.md)
+- [ADR-0087: Scoped Single-Reviewer Pilot Exception](0087-scoped-single-reviewer-pilot-exception.md)

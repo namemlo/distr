@@ -76,7 +76,9 @@ const approvalDecisionOutputExpr = `
 	decision.decision,
 	decision.comment,
 	decision.request_revision,
-	decision.idempotency_key
+	decision.idempotency_key,
+	COALESCE(decision.governance_exception_key, '') AS governance_exception_key,
+	COALESCE(decision.governance_exception_reference, '') AS governance_exception_reference
 `
 
 type approvalCursor struct {
@@ -368,6 +370,20 @@ func RecordApprovalDecision(
 	var result *types.ApprovalDecision
 	var invalidationReason types.ApprovalInvalidationReason
 	err := RunTx(ctx, func(ctx context.Context) error {
+		existing, err := getIdempotentApprovalDecision(ctx, input)
+		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
+		if existing != nil {
+			if approvalDecisionMatchesInput(*existing, input) {
+				result = existing
+				return nil
+			}
+			return apierrors.NewConflict(
+				"idempotency key is already bound to a different approval decision",
+			)
+		}
+
 		decisionAt, err := approvalDatabaseTime(ctx)
 		if err != nil {
 			return err
@@ -410,23 +426,19 @@ func RecordApprovalDecision(
 		if err := input.Authorize(ctx, authorizationContext); err != nil {
 			return err
 		}
+		if request.SubjectType == types.ApprovalSubjectDeploymentPlan {
+			input.GovernanceException = input.SingleReviewerPilot.ApprovalEvidence(
+				request.OrganizationID,
+				authorizationContext.EnvironmentID,
+				authorizationContext.DeploymentTargetIDs,
+				request.RequesterUserAccountID,
+				input.ActorUserAccountID,
+				input.Decision == types.ApprovalDecisionApprove,
+			)
+		}
 		if err := validateSampleRetirementDecisionActor(*request, input); err != nil {
 			return err
 		}
-		existing, err := getIdempotentApprovalDecision(ctx, input)
-		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
-			return err
-		}
-		if existing != nil {
-			if approvalDecisionMatchesInput(*existing, input) {
-				result = existing
-				return nil
-			}
-			return apierrors.NewConflict(
-				"idempotency key is already bound to a different approval decision",
-			)
-		}
-
 		invalidationReason = observedReason
 		if invalidationReason == "" {
 			invalidationReason = detectApprovalInvalidation(
@@ -505,6 +517,10 @@ func RecordApprovalDecision(
 			Comment:               strings.TrimSpace(input.Comment),
 			RequestRevision:       request.Revision,
 			IdempotencyKey:        strings.TrimSpace(input.IdempotencyKey),
+		}
+		if input.GovernanceException != nil {
+			decision.GovernanceExceptionKey = input.GovernanceException.Key
+			decision.GovernanceExceptionReference = input.GovernanceException.ApprovalReference
 		}
 		if err := insertApprovalDecision(ctx, decision); err != nil {
 			return err
@@ -1429,7 +1445,9 @@ func insertApprovalDecision(
 			decision,
 			comment,
 			request_revision,
-			idempotency_key
+			idempotency_key,
+			governance_exception_key,
+			governance_exception_reference
 		) VALUES (
 			@id,
 			@organizationID,
@@ -1439,19 +1457,23 @@ func insertApprovalDecision(
 			@decision,
 			@comment,
 			@requestRevision,
-			@idempotencyKey
+			@idempotencyKey,
+			@governanceExceptionKey,
+			@governanceExceptionReference
 		)
 		RETURNING `+approvalDecisionOutputExpr,
 		pgx.NamedArgs{
-			"id":                    decision.ID,
-			"organizationID":        decision.OrganizationID,
-			"approvalRequestID":     decision.ApprovalRequestID,
-			"approvalRequirementID": decision.ApprovalRequirementID,
-			"actorUserAccountID":    decision.ActorUserAccountID,
-			"decision":              decision.Decision,
-			"comment":               decision.Comment,
-			"requestRevision":       decision.RequestRevision,
-			"idempotencyKey":        decision.IdempotencyKey,
+			"id":                           decision.ID,
+			"organizationID":               decision.OrganizationID,
+			"approvalRequestID":            decision.ApprovalRequestID,
+			"approvalRequirementID":        decision.ApprovalRequirementID,
+			"actorUserAccountID":           decision.ActorUserAccountID,
+			"decision":                     decision.Decision,
+			"comment":                      decision.Comment,
+			"requestRevision":              decision.RequestRevision,
+			"idempotencyKey":               decision.IdempotencyKey,
+			"governanceExceptionKey":       protectedHistoryNullableString(decision.GovernanceExceptionKey),
+			"governanceExceptionReference": protectedHistoryNullableString(decision.GovernanceExceptionReference),
 		},
 	)
 	if err != nil {
@@ -1874,6 +1896,16 @@ func approvalAuthorizationContextForRequest(
 		result.DeploymentPlanID = request.SubjectID
 		result.EnvironmentID = plan.EnvironmentID
 		result.DeploymentUnitID = plan.DeploymentUnitID
+		targets, err := getDeploymentPlanTargets(ctx, plan.ID, plan.OrganizationID)
+		if err != nil {
+			return result, err
+		}
+		for _, target := range targets {
+			result.DeploymentTargetIDs = append(
+				result.DeploymentTargetIDs,
+				target.DeploymentTargetID,
+			)
+		}
 	case types.ApprovalSubjectSampleRetirement:
 		if _, err := getSampleRetirementJobForApproval(
 			ctx,

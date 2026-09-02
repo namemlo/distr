@@ -258,6 +258,12 @@ func ValidateApprovalDecision(
 		len(input.IdempotencyKey) > 128 {
 		return apierrors.NewBadRequest("idempotencyKey is invalid")
 	}
+	singleReviewerException := input.GovernanceException != nil && input.GovernanceException.Valid()
+	if input.GovernanceException != nil && (!singleReviewerException ||
+		input.Decision != types.ApprovalDecisionApprove ||
+		input.ActorUserAccountID != request.RequesterUserAccountID) {
+		return apierrors.NewBadRequest("single-reviewer governance exception is invalid")
+	}
 	if input.Decision == types.ApprovalDecisionApprove &&
 		input.ActorUserAccountID == request.RequesterUserAccountID &&
 		(slices.Contains(
@@ -267,7 +273,7 @@ func ValidateApprovalDecision(
 			slices.Contains(
 				requirement.SeparationConstraints,
 				types.SeparationConstraintPublisherCannotApprove,
-			)) {
+			)) && !singleReviewerException {
 		return apierrors.NewForbidden("requester cannot approve this deployment")
 	}
 	for _, decision := range existing {

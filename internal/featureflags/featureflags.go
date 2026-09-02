@@ -32,6 +32,7 @@ const (
 	KeyOperatorControlPlaneV2           Key = "operator_control_plane_v2"
 	KeyExecutorProtocolV2               Key = "executor_protocol_v2"
 	KeyExternalExecutionPreMutationHold Key = "external_execution_pre_mutation_hold"
+	KeyScopedSingleReviewerPilot        Key = "scoped_single_reviewer_pilot"
 )
 
 type Flag struct {
@@ -186,6 +187,12 @@ var definitions = []definition{
 		Label:       "External Execution Pre-Mutation Hold",
 		Description: "Enables a checksum-bound, one-use pilot hold before an external executor can be invoked.",
 		Milestone:   "Operator Control Plane",
+	},
+	{
+		Key:         KeyScopedSingleReviewerPilot,
+		Label:       "Scoped single-reviewer pilot",
+		Description: "Allows one explicitly configured adopter pilot scope to retain labelled single-reviewer evidence.",
+		Milestone:   "Adopter pilot",
 	},
 }
 

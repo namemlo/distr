@@ -94,6 +94,16 @@ func approvalDecisionRecordedAuditEvent(
 	request types.ApprovalRequest,
 	decision types.ApprovalDecision,
 ) types.ControlPlaneAuditEventInput {
+	payload := map[string]any{
+		"decisionId":           decision.ID,
+		"requirementId":        decision.ApprovalRequirementID,
+		"requestRevision":      decision.RequestRevision,
+		"approvalRequestState": request.State,
+	}
+	if decision.GovernanceExceptionKey != "" {
+		payload["governanceExceptionKey"] = decision.GovernanceExceptionKey
+		payload["governanceExceptionReference"] = decision.GovernanceExceptionReference
+	}
 	return types.ControlPlaneAuditEventInput{
 		OrganizationID:         request.OrganizationID,
 		EventType:              "approval.decided",
@@ -104,12 +114,7 @@ func approvalDecisionRecordedAuditEvent(
 		DeploymentPlanChecksum: request.SubjectChecksum,
 		PolicyChecksum:         request.EffectivePolicyChecksum,
 		ApprovalChecksum:       approvalEvidenceChecksum(request),
-		Payload: governanceAuditPayload(map[string]any{
-			"decisionId":           decision.ID,
-			"requirementId":        decision.ApprovalRequirementID,
-			"requestRevision":      decision.RequestRevision,
-			"approvalRequestState": request.State,
-		}),
+		Payload:                governanceAuditPayload(payload),
 	}
 }
 

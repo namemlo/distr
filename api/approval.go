@@ -111,15 +111,17 @@ type ApprovalRequirement struct {
 }
 
 type ApprovalDecision struct {
-	ID                    uuid.UUID                   `json:"id"`
-	CreatedAt             time.Time                   `json:"createdAt"`
-	ApprovalRequestID     uuid.UUID                   `json:"approvalRequestId"`
-	ApprovalRequirementID uuid.UUID                   `json:"approvalRequirementId"`
-	ActorUserAccountID    uuid.UUID                   `json:"actorUserAccountId"`
-	Decision              types.ApprovalDecisionValue `json:"decision"`
-	Comment               string                      `json:"comment"`
-	RequestRevision       int64                       `json:"requestRevision"`
-	IdempotencyKey        string                      `json:"idempotencyKey"`
+	ID                           uuid.UUID                   `json:"id"`
+	CreatedAt                    time.Time                   `json:"createdAt"`
+	ApprovalRequestID            uuid.UUID                   `json:"approvalRequestId"`
+	ApprovalRequirementID        uuid.UUID                   `json:"approvalRequirementId"`
+	ActorUserAccountID           uuid.UUID                   `json:"actorUserAccountId"`
+	Decision                     types.ApprovalDecisionValue `json:"decision"`
+	Comment                      string                      `json:"comment"`
+	RequestRevision              int64                       `json:"requestRevision"`
+	IdempotencyKey               string                      `json:"idempotencyKey"`
+	GovernanceExceptionKey       string                      `json:"governanceExceptionKey,omitempty"`
+	GovernanceExceptionReference string                      `json:"governanceExceptionReference,omitempty"`
 }
 
 type ApprovalRequest struct {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/distr-sh/distr/internal/protectedhistory"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -19,29 +20,31 @@ import (
 )
 
 type protectedHistoryArtifactRow struct {
-	ID                      uuid.UUID   `db:"id"`
-	CreatedAt               time.Time   `db:"created_at"`
-	OrganizationID          uuid.UUID   `db:"organization_id"`
-	Schema                  string      `db:"schema"`
-	SourceSchemaVersion     uint64      `db:"source_schema_version"`
-	CustomerOrganizationIDs []uuid.UUID `db:"customer_organization_ids"`
-	DeploymentTargetIDs     []uuid.UUID `db:"deployment_target_ids"`
-	ArtifactID              string      `db:"artifact_id"`
-	RecordsRoot             string      `db:"records_root"`
-	RecordCount             uint64      `db:"record_count"`
-	ObjectReference         string      `db:"object_reference"`
-	MediaType               string      `db:"media_type"`
-	ByteLength              int64       `db:"byte_length"`
-	ContentChecksum         string      `db:"content_checksum"`
-	CapturedAt              time.Time   `db:"captured_at"`
-	IssuerUserAccountID     uuid.UUID   `db:"issuer_useraccount_id"`
-	ReviewerUserAccountID   uuid.UUID   `db:"reviewer_useraccount_id"`
-	RetentionChecksum       string      `db:"retention_checksum"`
-	AuditEventID            uuid.UUID   `db:"audit_event_id"`
-	AuditEventSequence      int64       `db:"audit_event_sequence"`
-	AuditBindingChecksum    string      `db:"audit_binding_checksum"`
-	IdempotencyKey          string      `db:"idempotency_key"`
-	RequestChecksum         string      `db:"request_checksum"`
+	ID                           uuid.UUID   `db:"id"`
+	CreatedAt                    time.Time   `db:"created_at"`
+	OrganizationID               uuid.UUID   `db:"organization_id"`
+	Schema                       string      `db:"schema"`
+	SourceSchemaVersion          uint64      `db:"source_schema_version"`
+	CustomerOrganizationIDs      []uuid.UUID `db:"customer_organization_ids"`
+	DeploymentTargetIDs          []uuid.UUID `db:"deployment_target_ids"`
+	ArtifactID                   string      `db:"artifact_id"`
+	RecordsRoot                  string      `db:"records_root"`
+	RecordCount                  uint64      `db:"record_count"`
+	ObjectReference              string      `db:"object_reference"`
+	MediaType                    string      `db:"media_type"`
+	ByteLength                   int64       `db:"byte_length"`
+	ContentChecksum              string      `db:"content_checksum"`
+	CapturedAt                   time.Time   `db:"captured_at"`
+	IssuerUserAccountID          uuid.UUID   `db:"issuer_useraccount_id"`
+	ReviewerUserAccountID        uuid.UUID   `db:"reviewer_useraccount_id"`
+	GovernanceExceptionKey       *string     `db:"governance_exception_key"`
+	GovernanceExceptionReference *string     `db:"governance_exception_reference"`
+	RetentionChecksum            string      `db:"retention_checksum"`
+	AuditEventID                 uuid.UUID   `db:"audit_event_id"`
+	AuditEventSequence           int64       `db:"audit_event_sequence"`
+	AuditBindingChecksum         string      `db:"audit_binding_checksum"`
+	IdempotencyKey               string      `db:"idempotency_key"`
+	RequestChecksum              string      `db:"request_checksum"`
 }
 
 const protectedHistoryArtifactColumns = `
@@ -49,7 +52,8 @@ const protectedHistoryArtifactColumns = `
 	customer_organization_ids, deployment_target_ids,
 	artifact_id, records_root, record_count,
 	object_reference, media_type, byte_length, content_checksum, captured_at,
-	issuer_useraccount_id, reviewer_useraccount_id, retention_checksum,
+	issuer_useraccount_id, reviewer_useraccount_id,
+	governance_exception_key, governance_exception_reference, retention_checksum,
 	audit_event_id, audit_event_sequence, audit_binding_checksum,
 	idempotency_key, request_checksum`
 
@@ -62,7 +66,7 @@ func RetainProtectedHistoryArtifact(
 	if store == nil {
 		store = protectedhistory.NewUnavailableObjectStore()
 	}
-	canonicalScope, requestChecksum, err := validateProtectedHistoryRetentionRequest(request)
+	canonicalScope, err := canonicalizeProtectedHistoryRetentionRequest(request)
 	if err != nil {
 		return nil, err
 	}
@@ -70,8 +74,20 @@ func RetainProtectedHistoryArtifact(
 	if existing, err := getProtectedHistoryArtifactByIdempotencyKey(
 		ctx, request.OrganizationID, request.IdempotencyKey,
 	); err == nil {
+		request.GovernanceException, err = protectedHistoryReplayGovernanceException(*existing)
+		if err != nil {
+			return nil, err
+		}
+		requestChecksum, err := protectedhistory.RetentionRequestChecksum(request)
+		if err != nil {
+			return nil, apierrors.NewBadRequest(err.Error())
+		}
 		return verifyProtectedHistoryReplay(ctx, store, existing, requestChecksum)
 	} else if !errors.Is(err, apierrors.ErrNotFound) {
+		return nil, err
+	}
+	canonicalScope, requestChecksum, err := validateProtectedHistoryRetentionRequest(request)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateProtectedHistoryParticipants(ctx, request); err != nil {
@@ -103,6 +119,7 @@ func RetainProtectedHistoryArtifact(
 		CapturedAt:            capturedAt.UTC().Truncate(time.Microsecond),
 		IssuerUserAccountID:   request.IssuerUserAccountID,
 		ReviewerUserAccountID: request.ReviewerUserAccountID,
+		GovernanceException:   request.GovernanceException,
 	})
 	if err != nil {
 		return nil, apierrors.NewBadRequest(err.Error())
@@ -219,18 +236,20 @@ func VerifyProtectedHistoryArtifact(
 func validateProtectedHistoryRetentionRequest(
 	request protectedhistory.CreateRetentionRequest,
 ) (protectedhistory.Scope, string, error) {
-	if request.OrganizationID == uuid.Nil || request.IssuerUserAccountID == uuid.Nil ||
-		request.ReviewerUserAccountID == uuid.Nil || request.IssuerUserAccountID == request.ReviewerUserAccountID {
+	canonicalScope, err := canonicalizeProtectedHistoryRetentionRequest(request)
+	if err != nil {
+		return protectedhistory.Scope{}, "", err
+	}
+	if request.IssuerUserAccountID == request.ReviewerUserAccountID &&
+		(request.GovernanceException == nil || !request.GovernanceException.Valid()) {
 		return protectedhistory.Scope{}, "", apierrors.NewBadRequest(
 			"protected-history issuer and distinct reviewer are required",
 		)
 	}
-	canonicalScope, err := protectedhistory.CanonicalScope(request.Scope)
-	if err != nil {
-		return protectedhistory.Scope{}, "", apierrors.NewBadRequest(err.Error())
-	}
-	if canonicalScope.OrganizationID != request.OrganizationID.String() {
-		return protectedhistory.Scope{}, "", apierrors.NewForbidden("protected-history scope is outside the organization")
+	if request.IssuerUserAccountID != request.ReviewerUserAccountID && request.GovernanceException != nil {
+		return protectedhistory.Scope{}, "", apierrors.NewBadRequest(
+			"protected-history governance exception is only valid for a single reviewer",
+		)
 	}
 	request.Scope = canonicalScope
 	requestChecksum, err := protectedhistory.RetentionRequestChecksum(request)
@@ -238,6 +257,45 @@ func validateProtectedHistoryRetentionRequest(
 		return protectedhistory.Scope{}, "", apierrors.NewBadRequest(err.Error())
 	}
 	return canonicalScope, requestChecksum, nil
+}
+
+func canonicalizeProtectedHistoryRetentionRequest(
+	request protectedhistory.CreateRetentionRequest,
+) (protectedhistory.Scope, error) {
+	if request.OrganizationID == uuid.Nil || request.IssuerUserAccountID == uuid.Nil ||
+		request.ReviewerUserAccountID == uuid.Nil || strings.TrimSpace(request.IdempotencyKey) == "" {
+		return protectedhistory.Scope{}, apierrors.NewBadRequest(
+			"protected-history retention request identity is incomplete",
+		)
+	}
+	canonicalScope, err := protectedhistory.CanonicalScope(request.Scope)
+	if err != nil {
+		return protectedhistory.Scope{}, apierrors.NewBadRequest(err.Error())
+	}
+	if canonicalScope.OrganizationID != request.OrganizationID.String() {
+		return protectedhistory.Scope{}, apierrors.NewForbidden(
+			"protected-history scope is outside the organization",
+		)
+	}
+	return canonicalScope, nil
+}
+
+func protectedHistoryReplayGovernanceException(
+	existing protectedhistory.RetainedArtifact,
+) (*pilotexception.Evidence, error) {
+	if existing.GovernanceExceptionKey == "" && existing.GovernanceExceptionReference == "" {
+		return nil, nil
+	}
+	evidence := &pilotexception.Evidence{
+		Key:               existing.GovernanceExceptionKey,
+		ApprovalReference: existing.GovernanceExceptionReference,
+	}
+	if !evidence.Valid() {
+		return nil, apierrors.NewConflict(
+			"stored protected-history governance exception is invalid",
+		)
+	}
+	return evidence, nil
 }
 
 func validateProtectedHistoryParticipants(
@@ -256,7 +314,11 @@ func validateProtectedHistoryParticipants(
 	if err != nil {
 		return fmt.Errorf("validate protected-history participants: %w", err)
 	}
-	if count != 2 {
+	expectedParticipants := 2
+	if request.IssuerUserAccountID == request.ReviewerUserAccountID {
+		expectedParticipants = 1
+	}
+	if count != expectedParticipants {
 		return apierrors.NewBadRequest("issuer and reviewer must be current organization members")
 	}
 	return nil
@@ -303,7 +365,8 @@ func insertProtectedHistoryArtifact(
 			customer_organization_ids, deployment_target_ids,
 			artifact_id, records_root, record_count,
 			object_reference, media_type, byte_length, content_checksum, captured_at,
-			issuer_useraccount_id, reviewer_useraccount_id, retention_checksum,
+			issuer_useraccount_id, reviewer_useraccount_id,
+			governance_exception_key, governance_exception_reference, retention_checksum,
 			audit_event_id, audit_event_sequence, audit_binding_checksum,
 			idempotency_key, request_checksum
 		) VALUES (
@@ -311,7 +374,8 @@ func insertProtectedHistoryArtifact(
 			@customerOrganizationIds, @deploymentTargetIds,
 			@artifactId, @recordsRoot, @recordCount,
 			@objectReference, @mediaType, @byteLength, @contentChecksum, @capturedAt,
-			@issuerUserAccountId, @reviewerUserAccountId, @retentionChecksum,
+			@issuerUserAccountId, @reviewerUserAccountId,
+			@governanceExceptionKey, @governanceExceptionReference, @retentionChecksum,
 			@auditEventId, @auditEventSequence, @auditBindingChecksum,
 			@idempotencyKey, @requestChecksum
 		)
@@ -323,9 +387,11 @@ func insertProtectedHistoryArtifact(
 		"recordCount": retained.RecordCount, "objectReference": retained.ObjectReference,
 		"mediaType": retained.MediaType, "byteLength": retained.ByteLength,
 		"contentChecksum": retained.ContentChecksum, "capturedAt": retained.CapturedAt,
-		"issuerUserAccountId":   retained.IssuerUserAccountID,
-		"reviewerUserAccountId": retained.ReviewerUserAccountID,
-		"retentionChecksum":     retained.RetentionChecksum, "auditEventId": retained.AuditEventID,
+		"issuerUserAccountId":          retained.IssuerUserAccountID,
+		"reviewerUserAccountId":        retained.ReviewerUserAccountID,
+		"governanceExceptionKey":       protectedHistoryNullableString(retained.GovernanceExceptionKey),
+		"governanceExceptionReference": protectedHistoryNullableString(retained.GovernanceExceptionReference),
+		"retentionChecksum":            retained.RetentionChecksum, "auditEventId": retained.AuditEventID,
 		"auditEventSequence":   retained.AuditEventSequence,
 		"auditBindingChecksum": retained.AuditBindingChecksum,
 		"idempotencyKey":       retained.IdempotencyKey, "requestChecksum": retained.RequestChecksum,
@@ -350,9 +416,11 @@ func protectedHistoryArtifactFromRow(
 		ArtifactID: row.ArtifactID, RecordsRoot: row.RecordsRoot, RecordCount: row.RecordCount,
 		ObjectReference: row.ObjectReference, MediaType: row.MediaType, ByteLength: row.ByteLength,
 		ContentChecksum: row.ContentChecksum, CapturedAt: row.CapturedAt,
-		IssuerUserAccountID:   row.IssuerUserAccountID,
-		ReviewerUserAccountID: row.ReviewerUserAccountID,
-		RetentionChecksum:     row.RetentionChecksum, AuditEventID: row.AuditEventID,
+		IssuerUserAccountID:          row.IssuerUserAccountID,
+		ReviewerUserAccountID:        row.ReviewerUserAccountID,
+		GovernanceExceptionKey:       protectedHistoryStringValue(row.GovernanceExceptionKey),
+		GovernanceExceptionReference: protectedHistoryStringValue(row.GovernanceExceptionReference),
+		RetentionChecksum:            row.RetentionChecksum, AuditEventID: row.AuditEventID,
 		AuditEventSequence:   row.AuditEventSequence,
 		AuditBindingChecksum: row.AuditBindingChecksum,
 		IdempotencyKey:       row.IdempotencyKey, RequestChecksum: row.RequestChecksum,
@@ -393,30 +461,48 @@ func protectedHistoryRetentionAuditPayload(
 	retained protectedhistory.RetainedArtifact,
 ) (json.RawMessage, error) {
 	payload, err := json.Marshal(struct {
-		RetentionChecksum     string `json:"retentionChecksum"`
-		RequestChecksum       string `json:"requestChecksum"`
-		ArtifactID            string `json:"artifactId"`
-		RecordsRoot           string `json:"recordsRoot"`
-		ObjectReference       string `json:"objectReference"`
-		MediaType             string `json:"mediaType"`
-		ByteLength            int64  `json:"byteLength"`
-		ContentChecksum       string `json:"contentChecksum"`
-		CapturedAt            string `json:"capturedAt"`
-		IssuerUserAccountID   string `json:"issuerUserAccountId"`
-		ReviewerUserAccountID string `json:"reviewerUserAccountId"`
+		RetentionChecksum            string `json:"retentionChecksum"`
+		RequestChecksum              string `json:"requestChecksum"`
+		ArtifactID                   string `json:"artifactId"`
+		RecordsRoot                  string `json:"recordsRoot"`
+		ObjectReference              string `json:"objectReference"`
+		MediaType                    string `json:"mediaType"`
+		ByteLength                   int64  `json:"byteLength"`
+		ContentChecksum              string `json:"contentChecksum"`
+		CapturedAt                   string `json:"capturedAt"`
+		IssuerUserAccountID          string `json:"issuerUserAccountId"`
+		ReviewerUserAccountID        string `json:"reviewerUserAccountId"`
+		GovernanceExceptionKey       string `json:"governanceExceptionKey,omitempty"`
+		GovernanceExceptionReference string `json:"governanceExceptionReference,omitempty"`
 	}{
 		RetentionChecksum: retained.RetentionChecksum, RequestChecksum: retained.RequestChecksum,
 		ArtifactID: retained.ArtifactID, RecordsRoot: retained.RecordsRoot,
 		ObjectReference: retained.ObjectReference, MediaType: retained.MediaType,
 		ByteLength: retained.ByteLength, ContentChecksum: retained.ContentChecksum,
-		CapturedAt:            retained.CapturedAt.Format(time.RFC3339Nano),
-		IssuerUserAccountID:   retained.IssuerUserAccountID.String(),
-		ReviewerUserAccountID: retained.ReviewerUserAccountID.String(),
+		CapturedAt:                   retained.CapturedAt.Format(time.RFC3339Nano),
+		IssuerUserAccountID:          retained.IssuerUserAccountID.String(),
+		ReviewerUserAccountID:        retained.ReviewerUserAccountID.String(),
+		GovernanceExceptionKey:       retained.GovernanceExceptionKey,
+		GovernanceExceptionReference: retained.GovernanceExceptionReference,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode protected-history audit payload: %w", err)
 	}
 	return payload, nil
+}
+
+func protectedHistoryNullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func protectedHistoryStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func protectedHistoryObjectIdentity(

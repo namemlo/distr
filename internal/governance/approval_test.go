@@ -5,10 +5,41 @@ import (
 	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
+
+func TestValidateApprovalDecisionAllowsLabelledScopedSingleReviewerPilot(t *testing.T) {
+	t.Parallel()
+	g := NewWithT(t)
+	now := time.Now().UTC()
+	actorID := uuid.New()
+	request, requirement := pendingApprovalFixture(now, actorID)
+	input := types.ApprovalDecisionInput{
+		OrganizationID:          request.OrganizationID,
+		ApprovalRequestID:       request.ID,
+		ApprovalRequirementID:   requirement.ID,
+		ActorUserAccountID:      actorID,
+		Decision:                types.ApprovalDecisionApprove,
+		Comment:                 "Owner-approved adopter pilot exception.",
+		ExpectedRequestRevision: request.Revision,
+		IdempotencyKey:          "adopter-pilot-approval",
+		GovernanceException: &pilotexception.Evidence{
+			Key:               pilotexception.Key,
+			ApprovalReference: "owner-approval:adopter-dev-20260903",
+		},
+	}
+
+	g.Expect(ValidateApprovalDecision(
+		request, requirement, nil, input, true, now,
+	)).To(Succeed())
+	input.GovernanceException = nil
+	g.Expect(ValidateApprovalDecision(
+		request, requirement, nil, input, true, now,
+	)).To(MatchError(ContainSubstring("requester cannot approve")))
+}
 
 func TestApprovalDecisionDeniesRequesterSelfApproval(t *testing.T) {
 	now := time.Date(2026, time.July, 18, 8, 0, 0, 0, time.UTC)

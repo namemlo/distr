@@ -54,27 +54,29 @@ func (request CreateProtectedHistoryArtifactRequest) Scope(organizationID uuid.U
 }
 
 type ProtectedHistoryArtifact struct {
-	ID                    uuid.UUID              `json:"id"`
-	Schema                string                 `json:"schema"`
-	SourceSchemaVersion   uint64                 `json:"sourceSchemaVersion"`
-	Scope                 protectedhistory.Scope `json:"scope"`
-	ArtifactID            string                 `json:"artifactId"`
-	RecordsRoot           string                 `json:"recordsRoot"`
-	RecordCount           uint64                 `json:"recordCount"`
-	ObjectReference       string                 `json:"objectReference"`
-	MediaType             string                 `json:"mediaType"`
-	ByteLength            int64                  `json:"byteLength"`
-	ContentChecksum       string                 `json:"contentChecksum"`
-	CapturedAt            time.Time              `json:"capturedAt"`
-	IssuerUserAccountID   uuid.UUID              `json:"issuerUserAccountId"`
-	ReviewerUserAccountID uuid.UUID              `json:"reviewerUserAccountId"`
-	RetentionChecksum     string                 `json:"retentionChecksum"`
-	AuditEventID          uuid.UUID              `json:"auditEventId"`
-	AuditEventSequence    int64                  `json:"auditEventSequence"`
-	AuditBindingChecksum  string                 `json:"auditBindingChecksum"`
-	IdempotencyKey        string                 `json:"idempotencyKey"`
-	RequestChecksum       string                 `json:"requestChecksum"`
-	CreatedAt             time.Time              `json:"createdAt"`
+	ID                           uuid.UUID              `json:"id"`
+	Schema                       string                 `json:"schema"`
+	SourceSchemaVersion          uint64                 `json:"sourceSchemaVersion"`
+	Scope                        protectedhistory.Scope `json:"scope"`
+	ArtifactID                   string                 `json:"artifactId"`
+	RecordsRoot                  string                 `json:"recordsRoot"`
+	RecordCount                  uint64                 `json:"recordCount"`
+	ObjectReference              string                 `json:"objectReference"`
+	MediaType                    string                 `json:"mediaType"`
+	ByteLength                   int64                  `json:"byteLength"`
+	ContentChecksum              string                 `json:"contentChecksum"`
+	CapturedAt                   time.Time              `json:"capturedAt"`
+	IssuerUserAccountID          uuid.UUID              `json:"issuerUserAccountId"`
+	ReviewerUserAccountID        uuid.UUID              `json:"reviewerUserAccountId"`
+	GovernanceExceptionKey       string                 `json:"governanceExceptionKey,omitempty"`
+	GovernanceExceptionReference string                 `json:"governanceExceptionReference,omitempty"`
+	RetentionChecksum            string                 `json:"retentionChecksum"`
+	AuditEventID                 uuid.UUID              `json:"auditEventId"`
+	AuditEventSequence           int64                  `json:"auditEventSequence"`
+	AuditBindingChecksum         string                 `json:"auditBindingChecksum"`
+	IdempotencyKey               string                 `json:"idempotencyKey"`
+	RequestChecksum              string                 `json:"requestChecksum"`
+	CreatedAt                    time.Time              `json:"createdAt"`
 }
 
 func ProtectedHistoryArtifactFromDomain(
@@ -87,9 +89,11 @@ func ProtectedHistoryArtifactFromDomain(
 		RecordCount: artifact.RecordCount, ObjectReference: artifact.ObjectReference,
 		MediaType: artifact.MediaType, ByteLength: artifact.ByteLength,
 		ContentChecksum: artifact.ContentChecksum, CapturedAt: artifact.CapturedAt,
-		IssuerUserAccountID:   artifact.IssuerUserAccountID,
-		ReviewerUserAccountID: artifact.ReviewerUserAccountID,
-		RetentionChecksum:     artifact.RetentionChecksum, AuditEventID: artifact.AuditEventID,
+		IssuerUserAccountID:          artifact.IssuerUserAccountID,
+		ReviewerUserAccountID:        artifact.ReviewerUserAccountID,
+		GovernanceExceptionKey:       artifact.GovernanceExceptionKey,
+		GovernanceExceptionReference: artifact.GovernanceExceptionReference,
+		RetentionChecksum:            artifact.RetentionChecksum, AuditEventID: artifact.AuditEventID,
 		AuditEventSequence:   artifact.AuditEventSequence,
 		AuditBindingChecksum: artifact.AuditBindingChecksum,
 		IdempotencyKey:       artifact.IdempotencyKey, RequestChecksum: artifact.RequestChecksum,
