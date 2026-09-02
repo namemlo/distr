@@ -381,7 +381,7 @@ func validateDeploymentPlanDraft(
 		})
 		return result, nil
 	}
-	baselines, changes, risks, bootstrap, err := resolveDeploymentPlanEvidence(
+	baselines, changes, risks, bootstrap, historyIssues, err := resolveDeploymentPlanEvidence(
 		ctx,
 		*draft,
 		*input,
@@ -390,6 +390,14 @@ func validateDeploymentPlanDraft(
 	)
 	if err != nil {
 		return nil, err
+	}
+	if len(historyIssues) > 0 {
+		result.Baselines = baselines
+		result.Changes = changes
+		result.Risks = risks
+		result.Bootstrap = bootstrap
+		result.Issues = appendUniquePlanIssues(result.Issues, historyIssues)
+		return result, nil
 	}
 	result.Baselines = baselines
 	result.Changes = changes
@@ -1569,6 +1577,9 @@ func loadTargetPlanReleasePins(
 		}
 		if component.Contract != nil {
 			pin.AdapterRequirements = slices.Clone(component.Contract.AdapterRequirements)
+			pin.SourceRepository = strings.TrimSpace(component.Contract.Source.Repository)
+			pin.SourceCommit = strings.TrimSpace(component.Contract.Source.Commit)
+			pin.SourceChangeCommits = slices.Clone(component.Contract.Changes.Commits)
 		}
 		if len(artifacts) == 1 {
 			pin.PlatformDigest = artifacts[0].PlatformDigest

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/distr-sh/distr/internal/apierrors"
 	"github.com/distr-sh/distr/internal/migrationplanning"
@@ -80,6 +81,156 @@ func TestReleaseNoteQueryIsApplicationLineageScopedAndKeepsBounds(t *testing.T) 
 	g.Expect(text).To(ContainSubstring("recent_rank <= 129"))
 	g.Expect(text).To(ContainSubstring("id = baseline_release_id"))
 	g.Expect(text).To(ContainSubstring("LIMIT 130"))
+	g.Expect(text).To(ContainSubstring("release_contract -> 'source' ->> 'repository'"))
+	g.Expect(text).To(ContainSubstring("release_contract -> 'source' ->> 'commit'"))
+}
+
+func TestVerifyAndFilterSourceHistoryRetainsLinearSkippedReleasesAndExcludesSibling(t *testing.T) {
+	g := NewWithT(t)
+	baselineID, intermediateID, siblingID, candidateID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	repository := "https://code.example.invalid/acme/platform.git"
+	baselineCommit := strings.Repeat("a", 40)
+	firstCommit := strings.Repeat("b", 40)
+	intermediateCommit := strings.Repeat("c", 40)
+	candidateCommit := strings.Repeat("d", 40)
+	siblingCommit := strings.Repeat("e", 40)
+	planned := types.PlannedState{
+		ReleaseBundleID:     candidateID,
+		SourceRepository:    repository,
+		SourceCommit:        candidateCommit,
+		SourceChangeCommits: []string{firstCommit, intermediateCommit, candidateCommit},
+	}
+	facts := []componentReleaseHistoryFact{
+		testReleaseHistoryFact(baselineID, repository, baselineCommit, 1),
+		testReleaseHistoryFact(siblingID, repository, siblingCommit, 2),
+		testReleaseHistoryFact(intermediateID, repository, intermediateCommit, 3),
+		testReleaseHistoryFact(candidateID, repository, candidateCommit, 4),
+	}
+
+	notes, issue := verifyAndFilterSourceHistory("api", baselineID, planned, facts)
+
+	g.Expect(issue).To(BeNil())
+	g.Expect(notes).To(HaveLen(2))
+	g.Expect(notes[0].ReleaseBundleID).To(Equal(intermediateID))
+	g.Expect(notes[1].ReleaseBundleID).To(Equal(candidateID))
+	g.Expect(notes).NotTo(ContainElement(HaveField("ReleaseBundleID", siblingID)))
+}
+
+func TestVerifyAndFilterSourceHistoryAcceptsSameCommitWithoutSourceNotes(t *testing.T) {
+	g := NewWithT(t)
+	baselineID, candidateID := uuid.New(), uuid.New()
+	repository := "https://code.example.invalid/acme/platform.git"
+	commit := strings.Repeat("a", 40)
+	planned := types.PlannedState{
+		ReleaseBundleID:  candidateID,
+		SourceRepository: repository,
+		SourceCommit:     commit,
+	}
+	facts := []componentReleaseHistoryFact{
+		testReleaseHistoryFact(baselineID, repository, commit, 1),
+		testReleaseHistoryFact(candidateID, repository, commit, 2),
+	}
+
+	notes, issue := verifyAndFilterSourceHistory("api", baselineID, planned, facts)
+
+	g.Expect(issue).To(BeNil())
+	g.Expect(notes).To(BeEmpty())
+}
+
+func TestVerifyAndFilterSourceHistoryAcceptsComponentScopedPathBeforeCandidateCommit(t *testing.T) {
+	g := NewWithT(t)
+	baselineID, candidateID := uuid.New(), uuid.New()
+	repository := "https://code.example.invalid/acme/platform.git"
+	baselineCommit := strings.Repeat("a", 40)
+	componentCommit := strings.Repeat("b", 40)
+	candidateCommit := strings.Repeat("c", 40)
+	planned := types.PlannedState{
+		ReleaseBundleID:     candidateID,
+		SourceRepository:    repository,
+		SourceCommit:        candidateCommit,
+		SourceChangeCommits: []string{componentCommit},
+	}
+	facts := []componentReleaseHistoryFact{
+		testReleaseHistoryFact(baselineID, repository, baselineCommit, 1),
+		testReleaseHistoryFact(candidateID, repository, candidateCommit, 2),
+	}
+
+	notes, issue := verifyAndFilterSourceHistory("api", baselineID, planned, facts)
+
+	g.Expect(issue).To(BeNil())
+	g.Expect(notes).To(HaveLen(1))
+	g.Expect(notes[0].ReleaseBundleID).To(Equal(candidateID))
+}
+
+func TestVerifyAndFilterSourceHistoryFailsClosed(t *testing.T) {
+	repository := "https://code.example.invalid/acme/platform.git"
+	baselineCommit := strings.Repeat("a", 40)
+	candidateCommit := strings.Repeat("b", 40)
+	baselineID, candidateID := uuid.New(), uuid.New()
+	baseFacts := []componentReleaseHistoryFact{
+		testReleaseHistoryFact(baselineID, repository, baselineCommit, 1),
+		testReleaseHistoryFact(candidateID, repository, candidateCommit, 2),
+	}
+	tests := []struct {
+		name    string
+		planned types.PlannedState
+		facts   []componentReleaseHistoryFact
+		code    string
+	}{
+		{
+			name:    "missing declared path",
+			planned: types.PlannedState{ReleaseBundleID: candidateID, SourceRepository: repository, SourceCommit: candidateCommit},
+			facts:   baseFacts,
+			code:    "source_history_unverified",
+		},
+		{
+			name:    "repository mismatch",
+			planned: types.PlannedState{ReleaseBundleID: candidateID, SourceRepository: repository, SourceCommit: candidateCommit, SourceChangeCommits: []string{candidateCommit}},
+			facts: []componentReleaseHistoryFact{
+				testReleaseHistoryFact(baselineID, "https://code.example.invalid/other/platform.git", baselineCommit, 1),
+				testReleaseHistoryFact(candidateID, repository, candidateCommit, 2),
+			},
+			code: "source_history_divergent",
+		},
+		{
+			name:    "candidate does not terminate path",
+			planned: types.PlannedState{ReleaseBundleID: candidateID, SourceRepository: repository, SourceCommit: candidateCommit, SourceChangeCommits: []string{candidateCommit, strings.Repeat("c", 40)}},
+			facts:   baseFacts,
+			code:    "source_history_divergent",
+		},
+		{
+			name:    "duplicate commit",
+			planned: types.PlannedState{ReleaseBundleID: candidateID, SourceRepository: repository, SourceCommit: candidateCommit, SourceChangeCommits: []string{candidateCommit, candidateCommit}},
+			facts:   baseFacts,
+			code:    "source_history_divergent",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := NewWithT(t)
+			notes, issue := verifyAndFilterSourceHistory("api", baselineID, test.planned, test.facts)
+			g.Expect(notes).To(BeNil())
+			g.Expect(issue).NotTo(BeNil())
+			g.Expect(issue.Code).To(Equal(test.code))
+		})
+	}
+}
+
+func testReleaseHistoryFact(
+	releaseID uuid.UUID,
+	repository string,
+	commit string,
+	minute int,
+) componentReleaseHistoryFact {
+	return componentReleaseHistoryFact{
+		ReleaseBundleID:  releaseID,
+		Version:          "1.0." + string(rune('0'+minute)),
+		PublishedAt:      time.Date(2026, time.January, 1, 0, minute, 0, 0, time.UTC),
+		SourceRevision:   commit,
+		Summary:          "release note",
+		SourceRepository: repository,
+		SourceCommit:     commit,
+	}
 }
 
 func TestSuccessfulObservationCoverageRequiresEachComponentInstance(t *testing.T) {

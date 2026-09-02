@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/distr-sh/distr/internal/apierrors"
@@ -27,6 +29,8 @@ const (
 	maxPlanEvidenceRows       = 4096
 )
 
+var sourceCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
 func resolveDeploymentPlanEvidence(
 	ctx context.Context,
 	draft types.PlanDraft,
@@ -38,19 +42,21 @@ func resolveDeploymentPlanEvidence(
 	[]types.DeploymentPlanChangeEntry,
 	[]types.DeploymentPlanRiskEntry,
 	bool,
+	[]types.ValidationIssue,
 	error,
 ) {
 	plannedStates, err := plannedStatesFromResolution(input, resolutions, graph)
 	if err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, nil, false, nil, err
 	}
 	if len(plannedStates) > maxPlanEvidenceComponents {
-		return nil, nil, nil, false, apierrors.NewBadRequest("deployment plan component limit exceeded")
+		return nil, nil, nil, false, nil, apierrors.NewBadRequest("deployment plan component limit exceeded")
 	}
 
 	baselines := make([]types.DeploymentPlanBaseline, 0, len(plannedStates))
 	changes := make([]types.DeploymentPlanChangeEntry, 0, len(plannedStates)*4)
 	bootstrap := false
+	issues := make([]types.ValidationIssue, 0)
 	for _, planned := range plannedStates {
 		baseline, baselineState, err := loadVerifiedBaseline(
 			ctx,
@@ -58,31 +64,34 @@ func resolveDeploymentPlanEvidence(
 			planned,
 		)
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
 		}
 		baseline.SortOrder = len(baselines)
 		baseline.CanonicalChecksum, err = checksumPlanEvidence(baselineCanonical(*baseline))
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
 		}
 		baselines = append(baselines, *baseline)
 		bootstrap = bootstrap || baseline.Bootstrap
 
-		notes, err := loadReleaseNotes(
+		notes, historyIssue, err := loadReleaseNotes(
 			ctx,
 			draft.OrganizationID,
 			draft.ProductReleaseID,
 			planned.ComponentKey,
 			baselineState.ReleaseBundleID,
-			planned.ReleaseBundleID,
+			planned,
 		)
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
+		}
+		if historyIssue != nil {
+			issues = append(issues, *historyIssue)
 		}
 		componentChanges := planning.BuildTargetChangeSet(baselineState, planned, notes)
 		changes = append(changes, componentChanges...)
 		if len(changes) > maxPlanEvidenceRows {
-			return nil, nil, nil, false, apierrors.NewBadRequest("deployment plan change limit exceeded")
+			return nil, nil, nil, false, nil, apierrors.NewBadRequest("deployment plan change limit exceeded")
 		}
 	}
 	sortPlanChanges(changes)
@@ -93,16 +102,16 @@ func resolveDeploymentPlanEvidence(
 		RequireAuthoritativeV2Baseline: true,
 	})
 	if len(risks) > maxPlanEvidenceRows {
-		return nil, nil, nil, false, apierrors.NewBadRequest("deployment plan risk limit exceeded")
+		return nil, nil, nil, false, nil, apierrors.NewBadRequest("deployment plan risk limit exceeded")
 	}
 	for index := range risks {
 		risks[index].SortOrder = index
 		risks[index].CanonicalChecksum, err = checksumPlanEvidence(riskCanonical(risks[index]))
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, false, nil, err
 		}
 	}
-	return baselines, changes, risks, bootstrap, nil
+	return baselines, changes, risks, bootstrap, issues, nil
 }
 
 func plannedStatesFromResolution(
@@ -191,6 +200,9 @@ func plannedStatesFromResolution(
 			SchemaChecksum:          schemaChecksum,
 			TopologyChecksum:        topologyChecksum,
 			ForwardOnly:             forwardOnly,
+			SourceRepository:        strings.TrimSpace(pin.SourceRepository),
+			SourceCommit:            strings.TrimSpace(pin.SourceCommit),
+			SourceChangeCommits:     slices.Clone(pin.SourceChangeCommits),
 		})
 	}
 	return result, nil
@@ -584,14 +596,34 @@ func plannedStatesFromCanonical(
 	)
 }
 
+type componentReleaseHistoryFact struct {
+	ReleaseBundleID  uuid.UUID
+	Version          string
+	PublishedAt      time.Time
+	SourceRevision   string
+	Summary          string
+	SourceRepository string
+	SourceCommit     string
+}
+
+func (f componentReleaseHistoryFact) releaseNote() types.ReleaseNote {
+	return types.ReleaseNote{
+		ReleaseBundleID: f.ReleaseBundleID,
+		Version:         f.Version,
+		PublishedAt:     f.PublishedAt,
+		SourceRevision:  f.SourceRevision,
+		Summary:         f.Summary,
+	}
+}
+
 func loadReleaseNotes(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	productReleaseID uuid.UUID,
 	componentKey string,
 	baselineReleaseID uuid.UUID,
-	plannedReleaseID uuid.UUID,
-) ([]types.ReleaseNote, error) {
+	planned types.PlannedState,
+) ([]types.ReleaseNote, *types.ValidationIssue, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		WITH bounds AS (
 		  SELECT product.application_id,
@@ -623,6 +655,8 @@ func loadReleaseNotes(
 		         bundle.published_at,
 		         bundle.source_revision,
 		         bundle.release_notes,
+		         COALESCE(bundle.release_contract -> 'source' ->> 'repository', '') AS source_repository,
+		         COALESCE(bundle.release_contract -> 'source' ->> 'commit', '') AS source_commit,
 		         bounds.baseline_release_id
 		  FROM bounds
 		  JOIN ReleaseBundle bundle
@@ -672,7 +706,8 @@ func loadReleaseNotes(
 		         ) AS recent_rank
 		  FROM candidates
 		)
-		SELECT id, component_version, published_at, source_revision, release_notes
+		SELECT id, component_version, published_at, source_revision, release_notes,
+		       source_repository, source_commit
 		FROM ranked
 		WHERE recent_rank <= 129
 		   OR id = baseline_release_id
@@ -683,15 +718,146 @@ func loadReleaseNotes(
 			"productReleaseID":  productReleaseID,
 			"componentKey":      componentKey,
 			"baselineReleaseID": uuidOrNil(baselineReleaseID),
-			"plannedReleaseID":  plannedReleaseID,
+			"plannedReleaseID":  planned.ReleaseBundleID,
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("query accumulated component release notes: %w", err)
+		return nil, nil, fmt.Errorf("query accumulated component release notes: %w", err)
 	}
-	notes, err := pgx.CollectRows(rows, pgx.RowToStructByPos[types.ReleaseNote])
+	facts, err := pgx.CollectRows(rows, pgx.RowToStructByPos[componentReleaseHistoryFact])
 	if err != nil {
-		return nil, fmt.Errorf("collect accumulated component release notes: %w", err)
+		return nil, nil, fmt.Errorf("collect accumulated component release notes: %w", err)
+	}
+	if baselineReleaseID == uuid.Nil {
+		notes := make([]types.ReleaseNote, 0, len(facts))
+		for _, fact := range facts {
+			notes = append(notes, fact.releaseNote())
+		}
+		return notes, nil, nil
+	}
+	notes, issue := verifyAndFilterSourceHistory(
+		componentKey,
+		baselineReleaseID,
+		planned,
+		facts,
+	)
+	return notes, issue, nil
+}
+
+func verifyAndFilterSourceHistory(
+	componentKey string,
+	baselineReleaseID uuid.UUID,
+	planned types.PlannedState,
+	facts []componentReleaseHistoryFact,
+) ([]types.ReleaseNote, *types.ValidationIssue) {
+	block := func(code, message string) ([]types.ReleaseNote, *types.ValidationIssue) {
+		return nil, &types.ValidationIssue{
+			Code:    code,
+			Field:   "releasePins." + strings.TrimSpace(componentKey) + ".sourceHistory",
+			Message: message,
+		}
+	}
+	repository := strings.TrimSpace(planned.SourceRepository)
+	candidateCommit := strings.TrimSpace(planned.SourceCommit)
+	if repository == "" || !sourceCommitPattern.MatchString(candidateCommit) {
+		return block("source_history_unverified", "candidate source repository and commit proof are required")
+	}
+
+	var baselineFact, candidateFact *componentReleaseHistoryFact
+	for index := range facts {
+		fact := &facts[index]
+		if fact.ReleaseBundleID == baselineReleaseID {
+			baselineFact = fact
+		}
+		if fact.ReleaseBundleID == planned.ReleaseBundleID {
+			candidateFact = fact
+		}
+	}
+	if baselineFact == nil || candidateFact == nil {
+		return block("source_history_unverified", "baseline and candidate source history proof must both be available")
+	}
+	baselineRepository := strings.TrimSpace(baselineFact.SourceRepository)
+	baselineCommit := strings.TrimSpace(baselineFact.SourceCommit)
+	if baselineRepository == "" || !sourceCommitPattern.MatchString(baselineCommit) {
+		return block("source_history_unverified", "baseline source repository and commit proof are required")
+	}
+	if baselineRepository != repository || strings.TrimSpace(candidateFact.SourceRepository) != repository {
+		return block("source_history_divergent", "baseline and candidate source repositories do not match")
+	}
+	if strings.TrimSpace(candidateFact.SourceCommit) != candidateCommit ||
+		strings.TrimSpace(candidateFact.SourceRevision) != candidateCommit {
+		return block("source_history_divergent", "candidate source commit conflicts with immutable release history")
+	}
+	if strings.TrimSpace(baselineFact.SourceRevision) != baselineCommit {
+		return block("source_history_divergent", "baseline source commit conflicts with immutable release history")
+	}
+	if baselineCommit == candidateCommit {
+		return nil, nil
+	}
+
+	path := slices.Clone(planned.SourceChangeCommits)
+	if len(path) == 0 {
+		return block("source_history_unverified", "candidate accumulated source commit path is required")
+	}
+	seen := make(map[string]int, len(path))
+	for index := range path {
+		path[index] = strings.TrimSpace(path[index])
+		if !sourceCommitPattern.MatchString(path[index]) {
+			return block("source_history_unverified", "candidate accumulated source commit path is incomplete or invalid")
+		}
+		if _, exists := seen[path[index]]; exists {
+			return block("source_history_divergent", "candidate accumulated source commit path contains duplicates")
+		}
+		seen[path[index]] = index
+	}
+	if path[0] == baselineCommit {
+		path = path[1:]
+		seen = make(map[string]int, len(path))
+		for index, commit := range path {
+			seen[commit] = index
+		}
+	} else if _, exists := seen[baselineCommit]; exists {
+		return block("source_history_divergent", "baseline source commit is reordered inside the candidate path")
+	}
+	if len(path) == 0 {
+		return block("source_history_unverified", "candidate accumulated source commit path is required")
+	}
+	if candidateIndex, exists := seen[candidateCommit]; exists && candidateIndex != len(path)-1 {
+		return block("source_history_divergent", "candidate source commit is reordered inside the accumulated source path")
+	}
+
+	byPathIndex := make(map[int]types.ReleaseNote, len(facts))
+	for _, fact := range facts {
+		commit := strings.TrimSpace(fact.SourceCommit)
+		pathIndex, onPath := seen[commit]
+		if !onPath {
+			continue
+		}
+		if strings.TrimSpace(fact.SourceRepository) != repository ||
+			strings.TrimSpace(fact.SourceRevision) != commit {
+			return block("source_history_divergent", "published release source facts conflict with the candidate path")
+		}
+		note := fact.releaseNote()
+		if existing, exists := byPathIndex[pathIndex]; exists &&
+			existing.ReleaseBundleID != note.ReleaseBundleID {
+			return block("source_history_divergent", "multiple published releases ambiguously map to one source commit")
+		}
+		byPathIndex[pathIndex] = note
+	}
+	candidatePathIndex, candidateOnPath := seen[candidateCommit]
+	if candidateOnPath {
+		if note, ok := byPathIndex[candidatePathIndex]; !ok || note.ReleaseBundleID != planned.ReleaseBundleID {
+			return block("source_history_divergent", "candidate release does not match the terminal source commit")
+		}
+	}
+	notes := make([]types.ReleaseNote, 0, len(byPathIndex))
+	for index := range path {
+		if note, ok := byPathIndex[index]; ok {
+			notes = append(notes, note)
+		}
+	}
+	if !candidateOnPath {
+		notes = append(notes, candidateFact.releaseNote())
 	}
 	return notes, nil
 }

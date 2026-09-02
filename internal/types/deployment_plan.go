@@ -189,6 +189,9 @@ type PlannedState struct {
 	SchemaChecksum          string
 	TopologyChecksum        string
 	ForwardOnly             bool
+	SourceRepository        string
+	SourceCommit            string
+	SourceChangeCommits     []string
 }
 
 type ReleaseNote struct {

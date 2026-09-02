@@ -154,6 +154,9 @@ type ComponentReleasePin struct {
 	Migrations                []MigrationDeclaration    `json:"migrations"`
 	MigrationContracts        []MigrationContract       `json:"migrationContracts,omitempty"`
 	AdapterRequirements       []AdapterRequirement      `json:"adapterRequirements,omitempty"`
+	SourceRepository          string                    `json:"-"`
+	SourceCommit              string                    `json:"-"`
+	SourceChangeCommits       []string                  `json:"-"`
 }
 
 type ComponentProvenanceFact struct {
