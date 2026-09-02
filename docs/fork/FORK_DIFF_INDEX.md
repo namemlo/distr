@@ -2337,3 +2337,28 @@ Use one entry per pull request:
   published plans, and bootstrap behavior remain unchanged. The gate validates
   immutable Distr manifest consistency; independent Git-parent proof requires
   a future authenticated source-host or CI ancestry attestation.
+
+### Post-PR-102 - Operator baseline, admission, rollback, and retention controls
+
+- Status: Implemented with focused Angular component and HTTP contract tests.
+- Upstream base: `ee3f33f7` integrated release checkpoint.
+- Feature flags: Uses the existing `operator_control_plane_v2` route boundary.
+- User-facing behavior: Plan review can evaluate current admission, adopt a
+  checksum-bound independently observed baseline, and create a new previous-
+  state plan when the current plan is already `EXECUTED`. Audit operators can
+  create protected-history artifacts, open retained metadata by ID, and verify
+  the immutable stored object.
+- Database changes: None.
+- API changes: None; the UI consumes the existing baseline-adoption,
+  admission, previous-state, and protected-history artifact APIs.
+- UI changes: Adds explicit confirmation, exact checksum binding, structured
+  results, and loading/error states to the existing plan and audit pages.
+- Agent protocol changes: None.
+- Documentation: Records the UI workflow and the current API discovery gaps.
+- Tests: Adds service endpoint coverage and focused plan/audit component tests.
+- Upstream contribution notes: Community-neutral operator controls with no
+  adopter, service, registry, CI, or infrastructure assumptions.
+- Compatibility notes: Existing read-only views and API authorization remain
+  unchanged. Baseline component evidence must be entered as JSON because no
+  endpoint exposes a complete create-request projection. Protected-history
+  metadata must be opened by ID because the API has no list endpoint.

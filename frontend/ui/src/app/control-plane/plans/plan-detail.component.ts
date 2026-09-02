@@ -7,6 +7,9 @@ import {distinctUntilChanged, firstValueFrom, map} from 'rxjs';
 import {OperatorControlPlaneService} from '../../services/operator-control-plane.service';
 import {OverlayService} from '../../services/overlay.service';
 import {
+  OperatorAdmissionEvaluation,
+  OperatorBaselineAdoption,
+  OperatorBaselineAdoptionComponentRequest,
   OperatorControlPlaneError,
   OperatorEvidenceRef,
   OperatorPlanCompare,
@@ -20,6 +23,29 @@ import {
 
 const actionablePlanStatuses = new Set(['DRAFT', 'VALIDATING', 'BLOCKED', 'READY', 'PUBLISHED']);
 const knownPlanStatuses = new Set([...actionablePlanStatuses, 'EXPIRED', 'EXECUTED', 'STALE', 'DISABLED']);
+const previousStatePlanStatuses = new Set([...actionablePlanStatuses, 'EXECUTED']);
+const baselineAdoptionComponentKeys: Array<keyof OperatorBaselineAdoptionComponentRequest> = [
+  'componentInstanceId',
+  'componentKey',
+  'componentReleaseId',
+  'componentReleaseChecksum',
+  'sourceCommit',
+  'buildId',
+  'provenanceVerificationId',
+  'provenanceEvidenceDigest',
+  'provenancePolicyChecksum',
+  'artifactDigest',
+  'platform',
+  'configChecksum',
+  'schemaVersion',
+  'capabilityChecksum',
+  'topologyChecksum',
+  'observationId',
+  'observerId',
+  'observationEvidenceChecksum',
+  'observationStateChecksum',
+  'observationRuntimeStateChecksum',
+];
 
 interface PlanFactSection {
   title: string;
@@ -48,6 +74,8 @@ export class PlanDetailComponent implements OnInit {
   protected readonly draftValidation = signal<OperatorPlanDraftValidation | null>(null);
   protected readonly reviewMaterial = signal<OperatorReviewAdmissionMaterial | null>(null);
   protected readonly reviewDecisionHistory = signal<OperatorReviewAdmissionDecision[]>([]);
+  protected readonly admissionEvaluation = signal<OperatorAdmissionEvaluation | null>(null);
+  protected readonly baselineAdoption = signal<OperatorBaselineAdoption | null>(null);
   protected readonly loading = signal(true);
   protected readonly evidenceLoading = signal(true);
   protected readonly reviewMaterialLoading = signal(true);
@@ -78,6 +106,10 @@ export class PlanDetailComponent implements OnInit {
     successfulDeploymentPlanId: ['', Validators.required],
     reason: ['', [Validators.required, Validators.maxLength(2048)]],
   });
+  protected readonly baselineAdoptionForm = this.fb.nonNullable.group({
+    reason: ['', [Validators.required, Validators.maxLength(2048)]],
+    components: ['[]', Validators.required],
+  });
 
   ngOnInit() {
     this.route.paramMap
@@ -103,6 +135,8 @@ export class PlanDetailComponent implements OnInit {
     this.draftValidation.set(null);
     this.reviewMaterial.set(null);
     this.reviewDecisionHistory.set([]);
+    this.admissionEvaluation.set(null);
+    this.baselineAdoption.set(null);
     this.actionError.set(null);
     this.error.set(null);
     this.evidenceError.set(null);
@@ -316,7 +350,7 @@ export class PlanDetailComponent implements OnInit {
   }
 
   protected async createPreviousState() {
-    if (this.previousStateForm.invalid || !this.actionsEnabled()) {
+    if (this.previousStateForm.invalid || !this.previousStateEnabled()) {
       return;
     }
     const request = this.previousStateForm.getRawValue();
@@ -339,6 +373,78 @@ export class PlanDetailComponent implements OnInit {
     await this.runAction('previous-state', async () => {
       const result = await firstValueFrom(this.service.createPreviousStatePlan(this.planId, request));
       await this.router.navigate(['/deployments/plans', result.id], {queryParams: this.deploymentUnitQuery()});
+    });
+  }
+
+  protected async evaluateAdmission() {
+    const detail = this.detail();
+    if (!detail || !this.admissionEnabled()) {
+      return;
+    }
+    const confirmed = await firstValueFrom(
+      this.overlay.confirm({
+        message: {
+          message: `Evaluate deployment admission for plan ${this.planId}?`,
+          alert: {
+            type: 'warning',
+            message:
+              'This appends a new admission decision bound to the current immutable plan and live gate evidence.',
+          },
+        },
+        requiredConfirmInputText: detail.plan.canonicalChecksum,
+        confirmLabel: 'Evaluate admission',
+      })
+    );
+    if (!confirmed) {
+      return;
+    }
+    await this.runAction('admission', async () => {
+      this.admissionEvaluation.set(await firstValueFrom(this.service.admitDeploymentPlan(this.planId)));
+      this.loadReviewMaterial();
+    });
+  }
+
+  protected async adoptBaseline() {
+    const detail = this.detail();
+    if (!detail || this.baselineAdoptionForm.invalid || !this.baselineAdoptionEnabled()) {
+      return;
+    }
+    let components: OperatorBaselineAdoptionComponentRequest[];
+    try {
+      components = this.parseBaselineAdoptionComponents(this.baselineAdoptionForm.controls.components.value);
+    } catch {
+      this.actionError.set('Baseline component evidence must be a non-empty JSON array with every documented field.');
+      return;
+    }
+    const reason = this.baselineAdoptionForm.controls.reason.value.trim();
+    const confirmed = await firstValueFrom(
+      this.overlay.confirm({
+        message: {
+          message: `Adopt the independently observed runtime as the baseline for plan ${this.planId}?`,
+          alert: {
+            type: 'danger',
+            message: 'This marks the READY plan EXECUTED without creating deployment tasks, locks, or executions.',
+          },
+        },
+        requiredConfirmInputText: detail.plan.canonicalChecksum,
+        confirmLabel: 'Adopt baseline',
+      })
+    );
+    if (!confirmed) {
+      return;
+    }
+    await this.runAction('baseline-adoption', async () => {
+      const adoption = await firstValueFrom(
+        this.service.createBaselineAdoption(this.planId, {
+          reason,
+          expectedPlanChecksum: detail.plan.canonicalChecksum,
+          expectedProductReleaseChecksum: detail.productReleaseChecksum,
+          expectedTargetConfigChecksum: detail.targetConfigChecksum,
+          components,
+        })
+      );
+      this.baselineAdoption.set(adoption);
+      this.load();
     });
   }
 
@@ -403,6 +509,23 @@ export class PlanDetailComponent implements OnInit {
   protected actionsEnabled(): boolean {
     const status = this.detail()?.plan.status;
     return status !== undefined && actionablePlanStatuses.has(status) && !this.isPartial();
+  }
+
+  protected admissionEnabled(): boolean {
+    return this.detail()?.plan.status === 'READY' && !this.isPartial() && !this.actionLoading();
+  }
+
+  protected baselineAdoptionEnabled(): boolean {
+    return this.admissionEnabled();
+  }
+
+  protected previousStateEnabled(): boolean {
+    const status = this.detail()?.plan.status;
+    return status !== undefined && previousStatePlanStatuses.has(status) && !this.isPartial() && !this.actionLoading();
+  }
+
+  protected hasEnabledPlanAction(): boolean {
+    return this.actionsEnabled() || this.previousStateEnabled();
   }
 
   protected reviewDecisionStateLabel(): string {
@@ -483,5 +606,31 @@ export class PlanDetailComponent implements OnInit {
       return error.message;
     }
     return 'The plan action could not be completed. Refresh and try again.';
+  }
+
+  private parseBaselineAdoptionComponents(value: string): OperatorBaselineAdoptionComponentRequest[] {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('baseline adoption components are required');
+    }
+    return parsed.map((candidate) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        throw new Error('baseline adoption component must be an object');
+      }
+      const record = candidate as Record<string, unknown>;
+      if (
+        Object.keys(record).some(
+          (key) => !baselineAdoptionComponentKeys.includes(key as keyof OperatorBaselineAdoptionComponentRequest)
+        ) ||
+        baselineAdoptionComponentKeys.some(
+          (key) => typeof record[key] !== 'string' || String(record[key]).trim() === ''
+        )
+      ) {
+        throw new Error('baseline adoption component fields are invalid');
+      }
+      return Object.fromEntries(
+        baselineAdoptionComponentKeys.map((key) => [key, String(record[key]).trim()])
+      ) as unknown as OperatorBaselineAdoptionComponentRequest;
+    });
   }
 }

@@ -101,6 +101,45 @@ describe('AuditComponent', () => {
         ])
       ),
       createAuditExportSink: vi.fn().mockReturnValue(of({id: 'AUTO-sink-2'})),
+      createProtectedHistoryArtifact: vi.fn().mockReturnValue(
+        of({
+          id: 'AUTO-history-1',
+          schema: 'distr.protected-history-retention/v1',
+          sourceSchemaVersion: 170,
+          scope: {
+            organizationId: 'AUTO-organization-1',
+            customerOrganizationIds: ['AUTO-customer-1'],
+            deploymentTargetIds: ['AUTO-target-1'],
+          },
+          artifactId: `sha256:${'1'.repeat(64)}`,
+          recordsRoot: `sha256:${'2'.repeat(64)}`,
+          recordCount: 27,
+          objectReference: `s3://audit/_immutable/sha256/${'3'.repeat(64)}/history.json`,
+          mediaType: 'application/vnd.distr.protected-history.v1+json',
+          byteLength: 4096,
+          contentChecksum: `sha256:${'3'.repeat(64)}`,
+          capturedAt: '2026-07-28T08:10:00Z',
+          issuerUserAccountId: 'AUTO-user-1',
+          reviewerUserAccountId: 'AUTO-reviewer-1',
+          retentionChecksum: `sha256:${'4'.repeat(64)}`,
+          auditEventId: 'AUTO-history-event-1',
+          auditEventSequence: 44,
+          auditBindingChecksum: `sha256:${'5'.repeat(64)}`,
+          requestChecksum: `sha256:${'6'.repeat(64)}`,
+          createdAt: '2026-07-28T08:10:00Z',
+        })
+      ),
+      getProtectedHistoryArtifact: vi.fn(),
+      verifyProtectedHistoryArtifact: vi.fn().mockReturnValue(
+        of({
+          protectedHistoryArtifactId: 'AUTO-history-1',
+          objectReference: `s3://audit/_immutable/sha256/${'3'.repeat(64)}/history.json`,
+          mediaType: 'application/vnd.distr.protected-history.v1+json',
+          byteLength: 4096,
+          contentChecksum: `sha256:${'3'.repeat(64)}`,
+          verifiedAt: '2026-07-28T08:11:00Z',
+        })
+      ),
       listAuditExportStatus: vi.fn().mockReturnValue(
         of([
           {
@@ -321,6 +360,64 @@ describe('AuditComponent', () => {
       enabled: true,
     });
     expect(fixture.nativeElement.textContent as string).toContain('Export sink created.');
+  });
+
+  it('creates, views, and verifies an immutable protected-history artifact by retained ID', async () => {
+    const {fixture, component} = await createComponent();
+    const artifact = await new Promise<any>((resolve) =>
+      service.createProtectedHistoryArtifact({}).subscribe((value: unknown) => resolve(value))
+    );
+    service.createProtectedHistoryArtifact.mockClear();
+    service.getProtectedHistoryArtifact.mockReturnValue(of(artifact));
+    (component as any).protectedHistoryForm.setValue({
+      customerOrganizationIds: 'AUTO-customer-1, AUTO-customer-1',
+      deploymentTargetIds: 'AUTO-target-1\nAUTO-target-2',
+      reviewerUserAccountId: 'AUTO-reviewer-1',
+      confirmed: true,
+    });
+
+    await (component as any).createProtectedHistoryArtifact();
+    fixture.detectChanges();
+
+    expect(service.createProtectedHistoryArtifact).toHaveBeenCalledWith({
+      customerOrganizationIds: ['AUTO-customer-1'],
+      deploymentTargetIds: ['AUTO-target-1', 'AUTO-target-2'],
+      reviewerUserAccountId: 'AUTO-reviewer-1',
+    });
+    expect((component as any).protectedHistoryLookupForm.controls.artifactId.value).toBe('AUTO-history-1');
+    expect(fixture.nativeElement.textContent as string).toContain('27 protected records');
+    expect(fixture.nativeElement.textContent as string).toContain('AUTO-reviewer-1');
+
+    await (component as any).loadProtectedHistoryArtifact();
+    await (component as any).verifyProtectedHistoryArtifact();
+    fixture.detectChanges();
+
+    expect(service.getProtectedHistoryArtifact).toHaveBeenCalledWith('AUTO-history-1');
+    expect(service.verifyProtectedHistoryArtifact).toHaveBeenCalledWith('AUTO-history-1');
+    const verification = fixture.nativeElement.querySelector(
+      '[data-testid="protected-history-verification"]'
+    ) as HTMLElement;
+    expect(verification.textContent).toContain(`sha256:${'3'.repeat(64)}`);
+  });
+
+  it('requires a protected-history scope and explicit reviewer confirmation', async () => {
+    const {component} = await createComponent();
+    (component as any).protectedHistoryForm.setValue({
+      customerOrganizationIds: '',
+      deploymentTargetIds: '',
+      reviewerUserAccountId: 'AUTO-reviewer-1',
+      confirmed: true,
+    });
+
+    await (component as any).createProtectedHistoryArtifact();
+
+    expect(service.createProtectedHistoryArtifact).not.toHaveBeenCalled();
+    expect((component as any).protectedHistoryError()).toContain('at least one customer organization ID');
+
+    (component as any).protectedHistoryForm.controls.confirmed.setValue(false);
+    (component as any).protectedHistoryForm.controls.customerOrganizationIds.setValue('AUTO-customer-1');
+    await (component as any).createProtectedHistoryArtifact();
+    expect(service.createProtectedHistoryArtifact).not.toHaveBeenCalled();
   });
 
   it('keeps available audit data when export status is unavailable', async () => {

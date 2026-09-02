@@ -511,6 +511,29 @@ describe('OperatorControlPlaneService', () => {
       successfulDeploymentPlanId: 'plan-successful',
       reason: 'restore last successful state',
     });
+
+    service.admitDeploymentPlan('plan-current').subscribe();
+    expectMutation('/api/v1/deployment-plans/plan-current/admission', 'POST', {
+      schedulerIdempotencyKey: 'action-key-1',
+    });
+
+    service
+      .createBaselineAdoption('plan-current', {
+        reason: 'Adopt independently verified runtime.',
+        expectedPlanChecksum: 'sha256:plan',
+        expectedProductReleaseChecksum: 'sha256:product',
+        expectedTargetConfigChecksum: 'sha256:config',
+        components: [],
+      })
+      .subscribe();
+    expectMutation('/api/v1/deployment-plans/plan-current/baseline-adoptions', 'POST', {
+      reason: 'Adopt independently verified runtime.',
+      expectedPlanChecksum: 'sha256:plan',
+      expectedProductReleaseChecksum: 'sha256:product',
+      expectedTargetConfigChecksum: 'sha256:config',
+      components: [],
+      idempotencyKey: 'action-key-1',
+    });
   });
 
   it('uses PR-078 audit export and evidence endpoints', () => {
@@ -542,6 +565,26 @@ describe('OperatorControlPlaneService', () => {
 
     service.listAuditExportStatus().subscribe();
     expectRequest('/api/v1/control-plane-audit/export-status', {});
+
+    service
+      .createProtectedHistoryArtifact({
+        customerOrganizationIds: ['customer-1'],
+        deploymentTargetIds: ['target-1'],
+        reviewerUserAccountId: 'reviewer-1',
+      })
+      .subscribe();
+    expectMutation('/api/v1/protected-history-artifacts', 'POST', {
+      customerOrganizationIds: ['customer-1'],
+      deploymentTargetIds: ['target-1'],
+      reviewerUserAccountId: 'reviewer-1',
+      idempotencyKey: 'action-key-1',
+    });
+
+    service.getProtectedHistoryArtifact('artifact/1').subscribe();
+    expectRequest('/api/v1/protected-history-artifacts/artifact%2F1', {});
+
+    service.verifyProtectedHistoryArtifact('artifact/1').subscribe();
+    expectRequest('/api/v1/protected-history-artifacts/artifact%2F1/verification', {});
   });
 
   it('requires the latest active organization and selected-environment enrollment revisions for setup readiness', () => {

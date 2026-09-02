@@ -14,6 +14,8 @@ import {
   OperatorControlPlaneAuditEvent,
   OperatorEvidenceBundle,
   OperatorEvidenceRef,
+  OperatorProtectedHistoryArtifact,
+  OperatorProtectedHistoryArtifactVerification,
 } from '../../types/operator-control-plane';
 
 @Component({
@@ -45,6 +47,15 @@ export class AuditComponent {
     enabled: this.fb.control(true),
     confirmed: this.fb.control(false, Validators.requiredTrue),
   });
+  protected readonly protectedHistoryForm = this.fb.group({
+    customerOrganizationIds: this.fb.control(''),
+    deploymentTargetIds: this.fb.control(''),
+    reviewerUserAccountId: this.fb.control('', Validators.required),
+    confirmed: this.fb.control(false, Validators.requiredTrue),
+  });
+  protected readonly protectedHistoryLookupForm = this.fb.group({
+    artifactId: this.fb.control('', Validators.required),
+  });
 
   protected readonly events = signal<OperatorAuditRow[]>([]);
   protected readonly correlatedEvents = signal<OperatorControlPlaneAuditEvent[]>([]);
@@ -54,6 +65,10 @@ export class AuditComponent {
   protected readonly bundle = signal<OperatorEvidenceBundle | undefined>(undefined);
   protected readonly sinks = signal<OperatorAuditExportSink[]>([]);
   protected readonly exportStatuses = signal<OperatorAuditExportStatus[]>([]);
+  protected readonly protectedHistoryArtifact = signal<OperatorProtectedHistoryArtifact | undefined>(undefined);
+  protected readonly protectedHistoryVerification = signal<OperatorProtectedHistoryArtifactVerification | undefined>(
+    undefined
+  );
 
   protected readonly loading = signal(true);
   protected readonly loadingMore = signal(false);
@@ -67,6 +82,10 @@ export class AuditComponent {
   protected readonly sinkError = signal('');
   protected readonly sinkSuccess = signal('');
   protected readonly exportStatusError = signal('');
+  protected readonly protectedHistoryCreating = signal(false);
+  protected readonly protectedHistoryLoading = signal(false);
+  protected readonly protectedHistoryVerifying = signal(false);
+  protected readonly protectedHistoryError = signal('');
 
   constructor() {
     void this.loadInitial();
@@ -165,6 +184,77 @@ export class AuditComponent {
       this.sinkError.set(this.readError(error, 'Could not create the export sink.'));
     } finally {
       this.creatingSink.set(false);
+    }
+  }
+
+  protected async createProtectedHistoryArtifact(): Promise<void> {
+    this.protectedHistoryError.set('');
+    if (this.protectedHistoryForm.invalid || this.protectedHistoryCreating()) {
+      this.protectedHistoryForm.markAllAsTouched();
+      return;
+    }
+    const value = this.protectedHistoryForm.getRawValue();
+    const customerOrganizationIds = this.parseIdList(value.customerOrganizationIds);
+    const deploymentTargetIds = this.parseIdList(value.deploymentTargetIds);
+    if (customerOrganizationIds.length === 0 && deploymentTargetIds.length === 0) {
+      this.protectedHistoryError.set('Enter at least one customer organization ID or deployment target ID.');
+      return;
+    }
+
+    this.protectedHistoryCreating.set(true);
+    this.protectedHistoryVerification.set(undefined);
+    try {
+      const artifact = await firstValueFrom(
+        this.service.createProtectedHistoryArtifact({
+          customerOrganizationIds,
+          deploymentTargetIds,
+          reviewerUserAccountId: value.reviewerUserAccountId.trim(),
+        })
+      );
+      this.protectedHistoryArtifact.set(artifact);
+      this.protectedHistoryLookupForm.controls.artifactId.setValue(artifact.id);
+      this.protectedHistoryForm.controls.confirmed.setValue(false);
+    } catch (error) {
+      this.protectedHistoryError.set(this.readError(error, 'Could not retain the protected-history artifact.'));
+    } finally {
+      this.protectedHistoryCreating.set(false);
+    }
+  }
+
+  protected async loadProtectedHistoryArtifact(): Promise<void> {
+    if (this.protectedHistoryLookupForm.invalid || this.protectedHistoryLoading()) {
+      this.protectedHistoryLookupForm.markAllAsTouched();
+      return;
+    }
+    const artifactId = this.protectedHistoryLookupForm.controls.artifactId.value.trim();
+    this.protectedHistoryError.set('');
+    this.protectedHistoryArtifact.set(undefined);
+    this.protectedHistoryVerification.set(undefined);
+    this.protectedHistoryLoading.set(true);
+    try {
+      this.protectedHistoryArtifact.set(await firstValueFrom(this.service.getProtectedHistoryArtifact(artifactId)));
+    } catch (error) {
+      this.protectedHistoryError.set(this.readError(error, 'Could not load the protected-history artifact.'));
+    } finally {
+      this.protectedHistoryLoading.set(false);
+    }
+  }
+
+  protected async verifyProtectedHistoryArtifact(): Promise<void> {
+    const artifact = this.protectedHistoryArtifact();
+    if (!artifact || this.protectedHistoryVerifying()) return;
+
+    this.protectedHistoryError.set('');
+    this.protectedHistoryVerification.set(undefined);
+    this.protectedHistoryVerifying.set(true);
+    try {
+      this.protectedHistoryVerification.set(
+        await firstValueFrom(this.service.verifyProtectedHistoryArtifact(artifact.id))
+      );
+    } catch (error) {
+      this.protectedHistoryError.set(this.readError(error, 'Could not verify the protected-history artifact.'));
+    } finally {
+      this.protectedHistoryVerifying.set(false);
     }
   }
 
@@ -304,5 +394,16 @@ export class AuditComponent {
 
   private queryFilter(key: string): string {
     return this.route.snapshot.queryParamMap.get(key)?.trim() ?? '';
+  }
+
+  private parseIdList(value: string): string[] {
+    return [
+      ...new Set(
+        value
+          .split(/[\s,]+/)
+          .map((id) => id.trim())
+          .filter(Boolean)
+      ),
+    ];
   }
 }

@@ -240,6 +240,121 @@
     }
   </section>
 
+  <section class="space-y-4" aria-labelledby="protected-history-heading">
+    <div>
+      <h2 id="protected-history-heading" class="text-xl font-semibold">Protected-history artifacts</h2>
+      <p class="text-sm text-gray-600 dark:text-gray-300">
+        Export scoped deployment history to immutable object storage, retain its audit binding, and verify the stored
+        object without changing history.
+      </p>
+    </div>
+
+    <form
+      class="grid grid-cols-2 gap-3 rounded border border-gray-200 p-4 dark:border-gray-700"
+      [formGroup]="protectedHistoryForm"
+      (ngSubmit)="createProtectedHistoryArtifact()">
+      <label>
+        <span class="distr-label">Customer organization IDs</span>
+        <textarea
+          class="distr-input"
+          rows="3"
+          formControlName="customerOrganizationIds"
+          placeholder="Comma or newline separated UUIDs"></textarea>
+      </label>
+      <label>
+        <span class="distr-label">Deployment target IDs</span>
+        <textarea
+          class="distr-input"
+          rows="3"
+          formControlName="deploymentTargetIds"
+          placeholder="Comma or newline separated UUIDs"></textarea>
+      </label>
+      <label class="col-span-2">
+        <span class="distr-label">Distinct reviewer user account ID</span>
+        <input class="distr-input" formControlName="reviewerUserAccountId" />
+      </label>
+      <label class="col-span-2 flex items-center gap-2">
+        <input class="distr-checkbox" type="checkbox" formControlName="confirmed" />
+        I reviewed the exact scope and confirmed the reviewer is not the issuing user.
+      </label>
+      <button class="distr-button col-span-2" type="submit" [disabled]="protectedHistoryCreating()">
+        {{ protectedHistoryCreating() ? 'Retaining…' : 'Create protected-history artifact' }}
+      </button>
+    </form>
+
+    <form
+      class="flex items-end gap-3"
+      [formGroup]="protectedHistoryLookupForm"
+      (ngSubmit)="loadProtectedHistoryArtifact()">
+      <label class="grow">
+        <span class="distr-label">Retained artifact ID</span>
+        <input class="distr-input" formControlName="artifactId" />
+      </label>
+      <button class="distr-button" type="submit" [disabled]="protectedHistoryLoading()">
+        {{ protectedHistoryLoading() ? 'Loading…' : 'View retained artifact' }}
+      </button>
+    </form>
+
+    @if (protectedHistoryError()) {
+      <p role="alert" class="text-red-600">{{ protectedHistoryError() }}</p>
+    }
+    @if (protectedHistoryArtifact(); as artifact) {
+      <article
+        class="space-y-3 rounded border border-gray-200 p-4 dark:border-gray-700"
+        data-testid="protected-history-artifact">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 class="font-semibold">Retained artifact {{ artifact.id }}</h3>
+            <p class="text-sm">
+              Schema {{ artifact.sourceSchemaVersion }} · {{ artifact.recordCount }} protected records
+            </p>
+          </div>
+          <button
+            class="distr-button"
+            type="button"
+            [disabled]="protectedHistoryVerifying()"
+            (click)="verifyProtectedHistoryArtifact()">
+            {{ protectedHistoryVerifying() ? 'Verifying…' : 'Verify stored object' }}
+          </button>
+        </div>
+        <dl class="grid gap-2 text-sm md:grid-cols-2">
+          <div>
+            <dt>Object reference</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.objectReference }}</dd>
+          </div>
+          <div>
+            <dt>Content checksum</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.contentChecksum }}</dd>
+          </div>
+          <div>
+            <dt>Records root</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.recordsRoot }}</dd>
+          </div>
+          <div>
+            <dt>Audit binding</dt>
+            <dd class="break-all font-mono text-xs">
+              #{{ artifact.auditEventSequence }} · {{ artifact.auditBindingChecksum }}
+            </dd>
+          </div>
+          <div>
+            <dt>Issuer</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.issuerUserAccountId }}</dd>
+          </div>
+          <div>
+            <dt>Reviewer</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.reviewerUserAccountId }}</dd>
+          </div>
+        </dl>
+        @if (protectedHistoryVerification(); as verification) {
+          <div role="status" class="rounded bg-gray-100 p-3 text-sm" data-testid="protected-history-verification">
+            <p class="font-semibold">Stored object verified {{ verification.verifiedAt | date: 'medium' }}</p>
+            <p class="break-all font-mono text-xs">{{ verification.contentChecksum }}</p>
+          </div>
+        }
+      </article>
+    }
+  </section>
+
   <section class="space-y-4" aria-labelledby="sinks-heading">
     <h2 id="sinks-heading" class="text-xl font-semibold">Export sinks</h2>
     @if (sinkError()) {

@@ -27,6 +27,8 @@ describe('PlanDetailComponent', () => {
     listReviewAdmissionDecisions: ReturnType<typeof vi.fn>;
     recordReviewAdmissionDecision: ReturnType<typeof vi.fn>;
     createPreviousStatePlan: ReturnType<typeof vi.fn>;
+    admitDeploymentPlan: ReturnType<typeof vi.fn>;
+    createBaselineAdoption: ReturnType<typeof vi.fn>;
   };
   let overlay: {confirm: ReturnType<typeof vi.fn>};
   let router: Router;
@@ -177,6 +179,8 @@ describe('PlanDetailComponent', () => {
       listReviewAdmissionDecisions: vi.fn().mockReturnValue(of(reviewHistory)),
       recordReviewAdmissionDecision: vi.fn(),
       createPreviousStatePlan: vi.fn(),
+      admitDeploymentPlan: vi.fn(),
+      createBaselineAdoption: vi.fn(),
     };
     overlay = {confirm: vi.fn().mockReturnValue(of(true))};
     routeParams = new BehaviorSubject(convertToParamMap({planId: 'plan-1'}));
@@ -639,6 +643,117 @@ describe('PlanDetailComponent', () => {
     });
     expect(router.navigate).toHaveBeenCalledWith(['/deployments/plans', 'plan-previous'], {
       queryParams: {deploymentUnitId: 'unit-1'},
+    });
+  });
+
+  it('evaluates admission with checksum confirmation and renders the append-only decision', async () => {
+    service.admitDeploymentPlan.mockReturnValue(
+      of({
+        id: 'admission-2',
+        createdAt: '2026-07-28T01:07:00Z',
+        deploymentPlanId: 'plan-1',
+        planRevision: 1,
+        planChecksum: 'sha256:canonical',
+        decision: 'BLOCK',
+        reasonCodes: ['mandatory_gate_failed'],
+        evaluatedAt: '2026-07-28T01:07:00Z',
+        materialChecksum: 'sha256:admission-material',
+        decisionChecksum: 'sha256:admission-decision',
+        schedulerIdempotencyKey: 'scheduler-1',
+      })
+    );
+    const {fixture, component} = createComponent();
+
+    await (component as any).evaluateAdmission();
+    fixture.detectChanges();
+
+    expect(overlay.confirm.mock.calls[0][0].requiredConfirmInputText).toBe('sha256:canonical');
+    expect(service.admitDeploymentPlan).toHaveBeenCalledWith('plan-1');
+    const result = fixture.nativeElement.querySelector('[data-testid="admission-result"]') as HTMLElement;
+    expect(result.textContent).toContain('BLOCK');
+    expect(result.textContent).toContain('mandatory_gate_failed');
+    expect(result.textContent).toContain('sha256:admission-decision');
+  });
+
+  it('adopts a verified baseline with plan-derived checksums and no deployment side effects', async () => {
+    const componentEvidence = {
+      componentInstanceId: 'component-instance-1',
+      componentKey: 'payments-api',
+      componentReleaseId: 'component-release-1',
+      componentReleaseChecksum: 'sha256:component-release',
+      sourceCommit: 'a'.repeat(40),
+      buildId: 'build-1',
+      provenanceVerificationId: 'provenance-1',
+      provenanceEvidenceDigest: 'sha256:provenance-evidence',
+      provenancePolicyChecksum: 'sha256:provenance-policy',
+      artifactDigest: 'sha256:artifact',
+      platform: 'linux/amd64',
+      configChecksum: 'sha256:config',
+      schemaVersion: '1',
+      capabilityChecksum: 'sha256:capability',
+      topologyChecksum: 'sha256:topology',
+      observationId: 'observation-1',
+      observerId: 'observer-1',
+      observationEvidenceChecksum: 'sha256:observation-evidence',
+      observationStateChecksum: 'sha256:observation-state',
+      observationRuntimeStateChecksum: 'sha256:observation-runtime',
+    };
+    service.createBaselineAdoption.mockReturnValue(
+      of({
+        id: 'adoption-1',
+        createdAt: '2026-07-28T01:08:00Z',
+        deploymentPlanId: 'plan-1',
+        status: 'ADOPTED',
+        deploymentPerformed: false,
+        taskCount: 0,
+        lockCount: 0,
+        executionCount: 0,
+        requestChecksum: 'sha256:adoption-request',
+        outcomeChecksum: 'sha256:adoption-outcome',
+        components: [{...componentEvidence, id: 'adoption-component-1', applicationVersion: '1.0.0'}],
+      })
+    );
+    const {fixture, component} = createComponent();
+    (component as any).baselineAdoptionForm.setValue({
+      reason: 'Adopt the independently verified existing runtime.',
+      components: JSON.stringify([componentEvidence]),
+    });
+
+    await (component as any).adoptBaseline();
+    fixture.detectChanges();
+
+    expect(overlay.confirm.mock.calls[0][0].requiredConfirmInputText).toBe('sha256:canonical');
+    expect(service.createBaselineAdoption).toHaveBeenCalledWith('plan-1', {
+      reason: 'Adopt the independently verified existing runtime.',
+      expectedPlanChecksum: 'sha256:canonical',
+      expectedProductReleaseChecksum: 'sha256:product',
+      expectedTargetConfigChecksum: 'sha256:config',
+      components: [componentEvidence],
+    });
+    const result = fixture.nativeElement.querySelector('[data-testid="baseline-adoption-result"]') as HTMLElement;
+    expect(result.textContent).toContain('ADOPTED');
+    expect(result.textContent).toContain('Tasks 0');
+    expect(result.textContent).toContain('locks 0');
+    expect(result.textContent).toContain('executions 0');
+  });
+
+  it('keeps previous-state creation available when the current plan is EXECUTED', async () => {
+    service.createPreviousStatePlan.mockReturnValue(of({id: 'plan-previous'}));
+    resetWithDetail({...detail, plan: {...plan, status: 'EXECUTED'}});
+    const {fixture, component} = createComponent();
+    (component as any).previousStateForm.setValue({
+      successfulDeploymentPlanId: 'plan-successful',
+      reason: 'Restore the prior successful state.',
+    });
+    fixture.detectChanges();
+    const buttons = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
+    const previousStateButton = buttons.find((button) => button.textContent?.includes('Create previous-state plan'))!;
+
+    expect(previousStateButton.disabled).toBe(false);
+    await (component as any).createPreviousState();
+    expect(service.createPreviousStatePlan).toHaveBeenCalledWith('plan-1', {
+      successfulDeploymentPlanId: 'plan-successful',
+      reason: 'Restore the prior successful state.',
     });
   });
 

@@ -942,6 +942,109 @@ export interface OperatorPreviousStatePlanRequest {
   reason: string;
 }
 
+export interface OperatorBaselineAdoptionComponentRequest {
+  componentInstanceId: string;
+  componentKey: string;
+  componentReleaseId: string;
+  componentReleaseChecksum: string;
+  sourceCommit: string;
+  buildId: string;
+  provenanceVerificationId: string;
+  provenanceEvidenceDigest: string;
+  provenancePolicyChecksum: string;
+  artifactDigest: string;
+  platform: string;
+  configChecksum: string;
+  schemaVersion: string;
+  capabilityChecksum: string;
+  topologyChecksum: string;
+  observationId: string;
+  observerId: string;
+  observationEvidenceChecksum: string;
+  observationStateChecksum: string;
+  observationRuntimeStateChecksum: string;
+}
+
+export interface OperatorBaselineAdoptionRequest {
+  reason: string;
+  expectedPlanChecksum: string;
+  expectedProductReleaseChecksum: string;
+  expectedTargetConfigChecksum: string;
+  components: OperatorBaselineAdoptionComponentRequest[];
+}
+
+export interface OperatorBaselineAdoption {
+  id: string;
+  createdAt: string;
+  deploymentPlanId: string;
+  status: string;
+  deploymentPerformed: boolean;
+  taskCount: number;
+  lockCount: number;
+  executionCount: number;
+  requestChecksum: string;
+  outcomeChecksum: string;
+  components: Array<OperatorBaselineAdoptionComponentRequest & {id: string; applicationVersion: string}>;
+}
+
+export type OperatorAdmissionDecision = 'ADMIT' | 'WAIT' | 'BLOCK';
+
+export interface OperatorAdmissionEvaluation {
+  id: string;
+  createdAt: string;
+  deploymentPlanId: string;
+  planRevision: number;
+  planChecksum: string;
+  decision: OperatorAdmissionDecision;
+  reasonCodes: string[];
+  evaluatedAt: string;
+  materialChecksum: string;
+  decisionChecksum: string;
+  schedulerIdempotencyKey: string;
+}
+
+export interface OperatorProtectedHistoryArtifactRequest {
+  customerOrganizationIds: string[];
+  deploymentTargetIds: string[];
+  reviewerUserAccountId: string;
+}
+
+export interface OperatorProtectedHistoryArtifact {
+  id: string;
+  schema: string;
+  sourceSchemaVersion: number;
+  scope: {
+    organizationId: string;
+    customerOrganizationIds: string[];
+    deploymentTargetIds: string[];
+  };
+  artifactId: string;
+  recordsRoot: string;
+  recordCount: number;
+  objectReference: string;
+  mediaType: string;
+  byteLength: number;
+  contentChecksum: string;
+  capturedAt: string;
+  issuerUserAccountId: string;
+  reviewerUserAccountId: string;
+  retentionChecksum: string;
+  auditEventId: string;
+  auditEventSequence: number;
+  auditBindingChecksum: string;
+  requestChecksum: string;
+  createdAt: string;
+}
+
+export interface OperatorProtectedHistoryArtifactVerification {
+  protectedHistoryArtifactId: string;
+  objectReference: string;
+  mediaType: string;
+  byteLength: number;
+  contentChecksum: string;
+  verifiedAt: string;
+}
+
 export interface OperatorRegistryImportPreviewRequest {
   sourceKind: string;
   toolName: string;

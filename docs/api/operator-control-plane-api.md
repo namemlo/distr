@@ -241,6 +241,15 @@ does not independently prove Git parent edges. A cryptographic ancestry claim
 requires an authenticated source-host or CI attestation that binds the exact
 repository, baseline commit, candidate commit, and ancestry result.
 
+The plan review UI exposes the existing baseline-adoption and admission
+mutations. It binds plan, Product Release, and target-configuration checksums
+from the immutable plan detail instead of asking the operator to retype them.
+The component observation/provenance array remains explicit because the API
+does not currently expose a complete baseline-adoption request projection.
+Previous-state creation remains available when the current plan is already
+`EXECUTED`; the selected source plan must itself satisfy the server-side
+successful-state and exact-placement guards.
+
 Target-plan validation additively returns `migrationContracts`, ordered in dependency
 order. Each entry freezes exact source/result schema checksums, backup and probe
 requirements, lock/retry/recovery facts, artifact digest, and component/database
@@ -519,6 +528,12 @@ row; changed request material or object bytes returns `409 Conflict`. The
 dedicated `PROTECTED_HISTORY_OBJECT_STORE_ENABLED` and
 `PROTECTED_HISTORY_S3_*` configuration never falls back to registry or
 target-config storage.
+
+The audit UI can create a scoped retained artifact, open it by retained ID,
+and request readback verification. A distinct reviewer user-account ID remains
+mandatory. The API does not currently provide artifact listing or reviewer
+directory discovery, so operators must retain the returned artifact ID and
+obtain the reviewer ID through their existing identity-administration process.
 
 ### Sample retirement
 

@@ -4,6 +4,7 @@ import {catchError, forkJoin, map, Observable, of, switchMap, throwError} from '
 import {DeploymentPlan} from '../types/deployment-plan';
 import {ExperimentalFeatureFlag} from '../types/feature-flags';
 import {
+  OperatorAdmissionEvaluation,
   OperatorApprovalDecision,
   OperatorApprovalDecisionRequest,
   OperatorApprovalFilters,
@@ -14,6 +15,8 @@ import {
   OperatorAuditExportStatus,
   OperatorAuditFilters,
   OperatorAuditRow,
+  OperatorBaselineAdoption,
+  OperatorBaselineAdoptionRequest,
   OperatorCampaignControlAction,
   OperatorCampaignControlRequest,
   OperatorCampaignControlResult,
@@ -61,6 +64,9 @@ import {
   OperatorPreviousStatePlanRequest,
   OperatorProductRelease,
   OperatorProductReleaseValidation,
+  OperatorProtectedHistoryArtifact,
+  OperatorProtectedHistoryArtifactRequest,
+  OperatorProtectedHistoryArtifactVerification,
   OperatorPublishPlanDraftRequest,
   OperatorReconciliationDecisionRequest,
   OperatorReconciliationDetailResponse,
@@ -426,6 +432,46 @@ export class OperatorControlPlaneService {
 
   createPreviousStatePlan(planId: string, request: OperatorPreviousStatePlanRequest): Observable<DeploymentPlan> {
     return this.post<DeploymentPlan>(`/api/v1/deployment-plans/${pathId(planId)}/previous-state`, request);
+  }
+
+  createBaselineAdoption(
+    planId: string,
+    request: OperatorBaselineAdoptionRequest,
+    idempotencyKey = this.newActionKey()
+  ): Observable<OperatorBaselineAdoption> {
+    return this.post<OperatorBaselineAdoption>(`/api/v1/deployment-plans/${pathId(planId)}/baseline-adoptions`, {
+      ...request,
+      idempotencyKey,
+    });
+  }
+
+  admitDeploymentPlan(
+    planId: string,
+    schedulerIdempotencyKey = this.newActionKey()
+  ): Observable<OperatorAdmissionEvaluation> {
+    return this.post<OperatorAdmissionEvaluation>(`/api/v1/deployment-plans/${pathId(planId)}/admission`, {
+      schedulerIdempotencyKey,
+    });
+  }
+
+  createProtectedHistoryArtifact(
+    request: OperatorProtectedHistoryArtifactRequest,
+    idempotencyKey = this.newActionKey()
+  ): Observable<OperatorProtectedHistoryArtifact> {
+    return this.post<OperatorProtectedHistoryArtifact>('/api/v1/protected-history-artifacts', {
+      ...request,
+      idempotencyKey,
+    });
+  }
+
+  getProtectedHistoryArtifact(artifactId: string): Observable<OperatorProtectedHistoryArtifact> {
+    return this.get<OperatorProtectedHistoryArtifact>(`/api/v1/protected-history-artifacts/${pathId(artifactId)}`);
+  }
+
+  verifyProtectedHistoryArtifact(artifactId: string): Observable<OperatorProtectedHistoryArtifactVerification> {
+    return this.get<OperatorProtectedHistoryArtifactVerification>(
+      `/api/v1/protected-history-artifacts/${pathId(artifactId)}/verification`
+    );
   }
 
   listControlPlaneAuditEvents(

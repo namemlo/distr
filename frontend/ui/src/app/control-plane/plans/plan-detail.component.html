@@ -67,7 +67,7 @@
           This plan review is partial. Do not approve or publish until every required checksum is available.
         </div>
       }
-      @if (!actionsEnabled()) {
+      @if (!hasEnabledPlanAction()) {
         <div role="status" class="mt-4 rounded-lg border border-gray-300 bg-gray-100 p-4 text-gray-800">
           Actions are disabled for this plan state.
         </div>
@@ -425,6 +425,77 @@
         }
 
         <div class="mt-4 grid gap-5 xl:grid-cols-3">
+          <section class="rounded border p-4" aria-labelledby="admission-action-heading">
+            <h3 id="admission-action-heading" class="font-semibold">Evaluate admission</h3>
+            <p class="mt-1 text-xs text-gray-500">
+              Re-evaluates current approvals, policies, observations, schema evidence, freezes, and maintenance windows.
+            </p>
+            <button
+              type="button"
+              (click)="evaluateAdmission()"
+              [disabled]="!admissionEnabled()"
+              class="distr-btn-primary mt-3 px-3 py-2">
+              {{ actionLoading() === 'admission' ? 'Evaluating...' : 'Evaluate admission' }}
+            </button>
+            @if (admissionEvaluation(); as admission) {
+              <dl class="mt-3 grid gap-2 text-sm" data-testid="admission-result">
+                <div>
+                  <dt class="text-gray-500">Decision</dt>
+                  <dd class="font-semibold">{{ admission.decision }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Reasons</dt>
+                  <dd>{{ admission.reasonCodes.join(', ') || 'None' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Decision checksum</dt>
+                  <dd class="break-all font-mono text-xs">{{ admission.decisionChecksum }}</dd>
+                </div>
+              </dl>
+            }
+          </section>
+
+          <form [formGroup]="baselineAdoptionForm" class="rounded border p-4 xl:col-span-2">
+            <h3 class="font-semibold">Adopt observed baseline</h3>
+            <p class="mt-1 text-xs text-gray-500">
+              Use only for an existing healthy runtime. Plan, release, and target configuration checksums are taken from
+              this immutable review.
+            </p>
+            <label class="mt-3 block text-sm"
+              >Reason<textarea formControlName="reason" rows="2" class="distr-input mt-1 w-full"></textarea>
+            </label>
+            <label class="mt-3 block text-sm">
+              Component observation and provenance evidence (JSON array)
+              <textarea
+                formControlName="components"
+                rows="10"
+                class="distr-input mt-1 w-full font-mono text-xs"></textarea>
+            </label>
+            <p class="mt-2 text-xs text-gray-500">
+              Each component requires instance/release IDs, release checksum, source commit, build and provenance
+              evidence, immutable artifact digest, platform, config/schema/capability/topology checksums, and observer
+              observation IDs plus evidence/state/runtime checksums.
+            </p>
+            <button
+              type="button"
+              (click)="adoptBaseline()"
+              [disabled]="baselineAdoptionForm.invalid || !baselineAdoptionEnabled()"
+              class="distr-btn-primary mt-3 px-3 py-2">
+              {{ actionLoading() === 'baseline-adoption' ? 'Adopting...' : 'Adopt baseline' }}
+            </button>
+            @if (baselineAdoption(); as adoption) {
+              <div role="status" class="mt-3 rounded bg-gray-100 p-3 text-sm" data-testid="baseline-adoption-result">
+                <p class="font-semibold">{{ adoption.status }} · {{ adoption.components.length }} component(s)</p>
+                <p>No deployment performed: {{ adoption.deploymentPerformed ? 'No' : 'Yes' }}</p>
+                <p>
+                  Tasks {{ adoption.taskCount }} · locks {{ adoption.lockCount }} · executions
+                  {{ adoption.executionCount }}
+                </p>
+                <p class="mt-1 break-all font-mono text-xs">{{ adoption.outcomeChecksum }}</p>
+              </div>
+            }
+          </form>
+
           <form [formGroup]="draftForm" class="rounded border p-4">
             <h3 class="font-semibold">Draft validation and publish</h3>
             <label class="mt-3 block text-sm"
@@ -493,7 +564,7 @@
             <button
               type="button"
               (click)="createPreviousState()"
-              [disabled]="previousStateForm.invalid || !actionsEnabled() || actionLoading()"
+              [disabled]="previousStateForm.invalid || !previousStateEnabled()"
               class="distr-btn-primary mt-3 px-3 py-2">
               Create previous-state plan
             </button>
