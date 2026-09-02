@@ -15,7 +15,7 @@ AS $$
     || convert_to(value, 'UTF8');
 $$;
 
-CREATE FUNCTION protected_history_checksum_uuid_set(values UUID[])
+CREATE FUNCTION protected_history_checksum_uuid_set(input_values UUID[])
 RETURNS BYTEA
 LANGUAGE plpgsql
 IMMUTABLE
@@ -23,9 +23,9 @@ STRICT
 AS $$
 DECLARE
   value UUID;
-  payload BYTEA := protected_history_checksum_field(cardinality(values)::TEXT);
+  payload BYTEA := protected_history_checksum_field(cardinality(input_values)::TEXT);
 BEGIN
-  FOREACH value IN ARRAY values LOOP
+  FOREACH value IN ARRAY input_values LOOP
     payload := payload || protected_history_checksum_field(value::TEXT);
   END LOOP;
   RETURN payload;
@@ -65,7 +65,7 @@ LANGUAGE sql
 IMMUTABLE
 STRICT
 AS $$
-  SELECT 'sha256:' || encode(digest(
+  SELECT 'sha256:' || encode(sha256(
     protected_history_checksum_field(
       'distr.protected-history-retention/request/v1'
     )
@@ -75,8 +75,7 @@ AS $$
     || protected_history_checksum_uuid_set(deployment_target_ids)
     || protected_history_checksum_field(issuer_useraccount_id::TEXT)
     || protected_history_checksum_field(reviewer_useraccount_id::TEXT)
-    || protected_history_checksum_field(idempotency_key),
-    'sha256'
+    || protected_history_checksum_field(idempotency_key)
   ), 'hex');
 $$;
 
@@ -103,7 +102,7 @@ LANGUAGE sql
 STABLE
 STRICT
 AS $$
-  SELECT 'sha256:' || encode(digest(
+  SELECT 'sha256:' || encode(sha256(
     protected_history_checksum_field(
       'distr.protected-history-retention/material/v1'
     )
@@ -125,8 +124,7 @@ AS $$
       protected_history_rfc3339_microseconds(captured_at)
     )
     || protected_history_checksum_field(issuer_useraccount_id::TEXT)
-    || protected_history_checksum_field(reviewer_useraccount_id::TEXT),
-    'sha256'
+    || protected_history_checksum_field(reviewer_useraccount_id::TEXT)
   ), 'hex');
 $$;
 
@@ -141,15 +139,14 @@ LANGUAGE sql
 IMMUTABLE
 STRICT
 AS $$
-  SELECT 'sha256:' || encode(digest(
+  SELECT 'sha256:' || encode(sha256(
     protected_history_checksum_field(
       'distr.protected-history-retention/audit-binding/v1'
     )
     || protected_history_checksum_field(id::TEXT)
     || protected_history_checksum_field(retention_checksum)
     || protected_history_checksum_field(audit_event_id::TEXT)
-    || protected_history_checksum_field(audit_event_sequence::TEXT),
-    'sha256'
+    || protected_history_checksum_field(audit_event_sequence::TEXT)
   ), 'hex');
 $$;
 
@@ -281,7 +278,7 @@ CREATE TABLE ProtectedHistoryArtifact (
   CONSTRAINT protectedhistoryartifact_capture_time_check CHECK (
     captured_at <= created_at
   ),
-  CONSTRAINT protectedhistoryartifact_request_checksum_check CHECK (
+  CONSTRAINT protectedhistoryartifact_request_checksum_matches CHECK (
     request_checksum = protected_history_request_checksum(
       organization_id,
       customer_organization_ids,
@@ -291,7 +288,7 @@ CREATE TABLE ProtectedHistoryArtifact (
       idempotency_key
     )
   ),
-  CONSTRAINT protectedhistoryartifact_retention_checksum_check CHECK (
+  CONSTRAINT protectedhistoryartifact_retention_checksum_matches CHECK (
     retention_checksum = protected_history_retention_checksum(
       id,
       organization_id,
@@ -311,7 +308,7 @@ CREATE TABLE ProtectedHistoryArtifact (
       reviewer_useraccount_id
     )
   ),
-  CONSTRAINT protectedhistoryartifact_audit_binding_checksum_check CHECK (
+  CONSTRAINT protectedhistoryartifact_audit_binding_checksum_matches CHECK (
     audit_binding_checksum = protected_history_audit_binding_checksum(
       id,
       retention_checksum,

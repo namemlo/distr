@@ -48,6 +48,131 @@ SELECT
 	g.Expect(auditColumnExists).To(BeFalse())
 }
 
+func TestMigration170UpOnPostgreSQL18(t *testing.T) {
+	g := NewWithT(t)
+	database := newMigrationTestDatabase(t)
+	ctx := context.Background()
+	var serverVersion int
+	g.Expect(database.pool.QueryRow(
+		ctx,
+		"SELECT current_setting('server_version_num')::INTEGER",
+	).Scan(&serverVersion)).To(Succeed())
+	if serverVersion < 180000 || serverVersion >= 190000 {
+		t.Skipf("requires PostgreSQL 18, found server_version_num=%d", serverVersion)
+	}
+
+	database.migrateTo(t, 169)
+	var pgcryptoInstalledBefore bool
+	g.Expect(database.pool.QueryRow(ctx, `
+SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto')
+`).Scan(&pgcryptoInstalledBefore)).To(Succeed())
+
+	organizationID := uuid.New()
+	auditEventID := uuid.New()
+	actorID := uuid.New()
+	deploymentPlanID := uuid.New()
+	createdAt := time.Date(2026, time.September, 1, 1, 2, 3, 456789000, time.UTC)
+	payload := `{"deploymentPlanId":"` + deploymentPlanID.String() +
+		`","result":"preserved"}`
+	_, err := database.pool.Exec(ctx, `
+INSERT INTO Organization (id, name) VALUES ($1, $2)
+`, organizationID, "Migration 170 preservation "+uuid.NewString())
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(ctx, `
+INSERT INTO ControlPlaneAuditEvent (
+  id, organization_id, sequence, event_type, actor_id, outcome,
+  deployment_plan_id, deployment_plan_checksum, artifact_digest,
+  payload, payload_redacted, payload_truncated, created_at
+) VALUES (
+  $2, $1, 7, 'deployment.completed', $3, 'SUCCEEDED',
+  $4, 'sha256:' || repeat('1', 64), 'sha256:' || repeat('2', 64),
+  $5::JSONB, true, false, $6
+)
+`,
+		organizationID,
+		auditEventID,
+		actorID,
+		deploymentPlanID,
+		payload,
+		createdAt,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	type auditEvidence struct {
+		ID                     uuid.UUID
+		OrganizationID         uuid.UUID
+		Sequence               int64
+		EventType              string
+		ActorID                uuid.UUID
+		Outcome                string
+		DeploymentPlanID       uuid.UUID
+		DeploymentPlanChecksum string
+		ArtifactDigest         string
+		Payload                string
+		PayloadRedacted        bool
+		PayloadTruncated       bool
+		CreatedAt              time.Time
+	}
+	readAuditEvidence := func() auditEvidence {
+		var evidence auditEvidence
+		g.Expect(database.pool.QueryRow(ctx, `
+SELECT id, organization_id, sequence, event_type, actor_id, outcome,
+       deployment_plan_id, deployment_plan_checksum, artifact_digest,
+       payload::TEXT, payload_redacted, payload_truncated, created_at
+FROM ControlPlaneAuditEvent
+WHERE id = $1
+`, auditEventID).Scan(
+			&evidence.ID,
+			&evidence.OrganizationID,
+			&evidence.Sequence,
+			&evidence.EventType,
+			&evidence.ActorID,
+			&evidence.Outcome,
+			&evidence.DeploymentPlanID,
+			&evidence.DeploymentPlanChecksum,
+			&evidence.ArtifactDigest,
+			&evidence.Payload,
+			&evidence.PayloadRedacted,
+			&evidence.PayloadTruncated,
+			&evidence.CreatedAt,
+		)).To(Succeed())
+		return evidence
+	}
+
+	before := readAuditEvidence()
+	var beforeCount int
+	g.Expect(database.pool.QueryRow(ctx, `
+SELECT count(*) FROM ControlPlaneAuditEvent
+`).Scan(&beforeCount)).To(Succeed())
+
+	database.migrateTo(t, 170)
+
+	after := readAuditEvidence()
+	var afterCount int
+	g.Expect(database.pool.QueryRow(ctx, `
+SELECT count(*) FROM ControlPlaneAuditEvent
+`).Scan(&afterCount)).To(Succeed())
+	g.Expect(afterCount).To(Equal(beforeCount))
+	g.Expect(after).To(Equal(before))
+
+	var protectedHistoryArtifactID *uuid.UUID
+	g.Expect(database.pool.QueryRow(ctx, `
+SELECT protected_history_artifact_id
+FROM ControlPlaneAuditEvent
+WHERE id = $1
+`, auditEventID).Scan(&protectedHistoryArtifactID)).To(Succeed())
+	g.Expect(protectedHistoryArtifactID).To(BeNil())
+
+	var pgcryptoInstalledAfter, sha256Available bool
+	g.Expect(database.pool.QueryRow(ctx, `
+SELECT
+  EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto'),
+  to_regprocedure('sha256(bytea)') IS NOT NULL
+`).Scan(&pgcryptoInstalledAfter, &sha256Available)).To(Succeed())
+	g.Expect(pgcryptoInstalledAfter).To(Equal(pgcryptoInstalledBefore))
+	g.Expect(sha256Available).To(BeTrue())
+}
+
 func TestMigration170RetainedRowsAreAppendOnlyAndRefuseDown(t *testing.T) {
 	g := NewWithT(t)
 	database := newMigrationTestDatabase(t)
@@ -57,7 +182,7 @@ func TestMigration170RetainedRowsAreAppendOnlyAndRefuseDown(t *testing.T) {
 	for name, statement := range map[string]string{
 		"update":   `UPDATE ProtectedHistoryArtifact SET media_type = media_type WHERE id = $1`,
 		"delete":   `DELETE FROM ProtectedHistoryArtifact WHERE id = $1`,
-		"truncate": `TRUNCATE ProtectedHistoryArtifact`,
+		"truncate": `TRUNCATE ProtectedHistoryArtifact CASCADE`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			args := []any{retained.ID}
@@ -96,21 +221,30 @@ func insertMigration170ProtectedHistoryFixture(
 	reviewerID := uuid.New()
 	customerID := uuid.New()
 	_, err := database.pool.Exec(ctx, `
-INSERT INTO Organization (id, name) VALUES ($1, $2);
-INSERT INTO UserAccount (id, email) VALUES ($3, $4), ($5, $6);
-INSERT INTO Organization_UserAccount (
-  organization_id, user_account_id, user_role
-) VALUES ($1, $3, 'admin'), ($1, $5, 'admin');
-INSERT INTO CustomerOrganization (id, organization_id, name)
-VALUES ($7, $1, $8);
+INSERT INTO Organization (id, name) VALUES ($1, $2)
+`, organizationID, "Protected History "+uuid.NewString())
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(ctx, `
+INSERT INTO UserAccount (id, email) VALUES ($1, $2), ($3, $4)
 `,
-		organizationID,
-		"Protected History "+uuid.NewString(),
 		issuerID,
 		"issuer-"+uuid.NewString()+"@example.com",
 		reviewerID,
 		"reviewer-"+uuid.NewString()+"@example.com",
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(ctx, `
+INSERT INTO Organization_UserAccount (
+  organization_id, user_account_id, user_role
+) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')
+`, organizationID, issuerID, reviewerID)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(ctx, `
+INSERT INTO CustomerOrganization (id, organization_id, name)
+VALUES ($1, $2, $3)
+`,
 		customerID,
+		organizationID,
 		"Customer "+uuid.NewString(),
 	)
 	g.Expect(err).NotTo(HaveOccurred())
