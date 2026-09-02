@@ -2,7 +2,7 @@
   "schema": "distr.adopter-term-baseline/v1",
   "profile": "emlo-fork",
   "repository": "namemlo/distr",
-  "sourceCommit": "1be4a850e09ac6e7587708d090a111b82868c46a",
+  "sourceCommit": "ce5220921379182847272692dcf56cb8b7ec38c8",
   "findings": [
     {
       "file": "api/execution_v2_test.go",
@@ -90,19 +90,37 @@
     },
     {
       "file": "deploy/jenkins/publish-hub-image.sh",
-      "line": 346,
+      "line": 548,
       "label": "ECR registry term",
       "sourceSha256": "1245393dfa0bd2364acca5065c43c9281b6e76bf6f04f5378263e575b6375b89"
     },
     {
       "file": "deploy/jenkins/publish-hub-image.sh",
-      "line": 354,
+      "line": 556,
       "label": "ECR registry term",
       "sourceSha256": "a0d7d2d311d9dc10f05cc67e55549e3d95b573e4c4f7d929a629ebe77a636663"
     },
     {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 679,
+      "label": "ECR registry term",
+      "sourceSha256": "fd59f222408eb9ee1135cac07d6ab03f13b3a59822981585ed0df47c5de31efd"
+    },
+    {
+      "file": "deploy/jenkins/publish-hub-image.sh",
+      "line": 793,
+      "label": "ECR registry term",
+      "sourceSha256": "598d648d0555e7ad078d5bed695130e9b59ff58116a112be277092412a2f3155"
+    },
+    {
       "file": "deploy/server-docker-compose/deploy.sh",
-      "line": 4963,
+      "line": 441,
+      "label": "ECR registry term",
+      "sourceSha256": "949512e4bb9247e5e180d482fa751875c3cf52169b64dfa3c90e7a0b7c9796e9"
+    },
+    {
+      "file": "deploy/server-docker-compose/deploy.sh",
+      "line": 5381,
       "label": "ECR registry term",
       "sourceSha256": "9e52f6b8e79d71f61cea47c3ab38697cb6ce2f517d79981cfaaed650ddc75aa1"
     },
@@ -4295,6 +4313,48 @@
       "sourceSha256": "3aeb8c73f94d504cd2ff7f4b854e62c1d36f513671648490cfbdd5a1ba842ac8"
     },
     {
+      "file": "hack/pr050-govulncheck.test.mjs",
+      "line": 461,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "dc8fb0b4e6e59b35ce293f1b5905fd57520881ed1b88783c4969179c48ec3a60"
+    },
+    {
+      "file": "hack/pr050-govulncheck.test.mjs",
+      "line": 462,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "355de81ce4ffbab6d4ee45c9f2d6e155c3f5561dec5ebad9267cefd17fa2e042"
+    },
+    {
+      "file": "hack/pr050-govulncheck.test.mjs",
+      "line": 541,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "2c19a17120907420684b09b89d54e13d083ebddd5d4531db396c296399ab589c"
+    },
+    {
+      "file": "hack/pr050-validate-release-hardening.mjs",
+      "line": 551,
+      "label": "ECR registry term",
+      "sourceSha256": "8be13e1fb75eca60b61f7e136b4ffa9369e4226091437e210ec4d1bd1663b334"
+    },
+    {
+      "file": "hack/pr050-validate-release-hardening.mjs",
+      "line": 619,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "6ee51a08951349d557905d182fe874d7ca51bac9898b4b2710c4c1f1c5a39d06"
+    },
+    {
+      "file": "hack/pr050-validate-release-hardening.mjs",
+      "line": 622,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "659fce2e9ac42e47cbf7ec70c89b3cb96b1af1f0084c03e9bb52eb400e9213e2"
+    },
+    {
+      "file": "hack/pr050-validate-release-hardening.mjs",
+      "line": 762,
+      "label": "Jenkins implementation term",
+      "sourceSha256": "3ee4b0c015d96223a0a174008c1b924573805d75ea96e855adff399c28dd42e2"
+    },
+    {
       "file": "hack/test-jenkins-hub-image.sh",
       "line": 6,
       "label": "Jenkins implementation term",
@@ -4314,85 +4374,85 @@
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 51,
+      "line": 53,
       "label": "ECR registry term",
       "sourceSha256": "92cf3b794be5491924feba673b53952c90d7785a7b185dce8611f412fecf7726"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 67,
+      "line": 69,
       "label": "Jenkins implementation term",
       "sourceSha256": "0dba6d4e20b29f249f08e6e221cef863bbcb330ba4a4d7a149d2e1e165599c64"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 72,
+      "line": 74,
       "label": "Jenkins implementation term",
       "sourceSha256": "c79bc8ea16fcbcb564131fda27f8dd348744b5d2b226e78b80576ce5269c942f"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 74,
+      "line": 76,
       "label": "Jenkins implementation term",
       "sourceSha256": "bbf6fb568e795e02b9e546efbab8476479d60c43116ad69ccc34d45581e15172"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 134,
+      "line": 188,
       "label": "ECR registry term",
       "sourceSha256": "eea86ba1a1875d83b9c766a3bdbce7c1cad4d0b96be149a574a9d5291b77a042"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 138,
+      "line": 192,
       "label": "ECR registry term",
       "sourceSha256": "63d6f456d6214a357d098090f4add3e0ecab6028e0743aa298845e64cab3aa88"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 251,
+      "line": 308,
       "label": "Jenkins implementation term",
       "sourceSha256": "010fcd8a2d1d7b849cf8d2135b58586a43f27a18900fba1488128b37c0e2d70c"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 265,
+      "line": 322,
       "label": "Jenkins implementation term",
       "sourceSha256": "72df7f4ce5aaf6d68c71c5438261e1eb0c952f787b5fd6f8ff60329ba1740e23"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 616,
+      "line": 694,
       "label": "Jenkins implementation term",
       "sourceSha256": "5463e98d9d151055f6a5aff75dc58b13c47a59ff3fa2614d8e8f0d37e63da699"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 642,
+      "line": 720,
       "label": "Jenkins implementation term",
       "sourceSha256": "b45373bf3487727c8c93fb777c04f650032c8386ac6d171a6aa2bf9d3942aadf"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 643,
+      "line": 721,
       "label": "Jenkins implementation term",
       "sourceSha256": "b1992cd3f823d5b3a2042edd07e299fd857446ec97dc21475a5094b67d6a27b4"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 644,
+      "line": 722,
       "label": "EMLO adopter name",
       "sourceSha256": "0a36547648ad8b94627948e9cfaa2d636fa1fe7ca0d0ae4e258315b15c0b18f5"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 644,
+      "line": 722,
       "label": "Jenkins implementation term",
       "sourceSha256": "0a36547648ad8b94627948e9cfaa2d636fa1fe7ca0d0ae4e258315b15c0b18f5"
     },
     {
       "file": "hack/test-jenkins-hub-image.sh",
-      "line": 654,
+      "line": 732,
       "label": "Jenkins implementation term",
       "sourceSha256": "466d61f22b7949773cae70281065b1fce922520c766c731843f0fda6ca1855f0"
     },
