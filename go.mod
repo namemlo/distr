@@ -92,9 +92,7 @@ require (
 	github.com/google/go-containerregistry v0.20.7 // indirect
 	github.com/jedisct1/go-minisign v0.0.0-20211028175153-1c139d1cc84b // indirect
 	github.com/letsencrypt/boulder v0.20251110.0 // indirect
-	github.com/miekg/dns v1.1.61 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
-	github.com/redis/go-redis/extra/redisotel/v9 v9.5.3 // indirect
 	github.com/sassoftware/relic v7.2.1+incompatible // indirect
 	github.com/sigstore/rekor v1.5.0 // indirect
 	github.com/sigstore/rekor-tiles/v2 v2.0.1 // indirect
