@@ -2284,3 +2284,27 @@ Use one entry per pull request:
 - Compatibility notes: Artifact serialization now satisfies the protected-
   history object-payload contract across every registered schema projection.
   Existing database state is not rewritten.
+
+### Post-PR-098 - PostgreSQL 18 restore-stable timestamp catalog validation
+
+- Status: Implemented with focused catalog regression coverage after the
+  verified release-backup gate reproduced the PostgreSQL 18 dump/restore form.
+- Upstream base: `f07755b7` protected-history promotion checkpoint.
+- Feature flags: None; this corrects the existing migration evidence validator.
+- User-facing behavior: A verified PostgreSQL 18 restore is accepted when the
+  tombstone allowlist retains identical semantics and PostgreSQL only flattens
+  redundant `OR` parentheses in its generated constraint definition.
+- Database changes: None.
+- API changes: None.
+- UI changes: None.
+- Agent protocol changes: None.
+- Documentation: Records the dump/restore compatibility fix; no ADR is required
+  because the timestamp safety contract remains unchanged.
+- Tests: Adds an isolated schema-138 regression using the exact normalized
+  PostgreSQL 18 restored allowlist form. Existing weakened-constraint tests
+  continue to fail closed.
+- Upstream contribution notes: Generic PostgreSQL catalog compatibility fix
+  with no adopter, registry, CI, runtime address, or credential assumption.
+- Compatibility notes: Validation accepts only the original and PostgreSQL 18
+  dump/restore-generated exact definitions and counts the matching constraint
+  identity once. Broader or weakened predicates remain rejected.

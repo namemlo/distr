@@ -468,6 +468,37 @@ ALTER TABLE ExternalExecution ALTER COLUMN created_at_instant SET NOT NULL`)
 	g.Expect(err).To(MatchError(ContainSubstring("schema 138 is not expand-compatible")))
 }
 
+func TestInspectExternalExecutionTimestampsAcceptsPostgres18RestoredAllowlist(t *testing.T) {
+	database := newTask4TestDatabase(t, 138, "UTC")
+	g := NewWithT(t)
+	_, err := database.pool.Exec(context.Background(), `
+ALTER TABLE ExternalExecutionTimestampDeletionTombstone
+DROP CONSTRAINT externalexecutiontimestampdeletiontombstone_allowlist;
+ALTER TABLE ExternalExecutionTimestampDeletionTombstone
+ADD CONSTRAINT externalexecutiontimestampdeletiontombstone_allowlist CHECK (
+  (
+    source_table = 'externalexecution'
+    AND (
+      (source_column = 'created_at' AND column_ordinal = 1)
+      OR (source_column = 'updated_at' AND column_ordinal = 2)
+      OR (source_column = 'started_at' AND column_ordinal = 3)
+      OR (source_column = 'completed_at' AND column_ordinal = 4)
+      OR (source_column = 'callback_deadline_at' AND column_ordinal = 5)
+    )
+  )
+  OR (
+    source_table = 'externalexecutionevent'
+    AND source_column = 'created_at'
+    AND column_ordinal = 6
+  )
+)`)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	manifest, err := db.InspectExternalExecutionTimestamps(database.ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(manifest.SourceSchemaVersion).To(Equal(uint(137)))
+}
+
 func TestInspectExternalExecutionTimestampsRequiresOrdinary138Tables(t *testing.T) {
 	t.Run("view", func(t *testing.T) {
 		database := newTask4TestDatabase(t, 138, "UTC")

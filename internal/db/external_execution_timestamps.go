@@ -701,6 +701,17 @@ WITH required_legacy(table_name, column_name, nullable) AS (
       '((source_column = ''callback_deadline_at''::text) AND (column_ordinal = 5)))) OR ' ||
       '((source_table = ''externalexecutionevent''::text) AND ' ||
       '(source_column = ''created_at''::text) AND (column_ordinal = 6))))'),
+    -- PostgreSQL 18 pg_dump flattens the equivalent OR chain on restore.
+    ('externalexecutiontimestampdeletiontombstone',
+      'externalexecutiontimestampdeletiontombstone_allowlist', 'c',
+      'CHECK ((((source_table = ''externalexecution''::text) AND ' ||
+      '(((source_column = ''created_at''::text) AND (column_ordinal = 1)) OR ' ||
+      '((source_column = ''updated_at''::text) AND (column_ordinal = 2)) OR ' ||
+      '((source_column = ''started_at''::text) AND (column_ordinal = 3)) OR ' ||
+      '((source_column = ''completed_at''::text) AND (column_ordinal = 4)) OR ' ||
+      '((source_column = ''callback_deadline_at''::text) AND (column_ordinal = 5)))) OR ' ||
+      '((source_table = ''externalexecutionevent''::text) AND ' ||
+      '(source_column = ''created_at''::text) AND (column_ordinal = 6))))'),
     ('externalexecutiontimestampexpandstate',
       'externalexecutiontimestampexpandstate_pkey', 'p',
       'PRIMARY KEY (singleton)'),
@@ -769,7 +780,7 @@ SELECT
     AND column_row.column_name = required.column_name
     AND column_row.data_type = required.data_type
     AND (column_row.is_nullable = 'YES') = required.nullable),
-  (SELECT count(*) FROM required_expand_constraint required
+  (SELECT count(DISTINCT constraint_row.oid) FROM required_expand_constraint required
    JOIN pg_class relation ON relation.relname = required.table_name
     AND relation.relkind = 'r'
    JOIN pg_namespace namespace_row ON namespace_row.oid = relation.relnamespace
