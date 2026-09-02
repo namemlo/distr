@@ -228,14 +228,401 @@ export function validateReleaseEvidenceWorkflow(workflowText) {
   }
 }
 
-export function validatePublicationPipeline(publicationPipeline) {
+function parseTomlString(value, context) {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  if ((quote !== '"' && quote !== "'") || trimmed.at(-1) !== quote) {
+    fail(`${context} must be a literal TOML string`);
+  }
+  const inner = trimmed.slice(1, -1);
+  if (quote === "'") {
+    if (inner.includes("'")) fail(`${context} contains an invalid literal string`);
+    return inner;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    fail(`${context} contains an invalid basic string`);
+  }
+}
+
+function parseTomlStringList(value, context) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('[')) return [parseTomlString(trimmed, context)];
+  if (!trimmed.endsWith(']')) fail(`${context} must be a one-line string array`);
+  const body = trimmed.slice(1, -1).trim();
+  if (body === '') return [];
+  const values = [];
+  let start = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index <= body.length; index += 1) {
+    const character = body[index];
+    if (quote === '"' && character === '\\' && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if ((character === '"' || character === "'") && !escaped) {
+      if (quote === '') quote = character;
+      else if (quote === character) quote = '';
+    }
+    escaped = false;
+    if ((character === ',' && quote === '') || index === body.length) {
+      const item = body.slice(start, index).trim();
+      if (item === '') fail(`${context} contains an empty dependency`);
+      values.push(parseTomlString(item, context));
+      start = index + 1;
+    }
+  }
+  if (quote !== '') fail(`${context} contains an unterminated string`);
+  return values;
+}
+
+function stripTomlComment(line) {
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quote === '"' && character === '\\' && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if ((character === '"' || character === "'") && !escaped) {
+      if (quote === '') quote = character;
+      else if (quote === character) quote = '';
+    } else if (character === '#' && quote === '') {
+      return line.slice(0, index);
+    }
+    escaped = false;
+  }
+  return line;
+}
+
+export function parseMiseTasks(miseText) {
+  const tasks = new Map();
+  let currentTask;
+  for (const rawLine of miseText.replace(/\r\n/gu, '\n').split('\n')) {
+    const line = stripTomlComment(rawLine).trim();
+    if (line === '') continue;
+    const section = line.match(/^\[tasks\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$/u);
+    if (section) {
+      const name = section[1] ?? section[2];
+      if (tasks.has(name)) fail(`mise task ${name} is defined more than once`);
+      currentTask = {depends: [], name, properties: new Set(), run: undefined};
+      tasks.set(name, currentTask);
+      continue;
+    }
+    if (line.startsWith('[')) {
+      currentTask = undefined;
+      continue;
+    }
+    if (!currentTask) continue;
+    const property = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/u);
+    if (!property) fail(`mise task ${currentTask.name} contains an unsupported multiline property`);
+    const [, key, value] = property;
+    if (currentTask.properties.has(key)) fail(`mise task ${currentTask.name} repeats property ${key}`);
+    currentTask.properties.add(key);
+    if (key === 'run') {
+      const trimmed = value.trim();
+      currentTask.run = trimmed.startsWith('[')
+        ? parseTomlStringList(trimmed, `mise task ${currentTask.name} run`)
+        : trimmed.startsWith('"') || trimmed.startsWith("'")
+          ? parseTomlString(trimmed, `mise task ${currentTask.name} run`)
+          : trimmed;
+    } else if (key === 'depends') {
+      currentTask.depends = parseTomlStringList(value, `mise task ${currentTask.name} depends`);
+    }
+  }
+  return tasks;
+}
+
+export function validateMiseReleaseTasks(miseText) {
+  const tasks = parseMiseTasks(miseText);
+  const tidyCheck = tasks.get('go-tidy-check');
+  if (!tidyCheck || tidyCheck.run !== 'go mod tidy -diff') {
+    fail('mise go-tidy-check must run exactly go mod tidy -diff');
+  }
+  if (tidyCheck.depends.length !== 0) {
+    fail('mise go-tidy-check must not delegate to another task');
+  }
+
+  const releaseTasks = [
+    'build:hub:community',
+    'build:hub:enterprise',
+    'build:agent:docker',
+    'build:agent:kubernetes',
+    'lint:go',
+    'test:go',
+  ];
+  for (const releaseTask of releaseTasks) {
+    if (!tasks.has(releaseTask)) fail(`mise release task is missing: ${releaseTask}`);
+    const reachable = new Set();
+    const visiting = new Set();
+    const visit = (taskName) => {
+      if (visiting.has(taskName)) fail(`mise task dependency cycle reaches ${taskName}`);
+      if (reachable.has(taskName)) return;
+      const task = tasks.get(taskName);
+      if (!task) fail(`mise task ${releaseTask} depends on missing task ${taskName}`);
+      visiting.add(taskName);
+      for (const dependency of task.depends) visit(dependency);
+      visiting.delete(taskName);
+      reachable.add(taskName);
+    };
+    visit(releaseTask);
+    if (!reachable.has('go-tidy-check')) {
+      fail(`${releaseTask} must transitively use the non-mutating go-tidy-check release gate`);
+    }
+    for (const taskName of reachable) {
+      const task = tasks.get(taskName);
+      const commands = Array.isArray(task?.run) ? task.run : [task?.run];
+      if (commands.some((command) => typeof command === 'string' && /\bmise\s+run\b/u.test(command))) {
+        fail(`${releaseTask} must declare task delegation through depends, not mise run`);
+      }
+      const runsMutatingTidy = commands.some(
+        (command) => typeof command === 'string' && command.includes('go mod tidy') && command !== 'go mod tidy -diff'
+      );
+      if (taskName === 'go-tidy' || runsMutatingTidy) {
+        fail(`${releaseTask} must not transitively reach mutating go mod tidy`);
+      }
+    }
+  }
+}
+
+function shellFunctionBody(script, name) {
+  const normalized = script.replace(/\r\n/gu, '\n');
+  const signatures = [...normalized.matchAll(new RegExp(`^${name}\\(\\)\\s*(?:\\{|\\()\\s*$`, 'gmu'))];
+  if (signatures.length !== 1) fail(`release shell must define ${name} exactly once`);
+  const start = signatures[0].index + signatures[0][0].length;
+  const remainder = normalized.slice(start);
+  const nextFunction = remainder.search(/^[A-Za-z_][A-Za-z0-9_]*\(\)\s*(?:\{|\()\s*$/mu);
+  return remainder.slice(0, nextFunction < 0 ? undefined : nextFunction);
+}
+
+function shellStatements(script, name) {
+  const statements = [];
+  const lines = shellFunctionBody(script, name).split('\n');
+  let heredoc;
+  let continued = '';
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (heredoc) {
+      if (trimmed === heredoc) heredoc = undefined;
+      continue;
+    }
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const line = trimmed.replace(/\s+#.*$/u, '').trim();
+    const heredocMatch = line.match(/<<-?['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/u);
+    const fragment = line.endsWith('\\') ? line.slice(0, -1).trimEnd() : line;
+    continued = continued === '' ? fragment : `${continued} ${fragment}`;
+    if (!line.endsWith('\\')) {
+      statements.push(continued.replace(/\s+/gu, ' ').trim());
+      continued = '';
+    }
+    if (heredocMatch) heredoc = heredocMatch[1];
+  }
+  if (continued !== '') statements.push(continued.replace(/\s+/gu, ' ').trim());
+  return statements;
+}
+
+function shellUnconditionalStatements(script, name) {
+  const statements = shellStatements(script, name);
+  const hidden = [];
+  const stack = [];
+  for (const statement of statements) {
+    if (/^(?:fi|esac|done)(?:\s|;|$)/u.test(statement)) stack.pop();
+    const conditional = stack.some((block) => block !== 'required-scan-loop');
+    if (conditional) hidden.push(statement);
+    if (/^if\b.*(?:;\s*then|\bthen)$/u.test(statement)) stack.push('if');
+    else if (/^(?:while|until)\b.*(?:;\s*do|\bdo)$/u.test(statement)) stack.push('conditional-loop');
+    else if (/^case\b.*\bin$/u.test(statement)) stack.push('case');
+    else if (/^for\b.*(?:;\s*do|\bdo)$/u.test(statement)) {
+      stack.push(statement === 'for raw in "$scan_one" "$scan_two"; do' ? 'required-scan-loop' : 'conditional-loop');
+    }
+  }
+  return statements.filter((statement) => !hidden.includes(statement));
+}
+
+function requireStatement(statements, pattern, message) {
+  const matches = statements.filter((statement) => pattern.test(statement));
+  if (matches.length !== 1) fail(`${message}; found ${matches.length} executable statements`);
+  return statements.indexOf(matches[0]);
+}
+
+function rejectEarlySuccessfulTermination(statements, lastRequiredIndex, message) {
+  if (statements.slice(0, lastRequiredIndex).some((statement) => /^(?:return|exit)(?: 0)?$/u.test(statement))) {
+    fail(message);
+  }
+}
+
+export function validateDeploymentReleaseShell(deployScript) {
+  const clean = shellUnconditionalStatements(deployScript, 'require_source_clean');
+  requireStatement(
+    clean,
+    /^dirty="\$\(git status --porcelain=v1 --untracked-files=all\)" \|\| return$/u,
+    'release source-clean gate must inspect tracked and all untracked files'
+  );
+  if (clean.some((statement) => statement.includes('--untracked-files=no'))) {
+    fail('release source-clean gate must not ignore untracked files');
+  }
+
+  const build = shellUnconditionalStatements(deployScript, 'build_image');
+  const before = requireStatement(
+    build,
+    /^require_source_clean before \|\| return$/u,
+    'build must run the pre-build clean gate'
+  );
+  const buildImage = requireStatement(build, /^docker build /u, 'build must execute exactly one Docker image build');
+  const sbom = requireStatement(
+    build,
+    /^generate_image_sbom "\$image_ref" "\$commit" \|\| return$/u,
+    'build must generate the image SBOM'
+  );
+  const after = requireStatement(
+    build,
+    /^require_source_clean after \|\| return$/u,
+    'build must run the post-build clean gate'
+  );
+  if (!(before < buildImage && buildImage < sbom && sbom < after)) {
+    fail('release clean gates and image SBOM generation are not in fail-closed build order');
+  }
+  rejectEarlySuccessfulTermination(build, after, 'build must not terminate successfully before release gates finish');
+
+  const identity = shellUnconditionalStatements(deployScript, 'resolve_local_image_identity');
+  requireStatement(
+    identity,
+    /^raw="\$\(docker image inspect --format '\{\{\.Id\}\}\|\{\{\.Os\}\}\/\{\{\.Architecture\}\}' "\$image_ref"\)" \|\| \{$/u,
+    'local image identity must come from an exact Docker ID and platform inspection'
+  );
+
+  const imageSbom = shellUnconditionalStatements(deployScript, 'generate_image_sbom');
+  requireStatement(
+    imageSbom,
+    /^syft_version="\$\(mise exec -- syft version -o json\)" \|\| return$/u,
+    'image SBOM must verify the mise-pinned Syft executable'
+  );
+  const scan = requireStatement(
+    imageSbom,
+    /^mise exec -- syft "docker:\$\{image_id\}" --source-name "\$DISTR_IMAGE" --source-version "\$DISTR_IMAGE_TAG" --platform "\$platform" -o "spdx-json=\$\{raw\}" \|\| \{$/u,
+    'image SBOM must scan the immutable local image ID with release identity arguments'
+  );
+  const firstIdentity = requireStatement(
+    imageSbom,
+    /^identity="\$\(resolve_local_image_identity "\$image_ref"\)" \|\| return$/u,
+    'image SBOM must bind the release tag before scanning'
+  );
+  const currentIdentity = requireStatement(
+    imageSbom,
+    /^current_identity="\$\(resolve_local_image_identity "\$image_ref"\)" \|\| return$/u,
+    'image SBOM must recheck the release tag after each scan'
+  );
+  requireStatement(
+    imageSbom,
+    /^\[\[ "\$current_identity" == "\$identity" \]\] \|\| \{$/u,
+    'image SBOM must reject a tag-to-image race'
+  );
+  if (!(firstIdentity < scan && scan < currentIdentity)) {
+    fail('image SBOM identity checks do not enclose the immutable-ID scan');
+  }
+  if (imageSbom.some((statement) => /^(?:syft |[A-Za-z_][A-Za-z0-9_]*="\$\(syft )/u.test(statement))) {
+    fail('image SBOM must not execute an unpinned Syft from PATH');
+  }
+}
+
+export function validatePublisherReleaseShell(publishScript) {
+  const publish = shellUnconditionalStatements(publishScript, 'publish');
+  const build = requireStatement(
+    publish,
+    /^GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "\$DEPLOY_SCRIPT" build \|\| return$/u,
+    'publisher must execute the reviewed deployment build'
+  );
+  const inspectTag = requireStatement(
+    publish,
+    /^inspect_image_identity "\$tagged_image" "\$expected_source" \|\| return$/u,
+    'publisher must inspect the locally tagged image'
+  );
+  const push = requireStatement(
+    publish,
+    /^"\$DEPLOY_SCRIPT" push \|\| return$/u,
+    'publisher must execute the reviewed push'
+  );
+  const digest = requireStatement(
+    publish,
+    /^digest="\$\(resolve_remote_digest\)" \|\| return$/u,
+    'publisher must resolve the immutable ECR digest'
+  );
+  const pull = requireStatement(
+    publish,
+    /^docker pull "\$digest_ref" >\/dev\/null \|\| return$/u,
+    'publisher must pull by digest'
+  );
+  const inspectDigest = requireStatement(
+    publish,
+    /^inspect_image_identity "\$digest_ref" "\$expected_source" \|\| return$/u,
+    'publisher must inspect the pulled digest image'
+  );
+  const bindingChecks = publish
+    .map((statement, index) => ({index, statement}))
+    .filter(({statement}) => /^require_image_sbom_binding /u.test(statement));
+  if (bindingChecks.length !== 2) {
+    fail(`publisher must validate the image SBOM binding before and after push; found ${bindingChecks.length}`);
+  }
+  const provenance = requireStatement(
+    publish,
+    /^provenance="\$\(write_provenance_attestation /u,
+    'publisher must generate provenance after digest verification'
+  );
+  const handoff = requireStatement(publish, /^write_exact_handoff /u, 'publisher must write the exact release handoff');
+  if (
+    !(
+      build < inspectTag &&
+      inspectTag < bindingChecks[0].index &&
+      bindingChecks[0].index < push &&
+      push < digest &&
+      digest < pull &&
+      pull < inspectDigest &&
+      inspectDigest < bindingChecks[1].index &&
+      bindingChecks[1].index < provenance &&
+      provenance < handoff
+    )
+  ) {
+    fail('publisher build, push, digest verification, provenance, and handoff order is unsafe');
+  }
+  rejectEarlySuccessfulTermination(
+    publish,
+    handoff,
+    'publisher must not terminate successfully before writing the exact handoff'
+  );
+
+  const signing = shellUnconditionalStatements(publishScript, 'sign_provenance_attestation');
+  const sign = requireStatement(signing, /^cosign sign-blob /u, 'publisher must sign provenance');
+  const verify = requireStatement(
+    signing,
+    /^cosign verify-blob /u,
+    'publisher must verify the new provenance signature'
+  );
+  if (sign >= verify) fail('publisher must verify provenance after signing it');
+
+  const finalize = shellUnconditionalStatements(publishScript, 'finalize_evidence');
+  const validateSbom = requireStatement(
+    finalize,
+    /^require_image_sbom_binding /u,
+    'finalizer must revalidate the retained image SBOM binding'
+  );
+  const verifySignature = requireStatement(
+    finalize,
+    /^cosign verify-blob /u,
+    'finalizer must revalidate signed provenance'
+  );
+  if (validateSbom >= verifySignature) fail('finalizer must validate the SBOM before accepting signed provenance');
+}
+
+export function validatePublicationPipeline({jenkinsfile, publishScript, deployScript}) {
+  validateDeploymentReleaseShell(deployScript);
+  validatePublisherReleaseShell(publishScript);
+  const publicationPipeline = `${jenkinsfile}\n${publishScript}\n${deployScript}`;
   for (const requiredPublicationText of [
-    'docker sbom',
-    'documentDescribes',
     'https://in-toto.io/Statement/v1',
     'https://slsa.dev/provenance/v1',
-    'cosign sign-blob',
-    'cosign verify-blob',
     'DISTR_PROVENANCE_SIGNATURE_REF',
     'control-plane-migration-matrix.ps1',
     'postgres:16.14-alpine3.23',
@@ -311,6 +698,12 @@ if ([...goVersions.values()].some((version) => version !== requiredGoVersion)) {
   fail(`Go version pins must remain at the patched baseline ${requiredGoVersion}`);
 }
 
+const miseText = readRel('mise.toml');
+if (!/^syft\s*=\s*"1\.51\.1"$/mu.test(miseText)) {
+  fail('Syft must remain pinned at the reviewed 1.51.1 release');
+}
+validateMiseReleaseTasks(miseText);
+
 const requiredContainerdVersion = 'v2.2.5';
 if (!readRel('go.mod').includes(`github.com/containerd/containerd/v2 ${requiredContainerdVersion}`)) {
   fail(`containerd/v2 must remain at the patched baseline ${requiredContainerdVersion}`);
@@ -365,12 +758,11 @@ for (const requiredWorkflowText of [
   }
 }
 
-const publicationPipeline = [
-  readRel('deploy/jen' + 'kins/Jen' + 'kinsfile.hub-image'),
-  readRel('deploy/jen' + 'kins/publish-hub-image.sh'),
-  readRel('deploy/server-docker-compose/deploy.sh'),
-].join('\n');
-validatePublicationPipeline(publicationPipeline);
+validatePublicationPipeline({
+  jenkinsfile: readRel('deploy/jen' + 'kins/Jen' + 'kinsfile.hub-image'),
+  publishScript: readRel('deploy/jen' + 'kins/publish-hub-image.sh'),
+  deployScript: readRel('deploy/server-docker-compose/deploy.sh'),
+});
 
 const vulnerabilityWrapper = readRel('hack/pr050-govulncheck.mjs');
 for (const requiredWrapperText of [

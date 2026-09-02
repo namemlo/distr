@@ -420,7 +420,8 @@ resolve_digest_ref_for_tag() {
 }
 
 write_release_metadata() {
-  local commit image_ref image_digest release_file release_dir repository
+  local commit tagged_ref image_ref image_digest release_file release_dir repository
+  local binding_details local_image_id image_platform sbom_sha binding_sha pulled_identity
   check_image_env || return
   need_cmd aws || return
   commit="$(git rev-parse HEAD 2>/dev/null)" || return
@@ -428,9 +429,23 @@ write_release_metadata() {
     die "release commit must be exactly 40 lowercase hexadecimal characters"
     return 1
   }
+  tagged_ref="$(tagged_image_ref)" || return
+  binding_details="$(verify_image_sbom_binding "$tagged_ref" "$commit")" || return
+  IFS='|' read -r local_image_id image_platform sbom_sha binding_sha <<<"$binding_details"
   image_ref="$(resolve_digest_ref_for_tag "${DISTR_IMAGE_TAG}")" || return
   image_digest="${image_ref##*@}"
   [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  docker pull "$image_ref" >/dev/null || return
+  pulled_identity="$(resolve_local_image_identity "$image_ref")" || return
+  [[ "$pulled_identity" == "${local_image_id}|${image_platform}" ]] || {
+    die "published ECR digest does not resolve to the bound local image identity"
+    return 1
+  }
+  binding_details="$(verify_image_sbom_binding "$tagged_ref" "$commit")" || return
+  [[ "$binding_details" == "${local_image_id}|${image_platform}|${sbom_sha}|${binding_sha}" ]] || {
+    die "image SBOM binding changed while resolving the published digest"
+    return 1
+  }
   set_image_identity "$image_ref" "$commit" || return
 
   release_dir="${RELEASE_METADATA_DIR:-dist}"
@@ -446,6 +461,12 @@ DISTR_IMAGE_REF=${image_ref}
 SOURCE_COMMIT=${commit}
 DISTR_RELEASE_COMMIT=${commit}
 DISTR_IMAGE_DIGEST=${image_digest}
+DISTR_LOCAL_IMAGE_ID=${local_image_id}
+DISTR_IMAGE_PLATFORM=${image_platform}
+DISTR_SBOM_FILE=dist/release-${DISTR_IMAGE_TAG}.spdx.json
+DISTR_SBOM_SHA256=${sbom_sha}
+DISTR_SBOM_BINDING_FILE=dist/release-${DISTR_IMAGE_TAG}.image-binding.json
+DISTR_SBOM_BINDING_SHA256=${binding_sha}
 EOF
   info "wrote release metadata ${release_file}"
 }
@@ -855,14 +876,77 @@ NODE
   ) || return
 }
 
-generate_image_sbom() {
-  local image_ref="$1" sbom temporary sidecar
+resolve_local_image_identity() {
+  local image_ref="$1" raw image_id raw_platform platform extra
+  raw="$(docker image inspect --format '{{.Id}}|{{.Os}}/{{.Architecture}}' "$image_ref")" || {
+    die "could not inspect local image identity for ${image_ref}"
+    return 1
+  }
+  IFS='|' read -r image_id raw_platform extra <<<"$raw"
+  [[ -z "$extra" && "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    die "local image identity is invalid for ${image_ref}"
+    return 1
+  }
+  platform="$(normalize_linux_platform "$raw_platform" image)" || return
+  printf '%s|%s' "$image_id" "$platform"
+}
+
+write_exact_checksum_artifact() {
+  local file="$1" sidecar checksum
+  sidecar="${file}.sha256"
+  checksum="$(sha256sum "$file" | awk '{print $1}')" || return
+  [[ "$checksum" =~ ^[0-9a-f]{64}$ && ! -L "$sidecar" ]] || return 1
+  printf '%s  %s\n' "$checksum" "$(basename "$file")" >"$sidecar" || return
+  (
+    cd "$(dirname "$file")" || return
+    sha256sum -c --status "$(basename "$sidecar")" || return
+  ) || return
+}
+
+require_exact_checksum_artifact() {
+  local file="$1" sidecar checksum expected_line
+  sidecar="${file}.sha256"
+  [[ -f "$file" && ! -L "$file" && -f "$sidecar" && ! -L "$sidecar" ]] || return 1
+  checksum="$(sha256sum "$file" | awk '{print $1}')" || return
+  [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || return 1
+  expected_line="${checksum}  $(basename "$file")"
+  [[ "$(wc -l <"$sidecar")" -eq 1 && "$(<"$sidecar")" == "$expected_line" ]] || {
+    die "release artifact checksum sidecar is not exact: ${sidecar}"
+    return 1
+  }
+  (
+    cd "$(dirname "$file")" || return
+    sha256sum -c --status "$(basename "$sidecar")" || return
+  ) || return
+}
+
+generate_image_sbom() (
+  set -Eeuo pipefail
+  local image_ref="$1" commit="$2" sbom sidecar binding binding_sidecar
+  local scan_one scan_two normalized_one normalized_two binding_temporary
+  local identity image_id platform current_identity commit_epoch syft_version
   need_cmd node || return
   need_cmd sha256sum || return
+  need_cmd cmp || return
+  need_cmd docker || return
+  need_cmd mise || return
   sbom="dist/release-${DISTR_IMAGE_TAG}.spdx.json"
   sidecar="${sbom}.sha256"
-  temporary="${sbom}.tmp"
-  [[ -f "$sbom" && ! -L "$sbom" && -f "$sidecar" && ! -L "$sidecar" && ! -e "$temporary" ]] || {
+  binding="dist/release-${DISTR_IMAGE_TAG}.image-binding.json"
+  binding_sidecar="${binding}.sha256"
+  scan_one="${sbom}.scan-1"
+  scan_two="${sbom}.scan-2"
+  normalized_one="${sbom}.normalized-1"
+  normalized_two="${sbom}.normalized-2"
+  binding_temporary="${binding}.tmp"
+  trap 'rm -f -- "$scan_one" "$scan_two" "$normalized_one" "$normalized_two" "$binding_temporary"' EXIT HUP INT TERM
+  [[ "$image_ref" == "${DISTR_IMAGE}:${DISTR_IMAGE_TAG}" && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+    die "image SBOM inputs do not match the release image and commit"
+    return 1
+  }
+  [[ -f "$sbom" && ! -L "$sbom" && -f "$sidecar" && ! -L "$sidecar" &&
+     ! -e "$binding" && ! -e "$binding_sidecar" && ! -e "$scan_one" && ! -e "$scan_two" &&
+     ! -e "$normalized_one" && ! -e "$normalized_two" && ! -e "$binding_temporary" ]] || {
     die "checksummed Hub content SBOM is required before the image build"
     return 1
   }
@@ -871,36 +955,367 @@ generate_image_sbom() {
     sha256sum -c --status "$(basename "$sidecar")" || return
   ) || return
 
-  info "generating SPDX SBOM from Hub image content ${image_ref}" || return
-  docker sbom "$image_ref" --format spdx-json >"$temporary" || {
-    rm -f -- "$temporary"
-    die "Docker SBOM generation failed closed"
+  identity="$(resolve_local_image_identity "$image_ref")" || return
+  IFS='|' read -r image_id platform <<<"$identity"
+  commit_epoch="$(git show -s --format=%ct "$commit")" || return
+  [[ "$commit_epoch" =~ ^[0-9]+$ ]] || return 1
+  syft_version="$(mise exec -- syft version -o json)" || return
+  printf '%s' "$syft_version" | node -e '
+const fs = require("node:fs");
+const version = JSON.parse(fs.readFileSync(0, "utf8"));
+if (version.application !== "syft" || version.version !== "1.51.1") process.exit(1);
+' || {
+    die "mise Syft version must be exactly 1.51.1"
     return 1
   }
-  node - "$temporary" <<'NODE' || {
+
+  info "generating deterministic SPDX SBOM from immutable local image ${image_id}" || return
+  for raw in "$scan_one" "$scan_two"; do
+    mise exec -- syft "docker:${image_id}" \
+      --source-name "$DISTR_IMAGE" \
+      --source-version "$DISTR_IMAGE_TAG" \
+      --platform "$platform" \
+      -o "spdx-json=${raw}" || {
+      die "Syft SBOM generation failed closed"
+      return 1
+    }
+    current_identity="$(resolve_local_image_identity "$image_ref")" || return
+    [[ "$current_identity" == "$identity" ]] || {
+      die "local image tag changed while generating the SBOM"
+      return 1
+    }
+  done
+
+  normalize_image_sbom() {
+    local raw="$1" output="$2"
+    node - "$raw" "$output" "$DISTR_IMAGE" "$DISTR_IMAGE_TAG" "$image_id" "$platform" "$commit" "$commit_epoch" <<'NODE'
 const fs = require('node:fs');
-const document = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const [rawFile, outputFile, repository, tag, imageId, platform, commit, commitEpoch] = process.argv.slice(2);
+const document = JSON.parse(fs.readFileSync(rawFile, 'utf8'));
+const fail = (message) => {
+  throw new Error(message);
+};
+const describeRelations = Array.isArray(document.relationships)
+  ? document.relationships.filter(
+      (relationship) =>
+        relationship?.spdxElementId === 'SPDXRef-DOCUMENT' && relationship?.relationshipType === 'DESCRIBES'
+    )
+  : [];
+if (describeRelations.length !== 1 || typeof describeRelations[0].relatedSpdxElement !== 'string') {
+  fail('SPDX document must contain exactly one DOCUMENT DESCRIBES relationship');
+}
+const rootId = describeRelations[0].relatedSpdxElement;
+if (document.documentDescribes == null || document.documentDescribes.length === 0) {
+  document.documentDescribes = [rootId];
+} else if (
+  !Array.isArray(document.documentDescribes) ||
+  document.documentDescribes.length !== 1 ||
+  document.documentDescribes[0] !== rootId
+) {
+  fail('SPDX documentDescribes must identify exactly the described root package');
+}
 if (
   document.spdxVersion !== 'SPDX-2.3' ||
   document.SPDXID !== 'SPDXRef-DOCUMENT' ||
-  !Array.isArray(document.documentDescribes) ||
-  document.documentDescribes.length === 0 ||
   !Array.isArray(document.packages) ||
   document.packages.length === 0
 ) {
   throw new Error('SPDX document must describe at least one image package');
 }
+const roots = document.packages.filter((item) => item?.SPDXID === rootId);
+if (roots.length !== 1) fail('SPDX described root package must be unique');
+const root = roots[0];
+if (root.name !== repository || root.versionInfo !== tag || root.primaryPackagePurpose !== 'CONTAINER') {
+  fail('SPDX described root package identity does not match the release image');
+}
+const checksums = Array.isArray(root.checksums)
+  ? root.checksums.filter((checksum) => checksum?.algorithm === 'SHA256')
+  : [];
+if (checksums.length !== 1 || !/^[0-9a-f]{64}$/.test(checksums[0].checksumValue ?? '')) {
+  fail('SPDX described root package must contain exactly one valid SHA256 checksum');
+}
+const rootChecksum = checksums[0].checksumValue;
+const purlRefs = Array.isArray(root.externalRefs)
+  ? root.externalRefs.filter(
+      (reference) => reference?.referenceCategory === 'PACKAGE-MANAGER' && reference?.referenceType === 'purl'
+    )
+  : [];
+if (purlRefs.length !== 1 || typeof purlRefs[0].referenceLocator !== 'string') {
+  fail('SPDX described root package must contain exactly one OCI purl');
+}
+const locator = purlRefs[0].referenceLocator;
+const separator = locator.indexOf('?');
+const packagePart = separator < 0 ? locator : locator.slice(0, separator);
+const qualifiers = new URLSearchParams(separator < 0 ? '' : locator.slice(separator + 1));
+if (
+  qualifiers.getAll('arch').length !== 1 ||
+  qualifiers.getAll('tag').length !== 1 ||
+  [...qualifiers.keys()].some((key) => key !== 'arch' && key !== 'tag')
+) {
+  fail('SPDX root purl must contain exactly one arch and tag qualifier');
+}
+if (!packagePart.startsWith('pkg:oci/')) fail('SPDX root purl must use the OCI type');
+const at = packagePart.lastIndexOf('@');
+if (at < 'pkg:oci/'.length) fail('SPDX root purl must contain a digest');
+const purlRepository = decodeURIComponent(packagePart.slice('pkg:oci/'.length, at));
+const purlDigest = decodeURIComponent(packagePart.slice(at + 1));
+const arch = platform.split('/')[1];
+const rawTag = qualifiers.get('tag');
+if (
+  purlRepository !== repository ||
+  purlDigest !== `sha256:${rootChecksum}` ||
+  qualifiers.get('arch') !== arch ||
+  (rawTag !== tag && rawTag !== imageId.slice('sha256:'.length))
+) {
+  fail('SPDX root OCI purl does not match the scanned image facts');
+}
+purlRefs[0].referenceLocator =
+  `pkg:oci/${encodeURIComponent(repository)}@${encodeURIComponent(`sha256:${rootChecksum}`)}` +
+  `?arch=${encodeURIComponent(arch)}&tag=${encodeURIComponent(tag)}`;
+
+const timestamp = new Date(Number(commitEpoch) * 1000);
+if (!Number.isSafeInteger(Number(commitEpoch)) || Number.isNaN(timestamp.valueOf())) {
+  fail('source commit timestamp is invalid');
+}
+document.creationInfo ??= {};
+document.creationInfo.created = timestamp.toISOString().replace('.000Z', 'Z');
+document.documentNamespace =
+  `https://distr.sh/spdx/hub-image/${commit}/${tag}/${imageId.slice('sha256:'.length)}`;
+
+const unorderedArrays = new Set([
+  'annotations',
+  'checksums',
+  'creators',
+  'documentDescribes',
+  'externalDocumentRefs',
+  'externalRefs',
+  'files',
+  'hasExtractedLicensingInfos',
+  'licenseInfoFromFiles',
+  'packages',
+  'relationships',
+  'snippets',
+]);
+function canonicalize(value, key = '') {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => canonicalize(item));
+    return unorderedArrays.has(key)
+      ? items.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+      : items;
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((childKey) => [childKey, canonicalize(value[childKey], childKey)])
+    );
+  }
+  return value;
+}
+fs.writeFileSync(outputFile, `${JSON.stringify(canonicalize(document))}\n`, {mode: 0o600});
 NODE
-    rm -f -- "$temporary"
-    die "SPDX document must describe at least one image package"
+  }
+
+  normalize_image_sbom "$scan_one" "$normalized_one" || {
+    die "first Syft SBOM failed the image identity contract"
     return 1
   }
-  mv -- "$temporary" "$sbom" || return
-  (
-    cd "$(dirname "$sbom")" || return
-    sha256sum "$(basename "$sbom")" >"$(basename "$sidecar")" || return
-    sha256sum -c --status "$(basename "$sidecar")" || return
-  ) || return
+  normalize_image_sbom "$scan_two" "$normalized_two" || {
+    die "second Syft SBOM failed the image identity contract"
+    return 1
+  }
+  cmp -s "$normalized_one" "$normalized_two" || {
+    die "normalized Syft SBOM scans are not byte-identical"
+    return 1
+  }
+  mv -- "$normalized_one" "$sbom" || return
+  write_exact_checksum_artifact "$sbom" || return
+  local sbom_sha
+  sbom_sha="$(sha256sum "$sbom" | awk '{print $1}')" || return
+  [[ "$sbom_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  node - "$binding_temporary" "$commit" "$image_ref" "$image_id" "$platform" "dist/$(basename "$sbom")" "$sbom_sha" <<'NODE' || return
+const fs = require('node:fs');
+const [file, sourceCommit, taggedImageRef, localImageId, platform, sbomFile, sbomSha] = process.argv.slice(2);
+const binding = {
+  schemaVersion: 'distr.image-sbom-binding/v1',
+  sourceCommit,
+  taggedImageRef,
+  localImageId,
+  platform,
+  sbomFile,
+  sbomSha256: `sha256:${sbomSha}`,
+};
+fs.writeFileSync(file, `${JSON.stringify(binding)}\n`, {mode: 0o600});
+NODE
+  mv -- "$binding_temporary" "$binding" || return
+  write_exact_checksum_artifact "$binding" || return
+)
+
+verify_image_sbom_binding() (
+  set -Eeuo pipefail
+  local image_ref="$1" commit="$2" sbom sidecar binding binding_sidecar
+  local identity image_id platform current_identity commit_epoch sbom_sha binding_sha
+  need_cmd node || return
+  need_cmd sha256sum || return
+  need_cmd docker || return
+  sbom="dist/release-${DISTR_IMAGE_TAG}.spdx.json"
+  sidecar="${sbom}.sha256"
+  binding="dist/release-${DISTR_IMAGE_TAG}.image-binding.json"
+  binding_sidecar="${binding}.sha256"
+  [[ "$image_ref" == "${DISTR_IMAGE}:${DISTR_IMAGE_TAG}" && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+    die "image SBOM verification inputs do not match the release image and commit"
+    return 1
+  }
+  for artifact in "$sbom" "$sidecar" "$binding" "$binding_sidecar"; do
+    [[ -f "$artifact" && ! -L "$artifact" ]] || {
+      die "image SBOM binding artifact must be a regular non-symlink file: ${artifact}"
+      return 1
+    }
+  done
+  require_exact_checksum_artifact "$sbom" || {
+    die "image SBOM or binding checksum is invalid"
+    return 1
+  }
+  require_exact_checksum_artifact "$binding" || {
+    die "image SBOM or binding checksum is invalid"
+    return 1
+  }
+  identity="$(resolve_local_image_identity "$image_ref")" || return
+  IFS='|' read -r image_id platform <<<"$identity"
+  commit_epoch="$(git show -s --format=%ct "$commit")" || return
+  [[ "$commit_epoch" =~ ^[0-9]+$ ]] || return 1
+  sbom_sha="$(sha256sum "$sbom" | awk '{print $1}')" || return
+  binding_sha="$(sha256sum "$binding" | awk '{print $1}')" || return
+  [[ "$sbom_sha" =~ ^[0-9a-f]{64}$ && "$binding_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  node - "$sbom" "$binding" "$DISTR_IMAGE" "$DISTR_IMAGE_TAG" "$image_id" "$platform" \
+    "$commit" "$commit_epoch" "dist/$(basename "$sbom")" "$sbom_sha" <<'NODE' || {
+const fs = require('node:fs');
+const [sbomFile, bindingFile, repository, tag, imageId, platform, commit, commitEpoch, sbomRef, sbomSha] =
+  process.argv.slice(2);
+const fail = (message) => {
+  throw new Error(message);
+};
+const sbomRaw = fs.readFileSync(sbomFile, 'utf8');
+const document = JSON.parse(sbomRaw);
+const describes = Array.isArray(document.relationships)
+  ? document.relationships.filter(
+      (relationship) =>
+        relationship?.spdxElementId === 'SPDXRef-DOCUMENT' && relationship?.relationshipType === 'DESCRIBES'
+    )
+  : [];
+if (describes.length !== 1 || typeof describes[0].relatedSpdxElement !== 'string') {
+  fail('SPDX document must contain exactly one DOCUMENT DESCRIBES relationship');
+}
+const rootId = describes[0].relatedSpdxElement;
+if (
+  document.spdxVersion !== 'SPDX-2.3' ||
+  document.SPDXID !== 'SPDXRef-DOCUMENT' ||
+  !Array.isArray(document.documentDescribes) ||
+  document.documentDescribes.length !== 1 ||
+  document.documentDescribes[0] !== rootId ||
+  !Array.isArray(document.packages)
+) {
+  fail('SPDX document identity is invalid');
+}
+const roots = document.packages.filter((item) => item?.SPDXID === rootId);
+if (roots.length !== 1) fail('SPDX described root package must be unique');
+const root = roots[0];
+if (root.name !== repository || root.versionInfo !== tag || root.primaryPackagePurpose !== 'CONTAINER') {
+  fail('SPDX described root package identity does not match the release image');
+}
+const checksums = Array.isArray(root.checksums)
+  ? root.checksums.filter((checksum) => checksum?.algorithm === 'SHA256')
+  : [];
+if (checksums.length !== 1 || !/^[0-9a-f]{64}$/.test(checksums[0].checksumValue ?? '')) {
+  fail('SPDX described root package must contain exactly one valid SHA256 checksum');
+}
+const purls = Array.isArray(root.externalRefs)
+  ? root.externalRefs.filter(
+      (reference) => reference?.referenceCategory === 'PACKAGE-MANAGER' && reference?.referenceType === 'purl'
+    )
+  : [];
+if (purls.length !== 1 || typeof purls[0].referenceLocator !== 'string') {
+  fail('SPDX described root package must contain exactly one OCI purl');
+}
+const locator = purls[0].referenceLocator;
+const separator = locator.indexOf('?');
+const packagePart = separator < 0 ? locator : locator.slice(0, separator);
+const qualifiers = new URLSearchParams(separator < 0 ? '' : locator.slice(separator + 1));
+if (
+  qualifiers.getAll('arch').length !== 1 ||
+  qualifiers.getAll('tag').length !== 1 ||
+  [...qualifiers.keys()].some((key) => key !== 'arch' && key !== 'tag')
+) {
+  fail('SPDX root purl must contain exactly one arch and tag qualifier');
+}
+const at = packagePart.lastIndexOf('@');
+if (!packagePart.startsWith('pkg:oci/') || at < 'pkg:oci/'.length) fail('SPDX root purl is invalid');
+if (
+  decodeURIComponent(packagePart.slice('pkg:oci/'.length, at)) !== repository ||
+  decodeURIComponent(packagePart.slice(at + 1)) !== `sha256:${checksums[0].checksumValue}` ||
+  qualifiers.get('arch') !== platform.split('/')[1] ||
+  qualifiers.get('tag') !== tag
+) {
+  fail('SPDX root OCI purl does not match the bound image facts');
+}
+const created = new Date(Number(commitEpoch) * 1000).toISOString().replace('.000Z', 'Z');
+if (
+  document.creationInfo?.created !== created ||
+  document.documentNamespace !==
+    `https://distr.sh/spdx/hub-image/${commit}/${tag}/${imageId.slice('sha256:'.length)}`
+) {
+  fail('SPDX deterministic release metadata does not match the source image');
+}
+const unorderedArrays = new Set([
+  'annotations', 'checksums', 'creators', 'documentDescribes', 'externalDocumentRefs', 'externalRefs',
+  'files', 'hasExtractedLicensingInfos', 'licenseInfoFromFiles', 'packages', 'relationships', 'snippets',
+]);
+function canonicalize(value, key = '') {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => canonicalize(item));
+    return unorderedArrays.has(key)
+      ? items.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+      : items;
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((childKey) => [childKey, canonicalize(value[childKey], childKey)])
+    );
+  }
+  return value;
+}
+if (sbomRaw !== `${JSON.stringify(canonicalize(document))}\n`) fail('SPDX document is not canonical');
+const expectedBinding = {
+  schemaVersion: 'distr.image-sbom-binding/v1',
+  sourceCommit: commit,
+  taggedImageRef: `${repository}:${tag}`,
+  localImageId: imageId,
+  platform,
+  sbomFile: sbomRef,
+  sbomSha256: `sha256:${sbomSha}`,
+};
+if (fs.readFileSync(bindingFile, 'utf8') !== `${JSON.stringify(expectedBinding)}\n`) {
+  fail('image SBOM binding is not the exact canonical release binding');
+}
+NODE
+    die "image SBOM binding does not match the exact release image"
+    return 1
+  }
+  current_identity="$(resolve_local_image_identity "$image_ref")" || return
+  [[ "$current_identity" == "$identity" ]] || {
+    die "local image tag changed while verifying the SBOM binding"
+    return 1
+  }
+  printf '%s|%s|sha256:%s|sha256:%s' "$image_id" "$platform" "$sbom_sha" "$binding_sha"
+)
+
+require_source_clean() {
+  local phase="$1" dirty
+  dirty="$(git status --porcelain=v1 --untracked-files=all)" || return
+  [[ -z "$dirty" ]] || {
+    die "source worktree must be clean ${phase} release build"
+    return 1
+  }
 }
 
 build_image() {
@@ -916,6 +1331,8 @@ build_image() {
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || return 1
   short_commit="${commit:0:12}"
   image_ref="$(tagged_image_ref)" || return
+
+  require_source_clean before || return
 
   info "installing tool versions from mise.toml" || return
   mise install || return
@@ -936,7 +1353,8 @@ build_image() {
     -f Dockerfile.hub \
     -t "${image_ref}" \
     . || return
-  generate_image_sbom "$image_ref" || return
+  generate_image_sbom "$image_ref" "$commit" || return
+  require_source_clean after || return
 }
 
 push_image() {

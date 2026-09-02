@@ -9,6 +9,7 @@ helm-docs = "1.14.2"
 watchexec = "2.5.1"
 pnpm = "11.7.0"
 stripe = "1.42.13"
+syft = "1.51.1"
 "go:github.com/go-delve/delve/cmd/dlv" = "1.26.3"
 git-lfs = "3.7.1"
 
@@ -34,6 +35,9 @@ sources = ["package.json", "pnpm-lock.yaml", "sdk/js/src/**/*"]
 [tasks.go-tidy]
 run = 'go mod tidy'
 
+[tasks.go-tidy-check]
+run = 'go mod tidy -diff'
+
 [tasks."build:sdk"]
 run = ['pnpm run build', 'pnpm run docs']
 dir = "sdk/js"
@@ -55,22 +59,22 @@ depends = ["frontend-deps"]
 
 [tasks."build:hub:community"]
 run = 'go build -ldflags="{{vars.ldflags}} -X github.com/distr-sh/distr/internal/buildconfig.edition=community" -o dist/distr ./cmd/hub'
-depends = ["go-tidy", "build:frontend:community"]
+depends = ["go-tidy-check", "build:frontend:community"]
 
 [tasks."build:hub:enterprise"]
 run = 'go build -ldflags="{{vars.ldflags}} -X github.com/distr-sh/distr/internal/buildconfig.edition=enterprise" -o dist/distr ./cmd/hub'
-depends = ["go-tidy", "build:frontend:enterprise"]
+depends = ["go-tidy-check", "build:frontend:enterprise"]
 
 [tasks."build:agent:docker"]
 run = 'go build -ldflags="{{vars.ldflags}}" -o dist/docker-agent ./cmd/agent/docker'
-depends = ["go-tidy"]
+depends = ["go-tidy-check"]
 
 [tasks."build:agent:kubernetes"]
 run = 'go build -ldflags="{{vars.ldflags}}" -o dist/kubernetes-agent ./cmd/agent/kubernetes'
-depends = ["go-tidy"]
+depends = ["go-tidy-check"]
 
 [tasks."lint:go"]
-depends = ["go-tidy"]
+depends = ["go-tidy-check"]
 run = 'golangci-lint run'
 
 [tasks."lint:frontend"]
@@ -84,7 +88,7 @@ run = { tasks = ["lint:go", "lint:frontend", "lint:migrations"] }
 
 [tasks."test:go"]
 run = 'go test ./...'
-depends = ["go-tidy"]
+depends = ["go-tidy-check"]
 description = 'Run all Go tests'
 
 [tasks.test]

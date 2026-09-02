@@ -457,15 +457,13 @@ test('the PR-050 validator seals executable release evidence and rejects empty S
 
 test('the PR-050 validator seals Jenkins signed evidence, matrix, adopter scan, and failure retention', () => {
   assert.equal(typeof releaseValidator.validatePublicationPipeline, 'function');
-  const publicationPipeline = [
-    readFileSync(new URL('../deploy/jenkins/Jenkinsfile.hub-image', import.meta.url), 'utf8'),
-    readFileSync(new URL('../deploy/jenkins/publish-hub-image.sh', import.meta.url), 'utf8'),
-    readFileSync(new URL('../deploy/server-docker-compose/deploy.sh', import.meta.url), 'utf8'),
-  ].join('\n');
+  const publicationPipeline = {
+    jenkinsfile: readFileSync(new URL('../deploy/jenkins/Jenkinsfile.hub-image', import.meta.url), 'utf8'),
+    publishScript: readFileSync(new URL('../deploy/jenkins/publish-hub-image.sh', import.meta.url), 'utf8'),
+    deployScript: readFileSync(new URL('../deploy/server-docker-compose/deploy.sh', import.meta.url), 'utf8'),
+  };
   assert.doesNotThrow(() => releaseValidator.validatePublicationPipeline(publicationPipeline));
   for (const requiredGate of [
-    'cosign sign-blob',
-    'cosign verify-blob',
     'postgres:16.14-alpine3.23',
     'postgres:18.4-alpine3.23',
     'work/release-evidence-${DISTR_IMAGE_TAG}',
@@ -475,9 +473,132 @@ test('the PR-050 validator seals Jenkins signed evidence, matrix, adopter scan, 
     'docs/api/operator-control-plane-api.md',
     'post {\n    always {\n      archiveArtifacts(',
   ]) {
+    const mutated = Object.fromEntries(
+      Object.entries(publicationPipeline).map(([name, contents]) => [
+        name,
+        contents.replaceAll(requiredGate, 'REMOVED_GATE'),
+      ])
+    );
     assert.throws(
-      () => releaseValidator.validatePublicationPipeline(publicationPipeline.replaceAll(requiredGate, 'REMOVED_GATE')),
+      () => releaseValidator.validatePublicationPipeline(mutated),
       /image publication pipeline missing release evidence contract/
+    );
+  }
+});
+
+test('the PR-050 validator parses mise task dependencies and seals the non-mutating tidy closure', () => {
+  assert.equal(typeof releaseValidator.validateMiseReleaseTasks, 'function');
+  const mise = readFileSync(new URL('../mise.toml', import.meta.url), 'utf8');
+  assert.doesNotThrow(() => releaseValidator.validateMiseReleaseTasks(mise));
+
+  const transitive = mise
+    .replace(
+      'depends = ["go-tidy-check", "build:frontend:community"]',
+      'depends = ["release-tidy-gate", "build:frontend:community"]'
+    )
+    .concat('\n[tasks.release-tidy-gate]\ndepends = ["go-tidy-check"]\n');
+  assert.doesNotThrow(() => releaseValidator.validateMiseReleaseTasks(transitive));
+
+  const bypasses = [
+    mise.replace("run = 'go mod tidy -diff'", "run = 'go mod tidy -diff && go mod tidy'"),
+    mise.replace(
+      "[tasks.go-tidy-check]\nrun = 'go mod tidy -diff'",
+      '[tasks.go-tidy-check]\nrun = \'go mod tidy -diff\'\ndepends = ["go-tidy"]'
+    ),
+    mise.replace(
+      'depends = ["go-tidy-check", "build:frontend:community"]',
+      'depends = ["build:frontend:community"] # go-tidy-check'
+    ),
+    mise
+      .replace(
+        'depends = ["go-tidy-check", "build:frontend:community"]',
+        'depends = ["release-tidy-gate", "build:frontend:community"]'
+      )
+      .concat('\n[tasks.release-tidy-gate]\ndepends = ["go-tidy-check", "go-tidy"]\n'),
+    mise
+      .replace(
+        'depends = ["go-tidy-check", "build:frontend:community"]',
+        'depends = ["renamed-mutating-tidy", "go-tidy-check", "build:frontend:community"]'
+      )
+      .concat("\n[tasks.renamed-mutating-tidy]\nrun = 'go mod tidy -v'\n"),
+    mise
+      .replace(
+        'run = \'go build -ldflags="{{vars.ldflags}} -X github.com/distr-sh/distr/internal/buildconfig.edition=community" -o dist/distr ./cmd/hub\'',
+        "run = 'mise run renamed-mutating-tidy && go build -o dist/distr ./cmd/hub'"
+      )
+      .concat("\n[tasks.renamed-mutating-tidy]\nrun = 'go mod tidy'\n"),
+    `${mise}\n[tasks.go-tidy-check]\nrun = 'go mod tidy -diff'\n`,
+  ];
+  for (const bypass of bypasses) {
+    assert.throws(() => releaseValidator.validateMiseReleaseTasks(bypass), /mise|go-tidy|mutating/i);
+  }
+});
+
+test('the PR-050 validator requires executable release-shell gates in their owning functions', () => {
+  assert.equal(typeof releaseValidator.validateDeploymentReleaseShell, 'function');
+  assert.equal(typeof releaseValidator.validatePublisherReleaseShell, 'function');
+  const deploy = readFileSync(new URL('../deploy/server-docker-compose/deploy.sh', import.meta.url), 'utf8');
+  const publisher = readFileSync(new URL('../deploy/jenkins/publish-hub-image.sh', import.meta.url), 'utf8');
+  assert.doesNotThrow(() => releaseValidator.validateDeploymentReleaseShell(deploy));
+  assert.doesNotThrow(() => releaseValidator.validatePublisherReleaseShell(publisher));
+
+  for (const bypass of [
+    deploy.replace(
+      '  dirty="$(git status --porcelain=v1 --untracked-files=all)" || return',
+      '  # dirty="$(git status --porcelain=v1 --untracked-files=all)" || return\n  dirty=""'
+    ),
+    deploy.replace('  require_source_clean after || return', '  # require_source_clean after || return\n  true'),
+    deploy.replace(
+      '    mise exec -- syft "docker:${image_id}" \\',
+      '    # mise exec -- syft "docker:${image_id}" --source-name "$DISTR_IMAGE" --source-version "$DISTR_IMAGE_TAG" --platform "$platform" -o "spdx-json=${raw}" || {\n    syft "${image_ref}" \\'
+    ),
+    deploy.replace(
+      '    current_identity="$(resolve_local_image_identity "$image_ref")" || return',
+      '    # current_identity="$(resolve_local_image_identity "$image_ref")" || return\n    current_identity="$identity"'
+    ),
+    deploy.replace(
+      '  require_source_clean before || return',
+      '  if false; then\n    require_source_clean before || return\n  fi'
+    ),
+    deploy.replace(
+      '  require_source_clean before || return',
+      '  if [[ 1 -eq 0 ]]; then\n    require_source_clean before || return\n  fi'
+    ),
+    deploy.replace('  require_source_clean before || return', '  return 0\n  require_source_clean before || return'),
+    deploy.replace('  require_source_clean before || return', '  return\n  require_source_clean before || return'),
+  ]) {
+    assert.throws(() => releaseValidator.validateDeploymentReleaseShell(bypass), /release|build|SBOM|Syft|identity/i);
+  }
+
+  for (const bypass of [
+    publisher.replace(
+      '  inspect_image_identity "$digest_ref" "$expected_source" || return',
+      '  # inspect_image_identity "$digest_ref" "$expected_source" || return\n  true'
+    ),
+    publisher.replace(
+      '  cosign verify-blob \\',
+      '  # cosign verify-blob --key "$PROVENANCE_SIGNING_PUBLIC_KEY" --signature "$temporary" "$provenance"\n  true \\'
+    ),
+    publisher.replace(
+      '  write_exact_handoff \\\n    "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return',
+      '  # write_exact_handoff "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return\n  true'
+    ),
+    publisher.replace(
+      '  write_exact_handoff \\\n    "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return',
+      '  if false; then\n    write_exact_handoff "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return\n  fi'
+    ),
+    publisher.replace(
+      '  write_exact_handoff \\\n    "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return',
+      '  if true; then\n    :\n  else\n    write_exact_handoff "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return\n  fi'
+    ),
+    publisher.replace(
+      '  write_exact_handoff \\\n    "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return',
+      '  exit 0\n  write_exact_handoff "$release_file" "$digest" "$sbom" "$binding" "$provenance" "$signature" "$expected_source" || return'
+    ),
+  ]) {
+    assert.throws(
+      () => releaseValidator.validatePublisherReleaseShell(bypass),
+      /release|publisher|provenance|handoff/i
     );
   }
 });
