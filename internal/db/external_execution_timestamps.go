@@ -548,6 +548,16 @@ var externalExecutionTimestampBusinessTriggerSetSpecs = []externalExecutionTimes
 	{tableName: externalExecutionTimestampDeletionTombstoneTable, triggerCount: 2},
 }
 
+var externalExecutionTimestampBaselineAdoptionGuardSpec = externalExecutionTimestampGuardSpec{
+	errorLabel:       "baseline adoption execution exclusion",
+	functionName:     "baseline_adoption_execution_exclusion_guard",
+	functionBodyHash: "7ed60234a09d48aa027e619318134019003ee8461491860aa6e4f76ebef4d05a",
+	tableName:        "externalexecution",
+	triggerName:      "externalexecution_baseline_adoption_exclusion",
+	triggerType:      23,
+	updateColumns:    []string{"deployment_plan_id", "organization_id"},
+}
+
 const externalExecutionTimestampCatalogSQL = `
 WITH required_legacy(table_name, column_name, nullable) AS (
   VALUES
@@ -1128,9 +1138,20 @@ func requireExternalExecutionTimestampGuardInTx(
 	return nil
 }
 
-func requireExternalExecutionTimestampGuardsInTx(ctx context.Context) error {
+func requireExternalExecutionTimestampGuardsInTx(
+	ctx context.Context,
+	schemaVersion uint,
+) error {
 	for _, spec := range externalExecutionTimestampGuardSpecs {
 		if err := requireExternalExecutionTimestampGuardInTx(ctx, spec); err != nil {
+			return err
+		}
+	}
+	if schemaVersion >= 166 {
+		if err := requireExternalExecutionTimestampGuardInTx(
+			ctx,
+			externalExecutionTimestampBaselineAdoptionGuardSpec,
+		); err != nil {
 			return err
 		}
 	}
@@ -1144,12 +1165,16 @@ func requireExternalExecutionTimestampGuardsInTx(ctx context.Context) error {
 		).Scan(&triggerCount); err != nil {
 			return fmt.Errorf("read %s non-internal trigger set: %w", spec.tableName, err)
 		}
-		if triggerCount != spec.triggerCount {
+		expectedTriggerCount := spec.triggerCount
+		if schemaVersion >= 166 && spec.tableName == "externalexecution" {
+			expectedTriggerCount++
+		}
+		if triggerCount != expectedTriggerCount {
 			return fmt.Errorf(
 				"%s non-internal trigger set has %d triggers; expected exactly %d",
 				spec.tableName,
 				triggerCount,
-				spec.triggerCount,
+				expectedTriggerCount,
 			)
 		}
 	}
@@ -1472,7 +1497,10 @@ func checkExternalExecutionTimestampExpandReadinessWithStatusInTx(
 	if err := requireExternalExecutionTimestampIndexesInTx(ctx); err != nil {
 		return nil, err
 	}
-	if err := requireExternalExecutionTimestampGuardsInTx(ctx); err != nil {
+	if err := requireExternalExecutionTimestampGuardsInTx(
+		ctx,
+		contract.CatalogVersion,
+	); err != nil {
 		return nil, err
 	}
 	state, err := readExternalExecutionTimestampExpandStateInTx(ctx)
@@ -3282,7 +3310,10 @@ IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 				request.Manifest.SourceSchemaVersion != contract.IdentitySourceVersion {
 				return errors.New("mutating apply requires compatible schema 138")
 			}
-			if err := requireExternalExecutionTimestampGuardsInTx(ctx); err != nil {
+			if err := requireExternalExecutionTimestampGuardsInTx(
+				ctx,
+				contract.CatalogVersion,
+			); err != nil {
 				return err
 			}
 			existing, existingState, err := readStoredExternalExecutionTimestampManifestInTx(

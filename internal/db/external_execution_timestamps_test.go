@@ -4617,4 +4617,22 @@ func TestRequireExternalExecutionTimestampExpandReadiness(t *testing.T) {
 		err := db.RequireExternalExecutionTimestampExpandReadiness(database.ctx)
 		NewWithT(t).Expect(err).To(MatchError(ContainSubstring("schema version")))
 	})
+	t.Run("accepts known baseline adoption guard in later schema", func(t *testing.T) {
+		database := newTask4TestDatabase(t, 170, "UTC")
+		NewWithT(t).Expect(
+			db.RequireExternalExecutionTimestampExpandReadiness(database.ctx),
+		).To(Succeed())
+	})
+	t.Run("rejects missing baseline adoption guard in later schema", func(t *testing.T) {
+		database := newTask4TestDatabase(t, 166, "UTC")
+		_, err := database.pool.Exec(context.Background(), `
+DROP TRIGGER ExternalExecution_baseline_adoption_exclusion
+ON ExternalExecution`)
+		NewWithT(t).Expect(err).NotTo(HaveOccurred())
+
+		err = db.RequireExternalExecutionTimestampExpandReadiness(database.ctx)
+		NewWithT(t).Expect(err).To(MatchError(ContainSubstring(
+			"baseline adoption execution exclusion",
+		)))
+	})
 }
