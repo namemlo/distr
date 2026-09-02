@@ -226,10 +226,10 @@ published sibling releases outside that path are excluded.
 
 Validation returns a blocking issue in the existing `issues[]` response:
 
-| Code | Meaning |
-| ---- | ------- |
+| Code                        | Meaning                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------- |
 | `source_history_unverified` | Required baseline, candidate, or declared component-path proof is missing or invalid. |
-| `source_history_divergent` | Repository identity, commit order/projection, or release-to-commit mapping conflicts. |
+| `source_history_divergent`  | Repository identity, commit order/projection, or release-to-commit mapping conflicts. |
 
 Publication recomputes the preview and refuses either issue before persisting
 an immutable plan. An equal baseline/candidate source commit is valid and adds
@@ -254,9 +254,9 @@ Every planned Component Release that is bound to a component instance with a
 database boundary, or that carries a structured migration contract, requires
 two immutable Target Config Snapshot objects of kind `adapter_input`:
 
-| Document | Schema | Media type |
-| -------- | ------ | ---------- |
-| Schema report | `distr.schema-report/v1` | `application/vnd.distr.schema-report.v1+json` |
+| Document           | Schema                        | Media type                                         |
+| ------------------ | ----------------------------- | -------------------------------------------------- |
+| Schema report      | `distr.schema-report/v1`      | `application/vnd.distr.schema-report.v1+json`      |
 | Migration evidence | `distr.migration-evidence/v1` | `application/vnd.distr.migration-evidence.v1+json` |
 
 The schema report binds the exact organization, deployment scope/unit,
@@ -496,14 +496,14 @@ observation.
 
 ### Audit and evidence export
 
-| Method     | Route                                          | Purpose                                         |
-| ---------- | ---------------------------------------------- | ----------------------------------------------- |
-| `GET`      | `/api/v1/control-plane-audit/events`           | Paginated correlated events                     |
-| `POST`     | `/api/v1/control-plane-audit/evidence-bundles` | Deterministic checksum-bound bundle             |
-| `GET/POST` | `/api/v1/control-plane-audit/export-sinks`     | Inspect/register allowlisted sink configuration |
-| `GET`      | `/api/v1/control-plane-audit/export-status`    | Check checkpoint, lag, attempts, failures       |
-| `POST`     | `/api/v1/protected-history-artifacts`          | Export, store, verify, and retain exact history |
-| `GET`      | `/api/v1/protected-history-artifacts/{id}`     | Read immutable retained metadata                |
+| Method     | Route                                                   | Purpose                                         |
+| ---------- | ------------------------------------------------------- | ----------------------------------------------- |
+| `GET`      | `/api/v1/control-plane-audit/events`                    | Paginated correlated events                     |
+| `POST`     | `/api/v1/control-plane-audit/evidence-bundles`          | Deterministic checksum-bound bundle             |
+| `GET/POST` | `/api/v1/control-plane-audit/export-sinks`              | Inspect/register allowlisted sink configuration |
+| `GET`      | `/api/v1/control-plane-audit/export-status`             | Check checkpoint, lag, attempts, failures       |
+| `POST`     | `/api/v1/protected-history-artifacts`                   | Export, store, verify, and retain exact history |
+| `GET`      | `/api/v1/protected-history-artifacts/{id}`              | Read immutable retained metadata                |
 | `GET`      | `/api/v1/protected-history-artifacts/{id}/verification` | Verify exact stored object without SQL mutation |
 
 Failed export does not delete primary events or advance the checkpoint.
