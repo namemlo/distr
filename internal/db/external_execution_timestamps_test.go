@@ -136,6 +136,41 @@ func task4MigrationVersion(t *testing.T, file string) int {
 	return version
 }
 
+func task4InstallBaselineAdoptionExecutionGuard(
+	t *testing.T,
+	database *task4TestDatabase,
+) {
+	t.Helper()
+	_, err := database.pool.Exec(context.Background(), `
+CREATE FUNCTION baseline_adoption_execution_exclusion_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  PERFORM 1
+  FROM DeploymentPlan
+  WHERE id = NEW.deployment_plan_id
+    AND organization_id = NEW.organization_id
+  FOR UPDATE;
+  IF EXISTS (
+    SELECT 1 FROM BaselineAdoption
+    WHERE deployment_plan_id = NEW.deployment_plan_id
+      AND organization_id = NEW.organization_id
+  ) THEN
+    RAISE EXCEPTION
+      'baseline adoption cannot coexist with deployment tasks or executions'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER ExternalExecution_baseline_adoption_exclusion
+BEFORE INSERT OR UPDATE OF deployment_plan_id, organization_id ON ExternalExecution
+FOR EACH ROW EXECUTE FUNCTION baseline_adoption_execution_exclusion_guard()`)
+	NewWithT(t).Expect(err).NotTo(HaveOccurred())
+}
+
 func (database *task4TestDatabase) migrateTo(t *testing.T) {
 	t.Helper()
 	const version = 138
@@ -4617,4 +4652,95 @@ func TestRequireExternalExecutionTimestampExpandReadiness(t *testing.T) {
 		err := db.RequireExternalExecutionTimestampExpandReadiness(database.ctx)
 		NewWithT(t).Expect(err).To(MatchError(ContainSubstring("schema version")))
 	})
+	for _, version := range []int{165, 166, 170} {
+		t.Run(fmt.Sprintf("accepts compatible schema %d", version), func(t *testing.T) {
+			database := newTask4TestDatabase(t, version, "UTC")
+			if version >= 166 {
+				task4InstallBaselineAdoptionExecutionGuard(t, database)
+			}
+			NewWithT(t).Expect(
+				db.RequireExternalExecutionTimestampExpandReadiness(database.ctx),
+			).To(Succeed())
+		})
+	}
+
+	for _, test := range []struct {
+		name      string
+		arrange   string
+		wantError string
+	}{
+		{
+			name: "missing baseline adoption trigger",
+			arrange: `DROP TRIGGER ExternalExecution_baseline_adoption_exclusion
+ON ExternalExecution`,
+			wantError: "baseline adoption execution exclusion",
+		},
+		{
+			name: "disabled baseline adoption trigger",
+			arrange: `ALTER TABLE ExternalExecution
+DISABLE TRIGGER ExternalExecution_baseline_adoption_exclusion`,
+			wantError: "must have one exact enabled migration-138 trigger",
+		},
+		{
+			name: "missing baseline adoption function",
+			arrange: `DROP TRIGGER ExternalExecution_baseline_adoption_exclusion
+ON ExternalExecution;
+DROP FUNCTION baseline_adoption_execution_exclusion_guard()`,
+			wantError: "function is absent or malformed",
+		},
+		{
+			name: "wrong baseline adoption function",
+			arrange: `
+CREATE FUNCTION task4_wrong_baseline_adoption_guard()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+DROP TRIGGER ExternalExecution_baseline_adoption_exclusion
+ON ExternalExecution;
+CREATE TRIGGER ExternalExecution_baseline_adoption_exclusion
+BEFORE INSERT OR UPDATE OF deployment_plan_id, organization_id ON ExternalExecution
+FOR EACH ROW EXECUTE FUNCTION task4_wrong_baseline_adoption_guard()`,
+			wantError: "must have one exact enabled migration-138 trigger",
+		},
+		{
+			name: "wrong baseline adoption function body",
+			arrange: `
+CREATE OR REPLACE FUNCTION baseline_adoption_execution_exclusion_guard()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$`,
+			wantError: "function body differs",
+		},
+		{
+			name: "wrong baseline adoption trigger type",
+			arrange: `DROP TRIGGER ExternalExecution_baseline_adoption_exclusion
+ON ExternalExecution;
+CREATE TRIGGER ExternalExecution_baseline_adoption_exclusion
+AFTER INSERT OR UPDATE OF deployment_plan_id, organization_id ON ExternalExecution
+FOR EACH ROW EXECUTE FUNCTION baseline_adoption_execution_exclusion_guard()`,
+			wantError: "must have one exact enabled migration-138 trigger",
+		},
+		{
+			name: "wrong baseline adoption update columns",
+			arrange: `DROP TRIGGER ExternalExecution_baseline_adoption_exclusion
+ON ExternalExecution;
+CREATE TRIGGER ExternalExecution_baseline_adoption_exclusion
+BEFORE INSERT OR UPDATE OF organization_id ON ExternalExecution
+FOR EACH ROW EXECUTE FUNCTION baseline_adoption_execution_exclusion_guard()`,
+			wantError: "must have one exact enabled migration-138 trigger",
+		},
+		{
+			name: "extra external execution trigger",
+			arrange: `CREATE TRIGGER task4_extra_external_execution_guard
+BEFORE INSERT ON ExternalExecution
+FOR EACH ROW EXECUTE FUNCTION baseline_adoption_execution_exclusion_guard()`,
+			wantError: "externalexecution non-internal trigger set",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database := newTask4TestDatabase(t, 166, "UTC")
+			task4InstallBaselineAdoptionExecutionGuard(t, database)
+			_, err := database.pool.Exec(context.Background(), test.arrange)
+			NewWithT(t).Expect(err).NotTo(HaveOccurred())
+
+			err = db.RequireExternalExecutionTimestampExpandReadiness(database.ctx)
+			NewWithT(t).Expect(err).To(MatchError(ContainSubstring(test.wantError)))
+		})
+	}
 }
