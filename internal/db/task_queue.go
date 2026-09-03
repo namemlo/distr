@@ -387,7 +387,23 @@ func createTasksForDeploymentPlan(
 				return err
 			}
 		}
-		preflight, passed, err := evaluateAndPersistDeploymentPreflight(ctx, *plan, request.ActorUserAccountID)
+		var preflight *types.DeploymentPreflightRun
+		var passed bool
+		if request.CampaignRetryMemberRunID != uuid.Nil {
+			preflight, passed, err = evaluateAndPersistCampaignRetryPreflight(
+				ctx,
+				*plan,
+				request.ActorUserAccountID,
+				request.CampaignRetryMemberRunID,
+				request.ExecutionOccurrenceID,
+			)
+		} else {
+			preflight, passed, err = evaluateAndPersistDeploymentPreflight(
+				ctx,
+				*plan,
+				request.ActorUserAccountID,
+			)
+		}
 		if err != nil {
 			return err
 		}
@@ -505,11 +521,24 @@ func taskCreationTargetIDs(
 	if path != deploymentPlanTaskCreationPathAdmittedV2 {
 		return nil, apierrors.NewBadRequest("campaign retry requires admitted protocol v2 task creation")
 	}
+	return loadCampaignRetryTargetIDs(
+		ctx,
+		request.OrganizationID,
+		request.CampaignRetryMemberRunID,
+		request.DeploymentPlanID,
+		request.ExecutionOccurrenceID,
+	)
+}
+
+func loadCampaignRetryTargetIDs(
+	ctx context.Context,
+	organizationID, memberRunID, deploymentPlanID, executionOccurrenceID uuid.UUID,
+) ([]uuid.UUID, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, loadCampaignRetryTargetIDsSQL, pgx.NamedArgs{
-		"organization_id":         request.OrganizationID,
-		"member_run_id":           request.CampaignRetryMemberRunID,
-		"deployment_plan_id":      request.DeploymentPlanID,
-		"execution_occurrence_id": request.ExecutionOccurrenceID,
+		"organization_id":         organizationID,
+		"member_run_id":           memberRunID,
+		"deployment_plan_id":      deploymentPlanID,
+		"execution_occurrence_id": executionOccurrenceID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("load campaign retry targets: %w", err)
@@ -1072,18 +1101,15 @@ func insertCampaignRetryStepRunsForTasks(
 	if len(tasks) == 0 {
 		return apierrors.NewConflict("campaign retry produced no task work")
 	}
-	rows, err := internalctx.GetDb(ctx).Query(ctx, loadCampaignRetryStepStatesSQL, pgx.NamedArgs{
-		"organization_id":         tasks[0].OrganizationID,
-		"member_run_id":           memberRunID,
-		"deployment_plan_id":      tasks[0].DeploymentPlanID,
-		"execution_occurrence_id": executionOccurrenceID,
-	})
+	states, err := loadCampaignRetryStepStates(
+		ctx,
+		tasks[0].OrganizationID,
+		memberRunID,
+		tasks[0].DeploymentPlanID,
+		executionOccurrenceID,
+	)
 	if err != nil {
-		return fmt.Errorf("load campaign retry step states: %w", err)
-	}
-	states, err := pgx.CollectRows(rows, pgx.RowToStructByName[campaignRetryStepState])
-	if err != nil {
-		return fmt.Errorf("collect campaign retry step states: %w", err)
+		return err
 	}
 	previous := make(map[uuid.UUID]map[string]types.StepRunStatus, len(tasks))
 	for _, state := range states {
@@ -1157,6 +1183,26 @@ func insertCampaignRetryStepRunsForTasks(
 		return mapTaskWriteError("insert campaign retry step runs", err)
 	}
 	return nil
+}
+
+func loadCampaignRetryStepStates(
+	ctx context.Context,
+	organizationID, memberRunID, deploymentPlanID, executionOccurrenceID uuid.UUID,
+) ([]campaignRetryStepState, error) {
+	rows, err := internalctx.GetDb(ctx).Query(ctx, loadCampaignRetryStepStatesSQL, pgx.NamedArgs{
+		"organization_id":         organizationID,
+		"member_run_id":           memberRunID,
+		"deployment_plan_id":      deploymentPlanID,
+		"execution_occurrence_id": executionOccurrenceID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load campaign retry step states: %w", err)
+	}
+	states, err := pgx.CollectRows(rows, pgx.RowToStructByName[campaignRetryStepState])
+	if err != nil {
+		return nil, fmt.Errorf("collect campaign retry step states: %w", err)
+	}
+	return states, nil
 }
 
 func campaignRetryStepSeed(

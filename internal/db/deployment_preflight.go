@@ -79,6 +79,194 @@ func evaluateAndPersistDeploymentPreflight(
 	)
 }
 
+func evaluateAndPersistCampaignRetryPreflight(
+	ctx context.Context,
+	plan types.DeploymentPlan,
+	actorUserAccountID, memberRunID, executionOccurrenceID uuid.UUID,
+) (*types.DeploymentPreflightRun, bool, error) {
+	if memberRunID == uuid.Nil || executionOccurrenceID == uuid.Nil {
+		return nil, false, apierrors.NewBadRequest(
+			"campaign retry preflight requires member run and execution occurrence",
+		)
+	}
+	targetIDs, err := loadCampaignRetryTargetIDs(
+		ctx,
+		plan.OrganizationID,
+		memberRunID,
+		plan.ID,
+		executionOccurrenceID,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	states, err := loadCampaignRetryStepStates(
+		ctx,
+		plan.OrganizationID,
+		memberRunID,
+		plan.ID,
+		executionOccurrenceID,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	scoped, err := scopeCampaignRetryPreflightPlan(plan, targetIDs, states)
+	if err != nil {
+		return nil, false, err
+	}
+	return evaluateAndPersistDeploymentPreflightScope(
+		ctx,
+		plan,
+		scoped,
+		actorUserAccountID,
+		DirectControlPlaneAuditAppendHook(),
+	)
+}
+
+func scopeCampaignRetryPreflightPlan(
+	plan types.DeploymentPlan,
+	targetIDs []uuid.UUID,
+	states []campaignRetryStepState,
+) (types.DeploymentPlan, error) {
+	if len(targetIDs) == 0 {
+		return types.DeploymentPlan{}, apierrors.NewConflict(
+			"campaign retry has no failed or canceled target work",
+		)
+	}
+	stepsByKey := make(map[string]types.DeploymentPlanStep, len(plan.Steps))
+	for _, step := range plan.Steps {
+		if _, duplicate := stepsByKey[step.StepKey]; duplicate || strings.TrimSpace(step.StepKey) == "" {
+			return types.DeploymentPlan{}, apierrors.NewConflict(
+				"campaign retry frozen plan step set is invalid",
+			)
+		}
+		stepsByKey[step.StepKey] = step
+	}
+	selectedTargets := make(map[uuid.UUID]struct{}, len(targetIDs))
+	for _, targetID := range targetIDs {
+		if targetID == uuid.Nil {
+			return types.DeploymentPlan{}, apierrors.NewConflict(
+				"campaign retry target scope is invalid",
+			)
+		}
+		if _, duplicate := selectedTargets[targetID]; duplicate {
+			return types.DeploymentPlan{}, apierrors.NewConflict(
+				"campaign retry target scope is duplicated",
+			)
+		}
+		selectedTargets[targetID] = struct{}{}
+	}
+
+	priorByTarget := make(map[uuid.UUID]map[string]types.StepRunStatus, len(selectedTargets))
+	for _, state := range states {
+		if _, selected := selectedTargets[state.DeploymentPlanTargetID]; !selected {
+			continue
+		}
+		if _, planned := stepsByKey[state.StepKey]; !planned {
+			return types.DeploymentPlan{}, apierrors.NewConflict(
+				"campaign retry source does not match the frozen plan step set",
+			)
+		}
+		if priorByTarget[state.DeploymentPlanTargetID] == nil {
+			priorByTarget[state.DeploymentPlanTargetID] = make(map[string]types.StepRunStatus, len(plan.Steps))
+		}
+		if _, duplicate := priorByTarget[state.DeploymentPlanTargetID][state.StepKey]; duplicate {
+			return types.DeploymentPlan{}, apierrors.NewConflict(
+				"campaign retry source contains duplicate frozen plan step state",
+			)
+		}
+		priorByTarget[state.DeploymentPlanTargetID][state.StepKey] = state.Status
+	}
+
+	pendingByTarget := make(map[uuid.UUID]map[string]struct{}, len(selectedTargets))
+	pendingStepKeys := make(map[string]struct{}, len(plan.Steps))
+	for targetID := range selectedTargets {
+		prior := priorByTarget[targetID]
+		pending := make(map[string]struct{}, len(plan.Steps))
+		for _, step := range plan.Steps {
+			previousStatus, found := prior[step.StepKey]
+			if !found {
+				return types.DeploymentPlan{}, apierrors.NewConflict(
+					"campaign retry source does not contain the frozen plan step set",
+				)
+			}
+			status, _, err := campaignRetryStepSeed(step, previousStatus)
+			if err != nil {
+				return types.DeploymentPlan{}, err
+			}
+			if status == types.StepRunStatusPending {
+				pending[step.StepKey] = struct{}{}
+				pendingStepKeys[step.StepKey] = struct{}{}
+			}
+		}
+		if len(pending) == 0 {
+			return types.DeploymentPlan{}, apierrors.NewConflict(
+				"campaign retry target has no pending frozen plan step work",
+			)
+		}
+		pendingByTarget[targetID] = pending
+	}
+
+	scoped := plan
+	scoped.Targets = nil
+	for _, target := range plan.Targets {
+		if _, selected := selectedTargets[target.ID]; selected {
+			scoped.Targets = append(scoped.Targets, target)
+			delete(selectedTargets, target.ID)
+		}
+	}
+	if len(selectedTargets) > 0 {
+		return types.DeploymentPlan{}, apierrors.NewConflict(
+			"campaign retry target is not present in the frozen plan",
+		)
+	}
+
+	scoped.TargetComponents = nil
+	for _, component := range plan.TargetComponents {
+		pending := pendingByTarget[component.DeploymentPlanTargetID]
+		if campaignRetryComponentHasPendingStep(component.Component, pending, plan.Migrations) {
+			scoped.TargetComponents = append(scoped.TargetComponents, component)
+		}
+	}
+	scoped.Migrations = nil
+	for _, migration := range plan.Migrations {
+		if strings.TrimSpace(migration.ApplyStepKey) == "" {
+			return types.DeploymentPlan{}, apierrors.NewConflict(
+				"campaign retry frozen migration is missing its apply step",
+			)
+		}
+		if _, pending := pendingStepKeys[migration.ApplyStepKey]; pending {
+			scoped.Migrations = append(scoped.Migrations, migration)
+		}
+	}
+	scoped.StepAdapters = nil
+	for _, adapter := range plan.StepAdapters {
+		if _, pending := pendingStepKeys[adapter.StepKey]; pending {
+			scoped.StepAdapters = append(scoped.StepAdapters, adapter)
+		}
+	}
+	return scoped, nil
+}
+
+func campaignRetryComponentHasPendingStep(
+	component string,
+	pending map[string]struct{},
+	migrations []types.DeploymentPlanMigration,
+) bool {
+	componentPrefix := "component:" + component + ":"
+	for stepKey := range pending {
+		if strings.HasPrefix(stepKey, componentPrefix) {
+			return true
+		}
+		for _, migration := range migrations {
+			if migration.ComponentKey == component &&
+				(stepKey == migration.ApplyStepKey || stepKey == migration.ValidateStepKey) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func evaluateAndPersistDeploymentPreflightForTask(
 	ctx context.Context,
 	plan types.DeploymentPlan,

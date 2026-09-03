@@ -218,6 +218,150 @@ func TestCampaignRetryQueriesUseLatestPriorOccurrenceAndTerminalFailureOnly(t *t
 	}
 }
 
+func TestCampaignRetryPreflightScopesChoiceTPToPendingTransactionWork(t *testing.T) {
+	g := NewWithT(t)
+	targetID := uuid.New()
+	plan := types.DeploymentPlan{
+		Targets: []types.DeploymentPlanTarget{{ID: targetID}},
+		TargetComponents: []types.DeploymentPlanTargetComponent{
+			{DeploymentPlanTargetID: targetID, Component: "customer-api"},
+			{DeploymentPlanTargetID: targetID, Component: "transaction-api"},
+		},
+		Steps: []types.DeploymentPlanStep{
+			{StepKey: "component:customer-api:deploy", Included: true},
+			{StepKey: "component:customer-api:health", Included: true},
+			{StepKey: "component:transaction-api:deploy", Included: true},
+			{StepKey: "component:transaction-api:health", Included: true},
+		},
+		StepAdapters: []types.DeploymentPlanStepAdapter{
+			{StepKey: "component:customer-api:deploy"},
+			{StepKey: "component:customer-api:health"},
+			{StepKey: "component:transaction-api:deploy"},
+			{StepKey: "component:transaction-api:health"},
+		},
+	}
+	states := campaignRetryStates(targetID, map[string]types.StepRunStatus{
+		"component:customer-api:deploy":    types.StepRunStatusSucceeded,
+		"component:customer-api:health":    types.StepRunStatusSucceeded,
+		"component:transaction-api:deploy": types.StepRunStatusFailed,
+		"component:transaction-api:health": types.StepRunStatusPending,
+	})
+
+	scoped, err := scopeCampaignRetryPreflightPlan(plan, []uuid.UUID{targetID}, states)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(scoped.Targets).To(Equal(plan.Targets))
+	g.Expect(scoped.TargetComponents).To(HaveLen(1))
+	g.Expect(scoped.TargetComponents[0].Component).To(Equal("transaction-api"))
+	g.Expect(scoped.StepAdapters).To(HaveLen(2))
+	g.Expect([]string{scoped.StepAdapters[0].StepKey, scoped.StepAdapters[1].StepKey}).To(ConsistOf(
+		"component:transaction-api:deploy",
+		"component:transaction-api:health",
+	))
+}
+
+func TestCampaignRetryPreflightExcludesAppliedMigrationButKeepsPendingValidationAdapter(t *testing.T) {
+	g := NewWithT(t)
+	targetID := uuid.New()
+	applyKey := "migration:transaction.042:apply"
+	validateKey := "migration:transaction.042:validate"
+	plan := types.DeploymentPlan{
+		Targets: []types.DeploymentPlanTarget{{ID: targetID}},
+		TargetComponents: []types.DeploymentPlanTargetComponent{{
+			DeploymentPlanTargetID: targetID, Component: "transaction-api",
+		}},
+		Steps: []types.DeploymentPlanStep{
+			{StepKey: applyKey, Included: true},
+			{StepKey: validateKey, Included: true},
+		},
+		Migrations: []types.DeploymentPlanMigration{{
+			MigrationID: "transaction.042", ComponentKey: "transaction-api",
+			ApplyStepKey: applyKey, ValidateStepKey: validateKey,
+		}},
+		StepAdapters: []types.DeploymentPlanStepAdapter{
+			{StepKey: applyKey},
+			{StepKey: validateKey},
+		},
+	}
+	states := campaignRetryStates(targetID, map[string]types.StepRunStatus{
+		applyKey:    types.StepRunStatusSucceeded,
+		validateKey: types.StepRunStatusFailed,
+	})
+
+	scoped, err := scopeCampaignRetryPreflightPlan(plan, []uuid.UUID{targetID}, states)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(scoped.TargetComponents).To(HaveLen(1))
+	g.Expect(scoped.Migrations).To(BeEmpty())
+	g.Expect(scoped.StepAdapters).To(HaveLen(1))
+	g.Expect(scoped.StepAdapters[0].StepKey).To(Equal(validateKey))
+}
+
+func TestCampaignRetryPreflightKeepsMigrationWhoseApplyIsPending(t *testing.T) {
+	g := NewWithT(t)
+	targetID := uuid.New()
+	applyKey := "migration:transaction.043:apply"
+	validateKey := "migration:transaction.043:validate"
+	plan := types.DeploymentPlan{
+		Targets: []types.DeploymentPlanTarget{{ID: targetID}},
+		TargetComponents: []types.DeploymentPlanTargetComponent{{
+			DeploymentPlanTargetID: targetID, Component: "transaction-api",
+		}},
+		Steps: []types.DeploymentPlanStep{
+			{StepKey: applyKey, Included: true},
+			{StepKey: validateKey, Included: true},
+		},
+		Migrations: []types.DeploymentPlanMigration{{
+			MigrationID: "transaction.043", ComponentKey: "transaction-api",
+			ApplyStepKey: applyKey, ValidateStepKey: validateKey,
+		}},
+	}
+	states := campaignRetryStates(targetID, map[string]types.StepRunStatus{
+		applyKey:    types.StepRunStatusFailed,
+		validateKey: types.StepRunStatusPending,
+	})
+
+	scoped, err := scopeCampaignRetryPreflightPlan(plan, []uuid.UUID{targetID}, states)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(scoped.Migrations).To(Equal(plan.Migrations))
+}
+
+func TestCampaignRetryPreflightFailsClosedWhenPriorFrozenStepStateIsMissing(t *testing.T) {
+	g := NewWithT(t)
+	targetID := uuid.New()
+	plan := types.DeploymentPlan{
+		Targets: []types.DeploymentPlanTarget{{ID: targetID}},
+		Steps: []types.DeploymentPlanStep{
+			{StepKey: "component:customer-api:deploy", Included: true},
+			{StepKey: "component:transaction-api:deploy", Included: true},
+		},
+	}
+	states := campaignRetryStates(targetID, map[string]types.StepRunStatus{
+		"component:transaction-api:deploy": types.StepRunStatusFailed,
+	})
+
+	_, err := scopeCampaignRetryPreflightPlan(plan, []uuid.UUID{targetID}, states)
+
+	g.Expect(err).To(MatchError(ContainSubstring("frozen plan step set")))
+	g.Expect(err).To(MatchError(apierrors.ErrConflict))
+}
+
+func campaignRetryStates(
+	targetID uuid.UUID,
+	statuses map[string]types.StepRunStatus,
+) []campaignRetryStepState {
+	result := make([]campaignRetryStepState, 0, len(statuses))
+	for stepKey, status := range statuses {
+		result = append(result, campaignRetryStepState{
+			DeploymentPlanTargetID: targetID,
+			StepKey:                stepKey,
+			Status:                 status,
+		})
+	}
+	return result
+}
+
 func targetPlanV2TaskReplayFixture() (types.DeploymentPlan, []types.Task) {
 	executionOccurrenceID := uuid.New()
 	plan := types.DeploymentPlan{

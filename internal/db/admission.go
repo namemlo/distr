@@ -70,12 +70,14 @@ const emergencyOverrideOutputExpr = `
 `
 
 type admissionGateEvidenceContext struct {
-	OrganizationID          uuid.UUID
-	DeploymentPlanID        uuid.UUID
-	PlanRevision            int64
-	PlanChecksum            string
-	EffectivePolicyChecksum string
-	EvaluatedAt             time.Time
+	OrganizationID           uuid.UUID
+	DeploymentPlanID         uuid.UUID
+	PlanRevision             int64
+	PlanChecksum             string
+	EffectivePolicyChecksum  string
+	ExecutionOccurrenceID    uuid.UUID
+	CampaignRetryMemberRunID uuid.UUID
+	EvaluatedAt              time.Time
 }
 
 type admissionGateEvidenceRepository interface {
@@ -192,12 +194,14 @@ func admitDeploymentPlan(
 			txCtx,
 			gateEvidenceRepository,
 			admissionGateEvidenceContext{
-				OrganizationID:          snapshot.Plan.OrganizationID,
-				DeploymentPlanID:        snapshot.Plan.ID,
-				PlanRevision:            snapshot.PlanRevision,
-				PlanChecksum:            snapshot.Plan.CanonicalChecksum,
-				EffectivePolicyChecksum: snapshot.Plan.EffectivePolicyChecksum,
-				EvaluatedAt:             decisionAt.UTC(),
+				OrganizationID:           snapshot.Plan.OrganizationID,
+				DeploymentPlanID:         snapshot.Plan.ID,
+				PlanRevision:             snapshot.PlanRevision,
+				PlanChecksum:             snapshot.Plan.CanonicalChecksum,
+				EffectivePolicyChecksum:  snapshot.Plan.EffectivePolicyChecksum,
+				ExecutionOccurrenceID:    request.ExecutionOccurrenceID,
+				CampaignRetryMemberRunID: request.CampaignRetryMemberRunID,
+				EvaluatedAt:              decisionAt.UTC(),
 			},
 			request.ActorUserAccountID,
 			admissionDatabaseTime,
@@ -373,6 +377,11 @@ func validateAdmitDeploymentPlanRequest(
 	}
 	if !admissionIdempotencyKeyValid(request.SchedulerIdempotencyKey) {
 		return apierrors.NewBadRequest("schedulerIdempotencyKey is invalid")
+	}
+	if request.CampaignRetryMemberRunID != uuid.Nil && request.ExecutionOccurrenceID == uuid.Nil {
+		return apierrors.NewBadRequest(
+			"campaign retry admission requires executionOccurrenceId",
+		)
 	}
 	if request.Authorize == nil {
 		return apierrors.NewForbidden("scoped admission authorization is required")
@@ -596,12 +605,14 @@ func buildAdmissionRequest(
 	gateEvidence, err := gateEvidenceRepository.ResolveAdmissionGateEvidence(
 		ctx,
 		admissionGateEvidenceContext{
-			OrganizationID:          snapshot.Plan.OrganizationID,
-			DeploymentPlanID:        snapshot.Plan.ID,
-			PlanRevision:            snapshot.PlanRevision,
-			PlanChecksum:            snapshot.Plan.CanonicalChecksum,
-			EffectivePolicyChecksum: snapshot.Plan.EffectivePolicyChecksum,
-			EvaluatedAt:             evaluatedAt.UTC(),
+			OrganizationID:           snapshot.Plan.OrganizationID,
+			DeploymentPlanID:         snapshot.Plan.ID,
+			PlanRevision:             snapshot.PlanRevision,
+			PlanChecksum:             snapshot.Plan.CanonicalChecksum,
+			EffectivePolicyChecksum:  snapshot.Plan.EffectivePolicyChecksum,
+			ExecutionOccurrenceID:    request.ExecutionOccurrenceID,
+			CampaignRetryMemberRunID: request.CampaignRetryMemberRunID,
+			EvaluatedAt:              evaluatedAt.UTC(),
 		},
 	)
 	if err != nil {

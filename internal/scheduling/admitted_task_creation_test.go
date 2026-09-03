@@ -129,6 +129,16 @@ func TestCreateTasksForAdmittedV2PlanPreservesCampaignRetryMemberScope(t *testin
 		ID: uuid.New(), Revision: 3, Checksum: "sha256:" + strings.Repeat("b", 64),
 	}
 	dependencies := admittedTaskCreationTestDependencies()
+	dependencies.AdmitDeploymentPlan = func(
+		_ context.Context,
+		admitRequest types.AdmitDeploymentPlanRequest,
+	) (*types.AdmissionEvaluation, error) {
+		g.Expect(admitRequest.CampaignRetryMemberRunID).
+			To(Equal(request.CampaignRetryMemberRunID))
+		g.Expect(admitRequest.ExecutionOccurrenceID).
+			To(Equal(request.ExecutionOccurrenceID))
+		return &types.AdmissionEvaluation{Decision: types.AdmissionDecisionAdmit}, nil
+	}
 	dependencies.CreateTasks = func(
 		_ context.Context,
 		createRequest types.CreateTasksForDeploymentPlanRequest,

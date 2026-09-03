@@ -68,12 +68,14 @@ func CreateTasksForAdmittedV2Plan(
 	evaluation, err := dependencies.AdmitDeploymentPlan(
 		ctx,
 		types.AdmitDeploymentPlanRequest{
-			OrganizationID:          request.OrganizationID,
-			DeploymentPlanID:        request.DeploymentPlanID,
-			ActorUserAccountID:      request.ActorUserAccountID,
-			SchedulerIdempotencyKey: request.SchedulerIdempotencyKey,
-			Campaign:                request.Campaign,
-			Authorize:               request.Authorize,
+			OrganizationID:           request.OrganizationID,
+			DeploymentPlanID:         request.DeploymentPlanID,
+			ExecutionOccurrenceID:    request.ExecutionOccurrenceID,
+			CampaignRetryMemberRunID: request.CampaignRetryMemberRunID,
+			ActorUserAccountID:       request.ActorUserAccountID,
+			SchedulerIdempotencyKey:  request.SchedulerIdempotencyKey,
+			Campaign:                 request.Campaign,
+			Authorize:                request.Authorize,
 		},
 	)
 	if err != nil {

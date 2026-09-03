@@ -254,7 +254,17 @@ func (databaseAdmissionGateEvidencePreparer) PrepareAdmissionGateEvidence(
 	if len(requiredEvidence) == 0 {
 		return nil
 	}
-	_, _, err = evaluateAndPersistDeploymentPreflight(ctx, *plan, actorUserAccountID)
+	if evidenceContext.CampaignRetryMemberRunID != uuid.Nil {
+		_, _, err = evaluateAndPersistCampaignRetryPreflight(
+			ctx,
+			*plan,
+			actorUserAccountID,
+			evidenceContext.CampaignRetryMemberRunID,
+			evidenceContext.ExecutionOccurrenceID,
+		)
+	} else {
+		_, _, err = evaluateAndPersistDeploymentPreflight(ctx, *plan, actorUserAccountID)
+	}
 	return err
 }
 

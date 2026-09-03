@@ -195,12 +195,14 @@ type AdmissionAuthorizationContext struct {
 type AdmissionAuthorizer func(context.Context, AdmissionAuthorizationContext) error
 
 type AdmitDeploymentPlanRequest struct {
-	OrganizationID          uuid.UUID
-	DeploymentPlanID        uuid.UUID
-	ActorUserAccountID      uuid.UUID
-	SchedulerIdempotencyKey string
-	Campaign                *AdmissionCampaignEvidence
-	Authorize               AdmissionAuthorizer
+	OrganizationID           uuid.UUID
+	DeploymentPlanID         uuid.UUID
+	ExecutionOccurrenceID    uuid.UUID
+	CampaignRetryMemberRunID uuid.UUID
+	ActorUserAccountID       uuid.UUID
+	SchedulerIdempotencyKey  string
+	Campaign                 *AdmissionCampaignEvidence
+	Authorize                AdmissionAuthorizer
 }
 
 type CreateEmergencyOverrideRequest struct {
