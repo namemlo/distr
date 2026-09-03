@@ -3,7 +3,7 @@ import {ChangeDetectionStrategy, Component, inject, signal} from '@angular/core'
 import {FormBuilder, ReactiveFormsModule, Validators} from '@angular/forms';
 import {ActivatedRoute} from '@angular/router';
 import {firstValueFrom} from 'rxjs';
-import {OperatorControlPlaneService} from '../../services/operator-control-plane.service';
+import {OPERATOR_ACTION_KEY_FACTORY, OperatorControlPlaneService} from '../../services/operator-control-plane.service';
 import {
   OperatorAuditDetail,
   OperatorAuditExportSink,
@@ -28,6 +28,10 @@ export class AuditComponent {
   private readonly service = inject(OperatorControlPlaneService);
   private readonly route = inject(ActivatedRoute);
   private readonly fb = inject(FormBuilder).nonNullable;
+  private readonly newActionKey = inject(OPERATOR_ACTION_KEY_FACTORY);
+  private protectedHistoryIntent = '';
+  private protectedHistoryIdempotencyKey = '';
+  private protectedHistorySelectionGeneration = 0;
 
   protected readonly filters = this.fb.group({
     action: this.fb.control(this.queryFilter('action')),
@@ -51,6 +55,7 @@ export class AuditComponent {
     customerOrganizationIds: this.fb.control(''),
     deploymentTargetIds: this.fb.control(''),
     reviewerUserAccountId: this.fb.control('', Validators.required),
+    singleReviewerPilot: this.fb.control(false),
     confirmed: this.fb.control(false, Validators.requiredTrue),
   });
   protected readonly protectedHistoryLookupForm = this.fb.group({
@@ -200,22 +205,35 @@ export class AuditComponent {
       this.protectedHistoryError.set('Enter at least one customer organization ID or deployment target ID.');
       return;
     }
+    if (value.singleReviewerPilot && (customerOrganizationIds.length !== 0 || deploymentTargetIds.length !== 1)) {
+      this.protectedHistoryError.set(
+        'The approved single-reviewer pilot requires exactly one deployment target and no customer-wide scope.'
+      );
+      return;
+    }
+
+    const request = {
+      customerOrganizationIds,
+      deploymentTargetIds,
+      reviewerUserAccountId: value.reviewerUserAccountId.trim(),
+    };
+    const idempotencyKey = this.protectedHistoryActionKey(request);
+    const selectionGeneration = ++this.protectedHistorySelectionGeneration;
 
     this.protectedHistoryCreating.set(true);
     this.protectedHistoryVerification.set(undefined);
     try {
-      const artifact = await firstValueFrom(
-        this.service.createProtectedHistoryArtifact({
-          customerOrganizationIds,
-          deploymentTargetIds,
-          reviewerUserAccountId: value.reviewerUserAccountId.trim(),
-        })
-      );
+      const artifact = await firstValueFrom(this.service.createProtectedHistoryArtifact(request, idempotencyKey));
+      this.protectedHistoryIntent = '';
+      this.protectedHistoryIdempotencyKey = '';
+      if (selectionGeneration !== this.protectedHistorySelectionGeneration) return;
       this.protectedHistoryArtifact.set(artifact);
       this.protectedHistoryLookupForm.controls.artifactId.setValue(artifact.id);
       this.protectedHistoryForm.controls.confirmed.setValue(false);
     } catch (error) {
-      this.protectedHistoryError.set(this.readError(error, 'Could not retain the protected-history artifact.'));
+      if (selectionGeneration === this.protectedHistorySelectionGeneration) {
+        this.protectedHistoryError.set(this.readError(error, 'Could not retain the protected-history artifact.'));
+      }
     } finally {
       this.protectedHistoryCreating.set(false);
     }
@@ -227,14 +245,20 @@ export class AuditComponent {
       return;
     }
     const artifactId = this.protectedHistoryLookupForm.controls.artifactId.value.trim();
+    const selectionGeneration = ++this.protectedHistorySelectionGeneration;
     this.protectedHistoryError.set('');
     this.protectedHistoryArtifact.set(undefined);
     this.protectedHistoryVerification.set(undefined);
     this.protectedHistoryLoading.set(true);
     try {
-      this.protectedHistoryArtifact.set(await firstValueFrom(this.service.getProtectedHistoryArtifact(artifactId)));
+      const artifact = await firstValueFrom(this.service.getProtectedHistoryArtifact(artifactId));
+      if (selectionGeneration === this.protectedHistorySelectionGeneration) {
+        this.protectedHistoryArtifact.set(artifact);
+      }
     } catch (error) {
-      this.protectedHistoryError.set(this.readError(error, 'Could not load the protected-history artifact.'));
+      if (selectionGeneration === this.protectedHistorySelectionGeneration) {
+        this.protectedHistoryError.set(this.readError(error, 'Could not load the protected-history artifact.'));
+      }
     } finally {
       this.protectedHistoryLoading.set(false);
     }
@@ -243,16 +267,37 @@ export class AuditComponent {
   protected async verifyProtectedHistoryArtifact(): Promise<void> {
     const artifact = this.protectedHistoryArtifact();
     if (!artifact || this.protectedHistoryVerifying()) return;
+    const selectionGeneration = this.protectedHistorySelectionGeneration;
 
     this.protectedHistoryError.set('');
     this.protectedHistoryVerification.set(undefined);
     this.protectedHistoryVerifying.set(true);
     try {
-      this.protectedHistoryVerification.set(
-        await firstValueFrom(this.service.verifyProtectedHistoryArtifact(artifact.id))
-      );
+      const verification = await firstValueFrom(this.service.verifyProtectedHistoryArtifact(artifact.id));
+      if (
+        selectionGeneration !== this.protectedHistorySelectionGeneration ||
+        this.protectedHistoryArtifact()?.id !== artifact.id
+      ) {
+        return;
+      }
+      if (
+        verification.protectedHistoryArtifactId !== artifact.id ||
+        verification.objectReference !== artifact.objectReference ||
+        verification.mediaType !== artifact.mediaType ||
+        verification.byteLength !== artifact.byteLength ||
+        verification.contentChecksum !== artifact.contentChecksum
+      ) {
+        this.protectedHistoryError.set('Stored object verification did not match the selected retained artifact.');
+        return;
+      }
+      this.protectedHistoryVerification.set(verification);
     } catch (error) {
-      this.protectedHistoryError.set(this.readError(error, 'Could not verify the protected-history artifact.'));
+      if (
+        selectionGeneration === this.protectedHistorySelectionGeneration &&
+        this.protectedHistoryArtifact()?.id === artifact.id
+      ) {
+        this.protectedHistoryError.set(this.readError(error, 'Could not verify the protected-history artifact.'));
+      }
     } finally {
       this.protectedHistoryVerifying.set(false);
     }
@@ -404,6 +449,19 @@ export class AuditComponent {
           .map((id) => id.trim())
           .filter(Boolean)
       ),
-    ];
+    ].sort();
+  }
+
+  private protectedHistoryActionKey(request: {
+    customerOrganizationIds: string[];
+    deploymentTargetIds: string[];
+    reviewerUserAccountId: string;
+  }): string {
+    const intent = JSON.stringify(request);
+    if (intent !== this.protectedHistoryIntent || !this.protectedHistoryIdempotencyKey) {
+      this.protectedHistoryIntent = intent;
+      this.protectedHistoryIdempotencyKey = this.newActionKey();
+    }
+    return this.protectedHistoryIdempotencyKey;
   }
 }

@@ -381,10 +381,12 @@ export class PlanDetailComponent implements OnInit {
     if (!detail || !this.admissionEnabled()) {
       return;
     }
+    const planId = this.planId;
+    const planLoadGeneration = this.planLoadGeneration;
     const confirmed = await firstValueFrom(
       this.overlay.confirm({
         message: {
-          message: `Evaluate deployment admission for plan ${this.planId}?`,
+          message: `Evaluate deployment admission for plan ${planId}?`,
           alert: {
             type: 'warning',
             message:
@@ -398,8 +400,14 @@ export class PlanDetailComponent implements OnInit {
     if (!confirmed) {
       return;
     }
+    if (planLoadGeneration !== this.planLoadGeneration || this.planId !== planId) {
+      this.actionError.set(
+        'The selected plan changed while confirmation was open. Review and confirm the current plan.'
+      );
+      return;
+    }
     await this.runAction('admission', async () => {
-      this.admissionEvaluation.set(await firstValueFrom(this.service.admitDeploymentPlan(this.planId)));
+      this.admissionEvaluation.set(await firstValueFrom(this.service.admitDeploymentPlan(planId)));
       this.loadReviewMaterial();
     });
   }

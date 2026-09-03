@@ -269,13 +269,30 @@
           formControlName="deploymentTargetIds"
           placeholder="Comma or newline separated UUIDs"></textarea>
       </label>
+      <label class="col-span-2 flex items-start gap-2 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900">
+        <input class="distr-checkbox mt-1" type="checkbox" formControlName="singleReviewerPilot" />
+        <span>
+          Use the explicitly approved, server-scoped single-reviewer pilot. The Hub accepts this only for its configured
+          organization and single deployment target and records the governance exception.
+        </span>
+      </label>
       <label class="col-span-2">
-        <span class="distr-label">Distinct reviewer user account ID</span>
+        <span class="distr-label">
+          {{
+            protectedHistoryForm.controls.singleReviewerPilot.value
+              ? 'Issuing user account ID (approved pilot)'
+              : 'Distinct reviewer user account ID'
+          }}
+        </span>
         <input class="distr-input" formControlName="reviewerUserAccountId" />
       </label>
       <label class="col-span-2 flex items-center gap-2">
         <input class="distr-checkbox" type="checkbox" formControlName="confirmed" />
-        I reviewed the exact scope and confirmed the reviewer is not the issuing user.
+        @if (protectedHistoryForm.controls.singleReviewerPilot.value) {
+          I reviewed the exact target-only scope and confirm this operation uses the approved same-user pilot exception.
+        } @else {
+          I reviewed the exact scope and confirmed the reviewer is not the issuing user.
+        }
       </label>
       <button class="distr-button col-span-2" type="submit" [disabled]="protectedHistoryCreating()">
         {{ protectedHistoryCreating() ? 'Retaining…' : 'Create protected-history artifact' }}
@@ -319,6 +336,10 @@
         </div>
         <dl class="grid gap-2 text-sm md:grid-cols-2">
           <div>
+            <dt>Artifact identity</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.artifactId }}</dd>
+          </div>
+          <div>
             <dt>Object reference</dt>
             <dd class="break-all font-mono text-xs">{{ artifact.objectReference }}</dd>
           </div>
@@ -331,9 +352,17 @@
             <dd class="break-all font-mono text-xs">{{ artifact.recordsRoot }}</dd>
           </div>
           <div>
-            <dt>Audit binding</dt>
+            <dt>Retention checksum</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.retentionChecksum }}</dd>
+          </div>
+          <div>
+            <dt>Request checksum</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.requestChecksum }}</dd>
+          </div>
+          <div>
+            <dt>Audit event and binding</dt>
             <dd class="break-all font-mono text-xs">
-              #{{ artifact.auditEventSequence }} · {{ artifact.auditBindingChecksum }}
+              {{ artifact.auditEventId }} · #{{ artifact.auditEventSequence }} · {{ artifact.auditBindingChecksum }}
             </dd>
           </div>
           <div>
@@ -344,6 +373,34 @@
             <dt>Reviewer</dt>
             <dd class="break-all font-mono text-xs">{{ artifact.reviewerUserAccountId }}</dd>
           </div>
+          <div>
+            <dt>Captured</dt>
+            <dd>{{ artifact.capturedAt | date: 'medium' }}</dd>
+          </div>
+          <div>
+            <dt>Stored object</dt>
+            <dd>{{ artifact.mediaType }} · {{ artifact.byteLength }} bytes</dd>
+          </div>
+          <div>
+            <dt>Idempotency key</dt>
+            <dd class="break-all font-mono text-xs">{{ artifact.idempotencyKey }}</dd>
+          </div>
+          <div class="md:col-span-2">
+            <dt>Exact retained scope</dt>
+            <dd class="break-all font-mono text-xs">
+              Organization {{ artifact.scope.organizationId }} · customers
+              {{ artifact.scope.customerOrganizationIds.join(', ') || 'none' }} · targets
+              {{ artifact.scope.deploymentTargetIds.join(', ') || 'none' }}
+            </dd>
+          </div>
+          @if (artifact.governanceExceptionKey) {
+            <div class="md:col-span-2 rounded border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <dt>Governance exception</dt>
+              <dd class="break-all font-mono text-xs">
+                {{ artifact.governanceExceptionKey }} · {{ artifact.governanceExceptionReference }}
+              </dd>
+            </div>
+          }
         </dl>
         @if (protectedHistoryVerification(); as verification) {
           <div role="status" class="rounded bg-gray-100 p-3 text-sm" data-testid="protected-history-verification">

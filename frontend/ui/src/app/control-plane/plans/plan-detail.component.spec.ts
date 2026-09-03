@@ -675,6 +675,21 @@ describe('PlanDetailComponent', () => {
     expect(result.textContent).toContain('sha256:admission-decision');
   });
 
+  it('does not admit a stale plan when the route changes while confirmation is open', async () => {
+    const confirmation = new Subject<boolean>();
+    overlay.confirm.mockReturnValue(confirmation);
+    const {component} = createComponent();
+
+    const pendingAdmission = (component as any).evaluateAdmission();
+    routeParams.next(convertToParamMap({planId: 'plan-2'}));
+    confirmation.next(true);
+    confirmation.complete();
+    await pendingAdmission;
+
+    expect(service.admitDeploymentPlan).not.toHaveBeenCalled();
+    expect((component as any).actionError()).toContain('selected plan changed while confirmation was open');
+  });
+
   it('adopts a verified baseline with plan-derived checksums and no deployment side effects', async () => {
     const componentEvidence = {
       componentInstanceId: 'component-instance-1',

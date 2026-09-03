@@ -1028,10 +1028,13 @@ export interface OperatorProtectedHistoryArtifact {
   capturedAt: string;
   issuerUserAccountId: string;
   reviewerUserAccountId: string;
+  governanceExceptionKey?: string;
+  governanceExceptionReference?: string;
   retentionChecksum: string;
   auditEventId: string;
   auditEventSequence: number;
   auditBindingChecksum: string;
+  idempotencyKey: string;
   requestChecksum: string;
   createdAt: string;
 }

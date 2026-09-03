@@ -3,12 +3,13 @@ import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {ActivatedRoute, convertToParamMap} from '@angular/router';
 import {of, Subject, throwError} from 'rxjs';
 import {vi} from 'vitest';
-import {OperatorControlPlaneService} from '../../services/operator-control-plane.service';
+import {OPERATOR_ACTION_KEY_FACTORY, OperatorControlPlaneService} from '../../services/operator-control-plane.service';
 import {AuditComponent} from './audit.component';
 
 describe('AuditComponent', () => {
   let service: any;
   let queryParams: Record<string, string>;
+  let actionKeySequence: number;
 
   const auditRow = {
     id: 'AUTO-audit-1',
@@ -23,8 +24,37 @@ describe('AuditComponent', () => {
     payloadChecksum: `sha256:${'a'.repeat(64)}`,
   };
 
+  const protectedHistoryArtifact = {
+    id: 'AUTO-history-1',
+    schema: 'distr.protected-history-retention/v1',
+    sourceSchemaVersion: 170,
+    scope: {
+      organizationId: 'AUTO-organization-1',
+      customerOrganizationIds: ['AUTO-customer-1'],
+      deploymentTargetIds: ['AUTO-target-1'],
+    },
+    artifactId: `sha256:${'1'.repeat(64)}`,
+    recordsRoot: `sha256:${'2'.repeat(64)}`,
+    recordCount: 27,
+    objectReference: `s3://audit/_immutable/sha256/${'3'.repeat(64)}/history.json`,
+    mediaType: 'application/vnd.distr.protected-history.v1+json',
+    byteLength: 4096,
+    contentChecksum: `sha256:${'3'.repeat(64)}`,
+    capturedAt: '2026-07-28T08:10:00Z',
+    issuerUserAccountId: 'AUTO-user-1',
+    reviewerUserAccountId: 'AUTO-reviewer-1',
+    retentionChecksum: `sha256:${'4'.repeat(64)}`,
+    auditEventId: 'AUTO-history-event-1',
+    auditEventSequence: 44,
+    auditBindingChecksum: `sha256:${'5'.repeat(64)}`,
+    idempotencyKey: 'AUTO-history-key-1',
+    requestChecksum: `sha256:${'6'.repeat(64)}`,
+    createdAt: '2026-07-28T08:10:00Z',
+  };
+
   beforeEach(() => {
     queryParams = {};
+    actionKeySequence = 0;
     service = {
       listAudit: vi.fn().mockReturnValue(of({items: [auditRow], nextCursor: 'next-audit'})),
       listControlPlaneAuditEvents: vi.fn().mockReturnValue(
@@ -101,34 +131,7 @@ describe('AuditComponent', () => {
         ])
       ),
       createAuditExportSink: vi.fn().mockReturnValue(of({id: 'AUTO-sink-2'})),
-      createProtectedHistoryArtifact: vi.fn().mockReturnValue(
-        of({
-          id: 'AUTO-history-1',
-          schema: 'distr.protected-history-retention/v1',
-          sourceSchemaVersion: 170,
-          scope: {
-            organizationId: 'AUTO-organization-1',
-            customerOrganizationIds: ['AUTO-customer-1'],
-            deploymentTargetIds: ['AUTO-target-1'],
-          },
-          artifactId: `sha256:${'1'.repeat(64)}`,
-          recordsRoot: `sha256:${'2'.repeat(64)}`,
-          recordCount: 27,
-          objectReference: `s3://audit/_immutable/sha256/${'3'.repeat(64)}/history.json`,
-          mediaType: 'application/vnd.distr.protected-history.v1+json',
-          byteLength: 4096,
-          contentChecksum: `sha256:${'3'.repeat(64)}`,
-          capturedAt: '2026-07-28T08:10:00Z',
-          issuerUserAccountId: 'AUTO-user-1',
-          reviewerUserAccountId: 'AUTO-reviewer-1',
-          retentionChecksum: `sha256:${'4'.repeat(64)}`,
-          auditEventId: 'AUTO-history-event-1',
-          auditEventSequence: 44,
-          auditBindingChecksum: `sha256:${'5'.repeat(64)}`,
-          requestChecksum: `sha256:${'6'.repeat(64)}`,
-          createdAt: '2026-07-28T08:10:00Z',
-        })
-      ),
+      createProtectedHistoryArtifact: vi.fn().mockReturnValue(of(protectedHistoryArtifact)),
       getProtectedHistoryArtifact: vi.fn(),
       verifyProtectedHistoryArtifact: vi.fn().mockReturnValue(
         of({
@@ -186,6 +189,7 @@ describe('AuditComponent', () => {
       imports: [AuditComponent],
       providers: [
         {provide: OperatorControlPlaneService, useValue: service},
+        {provide: OPERATOR_ACTION_KEY_FACTORY, useValue: () => `history-key-${++actionKeySequence}`},
         {
           provide: ActivatedRoute,
           useFactory: () => ({snapshot: {queryParamMap: convertToParamMap(queryParams)}}),
@@ -373,17 +377,21 @@ describe('AuditComponent', () => {
       customerOrganizationIds: 'AUTO-customer-1, AUTO-customer-1',
       deploymentTargetIds: 'AUTO-target-1\nAUTO-target-2',
       reviewerUserAccountId: 'AUTO-reviewer-1',
+      singleReviewerPilot: false,
       confirmed: true,
     });
 
     await (component as any).createProtectedHistoryArtifact();
     fixture.detectChanges();
 
-    expect(service.createProtectedHistoryArtifact).toHaveBeenCalledWith({
-      customerOrganizationIds: ['AUTO-customer-1'],
-      deploymentTargetIds: ['AUTO-target-1', 'AUTO-target-2'],
-      reviewerUserAccountId: 'AUTO-reviewer-1',
-    });
+    expect(service.createProtectedHistoryArtifact).toHaveBeenCalledWith(
+      {
+        customerOrganizationIds: ['AUTO-customer-1'],
+        deploymentTargetIds: ['AUTO-target-1', 'AUTO-target-2'],
+        reviewerUserAccountId: 'AUTO-reviewer-1',
+      },
+      'history-key-1'
+    );
     expect((component as any).protectedHistoryLookupForm.controls.artifactId.value).toBe('AUTO-history-1');
     expect(fixture.nativeElement.textContent as string).toContain('27 protected records');
     expect(fixture.nativeElement.textContent as string).toContain('AUTO-reviewer-1');
@@ -406,6 +414,7 @@ describe('AuditComponent', () => {
       customerOrganizationIds: '',
       deploymentTargetIds: '',
       reviewerUserAccountId: 'AUTO-reviewer-1',
+      singleReviewerPilot: false,
       confirmed: true,
     });
 
@@ -418,6 +427,157 @@ describe('AuditComponent', () => {
     (component as any).protectedHistoryForm.controls.customerOrganizationIds.setValue('AUTO-customer-1');
     await (component as any).createProtectedHistoryArtifact();
     expect(service.createProtectedHistoryArtifact).not.toHaveBeenCalled();
+  });
+
+  it('reuses a failed protected-history action key for an unchanged retry and rotates it when intent changes', async () => {
+    service.createProtectedHistoryArtifact
+      .mockReturnValueOnce(throwError(() => new Error('temporary failure')))
+      .mockReturnValueOnce(throwError(() => new Error('temporary failure')))
+      .mockReturnValueOnce(of(protectedHistoryArtifact));
+    const {component} = await createComponent();
+    (component as any).protectedHistoryForm.setValue({
+      customerOrganizationIds: 'AUTO-customer-1',
+      deploymentTargetIds: 'AUTO-target-1',
+      reviewerUserAccountId: 'AUTO-reviewer-1',
+      singleReviewerPilot: false,
+      confirmed: true,
+    });
+
+    await (component as any).createProtectedHistoryArtifact();
+    await (component as any).createProtectedHistoryArtifact();
+    (component as any).protectedHistoryForm.controls.deploymentTargetIds.setValue('AUTO-target-2');
+    await (component as any).createProtectedHistoryArtifact();
+
+    expect(service.createProtectedHistoryArtifact.mock.calls[0][1]).toBe('history-key-1');
+    expect(service.createProtectedHistoryArtifact.mock.calls[1][1]).toBe('history-key-1');
+    expect(service.createProtectedHistoryArtifact.mock.calls[2][1]).toBe('history-key-2');
+  });
+
+  it('shows accurate standard and pilot attestations and rejects non-target-only pilot scope', async () => {
+    const {fixture, component} = await createComponent();
+    expect(fixture.nativeElement.textContent as string).toContain(
+      'I reviewed the exact scope and confirmed the reviewer is not the issuing user.'
+    );
+
+    (component as any).protectedHistoryForm.setValue({
+      customerOrganizationIds: 'AUTO-customer-1',
+      deploymentTargetIds: 'AUTO-target-1,AUTO-target-2',
+      reviewerUserAccountId: 'AUTO-user-1',
+      singleReviewerPilot: true,
+      confirmed: true,
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent as string).toContain(
+      'I reviewed the exact target-only scope and confirm this operation uses the approved same-user pilot exception.'
+    );
+    await (component as any).createProtectedHistoryArtifact();
+    expect(service.createProtectedHistoryArtifact).not.toHaveBeenCalled();
+    expect((component as any).protectedHistoryError()).toContain(
+      'exactly one deployment target and no customer-wide scope'
+    );
+  });
+
+  it('renders complete protected-history handoff evidence and pilot governance metadata', async () => {
+    const pilotArtifact = {
+      ...protectedHistoryArtifact,
+      scope: {
+        organizationId: 'AUTO-organization-1',
+        customerOrganizationIds: [],
+        deploymentTargetIds: ['AUTO-target-1'],
+      },
+      reviewerUserAccountId: 'AUTO-user-1',
+      governanceExceptionKey: 'choice-tp-single-reviewer-pilot',
+      governanceExceptionReference: 'approval://choice-tp-dev/single-reviewer',
+    };
+    service.createProtectedHistoryArtifact.mockReturnValue(of(pilotArtifact));
+    const {fixture, component} = await createComponent();
+    (component as any).protectedHistoryForm.setValue({
+      customerOrganizationIds: '',
+      deploymentTargetIds: 'AUTO-target-1',
+      reviewerUserAccountId: 'AUTO-user-1',
+      singleReviewerPilot: true,
+      confirmed: true,
+    });
+
+    await (component as any).createProtectedHistoryArtifact();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.querySelector('[data-testid="protected-history-artifact"]').textContent;
+    for (const expected of [
+      pilotArtifact.artifactId,
+      pilotArtifact.objectReference,
+      pilotArtifact.contentChecksum,
+      pilotArtifact.recordsRoot,
+      pilotArtifact.retentionChecksum,
+      pilotArtifact.requestChecksum,
+      pilotArtifact.auditEventId,
+      pilotArtifact.auditBindingChecksum,
+      pilotArtifact.idempotencyKey,
+      pilotArtifact.mediaType,
+      '4096 bytes',
+      'Organization AUTO-organization-1',
+      'customers none',
+      'targets AUTO-target-1',
+      pilotArtifact.governanceExceptionKey,
+      pilotArtifact.governanceExceptionReference,
+    ]) {
+      expect(text).toContain(expected);
+    }
+  });
+
+  it('discards a delayed verification after a different retained artifact is selected', async () => {
+    const artifactA = protectedHistoryArtifact;
+    const artifactB = {...protectedHistoryArtifact, id: 'AUTO-history-2', artifactId: `sha256:${'7'.repeat(64)}`};
+    const verification = new Subject<any>();
+    service.getProtectedHistoryArtifact.mockImplementation((id: string) =>
+      of(id === artifactA.id ? artifactA : artifactB)
+    );
+    service.verifyProtectedHistoryArtifact.mockReturnValue(verification);
+    const {component} = await createComponent();
+
+    (component as any).protectedHistoryLookupForm.controls.artifactId.setValue(artifactA.id);
+    await (component as any).loadProtectedHistoryArtifact();
+    const pendingVerification = (component as any).verifyProtectedHistoryArtifact();
+    (component as any).protectedHistoryLookupForm.controls.artifactId.setValue(artifactB.id);
+    await (component as any).loadProtectedHistoryArtifact();
+    verification.next({
+      protectedHistoryArtifactId: artifactA.id,
+      objectReference: artifactA.objectReference,
+      mediaType: artifactA.mediaType,
+      byteLength: artifactA.byteLength,
+      contentChecksum: artifactA.contentChecksum,
+      verifiedAt: '2026-07-28T08:11:00Z',
+    });
+    verification.complete();
+    await pendingVerification;
+
+    expect((component as any).protectedHistoryArtifact()?.id).toBe(artifactB.id);
+    expect((component as any).protectedHistoryVerification()).toBeUndefined();
+  });
+
+  it('rejects verification metadata that does not identify the selected retained artifact', async () => {
+    service.getProtectedHistoryArtifact.mockReturnValue(of(protectedHistoryArtifact));
+    service.verifyProtectedHistoryArtifact.mockReturnValue(
+      of({
+        protectedHistoryArtifactId: protectedHistoryArtifact.id,
+        objectReference: 's3://audit/_immutable/wrong-object.json',
+        mediaType: protectedHistoryArtifact.mediaType,
+        byteLength: protectedHistoryArtifact.byteLength,
+        contentChecksum: protectedHistoryArtifact.contentChecksum,
+        verifiedAt: '2026-07-28T08:11:00Z',
+      })
+    );
+    const {component} = await createComponent();
+    (component as any).protectedHistoryLookupForm.controls.artifactId.setValue(protectedHistoryArtifact.id);
+
+    await (component as any).loadProtectedHistoryArtifact();
+    await (component as any).verifyProtectedHistoryArtifact();
+
+    expect((component as any).protectedHistoryVerification()).toBeUndefined();
+    expect((component as any).protectedHistoryError()).toContain(
+      'verification did not match the selected retained artifact'
+    );
   });
 
   it('keeps available audit data when export status is unavailable', async () => {
