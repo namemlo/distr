@@ -1151,6 +1151,14 @@ func TestReleaseBundleDowngradeRepairsProcessSnapshotCanonicalPayload(t *testing
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(string(expectedPayload)).NotTo(ContainSubstring("processSnapshotId"))
 
+	_, err = internalctx.GetDb(ctx).Exec(ctx, `
+SET session_replication_role = replica;
+TRUNCATE ControlPlaneAuditEvent, ControlPlaneAuditSubject,
+  ControlPlaneAuditEventSubject, AuditExportSink, AuditExportCheckpoint,
+  AuditExportAttempt CASCADE;
+SET session_replication_role = origin
+`)
+	g.Expect(err).NotTo(HaveOccurred())
 	runReleaseBundleTestDownMigrationsAfter(t, ctx, 115)
 
 	var repairedPayload []byte
@@ -1219,6 +1227,7 @@ func runReleaseBundleTestMigrations(t testing.TB, ctx context.Context, pool *pgx
 	sort.Slice(files, func(i, j int) bool {
 		return releaseBundleMigrationVersion(t, files[i]) < releaseBundleMigrationVersion(t, files[j])
 	})
+	latestVersion := 0
 	for _, file := range files {
 		data, err := os.ReadFile(file)
 		if err != nil {
@@ -1227,6 +1236,22 @@ func runReleaseBundleTestMigrations(t testing.TB, ctx context.Context, pool *pgx
 		if _, err := pool.Exec(ctx, string(data)); err != nil {
 			t.Fatalf("run migration %s: %v", file, err)
 		}
+		latestVersion = releaseBundleMigrationVersion(t, file)
+	}
+	if _, err := pool.Exec(ctx, `
+CREATE TABLE schema_migrations (
+  version BIGINT PRIMARY KEY,
+  dirty BOOLEAN NOT NULL
+)
+`); err != nil {
+		t.Fatalf("create test schema migration status: %v", err)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO schema_migrations (version, dirty) VALUES ($1, FALSE)`,
+		latestVersion,
+	); err != nil {
+		t.Fatalf("insert test schema migration status: %v", err)
 	}
 }
 

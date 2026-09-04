@@ -462,6 +462,28 @@ func (r *Runner) Run(ctx context.Context, options RunOptions) (finalErr error) {
 			)
 		}
 	}
+	if migrationErr != nil && status.Version >= 172 &&
+		desiredVersion(options, latest) < 172 &&
+		runtimeChecksumIdentitiesDowngradeGuardRejected(migrationErr) {
+		repairContext, repairCancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			DefaultMigrationLockTimeout,
+		)
+		repairErr := restoreRuntimeChecksumIdentitiesDowngradeGuardStatus(
+			repairContext,
+			connection,
+		)
+		repairCancel()
+		if repairErr != nil {
+			return errors.Join(
+				migrationErr,
+				fmt.Errorf(
+					"restore schema status after guarded runtime checksum downgrade: %w",
+					repairErr,
+				),
+			)
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -471,6 +493,115 @@ func (r *Runner) Run(ctx context.Context, options RunOptions) (finalErr error) {
 	if errors.Is(migrationErr, migrate.ErrNoChange) {
 		r.log.Info("migrations completed", zap.Error(migrationErr))
 	}
+	return nil
+}
+
+func runtimeChecksumIdentitiesDowngradeGuardRejected(err error) bool {
+	return strings.Contains(
+		err.Error(),
+		"refusing migration 172 rollback while v4 runtime checksum contracts or evidence exist",
+	)
+}
+
+func restoreRuntimeChecksumIdentitiesDowngradeGuardStatus(
+	ctx context.Context,
+	connection *sql.Conn,
+) (finalErr error) {
+	transaction, err := connection.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	open := true
+	defer func() {
+		if open {
+			finalErr = errors.Join(finalErr, transaction.Rollback())
+		}
+	}()
+	var version int
+	var dirty bool
+	if err := transaction.QueryRowContext(ctx, `
+SELECT version, dirty
+FROM schema_migrations
+FOR UPDATE`).Scan(&version, &dirty); err != nil {
+		return fmt.Errorf("read guarded runtime checksum migration status: %w", err)
+	}
+	if version != 171 || !dirty {
+		return fmt.Errorf(
+			"guarded runtime checksum migration status is version %d dirty=%t, expected version 171 dirty=true",
+			version,
+			dirty,
+		)
+	}
+	var columnCount, constraintCount, triggerCount int
+	if err := transaction.QueryRowContext(ctx, `
+SELECT
+  (
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND (table_name, column_name) IN (
+        ('executionattempt', 'runtime_manifest_checksum'),
+        ('executionattempt', 'desired_service_config_checksum'),
+        ('executionattempt', 'expected_current_service_config_checksum'),
+        ('executionruntimeevidence', 'pre_execution_service_config_checksum'),
+        ('executionruntimeevidence', 'result_service_config_checksum')
+      )
+  ),
+  (
+    SELECT count(*)
+    FROM pg_catalog.pg_constraint constraint_row
+    WHERE constraint_row.convalidated
+      AND (constraint_row.conrelid, constraint_row.conname) IN (
+        (to_regclass(format('%I.executionattempt', current_schema())),
+         'executionattempt_runtime_contract_version_check'),
+        (to_regclass(format('%I.executionattempt', current_schema())),
+         'executionattempt_runtime_contract_shape_check'),
+        (to_regclass(format('%I.executionruntimeevidence', current_schema())),
+         'executionruntimeevidence_schema_version_check'),
+        (to_regclass(format('%I.executionruntimeevidence', current_schema())),
+         'executionruntimeevidence_service_config_shape_check')
+      )
+  ),
+  (
+    SELECT count(*)
+    FROM pg_catalog.pg_trigger trigger_row
+    WHERE trigger_row.tgrelid =
+          to_regclass(format('%I.executionattempt', current_schema()))
+      AND trigger_row.tgname = 'executionattempt_runtime_contract_immutable'
+      AND NOT trigger_row.tgisinternal
+      AND trigger_row.tgenabled = 'O'
+  )`).Scan(&columnCount, &constraintCount, &triggerCount); err != nil {
+		return fmt.Errorf("inspect guarded runtime checksum schema: %w", err)
+	}
+	if columnCount != 5 || constraintCount != 4 || triggerCount != 1 {
+		return fmt.Errorf(
+			"guarded runtime checksum schema is incomplete: columns=%d constraints=%d triggers=%d",
+			columnCount,
+			constraintCount,
+			triggerCount,
+		)
+	}
+	result, err := transaction.ExecContext(ctx, `
+UPDATE schema_migrations
+SET version=172, dirty=FALSE
+WHERE version=171 AND dirty=TRUE`)
+	if err != nil {
+		return fmt.Errorf("restore guarded runtime checksum migration status: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read restored runtime checksum migration status count: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf(
+			"restore guarded runtime checksum migration status affected %d rows",
+			affected,
+		)
+	}
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	open = false
 	return nil
 }
 

@@ -253,6 +253,60 @@ WHERE table_schema = current_schema()
 	}
 }
 
+func TestRunnerRestoresCleanStatusAfterMigration172GuardRefusal(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		setup func(*testing.T, *migrationTestDatabase, uuid.UUID)
+	}{
+		{
+			name: "v4 attempt",
+			setup: func(t *testing.T, database *migrationTestDatabase, organizationID uuid.UUID) {
+				insertMigration172Attempt(
+					t, database, organizationID, "v4",
+					migration172Checksum("a"), migration172Checksum("b"),
+					migration172Checksum("c"),
+				)
+			},
+		},
+		{
+			name: "v2 evidence",
+			setup: func(t *testing.T, database *migrationTestDatabase, organizationID uuid.UUID) {
+				attempt := insertMigration172Attempt(
+					t, database, organizationID, "v3", nil, nil, nil,
+				)
+				insertMigration172Intent(t, database, attempt)
+				NewWithT(t).Expect(insertMigration172Evidence(
+					database,
+					attempt,
+					"distr.execution-runtime-evidence/v2",
+					migration172Checksum("d"),
+					migration172Checksum("e"),
+				)).To(Succeed())
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			g := NewWithT(t)
+			database := newRunnerTestDatabase(t)
+			database.migrateTo(t, 172)
+			fixtureDatabase := &migrationTestDatabase{pool: database.pool}
+			organizationID := prepareMigration172AttemptFixtures(t, fixtureDatabase)
+			testCase.setup(t, fixtureDatabase, organizationID)
+
+			err := database.runner.Run(
+				context.Background(),
+				RunOptions{Target: uintPointer(171)},
+			)
+			g.Expect(err).To(MatchError(ContainSubstring(
+				"refusing migration 172 rollback while v4 runtime checksum contracts or evidence exist",
+			)))
+			status, statusErr := database.runner.Status(context.Background())
+			g.Expect(statusErr).NotTo(HaveOccurred())
+			g.Expect(status).To(Equal(SchemaStatus{Version: 172, Dirty: false}))
+		})
+	}
+}
+
 func prepareMigration172AttemptFixtures(
 	t *testing.T,
 	database *migrationTestDatabase,

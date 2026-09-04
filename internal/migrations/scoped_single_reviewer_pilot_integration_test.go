@@ -238,23 +238,34 @@ func TestRunnerRestoresCleanStatusAfterMigration171GuardRefusal(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
 	actorID := uuid.New()
-	_, err := database.pool.Exec(ctx, `
-INSERT INTO Organization (id, name) VALUES ($1, $2);
-INSERT INTO UserAccount (id, email) VALUES ($3, $4);
-ALTER TABLE ApprovalDecision
+	_, err := database.pool.Exec(
+		ctx,
+		`INSERT INTO Organization (id, name) VALUES ($1, $2)`,
+		organizationID,
+		"Migration 171 runner "+uuid.NewString(),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(
+		ctx,
+		`INSERT INTO UserAccount (id, email) VALUES ($1, $2)`,
+		actorID,
+		"migration-171-runner-"+uuid.NewString()+"@example.invalid",
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(ctx, `ALTER TABLE ApprovalDecision
   DROP CONSTRAINT approvaldecision_request_fk,
-  DROP CONSTRAINT approvaldecision_requirement_fk;
-INSERT INTO ApprovalDecision (
+	  DROP CONSTRAINT approvaldecision_requirement_fk`)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(ctx, `INSERT INTO ApprovalDecision (
   id, organization_id, approval_request_id, approval_requirement_id,
   actor_useraccount_id, decision, comment, request_revision, idempotency_key,
   governance_exception_key, governance_exception_reference
 ) VALUES (
-  $5, $1, $6, $7, $3, 'APPROVE', 'Migration 171 runner guard', 1, $8,
+  $1, $2, $3, $4, $5, 'APPROVE', 'Migration 171 runner guard', 1, $6,
   'scoped-single-reviewer-pilot', 'approval:pilot-001'
 )`,
-		organizationID, "Migration 171 runner "+uuid.NewString(),
-		actorID, "migration-171-runner-"+uuid.NewString()+"@example.invalid",
-		uuid.New(), uuid.New(), uuid.New(), "migration-171-runner-"+uuid.NewString(),
+		uuid.New(), organizationID, uuid.New(), uuid.New(), actorID,
+		"migration-171-runner-"+uuid.NewString(),
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -306,6 +317,46 @@ func insertMigration171ProtectedHistoryCandidate(
 	governanceExceptionReference any,
 	idempotencyKey string,
 ) error {
+	if customerOrganizationIDs == nil {
+		customerOrganizationIDs = []uuid.UUID{}
+	}
+	if deploymentTargetIDs == nil {
+		deploymentTargetIDs = []uuid.UUID{}
+	}
+	if len(customerOrganizationIDs) > 0 {
+		_, err := tx.Exec(ctx, `
+INSERT INTO CustomerOrganization (id, organization_id, name)
+SELECT customer_id, source.organization_id, 'Migration 171 customer ' || customer_id::TEXT
+FROM ProtectedHistoryArtifact source
+CROSS JOIN unnest($2::UUID[]) customer_id
+WHERE source.id = $1
+ON CONFLICT (id) DO NOTHING
+`, sourceID, customerOrganizationIDs)
+		if err != nil {
+			return err
+		}
+	}
+	if len(deploymentTargetIDs) > 0 {
+		_, err := tx.Exec(ctx, `
+INSERT INTO DeploymentTarget (id, name, type, organization_id, agent_version_id)
+SELECT
+  target_id,
+  'Migration 171 target ' || target_id::TEXT,
+  'docker',
+  source.organization_id,
+  agent.id
+FROM ProtectedHistoryArtifact source
+CROSS JOIN LATERAL (
+  SELECT id FROM AgentVersion ORDER BY created_at, id LIMIT 1
+) agent
+CROSS JOIN unnest($2::UUID[]) target_id
+WHERE source.id = $1
+ON CONFLICT (id) DO NOTHING
+`, sourceID, deploymentTargetIDs)
+		if err != nil {
+			return err
+		}
+	}
 	_, err := tx.Exec(ctx, `
 WITH source AS (
   SELECT * FROM ProtectedHistoryArtifact WHERE id = $1
@@ -354,7 +405,11 @@ WITH source AS (
       'sha256:' || repeat('f', 64)
     ) AS retention_checksum,
     $3::UUID AS audit_event_id,
-    1::BIGINT AS audit_event_sequence,
+    (
+      SELECT COALESCE(MAX(event.sequence), 0) + 1
+      FROM ControlPlaneAuditEvent event
+      WHERE event.organization_id = source.organization_id
+    ) AS audit_event_sequence,
     $6::TEXT AS idempotency_key,
     COALESCE(
       protected_history_request_checksum(
