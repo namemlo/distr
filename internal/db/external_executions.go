@@ -69,6 +69,26 @@ const externalExecutionOutputExpr = `
 	ee.observed_state_checksum
 `
 
+const (
+	externalExecutionPreMutationHoldArmedEventType       = "external_execution.pre_mutation_hold.armed"
+	externalExecutionPreMutationHoldWaitingEventType     = "external_execution.pre_mutation_hold.waiting"
+	externalExecutionPreMutationHoldReleaseFailEventType = "external_execution.pre_mutation_hold.release_fail"
+	externalExecutionPreMutationHoldTimedOutEventType    = "external_execution.pre_mutation_hold.timed_out"
+	externalExecutionPreMutationHoldConsumedEventType    = "external_execution.pre_mutation_hold.consumed"
+)
+
+type externalExecutionPreMutationHoldAuditPayload struct {
+	Schema              string    `json:"schema"`
+	ControlID           uuid.UUID `json:"controlId"`
+	ControlChecksum     string    `json:"controlChecksum"`
+	Component           string    `json:"component"`
+	Reason              string    `json:"reason"`
+	ExpiresAt           time.Time `json:"expiresAt"`
+	ExternalExecutionID uuid.UUID `json:"externalExecutionId"`
+	AdapterInvoked      bool      `json:"adapterInvoked"`
+	Resolution          string    `json:"resolution,omitempty"`
+}
+
 type externalExecutionSource struct {
 	OrganizationID         uuid.UUID                      `db:"organization_id"`
 	StepRunID              uuid.UUID                      `db:"step_run_id"`
@@ -239,6 +259,14 @@ func MarkExternalExecutionTriggered(
 		if execution.Status != types.ExternalExecutionStatusQueued {
 			return apierrors.NewConflict("external execution dispatch is already claimed")
 		}
+		activeHold, err := getActiveExternalExecutionPreMutationHold(ctx, *execution)
+		if err != nil {
+			return err
+		}
+		if activeHold != nil {
+			holdWaiting, updated, err = exposeExternalExecutionPreMutationHold(ctx, *execution, *activeHold)
+			return err
+		}
 		if request.PreMutationHold != nil {
 			holdWaiting, updated, err = armExternalExecutionPreMutationHold(
 				ctx, *execution, *request.PreMutationHold,
@@ -296,7 +324,7 @@ func armExternalExecutionPreMutationHold(
 		return false, nil, err
 	}
 	consumed, err := externalExecutionPreMutationHoldEventExists(
-		ctx, control, "external_execution.pre_mutation_hold.consumed",
+		ctx, control, externalExecutionPreMutationHoldConsumedEventType,
 	)
 	if err != nil {
 		return false, nil, err
@@ -305,23 +333,31 @@ func armExternalExecutionPreMutationHold(
 		return false, nil, nil
 	}
 	waiting, err := externalExecutionPreMutationHoldEventExists(
-		ctx, control, "external_execution.pre_mutation_hold.waiting",
+		ctx, control, externalExecutionPreMutationHoldWaitingEventType,
 	)
 	if err != nil {
 		return false, nil, err
 	}
 	if !waiting {
 		if err := appendExternalExecutionPreMutationHoldAudit(
-			ctx, execution, control, "external_execution.pre_mutation_hold.armed", "ARMED", "",
+			ctx, execution, control, externalExecutionPreMutationHoldArmedEventType, "ARMED", "",
 		); err != nil {
 			return false, nil, err
 		}
 		if err := appendExternalExecutionPreMutationHoldAudit(
-			ctx, execution, control, "external_execution.pre_mutation_hold.waiting", "WAITING", "",
+			ctx, execution, control, externalExecutionPreMutationHoldWaitingEventType, "WAITING", "",
 		); err != nil {
 			return false, nil, err
 		}
 	}
+	return exposeExternalExecutionPreMutationHold(ctx, execution, control)
+}
+
+func exposeExternalExecutionPreMutationHold(
+	ctx context.Context,
+	execution types.ExternalExecution,
+	control types.ExternalExecutionPreMutationHold,
+) (bool, *types.ExternalExecution, error) {
 	rows, err := internalctx.GetDb(ctx).Query(ctx, `
 		UPDATE ExternalExecution
 		SET last_message = @message,
@@ -336,6 +372,9 @@ func armExternalExecutionPreMutationHold(
 		return false, nil, fmt.Errorf("could not expose external execution pre-mutation hold: %w", err)
 	}
 	updated, err := collectExternalExecution(rows)
+	if updated != nil {
+		updated.ActivePreMutationHold = &control
+	}
 	return true, updated, err
 }
 
@@ -349,16 +388,12 @@ func ResolveExternalExecutionPreMutationHold(
 	if err := externalexecution.ValidatePreMutationHold(request.Control); err != nil {
 		return nil, apierrors.NewBadRequest(err.Error())
 	}
-	checksum, err := externalexecution.PreMutationHoldChecksum(request.Control)
-	if err != nil || checksum != request.Control.ControlChecksum {
-		return nil, apierrors.NewBadRequest("pre-mutation hold controlChecksum does not match its binding")
-	}
 	if request.Resolution != types.ExternalExecutionPreMutationHoldReleaseFail &&
 		request.Resolution != types.ExternalExecutionPreMutationHoldTimedOut {
 		return nil, apierrors.NewBadRequest("pre-mutation hold resolution is invalid")
 	}
 	var updated *types.ExternalExecution
-	err = RunTx(ctx, func(ctx context.Context) error {
+	err := RunTx(ctx, func(ctx context.Context) error {
 		execution, err := getExternalExecutionForUpdate(
 			ctx, request.ExternalExecutionID, request.OrganizationID,
 		)
@@ -371,46 +406,118 @@ func ResolveExternalExecutionPreMutationHold(
 		if err := lockExternalExecutionPreMutationHold(ctx, request.Control.ControlChecksum); err != nil {
 			return err
 		}
-		consumed, err := externalExecutionPreMutationHoldEventExists(
-			ctx, request.Control, "external_execution.pre_mutation_hold.consumed",
-		)
+		activeHold, err := getActiveExternalExecutionPreMutationHold(ctx, *execution)
 		if err != nil {
 			return err
 		}
-		if consumed {
-			updated = execution
-			return nil
-		}
-		waiting, err := externalExecutionPreMutationHoldEventExists(
-			ctx, request.Control, "external_execution.pre_mutation_hold.waiting",
-		)
-		if err != nil {
-			return err
-		}
-		if !waiting || execution.Status != types.ExternalExecutionStatusQueued {
+		if activeHold == nil {
+			consumed, err := externalExecutionPreMutationHoldEventExists(
+				ctx, request.Control, externalExecutionPreMutationHoldConsumedEventType,
+			)
+			if err != nil {
+				return err
+			}
+			if consumed {
+				updated = execution
+				return nil
+			}
 			return apierrors.NewConflict("external execution is not waiting at the pre-mutation hold")
 		}
-		eventType := "external_execution.pre_mutation_hold.release_fail"
+		if !sameExternalExecutionPreMutationHoldIdentity(request.Control, *activeHold) ||
+			execution.Status != types.ExternalExecutionStatusQueued {
+			return apierrors.NewConflict("external execution is not waiting at the pre-mutation hold")
+		}
+		eventType := externalExecutionPreMutationHoldReleaseFailEventType
 		if request.Resolution == types.ExternalExecutionPreMutationHoldTimedOut {
-			eventType = "external_execution.pre_mutation_hold.timed_out"
+			eventType = externalExecutionPreMutationHoldTimedOutEventType
 		}
 		if err := appendExternalExecutionPreMutationHoldAudit(
-			ctx, *execution, request.Control, eventType, string(request.Resolution), request.Resolution,
+			ctx, *execution, *activeHold, eventType, string(request.Resolution), request.Resolution,
 		); err != nil {
 			return err
 		}
 		if err := appendExternalExecutionPreMutationHoldAudit(
-			ctx, *execution, request.Control,
-			"external_execution.pre_mutation_hold.consumed", "BLOCKED", request.Resolution,
+			ctx, *execution, *activeHold,
+			externalExecutionPreMutationHoldConsumedEventType, "BLOCKED", request.Resolution,
 		); err != nil {
 			return err
 		}
 		updated, err = failExternalExecutionLocked(
-			ctx, *execution, preMutationHoldFailureMessage(request.Control, request.Resolution),
+			ctx, *execution, preMutationHoldFailureMessage(*activeHold, request.Resolution),
 		)
 		return err
 	})
 	return updated, err
+}
+
+func getActiveExternalExecutionPreMutationHold(
+	ctx context.Context,
+	execution types.ExternalExecution,
+) (*types.ExternalExecutionPreMutationHold, error) {
+	var payload []byte
+	err := internalctx.GetDb(ctx).QueryRow(ctx, `
+		SELECT waiting.payload
+		FROM ControlPlaneAuditEvent waiting
+		WHERE waiting.organization_id = @organizationId
+		  AND waiting.deployment_plan_id = @deploymentPlanId
+		  AND waiting.deployment_target_id = @deploymentTargetId
+		  AND waiting.deployment_plan_checksum = @planChecksum
+		  AND waiting.event_type = @waitingEventType
+		  AND waiting.payload ->> 'externalExecutionId' = @externalExecutionId
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM ControlPlaneAuditEvent consumed
+			WHERE consumed.organization_id = waiting.organization_id
+			  AND consumed.deployment_plan_id = waiting.deployment_plan_id
+			  AND consumed.deployment_target_id = waiting.deployment_target_id
+			  AND consumed.deployment_plan_checksum = waiting.deployment_plan_checksum
+			  AND consumed.event_type = @consumedEventType
+			  AND consumed.payload ->> 'controlChecksum' = waiting.payload ->> 'controlChecksum'
+		  )
+		ORDER BY waiting.sequence DESC
+		LIMIT 1`, pgx.NamedArgs{
+		"organizationId": execution.OrganizationID, "deploymentPlanId": execution.DeploymentPlanID,
+		"deploymentTargetId": execution.DeploymentTargetID, "planChecksum": execution.PlanChecksum,
+		"externalExecutionId": execution.ID.String(),
+		"waitingEventType":    externalExecutionPreMutationHoldWaitingEventType,
+		"consumedEventType":   externalExecutionPreMutationHoldConsumedEventType,
+	}).Scan(&payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("could not load active external execution pre-mutation hold: %w", err)
+	}
+	var audit externalExecutionPreMutationHoldAuditPayload
+	if err := json.Unmarshal(payload, &audit); err != nil {
+		return nil, fmt.Errorf("could not decode active external execution pre-mutation hold: %w", err)
+	}
+	control := types.ExternalExecutionPreMutationHold{
+		Schema: audit.Schema, ControlID: audit.ControlID, ControlChecksum: audit.ControlChecksum,
+		OrganizationID: execution.OrganizationID, DeploymentPlanID: execution.DeploymentPlanID,
+		DeploymentTargetID: execution.DeploymentTargetID, PlanChecksum: execution.PlanChecksum,
+		Component: audit.Component, Reason: audit.Reason, ExpiresAt: audit.ExpiresAt.UTC(),
+	}
+	if audit.ExternalExecutionID != execution.ID || audit.AdapterInvoked ||
+		!externalexecution.MatchesPreMutationHold(control, execution) {
+		return nil, fmt.Errorf("active external execution pre-mutation hold audit binding is invalid")
+	}
+	if err := externalexecution.ValidatePreMutationHold(control); err != nil {
+		return nil, fmt.Errorf("active external execution pre-mutation hold audit binding is invalid: %w", err)
+	}
+	return &control, nil
+}
+
+func sameExternalExecutionPreMutationHoldIdentity(
+	left, right types.ExternalExecutionPreMutationHold,
+) bool {
+	return left.ControlID == right.ControlID &&
+		left.ControlChecksum == right.ControlChecksum &&
+		left.OrganizationID == right.OrganizationID &&
+		left.DeploymentPlanID == right.DeploymentPlanID &&
+		left.DeploymentTargetID == right.DeploymentTargetID &&
+		left.PlanChecksum == right.PlanChecksum &&
+		strings.TrimSpace(left.Component) == strings.TrimSpace(right.Component)
 }
 
 func lockExternalExecutionPreMutationHold(ctx context.Context, controlChecksum string) error {
@@ -458,17 +565,7 @@ func appendExternalExecutionPreMutationHoldAudit(
 	eventType, outcome string,
 	resolution types.ExternalExecutionPreMutationHoldResolution,
 ) error {
-	payload, err := json.Marshal(struct {
-		Schema              string    `json:"schema"`
-		ControlID           uuid.UUID `json:"controlId"`
-		ControlChecksum     string    `json:"controlChecksum"`
-		Component           string    `json:"component"`
-		Reason              string    `json:"reason"`
-		ExpiresAt           time.Time `json:"expiresAt"`
-		ExternalExecutionID uuid.UUID `json:"externalExecutionId"`
-		AdapterInvoked      bool      `json:"adapterInvoked"`
-		Resolution          string    `json:"resolution,omitempty"`
-	}{
+	payload, err := json.Marshal(externalExecutionPreMutationHoldAuditPayload{
 		Schema: control.Schema, ControlID: control.ControlID, ControlChecksum: control.ControlChecksum,
 		Component: control.Component, Reason: control.Reason, ExpiresAt: control.ExpiresAt,
 		ExternalExecutionID: execution.ID, AdapterInvoked: false, Resolution: string(resolution),
@@ -522,6 +619,13 @@ func RecordExternalExecutionCallback(
 		execution, err := getExternalExecutionForUpdate(ctx, request.ExternalExecutionID, request.OrganizationID)
 		if err != nil {
 			return err
+		}
+		activeHold, err := getActiveExternalExecutionPreMutationHold(ctx, *execution)
+		if err != nil {
+			return err
+		}
+		if activeHold != nil {
+			return apierrors.NewConflict("external execution is waiting at the pre-mutation hold")
 		}
 		existingHash, err := getExternalExecutionEventPayloadHash(
 			ctx, request.ExternalExecutionID, request.OrganizationID, request.Sequence,

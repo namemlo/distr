@@ -43,6 +43,14 @@ existing target/component `TaskResourceLock` therefore remains acquired and
 conflicting work is rejected by the normal concurrency policy. The Hub does not
 invoke the adapter while it polls the protected release file.
 
+The persisted WAITING audit event is authoritative until its matching consumed
+event exists. Every dispatch claim checks that durable state before considering
+the current process configuration, and callbacks are rejected while it is active.
+After a Hub restart, the worker recovers the original binding from audit history;
+a missing or different in-memory binding cannot bypass the hold. If the release
+file configuration is unavailable, the recovered hold remains fail-closed until
+its recorded expiry.
+
 Only an exact-bound `RELEASE_FAIL` document resolves the hold before expiry. A
 mismatched, malformed, or stale document is inert. At expiry the Hub resolves the
 hold as `TIMED_OUT`. Resolution performs one transaction that appends the matching
@@ -51,6 +59,12 @@ execution as `FAILED` with zero trigger attempts. Normal task failure completion
 then releases its lease and resource locks. The consumed audit event prevents the
 same control checksum from pausing a retry, including after a Hub restart.
 
+An expired durable hold also qualifies for a recovery-only Hub lease. This lease
+is limited to the held step and is available even if the associated release bundle
+was blocked after the original worker stopped. It exists only to record the
+`TIMED_OUT` resolution and normal failed-step/task transitions, ensuring the
+target/component lock cannot remain stranded.
+
 ## Consequences
 
 - No executor-adapter, client application, or client database change is needed.
@@ -58,8 +72,10 @@ same control checksum from pausing a retry, including after a Hub restart.
   the one-use state and remains available through existing audit/evidence APIs.
 - A malformed configured binding or relative release-file path fails Hub
   initialization. Non-matching bindings and release documents are inert.
-- Removing the experimental flag is the kill switch. Historical armed, waiting,
-  resolution, and consumed evidence remains readable.
+- Removing the experimental flag prevents new holds from being armed. An already
+  persisted WAITING hold remains authoritative until release or expiry; restoring
+  the release-file configuration re-enables explicit `RELEASE_FAIL` handling.
+  Historical armed, waiting, resolution, and consumed evidence remains readable.
 - The control is for deterministic acceptance demonstrations, not a general chaos
   testing system or a substitute for policy, approval, or dependency admission.
 

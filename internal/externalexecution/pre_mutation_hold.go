@@ -160,9 +160,7 @@ func WaitForPreMutationHoldRelease(
 	if err := ValidatePreMutationHold(control); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(releaseFile) == "" {
-		return "", fmt.Errorf("pre-mutation hold release file is required")
-	}
+	releaseFile = strings.TrimSpace(releaseFile)
 	if pollInterval <= 0 {
 		pollInterval = 250 * time.Millisecond
 	}
@@ -171,10 +169,12 @@ func WaitForPreMutationHoldRelease(
 		if remaining <= 0 {
 			return types.ExternalExecutionPreMutationHoldTimedOut, nil
 		}
-		if value, err := os.ReadFile(releaseFile); err == nil {
-			release, parseErr := ParsePreMutationHoldRelease(value)
-			if parseErr == nil && MatchesPreMutationHoldRelease(*release, control) {
-				return types.ExternalExecutionPreMutationHoldReleaseFail, nil
+		if releaseFile != "" {
+			if value, err := os.ReadFile(releaseFile); err == nil {
+				release, parseErr := ParsePreMutationHoldRelease(value)
+				if parseErr == nil && MatchesPreMutationHoldRelease(*release, control) {
+					return types.ExternalExecutionPreMutationHoldReleaseFail, nil
+				}
 			}
 		}
 		wait := min(pollInterval, remaining)

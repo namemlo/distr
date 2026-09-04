@@ -203,6 +203,51 @@ func TestPreMutationHoldWaitsRejectsConflictingTaskThenFailsBeforeAdapterMutatio
 	g.Expect(waiting.TriggerAttempts).To(Equal(0))
 	g.Expect(waiting.LastMessage).To(ContainSubstring("WAITING"))
 	g.Expect(waiting.LastMessage).To(ContainSubstring("adapter has not been invoked"))
+	g.Expect(waiting.ActivePreMutationHold).NotTo(BeNil())
+	g.Expect(waiting.ActivePreMutationHold.ControlChecksum).To(Equal(control.ControlChecksum))
+
+	recovered, err := db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
+	})
+	g.Expect(errors.Is(err, externalexecution.ErrPreMutationHoldWaiting)).To(BeTrue())
+	g.Expect(recovered.Status).To(Equal(types.ExternalExecutionStatusQueued))
+	g.Expect(recovered.ActivePreMutationHold).NotTo(BeNil())
+	g.Expect(recovered.ActivePreMutationHold.ControlChecksum).To(Equal(control.ControlChecksum))
+
+	mismatched := control
+	mismatched.ControlID = uuid.New()
+	mismatched.Reason = "a different in-memory control after restart"
+	mismatched.ControlChecksum, err = externalexecution.PreMutationHoldChecksum(mismatched)
+	g.Expect(err).NotTo(HaveOccurred())
+	recovered, err = db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
+		PreMutationHold: &mismatched,
+	})
+	g.Expect(errors.Is(err, externalexecution.ErrPreMutationHoldWaiting)).To(BeTrue())
+	g.Expect(recovered.ActivePreMutationHold.ControlChecksum).To(Equal(control.ControlChecksum))
+
+	_, err = db.RecordExternalExecutionCallback(ctx, types.RecordExternalExecutionCallbackRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, Sequence: 1,
+		Status: types.ExternalExecutionStatusRunning, Message: "callback must not bypass hold",
+	})
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	observed := types.ExternalExecutionObservedState{
+		Version: execution.ExpectedVersion, Image: execution.ExpectedImage, Platform: execution.ExpectedPlatform,
+		Contracts: execution.ExpectedContracts, ConfigReference: execution.ExpectedConfigReference,
+		ConfigChecksum: execution.ExpectedConfigChecksum, Health: types.TargetComponentHealthHealthy,
+	}
+	_, err = db.RecordExternalExecutionCallback(ctx, types.RecordExternalExecutionCallbackRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, Sequence: 1,
+		Status: types.ExternalExecutionStatusSucceeded, ObservedState: &observed,
+	})
+	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+	stillWaiting, err := db.GetExternalExecution(ctx, execution.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(stillWaiting.Status).To(Equal(types.ExternalExecutionStatusQueued))
+	g.Expect(stillWaiting.TriggerAttempts).To(Equal(0))
+	eventsBeforeRelease, err := db.GetExternalExecutionEvents(ctx, execution.ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(eventsBeforeRelease).To(BeEmpty())
 
 	secondPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
 		t, ctx, deps, "Conflicting external execution", execution.DeploymentTargetID,
@@ -249,6 +294,103 @@ func TestPreMutationHoldWaitsRejectsConflictingTaskThenFailsBeforeAdapterMutatio
 	g.Expect(err).NotTo(HaveOccurred())
 	created, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
 		OrganizationID: deps.orgID, DeploymentPlanID: secondPlan.ID, ActorUserAccountID: deps.actorID,
+		ConcurrencyPolicy: types.TaskConcurrencyPolicyRejectNew,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(created).To(HaveLen(1))
+}
+
+func TestExpiredPreMutationHoldRecoversAfterWorkerLossWhenReleaseBundleIsBlocked(t *testing.T) {
+	ctx := taskQueueDBTestContext(t)
+	g := NewWithT(t)
+	deps := createExternalExecutionPlan(t, ctx)
+	tasks, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID: deps.orgID, DeploymentPlanID: deps.plan.ID, ActorUserAccountID: deps.actorID,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(tasks).To(HaveLen(1))
+	recoveryPlan := createReadyDeploymentPlanForTaskQueueWithTargets(
+		t, ctx, deps, "Post-hold recovery deployment", tasks[0].DeploymentTargetID,
+	)
+	lease, err := db.LeaseHubTask(ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lease).NotTo(BeNil())
+	recordTaskLeaseHubStepEventForTest(
+		t, ctx, deps.orgID, lease.AgentID, lease.Steps[0].StepRunID,
+		lease.LeaseToken, 1, types.StepRunEventTypeStarted,
+	)
+	execution, err := db.PrepareExternalExecution(ctx, types.PrepareExternalExecutionRequest{
+		OrganizationID: deps.orgID, StepRunID: lease.Steps[0].StepRunID,
+		Component: "api-image", CallbackTimeoutSeconds: 600,
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	control := types.ExternalExecutionPreMutationHold{
+		Schema: types.ExternalExecutionPreMutationHoldSchemaV1, ControlID: uuid.New(),
+		OrganizationID: deps.orgID, DeploymentPlanID: deps.plan.ID,
+		DeploymentTargetID: execution.DeploymentTargetID, PlanChecksum: deps.plan.CanonicalChecksum,
+		Component: "api-image", Reason: "bounded recovery after worker loss",
+		ExpiresAt: time.Now().UTC().Add(20 * time.Millisecond),
+	}
+	control.ControlChecksum, err = externalexecution.PreMutationHoldChecksum(control)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	_, err = db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
+		PreMutationHold: &control,
+	})
+	g.Expect(errors.Is(err, externalexecution.ErrPreMutationHoldWaiting)).To(BeTrue())
+	expireTaskLeaseForTest(t, ctx, lease.ID)
+	_, err = db.BlockReleaseBundle(ctx, deps.plan.ReleaseBundleID, deps.orgID, deps.actorID)
+	g.Expect(err).NotTo(HaveOccurred())
+	if remaining := time.Until(control.ExpiresAt); remaining > 0 {
+		time.Sleep(remaining + 10*time.Millisecond)
+	}
+
+	recoveryLease, err := db.LeaseHubTask(ctx)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(recoveryLease).NotTo(BeNil())
+	g.Expect(recoveryLease.TaskID).To(Equal(tasks[0].ID))
+	g.Expect(recoveryLease.Steps).To(HaveLen(1))
+	g.Expect(recoveryLease.Steps[0].StepRunID).To(Equal(execution.StepRunID))
+	recovered, err := db.MarkExternalExecutionTriggered(ctx, types.MarkExternalExecutionTriggeredRequest{
+		OrganizationID: deps.orgID, ExternalExecutionID: execution.ID, TriggerAttempts: 1,
+	})
+	g.Expect(errors.Is(err, externalexecution.ErrPreMutationHoldWaiting)).To(BeTrue())
+	g.Expect(recovered.ActivePreMutationHold).NotTo(BeNil())
+	failed, err := db.ResolveExternalExecutionPreMutationHold(
+		ctx,
+		types.ResolveExternalExecutionPreMutationHoldRequest{
+			OrganizationID: deps.orgID, ExternalExecutionID: execution.ID,
+			Control: *recovered.ActivePreMutationHold, Resolution: types.ExternalExecutionPreMutationHoldTimedOut,
+		},
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(failed.Status).To(Equal(types.ExternalExecutionStatusFailed))
+	auditEvents, err := db.GetControlPlaneAuditEvents(ctx, deps.orgID, 0, 100)
+	g.Expect(err).NotTo(HaveOccurred())
+	eventTypes := make([]string, 0, len(auditEvents))
+	for _, event := range auditEvents {
+		eventTypes = append(eventTypes, event.EventType)
+	}
+	g.Expect(eventTypes).To(ContainElements(
+		"external_execution.pre_mutation_hold.timed_out",
+		"external_execution.pre_mutation_hold.consumed",
+	))
+	recordTaskLeaseHubStepEventForTest(
+		t, ctx, deps.orgID, recoveryLease.AgentID, recoveryLease.Steps[0].StepRunID,
+		recoveryLease.LeaseToken, 1, types.StepRunEventTypeStarted,
+	)
+	recordTaskLeaseHubStepEventForTest(
+		t, ctx, deps.orgID, recoveryLease.AgentID, recoveryLease.Steps[0].StepRunID,
+		recoveryLease.LeaseToken, 2, types.StepRunEventTypeFailed,
+	)
+
+	terminalTask, err := db.GetTask(ctx, tasks[0].ID, deps.orgID)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(terminalTask.Status).To(Equal(types.TaskStatusFailed))
+	g.Expect(countActiveTaskLeasesForTest(t, ctx, tasks[0].ID)).To(Equal(0))
+	created, err := db.CreateTasksForDeploymentPlan(ctx, types.CreateTasksForDeploymentPlanRequest{
+		OrganizationID: deps.orgID, DeploymentPlanID: recoveryPlan.ID, ActorUserAccountID: deps.actorID,
 		ConcurrencyPolicy: types.TaskConcurrencyPolicyRejectNew,
 	})
 	g.Expect(err).NotTo(HaveOccurred())
