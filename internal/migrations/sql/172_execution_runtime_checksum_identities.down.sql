@@ -1,7 +1,7 @@
 SET LOCAL lock_timeout = '10s';
 SET LOCAL statement_timeout = '5min';
 
-LOCK TABLE ExecutionAttempt, ExecutionRuntimeEvidence
+LOCK TABLE ExecutionAttempt, ExecutionRuntimeEvidence, ProtectedHistoryArtifact
   IN ACCESS EXCLUSIVE MODE;
 
 DO $$
@@ -17,12 +17,23 @@ BEGIN
        WHERE schema_version = 'distr.execution-runtime-evidence/v2'
           OR pre_execution_service_config_checksum IS NOT NULL
           OR result_service_config_checksum IS NOT NULL
+     )
+     OR EXISTS (
+       SELECT 1
+       FROM ProtectedHistoryArtifact
+       WHERE source_schema_version > 171
      ) THEN
     RAISE EXCEPTION
-      'refusing migration 172 rollback while v4 runtime checksum contracts or evidence exist';
+      'refusing migration 172 rollback while v4 runtime checksum contracts or evidence exist or schema-172 protected history exists';
   END IF;
 END;
 $$;
+
+ALTER TABLE ProtectedHistoryArtifact
+  DROP CONSTRAINT protectedhistoryartifact_source_schema_version_check,
+  ADD CONSTRAINT protectedhistoryartifact_source_schema_version_check CHECK (
+    source_schema_version BETWEEN 138 AND 171
+  );
 
 DROP TRIGGER ExecutionAttempt_runtime_contract_immutable
   ON ExecutionAttempt;

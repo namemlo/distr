@@ -194,6 +194,33 @@ WHERE table_schema = current_schema()
   )
 `).Scan(&addedColumns)).To(Succeed())
 	g.Expect(addedColumns).To(Equal(0))
+
+	var protectedHistoryConstraint string
+	g.Expect(database.pool.QueryRow(context.Background(), `
+SELECT pg_get_constraintdef(constraint_row.oid)
+FROM pg_catalog.pg_constraint constraint_row
+WHERE constraint_row.conrelid =
+      to_regclass(format('%I.protectedhistoryartifact', current_schema()))
+  AND constraint_row.conname =
+      'protectedhistoryartifact_source_schema_version_check'
+`).Scan(&protectedHistoryConstraint)).To(Succeed())
+	g.Expect(protectedHistoryConstraint).To(ContainSubstring(
+		"source_schema_version <= 171",
+	))
+	g.Expect(protectedHistoryConstraint).NotTo(ContainSubstring(
+		"source_schema_version <= 172",
+	))
+	_, err := insertMigrationProtectedHistoryFixtureWithError(t, database, 172)
+	expectMigration172CheckViolation(
+		t, err, "protectedhistoryartifact_source_schema_version_check",
+	)
+	var schemaVersion int
+	var dirty bool
+	g.Expect(database.pool.QueryRow(context.Background(), `
+SELECT version, dirty FROM schema_migrations
+`).Scan(&schemaVersion, &dirty)).To(Succeed())
+	g.Expect(schemaVersion).To(Equal(171))
+	g.Expect(dirty).To(BeFalse())
 }
 
 func TestMigration172DowngradeRefusesV4AttemptsAndV2Evidence(t *testing.T) {
@@ -225,6 +252,12 @@ func TestMigration172DowngradeRefusesV4AttemptsAndV2Evidence(t *testing.T) {
 					migration172Checksum("d"),
 					migration172Checksum("e"),
 				)).To(Succeed())
+			},
+		},
+		{
+			name: "schema 172 protected history",
+			setup: func(t *testing.T, database *migrationTestDatabase, _ uuid.UUID) {
+				insertMigrationProtectedHistoryFixture(t, database, 172)
 			},
 		},
 	} {
@@ -284,6 +317,12 @@ func TestRunnerRestoresCleanStatusAfterMigration172GuardRefusal(t *testing.T) {
 				)).To(Succeed())
 			},
 		},
+		{
+			name: "schema 172 protected history",
+			setup: func(t *testing.T, database *migrationTestDatabase, _ uuid.UUID) {
+				insertMigrationProtectedHistoryFixture(t, database, 172)
+			},
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			g := NewWithT(t)
@@ -305,6 +344,41 @@ func TestRunnerRestoresCleanStatusAfterMigration172GuardRefusal(t *testing.T) {
 			g.Expect(status).To(Equal(SchemaStatus{Version: 172, Dirty: false}))
 		})
 	}
+}
+
+func TestRunnerDoesNotRestoreMigration172WithWeakenedProtectedHistoryConstraint(t *testing.T) {
+	g := NewWithT(t)
+	database := newRunnerTestDatabase(t)
+	database.migrateTo(t, 172)
+	fixtureDatabase := &migrationTestDatabase{pool: database.pool}
+	organizationID := prepareMigration172AttemptFixtures(t, fixtureDatabase)
+	insertMigration172Attempt(
+		t, fixtureDatabase, organizationID, "v4",
+		migration172Checksum("a"), migration172Checksum("b"),
+		migration172Checksum("c"),
+	)
+	_, err := database.pool.Exec(context.Background(), `
+ALTER TABLE ProtectedHistoryArtifact
+  DROP CONSTRAINT protectedhistoryartifact_source_schema_version_check,
+  ADD CONSTRAINT protectedhistoryartifact_source_schema_version_check CHECK (
+    source_schema_version BETWEEN 138 AND 172 OR TRUE
+  )
+`)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	err = database.runner.Run(
+		context.Background(),
+		RunOptions{Target: uintPointer(171)},
+	)
+	g.Expect(err).To(MatchError(And(
+		ContainSubstring(
+			"refusing migration 172 rollback while v4 runtime checksum contracts or evidence exist",
+		),
+		ContainSubstring("guarded runtime checksum schema is incomplete"),
+	)))
+	status, statusErr := database.runner.Status(context.Background())
+	g.Expect(statusErr).NotTo(HaveOccurred())
+	g.Expect(status).To(Equal(SchemaStatus{Version: 171, Dirty: true}))
 }
 
 func prepareMigration172AttemptFixtures(

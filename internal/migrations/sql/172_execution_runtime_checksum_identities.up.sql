@@ -1,8 +1,14 @@
 SET LOCAL lock_timeout = '10s';
 SET LOCAL statement_timeout = '5min';
 
-LOCK TABLE ExecutionAttempt, ExecutionRuntimeEvidence
+LOCK TABLE ExecutionAttempt, ExecutionRuntimeEvidence, ProtectedHistoryArtifact
   IN ACCESS EXCLUSIVE MODE;
+
+ALTER TABLE ProtectedHistoryArtifact
+  DROP CONSTRAINT protectedhistoryartifact_source_schema_version_check,
+  ADD CONSTRAINT protectedhistoryartifact_source_schema_version_check CHECK (
+    source_schema_version BETWEEN 138 AND 172
+  );
 
 ALTER TABLE ExecutionAttempt
   ADD COLUMN runtime_manifest_checksum TEXT,

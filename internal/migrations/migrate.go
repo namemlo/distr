@@ -559,7 +559,15 @@ SELECT
         (to_regclass(format('%I.executionruntimeevidence', current_schema())),
          'executionruntimeevidence_schema_version_check'),
         (to_regclass(format('%I.executionruntimeevidence', current_schema())),
-         'executionruntimeevidence_service_config_shape_check')
+         'executionruntimeevidence_service_config_shape_check'),
+        (to_regclass(format('%I.protectedhistoryartifact', current_schema())),
+         'protectedhistoryartifact_source_schema_version_check')
+      )
+      AND (
+        constraint_row.conname <>
+          'protectedhistoryartifact_source_schema_version_check'
+        OR pg_get_constraintdef(constraint_row.oid) =
+          'CHECK (((source_schema_version >= 138) AND (source_schema_version <= 172)))'
       )
   ),
   (
@@ -573,7 +581,7 @@ SELECT
   )`).Scan(&columnCount, &constraintCount, &triggerCount); err != nil {
 		return fmt.Errorf("inspect guarded runtime checksum schema: %w", err)
 	}
-	if columnCount != 5 || constraintCount != 4 || triggerCount != 1 {
+	if columnCount != 5 || constraintCount != 5 || triggerCount != 1 {
 		return fmt.Errorf(
 			"guarded runtime checksum schema is incomplete: columns=%d constraints=%d triggers=%d",
 			columnCount,

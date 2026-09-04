@@ -213,6 +213,27 @@ func insertMigration170ProtectedHistoryFixture(
 	t *testing.T,
 	database *migrationTestDatabase,
 ) protectedhistory.RetainedArtifact {
+	return insertMigrationProtectedHistoryFixture(t, database, 170)
+}
+
+func insertMigrationProtectedHistoryFixture(
+	t *testing.T,
+	database *migrationTestDatabase,
+	sourceSchemaVersion uint64,
+) protectedhistory.RetainedArtifact {
+	t.Helper()
+	retained, err := insertMigrationProtectedHistoryFixtureWithError(
+		t, database, sourceSchemaVersion,
+	)
+	NewWithT(t).Expect(err).NotTo(HaveOccurred())
+	return retained
+}
+
+func insertMigrationProtectedHistoryFixtureWithError(
+	t *testing.T,
+	database *migrationTestDatabase,
+	sourceSchemaVersion uint64,
+) (protectedhistory.RetainedArtifact, error) {
 	t.Helper()
 	g := NewWithT(t)
 	ctx := context.Background()
@@ -253,7 +274,7 @@ VALUES ($1, $2, $3)
 		OrganizationID:          organizationID.String(),
 		CustomerOrganizationIDs: []string{customerID.String()},
 	}
-	artifact, err := protectedhistory.Build(scope, 170, []protectedhistory.RawRecord{{
+	artifact, err := protectedhistory.Build(scope, sourceSchemaVersion, []protectedhistory.RawRecord{{
 		Kind: "customerorganization",
 		ID:   customerID.String(),
 		Payload: json.RawMessage(`{"organizationId":"` + organizationID.String() +
@@ -349,7 +370,9 @@ INSERT INTO ProtectedHistoryArtifact (
 		retained.IdempotencyKey,
 		retained.RequestChecksum,
 	)
-	g.Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		return *retained, err
+	}
 	_, err = tx.Exec(ctx, `
 INSERT INTO ControlPlaneAuditEvent (
   id, organization_id, sequence, event_type, actor_id, outcome,
@@ -376,5 +399,5 @@ FROM ProtectedHistoryArtifact
 WHERE id = $1
 `, retained.ID).Scan(&checksum)).To(Succeed())
 	g.Expect(checksum).To(Equal(retained.AuditBindingChecksum))
-	return *retained
+	return *retained, nil
 }

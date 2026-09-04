@@ -57,6 +57,21 @@ func TestMigration172PreservesLegacyShapesAndDefaultsNewAttemptsToV4(t *testing.
 	}
 }
 
+func TestMigration172WidensProtectedHistorySourceVersion(t *testing.T) {
+	sql := readRuntimeChecksumIdentitiesMigration(
+		t, runtimeChecksumIdentitiesUpMigration,
+	)
+
+	lockAt := strings.Index(
+		sql,
+		"LOCK TABLE ExecutionAttempt, ExecutionRuntimeEvidence, ProtectedHistoryArtifact",
+	)
+	constraintAt := strings.Index(sql, "source_schema_version BETWEEN 138 AND 172")
+	if lockAt < 0 || constraintAt < 0 || lockAt >= constraintAt {
+		t.Fatal("migration 172 must lock protected history before widening its source version")
+	}
+}
+
 func TestMigration172MakesNewAttemptChecksumIdentitiesImmutable(t *testing.T) {
 	sql := readRuntimeChecksumIdentitiesMigration(
 		t, runtimeChecksumIdentitiesUpMigration,
@@ -102,10 +117,22 @@ func TestMigration172DowngradeLocksAndRefusesV4DataBeforeDroppingColumns(t *test
 		t, runtimeChecksumIdentitiesDownMigration,
 	)
 
-	lockAt := strings.Index(sql, "LOCK TABLE ExecutionAttempt, ExecutionRuntimeEvidence")
+	lockAt := strings.Index(
+		sql,
+		"LOCK TABLE ExecutionAttempt, ExecutionRuntimeEvidence, ProtectedHistoryArtifact",
+	)
 	checkAt := strings.Index(sql, "IF EXISTS")
+	protectedHistoryCheckAt := strings.Index(sql, "source_schema_version > 171")
+	protectedHistoryConstraintAt := strings.Index(
+		sql,
+		"source_schema_version BETWEEN 138 AND 171",
+	)
 	dropAt := strings.Index(sql, "DROP COLUMN runtime_manifest_checksum")
-	if lockAt < 0 || checkAt < 0 || dropAt < 0 || !(lockAt < checkAt && checkAt < dropAt) {
+	if lockAt < 0 || checkAt < 0 || protectedHistoryCheckAt < 0 ||
+		protectedHistoryConstraintAt < 0 || dropAt < 0 ||
+		!(lockAt < checkAt && checkAt < protectedHistoryCheckAt &&
+			protectedHistoryCheckAt < protectedHistoryConstraintAt &&
+			protectedHistoryConstraintAt < dropAt) {
 		t.Fatal("migration 172 downgrade must lock and refuse retained v4 data before dropping columns")
 	}
 	for _, required := range []string{
@@ -113,6 +140,9 @@ func TestMigration172DowngradeLocksAndRefusesV4DataBeforeDroppingColumns(t *test
 		"schema_version = 'distr.execution-runtime-evidence/v2'",
 		"pre_execution_service_config_checksum IS NOT NULL",
 		"result_service_config_checksum IS NOT NULL",
+		"source_schema_version > 171",
+		"schema-172 protected history exists",
+		"source_schema_version BETWEEN 138 AND 171",
 		"refusing migration 172 rollback while v4 runtime checksum contracts or evidence exist",
 		"ALTER COLUMN runtime_contract_version SET DEFAULT 'v3'",
 		"schema_version = 'distr.execution-runtime-evidence/v1'",
