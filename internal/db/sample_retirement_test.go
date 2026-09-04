@@ -707,14 +707,19 @@ func insertSampleRetirementApprovalFixture(
 	t.Helper()
 	g := NewWithT(t)
 	approverID := uuid.New()
-	_, err := database.pool.Exec(context.Background(), `
-INSERT INTO UserAccount (id, email) VALUES ($1, $2);
-INSERT INTO Organization_UserAccount (
-  organization_id, user_account_id, user_role
-) VALUES ($3, $1, 'admin')`,
+	_, err := database.pool.Exec(
+		context.Background(),
+		`INSERT INTO UserAccount (id, email) VALUES ($1, $2)`,
 		approverID,
 		approverID.String()+"@example.test",
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = database.pool.Exec(context.Background(), `
+INSERT INTO Organization_UserAccount (
+  organization_id, user_account_id, user_role
+) VALUES ($1, $2, 'admin')`,
 		organizationID,
+		approverID,
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	group := types.PrincipalGroup{

@@ -370,20 +370,6 @@ func RecordApprovalDecision(
 	var result *types.ApprovalDecision
 	var invalidationReason types.ApprovalInvalidationReason
 	err := RunTx(ctx, func(ctx context.Context) error {
-		existing, err := getIdempotentApprovalDecision(ctx, input)
-		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
-			return err
-		}
-		if existing != nil {
-			if approvalDecisionMatchesInput(*existing, input) {
-				result = existing
-				return nil
-			}
-			return apierrors.NewConflict(
-				"idempotency key is already bound to a different approval decision",
-			)
-		}
-
 		decisionAt, err := approvalDatabaseTime(ctx)
 		if err != nil {
 			return err
@@ -439,6 +425,28 @@ func RecordApprovalDecision(
 		if err := validateSampleRetirementDecisionActor(*request, input); err != nil {
 			return err
 		}
+		requirement, err := getApprovalRequirement(
+			ctx,
+			input.ApprovalRequirementID,
+			request.ID,
+			request.OrganizationID,
+		)
+		if err != nil {
+			return err
+		}
+		actorInGroup, err := approvalActorInRequiredGroup(
+			ctx,
+			request.OrganizationID,
+			requirement.PrincipalGroupID,
+			input.ActorUserAccountID,
+			decisionAt,
+		)
+		if err != nil {
+			return err
+		}
+		if !actorInGroup {
+			return apierrors.ErrForbidden
+		}
 		invalidationReason = observedReason
 		if invalidationReason == "" {
 			invalidationReason = detectApprovalInvalidation(
@@ -470,29 +478,27 @@ func RecordApprovalDecision(
 			}
 			return nil
 		}
-		requirement, err := getApprovalRequirement(
-			ctx,
-			input.ApprovalRequirementID,
-			request.ID,
-			request.OrganizationID,
-		)
-		if err != nil {
+		existing, err := getIdempotentApprovalDecision(ctx, input)
+		if err != nil && !errors.Is(err, apierrors.ErrNotFound) {
 			return err
 		}
+		if existing != nil {
+			if approvalDecisionMatchesInput(*existing, input) {
+				if request.Revision != existing.RequestRevision+1 {
+					return apierrors.NewConflict("approval request revision changed")
+				}
+				result = existing
+				return nil
+			}
+			return apierrors.NewConflict(
+				"idempotency key is already bound to a different approval decision",
+			)
+		}
+
 		decisions, err := listApprovalDecisions(
 			ctx,
 			request.ID,
 			request.OrganizationID,
-		)
-		if err != nil {
-			return err
-		}
-		actorInGroup, err := approvalActorInRequiredGroup(
-			ctx,
-			request.OrganizationID,
-			requirement.PrincipalGroupID,
-			input.ActorUserAccountID,
-			decisionAt,
 		)
 		if err != nil {
 			return err

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
@@ -275,9 +276,17 @@ func TestApprovalRepositoryUsesLocksIdempotencyAndKeysetPagination(t *testing.T)
 	subjectLock := strings.Index(recordCode, "currentapprovalsubjectsnapshot")
 	requestLock := strings.Index(recordCode, "getapprovalrequestforupdate")
 	authorization := strings.Index(recordCode, "input.authorize(")
+	requirement := strings.Index(recordCode, "getapprovalrequirement(")
+	currentGroupAuthority := strings.Index(recordCode, "approvalactorinrequiredgroup(")
+	invalidation := strings.Index(recordCode, "detectapprovalinvalidation(")
+	idempotentReplay := strings.Index(recordCode, "getidempotentapprovaldecision(")
 	g.Expect(subjectLock).To(BeNumerically(">=", 0))
 	g.Expect(requestLock).To(BeNumerically(">", subjectLock))
 	g.Expect(authorization).To(BeNumerically(">", requestLock))
+	g.Expect(requirement).To(BeNumerically(">", authorization))
+	g.Expect(currentGroupAuthority).To(BeNumerically(">", requirement))
+	g.Expect(invalidation).To(BeNumerically(">", currentGroupAuthority))
+	g.Expect(idempotentReplay).To(BeNumerically(">", invalidation))
 	g.Expect(recordCode).To(ContainSubstring(
 		"stateforapprovalinvalidation(invalidationreason)",
 	))
@@ -320,6 +329,25 @@ func TestApprovalDecisionIdempotencyMatchesOnlyExactRetry(t *testing.T) {
 
 	input.Decision = types.ApprovalDecisionReject
 	g.Expect(approvalDecisionMatchesInput(decision, input)).To(BeFalse())
+
+	input.Decision = decision.Decision
+	input.ExpectedRequestRevision++
+	g.Expect(approvalDecisionMatchesInput(decision, input)).To(BeFalse())
+
+	input.ExpectedRequestRevision = decision.RequestRevision
+	changedPilot, err := pilotexception.Parse(
+		true,
+		uuid.NewString(),
+		uuid.NewString(),
+		uuid.NewString(),
+		"approved-change-456",
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	input.SingleReviewerPilot = changedPilot
+	g.Expect(approvalDecisionMatchesInput(decision, input)).To(BeTrue())
+
+	input.SingleReviewerPilot = pilotexception.Config{}
+	g.Expect(approvalDecisionMatchesInput(decision, input)).To(BeTrue())
 }
 
 func TestAdmissionApprovalRevalidatesCurrentRequirementAuthority(t *testing.T) {
