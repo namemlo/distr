@@ -633,11 +633,18 @@ func deriveFrozenAttemptInputs(
 		strings.EqualFold(step.RetryClass, "bounded")) &&
 		adapter.RetrySafeCapabilityVersion == adapter.CapabilityVersion
 	if latest != nil && !retry {
+		runtimeChecksumsValid := (latest.RuntimeContractVersion == types.ExecutionRuntimeContractVersionV3 &&
+			latest.RuntimeManifestChecksum == "" && latest.DesiredServiceConfigChecksum == "" &&
+			latest.ExpectedCurrentServiceConfigChecksum == "") ||
+			(latest.RuntimeContractVersion == types.ExecutionRuntimeContractVersionV4 &&
+				frozenChecksumPattern.MatchString(latest.RuntimeManifestChecksum) &&
+				frozenChecksumPattern.MatchString(latest.DesiredServiceConfigChecksum) &&
+				frozenChecksumPattern.MatchString(latest.ExpectedCurrentServiceConfigChecksum))
 		if latest.PlanChecksum != plan.CanonicalChecksum ||
 			latest.ArtifactDigest != artifactDigest ||
 			latest.ConfigChecksum != adapter.ConfigChecksum ||
 			latest.AdapterRevision != adapterRevision ||
-			latest.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 ||
+			!runtimeChecksumsValid ||
 			latest.ExpectedObservedStateVersion != runtimeTrust.ExpectedObservedStateVersion ||
 			latest.ExpectedObservedStateChecksum != runtimeTrust.ExpectedObservedStateChecksum ||
 			latest.ExpectedCurrentImageDigest != runtimeTrust.ExpectedCurrentImageDigest ||
@@ -654,14 +661,17 @@ func deriveFrozenAttemptInputs(
 		return FrozenAttemptInputs{
 			AttemptNumber: latest.Identity.AttemptNumber, PlanChecksum: latest.PlanChecksum,
 			ArtifactDigest: latest.ArtifactDigest, ConfigChecksum: latest.ConfigChecksum,
-			AdapterRevision: latest.AdapterRevision, ResourceKey: latest.Fence.ResourceKey,
-			RuntimeContractVersion:        latest.RuntimeContractVersion,
-			ExpectedObservedStateVersion:  latest.ExpectedObservedStateVersion,
-			ExpectedObservedStateChecksum: latest.ExpectedObservedStateChecksum,
-			ExpectedCurrentImageDigest:    latest.ExpectedCurrentImageDigest,
-			ExpectedCurrentConfigChecksum: latest.ExpectedCurrentConfigChecksum,
-			ExpectedPlatform:              latest.ExpectedPlatform,
-			CallerBinding:                 latest.CallerBinding, Audience: latest.Audience,
+			RuntimeManifestChecksum:      latest.RuntimeManifestChecksum,
+			DesiredServiceConfigChecksum: latest.DesiredServiceConfigChecksum,
+			AdapterRevision:              latest.AdapterRevision, ResourceKey: latest.Fence.ResourceKey,
+			RuntimeContractVersion:               latest.RuntimeContractVersion,
+			ExpectedObservedStateVersion:         latest.ExpectedObservedStateVersion,
+			ExpectedObservedStateChecksum:        latest.ExpectedObservedStateChecksum,
+			ExpectedCurrentImageDigest:           latest.ExpectedCurrentImageDigest,
+			ExpectedCurrentConfigChecksum:        latest.ExpectedCurrentConfigChecksum,
+			ExpectedCurrentServiceConfigChecksum: latest.ExpectedCurrentServiceConfigChecksum,
+			ExpectedPlatform:                     latest.ExpectedPlatform,
+			CallerBinding:                        latest.CallerBinding, Audience: latest.Audience,
 			FenceGeneration: latest.Fence.Generation, Cancellable: latest.Cancellable,
 			RetrySafe: latest.RetrySafe, IntentTTL: latest.IntentExpiresAt.Sub(latest.IntentIssuedAt),
 			PublicKeyFingerprint:         adapter.PublicKeyFingerprint,
@@ -674,21 +684,33 @@ func deriveFrozenAttemptInputs(
 	}
 	attemptNumber := 1
 	fenceGeneration := int64(1)
+	runtimeContractVersion := types.ExecutionRuntimeContractVersionV3
+	var runtimeManifestChecksum, desiredServiceConfigChecksum string
+	var expectedCurrentServiceConfigChecksum string
 	if latest != nil {
 		attemptNumber = latest.Identity.AttemptNumber + 1
 		fenceGeneration = latest.Fence.Generation + 1
+		if retry {
+			runtimeContractVersion = latest.RuntimeContractVersion
+			runtimeManifestChecksum = latest.RuntimeManifestChecksum
+			desiredServiceConfigChecksum = latest.DesiredServiceConfigChecksum
+			expectedCurrentServiceConfigChecksum = latest.ExpectedCurrentServiceConfigChecksum
+		}
 	}
 	return FrozenAttemptInputs{
 		AttemptNumber: attemptNumber, PlanChecksum: plan.CanonicalChecksum,
 		ArtifactDigest: artifactDigest, ConfigChecksum: adapter.ConfigChecksum,
-		AdapterRevision: adapterRevision, ResourceKey: resourceKey,
-		RuntimeContractVersion:        types.ExecutionRuntimeContractVersionV3,
-		ExpectedObservedStateVersion:  runtimeTrust.ExpectedObservedStateVersion,
-		ExpectedObservedStateChecksum: runtimeTrust.ExpectedObservedStateChecksum,
-		ExpectedCurrentImageDigest:    runtimeTrust.ExpectedCurrentImageDigest,
-		ExpectedCurrentConfigChecksum: runtimeTrust.ExpectedCurrentConfigChecksum,
-		ExpectedPlatform:              runtimeTrust.ExpectedPlatform,
-		CallerBinding:                 runtimeTrust.CallerBinding, Audience: runtimeTrust.Audience,
+		RuntimeManifestChecksum:      runtimeManifestChecksum,
+		DesiredServiceConfigChecksum: desiredServiceConfigChecksum,
+		AdapterRevision:              adapterRevision, ResourceKey: resourceKey,
+		RuntimeContractVersion:               runtimeContractVersion,
+		ExpectedObservedStateVersion:         runtimeTrust.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum:        runtimeTrust.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:           runtimeTrust.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum:        runtimeTrust.ExpectedCurrentConfigChecksum,
+		ExpectedCurrentServiceConfigChecksum: expectedCurrentServiceConfigChecksum,
+		ExpectedPlatform:                     runtimeTrust.ExpectedPlatform,
+		CallerBinding:                        runtimeTrust.CallerBinding, Audience: runtimeTrust.Audience,
 		FenceGeneration: fenceGeneration,
 		Cancellable:     cancellable,
 		RetrySafe:       retrySafe,

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,16 @@ func TestExecutionV2LeaseRequestValidation(t *testing.T) {
 	g.Expect(validateLeaseExecutionV2Request(request)).To(MatchError(ContainSubstring("scope")))
 }
 
+func TestExecutionV2LeaseClaimUpdateSupportsV3AndV4RuntimeContracts(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("execution_v2_discovery.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(strings.Count(
+		strings.ToLower(string(source)),
+		"runtime_contract_version in ('v3', 'v4')",
+	)).To(Equal(2))
+}
+
 func TestExecutionV2LeaseCandidateQueryIsCredentialAndFrozenIdentityScoped(t *testing.T) {
 	g := NewWithT(t)
 	query := strings.ToLower(executionV2LeaseCandidateQuery)
@@ -32,7 +43,7 @@ func TestExecutionV2LeaseCandidateQueryIsCredentialAndFrozenIdentityScoped(t *te
 		"ea.organization_id = @organizationid",
 		"ea.deployment_target_id = @deploymenttargetid",
 		"ea.status = 'pending'",
-		"ea.runtime_contract_version = 'v3'",
+		"ea.runtime_contract_version in ('v3', 'v4')",
 		"ea.adapter_revision = @adapterrevision",
 		"ei.key_id = @keyid",
 		"ea.intent_issued_at <= clock_timestamp()",

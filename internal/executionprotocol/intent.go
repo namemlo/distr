@@ -18,7 +18,10 @@ import (
 
 var intentChecksumPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-const executionIntentSchemaV3 = "distr.execution-intent/v3"
+const (
+	executionIntentSchemaV3 = "distr.execution-intent/v3"
+	executionIntentSchemaV4 = "distr.execution-intent/v4"
+)
 
 type intentSignerContextKey struct{}
 
@@ -27,31 +30,34 @@ func WithIntentSigner(ctx context.Context, signer IntentSigner) context.Context 
 }
 
 type canonicalIntent struct {
-	Schema                        string                                `json:"schema"`
-	OrganizationID                uuid.UUID                             `json:"organizationId"`
-	DeploymentTargetID            uuid.UUID                             `json:"deploymentTargetId"`
-	AttemptID                     uuid.UUID                             `json:"attemptId"`
-	TaskID                        uuid.UUID                             `json:"taskId"`
-	StepRunID                     uuid.UUID                             `json:"stepRunId"`
-	ExecutionID                   uuid.UUID                             `json:"executionId"`
-	AttemptNumber                 int                                   `json:"attemptNumber"`
-	StepKey                       string                                `json:"stepKey"`
-	PlanChecksum                  string                                `json:"planChecksum"`
-	ArtifactDigest                string                                `json:"artifactDigest"`
-	ConfigChecksum                string                                `json:"configChecksum"`
-	AdapterRevision               string                                `json:"adapterRevision"`
-	RuntimeContractVersion        types.ExecutionRuntimeContractVersion `json:"runtimeContractVersion"`
-	ExpectedObservedStateVersion  int64                                 `json:"expectedObservedStateVersion"`
-	ExpectedObservedStateChecksum string                                `json:"expectedObservedStateChecksum"`
-	ExpectedCurrentImageDigest    string                                `json:"expectedCurrentImageDigest"`
-	ExpectedCurrentConfigChecksum string                                `json:"expectedCurrentConfigChecksum"`
-	ExpectedPlatform              types.DeploymentTargetPlatform        `json:"expectedPlatform"`
-	CallerBinding                 string                                `json:"callerBinding"`
-	Audience                      string                                `json:"audience"`
-	ResourceKey                   string                                `json:"resourceKey"`
-	FenceGeneration               int64                                 `json:"fenceGeneration"`
-	IssuedAt                      time.Time                             `json:"issuedAt"`
-	ExpiresAt                     time.Time                             `json:"expiresAt"`
+	Schema                               string                                `json:"schema"`
+	OrganizationID                       uuid.UUID                             `json:"organizationId"`
+	DeploymentTargetID                   uuid.UUID                             `json:"deploymentTargetId"`
+	AttemptID                            uuid.UUID                             `json:"attemptId"`
+	TaskID                               uuid.UUID                             `json:"taskId"`
+	StepRunID                            uuid.UUID                             `json:"stepRunId"`
+	ExecutionID                          uuid.UUID                             `json:"executionId"`
+	AttemptNumber                        int                                   `json:"attemptNumber"`
+	StepKey                              string                                `json:"stepKey"`
+	PlanChecksum                         string                                `json:"planChecksum"`
+	ArtifactDigest                       string                                `json:"artifactDigest"`
+	ConfigChecksum                       string                                `json:"configChecksum"`
+	RuntimeManifestChecksum              string                                `json:"runtimeManifestChecksum,omitempty"`
+	DesiredServiceConfigChecksum         string                                `json:"desiredServiceConfigChecksum,omitempty"`
+	AdapterRevision                      string                                `json:"adapterRevision"`
+	RuntimeContractVersion               types.ExecutionRuntimeContractVersion `json:"runtimeContractVersion"`
+	ExpectedObservedStateVersion         int64                                 `json:"expectedObservedStateVersion"`
+	ExpectedObservedStateChecksum        string                                `json:"expectedObservedStateChecksum"`
+	ExpectedCurrentImageDigest           string                                `json:"expectedCurrentImageDigest"`
+	ExpectedCurrentConfigChecksum        string                                `json:"expectedCurrentConfigChecksum"`
+	ExpectedCurrentServiceConfigChecksum string                                `json:"expectedCurrentServiceConfigChecksum,omitempty"`
+	ExpectedPlatform                     types.DeploymentTargetPlatform        `json:"expectedPlatform"`
+	CallerBinding                        string                                `json:"callerBinding"`
+	Audience                             string                                `json:"audience"`
+	ResourceKey                          string                                `json:"resourceKey"`
+	FenceGeneration                      int64                                 `json:"fenceGeneration"`
+	IssuedAt                             time.Time                             `json:"issuedAt"`
+	ExpiresAt                            time.Time                             `json:"expiresAt"`
 }
 
 func BuildExecutionIntent(
@@ -66,22 +72,25 @@ func BuildExecutionIntent(
 		return types.SignedExecutionIntent{}, err
 	}
 	value := canonicalIntent{
-		Schema: executionIntentSchemaV3, OrganizationID: attempt.OrganizationID,
+		Schema: executionIntentSchema(attempt.RuntimeContractVersion), OrganizationID: attempt.OrganizationID,
 		DeploymentTargetID: attempt.DeploymentTargetID, AttemptID: attempt.ID,
 		TaskID: attempt.TaskID, StepRunID: attempt.StepRunID,
 		ExecutionID:   attempt.Identity.ExecutionID,
 		AttemptNumber: attempt.Identity.AttemptNumber, StepKey: strings.TrimSpace(attempt.Identity.StepKey),
 		PlanChecksum: attempt.PlanChecksum, ArtifactDigest: attempt.ArtifactDigest,
 		ConfigChecksum: attempt.ConfigChecksum, AdapterRevision: strings.TrimSpace(attempt.AdapterRevision),
-		RuntimeContractVersion:        attempt.RuntimeContractVersion,
-		ExpectedObservedStateVersion:  attempt.ExpectedObservedStateVersion,
-		ExpectedObservedStateChecksum: attempt.ExpectedObservedStateChecksum,
-		ExpectedCurrentImageDigest:    attempt.ExpectedCurrentImageDigest,
-		ExpectedCurrentConfigChecksum: attempt.ExpectedCurrentConfigChecksum,
-		ExpectedPlatform:              attempt.ExpectedPlatform,
-		CallerBinding:                 strings.TrimSpace(attempt.CallerBinding),
-		Audience:                      strings.TrimSpace(attempt.Audience),
-		ResourceKey:                   strings.TrimSpace(attempt.Fence.ResourceKey), FenceGeneration: attempt.Fence.Generation,
+		RuntimeManifestChecksum:              attempt.RuntimeManifestChecksum,
+		DesiredServiceConfigChecksum:         attempt.DesiredServiceConfigChecksum,
+		RuntimeContractVersion:               attempt.RuntimeContractVersion,
+		ExpectedObservedStateVersion:         attempt.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum:        attempt.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:           attempt.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum:        attempt.ExpectedCurrentConfigChecksum,
+		ExpectedCurrentServiceConfigChecksum: attempt.ExpectedCurrentServiceConfigChecksum,
+		ExpectedPlatform:                     attempt.ExpectedPlatform,
+		CallerBinding:                        strings.TrimSpace(attempt.CallerBinding),
+		Audience:                             strings.TrimSpace(attempt.Audience),
+		ResourceKey:                          strings.TrimSpace(attempt.Fence.ResourceKey), FenceGeneration: attempt.Fence.Generation,
 		IssuedAt: attempt.IntentIssuedAt.UTC(), ExpiresAt: attempt.IntentExpiresAt.UTC(),
 	}
 	payload, err := json.Marshal(value)
@@ -108,22 +117,25 @@ func ValidateExecutionIntentBinding(
 		return fmt.Errorf("execution intent payload is invalid: %w", err)
 	}
 	expected := canonicalIntent{
-		Schema: executionIntentSchemaV3, OrganizationID: attempt.OrganizationID,
+		Schema: executionIntentSchema(attempt.RuntimeContractVersion), OrganizationID: attempt.OrganizationID,
 		DeploymentTargetID: attempt.DeploymentTargetID, AttemptID: attempt.ID,
 		TaskID: attempt.TaskID, StepRunID: attempt.StepRunID,
 		ExecutionID:   attempt.Identity.ExecutionID,
 		AttemptNumber: attempt.Identity.AttemptNumber, StepKey: strings.TrimSpace(attempt.Identity.StepKey),
 		PlanChecksum: attempt.PlanChecksum, ArtifactDigest: attempt.ArtifactDigest,
 		ConfigChecksum: attempt.ConfigChecksum, AdapterRevision: strings.TrimSpace(attempt.AdapterRevision),
-		RuntimeContractVersion:        attempt.RuntimeContractVersion,
-		ExpectedObservedStateVersion:  attempt.ExpectedObservedStateVersion,
-		ExpectedObservedStateChecksum: attempt.ExpectedObservedStateChecksum,
-		ExpectedCurrentImageDigest:    attempt.ExpectedCurrentImageDigest,
-		ExpectedCurrentConfigChecksum: attempt.ExpectedCurrentConfigChecksum,
-		ExpectedPlatform:              attempt.ExpectedPlatform,
-		CallerBinding:                 strings.TrimSpace(attempt.CallerBinding),
-		Audience:                      strings.TrimSpace(attempt.Audience),
-		ResourceKey:                   strings.TrimSpace(attempt.Fence.ResourceKey), FenceGeneration: attempt.Fence.Generation,
+		RuntimeManifestChecksum:              attempt.RuntimeManifestChecksum,
+		DesiredServiceConfigChecksum:         attempt.DesiredServiceConfigChecksum,
+		RuntimeContractVersion:               attempt.RuntimeContractVersion,
+		ExpectedObservedStateVersion:         attempt.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum:        attempt.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:           attempt.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum:        attempt.ExpectedCurrentConfigChecksum,
+		ExpectedCurrentServiceConfigChecksum: attempt.ExpectedCurrentServiceConfigChecksum,
+		ExpectedPlatform:                     attempt.ExpectedPlatform,
+		CallerBinding:                        strings.TrimSpace(attempt.CallerBinding),
+		Audience:                             strings.TrimSpace(attempt.Audience),
+		ResourceKey:                          strings.TrimSpace(attempt.Fence.ResourceKey), FenceGeneration: attempt.Fence.Generation,
 		IssuedAt: attempt.IntentIssuedAt.UTC(), ExpiresAt: attempt.IntentExpiresAt.UTC(),
 	}
 	if payload != expected {
@@ -159,7 +171,7 @@ func VerifyExecutionIntent(intent types.SignedExecutionIntent, policy types.Trus
 	if err := json.Unmarshal(intent.Payload, &payload); err != nil {
 		return fmt.Errorf("execution intent payload is invalid: %w", err)
 	}
-	if payload.Schema != executionIntentSchemaV3 {
+	if !validIntentSchemaContract(payload.Schema, payload.RuntimeContractVersion) {
 		return errors.New("execution intent schema is invalid")
 	}
 	now := time.Now().UTC()
@@ -178,6 +190,14 @@ func VerifyExecutionIntent(intent types.SignedExecutionIntent, policy types.Trus
 	if policy.ExpectedConfigChecksum != "" && payload.ConfigChecksum != policy.ExpectedConfigChecksum {
 		return errors.New("execution intent config checksum mismatch")
 	}
+	if policy.ExpectedRuntimeManifestChecksum != "" &&
+		payload.RuntimeManifestChecksum != policy.ExpectedRuntimeManifestChecksum {
+		return errors.New("execution intent runtime manifest checksum mismatch")
+	}
+	if policy.ExpectedDesiredServiceConfigChecksum != "" &&
+		payload.DesiredServiceConfigChecksum != policy.ExpectedDesiredServiceConfigChecksum {
+		return errors.New("execution intent desired service config checksum mismatch")
+	}
 	if policy.ExpectedObservedStateVersion > 0 &&
 		payload.ExpectedObservedStateVersion != policy.ExpectedObservedStateVersion {
 		return errors.New("execution intent expected observed-state version mismatch")
@@ -193,6 +213,10 @@ func VerifyExecutionIntent(intent types.SignedExecutionIntent, policy types.Trus
 	if policy.ExpectedCurrentConfigChecksum != "" &&
 		payload.ExpectedCurrentConfigChecksum != policy.ExpectedCurrentConfigChecksum {
 		return errors.New("execution intent expected current config checksum mismatch")
+	}
+	if policy.ExpectedCurrentServiceConfigChecksum != "" &&
+		payload.ExpectedCurrentServiceConfigChecksum != policy.ExpectedCurrentServiceConfigChecksum {
+		return errors.New("execution intent expected current service config checksum mismatch")
 	}
 	if policy.ExpectedPlatform != "" && payload.ExpectedPlatform != policy.ExpectedPlatform {
 		return errors.New("execution intent expected platform mismatch")
@@ -241,13 +265,24 @@ func validateIntentAttempt(attempt types.ExecutionAttempt) error {
 	if strings.TrimSpace(attempt.AdapterRevision) == "" {
 		return errors.New("adapter revision is required")
 	}
-	if attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 ||
+	if (attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 &&
+		attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV4) ||
 		attempt.ExpectedObservedStateVersion <= 0 ||
 		!intentChecksumPattern.MatchString(attempt.ExpectedObservedStateChecksum) ||
 		!intentChecksumPattern.MatchString(attempt.ExpectedCurrentImageDigest) ||
 		!intentChecksumPattern.MatchString(attempt.ExpectedCurrentConfigChecksum) ||
 		!attempt.ExpectedPlatform.IsValid() {
 		return errors.New("execution runtime trust preconditions are invalid")
+	}
+	if attempt.RuntimeContractVersion == types.ExecutionRuntimeContractVersionV3 {
+		if attempt.RuntimeManifestChecksum != "" || attempt.DesiredServiceConfigChecksum != "" ||
+			attempt.ExpectedCurrentServiceConfigChecksum != "" {
+			return errors.New("execution v3 runtime checksum identities must be empty")
+		}
+	} else if !intentChecksumPattern.MatchString(attempt.RuntimeManifestChecksum) ||
+		!intentChecksumPattern.MatchString(attempt.DesiredServiceConfigChecksum) ||
+		!intentChecksumPattern.MatchString(attempt.ExpectedCurrentServiceConfigChecksum) {
+		return errors.New("execution v4 runtime checksum identities are invalid")
 	}
 	if caller, audience := strings.TrimSpace(attempt.CallerBinding), strings.TrimSpace(attempt.Audience); caller == "" || len(caller) > 512 || strings.ContainsAny(caller, "\r\n") ||
 		audience == "" || len(audience) > 512 || strings.ContainsAny(audience, "\r\n") {
@@ -261,4 +296,16 @@ func validateIntentAttempt(attempt types.ExecutionAttempt) error {
 		return errors.New("execution intent validity interval is invalid")
 	}
 	return nil
+}
+
+func executionIntentSchema(version types.ExecutionRuntimeContractVersion) string {
+	if version == types.ExecutionRuntimeContractVersionV4 {
+		return executionIntentSchemaV4
+	}
+	return executionIntentSchemaV3
+}
+
+func validIntentSchemaContract(schema string, version types.ExecutionRuntimeContractVersion) bool {
+	return (schema == executionIntentSchemaV3 && version == types.ExecutionRuntimeContractVersionV3) ||
+		(schema == executionIntentSchemaV4 && version == types.ExecutionRuntimeContractVersionV4)
 }

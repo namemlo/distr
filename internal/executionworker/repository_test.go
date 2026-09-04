@@ -163,6 +163,90 @@ func TestDeriveFrozenAttemptInputsBindsAdapterLineageAndExactTimeout(t *testing.
 	g.Expect(err).To(MatchError(ContainSubstring("timeouts do not match")))
 }
 
+func TestDeriveFrozenAttemptInputsPreservesRuntimeChecksumIdentitiesOnRetry(t *testing.T) {
+	g := NewWithT(t)
+	adapter := frozenAdapterEvidence{
+		AssignmentID: uuid.New(), ImplementationID: uuid.New(),
+		ImplementationVersion: "2.1.0", Capability: "distr.compose.deploy",
+		CapabilityVersion: "2.0.0", ScopeType: "deployment_target",
+		ScopeReference: uuid.NewString(), ConfigSnapshotID: uuid.New(),
+		ConfigChecksum: "sha256:" + strings.Repeat("c", 64), KeyID: "reference-client-dev",
+		PublicKeyFingerprint:         "sha256:" + strings.Repeat("d", 64),
+		SigningKeyReference:          "secret-provider://executor/reference-client-dev",
+		SigningKeyVersionFingerprint: "sha256:" + strings.Repeat("e", 64),
+		RetrySafeCapabilityVersion:   "2.0.0",
+		TimeoutSeconds:               420,
+	}
+	step := types.TargetPlanStep{
+		StepKey: "deploy-api", TimeoutSeconds: 420, RetryClass: "safe",
+	}
+	plan := types.DeploymentPlan{CanonicalChecksum: "sha256:" + strings.Repeat("f", 64)}
+	latest := &types.ExecutionAttempt{
+		Identity:                             types.ExecutionIdentity{AttemptNumber: 3},
+		RuntimeContractVersion:               types.ExecutionRuntimeContractVersionV4,
+		RuntimeManifestChecksum:              "sha256:" + strings.Repeat("1", 64),
+		DesiredServiceConfigChecksum:         "sha256:" + strings.Repeat("2", 64),
+		ExpectedCurrentServiceConfigChecksum: "sha256:" + strings.Repeat("3", 64),
+		RetrySafe:                            true,
+		Fence:                                types.ExecutionFence{Generation: 7},
+	}
+
+	inputs, err := deriveFrozenAttemptInputs(
+		plan, step, "sha256:"+strings.Repeat("a", 64), adapter, runtimeTrustFixture(),
+		"sha256:"+strings.Repeat("b", 64), latest, true,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(inputs.AttemptNumber).To(Equal(4))
+	g.Expect(inputs.FenceGeneration).To(Equal(int64(8)))
+	g.Expect(inputs.RuntimeContractVersion).To(Equal(types.ExecutionRuntimeContractVersionV4))
+	g.Expect(inputs.RuntimeManifestChecksum).To(Equal(latest.RuntimeManifestChecksum))
+	g.Expect(inputs.DesiredServiceConfigChecksum).To(Equal(latest.DesiredServiceConfigChecksum))
+	g.Expect(inputs.ExpectedCurrentServiceConfigChecksum).To(
+		Equal(latest.ExpectedCurrentServiceConfigChecksum),
+	)
+
+	adapterRevision, err := frozenAdapterRevision(adapter)
+	g.Expect(err).NotTo(HaveOccurred())
+	trust := runtimeTrustFixture()
+	latest.PlanChecksum = plan.CanonicalChecksum
+	latest.ArtifactDigest = "sha256:" + strings.Repeat("a", 64)
+	latest.ConfigChecksum = adapter.ConfigChecksum
+	latest.AdapterRevision = adapterRevision
+	latest.ExpectedObservedStateVersion = trust.ExpectedObservedStateVersion
+	latest.ExpectedObservedStateChecksum = trust.ExpectedObservedStateChecksum
+	latest.ExpectedCurrentImageDigest = trust.ExpectedCurrentImageDigest
+	latest.ExpectedCurrentConfigChecksum = trust.ExpectedCurrentConfigChecksum
+	latest.ExpectedPlatform = trust.ExpectedPlatform
+	latest.CallerBinding = trust.CallerBinding
+	latest.Audience = trust.Audience
+	latest.Fence.ResourceKey = "sha256:" + strings.Repeat("b", 64)
+	latest.IntentIssuedAt = time.Now().UTC()
+	latest.IntentExpiresAt = latest.IntentIssuedAt.Add(420 * time.Second)
+	duplicate, err := deriveFrozenAttemptInputs(
+		plan, step, latest.ArtifactDigest, adapter, trust, latest.Fence.ResourceKey, latest, false,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(duplicate.RuntimeContractVersion).To(Equal(types.ExecutionRuntimeContractVersionV4))
+	g.Expect(duplicate.RuntimeManifestChecksum).To(Equal(latest.RuntimeManifestChecksum))
+	g.Expect(duplicate.DesiredServiceConfigChecksum).To(Equal(latest.DesiredServiceConfigChecksum))
+	g.Expect(duplicate.ExpectedCurrentServiceConfigChecksum).To(
+		Equal(latest.ExpectedCurrentServiceConfigChecksum),
+	)
+
+	latest.RuntimeContractVersion = types.ExecutionRuntimeContractVersionV3
+	latest.RuntimeManifestChecksum = ""
+	latest.DesiredServiceConfigChecksum = ""
+	latest.ExpectedCurrentServiceConfigChecksum = ""
+	v3Retry, err := deriveFrozenAttemptInputs(
+		plan, step, latest.ArtifactDigest, adapter, trust, latest.Fence.ResourceKey, latest, true,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(v3Retry.RuntimeContractVersion).To(Equal(types.ExecutionRuntimeContractVersionV3))
+	g.Expect(v3Retry.RuntimeManifestChecksum).To(BeEmpty())
+	g.Expect(v3Retry.DesiredServiceConfigChecksum).To(BeEmpty())
+	g.Expect(v3Retry.ExpectedCurrentServiceConfigChecksum).To(BeEmpty())
+}
+
 func TestDeriveFrozenAttemptInputsRequiresVersionedAdapterControlCapabilities(t *testing.T) {
 	g := NewWithT(t)
 	adapter := frozenAdapterEvidence{

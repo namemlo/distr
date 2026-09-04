@@ -93,6 +93,10 @@ filtered AS (
     attempt.plan_checksum,
     attempt.artifact_digest,
     attempt.config_checksum,
+    attempt.runtime_manifest_checksum,
+    attempt.desired_service_config_checksum,
+    attempt.expected_current_config_checksum,
+    attempt.expected_current_service_config_checksum,
     attempt.adapter_revision,
     attempt.completed_at,
     attempt.cancellable,
@@ -141,6 +145,10 @@ SELECT
   filtered.plan_checksum,
   filtered.artifact_digest,
   filtered.config_checksum,
+  filtered.runtime_manifest_checksum,
+  filtered.desired_service_config_checksum,
+  filtered.expected_current_config_checksum,
+  filtered.expected_current_service_config_checksum,
   filtered.adapter_revision,
   filtered.completed_at,
   filtered.cancellable,
@@ -311,6 +319,10 @@ detail AS (
       'planChecksum', attempt.plan_checksum,
       'artifactDigest', attempt.artifact_digest,
       'configChecksum', attempt.config_checksum,
+      'runtimeManifestChecksum', attempt.runtime_manifest_checksum,
+      'desiredServiceConfigChecksum', attempt.desired_service_config_checksum,
+      'expectedCurrentConfigChecksum', attempt.expected_current_config_checksum,
+      'expectedCurrentServiceConfigChecksum', attempt.expected_current_service_config_checksum,
       'adapterRevision', attempt.adapter_revision,
       'completedAt', attempt.completed_at,
       'cancellable', attempt.cancellable,
@@ -435,6 +447,10 @@ detail AS (
       'planChecksum', retry.plan_checksum,
       'artifactDigest', retry.artifact_digest,
       'configChecksum', retry.config_checksum,
+      'runtimeManifestChecksum', retry.runtime_manifest_checksum,
+      'desiredServiceConfigChecksum', retry.desired_service_config_checksum,
+      'expectedCurrentConfigChecksum', retry.expected_current_config_checksum,
+      'expectedCurrentServiceConfigChecksum', retry.expected_current_service_config_checksum,
       'fenceGeneration', fence.generation,
       'fenceResourceKey', fence.resource_key,
       'idempotencyKey', external.idempotency_key,
@@ -584,7 +600,12 @@ detail AS (
 	  SELECT runtime.created_at, runtime.id, jsonb_build_object(
 		'id', runtime.id, 'kind', 'executor-runtime-evidence',
 		'label', runtime.health_status, 'href', runtime.evidence_reference,
-		'checksum', runtime.canonical_checksum, 'createdAt', runtime.created_at
+		'checksum', runtime.canonical_checksum,
+		'preExecutionConfigChecksum', runtime.pre_execution_config_checksum,
+		'preExecutionServiceConfigChecksum', runtime.pre_execution_service_config_checksum,
+		'resultConfigChecksum', runtime.result_config_checksum,
+		'resultServiceConfigChecksum', runtime.result_service_config_checksum,
+		'createdAt', runtime.created_at
 	  ) AS item
 	  FROM ExecutionRuntimeEvidence AS runtime
 	  WHERE runtime.organization_id = attempt.organization_id

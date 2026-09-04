@@ -163,25 +163,27 @@ func (r ExecutionV2EventRequest) ToTypes(
 }
 
 type ExecutionV2RuntimeEvidenceRequest struct {
-	EventIdentity                 uuid.UUID                      `json:"eventIdentity"`
-	SchemaVersion                 string                         `json:"schemaVersion"`
-	IntentChecksum                string                         `json:"intentChecksum"`
-	ExecutorID                    string                         `json:"executorId"`
-	CallerIdentity                string                         `json:"callerIdentity"`
-	Audience                      string                         `json:"audience"`
-	FenceGeneration               int64                          `json:"fenceGeneration"`
-	ExpectedObservedStateVersion  int64                          `json:"expectedObservedStateVersion"`
-	ExpectedObservedStateChecksum string                         `json:"expectedObservedStateChecksum"`
-	PreExecutionImageDigest       string                         `json:"preExecutionImageDigest"`
-	PreExecutionConfigChecksum    string                         `json:"preExecutionConfigChecksum"`
-	ResultImageDigest             string                         `json:"resultImageDigest"`
-	ResultConfigChecksum          string                         `json:"resultConfigChecksum"`
-	Platform                      types.DeploymentTargetPlatform `json:"platform"`
-	HealthStatus                  types.TargetComponentHealth    `json:"healthStatus"`
-	ResultChecksum                string                         `json:"resultChecksum"`
-	EvidenceReference             string                         `json:"evidenceReference"`
-	EvidenceChecksum              string                         `json:"evidenceChecksum"`
-	CapturedAt                    time.Time                      `json:"capturedAt"`
+	EventIdentity                     uuid.UUID                      `json:"eventIdentity"`
+	SchemaVersion                     string                         `json:"schemaVersion"`
+	IntentChecksum                    string                         `json:"intentChecksum"`
+	ExecutorID                        string                         `json:"executorId"`
+	CallerIdentity                    string                         `json:"callerIdentity"`
+	Audience                          string                         `json:"audience"`
+	FenceGeneration                   int64                          `json:"fenceGeneration"`
+	ExpectedObservedStateVersion      int64                          `json:"expectedObservedStateVersion"`
+	ExpectedObservedStateChecksum     string                         `json:"expectedObservedStateChecksum"`
+	PreExecutionImageDigest           string                         `json:"preExecutionImageDigest"`
+	PreExecutionConfigChecksum        string                         `json:"preExecutionConfigChecksum"`
+	PreExecutionServiceConfigChecksum string                         `json:"preExecutionServiceConfigChecksum,omitempty"`
+	ResultImageDigest                 string                         `json:"resultImageDigest"`
+	ResultConfigChecksum              string                         `json:"resultConfigChecksum"`
+	ResultServiceConfigChecksum       string                         `json:"resultServiceConfigChecksum,omitempty"`
+	Platform                          types.DeploymentTargetPlatform `json:"platform"`
+	HealthStatus                      types.TargetComponentHealth    `json:"healthStatus"`
+	ResultChecksum                    string                         `json:"resultChecksum"`
+	EvidenceReference                 string                         `json:"evidenceReference"`
+	EvidenceChecksum                  string                         `json:"evidenceChecksum"`
+	CapturedAt                        time.Time                      `json:"capturedAt"`
 }
 
 func (r *ExecutionV2RuntimeEvidenceRequest) Validate() error {
@@ -196,7 +198,8 @@ func (r *ExecutionV2RuntimeEvidenceRequest) Validate() error {
 	if r.EventIdentity == uuid.Nil {
 		return validation.NewValidationFailedError("eventIdentity is required")
 	}
-	if r.SchemaVersion != types.ExecutionRuntimeEvidenceSchemaV1 {
+	if r.SchemaVersion != types.ExecutionRuntimeEvidenceSchemaV1 &&
+		r.SchemaVersion != types.ExecutionRuntimeEvidenceSchemaV2 {
 		return validation.NewValidationFailedError("schemaVersion is invalid")
 	}
 	if !validExecutionV2Identity(r.ExecutorID, 128) {
@@ -228,6 +231,21 @@ func (r *ExecutionV2RuntimeEvidenceRequest) Validate() error {
 			return validation.NewValidationFailedError(name + " must be a sha256 checksum")
 		}
 	}
+	if r.SchemaVersion == types.ExecutionRuntimeEvidenceSchemaV1 {
+		if r.PreExecutionServiceConfigChecksum != "" || r.ResultServiceConfigChecksum != "" {
+			return validation.NewValidationFailedError(
+				"runtime evidence v1 service config checksums must be empty",
+			)
+		}
+	} else if !executionV2ChecksumPattern.MatchString(r.PreExecutionServiceConfigChecksum) {
+		return validation.NewValidationFailedError(
+			"preExecutionServiceConfigChecksum must be a sha256 checksum",
+		)
+	} else if !executionV2ChecksumPattern.MatchString(r.ResultServiceConfigChecksum) {
+		return validation.NewValidationFailedError(
+			"resultServiceConfigChecksum must be a sha256 checksum",
+		)
+	}
 	if !r.Platform.IsValid() {
 		return validation.NewValidationFailedError("platform is invalid")
 	}
@@ -252,13 +270,15 @@ func (r ExecutionV2RuntimeEvidenceRequest) ToTypes(
 		ExecutorID: r.ExecutorID, EventIdentity: r.EventIdentity,
 		SchemaVersion:  r.SchemaVersion,
 		IntentChecksum: r.IntentChecksum, CallerIdentity: r.CallerIdentity, Audience: r.Audience,
-		FenceGeneration:               r.FenceGeneration,
-		ExpectedObservedStateVersion:  r.ExpectedObservedStateVersion,
-		ExpectedObservedStateChecksum: r.ExpectedObservedStateChecksum,
-		PreExecutionImageDigest:       r.PreExecutionImageDigest,
-		PreExecutionConfigChecksum:    r.PreExecutionConfigChecksum,
-		ResultImageDigest:             r.ResultImageDigest, ResultConfigChecksum: r.ResultConfigChecksum,
-		Platform: r.Platform, HealthStatus: r.HealthStatus, ResultChecksum: r.ResultChecksum,
+		FenceGeneration:                   r.FenceGeneration,
+		ExpectedObservedStateVersion:      r.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum:     r.ExpectedObservedStateChecksum,
+		PreExecutionImageDigest:           r.PreExecutionImageDigest,
+		PreExecutionConfigChecksum:        r.PreExecutionConfigChecksum,
+		PreExecutionServiceConfigChecksum: r.PreExecutionServiceConfigChecksum,
+		ResultImageDigest:                 r.ResultImageDigest, ResultConfigChecksum: r.ResultConfigChecksum,
+		ResultServiceConfigChecksum: r.ResultServiceConfigChecksum,
+		Platform:                    r.Platform, HealthStatus: r.HealthStatus, ResultChecksum: r.ResultChecksum,
 		EvidenceReference: r.EvidenceReference, EvidenceChecksum: r.EvidenceChecksum,
 		CapturedAt: r.CapturedAt.UTC().Truncate(time.Microsecond),
 	}

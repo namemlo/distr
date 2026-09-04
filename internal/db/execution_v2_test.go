@@ -27,13 +27,91 @@ func TestExecutionV2RepositoryRequestValidation(t *testing.T) {
 	g.Expect(validateExecutionV2ClaimRequest(request)).To(MatchError(ContainSubstring("generation")))
 }
 
-func TestExecutionV2DirectClaimUpdateRequiresV3RuntimeContract(t *testing.T) {
+func TestExecutionV2DirectClaimUpdateSupportsV3AndV4RuntimeContracts(t *testing.T) {
 	g := NewWithT(t)
 	query := strings.ToLower(executionV2DirectClaimUpdate)
 
 	g.Expect(query).To(ContainSubstring("status = 'pending'"))
-	g.Expect(query).To(ContainSubstring("runtime_contract_version = 'v3'"))
+	g.Expect(query).To(ContainSubstring("runtime_contract_version in ('v3', 'v4')"))
 	g.Expect(query).To(ContainSubstring("intent_expires_at > clock_timestamp()"))
+}
+
+func TestExecutionAttemptPersistenceCarriesRuntimeChecksumIdentities(t *testing.T) {
+	g := NewWithT(t)
+	source, err := os.ReadFile("execution_v2.go")
+	g.Expect(err).NotTo(HaveOccurred())
+	text := string(source)
+
+	for _, required := range []string{
+		"ea.runtime_manifest_checksum",
+		"ea.desired_service_config_checksum",
+		"ea.expected_current_service_config_checksum",
+		"runtime_manifest_checksum,",
+		"desired_service_config_checksum, adapter_revision",
+		"expected_current_service_config_checksum,",
+		`attempt.RuntimeManifestChecksum`,
+		`attempt.DesiredServiceConfigChecksum`,
+		`attempt.ExpectedCurrentServiceConfigChecksum`,
+	} {
+		g.Expect(text).To(ContainSubstring(required))
+	}
+}
+
+type executionAttemptChecksumScanner struct {
+	values map[int]string
+}
+
+func (s executionAttemptChecksumScanner) Scan(destinations ...any) error {
+	for index, value := range s.values {
+		checksum := value
+		*destinations[index].(**string) = &checksum
+	}
+	return nil
+}
+
+func TestScanExecutionAttemptSupportsV4AndHistoricalNullRuntimeChecksums(t *testing.T) {
+	g := NewWithT(t)
+	runtimeManifestChecksum := "sha256:" + repeatDBHex("71")
+	desiredServiceConfigChecksum := "sha256:" + repeatDBHex("72")
+	expectedCurrentServiceConfigChecksum := "sha256:" + repeatDBHex("73")
+
+	attempt, err := scanExecutionAttempt(executionAttemptChecksumScanner{values: map[int]string{
+		15: runtimeManifestChecksum,
+		16: desiredServiceConfigChecksum,
+		23: expectedCurrentServiceConfigChecksum,
+	}})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(attempt.RuntimeManifestChecksum).To(Equal(runtimeManifestChecksum))
+	g.Expect(attempt.DesiredServiceConfigChecksum).To(Equal(desiredServiceConfigChecksum))
+	g.Expect(attempt.ExpectedCurrentServiceConfigChecksum).To(Equal(expectedCurrentServiceConfigChecksum))
+
+	historical, err := scanExecutionAttempt(executionAttemptChecksumScanner{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(historical.RuntimeManifestChecksum).To(BeEmpty())
+	g.Expect(historical.DesiredServiceConfigChecksum).To(BeEmpty())
+	g.Expect(historical.ExpectedCurrentServiceConfigChecksum).To(BeEmpty())
+}
+
+func TestExecutionAttemptRuntimeChecksumValuesPersistV3AsNullAndV4Exactly(t *testing.T) {
+	g := NewWithT(t)
+	v3 := types.ExecutionAttempt{RuntimeContractVersion: types.ExecutionRuntimeContractVersionV3}
+	runtimeManifest, desiredServiceConfig, expectedCurrentServiceConfig :=
+		executionAttemptRuntimeChecksumValues(v3)
+	g.Expect(runtimeManifest).To(BeNil())
+	g.Expect(desiredServiceConfig).To(BeNil())
+	g.Expect(expectedCurrentServiceConfig).To(BeNil())
+
+	v4 := types.ExecutionAttempt{
+		RuntimeContractVersion:               types.ExecutionRuntimeContractVersionV4,
+		RuntimeManifestChecksum:              "sha256:" + repeatDBHex("81"),
+		DesiredServiceConfigChecksum:         "sha256:" + repeatDBHex("82"),
+		ExpectedCurrentServiceConfigChecksum: "sha256:" + repeatDBHex("83"),
+	}
+	runtimeManifest, desiredServiceConfig, expectedCurrentServiceConfig =
+		executionAttemptRuntimeChecksumValues(v4)
+	g.Expect(runtimeManifest).To(Equal(v4.RuntimeManifestChecksum))
+	g.Expect(desiredServiceConfig).To(Equal(v4.DesiredServiceConfigChecksum))
+	g.Expect(expectedCurrentServiceConfig).To(Equal(v4.ExpectedCurrentServiceConfigChecksum))
 }
 
 func TestExecutionV2AttemptInsertValidation(t *testing.T) {
@@ -68,6 +146,23 @@ func TestExecutionV2AttemptInsertValidation(t *testing.T) {
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(Succeed())
+	attempt.RuntimeManifestChecksum = "sha256:" + repeatDBHex("77")
+	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(
+		MatchError(ContainSubstring("v3 runtime checksum identities must be empty")),
+	)
+	attempt.RuntimeContractVersion = types.ExecutionRuntimeContractVersionV4
+	attempt.DesiredServiceConfigChecksum = "sha256:" + repeatDBHex("88")
+	attempt.ExpectedCurrentServiceConfigChecksum = "sha256:" + repeatDBHex("99")
+	intent, err = executionprotocol.BuildExecutionIntent(
+		executionprotocol.WithIntentSigner(context.Background(), signer), attempt,
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(Succeed())
+	attempt.ExpectedCurrentServiceConfigChecksum = ""
+	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(
+		MatchError(ContainSubstring("runtime checksum identities are invalid")),
+	)
+	attempt.ExpectedCurrentServiceConfigChecksum = "sha256:" + repeatDBHex("99")
 	attempt.Status = types.ExecutionAttemptStatusRunning
 	g.Expect(validateNewExecutionAttempt(attempt, intent)).To(MatchError(ContainSubstring("PENDING")))
 }

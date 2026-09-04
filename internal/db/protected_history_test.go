@@ -53,9 +53,9 @@ func TestProtectedHistorySchema138ProjectionCoversAllHistoryFamiliesAndFields(t 
 	}
 }
 
-func TestProtectedHistoryProjectionRegistersSchema166Through171(t *testing.T) {
+func TestProtectedHistoryProjectionRegistersSchema166Through172(t *testing.T) {
 	t.Parallel()
-	for _, version := range []uint64{138, 165, 166, 167, 168, 169, 170, 171} {
+	for _, version := range []uint64{138, 165, 166, 167, 168, 169, 170, 171, 172} {
 		query, err := protectedHistoryRecordsSQLForSchema(version)
 		if err != nil || strings.TrimSpace(query) == "" {
 			t.Fatalf("schema %d projection is not registered: %v", version, err)
@@ -67,6 +67,7 @@ func TestProtectedHistoryProjectionRegistersSchema166Through171(t *testing.T) {
 	query169, _ := protectedHistoryRecordsSQLForSchema(169)
 	query170, _ := protectedHistoryRecordsSQLForSchema(170)
 	query171, _ := protectedHistoryRecordsSQLForSchema(171)
+	query172, _ := protectedHistoryRecordsSQLForSchema(172)
 	if strings.Contains(strings.ToLower(query166), "'executionruntimeevidence'") {
 		t.Fatal("schema 166 projection references migration-167 evidence")
 	}
@@ -100,9 +101,12 @@ func TestProtectedHistoryProjectionRegistersSchema166Through171(t *testing.T) {
 		if !strings.Contains(strings.ToLower(query171), "'"+kind+"'") {
 			t.Fatalf("schema 171 projection omits retained history record %s", kind)
 		}
+		if !strings.Contains(strings.ToLower(query172), "'"+kind+"'") {
+			t.Fatalf("schema 172 projection omits retained history record %s", kind)
+		}
 	}
-	if _, err := protectedHistoryRecordsSQLForSchema(172); err == nil {
-		t.Fatal("unknown schema 172 did not fail closed")
+	if _, err := protectedHistoryRecordsSQLForSchema(173); err == nil {
+		t.Fatal("unknown schema 173 did not fail closed")
 	}
 }
 

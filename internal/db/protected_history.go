@@ -94,8 +94,8 @@ func protectedHistorySchemaVersion(ctx context.Context) (uint64, error) {
 	if version < 138 {
 		return 0, fmt.Errorf("schema version %d is unsupported; minimum is 138", version)
 	}
-	if version > 171 {
-		return 0, fmt.Errorf("schema version %d is unsupported; maximum registered projection is 171", version)
+	if version > 172 {
+		return 0, fmt.Errorf("schema version %d is unsupported; maximum registered projection is 172", version)
 	}
 	return uint64(version), nil
 }
@@ -187,7 +187,7 @@ func protectedHistoryRecordsSQLForSchema(schemaVersion uint64) (string, error) {
 				protectedHistorySchema168RecordsSQL+
 				protectedHistorySchema169RecordsSQL,
 		), nil
-	case schemaVersion == 170 || schemaVersion == 171:
+	case schemaVersion == 170 || schemaVersion == 171 || schemaVersion == 172:
 		return strings.ReplaceAll(
 			protectedHistoryRecordsSQL,
 			protectedHistoryVersionRecordsMarker,

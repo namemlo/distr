@@ -45,8 +45,48 @@ func TestExecutionRuntimeEvidenceValidationAndCanonicalBinding(t *testing.T) {
 		To(MatchError(ContainSubstring("caller or audience")))
 }
 
+func TestExecutionRuntimeEvidenceV2BindsPhysicalServiceConfigChecksums(t *testing.T) {
+	g := NewWithT(t)
+	input := validExecutionRuntimeEvidenceInput()
+	input.SchemaVersion = types.ExecutionRuntimeEvidenceSchemaV2
+	input.PreExecutionServiceConfigChecksum = checksum("9")
+	input.ResultServiceConfigChecksum = checksum("a")
+	g.Expect(validateExecutionRuntimeEvidenceInput(input)).To(Succeed())
+
+	attempt := types.ExecutionAttempt{
+		ID:       input.AttemptID,
+		Identity: types.ExecutionIdentity{ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy-api"},
+	}
+	original, err := executionRuntimeEvidenceCanonicalChecksum(attempt, input)
+	g.Expect(err).NotTo(HaveOccurred())
+	tampered := input
+	tampered.ResultServiceConfigChecksum = checksum("b")
+	changed, err := executionRuntimeEvidenceCanonicalChecksum(attempt, tampered)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(changed).NotTo(Equal(original))
+
+	invalidV2 := input
+	invalidV2.ResultServiceConfigChecksum = ""
+	g.Expect(validateExecutionRuntimeEvidenceInput(invalidV2)).
+		To(MatchError(ContainSubstring("service config checksum")))
+
+	invalidV1 := validExecutionRuntimeEvidenceInput()
+	invalidV1.PreExecutionServiceConfigChecksum = checksum("9")
+	g.Expect(validateExecutionRuntimeEvidenceInput(invalidV1)).
+		To(MatchError(ContainSubstring("v1 service config checksums must be empty")))
+
+	g.Expect(runtimeEvidenceSchemaMatchesAttempt(
+		types.ExecutionRuntimeEvidenceSchemaV1, types.ExecutionRuntimeContractVersionV3,
+	)).To(BeTrue())
+	g.Expect(runtimeEvidenceSchemaMatchesAttempt(
+		types.ExecutionRuntimeEvidenceSchemaV2, types.ExecutionRuntimeContractVersionV4,
+	)).To(BeTrue())
+	g.Expect(runtimeEvidenceSchemaMatchesAttempt(
+		types.ExecutionRuntimeEvidenceSchemaV1, types.ExecutionRuntimeContractVersionV4,
+	)).To(BeFalse())
+}
+
 func validExecutionRuntimeEvidenceInput() types.ExecutionRuntimeEvidenceInput {
-	checksum := func(value string) string { return "sha256:" + strings.Repeat(value, 64) }
 	return types.ExecutionRuntimeEvidenceInput{
 		OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(), AttemptID: uuid.New(),
 		EventIdentity: uuid.New(), SchemaVersion: types.ExecutionRuntimeEvidenceSchemaV1,
@@ -62,4 +102,8 @@ func validExecutionRuntimeEvidenceInput() types.ExecutionRuntimeEvidenceInput {
 		ResultChecksum: checksum("7"), EvidenceReference: "jenkins://job/42/runtime-proof.json",
 		EvidenceChecksum: checksum("8"), CapturedAt: time.Now().UTC(),
 	}
+}
+
+func checksum(value string) string {
+	return "sha256:" + strings.Repeat(value, 64)
 }

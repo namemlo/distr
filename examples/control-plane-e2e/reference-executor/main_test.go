@@ -42,6 +42,26 @@ func TestReferenceExecutorDerivesOperationFromSignedIntentWithoutUnsignedSpec(t 
 	g.Expect(decodeOperationView(t, response).Status).To(Equal(types.ExecutionAttemptStatusSucceeded))
 }
 
+func TestReferenceExecutorAcceptsV4RuntimeChecksumBindings(t *testing.T) {
+	g := NewWithT(t)
+	harness := newExecutorHarness(t, 4096)
+	input := harness.newOperationRequest(t, "succeed", 0, 1, "resource:v4")
+	input.Binding.RuntimeContractVersion = types.ExecutionRuntimeContractVersionV4
+	input.Binding.RuntimeManifestChecksum = checksum([]byte("runtime-manifest"))
+	input.Binding.DesiredServiceConfigChecksum = checksum([]byte("desired-service-config"))
+	input.Binding.ExpectedCurrentServiceConfigChecksum = checksum([]byte("current-service-config"))
+	input.Intent = harness.signBinding(t, input.Binding)
+
+	response := harness.send(t, http.MethodPost, "/v1/operations", input, fixtureAuthorization)
+	g.Expect(response.Code).To(Equal(http.StatusAccepted))
+	view := decodeOperationView(t, response)
+	g.Expect(view.Binding.ConfigChecksum).To(Equal(input.Binding.ConfigChecksum))
+	g.Expect(view.Binding.RuntimeManifestChecksum).To(Equal(input.Binding.RuntimeManifestChecksum))
+	g.Expect(view.Binding.DesiredServiceConfigChecksum).To(Equal(input.Binding.DesiredServiceConfigChecksum))
+	g.Expect(view.Binding.ExpectedCurrentServiceConfigChecksum).
+		To(Equal(input.Binding.ExpectedCurrentServiceConfigChecksum))
+}
+
 func TestReferenceExecutorRejectsUnsignedOperationSpec(t *testing.T) {
 	g := NewWithT(t)
 	harness := newExecutorHarness(t, 4096)
@@ -402,18 +422,21 @@ func (h *executorHarness) signBinding(
 			AttemptNumber: binding.AttemptNumber,
 			StepKey:       binding.StepKey,
 		},
-		PlanChecksum:                  binding.PlanChecksum,
-		ArtifactDigest:                binding.ArtifactDigest,
-		ConfigChecksum:                binding.ConfigChecksum,
-		AdapterRevision:               binding.AdapterRevision,
-		RuntimeContractVersion:        binding.RuntimeContractVersion,
-		ExpectedObservedStateVersion:  binding.ExpectedObservedStateVersion,
-		ExpectedObservedStateChecksum: binding.ExpectedObservedStateChecksum,
-		ExpectedCurrentImageDigest:    binding.ExpectedCurrentImageDigest,
-		ExpectedCurrentConfigChecksum: binding.ExpectedCurrentConfigChecksum,
-		ExpectedPlatform:              binding.ExpectedPlatform,
-		CallerBinding:                 binding.CallerBinding,
-		Audience:                      binding.Audience,
+		PlanChecksum:                         binding.PlanChecksum,
+		ArtifactDigest:                       binding.ArtifactDigest,
+		ConfigChecksum:                       binding.ConfigChecksum,
+		RuntimeManifestChecksum:              binding.RuntimeManifestChecksum,
+		DesiredServiceConfigChecksum:         binding.DesiredServiceConfigChecksum,
+		AdapterRevision:                      binding.AdapterRevision,
+		RuntimeContractVersion:               binding.RuntimeContractVersion,
+		ExpectedObservedStateVersion:         binding.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum:        binding.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:           binding.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum:        binding.ExpectedCurrentConfigChecksum,
+		ExpectedCurrentServiceConfigChecksum: binding.ExpectedCurrentServiceConfigChecksum,
+		ExpectedPlatform:                     binding.ExpectedPlatform,
+		CallerBinding:                        binding.CallerBinding,
+		Audience:                             binding.Audience,
 		Fence: types.ExecutionFence{
 			ResourceKey: binding.ResourceKey,
 			Generation:  binding.FenceGeneration,

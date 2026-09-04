@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +130,74 @@ func TestTrustPolicyOverlapAndRevocation(t *testing.T) {
 	g.Expect(ValidateTrustPolicy(policy)).To(Succeed())
 	g.Expect(policy.Keys).To(HaveLen(2))
 	g.Expect(idA).NotTo(Equal(idB))
+}
+
+func TestSignedIntentV4BindsSeparateRuntimeChecksumIdentities(t *testing.T) {
+	g := NewWithT(t)
+	seed := sha256.Sum256([]byte("distr-runtime-checksum-contract-v4"))
+	privateKey := ed25519.NewKeyFromSeed(seed[:])
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+	keyID := PublicKeyFingerprint(publicKey)
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	attempt := types.ExecutionAttempt{
+		ID: uuid.New(), OrganizationID: uuid.New(), DeploymentTargetID: uuid.New(),
+		TaskID: uuid.New(), StepRunID: uuid.New(),
+		Identity:     types.ExecutionIdentity{ExecutionID: uuid.New(), AttemptNumber: 1, StepKey: "deploy"},
+		PlanChecksum: checksumForIntentTest("1"), ArtifactDigest: checksumForIntentTest("2"),
+		ConfigChecksum:                       checksumForIntentTest("3"),
+		RuntimeManifestChecksum:              checksumForIntentTest("4"),
+		DesiredServiceConfigChecksum:         checksumForIntentTest("5"),
+		AdapterRevision:                      "adapter.compose@2",
+		RuntimeContractVersion:               types.ExecutionRuntimeContractVersionV4,
+		ExpectedObservedStateVersion:         9,
+		ExpectedObservedStateChecksum:        checksumForIntentTest("6"),
+		ExpectedCurrentImageDigest:           checksumForIntentTest("7"),
+		ExpectedCurrentConfigChecksum:        checksumForIntentTest("8"),
+		ExpectedCurrentServiceConfigChecksum: checksumForIntentTest("9"),
+		ExpectedPlatform:                     types.DeploymentTargetPlatformLinuxAMD64,
+		CallerBinding:                        "urn:distr:caller:test", Audience: "urn:distr:audience:test",
+		Fence:          types.ExecutionFence{ResourceKey: "deployment-target:test", Generation: 3},
+		IntentIssuedAt: now, IntentExpiresAt: now.Add(5 * time.Minute),
+	}
+	signer, err := NewEd25519IntentSigner(keyID, privateKey)
+	g.Expect(err).NotTo(HaveOccurred())
+	signed, err := BuildExecutionIntent(WithIntentSigner(context.Background(), signer), attempt)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(signed.Payload)).To(ContainSubstring(`"schema":"distr.execution-intent/v4"`))
+	g.Expect(string(signed.Payload)).To(ContainSubstring(`"runtimeManifestChecksum":"` + attempt.RuntimeManifestChecksum + `"`))
+	g.Expect(string(signed.Payload)).To(ContainSubstring(`"desiredServiceConfigChecksum":"` + attempt.DesiredServiceConfigChecksum + `"`))
+	g.Expect(string(signed.Payload)).To(ContainSubstring(`"expectedCurrentServiceConfigChecksum":"` + attempt.ExpectedCurrentServiceConfigChecksum + `"`))
+
+	policy := types.TrustPolicy{
+		Keys: map[string]ed25519.PublicKey{keyID: publicKey}, Now: func() time.Time { return now.Add(time.Minute) },
+		ExpectedArtifactDigest:               attempt.ArtifactDigest,
+		ExpectedConfigChecksum:               attempt.ConfigChecksum,
+		ExpectedRuntimeManifestChecksum:      attempt.RuntimeManifestChecksum,
+		ExpectedDesiredServiceConfigChecksum: attempt.DesiredServiceConfigChecksum,
+		ExpectedObservedStateVersion:         attempt.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum:        attempt.ExpectedObservedStateChecksum,
+		ExpectedCurrentImageDigest:           attempt.ExpectedCurrentImageDigest,
+		ExpectedCurrentConfigChecksum:        attempt.ExpectedCurrentConfigChecksum,
+		ExpectedCurrentServiceConfigChecksum: attempt.ExpectedCurrentServiceConfigChecksum,
+		ExpectedPlatform:                     attempt.ExpectedPlatform,
+		ExpectedCallerBinding:                attempt.CallerBinding, ExpectedAudience: attempt.Audience,
+	}
+	g.Expect(VerifyExecutionIntent(signed, policy)).To(Succeed())
+	g.Expect(ValidateExecutionIntentBinding(attempt, signed)).To(Succeed())
+
+	mismatch := policy
+	mismatch.ExpectedDesiredServiceConfigChecksum = checksumForIntentTest("a")
+	g.Expect(VerifyExecutionIntent(signed, mismatch)).
+		To(MatchError(ContainSubstring("desired service config checksum")))
+
+	legacyWithV4Fields := attempt
+	legacyWithV4Fields.RuntimeContractVersion = types.ExecutionRuntimeContractVersionV3
+	_, err = BuildExecutionIntent(WithIntentSigner(context.Background(), signer), legacyWithV4Fields)
+	g.Expect(err).To(MatchError(ContainSubstring("v3 runtime checksum identities must be empty")))
+}
+
+func checksumForIntentTest(value string) string {
+	return "sha256:" + strings.Repeat(value, 64)
 }
 
 func repeatHex(pair string) string {

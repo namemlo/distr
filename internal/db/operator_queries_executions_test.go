@@ -114,6 +114,10 @@ func TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution
 		"runtime.organization_id = attempt.organization_id",
 		"runtime.execution_id = attempt.execution_id",
 		"runtime.execution_attempt_id = attempt.id",
+		"'preExecutionConfigChecksum', runtime.pre_execution_config_checksum",
+		"'preExecutionServiceConfigChecksum', runtime.pre_execution_service_config_checksum",
+		"'resultConfigChecksum', runtime.result_config_checksum",
+		"'resultServiceConfigChecksum', runtime.result_service_config_checksum",
 		"observed.organization_id = desired.organization_id",
 		"desired.execution_id = attempt.execution_id",
 		"ORDER BY retry.attempt_number, retry.created_at, retry.id",
@@ -126,6 +130,10 @@ func TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution
 		"'planChecksum', retry.plan_checksum",
 		"'artifactDigest', retry.artifact_digest",
 		"'configChecksum', retry.config_checksum",
+		"'runtimeManifestChecksum', retry.runtime_manifest_checksum",
+		"'desiredServiceConfigChecksum', retry.desired_service_config_checksum",
+		"'expectedCurrentConfigChecksum', retry.expected_current_config_checksum",
+		"'expectedCurrentServiceConfigChecksum', retry.expected_current_service_config_checksum",
 		"FROM TaskResourceLock AS lockrow",
 		"FROM TaskLease AS lease",
 		"'currentConflict'",
@@ -141,6 +149,28 @@ func TestOperatorExecutionDetailSQLScopesEveryEvidenceBranchToTenantAndExecution
 		"'health', observed.health",
 	} {
 		g.Expect(operatorExecutionDetailSQL).To(ContainSubstring(required))
+	}
+}
+
+func TestOperatorExecutionQueriesExposeSeparatedRuntimeChecksumIdentities(t *testing.T) {
+	t.Parallel()
+
+	g := NewWithT(t)
+	for _, required := range []string{
+		"attempt.runtime_manifest_checksum",
+		"attempt.desired_service_config_checksum",
+		"attempt.expected_current_config_checksum",
+		"attempt.expected_current_service_config_checksum",
+		"filtered.runtime_manifest_checksum",
+		"filtered.desired_service_config_checksum",
+		"filtered.expected_current_config_checksum",
+		"filtered.expected_current_service_config_checksum",
+		"'runtimeManifestChecksum', attempt.runtime_manifest_checksum",
+		"'desiredServiceConfigChecksum', attempt.desired_service_config_checksum",
+		"'expectedCurrentConfigChecksum', attempt.expected_current_config_checksum",
+		"'expectedCurrentServiceConfigChecksum', attempt.expected_current_service_config_checksum",
+	} {
+		g.Expect(operatorExecutionListSQL + operatorExecutionDetailSQL).To(ContainSubstring(required))
 	}
 }
 

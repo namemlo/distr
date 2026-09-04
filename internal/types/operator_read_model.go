@@ -283,12 +283,16 @@ type OperatorReleaseDetailContext struct {
 }
 
 type OperatorEvidenceRef struct {
-	ID        uuid.UUID `json:"id"`
-	Kind      string    `json:"kind"`
-	Label     string    `json:"label"`
-	Href      string    `json:"href"`
-	Checksum  string    `json:"checksum"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID                                uuid.UUID `json:"id"`
+	Kind                              string    `json:"kind"`
+	Label                             string    `json:"label"`
+	Href                              string    `json:"href"`
+	Checksum                          string    `json:"checksum"`
+	PreExecutionConfigChecksum        string    `json:"preExecutionConfigChecksum,omitempty"`
+	PreExecutionServiceConfigChecksum string    `json:"preExecutionServiceConfigChecksum,omitempty"`
+	ResultConfigChecksum              string    `json:"resultConfigChecksum,omitempty"`
+	ResultServiceConfigChecksum       string    `json:"resultServiceConfigChecksum,omitempty"`
+	CreatedAt                         time.Time `json:"createdAt"`
 }
 
 type OperatorReleaseDetail struct {
@@ -479,43 +483,51 @@ type OperatorCampaignDetail struct {
 }
 
 type OperatorExecutionRow struct {
-	ID                 uuid.UUID  `db:"id" json:"id"`
-	CreatedAt          time.Time  `db:"created_at" json:"createdAt"`
-	CampaignID         *uuid.UUID `db:"campaign_id" json:"campaignId,omitempty"`
-	DeploymentPlanID   uuid.UUID  `db:"deployment_plan_id" json:"deploymentPlanId"`
-	DeploymentTargetID uuid.UUID  `db:"deployment_target_id" json:"deploymentTargetId"`
-	TaskID             uuid.UUID  `db:"task_id" json:"taskId"`
-	StepRunID          uuid.UUID  `db:"step_run_id" json:"stepRunId"`
-	StepKey            string     `db:"step_key" json:"stepKey"`
-	AttemptNumber      int        `db:"attempt_number" json:"attemptNumber"`
-	ProtocolVersion    string     `db:"protocol_version" json:"protocolVersion"`
-	Status             string     `db:"status" json:"status"`
-	PlanChecksum       string     `db:"plan_checksum" json:"planChecksum"`
-	ArtifactDigest     string     `db:"artifact_digest" json:"artifactDigest"`
-	ConfigChecksum     string     `db:"config_checksum" json:"configChecksum"`
-	AdapterRevision    string     `db:"adapter_revision" json:"adapterRevision"`
-	CompletedAt        *time.Time `db:"completed_at" json:"completedAt,omitempty"`
-	Cancellable        bool       `db:"cancellable" json:"cancellable"`
-	Reconciliation     string     `db:"reconciliation" json:"reconciliation"`
-	Observation        string     `db:"observation" json:"observation"`
-	FenceGeneration    int64      `db:"fence_generation" json:"fenceGeneration,omitempty"`
-	FenceResourceKey   string     `db:"fence_resource_key" json:"fenceResourceKey,omitempty"`
-	IdempotencyKey     string     `db:"idempotency_key" json:"idempotencyKey,omitempty"`
+	ID                                   uuid.UUID  `db:"id" json:"id"`
+	CreatedAt                            time.Time  `db:"created_at" json:"createdAt"`
+	CampaignID                           *uuid.UUID `db:"campaign_id" json:"campaignId,omitempty"`
+	DeploymentPlanID                     uuid.UUID  `db:"deployment_plan_id" json:"deploymentPlanId"`
+	DeploymentTargetID                   uuid.UUID  `db:"deployment_target_id" json:"deploymentTargetId"`
+	TaskID                               uuid.UUID  `db:"task_id" json:"taskId"`
+	StepRunID                            uuid.UUID  `db:"step_run_id" json:"stepRunId"`
+	StepKey                              string     `db:"step_key" json:"stepKey"`
+	AttemptNumber                        int        `db:"attempt_number" json:"attemptNumber"`
+	ProtocolVersion                      string     `db:"protocol_version" json:"protocolVersion"`
+	Status                               string     `db:"status" json:"status"`
+	PlanChecksum                         string     `db:"plan_checksum" json:"planChecksum"`
+	ArtifactDigest                       string     `db:"artifact_digest" json:"artifactDigest"`
+	ConfigChecksum                       string     `db:"config_checksum" json:"configChecksum"`
+	RuntimeManifestChecksum              *string    `db:"runtime_manifest_checksum" json:"runtimeManifestChecksum,omitempty"`
+	DesiredServiceConfigChecksum         *string    `db:"desired_service_config_checksum" json:"desiredServiceConfigChecksum,omitempty"`
+	ExpectedCurrentConfigChecksum        *string    `db:"expected_current_config_checksum" json:"expectedCurrentConfigChecksum,omitempty"`
+	ExpectedCurrentServiceConfigChecksum *string    `db:"expected_current_service_config_checksum" json:"expectedCurrentServiceConfigChecksum,omitempty"`
+	AdapterRevision                      string     `db:"adapter_revision" json:"adapterRevision"`
+	CompletedAt                          *time.Time `db:"completed_at" json:"completedAt,omitempty"`
+	Cancellable                          bool       `db:"cancellable" json:"cancellable"`
+	Reconciliation                       string     `db:"reconciliation" json:"reconciliation"`
+	Observation                          string     `db:"observation" json:"observation"`
+	FenceGeneration                      int64      `db:"fence_generation" json:"fenceGeneration,omitempty"`
+	FenceResourceKey                     string     `db:"fence_resource_key" json:"fenceResourceKey,omitempty"`
+	IdempotencyKey                       string     `db:"idempotency_key" json:"idempotencyKey,omitempty"`
 }
 
 type OperatorExecutionAttemptFact struct {
-	ID               uuid.UUID `json:"id"`
-	StepKey          string    `json:"stepKey"`
-	Status           string    `json:"status"`
-	AttemptNumber    int       `json:"attemptNumber"`
-	PlanChecksum     string    `json:"planChecksum"`
-	ArtifactDigest   string    `json:"artifactDigest"`
-	ConfigChecksum   string    `json:"configChecksum"`
-	FenceGeneration  int64     `json:"fenceGeneration"`
-	FenceResourceKey string    `json:"fenceResourceKey"`
-	IdempotencyKey   string    `json:"idempotencyKey,omitempty"`
-	Message          string    `json:"message,omitempty"`
-	Blocking         bool      `json:"blocking"`
+	ID                                   uuid.UUID `json:"id"`
+	StepKey                              string    `json:"stepKey"`
+	Status                               string    `json:"status"`
+	AttemptNumber                        int       `json:"attemptNumber"`
+	PlanChecksum                         string    `json:"planChecksum"`
+	ArtifactDigest                       string    `json:"artifactDigest"`
+	ConfigChecksum                       string    `json:"configChecksum"`
+	RuntimeManifestChecksum              *string   `json:"runtimeManifestChecksum,omitempty"`
+	DesiredServiceConfigChecksum         *string   `json:"desiredServiceConfigChecksum,omitempty"`
+	ExpectedCurrentConfigChecksum        *string   `json:"expectedCurrentConfigChecksum,omitempty"`
+	ExpectedCurrentServiceConfigChecksum *string   `json:"expectedCurrentServiceConfigChecksum,omitempty"`
+	FenceGeneration                      int64     `json:"fenceGeneration"`
+	FenceResourceKey                     string    `json:"fenceResourceKey"`
+	IdempotencyKey                       string    `json:"idempotencyKey,omitempty"`
+	Message                              string    `json:"message,omitempty"`
+	Blocking                             bool      `json:"blocking"`
 }
 
 type OperatorExecutionLockFact struct {

@@ -2438,3 +2438,18 @@ Use one entry per pull request:
   unchanged. Baseline component evidence must be entered as JSON because no
   endpoint exposes a complete create-request projection. Protected-history
   metadata must be opened by ID because the API has no list endpoint.
+
+### Post-PR-103 - Separated runtime checksum identities
+
+- Status: Implemented in an isolated worktree with focused local and disposable-PostgreSQL verification; no backend, live target, or client database was contacted.
+- Upstream base: `c269e7b0`.
+- Feature flags: Uses the existing `operator_control_plane_v2` and `executor_protocol_v2` boundary; no new flag is added.
+- User-facing behavior: Execution and operator views distinguish the logical Target Config Snapshot, immutable runtime-manifest, desired service-config bytes, expected-current logical snapshot, and expected-current service-config bytes.
+- Database changes: Migration 172 adds nullable immutable attempt fields and nullable runtime-evidence physical checksum fields. V4/v2 require complete SHA-256 values; retained v3/v1 rows stay null. Downgrade refuses after v4/v2 use.
+- API changes: Executor runtime evidence accepts schema v2 physical pre/result service-config checksums. Lease and operator responses expose distinct checksum identities.
+- UI changes: None.
+- Agent protocol changes: Adds runtime contract v4, signed intent schema v4, and runtime-evidence schema v2 while preserving v3/v1 bytes and semantics.
+- Documentation: Adds ADR-0089, Post-PR-103 notes, schema index, and upgrade guidance.
+- Tests: Protocol signing/tamper, API validation, persistence, retry, discovery, evidence, operator reads, reference executor, protected history, and migration upgrade/down/refusal coverage.
+- Upstream contribution notes: Community-neutral contract separation with no adopter, CI, registry, runtime address, service, credential, or workload-database assumption.
+- Compatibility notes: Existing v3 execution remains unchanged. Fresh v4 execution stays unavailable until an authorized publication integration supplies all three physical identities; no logical checksum is substituted.

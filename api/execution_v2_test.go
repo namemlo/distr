@@ -33,9 +33,20 @@ func TestExecutionV2RuntimeEvidenceRequestValidationAndConversion(t *testing.T) 
 	g.Expect(input.OrganizationID).To(Equal(orgID))
 	g.Expect(input.DeploymentTargetID).To(Equal(targetID))
 	g.Expect(input.AttemptID).To(Equal(attemptID))
-	g.Expect(input.SchemaVersion).To(Equal(types.ExecutionRuntimeEvidenceSchemaV1))
+	g.Expect(input.SchemaVersion).To(Equal(types.ExecutionRuntimeEvidenceSchemaV2))
 	g.Expect(input.ExpectedObservedStateVersion).To(Equal(int64(12)))
+	g.Expect(input.PreExecutionServiceConfigChecksum).
+		To(Equal(request.PreExecutionServiceConfigChecksum))
+	g.Expect(input.ResultServiceConfigChecksum).To(Equal(request.ResultServiceConfigChecksum))
 	g.Expect(input.CapturedAt).To(Equal(now.Truncate(time.Microsecond)))
+
+	legacy := validExecutionV2RuntimeEvidenceRequest(now)
+	legacy.SchemaVersion = types.ExecutionRuntimeEvidenceSchemaV1
+	legacy.PreExecutionServiceConfigChecksum = ""
+	legacy.ResultServiceConfigChecksum = ""
+	g.Expect(legacy.Validate()).To(Succeed())
+	legacy.PreExecutionServiceConfigChecksum = "sha256:" + repeatAPIHex("cd")
+	g.Expect(legacy.Validate()).To(MatchError(ContainSubstring("v1 service config checksums")))
 
 	cases := []struct {
 		name   string
@@ -50,6 +61,8 @@ func TestExecutionV2RuntimeEvidenceRequestValidationAndConversion(t *testing.T) 
 		{"audience required", func(r *ExecutionV2RuntimeEvidenceRequest) { r.Audience = "" }, "audience"},
 		{"state version", func(r *ExecutionV2RuntimeEvidenceRequest) { r.ExpectedObservedStateVersion = 0 }, "expectedObservedStateVersion"},
 		{"checksum", func(r *ExecutionV2RuntimeEvidenceRequest) { r.ResultChecksum = "bad" }, "resultChecksum"},
+		{"pre service config checksum", func(r *ExecutionV2RuntimeEvidenceRequest) { r.PreExecutionServiceConfigChecksum = "bad" }, "preExecutionServiceConfigChecksum"},
+		{"result service config checksum", func(r *ExecutionV2RuntimeEvidenceRequest) { r.ResultServiceConfigChecksum = "bad" }, "resultServiceConfigChecksum"},
 		{"platform", func(r *ExecutionV2RuntimeEvidenceRequest) { r.Platform = "jenkins" }, "platform"},
 		{"health", func(r *ExecutionV2RuntimeEvidenceRequest) { r.HealthStatus = "OK" }, "healthStatus"},
 		{"reference bound", func(r *ExecutionV2RuntimeEvidenceRequest) { r.EvidenceReference = strings.Repeat("x", 2049) }, "evidenceReference"},
@@ -155,13 +168,15 @@ func TestExecutionStatusRequestPreservesRequestedTTL(t *testing.T) {
 func validExecutionV2RuntimeEvidenceRequest(capturedAt time.Time) ExecutionV2RuntimeEvidenceRequest {
 	checksum := "sha256:" + repeatAPIHex("ab")
 	return ExecutionV2RuntimeEvidenceRequest{
-		SchemaVersion: types.ExecutionRuntimeEvidenceSchemaV1,
+		SchemaVersion: types.ExecutionRuntimeEvidenceSchemaV2,
 		EventIdentity: uuid.New(), IntentChecksum: checksum, ExecutorID: "executor-a",
 		CallerIdentity: "target:choice-tp-dev", Audience: "adapter:compose@2",
 		FenceGeneration: 3, ExpectedObservedStateVersion: 12,
 		ExpectedObservedStateChecksum: checksum, PreExecutionImageDigest: checksum,
 		PreExecutionConfigChecksum: checksum, ResultImageDigest: checksum,
-		ResultConfigChecksum: checksum, Platform: types.DeploymentTargetPlatformLinuxAMD64,
+		PreExecutionServiceConfigChecksum: checksum,
+		ResultConfigChecksum:              checksum, ResultServiceConfigChecksum: checksum,
+		Platform:       types.DeploymentTargetPlatformLinuxAMD64,
 		HealthStatus:   types.TargetComponentHealthHealthy,
 		ResultChecksum: checksum, EvidenceReference: "jenkins://job/choice-tp-dev/42",
 		EvidenceChecksum: checksum, CapturedAt: capturedAt,

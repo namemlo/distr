@@ -136,10 +136,12 @@ const executionAttemptSelect = `
 		ea.deployment_target_id,
 		ea.task_id, ea.step_run_id, ea.execution_id, ea.attempt_number,
 		ea.step_key, ea.status, ea.claimed_by, ea.plan_checksum,
-		ea.artifact_digest, ea.config_checksum, ea.adapter_revision,
+		ea.artifact_digest, ea.config_checksum, ea.runtime_manifest_checksum,
+		ea.desired_service_config_checksum, ea.adapter_revision,
 		ea.runtime_contract_version, ea.expected_observed_state_revision,
 		ea.expected_observed_state_checksum, ea.expected_current_image_digest,
-		ea.expected_current_config_checksum, ea.expected_platform,
+		ea.expected_current_config_checksum,
+		ea.expected_current_service_config_checksum, ea.expected_platform,
 		ea.intent_caller, ea.intent_audience,
 		ea.intent_issued_at, ea.intent_expires_at, ea.last_event_sequence,
 		ea.acknowledged_at, ea.completed_at, ea.cancellable, ea.retry_safe,
@@ -158,7 +160,7 @@ const executionV2DirectClaimUpdate = `
 	WHERE id = @attemptId AND organization_id = @organizationId
 		AND deployment_target_id = @deploymentTargetId
 		AND status = 'PENDING'
-		AND runtime_contract_version = 'v3'
+		AND runtime_contract_version IN ('v3', 'v4')
 		AND intent_issued_at <= clock_timestamp()
 		AND intent_expires_at > clock_timestamp()`
 
@@ -189,10 +191,13 @@ func CreateExecutionAttempt(
 		trustPolicy.Now = func() time.Time { return trustedNow }
 		trustPolicy.ExpectedArtifactDigest = attempt.ArtifactDigest
 		trustPolicy.ExpectedConfigChecksum = attempt.ConfigChecksum
+		trustPolicy.ExpectedRuntimeManifestChecksum = attempt.RuntimeManifestChecksum
+		trustPolicy.ExpectedDesiredServiceConfigChecksum = attempt.DesiredServiceConfigChecksum
 		trustPolicy.ExpectedObservedStateVersion = attempt.ExpectedObservedStateVersion
 		trustPolicy.ExpectedObservedStateChecksum = attempt.ExpectedObservedStateChecksum
 		trustPolicy.ExpectedCurrentImageDigest = attempt.ExpectedCurrentImageDigest
 		trustPolicy.ExpectedCurrentConfigChecksum = attempt.ExpectedCurrentConfigChecksum
+		trustPolicy.ExpectedCurrentServiceConfigChecksum = attempt.ExpectedCurrentServiceConfigChecksum
 		trustPolicy.ExpectedPlatform = attempt.ExpectedPlatform
 		trustPolicy.ExpectedCallerBinding = attempt.CallerBinding
 		trustPolicy.ExpectedAudience = attempt.Audience
@@ -220,21 +225,27 @@ func CreateExecutionAttempt(
 		if err := acquireExecutionAttemptTaskResourceLocks(ctx, attempt); err != nil {
 			return err
 		}
+		runtimeManifestChecksum, desiredServiceConfigChecksum,
+			expectedCurrentServiceConfigChecksum := executionAttemptRuntimeChecksumValues(attempt)
 		_, err = db.Exec(ctx, `
 			INSERT INTO ExecutionAttempt (
 				id, organization_id, deployment_target_id, task_id, step_run_id, execution_id,
 				attempt_number, step_key, status, plan_checksum, artifact_digest,
-				config_checksum, adapter_revision, runtime_contract_version,
+				config_checksum, runtime_manifest_checksum,
+				desired_service_config_checksum, adapter_revision, runtime_contract_version,
 				expected_observed_state_revision, expected_observed_state_checksum,
 				expected_current_image_digest, expected_current_config_checksum,
+				expected_current_service_config_checksum,
 				expected_platform, intent_caller, intent_audience, intent_issued_at,
 				intent_expires_at, cancellable, retry_safe
 			) VALUES (
 				@id, @organizationId, @deploymentTargetId, @taskId, @stepRunId, @executionId,
 				@attemptNumber, @stepKey, 'PENDING', @planChecksum, @artifactDigest,
-				@configChecksum, @adapterRevision, @runtimeContractVersion,
+				@configChecksum, @runtimeManifestChecksum,
+				@desiredServiceConfigChecksum, @adapterRevision, @runtimeContractVersion,
 				@expectedObservedStateVersion, @expectedObservedStateChecksum,
 				@expectedCurrentImageDigest, @expectedCurrentConfigChecksum,
+				@expectedCurrentServiceConfigChecksum,
 				@expectedPlatform, @intentCaller, @intentAudience, @intentIssuedAt,
 				@intentExpiresAt, @cancellable, @retrySafe
 			)`,
@@ -245,14 +256,18 @@ func CreateExecutionAttempt(
 				"executionId":   attempt.Identity.ExecutionID,
 				"attemptNumber": attempt.Identity.AttemptNumber, "stepKey": attempt.Identity.StepKey,
 				"planChecksum": attempt.PlanChecksum, "artifactDigest": attempt.ArtifactDigest,
-				"configChecksum": attempt.ConfigChecksum, "adapterRevision": attempt.AdapterRevision,
-				"runtimeContractVersion":        attempt.RuntimeContractVersion,
-				"expectedObservedStateVersion":  attempt.ExpectedObservedStateVersion,
-				"expectedObservedStateChecksum": attempt.ExpectedObservedStateChecksum,
-				"expectedCurrentImageDigest":    attempt.ExpectedCurrentImageDigest,
-				"expectedCurrentConfigChecksum": attempt.ExpectedCurrentConfigChecksum,
-				"expectedPlatform":              attempt.ExpectedPlatform,
-				"intentCaller":                  attempt.CallerBinding, "intentAudience": attempt.Audience,
+				"configChecksum":                       attempt.ConfigChecksum,
+				"runtimeManifestChecksum":              runtimeManifestChecksum,
+				"desiredServiceConfigChecksum":         desiredServiceConfigChecksum,
+				"adapterRevision":                      attempt.AdapterRevision,
+				"runtimeContractVersion":               attempt.RuntimeContractVersion,
+				"expectedObservedStateVersion":         attempt.ExpectedObservedStateVersion,
+				"expectedObservedStateChecksum":        attempt.ExpectedObservedStateChecksum,
+				"expectedCurrentImageDigest":           attempt.ExpectedCurrentImageDigest,
+				"expectedCurrentConfigChecksum":        attempt.ExpectedCurrentConfigChecksum,
+				"expectedCurrentServiceConfigChecksum": expectedCurrentServiceConfigChecksum,
+				"expectedPlatform":                     attempt.ExpectedPlatform,
+				"intentCaller":                         attempt.CallerBinding, "intentAudience": attempt.Audience,
 				"intentIssuedAt":  attempt.IntentIssuedAt.UTC(),
 				"intentExpiresAt": attempt.IntentExpiresAt.UTC(),
 				"cancellable":     attempt.Cancellable, "retrySafe": attempt.RetrySafe,
@@ -319,6 +334,14 @@ func CreateExecutionAttempt(
 		}
 	}
 	return result, err
+}
+
+func executionAttemptRuntimeChecksumValues(attempt types.ExecutionAttempt) (any, any, any) {
+	if attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV4 {
+		return nil, nil, nil
+	}
+	return attempt.RuntimeManifestChecksum, attempt.DesiredServiceConfigChecksum,
+		attempt.ExpectedCurrentServiceConfigChecksum
 }
 
 type canonicalTaskResource struct {
@@ -482,18 +505,21 @@ func scanExecutionAttempt(row rowScanner) (*types.ExecutionAttempt, error) {
 	var generation int64
 	var leaseExpiresAt *time.Time
 	var expectedObservedStateVersion *int64
+	var runtimeManifestChecksum, desiredServiceConfigChecksum *string
 	var expectedObservedStateChecksum, expectedCurrentImageDigest *string
-	var expectedCurrentConfigChecksum, expectedPlatform *string
+	var expectedCurrentConfigChecksum, expectedCurrentServiceConfigChecksum *string
+	var expectedPlatform *string
 	var callerBinding, audience *string
 	err := row.Scan(
 		&attempt.ID, &attempt.CreatedAt, &attempt.UpdatedAt, &attempt.OrganizationID,
 		&attempt.DeploymentTargetID,
 		&attempt.TaskID, &attempt.StepRunID, &executionID, &attemptNumber,
 		&stepKey, &attempt.Status, &attempt.ClaimedBy, &attempt.PlanChecksum,
-		&attempt.ArtifactDigest, &attempt.ConfigChecksum, &attempt.AdapterRevision,
+		&attempt.ArtifactDigest, &attempt.ConfigChecksum, &runtimeManifestChecksum,
+		&desiredServiceConfigChecksum, &attempt.AdapterRevision,
 		&attempt.RuntimeContractVersion, &expectedObservedStateVersion,
 		&expectedObservedStateChecksum, &expectedCurrentImageDigest,
-		&expectedCurrentConfigChecksum, &expectedPlatform,
+		&expectedCurrentConfigChecksum, &expectedCurrentServiceConfigChecksum, &expectedPlatform,
 		&callerBinding, &audience,
 		&attempt.IntentIssuedAt, &attempt.IntentExpiresAt, &attempt.LastEventSequence,
 		&attempt.AcknowledgedAt, &attempt.CompletedAt, &attempt.Cancellable, &attempt.RetrySafe,
@@ -508,6 +534,12 @@ func scanExecutionAttempt(row rowScanner) (*types.ExecutionAttempt, error) {
 	if expectedObservedStateVersion != nil {
 		attempt.ExpectedObservedStateVersion = *expectedObservedStateVersion
 	}
+	if runtimeManifestChecksum != nil {
+		attempt.RuntimeManifestChecksum = *runtimeManifestChecksum
+	}
+	if desiredServiceConfigChecksum != nil {
+		attempt.DesiredServiceConfigChecksum = *desiredServiceConfigChecksum
+	}
 	if expectedObservedStateChecksum != nil {
 		attempt.ExpectedObservedStateChecksum = *expectedObservedStateChecksum
 	}
@@ -516,6 +548,9 @@ func scanExecutionAttempt(row rowScanner) (*types.ExecutionAttempt, error) {
 	}
 	if expectedCurrentConfigChecksum != nil {
 		attempt.ExpectedCurrentConfigChecksum = *expectedCurrentConfigChecksum
+	}
+	if expectedCurrentServiceConfigChecksum != nil {
+		attempt.ExpectedCurrentServiceConfigChecksum = *expectedCurrentServiceConfigChecksum
 	}
 	if expectedPlatform != nil {
 		attempt.ExpectedPlatform = types.DeploymentTargetPlatform(*expectedPlatform)
@@ -549,7 +584,8 @@ func ClaimExecutionAttempt(
 		if err != nil {
 			return err
 		}
-		if current.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 {
+		if current.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 &&
+			current.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV4 {
 			return apierrors.NewConflict("execution attempt has no runtime trust contract")
 		}
 		if current.Fence.Generation != request.ExpectedGeneration {
@@ -1135,7 +1171,8 @@ func validateNewExecutionAttempt(
 		return apierrors.NewBadRequest("execution attempt frozen checksums are invalid")
 	}
 	if strings.TrimSpace(attempt.AdapterRevision) == "" ||
-		attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 ||
+		(attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 &&
+			attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV4) ||
 		attempt.ExpectedObservedStateVersion <= 0 ||
 		!intentChecksumPatternDB.MatchString(attempt.ExpectedObservedStateChecksum) ||
 		!intentChecksumPatternDB.MatchString(attempt.ExpectedCurrentImageDigest) ||
@@ -1149,6 +1186,16 @@ func validateNewExecutionAttempt(
 		attempt.IntentExpiresAt.Sub(attempt.IntentIssuedAt) > 15*time.Minute ||
 		strings.TrimSpace(attempt.Fence.ResourceKey) == "" || attempt.Fence.Generation <= 0 {
 		return apierrors.NewBadRequest("execution attempt frozen inputs are invalid")
+	}
+	if attempt.RuntimeContractVersion == types.ExecutionRuntimeContractVersionV3 {
+		if attempt.RuntimeManifestChecksum != "" || attempt.DesiredServiceConfigChecksum != "" ||
+			attempt.ExpectedCurrentServiceConfigChecksum != "" {
+			return apierrors.NewBadRequest("execution v3 runtime checksum identities must be empty")
+		}
+	} else if !intentChecksumPatternDB.MatchString(attempt.RuntimeManifestChecksum) ||
+		!intentChecksumPatternDB.MatchString(attempt.DesiredServiceConfigChecksum) ||
+		!intentChecksumPatternDB.MatchString(attempt.ExpectedCurrentServiceConfigChecksum) {
+		return apierrors.NewBadRequest("execution attempt runtime checksum identities are invalid")
 	}
 	sum := sha256.Sum256(intent.Payload)
 	if intent.Checksum != "sha256:"+hex.EncodeToString(sum[:]) {

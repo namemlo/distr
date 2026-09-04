@@ -73,3 +73,4 @@ List tests, migration checks, manual verification, and rollout or rollback notes
 - [ADR-0085: Deployment Plan Source-History Validation](0085-deployment-plan-source-history-validation.md)
 - [ADR-0087: Scoped Single-Reviewer Pilot Exception](0087-scoped-single-reviewer-pilot-exception.md)
 - [ADR-0088: Governed Baseline Adoption](0088-governed-baseline-adoption.md)
+- [ADR-0089: Separated Runtime Checksum Identities](0089-separated-runtime-checksum-identities.md)

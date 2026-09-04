@@ -1,12 +1,44 @@
 package api
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
 	. "github.com/onsi/gomega"
 )
+
+func TestExecutionV2LeaseResponseKeepsRuntimeChecksumIdentitiesDistinct(t *testing.T) {
+	g := NewWithT(t)
+	response := ExecutionV2LeaseResponse{Attempt: types.ExecutionAttempt{
+		ConfigChecksum:                       "sha256:" + strings.Repeat("1", 64),
+		RuntimeManifestChecksum:              "sha256:" + strings.Repeat("2", 64),
+		DesiredServiceConfigChecksum:         "sha256:" + strings.Repeat("3", 64),
+		ExpectedCurrentConfigChecksum:        "sha256:" + strings.Repeat("4", 64),
+		ExpectedCurrentServiceConfigChecksum: "sha256:" + strings.Repeat("5", 64),
+	}}
+
+	payload, err := json.Marshal(response)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(payload)).To(ContainSubstring(
+		`"configChecksum":"sha256:` + strings.Repeat("1", 64) + `"`,
+	))
+	g.Expect(string(payload)).To(ContainSubstring(
+		`"runtimeManifestChecksum":"sha256:` + strings.Repeat("2", 64) + `"`,
+	))
+	g.Expect(string(payload)).To(ContainSubstring(
+		`"desiredServiceConfigChecksum":"sha256:` + strings.Repeat("3", 64) + `"`,
+	))
+	g.Expect(string(payload)).To(ContainSubstring(
+		`"expectedCurrentConfigChecksum":"sha256:` + strings.Repeat("4", 64) + `"`,
+	))
+	g.Expect(string(payload)).To(ContainSubstring(
+		`"expectedCurrentServiceConfigChecksum":"sha256:` + strings.Repeat("5", 64) + `"`,
+	))
+}
 
 func TestExecutionV2LeaseRequestValidatesFrozenExecutorIdentity(t *testing.T) {
 	g := NewWithT(t)

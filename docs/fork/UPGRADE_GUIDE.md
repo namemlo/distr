@@ -16,7 +16,7 @@ compatibility, or clear the fence. Resume the applicable normal timestamp-expand
 finalizer exists. The no-manifest branch requires a timestamp fence and complete capture bundle that predate
 migration; an interrupted ordinary zero-history release without them requires verified restore or escalation.
 
-## Integrated Upgrade Through Migration 170
+## Integrated Upgrade Through Migration 172
 
 The current release requires an ordered upgrade from migration 138 through migration 170. Migration 163 preserves existing
 blocked plan history and enables only newly validated target deployment plans to seal as executable `READY` plans.
@@ -39,9 +39,14 @@ idempotency and reviewer identity, a deferred correlated audit binding, and an
 explicit schema-170 projection. Its down migration succeeds only before any
 protected-history artifact is retained; afterward it refuses rather than
 delete evidence.
+Migration 171 adds the default-off scoped single-reviewer pilot exception and
+refuses downgrade after exception evidence exists. Migration 172 separates
+logical Target Config Snapshot checksums from runtime-manifest and physical
+service-config checksums. Existing v3 attempts and v1 evidence remain unchanged;
+the migration refuses downgrade after any v4 attempt or v2 evidence exists.
 Before a release can be signed, retain separate results for clean install, upgrade, safe down/refusal, checkpoint
 restart, v1-only flags-off, mixed v1/v2, and retained-v2-history flags-off paths on the supported PostgreSQL 16.14
-and 18.4 images through migration 170. The required matrix and current pending status are recorded in the
+and 18.4 images through migration 172. The required matrix and current pending status are recorded in the
 [community release readiness package](../release/community-release-readiness.md#integrated-control-plane-release-gate).
 
 Migration 162 adds `SampleRetirementJob`, `SampleRetirementItem`, `SampleRetirementCheckpoint`, and

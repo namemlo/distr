@@ -53,8 +53,12 @@ func RecordExecutionRuntimeEvidence(
 		if !errors.Is(err, apierrors.ErrNotFound) {
 			return err
 		}
-		if attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 {
+		if attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV3 &&
+			attempt.RuntimeContractVersion != types.ExecutionRuntimeContractVersionV4 {
 			return apierrors.NewConflict("execution attempt has no runtime trust contract")
+		}
+		if !runtimeEvidenceSchemaMatchesAttempt(input.SchemaVersion, attempt.RuntimeContractVersion) {
+			return apierrors.NewConflict("execution runtime evidence schema does not match the runtime contract")
 		}
 		if attempt.Fence.Generation != input.FenceGeneration {
 			return apierrors.NewConflict("stale execution runtime-evidence fence generation")
@@ -96,8 +100,10 @@ func RecordExecutionRuntimeEvidence(
 			input.ExpectedObservedStateChecksum != attempt.ExpectedObservedStateChecksum ||
 			input.PreExecutionImageDigest != attempt.ExpectedCurrentImageDigest ||
 			input.PreExecutionConfigChecksum != attempt.ExpectedCurrentConfigChecksum ||
+			input.PreExecutionServiceConfigChecksum != attempt.ExpectedCurrentServiceConfigChecksum ||
 			input.ResultImageDigest != attempt.ArtifactDigest ||
 			input.ResultConfigChecksum != attempt.ConfigChecksum ||
+			input.ResultServiceConfigChecksum != attempt.DesiredServiceConfigChecksum ||
 			input.Platform != attempt.ExpectedPlatform {
 			return apierrors.NewConflict("execution runtime evidence does not match the signed intent")
 		}
@@ -137,42 +143,46 @@ func executionRuntimeEvidenceCanonicalChecksum(
 	input types.ExecutionRuntimeEvidenceInput,
 ) (string, error) {
 	payload, err := json.Marshal(struct {
-		Schema                        string                         `json:"schema"`
-		OrganizationID                uuid.UUID                      `json:"organizationId"`
-		DeploymentTargetID            uuid.UUID                      `json:"deploymentTargetId"`
-		AttemptID                     uuid.UUID                      `json:"attemptId"`
-		Identity                      types.ExecutionIdentity        `json:"identity"`
-		EventIdentity                 uuid.UUID                      `json:"eventIdentity"`
-		IntentChecksum                string                         `json:"intentChecksum"`
-		ExecutorID                    string                         `json:"executorId"`
-		CallerIdentity                string                         `json:"callerIdentity"`
-		Audience                      string                         `json:"audience"`
-		FenceGeneration               int64                          `json:"fenceGeneration"`
-		ExpectedObservedStateVersion  int64                          `json:"expectedObservedStateVersion"`
-		ExpectedObservedStateChecksum string                         `json:"expectedObservedStateChecksum"`
-		PreExecutionImageDigest       string                         `json:"preExecutionImageDigest"`
-		PreExecutionConfigChecksum    string                         `json:"preExecutionConfigChecksum"`
-		ResultImageDigest             string                         `json:"resultImageDigest"`
-		ResultConfigChecksum          string                         `json:"resultConfigChecksum"`
-		Platform                      types.DeploymentTargetPlatform `json:"platform"`
-		HealthStatus                  types.TargetComponentHealth    `json:"healthStatus"`
-		ResultChecksum                string                         `json:"resultChecksum"`
-		EvidenceReference             string                         `json:"evidenceReference"`
-		EvidenceChecksum              string                         `json:"evidenceChecksum"`
-		CapturedAt                    string                         `json:"capturedAt"`
+		Schema                            string                         `json:"schema"`
+		OrganizationID                    uuid.UUID                      `json:"organizationId"`
+		DeploymentTargetID                uuid.UUID                      `json:"deploymentTargetId"`
+		AttemptID                         uuid.UUID                      `json:"attemptId"`
+		Identity                          types.ExecutionIdentity        `json:"identity"`
+		EventIdentity                     uuid.UUID                      `json:"eventIdentity"`
+		IntentChecksum                    string                         `json:"intentChecksum"`
+		ExecutorID                        string                         `json:"executorId"`
+		CallerIdentity                    string                         `json:"callerIdentity"`
+		Audience                          string                         `json:"audience"`
+		FenceGeneration                   int64                          `json:"fenceGeneration"`
+		ExpectedObservedStateVersion      int64                          `json:"expectedObservedStateVersion"`
+		ExpectedObservedStateChecksum     string                         `json:"expectedObservedStateChecksum"`
+		PreExecutionImageDigest           string                         `json:"preExecutionImageDigest"`
+		PreExecutionConfigChecksum        string                         `json:"preExecutionConfigChecksum"`
+		PreExecutionServiceConfigChecksum string                         `json:"preExecutionServiceConfigChecksum,omitempty"`
+		ResultImageDigest                 string                         `json:"resultImageDigest"`
+		ResultConfigChecksum              string                         `json:"resultConfigChecksum"`
+		ResultServiceConfigChecksum       string                         `json:"resultServiceConfigChecksum,omitempty"`
+		Platform                          types.DeploymentTargetPlatform `json:"platform"`
+		HealthStatus                      types.TargetComponentHealth    `json:"healthStatus"`
+		ResultChecksum                    string                         `json:"resultChecksum"`
+		EvidenceReference                 string                         `json:"evidenceReference"`
+		EvidenceChecksum                  string                         `json:"evidenceChecksum"`
+		CapturedAt                        string                         `json:"capturedAt"`
 	}{
 		Schema:         input.SchemaVersion,
 		OrganizationID: input.OrganizationID, DeploymentTargetID: input.DeploymentTargetID,
 		AttemptID: input.AttemptID, Identity: attempt.Identity, EventIdentity: input.EventIdentity,
 		IntentChecksum: input.IntentChecksum, ExecutorID: input.ExecutorID,
 		CallerIdentity: input.CallerIdentity, Audience: input.Audience,
-		FenceGeneration:               input.FenceGeneration,
-		ExpectedObservedStateVersion:  input.ExpectedObservedStateVersion,
-		ExpectedObservedStateChecksum: input.ExpectedObservedStateChecksum,
-		PreExecutionImageDigest:       input.PreExecutionImageDigest,
-		PreExecutionConfigChecksum:    input.PreExecutionConfigChecksum,
-		ResultImageDigest:             input.ResultImageDigest, ResultConfigChecksum: input.ResultConfigChecksum,
-		Platform: input.Platform, HealthStatus: input.HealthStatus,
+		FenceGeneration:                   input.FenceGeneration,
+		ExpectedObservedStateVersion:      input.ExpectedObservedStateVersion,
+		ExpectedObservedStateChecksum:     input.ExpectedObservedStateChecksum,
+		PreExecutionImageDigest:           input.PreExecutionImageDigest,
+		PreExecutionConfigChecksum:        input.PreExecutionConfigChecksum,
+		PreExecutionServiceConfigChecksum: input.PreExecutionServiceConfigChecksum,
+		ResultImageDigest:                 input.ResultImageDigest, ResultConfigChecksum: input.ResultConfigChecksum,
+		ResultServiceConfigChecksum: input.ResultServiceConfigChecksum,
+		Platform:                    input.Platform, HealthStatus: input.HealthStatus,
 		ResultChecksum: input.ResultChecksum, EvidenceReference: input.EvidenceReference,
 		EvidenceChecksum: input.EvidenceChecksum,
 		CapturedAt:       input.CapturedAt.UTC().Format(time.RFC3339Nano),
@@ -192,7 +202,8 @@ func validateExecutionRuntimeEvidenceInput(input types.ExecutionRuntimeEvidenceI
 		input.ExpectedObservedStateVersion <= 0 || input.CapturedAt.IsZero() {
 		return apierrors.NewBadRequest("execution runtime evidence identity is invalid")
 	}
-	if input.SchemaVersion != types.ExecutionRuntimeEvidenceSchemaV1 {
+	if input.SchemaVersion != types.ExecutionRuntimeEvidenceSchemaV1 &&
+		input.SchemaVersion != types.ExecutionRuntimeEvidenceSchemaV2 {
 		return apierrors.NewBadRequest("execution runtime evidence schema is invalid")
 	}
 	caller, audience := strings.TrimSpace(input.CallerIdentity), strings.TrimSpace(input.Audience)
@@ -209,6 +220,14 @@ func validateExecutionRuntimeEvidenceInput(input types.ExecutionRuntimeEvidenceI
 		if !intentChecksumPatternDB.MatchString(checksum) {
 			return apierrors.NewBadRequest("execution runtime evidence checksum is invalid")
 		}
+	}
+	if input.SchemaVersion == types.ExecutionRuntimeEvidenceSchemaV1 {
+		if input.PreExecutionServiceConfigChecksum != "" || input.ResultServiceConfigChecksum != "" {
+			return apierrors.NewBadRequest("execution runtime evidence v1 service config checksums must be empty")
+		}
+	} else if !intentChecksumPatternDB.MatchString(input.PreExecutionServiceConfigChecksum) ||
+		!intentChecksumPatternDB.MatchString(input.ResultServiceConfigChecksum) {
+		return apierrors.NewBadRequest("execution runtime evidence service config checksum is invalid")
 	}
 	if !input.Platform.IsValid() ||
 		(input.HealthStatus != types.TargetComponentHealthHealthy &&
@@ -228,6 +247,11 @@ func insertExecutionRuntimeEvidence(
 	input types.ExecutionRuntimeEvidenceInput,
 	canonicalChecksum string,
 ) (*types.ExecutionRuntimeEvidence, error) {
+	var preExecutionServiceConfigChecksum, resultServiceConfigChecksum any
+	if input.SchemaVersion == types.ExecutionRuntimeEvidenceSchemaV2 {
+		preExecutionServiceConfigChecksum = input.PreExecutionServiceConfigChecksum
+		resultServiceConfigChecksum = input.ResultServiceConfigChecksum
+	}
 	row := internalctx.GetDb(ctx).QueryRow(ctx, `
 		INSERT INTO ExecutionRuntimeEvidence (
 			organization_id, deployment_target_id, execution_attempt_id,
@@ -235,7 +259,9 @@ func insertExecutionRuntimeEvidence(
 			intent_checksum, executor_id, caller_identity, audience, fence_generation,
 			expected_observed_state_revision, expected_observed_state_checksum,
 			pre_execution_image_digest, pre_execution_config_checksum,
-			result_image_digest, result_config_checksum, platform, health_status,
+			pre_execution_service_config_checksum,
+			result_image_digest, result_config_checksum, result_service_config_checksum,
+			platform, health_status,
 			result_checksum, evidence_reference, evidence_checksum,
 			canonical_checksum, captured_at
 		) VALUES (
@@ -244,7 +270,9 @@ func insertExecutionRuntimeEvidence(
 			@intentChecksum, @executorId, @callerIdentity, @audience, @fenceGeneration,
 			@expectedObservedStateVersion, @expectedObservedStateChecksum,
 			@preExecutionImageDigest, @preExecutionConfigChecksum,
-			@resultImageDigest, @resultConfigChecksum, @platform, @healthStatus,
+			@preExecutionServiceConfigChecksum,
+			@resultImageDigest, @resultConfigChecksum, @resultServiceConfigChecksum,
+			@platform, @healthStatus,
 			@resultChecksum, @evidenceReference, @evidenceChecksum,
 			@canonicalChecksum, @capturedAt
 		)
@@ -254,7 +282,9 @@ func insertExecutionRuntimeEvidence(
 			caller_identity, audience, fence_generation,
 			expected_observed_state_revision, expected_observed_state_checksum,
 			pre_execution_image_digest, pre_execution_config_checksum,
-			result_image_digest, result_config_checksum, platform, health_status,
+			pre_execution_service_config_checksum,
+			result_image_digest, result_config_checksum, result_service_config_checksum,
+			platform, health_status,
 			result_checksum, evidence_reference, evidence_checksum,
 			canonical_checksum, captured_at`, pgx.NamedArgs{
 		"organizationId": input.OrganizationID, "deploymentTargetId": input.DeploymentTargetID,
@@ -263,14 +293,16 @@ func insertExecutionRuntimeEvidence(
 		"eventIdentity": input.EventIdentity, "schemaVersion": input.SchemaVersion,
 		"intentChecksum": input.IntentChecksum, "executorId": input.ExecutorID,
 		"callerIdentity": input.CallerIdentity, "audience": input.Audience,
-		"fenceGeneration":               input.FenceGeneration,
-		"expectedObservedStateVersion":  input.ExpectedObservedStateVersion,
-		"expectedObservedStateChecksum": input.ExpectedObservedStateChecksum,
-		"preExecutionImageDigest":       input.PreExecutionImageDigest,
-		"preExecutionConfigChecksum":    input.PreExecutionConfigChecksum,
-		"resultImageDigest":             input.ResultImageDigest,
-		"resultConfigChecksum":          input.ResultConfigChecksum,
-		"platform":                      input.Platform, "healthStatus": input.HealthStatus,
+		"fenceGeneration":                   input.FenceGeneration,
+		"expectedObservedStateVersion":      input.ExpectedObservedStateVersion,
+		"expectedObservedStateChecksum":     input.ExpectedObservedStateChecksum,
+		"preExecutionImageDigest":           input.PreExecutionImageDigest,
+		"preExecutionConfigChecksum":        input.PreExecutionConfigChecksum,
+		"preExecutionServiceConfigChecksum": preExecutionServiceConfigChecksum,
+		"resultImageDigest":                 input.ResultImageDigest,
+		"resultConfigChecksum":              input.ResultConfigChecksum,
+		"resultServiceConfigChecksum":       resultServiceConfigChecksum,
+		"platform":                          input.Platform, "healthStatus": input.HealthStatus,
 		"resultChecksum": input.ResultChecksum, "evidenceReference": input.EvidenceReference,
 		"evidenceChecksum": input.EvidenceChecksum, "canonicalChecksum": canonicalChecksum,
 		"capturedAt": input.CapturedAt.UTC(),
@@ -287,6 +319,7 @@ func scanExecutionRuntimeEvidence(row rowScanner) (*types.ExecutionRuntimeEviden
 	var executionID uuid.UUID
 	var attemptNumber int
 	var stepKey string
+	var preExecutionServiceConfigChecksum, resultServiceConfigChecksum *string
 	if err := row.Scan(
 		&evidence.ID, &evidence.CreatedAt, &evidence.OrganizationID,
 		&evidence.DeploymentTargetID, &evidence.AttemptID, &executionID,
@@ -295,7 +328,9 @@ func scanExecutionRuntimeEvidence(row rowScanner) (*types.ExecutionRuntimeEviden
 		&evidence.Audience, &evidence.FenceGeneration,
 		&evidence.ExpectedObservedStateVersion, &evidence.ExpectedObservedStateChecksum,
 		&evidence.PreExecutionImageDigest, &evidence.PreExecutionConfigChecksum,
+		&preExecutionServiceConfigChecksum,
 		&evidence.ResultImageDigest, &evidence.ResultConfigChecksum,
+		&resultServiceConfigChecksum,
 		&evidence.Platform, &evidence.HealthStatus, &evidence.ResultChecksum,
 		&evidence.EvidenceReference, &evidence.EvidenceChecksum,
 		&evidence.CanonicalChecksum, &evidence.CapturedAt,
@@ -304,6 +339,12 @@ func scanExecutionRuntimeEvidence(row rowScanner) (*types.ExecutionRuntimeEviden
 	}
 	evidence.Identity = types.ExecutionIdentity{
 		ExecutionID: executionID, AttemptNumber: attemptNumber, StepKey: stepKey,
+	}
+	if preExecutionServiceConfigChecksum != nil {
+		evidence.PreExecutionServiceConfigChecksum = *preExecutionServiceConfigChecksum
+	}
+	if resultServiceConfigChecksum != nil {
+		evidence.ResultServiceConfigChecksum = *resultServiceConfigChecksum
 	}
 	return &evidence, nil
 }
@@ -319,7 +360,9 @@ func getExecutionRuntimeEvidence(
 			caller_identity, audience, fence_generation,
 			expected_observed_state_revision, expected_observed_state_checksum,
 			pre_execution_image_digest, pre_execution_config_checksum,
-			result_image_digest, result_config_checksum, platform, health_status,
+			pre_execution_service_config_checksum,
+			result_image_digest, result_config_checksum, result_service_config_checksum,
+			platform, health_status,
 			result_checksum, evidence_reference, evidence_checksum,
 			canonical_checksum, captured_at
 		FROM ExecutionRuntimeEvidence
@@ -365,11 +408,23 @@ func validateSuccessfulCompletionRuntimeEvidence(
 		evidence.ExpectedObservedStateChecksum != attempt.ExpectedObservedStateChecksum ||
 		evidence.PreExecutionImageDigest != attempt.ExpectedCurrentImageDigest ||
 		evidence.PreExecutionConfigChecksum != attempt.ExpectedCurrentConfigChecksum ||
+		evidence.PreExecutionServiceConfigChecksum != attempt.ExpectedCurrentServiceConfigChecksum ||
 		evidence.ResultImageDigest != attempt.ArtifactDigest ||
 		evidence.ResultConfigChecksum != attempt.ConfigChecksum ||
+		evidence.ResultServiceConfigChecksum != attempt.DesiredServiceConfigChecksum ||
 		evidence.Platform != attempt.ExpectedPlatform ||
 		evidence.HealthStatus != types.TargetComponentHealthHealthy {
 		return apierrors.NewConflict("successful execution completion runtime evidence is invalid")
 	}
 	return nil
+}
+
+func runtimeEvidenceSchemaMatchesAttempt(
+	schema string,
+	version types.ExecutionRuntimeContractVersion,
+) bool {
+	return (schema == types.ExecutionRuntimeEvidenceSchemaV1 &&
+		version == types.ExecutionRuntimeContractVersionV3) ||
+		(schema == types.ExecutionRuntimeEvidenceSchemaV2 &&
+			version == types.ExecutionRuntimeContractVersionV4)
 }

@@ -143,7 +143,7 @@ func ValidateRetention(retained RetainedArtifact) error {
 		return errors.New("retained artifact organization is required")
 	case retained.Schema != RetentionSchemaV1:
 		return fmt.Errorf("unsupported retained artifact schema %q", retained.Schema)
-	case retained.SourceSchemaVersion < 138 || retained.SourceSchemaVersion > 171:
+	case retained.SourceSchemaVersion < 138 || retained.SourceSchemaVersion > 172:
 		return fmt.Errorf("source schema version %d is unsupported", retained.SourceSchemaVersion)
 	}
 	canonicalScope, err := CanonicalScope(retained.Scope)

@@ -87,6 +87,33 @@ func TestBuildRetentionSealsArtifactObjectReviewAndCaptureIdentity(t *testing.T)
 	g.Expect(rebuilt.RetentionChecksum).To(Equal(retained.RetentionChecksum))
 }
 
+func TestRetentionAcceptsRegisteredSchema172AndRejectsLaterSchemas(t *testing.T) {
+	t.Parallel()
+	g := NewWithT(t)
+	build := func(version uint64) error {
+		artifact, err := Build(testScope(), version, nil)
+		if err != nil {
+			return err
+		}
+		payload, err := Marshal(*artifact)
+		if err != nil {
+			return err
+		}
+		checksum := ContentChecksum(payload)
+		_, err = BuildRetention(RetentionInput{
+			ID: uuid.New(), Artifact: *artifact,
+			ObjectReference: immutableProtectedHistoryReference(checksum),
+			MediaType:       ArtifactMediaTypeV1, ByteLength: int64(len(payload)),
+			ContentChecksum:     checksum,
+			CapturedAt:          time.Date(2026, time.September, 4, 0, 0, 0, 0, time.UTC),
+			IssuerUserAccountID: uuid.New(), ReviewerUserAccountID: uuid.New(),
+		})
+		return err
+	}
+	g.Expect(build(172)).To(Succeed())
+	g.Expect(build(173)).To(MatchError(ContainSubstring("source schema version 173 is unsupported")))
+}
+
 func TestRetentionChecksumChangesForEveryMaterialIdentity(t *testing.T) {
 	t.Parallel()
 	g := NewWithT(t)

@@ -20,12 +20,15 @@ func MatchesExecutionDispatch(existing, candidate types.ExecutionAttempt) bool {
 		existing.PlanChecksum == candidate.PlanChecksum &&
 		existing.ArtifactDigest == candidate.ArtifactDigest &&
 		existing.ConfigChecksum == candidate.ConfigChecksum &&
+		existing.RuntimeManifestChecksum == candidate.RuntimeManifestChecksum &&
+		existing.DesiredServiceConfigChecksum == candidate.DesiredServiceConfigChecksum &&
 		existing.AdapterRevision == candidate.AdapterRevision &&
 		existing.RuntimeContractVersion == candidate.RuntimeContractVersion &&
 		existing.ExpectedObservedStateVersion == candidate.ExpectedObservedStateVersion &&
 		existing.ExpectedObservedStateChecksum == candidate.ExpectedObservedStateChecksum &&
 		existing.ExpectedCurrentImageDigest == candidate.ExpectedCurrentImageDigest &&
 		existing.ExpectedCurrentConfigChecksum == candidate.ExpectedCurrentConfigChecksum &&
+		existing.ExpectedCurrentServiceConfigChecksum == candidate.ExpectedCurrentServiceConfigChecksum &&
 		existing.ExpectedPlatform == candidate.ExpectedPlatform &&
 		existing.CallerBinding == candidate.CallerBinding &&
 		existing.Audience == candidate.Audience &&
@@ -52,8 +55,10 @@ func IsExactRuntimeEvidenceReplay(
 		existing.ExpectedObservedStateChecksum == input.ExpectedObservedStateChecksum &&
 		existing.PreExecutionImageDigest == input.PreExecutionImageDigest &&
 		existing.PreExecutionConfigChecksum == input.PreExecutionConfigChecksum &&
+		existing.PreExecutionServiceConfigChecksum == input.PreExecutionServiceConfigChecksum &&
 		existing.ResultImageDigest == input.ResultImageDigest &&
 		existing.ResultConfigChecksum == input.ResultConfigChecksum &&
+		existing.ResultServiceConfigChecksum == input.ResultServiceConfigChecksum &&
 		existing.Platform == input.Platform &&
 		existing.HealthStatus == input.HealthStatus &&
 		existing.ResultChecksum == input.ResultChecksum &&
