@@ -35,6 +35,16 @@ func TestParseEnabledKeysAll(t *testing.T) {
 	keys, err := ParseEnabledKeys("all")
 
 	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(keys).To(HaveLen(len(AllKeys()) - 1))
+	g.Expect(keys).NotTo(ContainElement(KeyScopedSingleReviewerPilot))
+}
+
+func TestParseEnabledKeysAllAllowsExplicitSensitiveOptIn(t *testing.T) {
+	g := NewWithT(t)
+
+	keys, err := ParseEnabledKeys("all,scoped_single_reviewer_pilot")
+
+	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(keys).To(Equal(AllKeys()))
 }
 

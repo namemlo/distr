@@ -86,6 +86,15 @@ func RetainProtectedHistoryArtifact(
 	} else if !errors.Is(err, apierrors.ErrNotFound) {
 		return nil, err
 	}
+	// New records derive waiver evidence from the active target assignment; callers
+	// cannot supply or preserve their own exception evidence.
+	request.GovernanceException = nil
+	request.GovernanceException, err = protectedHistoryGovernanceException(
+		ctx, request, capturedAt, false,
+	)
+	if err != nil {
+		return nil, err
+	}
 	canonicalScope, requestChecksum, err := validateProtectedHistoryRetentionRequest(request)
 	if err != nil {
 		return nil, err
@@ -150,6 +159,21 @@ func RetainProtectedHistoryArtifact(
 		if !errors.Is(err, apierrors.ErrNotFound) {
 			return err
 		}
+		if request.IssuerUserAccountID == request.ReviewerUserAccountID {
+			lockedEvidence, err := protectedHistoryGovernanceException(
+				txCtx, request, capturedAt, true,
+			)
+			if err != nil {
+				return err
+			}
+			if !sameProtectedHistoryGovernanceException(
+				request.GovernanceException, lockedEvidence,
+			) {
+				return apierrors.NewConflict(
+					"protected-history target environment assignment changed during retention",
+				)
+			}
+		}
 		auditPayload, err := protectedHistoryRetentionAuditPayload(*retained)
 		if err != nil {
 			return err
@@ -186,6 +210,65 @@ func RetainProtectedHistoryArtifact(
 		return verifyProtectedHistoryReplay(ctx, store, result, requestChecksum)
 	}
 	return result, nil
+}
+
+func protectedHistoryGovernanceException(
+	ctx context.Context,
+	request protectedhistory.CreateRetentionRequest,
+	capturedAt time.Time,
+	lockAssignment bool,
+) (*pilotexception.Evidence, error) {
+	if request.IssuerUserAccountID != request.ReviewerUserAccountID {
+		return nil, nil
+	}
+	if len(request.Scope.CustomerOrganizationIDs) != 0 ||
+		len(request.Scope.DeploymentTargetIDs) != 1 {
+		return nil, nil
+	}
+	targetID, err := uuid.Parse(request.Scope.DeploymentTargetIDs[0])
+	if err != nil || targetID == uuid.Nil {
+		return nil, nil
+	}
+	query := `
+		SELECT environment_id
+		FROM TargetEnvironmentAssignment
+		WHERE organization_id = @organizationId
+		  AND deployment_target_id = @deploymentTargetId
+		  AND active_from <= @capturedAt
+		  AND (active_until IS NULL OR active_until > @capturedAt)`
+	if lockAssignment {
+		query += ` FOR SHARE`
+	}
+	var environmentID uuid.UUID
+	err = internalctx.GetDb(ctx).QueryRow(ctx, query, pgx.NamedArgs{
+		"organizationId":     request.OrganizationID,
+		"deploymentTargetId": targetID,
+		"capturedAt":         capturedAt.UTC(),
+	}).Scan(&environmentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve protected-history target environment: %w", err)
+	}
+	return request.SingleReviewerPilot.ProtectedHistoryEvidence(
+		request.OrganizationID,
+		environmentID,
+		request.Scope.CustomerOrganizationIDs,
+		request.Scope.DeploymentTargetIDs,
+		request.IssuerUserAccountID,
+		request.ReviewerUserAccountID,
+	), nil
+}
+
+func sameProtectedHistoryGovernanceException(
+	left,
+	right *pilotexception.Evidence,
+) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func GetProtectedHistoryArtifact(

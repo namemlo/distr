@@ -82,13 +82,15 @@ func (c Config) ApprovalEvidence(
 
 func (c Config) ProtectedHistoryEvidence(
 	organizationID uuid.UUID,
+	environmentID uuid.UUID,
 	customerOrganizationIDs []string,
 	deploymentTargetIDs []string,
 	issuerID uuid.UUID,
 	reviewerID uuid.UUID,
 ) *Evidence {
 	if !c.enabled || issuerID == uuid.Nil || reviewerID != issuerID ||
-		organizationID != c.organizationID || len(customerOrganizationIDs) != 0 ||
+		organizationID != c.organizationID || environmentID != c.environmentID ||
+		len(customerOrganizationIDs) != 0 ||
 		len(deploymentTargetIDs) != 1 || deploymentTargetIDs[0] != c.deploymentTargetID.String() {
 		return nil
 	}

@@ -440,6 +440,28 @@ func (r *Runner) Run(ctx context.Context, options RunOptions) (finalErr error) {
 			)
 		}
 	}
+	if migrationErr != nil && status.Version >= 171 &&
+		desiredVersion(options, latest) < 171 &&
+		scopedSingleReviewerDowngradeGuardRejected(migrationErr) {
+		repairContext, repairCancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			DefaultMigrationLockTimeout,
+		)
+		repairErr := restoreScopedSingleReviewerDowngradeGuardStatus(
+			repairContext,
+			connection,
+		)
+		repairCancel()
+		if repairErr != nil {
+			return errors.Join(
+				migrationErr,
+				fmt.Errorf(
+					"restore schema status after guarded scoped single-reviewer downgrade: %w",
+					repairErr,
+				),
+			)
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -449,6 +471,114 @@ func (r *Runner) Run(ctx context.Context, options RunOptions) (finalErr error) {
 	if errors.Is(migrationErr, migrate.ErrNoChange) {
 		r.log.Info("migrations completed", zap.Error(migrationErr))
 	}
+	return nil
+}
+
+func scopedSingleReviewerDowngradeGuardRejected(err error) bool {
+	for _, message := range []string{
+		"refusing migration 171 rollback while pilot governance exception evidence exists",
+		"refusing migration 171 rollback while schema-171 protected-history evidence exists",
+	} {
+		if strings.Contains(err.Error(), message) {
+			return true
+		}
+	}
+	return false
+}
+
+func restoreScopedSingleReviewerDowngradeGuardStatus(
+	ctx context.Context,
+	connection *sql.Conn,
+) (finalErr error) {
+	transaction, err := connection.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	open := true
+	defer func() {
+		if open {
+			finalErr = errors.Join(finalErr, transaction.Rollback())
+		}
+	}()
+	var version int
+	var dirty bool
+	if err := transaction.QueryRowContext(ctx, `
+SELECT version, dirty
+FROM schema_migrations
+FOR UPDATE`).Scan(&version, &dirty); err != nil {
+		return fmt.Errorf("read guarded scoped single-reviewer migration status: %w", err)
+	}
+	if version != 170 || !dirty {
+		return fmt.Errorf(
+			"guarded scoped single-reviewer migration status is version %d dirty=%t, expected version 170 dirty=true",
+			version,
+			dirty,
+		)
+	}
+	var governanceColumnCount, governanceConstraintCount int
+	if err := transaction.QueryRowContext(ctx, `
+SELECT
+  (
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND (table_name, column_name) IN (
+        ('protectedhistoryartifact', 'governance_exception_key'),
+        ('protectedhistoryartifact', 'governance_exception_reference'),
+        ('approvaldecision', 'governance_exception_key'),
+        ('approvaldecision', 'governance_exception_reference')
+      )
+  ),
+  (
+    SELECT count(*)
+    FROM pg_catalog.pg_constraint constraint_row
+    WHERE constraint_row.contype = 'c'
+      AND constraint_row.convalidated
+      AND (
+        (
+          constraint_row.conrelid =
+            to_regclass(format('%I.protectedhistoryartifact', current_schema()))
+          AND constraint_row.conname =
+            'protectedhistoryartifact_review_governance_check'
+        )
+        OR (
+          constraint_row.conrelid =
+            to_regclass(format('%I.approvaldecision', current_schema()))
+          AND constraint_row.conname =
+            'approvaldecision_governance_exception_check'
+        )
+      )
+  )`).Scan(&governanceColumnCount, &governanceConstraintCount); err != nil {
+		return fmt.Errorf("inspect guarded scoped single-reviewer schema: %w", err)
+	}
+	if governanceColumnCount != 4 || governanceConstraintCount != 2 {
+		return fmt.Errorf(
+			"guarded scoped single-reviewer schema is incomplete: columns=%d constraints=%d",
+			governanceColumnCount,
+			governanceConstraintCount,
+		)
+	}
+	result, err := transaction.ExecContext(ctx, `
+UPDATE schema_migrations
+SET version=171, dirty=FALSE
+WHERE version=170 AND dirty=TRUE`)
+	if err != nil {
+		return fmt.Errorf("restore guarded scoped single-reviewer migration status: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read restored scoped single-reviewer migration status count: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf(
+			"restore guarded scoped single-reviewer migration status affected %d rows",
+			affected,
+		)
+	}
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	open = false
 	return nil
 }
 

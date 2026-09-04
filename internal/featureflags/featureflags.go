@@ -44,10 +44,11 @@ type Flag struct {
 }
 
 type definition struct {
-	Key         Key
-	Label       string
-	Description string
-	Milestone   string
+	Key          Key
+	Label        string
+	Description  string
+	Milestone    string
+	ExplicitOnly bool
 }
 
 type Registry struct {
@@ -189,10 +190,11 @@ var definitions = []definition{
 		Milestone:   "Operator Control Plane",
 	},
 	{
-		Key:         KeyScopedSingleReviewerPilot,
-		Label:       "Scoped single-reviewer pilot",
-		Description: "Allows one explicitly configured adopter pilot scope to retain labelled single-reviewer evidence.",
-		Milestone:   "Adopter pilot",
+		Key:          KeyScopedSingleReviewerPilot,
+		Label:        "Scoped single-reviewer pilot",
+		Description:  "Allows one explicitly configured adopter pilot scope to retain labelled single-reviewer evidence.",
+		Milestone:    "Adopter pilot",
+		ExplicitOnly: true,
 	},
 }
 
@@ -210,13 +212,15 @@ func ParseEnabledKeys(value string) ([]Key, error) {
 	})
 
 	enabled := map[Key]struct{}{}
+	enableAll := false
 	for _, field := range fields {
 		key := strings.TrimSpace(field)
 		if key == "" {
 			continue
 		}
 		if key == "all" {
-			return AllKeys(), nil
+			enableAll = true
+			continue
 		}
 		parsed := Key(key)
 		if !isKnown(parsed) {
@@ -226,9 +230,10 @@ func ParseEnabledKeys(value string) ([]Key, error) {
 	}
 
 	keys := make([]Key, 0, len(enabled))
-	for _, key := range AllKeys() {
-		if _, ok := enabled[key]; ok {
-			keys = append(keys, key)
+	for _, def := range definitions {
+		_, explicitlyEnabled := enabled[def.Key]
+		if explicitlyEnabled || (enableAll && !def.ExplicitOnly) {
+			keys = append(keys, def.Key)
 		}
 	}
 	return keys, nil

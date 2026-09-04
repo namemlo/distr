@@ -130,19 +130,12 @@ func createProtectedHistoryArtifactHandler(
 		authentication := auth.Authentication.Require(r.Context())
 		organizationID := *authentication.CurrentOrgID()
 		scope := request.Scope(organizationID)
-		governanceException := env.ScopedSingleReviewerPilotConfig().ProtectedHistoryEvidence(
-			organizationID,
-			scope.CustomerOrganizationIDs,
-			scope.DeploymentTargetIDs,
-			authentication.CurrentUserID(),
-			request.ReviewerUserAccountID,
-		)
 		retained, err := service.Retain(r.Context(), protectedhistory.CreateRetentionRequest{
 			OrganizationID:        organizationID,
 			Scope:                 scope,
 			IssuerUserAccountID:   authentication.CurrentUserID(),
 			ReviewerUserAccountID: request.ReviewerUserAccountID,
-			GovernanceException:   governanceException,
+			SingleReviewerPilot:   env.ScopedSingleReviewerPilotConfig(),
 			IdempotencyKey:        request.IdempotencyKey,
 		})
 		respondProtectedHistoryArtifactResult(w, r, err, func() {

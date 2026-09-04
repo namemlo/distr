@@ -6,6 +6,8 @@ Distr keeps four-eyes approval as the default. This exception exists only for th
 
 All five settings are required. If the feature flag is absent, the normal distinct-reviewer and requester-cannot-approve rules remain in force.
 
+The pilot flag must be named explicitly. `DISTR_EXPERIMENTAL_FEATURE_FLAGS=all` deliberately does not enable it.
+
 ```dotenv
 DISTR_EXPERIMENTAL_FEATURE_FLAGS=operator_control_plane_v2,executor_protocol_v2,scoped_single_reviewer_pilot
 DISTR_SINGLE_REVIEWER_PILOT_ORGANIZATION_ID=<exact Distr organization UUID>
@@ -17,7 +19,7 @@ DISTR_SINGLE_REVIEWER_PILOT_APPROVAL_REFERENCE=owner-approval:choice-tp-dev-2026
 The process fails closed at startup if the feature is enabled with an incomplete or malformed scope. The exception applies only when:
 
 - the authenticated requester approves their own deployment request in the configured organization and environment;
-- the protected-history issuer submits themselves as reviewer for exactly the configured deployment target, with no customer-wide scope; and
+- the protected-history issuer submits themselves as reviewer for exactly the configured deployment target, with no customer-wide scope, while that target has an active assignment to the configured Choice TP DEV environment at capture time; and
 - the decision is `APPROVE`; rejection and all other authorization checks are unchanged.
 
 ## Audit evidence
@@ -25,6 +27,8 @@ The process fails closed at startup if the feature is enabled with an incomplete
 The real authenticated account remains both identities. Distr stores `governanceExceptionKey=scoped-single-reviewer-pilot` and the configured approval reference on the append-only approval decision or protected-history artifact. The protected-history request and retention checksums include both fields, and its control-plane audit event must match them.
 
 Disable the feature immediately after the pilot. Existing exception evidence remains readable and cannot be silently downgraded; migration rollback is refused while any exception evidence exists.
+
+Before testing retention, verify the Choice TP DEV target's active `TargetEnvironmentAssignment` points to the UUID configured by `DISTR_SINGLE_REVIEWER_PILOT_ENVIRONMENT_ID`. Distr reads and locks that assignment itself; no governance-exception fields are accepted from the API caller.
 
 ## Not an enterprise default
 

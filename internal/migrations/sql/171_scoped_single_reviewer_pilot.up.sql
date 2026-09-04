@@ -126,6 +126,8 @@ ALTER TABLE ProtectedHistoryArtifact
     OR
     (
       issuer_useraccount_id = reviewer_useraccount_id
+      AND cardinality(customer_organization_ids) = 0
+      AND cardinality(deployment_target_ids) = 1
       AND governance_exception_key IS NOT NULL
       AND governance_exception_reference IS NOT NULL
       AND governance_exception_key = 'scoped-single-reviewer-pilot'

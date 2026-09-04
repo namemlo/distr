@@ -13,7 +13,11 @@ import (
 func TestBuildRetentionLabelsApprovedSingleReviewerPilot(t *testing.T) {
 	t.Parallel()
 	g := NewWithT(t)
-	artifact := mustBuild(t, nil)
+	artifact, err := Build(Scope{
+		OrganizationID:      testOrganizationID,
+		DeploymentTargetIDs: []string{testDeploymentTargetID},
+	}, 138, nil)
+	g.Expect(err).NotTo(HaveOccurred())
 	payload, err := Marshal(*artifact)
 	g.Expect(err).NotTo(HaveOccurred())
 	checksum := ContentChecksum(payload)

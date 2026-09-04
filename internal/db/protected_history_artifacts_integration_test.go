@@ -11,6 +11,7 @@ import (
 	"github.com/distr-sh/distr/internal/apierrors"
 	internalctx "github.com/distr-sh/distr/internal/context"
 	"github.com/distr-sh/distr/internal/db"
+	"github.com/distr-sh/distr/internal/pilotexception"
 	"github.com/distr-sh/distr/internal/protectedhistory"
 	"github.com/distr-sh/distr/internal/types"
 	"github.com/google/uuid"
@@ -121,6 +122,84 @@ WHERE id = @id AND organization_id = @organizationId
 	changed.ReviewerUserAccountID = otherReviewerID
 	_, err = db.RetainProtectedHistoryArtifact(ctx, changed, store, capturedAt)
 	g.Expect(errors.Is(err, apierrors.ErrConflict)).To(BeTrue())
+}
+
+func TestRetainProtectedHistoryArtifactScopesSingleReviewerToActiveEnvironment(t *testing.T) {
+	for _, testCase := range []struct {
+		name              string
+		createAssignment  bool
+		configuredMatches bool
+		expectSuccess     bool
+	}{
+		{
+			name:              "matching active assignment",
+			createAssignment:  true,
+			configuredMatches: true,
+			expectSuccess:     true,
+		},
+		{name: "wrong configured environment", createAssignment: true},
+		{name: "no active assignment", configuredMatches: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := releaseBundleDBTestContext(t)
+			g := NewWithT(t)
+			deps := createReleaseBundleEligibilityDependencies(t, ctx)
+			actorID := createReleaseBundleTestUser(t, ctx, deps.orgID)
+			targetID := createReleaseBundleDockerTargetForOrganization(
+				t, ctx, deps.orgID, "single-reviewer-target",
+			)
+			capturedAt := time.Now().UTC().Truncate(time.Microsecond)
+			if testCase.createAssignment {
+				assignment := types.TargetEnvironmentAssignment{
+					OrganizationID:     deps.orgID,
+					DeploymentTargetID: targetID,
+					EnvironmentID:      deps.devEnvironmentID,
+					ActiveFrom:         capturedAt.Add(-time.Hour),
+				}
+				g.Expect(db.CreateTargetEnvironmentAssignment(ctx, &assignment)).To(Succeed())
+			}
+			configuredEnvironmentID := deps.prodEnvironmentID
+			if testCase.configuredMatches {
+				configuredEnvironmentID = deps.devEnvironmentID
+			}
+			pilotConfig, err := pilotexception.Parse(
+				true,
+				deps.orgID.String(),
+				configuredEnvironmentID.String(),
+				targetID.String(),
+				"owner-approval:choice-tp-dev-20260903",
+			)
+			g.Expect(err).NotTo(HaveOccurred())
+			retained, err := db.RetainProtectedHistoryArtifact(
+				ctx,
+				protectedhistory.CreateRetentionRequest{
+					OrganizationID: deps.orgID,
+					Scope: protectedhistory.Scope{
+						OrganizationID:      deps.orgID.String(),
+						DeploymentTargetIDs: []string{targetID.String()},
+					},
+					IssuerUserAccountID:   actorID,
+					ReviewerUserAccountID: actorID,
+					SingleReviewerPilot:   pilotConfig,
+					IdempotencyKey:        "single-reviewer-" + uuid.NewString(),
+				},
+				newProtectedHistoryMemoryObjectStore(),
+				capturedAt,
+			)
+			if !testCase.expectSuccess {
+				g.Expect(err).To(MatchError(ContainSubstring(
+					"protected-history issuer and distinct reviewer are required",
+				)))
+				g.Expect(retained).To(BeNil())
+				return
+			}
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(retained.GovernanceExceptionKey).To(Equal(pilotexception.Key))
+			g.Expect(retained.GovernanceExceptionReference).To(Equal(
+				"owner-approval:choice-tp-dev-20260903",
+			))
+		})
+	}
 }
 
 func TestProtectedHistoryArtifactReadsAreOrganizationBoundAndNeverRewriteMetadata(t *testing.T) {

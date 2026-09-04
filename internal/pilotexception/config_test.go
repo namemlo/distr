@@ -40,10 +40,13 @@ func TestConfigScopesExceptionToOneAdopterPilot(t *testing.T) {
 		organizationID, environmentID, []uuid.UUID{targetID}, actorID, uuid.New(), true,
 	)).To(BeNil())
 	g.Expect(config.ProtectedHistoryEvidence(
-		organizationID, nil, []string{targetID.String()}, actorID, actorID,
+		organizationID, environmentID, nil, []string{targetID.String()}, actorID, actorID,
 	)).NotTo(BeNil())
 	g.Expect(config.ProtectedHistoryEvidence(
-		organizationID, []string{uuid.NewString()}, []string{targetID.String()}, actorID, actorID,
+		organizationID, uuid.New(), nil, []string{targetID.String()}, actorID, actorID,
+	)).To(BeNil())
+	g.Expect(config.ProtectedHistoryEvidence(
+		organizationID, environmentID, []string{uuid.NewString()}, []string{targetID.String()}, actorID, actorID,
 	)).To(BeNil())
 }
 

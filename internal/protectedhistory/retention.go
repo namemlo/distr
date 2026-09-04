@@ -46,6 +46,7 @@ type CreateRetentionRequest struct {
 	IssuerUserAccountID   uuid.UUID
 	ReviewerUserAccountID uuid.UUID
 	GovernanceException   *pilotexception.Evidence
+	SingleReviewerPilot   pilotexception.Config
 	IdempotencyKey        string
 }
 
@@ -175,6 +176,10 @@ func ValidateRetention(retained RetainedArtifact) error {
 	case retained.IssuerUserAccountID == retained.ReviewerUserAccountID &&
 		!retentionHasValidSingleReviewerException(retained):
 		return errors.New("issuer and reviewer user accounts must be distinct")
+	case retained.IssuerUserAccountID == retained.ReviewerUserAccountID &&
+		(len(retained.Scope.CustomerOrganizationIDs) != 0 ||
+			len(retained.Scope.DeploymentTargetIDs) != 1):
+		return errors.New("single-reviewer governance exception requires exactly one deployment target")
 	case retained.IssuerUserAccountID != retained.ReviewerUserAccountID &&
 		(retained.GovernanceExceptionKey != "" || retained.GovernanceExceptionReference != ""):
 		return errors.New("governance exception is only valid for a single reviewer")

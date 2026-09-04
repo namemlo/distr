@@ -2371,16 +2371,16 @@ Use one entry per pull request:
 
 - Status: Implemented in an isolated worktree with focused local verification; no live environment or client database is contacted.
 - Upstream base: `ee3f33f7` integrated release checkpoint.
-- Feature flags: Adds default-off `scoped_single_reviewer_pilot` with required exact organization, environment, target, and owner-approval reference configuration.
-- User-facing behavior: One normally authorized actor may approve their own one-target pilot deployment and retain target-only protected history as issuer/reviewer; every exception is explicitly labelled.
-- Database changes: Migration 171 adds nullable append-only exception evidence, checksum/audit binding, schema-171 export support, and downgrade refusal after use.
+- Feature flags: Adds default-off, explicit-only `scoped_single_reviewer_pilot` with required exact organization, environment, target, and owner-approval reference configuration; the `all` wildcard excludes it.
+- User-facing behavior: One normally authorized actor may approve their own one-target pilot deployment and retain target-only protected history as issuer/reviewer only while the target's active assignment matches the configured environment; every exception is explicitly labelled.
+- Database changes: Migration 171 adds nullable append-only exception evidence, checksum/audit binding, target-only database enforcement, schema-171 export support, downgrade refusal after use, and clean migration-metadata restoration after a guarded refusal.
 - API changes: Approval-decision and protected-history responses add optional exception key/reference fields.
 - UI changes: None.
 - Agent protocol changes: None.
 - Documentation: Adds ADR-0087, generic Post-PR-100 notes, and a separately marked adopter configuration example.
 - Tests: Focused configuration, governance, protected-history, API/mapping, handler, database, and migration tests.
 - Upstream contribution notes: Core behavior and names are community-neutral; no adopter, CI, registry, service, or database assumption is embedded.
-- Compatibility notes: Four-eyes remains the default. Existing rows/checksums are unchanged, and malformed, disabled, multi-target, customer-wide, wrong-scope, unauthorized, or non-approve use fails closed.
+- Compatibility notes: Four-eyes remains the default. Existing rows/checksums are unchanged, and malformed, disabled, wildcard-only, multi-target, customer-wide, inactive/wrong-environment, wrong-scope, unauthorized, or non-approve use fails closed.
 
 ### Post-PR-101 - Protocol-v2 campaign failed-work-only retry
 

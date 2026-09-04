@@ -25,7 +25,7 @@ func TestMigration171BindsPilotExceptionToAppendOnlyEvidence(t *testing.T) {
 		"governance_exception_reference",
 		"protectedhistoryartifact_review_governance_check",
 		"approvaldecision_governance_exception_check",
-		"issuer_useraccount_id = reviewer_useraccount_id\n      and governance_exception_key is not null\n      and governance_exception_reference is not null",
+		"issuer_useraccount_id = reviewer_useraccount_id\n      and cardinality(customer_organization_ids) = 0\n      and cardinality(deployment_target_ids) = 1\n      and governance_exception_key is not null",
 		"decision = 'approve'\n      and governance_exception_key is not null\n      and governance_exception_reference is not null",
 		"protected_history_artifact_audit_guard",
 		"is not distinct from new.governance_exception_key",

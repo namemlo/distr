@@ -46,6 +46,8 @@ func TestMigration171RejectsIncompleteProtectedHistoryExceptionEvidence(t *testi
 				legacy.ID,
 				uuid.New(),
 				uuid.New(),
+				nil,
+				[]uuid.UUID{uuid.New()},
 				testCase.key,
 				testCase.reference,
 				"migration-171-incomplete-"+uuid.NewString(),
@@ -140,6 +142,8 @@ func TestMigration171AcceptsValidExceptionAndRefusesDown(t *testing.T) {
 		legacy.ID,
 		artifactID,
 		auditEventID,
+		nil,
+		[]uuid.UUID{uuid.New()},
 		"scoped-single-reviewer-pilot",
 		"approval:pilot-001",
 		"migration-171-valid-"+uuid.NewString(),
@@ -190,6 +194,92 @@ SELECT count(*) FROM ProtectedHistoryArtifact WHERE id = $1
 	g.Expect(retainedCount).To(Equal(1))
 }
 
+func TestMigration171RejectsSingleReviewerOutsideOneTargetScope(t *testing.T) {
+	database := newMigrationTestDatabase(t)
+	database.migrateTo(t, 170)
+	legacy := insertMigration170ProtectedHistoryFixture(t, database)
+	database.migrateTo(t, 171)
+
+	for _, testCase := range []struct {
+		name        string
+		customerIDs []uuid.UUID
+		targetIDs   []uuid.UUID
+	}{
+		{name: "customer only", customerIDs: []uuid.UUID{uuid.New()}},
+		{
+			name:        "customer and target",
+			customerIDs: []uuid.UUID{uuid.New()},
+			targetIDs:   []uuid.UUID{uuid.New()},
+		},
+		{name: "multiple targets", targetIDs: []uuid.UUID{uuid.New(), uuid.New()}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			tx, err := database.pool.Begin(context.Background())
+			NewWithT(t).Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = tx.Rollback(context.Background()) }()
+
+			err = insertMigration171ProtectedHistoryCandidate(
+				context.Background(), tx, legacy.ID, uuid.New(), uuid.New(),
+				testCase.customerIDs, testCase.targetIDs,
+				"scoped-single-reviewer-pilot", "approval:pilot-001",
+				"migration-171-scope-"+uuid.NewString(),
+			)
+			expectMigration171CheckViolation(
+				t, err, "protectedhistoryartifact_review_governance_check",
+			)
+		})
+	}
+}
+
+func TestRunnerRestoresCleanStatusAfterMigration171GuardRefusal(t *testing.T) {
+	g := NewWithT(t)
+	database := newRunnerTestDatabase(t)
+	database.migrateTo(t, 171)
+	ctx := context.Background()
+	organizationID := uuid.New()
+	actorID := uuid.New()
+	_, err := database.pool.Exec(ctx, `
+INSERT INTO Organization (id, name) VALUES ($1, $2);
+INSERT INTO UserAccount (id, email) VALUES ($3, $4);
+ALTER TABLE ApprovalDecision
+  DROP CONSTRAINT approvaldecision_request_fk,
+  DROP CONSTRAINT approvaldecision_requirement_fk;
+INSERT INTO ApprovalDecision (
+  id, organization_id, approval_request_id, approval_requirement_id,
+  actor_useraccount_id, decision, comment, request_revision, idempotency_key,
+  governance_exception_key, governance_exception_reference
+) VALUES (
+  $5, $1, $6, $7, $3, 'APPROVE', 'Migration 171 runner guard', 1, $8,
+  'scoped-single-reviewer-pilot', 'approval:pilot-001'
+)`,
+		organizationID, "Migration 171 runner "+uuid.NewString(),
+		actorID, "migration-171-runner-"+uuid.NewString()+"@example.invalid",
+		uuid.New(), uuid.New(), uuid.New(), "migration-171-runner-"+uuid.NewString(),
+	)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	err = database.runner.Run(ctx, RunOptions{Target: uintPointer(170)})
+	g.Expect(err).To(MatchError(ContainSubstring(
+		"refusing migration 171 rollback while pilot governance exception evidence exists",
+	)))
+	status, statusErr := database.runner.Status(ctx)
+	g.Expect(statusErr).NotTo(HaveOccurred())
+	g.Expect(status).To(Equal(SchemaStatus{Version: 171, Dirty: false}))
+}
+
+func TestScopedSingleReviewerDowngradeGuardRejected(t *testing.T) {
+	g := NewWithT(t)
+	for _, message := range []string{
+		"refusing migration 171 rollback while pilot governance exception evidence exists",
+		"refusing migration 171 rollback while schema-171 protected-history evidence exists",
+	} {
+		g.Expect(scopedSingleReviewerDowngradeGuardRejected(errors.New("wrapped: " + message))).To(BeTrue())
+	}
+	g.Expect(scopedSingleReviewerDowngradeGuardRejected(errors.New(
+		"downgrade crossing 138 is forbidden after timestamp retention",
+	))).To(BeFalse())
+}
+
 func TestMigration171LegacyProtectedHistoryChecksumRoundTrip(t *testing.T) {
 	g := NewWithT(t)
 	database := newMigrationTestDatabase(t)
@@ -210,6 +300,8 @@ func insertMigration171ProtectedHistoryCandidate(
 	sourceID uuid.UUID,
 	artifactID uuid.UUID,
 	auditEventID uuid.UUID,
+	customerOrganizationIDs []uuid.UUID,
+	deploymentTargetIDs []uuid.UUID,
 	governanceExceptionKey any,
 	governanceExceptionReference any,
 	idempotencyKey string,
@@ -224,8 +316,8 @@ WITH source AS (
     source.organization_id,
     source.schema,
     source.source_schema_version,
-    source.customer_organization_ids,
-    source.deployment_target_ids,
+    $7::UUID[] AS customer_organization_ids,
+    $8::UUID[] AS deployment_target_ids,
     source.artifact_id,
     source.records_root,
     source.record_count,
@@ -244,8 +336,8 @@ WITH source AS (
         source.organization_id,
         source.schema,
         source.source_schema_version,
-        source.customer_organization_ids,
-        source.deployment_target_ids,
+        $7,
+        $8,
         source.artifact_id,
         source.records_root,
         source.record_count,
@@ -267,8 +359,8 @@ WITH source AS (
     COALESCE(
       protected_history_request_checksum(
         source.organization_id,
-        source.customer_organization_ids,
-        source.deployment_target_ids,
+        $7,
+        $8,
         source.issuer_useraccount_id,
         source.issuer_useraccount_id,
         $4,
@@ -309,6 +401,8 @@ FROM candidate
 		governanceExceptionKey,
 		governanceExceptionReference,
 		idempotencyKey,
+		customerOrganizationIDs,
+		deploymentTargetIDs,
 	)
 	return err
 }

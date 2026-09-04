@@ -2,6 +2,8 @@
 
 Experimental features are enabled with `DISTR_EXPERIMENTAL_FEATURE_FLAGS`. Multiple flags can be separated by commas, spaces, semicolons, tabs, or newlines. Registered flags are off by default, and unknown keys fail Hub startup validation.
 
+`all` enables ordinary registered flags. Sensitive explicit-only flags are excluded and must be named directly; currently this applies to `scoped_single_reviewer_pilot`.
+
 ## Observability Matrix
 
 | Flag                        | Enables                                                                                  | Still inactive when disabled                                                                 |
@@ -75,6 +77,10 @@ DISTR_EXPERIMENTAL_FEATURE_FLAGS=operator_control_plane_v2,executor_protocol_v2
 Do not use `all` in a shared or production environment during this program because it includes both registered
 control-plane flags. Removing the umbrella key and restarting the Hub makes executor protocol v2 ineffective
 without removing its configured key. It also makes the pre-mutation hold ineffective.
+
+The scoped single-reviewer pilot is excluded from `all`. Enabling it requires the exact key plus its organization,
+environment, deployment-target, and approval-reference settings; see
+`docs/fork/CHOICE_TP_SINGLE_REVIEWER_PILOT.md`.
 
 The pre-mutation hold is an isolated acceptance-test control, not a production policy. Its exact non-secret
 binding is supplied by `DISTR_EXTERNAL_EXECUTION_PRE_MUTATION_HOLD_JSON`; its
