@@ -289,15 +289,24 @@ func (w *Worker) executeStep(
 		} else if errors.Is(triggerErr, externalexecution.ErrPreMutationHoldWaiting) {
 			external = triggered
 			webhookInvoked = false
+			var activeHold *types.ExternalExecutionPreMutationHold
+			if external != nil {
+				activeHold = external.ActivePreMutationHold
+			}
+			if external == nil || activeHold == nil {
+				runErr = fmt.Errorf("durable pre-mutation hold binding is unavailable")
+			}
 			sequence++
-			runErr = w.record(
-				actionCtx, lease, step, sequence, types.StepRunEventTypeProgress,
-				external.LastMessage, nil,
-			)
+			if runErr == nil {
+				runErr = w.record(
+					actionCtx, lease, step, sequence, types.StepRunEventTypeProgress,
+					external.LastMessage, nil,
+				)
+			}
 			if runErr == nil {
 				resolution, waitErr := externalexecution.WaitForPreMutationHoldRelease(
 					actionCtx,
-					*w.options.PreMutationHold,
+					*activeHold,
 					w.options.PreMutationHoldReleaseFile,
 					w.options.PreMutationHoldPollInterval,
 				)
@@ -308,7 +317,7 @@ func (w *Worker) executeStep(
 						actionCtx,
 						types.ResolveExternalExecutionPreMutationHoldRequest{
 							OrganizationID: lease.OrganizationID, ExternalExecutionID: external.ID,
-							Control: *w.options.PreMutationHold, Resolution: resolution,
+							Control: *activeHold, Resolution: resolution,
 						},
 					)
 					if runErr == nil {

@@ -44,8 +44,14 @@ session. Do not put credentials or secret values in either document.
 - The Hub keeps heartbeating its task lease, so the existing target/component lock
   remains active and a `REJECT_NEW` request for that resource conflicts.
 - No webhook or Jenkins adapter is invoked while waiting.
+- The durable WAITING record is checked before every dispatch claim and callback.
+  Restarting with a missing or different in-memory binding cannot dispatch the
+  held execution, and callbacks remain rejected until the hold is consumed.
 - A malformed or non-matching release file is ignored until corrected or expiry.
 - Expiry automatically resolves the hold as `TIMED_OUT` and fails the execution.
+- If the original worker is lost and the release bundle is subsequently blocked,
+  a recovery-only Hub lease processes the expired held step so its task and
+  target/component locks are released through the normal failed-step path.
 - Audit contains armed, waiting, resolution, and consumed events with
   `adapterInvoked=false`.
 - The consumed event automatically disables that exact control. A retry proceeds
@@ -76,9 +82,10 @@ path so the Hub never observes a partial document.
 
 ## Compatibility and rollback
 
-No schema, public API, agent protocol, adapter contract, or existing disabled-path
-behavior changes. Remove `external_execution_pre_mutation_hold` from the flag list
-to disable all configured holds. Audit and execution history are never removed.
+No schema, public API, agent protocol, or adapter contract changes. Removing
+`external_execution_pre_mutation_hold` prevents new holds from being armed, but an
+already persisted WAITING hold remains fail-closed until release or expiry. Audit
+and execution history are never removed.
 
 ## Verification
 

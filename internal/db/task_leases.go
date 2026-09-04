@@ -48,6 +48,14 @@ type taskLeaseCandidate struct {
 	Status             types.TaskStatus `db:"status"`
 }
 
+type expiredPreMutationHoldLeaseCandidate struct {
+	TaskID             uuid.UUID        `db:"id"`
+	OrganizationID     uuid.UUID        `db:"organization_id"`
+	DeploymentTargetID uuid.UUID        `db:"deployment_target_id"`
+	Status             types.TaskStatus `db:"status"`
+	StepRunID          uuid.UUID        `db:"step_run_id"`
+}
+
 type taskLeaseStepCandidate struct {
 	StepRunID         uuid.UUID           `db:"step_run_id"`
 	StepKey           string              `db:"step_key"`
@@ -87,6 +95,14 @@ func LeaseAgentTask(ctx context.Context, request types.LeaseAgentTaskRequest) (*
 func LeaseHubTask(ctx context.Context) (*types.TaskLease, error) {
 	var lease *types.TaskLease
 	err := RunTx(ctx, func(ctx context.Context) error {
+		recoveryCandidate, err := getExpiredPreMutationHoldLeaseCandidateForUpdate(ctx)
+		if err == nil {
+			lease, err = leaseExpiredPreMutationHoldCandidate(ctx, *recoveryCandidate)
+			return err
+		}
+		if !errors.Is(err, apierrors.ErrNotFound) {
+			return err
+		}
 		candidate, err := getNextHubTaskLeaseCandidateForUpdate(ctx)
 		if errors.Is(err, apierrors.ErrNotFound) {
 			return nil
@@ -100,6 +116,63 @@ func LeaseHubTask(ctx context.Context) (*types.TaskLease, error) {
 	if err != nil {
 		return nil, err
 	}
+	return lease, nil
+}
+
+func leaseExpiredPreMutationHoldCandidate(
+	ctx context.Context,
+	candidate expiredPreMutationHoldLeaseCandidate,
+) (*types.TaskLease, error) {
+	attempt, err := releaseExpiredTaskLeasesAndNextAttempt(
+		ctx, candidate.TaskID, candidate.OrganizationID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	ready, err := getReadyTaskLeaseStepCandidates(
+		ctx, candidate.TaskID, candidate.OrganizationID, types.TaskExecutorTypeHub.ExecutionLocation(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, step := range ready {
+		if step.StepRunID == candidate.StepRunID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("expired pre-mutation hold step is not ready for recovery")
+	}
+	token, tokenHash, err := newTaskLeaseToken()
+	if err != nil {
+		return nil, err
+	}
+	leaseID, err := insertTaskLease(
+		ctx,
+		candidate.OrganizationID,
+		candidate.DeploymentTargetID,
+		candidate.TaskID,
+		types.TaskExecutorTypeHub,
+		tokenHash,
+		attempt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	lease, err := getTaskLeaseWithoutSteps(ctx, leaseID, candidate.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	lease.LeaseToken = token
+	step, err := getTaskLeaseStep(
+		ctx, lease.Task, types.TaskExecutorTypeHub.ExecutionLocation(), candidate.StepRunID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	lease.Steps = []types.TaskLeaseStep{*step}
 	return lease, nil
 }
 
@@ -454,6 +527,81 @@ func getNextHubTaskLeaseCandidateForUpdate(ctx context.Context) (*taskLeaseCandi
 	return &candidate, nil
 }
 
+func getExpiredPreMutationHoldLeaseCandidateForUpdate(
+	ctx context.Context,
+) (*expiredPreMutationHoldLeaseCandidate, error) {
+	db := internalctx.GetDb(ctx)
+	rows, err := db.Query(ctx, `
+		SELECT
+			t.id,
+			t.organization_id,
+			t.deployment_target_id,
+			t.status,
+			ee.step_run_id
+		FROM Task t
+		JOIN ExternalExecution ee
+			ON ee.task_id = t.id
+			AND ee.organization_id = t.organization_id
+		JOIN StepRun sr
+			ON sr.id = ee.step_run_id
+			AND sr.task_id = t.id
+			AND sr.organization_id = t.organization_id
+		JOIN ControlPlaneAuditEvent waiting
+			ON waiting.organization_id = ee.organization_id
+			AND waiting.deployment_plan_id = ee.deployment_plan_id
+			AND waiting.deployment_target_id = ee.deployment_target_id
+			AND waiting.deployment_plan_checksum = ee.plan_checksum
+			AND waiting.event_type = @waitingEventType
+			AND waiting.payload ->> 'externalExecutionId' = ee.id::text
+		WHERE t.protocol_version = 'v1'
+			AND t.status = @runningTaskStatus
+			AND ee.status = @queuedExecutionStatus
+			AND sr.status IN (@pendingStepStatus, @runningStepStatus)
+			AND (waiting.payload ->> 'expiresAt')::timestamptz <= now()
+			AND NOT EXISTS (
+				SELECT 1
+				FROM TaskLease active_lease
+				WHERE active_lease.task_id = t.id
+					AND active_lease.organization_id = t.organization_id
+					AND active_lease.released_at IS NULL
+					AND active_lease.expires_at > now()
+			)
+			AND NOT EXISTS (
+				SELECT 1
+				FROM ControlPlaneAuditEvent consumed
+				WHERE consumed.organization_id = waiting.organization_id
+					AND consumed.deployment_plan_id = waiting.deployment_plan_id
+					AND consumed.deployment_target_id = waiting.deployment_target_id
+					AND consumed.deployment_plan_checksum = waiting.deployment_plan_checksum
+					AND consumed.event_type = @consumedEventType
+					AND consumed.payload ->> 'controlChecksum' = waiting.payload ->> 'controlChecksum'
+			)
+		ORDER BY waiting.sequence, t.queue_order, t.id
+		LIMIT 1
+		FOR UPDATE OF t SKIP LOCKED`, pgx.NamedArgs{
+		"waitingEventType":      externalExecutionPreMutationHoldWaitingEventType,
+		"consumedEventType":     externalExecutionPreMutationHoldConsumedEventType,
+		"runningTaskStatus":     types.TaskStatusRunning,
+		"queuedExecutionStatus": types.ExternalExecutionStatusQueued,
+		"pendingStepStatus":     types.StepRunStatusPending,
+		"runningStepStatus":     types.StepRunStatusRunning,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not query expired pre-mutation hold recovery candidate: %w", err)
+	}
+	candidate, err := pgx.CollectExactlyOneRow(
+		rows,
+		pgx.RowToStructByName[expiredPreMutationHoldLeaseCandidate],
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apierrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("could not collect expired pre-mutation hold recovery candidate: %w", err)
+	}
+	return &candidate, nil
+}
+
 func lockTaskReleaseBundlePublishedForLease(ctx context.Context, taskID, orgID uuid.UUID) (bool, error) {
 	db := internalctx.GetDb(ctx)
 	var status types.ReleaseBundleStatus
@@ -731,6 +879,19 @@ func updateTaskLeaseHeartbeat(ctx context.Context, leaseID, orgID uuid.UUID) err
 }
 
 func getTaskLease(ctx context.Context, leaseID, orgID uuid.UUID) (*types.TaskLease, error) {
+	lease, err := getTaskLeaseWithoutSteps(ctx, leaseID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	steps, err := getTaskLeaseSteps(ctx, lease.Task, lease.ExecutorType.ExecutionLocation())
+	if err != nil {
+		return nil, err
+	}
+	lease.Steps = steps
+	return lease, nil
+}
+
+func getTaskLeaseWithoutSteps(ctx context.Context, leaseID, orgID uuid.UUID) (*types.TaskLease, error) {
 	db := internalctx.GetDb(ctx)
 	rows, err := db.Query(ctx,
 		`SELECT `+taskLeaseOutputExpr+`
@@ -760,11 +921,6 @@ func getTaskLease(ctx context.Context, leaseID, orgID uuid.UUID) (*types.TaskLea
 		return nil, err
 	}
 	lease.Task = *task
-	steps, err := getTaskLeaseSteps(ctx, lease.Task, lease.ExecutorType.ExecutionLocation())
-	if err != nil {
-		return nil, err
-	}
-	lease.Steps = steps
 	return &lease, nil
 }
 
@@ -777,28 +933,56 @@ func getTaskLeaseSteps(ctx context.Context, task types.Task, executionLocation s
 	}
 	steps := make([]types.TaskLeaseStep, 0, len(candidates))
 	for _, candidate := range candidates {
-		step := types.TaskLeaseStep{
-			StepRunID:     candidate.StepRunID,
-			StepKey:       candidate.StepKey,
-			Name:          candidate.Name,
-			ActionType:    candidate.ActionType,
-			ActionName:    candidate.ActionName,
-			InputBindings: candidate.InputBindings,
-			SortOrder:     candidate.SortOrder,
-		}
-		if step.InputBindings == nil {
-			step.InputBindings = map[string]any{}
-		}
-		step.ActionVersion = types.AgentActionVersionV1
-		secretReferences, err := resolveTaskLeaseStepSecrets(ctx, task, &step)
+		step, err := materializeTaskLeaseStep(ctx, task, candidate)
 		if err != nil {
 			return nil, err
 		}
-		step.SecretReferences = secretReferences
-		step.IdempotencyKey = taskLeaseStepIdempotencyKey(task, step)
-		steps = append(steps, step)
+		steps = append(steps, *step)
 	}
 	return steps, nil
+}
+
+func getTaskLeaseStep(
+	ctx context.Context,
+	task types.Task,
+	executionLocation string,
+	stepRunID uuid.UUID,
+) (*types.TaskLeaseStep, error) {
+	candidates, err := getReadyTaskLeaseStepCandidates(
+		ctx, task.ID, task.OrganizationID, executionLocation,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		if candidate.StepRunID == stepRunID {
+			return materializeTaskLeaseStep(ctx, task, candidate)
+		}
+	}
+	return nil, fmt.Errorf("expired pre-mutation hold recovery lease is missing its held step")
+}
+
+func materializeTaskLeaseStep(
+	ctx context.Context,
+	task types.Task,
+	candidate taskLeaseStepCandidate,
+) (*types.TaskLeaseStep, error) {
+	step := types.TaskLeaseStep{
+		StepRunID: candidate.StepRunID, StepKey: candidate.StepKey, Name: candidate.Name,
+		ActionType: candidate.ActionType, ActionName: candidate.ActionName,
+		InputBindings: candidate.InputBindings, SortOrder: candidate.SortOrder,
+		ActionVersion: types.AgentActionVersionV1,
+	}
+	if step.InputBindings == nil {
+		step.InputBindings = map[string]any{}
+	}
+	secretReferences, err := resolveTaskLeaseStepSecrets(ctx, task, &step)
+	if err != nil {
+		return nil, err
+	}
+	step.SecretReferences = secretReferences
+	step.IdempotencyKey = taskLeaseStepIdempotencyKey(task, step)
+	return &step, nil
 }
 
 func resolveTaskLeaseStepSecrets(
