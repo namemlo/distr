@@ -52,4 +52,6 @@ func TestBaselineAdoptionRouteRequiresScopedPlanExecutionAuthority(t *testing.T)
 	g.Expect(text).To(ContainSubstring("types.ActionPlanExecute"))
 	g.Expect(text).To(ContainSubstring("RequireEnrollment: true"))
 	g.Expect(text).To(ContainSubstring("middleware.BlockSuperAdmin"))
+	g.Expect(text).To(ContainSubstring("input.ReviewAuthorize"))
+	g.Expect(text).To(ContainSubstring("admissionScopedAuthorization"))
 }

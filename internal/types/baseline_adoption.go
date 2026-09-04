@@ -25,15 +25,20 @@ const (
 )
 
 type CreateBaselineAdoptionInput struct {
-	OrganizationID                 uuid.UUID
-	DeploymentPlanID               uuid.UUID
-	ActorUserAccountID             uuid.UUID
-	IdempotencyKey                 string
-	Reason                         string
-	ExpectedPlanChecksum           string
-	ExpectedProductReleaseChecksum string
-	ExpectedTargetConfigChecksum   string
-	Components                     []BaselineAdoptionComponentInput
+	OrganizationID                  uuid.UUID
+	DeploymentPlanID                uuid.UUID
+	ActorUserAccountID              uuid.UUID
+	AdmissionEvaluationID           uuid.UUID
+	AdmissionDecisionChecksum       string
+	ReviewAdmissionDecisionID       uuid.UUID
+	ReviewAdmissionDecisionChecksum string
+	IdempotencyKey                  string
+	Reason                          string
+	ExpectedPlanChecksum            string
+	ExpectedProductReleaseChecksum  string
+	ExpectedTargetConfigChecksum    string
+	Components                      []BaselineAdoptionComponentInput
+	ReviewAuthorize                 ReviewAdmissionExecutionAuthorizer
 }
 
 type BaselineAdoptionComponentInput struct {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -177,14 +178,29 @@ func createBaselineAdoptionHandler() http.HandlerFunc {
 			return
 		}
 
-		adoption, err := db.AdoptDeploymentPlanBaseline(ctx, request.ToTypes(
-			organizationID, deploymentPlanID, authentication.CurrentUserID(),
-		))
+		input := request.ToTypes(organizationID, deploymentPlanID, authentication.CurrentUserID())
+		input.ReviewAuthorize = func(
+			authorizationContext context.Context,
+			evidence types.ReviewAdmissionExecutionContext,
+		) error {
+			return admissionScopedAuthorization(authorizationContext, types.AdmissionAuthorizationContext{
+				OrganizationID:     evidence.OrganizationID,
+				ActorUserAccountID: evidence.ActorUserAccountID,
+				DeploymentPlanID:   evidence.DeploymentPlanID,
+				EnvironmentID:      evidence.EnvironmentID,
+				DeploymentUnitID:   evidence.DeploymentUnitID,
+				Action:             string(types.ActionPlanExecute),
+				DecisionAt:         evidence.DecisionAt,
+			})
+		}
+		adoption, err := db.AdoptDeploymentPlanBaseline(ctx, input)
 		switch {
 		case errors.Is(err, apierrors.ErrNotFound):
 			http.NotFound(w, r)
 		case errors.Is(err, apierrors.ErrBadRequest):
 			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.Is(err, apierrors.ErrForbidden):
+			http.Error(w, "insufficient permissions", http.StatusForbidden)
 		case errors.Is(err, apierrors.ErrConflict), errors.Is(err, apierrors.ErrAlreadyExists):
 			http.Error(w, err.Error(), http.StatusConflict)
 		case err != nil:

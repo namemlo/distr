@@ -383,7 +383,7 @@ func createTasksForDeploymentPlan(
 			if err != nil {
 				return err
 			}
-			if err := requireCurrentReviewAdmissionGo(ctx, request, *plan, approval); err != nil {
+			if _, err := requireCurrentReviewAdmissionGo(ctx, request, *plan, approval); err != nil {
 				return err
 			}
 		}

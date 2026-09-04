@@ -389,49 +389,58 @@ func currentReviewAdmissionEvaluation(
 		(latestObservedAt.IsZero() || !evaluation.EvaluatedAt.Before(latestObservedAt))
 }
 
+type currentReviewAdmissionAuthorization struct {
+	ApprovalRequestID               uuid.UUID
+	ApprovalRequestRevision         int64
+	AdmissionEvaluationID           uuid.UUID
+	AdmissionDecisionChecksum       string
+	ReviewAdmissionDecisionID       uuid.UUID
+	ReviewAdmissionDecisionChecksum string
+}
+
 func requireCurrentReviewAdmissionGo(
 	ctx context.Context,
 	request types.CreateTasksForDeploymentPlanRequest,
 	plan types.DeploymentPlan,
 	approval currentDeploymentPlanApproval,
-) error {
+) (currentReviewAdmissionAuthorization, error) {
 	if err := lockReviewAdmissionPlan(
 		ctx, request.OrganizationID, request.DeploymentPlanID,
 	); err != nil {
-		return err
+		return currentReviewAdmissionAuthorization{}, err
 	}
 	decision, err := getLatestReviewAdmissionDecisionForUpdate(
 		ctx, request.OrganizationID, request.DeploymentPlanID,
 	)
 	if err != nil {
 		if errors.Is(err, apierrors.ErrNotFound) {
-			return apierrors.NewConflict("deployment plan has no persistent GO review decision")
+			return currentReviewAdmissionAuthorization{}, apierrors.NewConflict("deployment plan has no persistent GO review decision")
 		}
-		return err
+		return currentReviewAdmissionAuthorization{}, err
 	}
 	now, err := admissionDatabaseTime(ctx)
 	if err != nil {
-		return err
+		return currentReviewAdmissionAuthorization{}, err
 	}
 	observed, err := loadCurrentPlanObservedStateMaterial(
 		ctx, request.OrganizationID, request.DeploymentPlanID, now, true,
 	)
 	if err != nil {
-		return err
+		return currentReviewAdmissionAuthorization{}, err
 	}
 	if !observed.Complete {
-		return apierrors.NewConflict("deployment plan current observed state set is incomplete")
+		return currentReviewAdmissionAuthorization{}, apierrors.NewConflict("deployment plan current observed state set is incomplete")
 	}
 	if err := reviewadmission.ValidateCurrentGo(
 		*decision, plan.CanonicalChecksum, observed.Checksum, now,
 	); err != nil {
-		return apierrors.NewConflict(err.Error())
+		return currentReviewAdmissionAuthorization{}, apierrors.NewConflict(err.Error())
 	}
 	boundAdmission, err := getReviewAdmissionEvaluationMaterialAt(
 		ctx, request.OrganizationID, request.DeploymentPlanID, decision.CreatedAt,
 	)
 	if err != nil {
-		return apierrors.NewConflict("GO review decision has no bound admission evaluation")
+		return currentReviewAdmissionAuthorization{}, apierrors.NewConflict("GO review decision has no bound admission evaluation")
 	}
 	if boundAdmission.ApprovalRequestID == nil || boundAdmission.ApprovalRequestRevision == nil ||
 		decision.AuthorizationEvidence != reviewAuthorizationEvidence(
@@ -439,31 +448,40 @@ func requireCurrentReviewAdmissionGo(
 			decision.CreatedAt, boundAdmission.ID, boundAdmission.DecisionChecksum,
 			*boundAdmission.ApprovalRequestID, *boundAdmission.ApprovalRequestRevision,
 		) {
-		return apierrors.NewConflict("GO authorization evidence is not bound to its admission and approval")
+		return currentReviewAdmissionAuthorization{}, apierrors.NewConflict("GO authorization evidence is not bound to its admission and approval")
 	}
 	currentAdmission, err := getLatestReviewAdmissionEvaluationMaterial(
 		ctx, request.OrganizationID, request.DeploymentPlanID,
 	)
 	if err != nil {
-		return apierrors.NewConflict("deployment plan has no current ADMIT evaluation")
+		return currentReviewAdmissionAuthorization{}, apierrors.NewConflict("deployment plan has no current ADMIT evaluation")
 	}
 	if !currentReviewAdmissionEvaluation(*currentAdmission, plan, observed.LatestReceivedAt, true) {
-		return apierrors.NewConflict("latest deployment admission is stale or not ADMIT")
+		return currentReviewAdmissionAuthorization{}, apierrors.NewConflict("latest deployment admission is stale or not ADMIT")
 	}
 	if err := validateExactReviewAdmissionBinding(
 		*currentAdmission, request.AdmissionEvaluationID, request.AdmissionDecisionChecksum,
 		approval.ID, approval.Revision,
 	); err != nil {
-		return err
+		return currentReviewAdmissionAuthorization{}, err
 	}
 	if request.ReviewAuthorize == nil {
-		return apierrors.ErrForbidden
+		return currentReviewAdmissionAuthorization{}, apierrors.ErrForbidden
 	}
-	return request.ReviewAuthorize(ctx, types.ReviewAdmissionExecutionContext{
+	if err := request.ReviewAuthorize(ctx, types.ReviewAdmissionExecutionContext{
 		OrganizationID: request.OrganizationID, DeploymentPlanID: request.DeploymentPlanID,
 		ActorUserAccountID: request.ActorUserAccountID, EnvironmentID: plan.EnvironmentID,
 		DeploymentUnitID: plan.DeploymentUnitID, DecisionAt: now,
-	})
+	}); err != nil {
+		return currentReviewAdmissionAuthorization{}, err
+	}
+	return currentReviewAdmissionAuthorization{
+		ApprovalRequestID: approval.ID, ApprovalRequestRevision: approval.Revision,
+		AdmissionEvaluationID:           currentAdmission.ID,
+		AdmissionDecisionChecksum:       currentAdmission.DecisionChecksum,
+		ReviewAdmissionDecisionID:       decision.ID,
+		ReviewAdmissionDecisionChecksum: decision.CanonicalChecksum,
+	}, nil
 }
 
 func getReviewAdmissionEvaluationMaterialAt(

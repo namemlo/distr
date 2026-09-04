@@ -24,6 +24,14 @@ func TestCreateBaselineAdoptionRequestRequiresExactEvidence(t *testing.T) {
 	request = validBaselineAdoptionRequest()
 	request.Components = append(request.Components, request.Components[0])
 	g.Expect(request.Validate()).To(MatchError(ContainSubstring("duplicate")))
+
+	request = validBaselineAdoptionRequest()
+	request.AdmissionEvaluationID = uuid.Nil
+	g.Expect(request.Validate()).To(MatchError(ContainSubstring("admissionEvaluationId")))
+
+	request = validBaselineAdoptionRequest()
+	request.ReviewAdmissionDecisionChecksum = "sha256:not-a-checksum"
+	g.Expect(request.Validate()).To(MatchError(ContainSubstring("reviewAdmissionDecisionChecksum")))
 }
 
 func TestCreateBaselineAdoptionRequestRejectsSyntheticOrIncompleteMaterial(t *testing.T) {
@@ -59,11 +67,15 @@ func TestCreateBaselineAdoptionRequestKeepsObservedFactsIndependentFromReleaseFa
 
 func validBaselineAdoptionRequest() CreateBaselineAdoptionRequest {
 	return CreateBaselineAdoptionRequest{
-		IdempotencyKey:                 "baseline:2026-08-31",
-		Reason:                         "Adopt independently observed healthy runtime",
-		ExpectedPlanChecksum:           baselineAdoptionTestChecksum("1"),
-		ExpectedProductReleaseChecksum: baselineAdoptionTestChecksum("2"),
-		ExpectedTargetConfigChecksum:   baselineAdoptionTestChecksum("3"),
+		IdempotencyKey:                  "baseline:2026-08-31",
+		Reason:                          "Adopt independently observed healthy runtime",
+		AdmissionEvaluationID:           uuid.New(),
+		AdmissionDecisionChecksum:       baselineAdoptionTestChecksum("d"),
+		ReviewAdmissionDecisionID:       uuid.New(),
+		ReviewAdmissionDecisionChecksum: baselineAdoptionTestChecksum("e"),
+		ExpectedPlanChecksum:            baselineAdoptionTestChecksum("1"),
+		ExpectedProductReleaseChecksum:  baselineAdoptionTestChecksum("2"),
+		ExpectedTargetConfigChecksum:    baselineAdoptionTestChecksum("3"),
 		Components: []BaselineAdoptionComponentRequest{{
 			ComponentInstanceID:             uuid.New(),
 			ComponentKey:                    " api ",

@@ -740,6 +740,10 @@ describe('PlanDetailComponent', () => {
     expect(overlay.confirm.mock.calls[0][0].requiredConfirmInputText).toBe('sha256:canonical');
     expect(service.createBaselineAdoption).toHaveBeenCalledWith('plan-1', {
       reason: 'Adopt the independently verified existing runtime.',
+      admissionEvaluationId: 'admission-1',
+      admissionDecisionChecksum: 'sha256:admission',
+      reviewAdmissionDecisionId: 'review-1',
+      reviewAdmissionDecisionChecksum: 'sha256:decision',
       expectedPlanChecksum: 'sha256:canonical',
       expectedProductReleaseChecksum: 'sha256:product',
       expectedTargetConfigChecksum: 'sha256:config',
@@ -750,6 +754,17 @@ describe('PlanDetailComponent', () => {
     expect(result.textContent).toContain('Tasks 0');
     expect(result.textContent).toContain('locks 0');
     expect(result.textContent).toContain('executions 0');
+  });
+
+  it('does not offer baseline adoption without a current GO bound to a valid ADMIT', () => {
+    service.getReviewAdmissionMaterial.mockReturnValue(
+      of({...reviewMaterial, state: 'STALE', admissionValid: false, latestDecision: undefined})
+    );
+    const {fixture} = createComponent();
+    const buttons = Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>);
+    const button = buttons.find((candidate) => candidate.textContent?.includes('Adopt baseline'))!;
+
+    expect(button.disabled).toBe(true);
   });
 
   it('keeps previous-state creation available when the current plan is EXECUTED', async () => {

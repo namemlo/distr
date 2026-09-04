@@ -967,6 +967,10 @@ export interface OperatorBaselineAdoptionComponentRequest {
 
 export interface OperatorBaselineAdoptionRequest {
   reason: string;
+  admissionEvaluationId: string;
+  admissionDecisionChecksum: string;
+  reviewAdmissionDecisionId: string;
+  reviewAdmissionDecisionChecksum: string;
   expectedPlanChecksum: string;
   expectedProductReleaseChecksum: string;
   expectedTargetConfigChecksum: string;

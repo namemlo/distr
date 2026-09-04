@@ -72,6 +72,7 @@ type baselineAdoptionPlan struct {
 	PlanSchema                    string
 	ProtocolVersion               string
 	PlanChecksum                  string
+	EffectivePolicyChecksum       string
 	CanonicalPayload              []byte
 	SealedAt                      *time.Time
 	ProductReleaseChecksum        string
@@ -132,6 +133,36 @@ func AdoptDeploymentPlanBaseline(
 		if err != nil {
 			return err
 		}
+		approval, err := requireCurrentDeploymentPlanApprovalForExecution(
+			txCtx, input.OrganizationID, input.DeploymentPlanID, input.ActorUserAccountID,
+		)
+		if err != nil {
+			return err
+		}
+		governance, err := requireCurrentReviewAdmissionGo(
+			txCtx,
+			types.CreateTasksForDeploymentPlanRequest{
+				OrganizationID: input.OrganizationID, DeploymentPlanID: input.DeploymentPlanID,
+				ActorUserAccountID:        input.ActorUserAccountID,
+				AdmissionEvaluationID:     input.AdmissionEvaluationID,
+				AdmissionDecisionChecksum: input.AdmissionDecisionChecksum,
+				ReviewAuthorize:           input.ReviewAuthorize,
+			},
+			types.DeploymentPlan{
+				ID: plan.ID, OrganizationID: plan.OrganizationID,
+				EnvironmentID: plan.EnvironmentID, DeploymentUnitID: &plan.DeploymentUnitID,
+				CanonicalChecksum:       plan.PlanChecksum,
+				EffectivePolicyChecksum: plan.EffectivePolicyChecksum,
+			},
+			approval,
+		)
+		if err != nil {
+			return err
+		}
+		if governance.ReviewAdmissionDecisionID != input.ReviewAdmissionDecisionID ||
+			governance.ReviewAdmissionDecisionChecksum != input.ReviewAdmissionDecisionChecksum {
+			return apierrors.NewConflict("persistent GO review decision changed before baseline adoption")
+		}
 		expected, err := baselineAdoptionExpectedComponents(canonical, input)
 		if err != nil {
 			return err
@@ -167,7 +198,7 @@ func AdoptDeploymentPlanBaseline(
 		if err := markBaselineAdoptionPlanExecuted(txCtx, *plan); err != nil {
 			return err
 		}
-		if err := recordBaselineAdoptionAudit(txCtx, *adoption); err != nil {
+		if err := recordBaselineAdoptionAudit(txCtx, *adoption, governance); err != nil {
 			return err
 		}
 		result = adoption
@@ -231,23 +262,31 @@ func canonicalizeBaselineAdoptionInput(
 		return strings.Compare(a.ComponentInstanceID.String(), b.ComponentInstanceID.String())
 	})
 	payload, err := json.Marshal(struct {
-		Schema                         string                                 `json:"schema"`
-		OrganizationID                 uuid.UUID                              `json:"organizationId"`
-		DeploymentPlanID               uuid.UUID                              `json:"deploymentPlanId"`
-		ActorUserAccountID             uuid.UUID                              `json:"actorUserAccountId"`
-		IdempotencyKey                 string                                 `json:"idempotencyKey"`
-		Reason                         string                                 `json:"reason"`
-		ExpectedPlanChecksum           string                                 `json:"expectedPlanChecksum"`
-		ExpectedProductReleaseChecksum string                                 `json:"expectedProductReleaseChecksum"`
-		ExpectedTargetConfigChecksum   string                                 `json:"expectedTargetConfigChecksum"`
-		Components                     []types.BaselineAdoptionComponentInput `json:"components"`
+		Schema                          string                                 `json:"schema"`
+		OrganizationID                  uuid.UUID                              `json:"organizationId"`
+		DeploymentPlanID                uuid.UUID                              `json:"deploymentPlanId"`
+		ActorUserAccountID              uuid.UUID                              `json:"actorUserAccountId"`
+		AdmissionEvaluationID           uuid.UUID                              `json:"admissionEvaluationId"`
+		AdmissionDecisionChecksum       string                                 `json:"admissionDecisionChecksum"`
+		ReviewAdmissionDecisionID       uuid.UUID                              `json:"reviewAdmissionDecisionId"`
+		ReviewAdmissionDecisionChecksum string                                 `json:"reviewAdmissionDecisionChecksum"`
+		IdempotencyKey                  string                                 `json:"idempotencyKey"`
+		Reason                          string                                 `json:"reason"`
+		ExpectedPlanChecksum            string                                 `json:"expectedPlanChecksum"`
+		ExpectedProductReleaseChecksum  string                                 `json:"expectedProductReleaseChecksum"`
+		ExpectedTargetConfigChecksum    string                                 `json:"expectedTargetConfigChecksum"`
+		Components                      []types.BaselineAdoptionComponentInput `json:"components"`
 	}{
-		Schema:         "distr.baseline-adoption-request/v1",
+		Schema:         "distr.baseline-adoption-request/v2",
 		OrganizationID: input.OrganizationID, DeploymentPlanID: input.DeploymentPlanID,
-		ActorUserAccountID:   input.ActorUserAccountID,
-		IdempotencyKey:       strings.TrimSpace(input.IdempotencyKey),
-		Reason:               strings.TrimSpace(input.Reason),
-		ExpectedPlanChecksum: strings.TrimSpace(input.ExpectedPlanChecksum),
+		ActorUserAccountID:              input.ActorUserAccountID,
+		AdmissionEvaluationID:           input.AdmissionEvaluationID,
+		AdmissionDecisionChecksum:       input.AdmissionDecisionChecksum,
+		ReviewAdmissionDecisionID:       input.ReviewAdmissionDecisionID,
+		ReviewAdmissionDecisionChecksum: input.ReviewAdmissionDecisionChecksum,
+		IdempotencyKey:                  strings.TrimSpace(input.IdempotencyKey),
+		Reason:                          strings.TrimSpace(input.Reason),
+		ExpectedPlanChecksum:            strings.TrimSpace(input.ExpectedPlanChecksum),
 		ExpectedProductReleaseChecksum: strings.TrimSpace(
 			input.ExpectedProductReleaseChecksum,
 		),
@@ -263,8 +302,12 @@ func canonicalizeBaselineAdoptionInput(
 
 func validateBaselineAdoptionInput(input types.CreateBaselineAdoptionInput) error {
 	if input.OrganizationID == uuid.Nil || input.DeploymentPlanID == uuid.Nil ||
-		input.ActorUserAccountID == uuid.Nil {
+		input.ActorUserAccountID == uuid.Nil || input.AdmissionEvaluationID == uuid.Nil ||
+		input.ReviewAdmissionDecisionID == uuid.Nil {
 		return apierrors.NewBadRequest("baseline adoption identity is incomplete")
+	}
+	if input.ReviewAuthorize == nil {
+		return apierrors.NewForbidden("baseline adoption requires scoped execution authorization")
 	}
 	if !baselineAdoptionIdempotencyPattern.MatchString(strings.TrimSpace(input.IdempotencyKey)) {
 		return apierrors.NewBadRequest("baseline adoption idempotency key is invalid")
@@ -277,6 +320,8 @@ func validateBaselineAdoptionInput(input types.CreateBaselineAdoptionInput) erro
 		input.ExpectedPlanChecksum,
 		input.ExpectedProductReleaseChecksum,
 		input.ExpectedTargetConfigChecksum,
+		input.AdmissionDecisionChecksum,
+		input.ReviewAdmissionDecisionChecksum,
 	} {
 		if !baselineAdoptionChecksumPattern.MatchString(checksum) {
 			return apierrors.NewBadRequest("baseline adoption checksum is invalid")
@@ -327,6 +372,7 @@ func lockBaselineAdoptionPlan(
 		       plan.deployment_unit_id, plan.target_config_snapshot_id,
 		       target.deployment_target_id, plan.status, plan.plan_schema,
 		       plan.protocol_version, plan.canonical_checksum,
+		       plan.effective_policy_checksum,
 		       plan.canonical_payload, plan.sealed_at,
 		       product.canonical_checksum, product.status, product.kind,
 		       config.canonical_checksum, config.target_platform,
@@ -361,6 +407,7 @@ func lockBaselineAdoptionPlan(
 		&plan.ProductReleaseID, &plan.EnvironmentID, &plan.DeploymentUnitID,
 		&plan.TargetConfigSnapshotID, &plan.DeploymentTargetID, &plan.Status,
 		&plan.PlanSchema, &plan.ProtocolVersion, &plan.PlanChecksum,
+		&plan.EffectivePolicyChecksum,
 		&plan.CanonicalPayload, &plan.SealedAt, &plan.ProductReleaseChecksum,
 		&plan.ProductReleaseStatus, &plan.ProductReleaseKind,
 		&plan.TargetConfigChecksum, &plan.TargetConfigPlatform,
@@ -1025,17 +1072,24 @@ func markBaselineAdoptionPlanExecuted(
 func recordBaselineAdoptionAudit(
 	ctx context.Context,
 	adoption types.BaselineAdoption,
+	governance currentReviewAdmissionAuthorization,
 ) error {
 	payload, err := json.Marshal(map[string]any{
-		"baselineAdoptionId":  adoption.ID,
-		"requestChecksum":     adoption.RequestChecksum,
-		"outcomeChecksum":     adoption.OutcomeChecksum,
-		"outcome":             types.BaselineAdoptionStatusAdopted,
-		"deploymentPerformed": false,
-		"taskCount":           0,
-		"lockCount":           0,
-		"executionCount":      0,
-		"componentCount":      len(adoption.Components),
+		"baselineAdoptionId":              adoption.ID,
+		"approvalRequestId":               governance.ApprovalRequestID,
+		"approvalRequestRevision":         governance.ApprovalRequestRevision,
+		"admissionEvaluationId":           governance.AdmissionEvaluationID,
+		"admissionDecisionChecksum":       governance.AdmissionDecisionChecksum,
+		"reviewAdmissionDecisionId":       governance.ReviewAdmissionDecisionID,
+		"reviewAdmissionDecisionChecksum": governance.ReviewAdmissionDecisionChecksum,
+		"requestChecksum":                 adoption.RequestChecksum,
+		"outcomeChecksum":                 adoption.OutcomeChecksum,
+		"outcome":                         types.BaselineAdoptionStatusAdopted,
+		"deploymentPerformed":             false,
+		"taskCount":                       0,
+		"lockCount":                       0,
+		"executionCount":                  0,
+		"componentCount":                  len(adoption.Components),
 	})
 	if err != nil {
 		return fmt.Errorf("canonicalize baseline adoption audit payload: %w", err)
@@ -1051,6 +1105,8 @@ func recordBaselineAdoptionAudit(
 			ProductReleaseID:       &adoption.ProductReleaseID,
 			TargetConfigID:         &adoption.TargetConfigSnapshotID,
 			DeploymentPlanID:       &adoption.DeploymentPlanID,
+			ApprovalID:             &governance.ApprovalRequestID,
+			AdmissionDecisionID:    &governance.AdmissionEvaluationID,
 			DeploymentTargetID:     &adoption.DeploymentTargetID,
 			EnvironmentID:          &adoption.EnvironmentID,
 			DeploymentUnitID:       &adoption.DeploymentUnitID,

@@ -24,12 +24,16 @@ var (
 )
 
 type CreateBaselineAdoptionRequest struct {
-	IdempotencyKey                 string                             `json:"idempotencyKey"`
-	Reason                         string                             `json:"reason"`
-	ExpectedPlanChecksum           string                             `json:"expectedPlanChecksum"`
-	ExpectedProductReleaseChecksum string                             `json:"expectedProductReleaseChecksum"`
-	ExpectedTargetConfigChecksum   string                             `json:"expectedTargetConfigChecksum"`
-	Components                     []BaselineAdoptionComponentRequest `json:"components"`
+	IdempotencyKey                  string                             `json:"idempotencyKey"`
+	Reason                          string                             `json:"reason"`
+	AdmissionEvaluationID           uuid.UUID                          `json:"admissionEvaluationId"`
+	AdmissionDecisionChecksum       string                             `json:"admissionDecisionChecksum"`
+	ReviewAdmissionDecisionID       uuid.UUID                          `json:"reviewAdmissionDecisionId"`
+	ReviewAdmissionDecisionChecksum string                             `json:"reviewAdmissionDecisionChecksum"`
+	ExpectedPlanChecksum            string                             `json:"expectedPlanChecksum"`
+	ExpectedProductReleaseChecksum  string                             `json:"expectedProductReleaseChecksum"`
+	ExpectedTargetConfigChecksum    string                             `json:"expectedTargetConfigChecksum"`
+	Components                      []BaselineAdoptionComponentRequest `json:"components"`
 }
 
 type BaselineAdoptionComponentRequest struct {
@@ -75,6 +79,18 @@ func (request *CreateBaselineAdoptionRequest) Validate() error {
 	if request.Reason == "" || len(request.Reason) > 2048 ||
 		strings.ContainsAny(request.Reason, "\r\n") {
 		return validation.NewValidationFailedError("reason must be 1-2048 single-line characters")
+	}
+	if request.AdmissionEvaluationID == uuid.Nil {
+		return validation.NewValidationFailedError("admissionEvaluationId is required")
+	}
+	if !baselineAdoptionChecksumPattern.MatchString(request.AdmissionDecisionChecksum) {
+		return validation.NewValidationFailedError("admissionDecisionChecksum is invalid")
+	}
+	if request.ReviewAdmissionDecisionID == uuid.Nil {
+		return validation.NewValidationFailedError("reviewAdmissionDecisionId is required")
+	}
+	if !baselineAdoptionChecksumPattern.MatchString(request.ReviewAdmissionDecisionChecksum) {
+		return validation.NewValidationFailedError("reviewAdmissionDecisionChecksum is invalid")
 	}
 	if !baselineAdoptionChecksumPattern.MatchString(request.ExpectedPlanChecksum) {
 		return validation.NewValidationFailedError("expectedPlanChecksum is invalid")
@@ -176,7 +192,11 @@ func (request CreateBaselineAdoptionRequest) ToTypes(
 	return types.CreateBaselineAdoptionInput{
 		OrganizationID: organizationID, DeploymentPlanID: deploymentPlanID,
 		ActorUserAccountID: actorUserAccountID, IdempotencyKey: request.IdempotencyKey,
-		Reason: request.Reason, ExpectedPlanChecksum: request.ExpectedPlanChecksum,
+		AdmissionEvaluationID:           request.AdmissionEvaluationID,
+		AdmissionDecisionChecksum:       request.AdmissionDecisionChecksum,
+		ReviewAdmissionDecisionID:       request.ReviewAdmissionDecisionID,
+		ReviewAdmissionDecisionChecksum: request.ReviewAdmissionDecisionChecksum,
+		Reason:                          request.Reason, ExpectedPlanChecksum: request.ExpectedPlanChecksum,
 		ExpectedProductReleaseChecksum: request.ExpectedProductReleaseChecksum,
 		ExpectedTargetConfigChecksum:   request.ExpectedTargetConfigChecksum,
 		Components:                     components,

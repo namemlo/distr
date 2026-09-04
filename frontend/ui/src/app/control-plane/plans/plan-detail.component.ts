@@ -414,7 +414,18 @@ export class PlanDetailComponent implements OnInit {
 
   protected async adoptBaseline() {
     const detail = this.detail();
-    if (!detail || this.baselineAdoptionForm.invalid || !this.baselineAdoptionEnabled()) {
+    const review = this.reviewMaterial();
+    const admissionEvaluationId = review?.admissionEvaluationId;
+    const admissionDecisionChecksum = review?.admissionDecisionChecksum;
+    const latestDecision = review?.latestDecision;
+    if (
+      !detail ||
+      !admissionEvaluationId ||
+      !admissionDecisionChecksum ||
+      !latestDecision ||
+      this.baselineAdoptionForm.invalid ||
+      !this.baselineAdoptionEnabled()
+    ) {
       return;
     }
     let components: OperatorBaselineAdoptionComponentRequest[];
@@ -445,6 +456,10 @@ export class PlanDetailComponent implements OnInit {
       const adoption = await firstValueFrom(
         this.service.createBaselineAdoption(this.planId, {
           reason,
+          admissionEvaluationId,
+          admissionDecisionChecksum,
+          reviewAdmissionDecisionId: latestDecision.id,
+          reviewAdmissionDecisionChecksum: latestDecision.canonicalChecksum,
           expectedPlanChecksum: detail.plan.canonicalChecksum,
           expectedProductReleaseChecksum: detail.productReleaseChecksum,
           expectedTargetConfigChecksum: detail.targetConfigChecksum,
@@ -524,7 +539,16 @@ export class PlanDetailComponent implements OnInit {
   }
 
   protected baselineAdoptionEnabled(): boolean {
-    return this.admissionEnabled();
+    const review = this.reviewMaterial();
+    return (
+      this.admissionEnabled() &&
+      review?.state === 'GO' &&
+      review.reviewMaterialValid &&
+      review.admissionValid &&
+      !!review.admissionEvaluationId &&
+      !!review.admissionDecisionChecksum &&
+      !!review.latestDecision
+    );
   }
 
   protected previousStateEnabled(): boolean {

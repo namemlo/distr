@@ -204,7 +204,7 @@ treat a partial cached manifest as deployable.
 | `GET`       | `/deployment-plans/{id}`                    | Get one plan                                                             |
 | `POST`      | `/deployment-plans/{id}/approval-requests`  | Request checksum-bound approval                                          |
 | `POST`      | `/deployment-plans/{id}/previous-state`     | Create a new compatible previous-state plan                              |
-| `POST`      | `/deployment-plans/{id}/baseline-adoptions` | Adopt exact existing runtime without deployment                          |
+| `POST`      | `/deployment-plans/{id}/baseline-adoptions` | Adopt exact existing runtime after approval, ADMIT, and GO               |
 | `POST`      | `/deployment-plans/{id}/tasks`              | Create durable tasks for a ready plan                                    |
 | `GET/POST`  | `/deployment-plans/{id}/review-decisions`   | Read or append observed-state-bound GO/NO_GO evidence                    |
 | `GET`       | `/deployment-plans/{id}/review-material`    | Read current checksums, admission validity, decision state, and blockers |
@@ -242,8 +242,11 @@ requires an authenticated source-host or CI attestation that binds the exact
 repository, baseline commit, candidate commit, and ancestry result.
 
 The plan review UI exposes the existing baseline-adoption and admission
-mutations. It binds plan, Product Release, and target-configuration checksums
-from the immutable plan detail instead of asking the operator to retype them.
+mutations. It binds plan, Product Release, target-configuration, current ADMIT,
+and persistent GO identities from immutable server read models instead of
+asking the operator to retype them. The server revalidates current approval,
+ADMIT, GO, observed state, and scoped execution authorization in the same
+serializable transaction before baseline adoption changes desired state.
 The component observation/provenance array remains explicit because the API
 does not currently expose a complete baseline-adoption request projection.
 Previous-state creation remains available when the current plan is already

@@ -72,6 +72,12 @@ provides idempotency: exact replay, including a request racing the original
 serializable write, re-reads and returns the retained outcome, while changed
 material under the same key conflicts.
 
+ADR-0088 additionally requires a current eligible approval, an exact current
+`ADMIT` evaluation, and an exact persistent current `GO` decision before the
+adoption transaction may mutate desired state or mark the plan executed. These
+governance identities are part of the v2 adoption request checksum and the
+correlated immutable audit evidence.
+
 ## Consequences
 
 Healthy existing runtime can become authoritative native baseline state without

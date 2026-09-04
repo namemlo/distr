@@ -520,6 +520,10 @@ describe('OperatorControlPlaneService', () => {
     service
       .createBaselineAdoption('plan-current', {
         reason: 'Adopt independently verified runtime.',
+        admissionEvaluationId: 'admission-1',
+        admissionDecisionChecksum: 'sha256:admission',
+        reviewAdmissionDecisionId: 'review-1',
+        reviewAdmissionDecisionChecksum: 'sha256:review',
         expectedPlanChecksum: 'sha256:plan',
         expectedProductReleaseChecksum: 'sha256:product',
         expectedTargetConfigChecksum: 'sha256:config',
@@ -528,6 +532,10 @@ describe('OperatorControlPlaneService', () => {
       .subscribe();
     expectMutation('/api/v1/deployment-plans/plan-current/baseline-adoptions', 'POST', {
       reason: 'Adopt independently verified runtime.',
+      admissionEvaluationId: 'admission-1',
+      admissionDecisionChecksum: 'sha256:admission',
+      reviewAdmissionDecisionId: 'review-1',
+      reviewAdmissionDecisionChecksum: 'sha256:review',
       expectedPlanChecksum: 'sha256:plan',
       expectedProductReleaseChecksum: 'sha256:product',
       expectedTargetConfigChecksum: 'sha256:config',

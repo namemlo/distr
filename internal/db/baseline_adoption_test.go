@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -149,6 +150,12 @@ func TestBaselineAdoptionCanonicalMaterialIsOrderStableAndEvidenceBound(t *testi
 	_, changedChecksum, err := canonicalizeBaselineAdoptionInput(input)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(changedChecksum).NotTo(Equal(firstChecksum))
+
+	input = baselineAdoptionCanonicalTestInput()
+	input.AdmissionDecisionChecksum = baselineAdoptionDBTestChecksum("f")
+	_, changedChecksum, err = canonicalizeBaselineAdoptionInput(input)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(changedChecksum).NotTo(Equal(firstChecksum))
 }
 
 func TestBaselineAdoptionCanonicalMaterialFreezesIndependentObservedFacts(t *testing.T) {
@@ -208,6 +215,12 @@ func TestBaselineAdoptionRepositoryHasNoSyntheticExecutionPath(t *testing.T) {
 	g.Expect(text).NotTo(ContainSubstring("INSERT INTO ExternalExecution"))
 	g.Expect(text).NotTo(ContainSubstring("INSERT INTO TaskResourceLock"))
 	g.Expect(text).To(ContainSubstring("baseline_adoption.adopted"))
+	g.Expect(text).To(ContainSubstring("requireCurrentDeploymentPlanApprovalForExecution"))
+	g.Expect(text).To(ContainSubstring("requireCurrentReviewAdmissionGo"))
+	g.Expect(text).To(ContainSubstring("persistent GO review decision changed before baseline adoption"))
+	g.Expect(text).To(ContainSubstring(`"approvalRequestId"`))
+	g.Expect(text).To(ContainSubstring(`"admissionEvaluationId"`))
+	g.Expect(text).To(ContainSubstring(`"reviewAdmissionDecisionId"`))
 	g.Expect(text).To(ContainSubstring(`Outcome:                "ADOPTED"`))
 	g.Expect(text).NotTo(ContainSubstring("DEPLOYED"))
 	g.Expect(text).To(ContainSubstring("baselineAdoptionConcurrentWriteConflict"))
@@ -386,16 +399,23 @@ func baselineAdoptionCanonicalTestInput() types.CreateBaselineAdoptionInput {
 		}
 	}
 	return types.CreateBaselineAdoptionInput{
-		OrganizationID:                 uuid.New(),
-		DeploymentPlanID:               uuid.New(),
-		ActorUserAccountID:             uuid.New(),
-		IdempotencyKey:                 "baseline-1",
-		Reason:                         "adopt healthy runtime",
-		ExpectedPlanChecksum:           baselineAdoptionDBTestChecksum("a"),
-		ExpectedProductReleaseChecksum: baselineAdoptionDBTestChecksum("b"),
-		ExpectedTargetConfigChecksum:   baselineAdoptionDBTestChecksum("c"),
+		OrganizationID:                  uuid.New(),
+		DeploymentPlanID:                uuid.New(),
+		ActorUserAccountID:              uuid.New(),
+		AdmissionEvaluationID:           uuid.New(),
+		AdmissionDecisionChecksum:       baselineAdoptionDBTestChecksum("e"),
+		ReviewAdmissionDecisionID:       uuid.New(),
+		ReviewAdmissionDecisionChecksum: baselineAdoptionDBTestChecksum("f"),
+		IdempotencyKey:                  "baseline-1",
+		Reason:                          "adopt healthy runtime",
+		ExpectedPlanChecksum:            baselineAdoptionDBTestChecksum("a"),
+		ExpectedProductReleaseChecksum:  baselineAdoptionDBTestChecksum("b"),
+		ExpectedTargetConfigChecksum:    baselineAdoptionDBTestChecksum("c"),
 		Components: []types.BaselineAdoptionComponentInput{
 			component("worker", "2"), component("api", "1"),
+		},
+		ReviewAuthorize: func(context.Context, types.ReviewAdmissionExecutionContext) error {
+			return nil
 		},
 	}
 }
